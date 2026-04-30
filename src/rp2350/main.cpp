@@ -1,66 +1,65 @@
-// Raspberry Pi Pico 2 — RS485 master matching ATTINY_Custom_Slave protocol
-//
-// Custom RS485 protocol — same framing style as tomrodinger/servomotor
-//
-// Frame structure (request):
-//   [SIZE] [ADDR] [CMD] [PAYLOAD...] [CRC16 LE 2 bytes]
-//   SIZE = ((remaining_bytes_after_size) << 1) | 1
-//   LSB of SIZE is always 1 — used for self-synchronizing frame detection
-//
-// Frame structure (response):
-//   [SIZE] [STATUS] [DATA...] [CRC16 LE 2 bytes]
-//   STATUS: 0x00=ok/no data, 0x01=ok/data follows, 0xFF=error
-//
-// Broadcast address 0xFF: all slaves execute, none respond.
-//
-// Commands (match slave exactly):
-//   0x01 CMD_PING    → reply: node_id (1 byte)
-//   0x02 CMD_QUEUE   → payload: dir(1)+steps(2 LE)+speed(2 LE)
-//                    → reply: buf_free (1 byte);
-//   0x03 CMD_GO      → broadcast: start all armed motors simultaneously
-//   0x04 CMD_STOP    → stop immediately, clear buffer; reply: STATUS_OK if not broadcast
-//   0x05 CMD_STATUS  → reply: running(1)+buf_used(1)+buf_free(1)+steps_remaining(2)
-//   0x06 CMD_ENABLE  → payload: enable(1); reply: STATUS_OK if not broadcast
-//
-// Wiring (SP3485EN):
-//   GP4 TX → DI,  GP5 RX ← RO,  GP6 → DE+/RE
-//
-// CoreXY node map:
-//   Node 1 = Motor A,  Node 2 = Motor B,  Node 3 = Z (pen)
-//   Motor A steps = dx + dy
-//   Motor B steps = dx - dy
-//
-// USB commands:
-//   ping <addr>
-//   enable <addr|all> <0|1>
-//   stop
-//   <addr> f/b <steps> [sps]            — single-axis jog
-//   xy <dx> <dy> [sps]                   — CoreXY in steps (signed)
-//   rect <W_mm> <H_mm> [speed_mm_s]     — draw rectangle
-//   circle <R_mm> [speed_mm_s] [segs]   — draw circle
-
 #include <Arduino.h>
-#include "shared.h"
 
-// ─── Cross-Core Global Variables (Memory Allocation) ──────────────────────────
+// ─── Pins 
+#define RS485_TX_PIN  4
+#define RS485_RX_PIN  5
+#define RS485_EN_PIN  6
 
-// The Ring Buffer
-Segment masterBuf[MASTER_BUF_SIZE];
-volatile uint8_t mBufHead = 0; 
-volatile uint8_t mBufTail = 0;
+// ─── Bus 
+#define RS485_BAUD          230400
+#define RESPONSE_TIMEOUT_MS    80
 
-// Emergency Stop Flag
-volatile bool emergencyStop = false;
+// Buffer for PC -> RS485 relaying
+uint8_t relayBuf[256];
 
-// UI Command Flags
-volatile uint8_t reqPingAddr = 0;
-volatile uint8_t reqEnableAddr = 0;
-volatile int8_t  reqEnableVal = -1;  
-volatile int8_t  pingResult = -1;    
+// ─── RS485 low-level 
+static void rs485Send(const uint8_t *d, uint8_t len) {
+    digitalWrite(RS485_EN_PIN, HIGH);
+    // On RP2350, we don't need a delay before writing; 
+    // Serial2.write is non-blocking until the FIFO is full.
+    Serial2.write(d, len);
+    
+    // Crucial: Wait for the hardware shift register to finish
+    Serial2.flush(); 
+    
+    // At 230400 baud, 1 bit is ~4.3us. A tiny safety margin
+    // ensures the last stop bit cleared the wire before we drop EN.
+    delayMicroseconds(10); 
+    
+    digitalWrite(RS485_EN_PIN, LOW);
+}
 
-// Note: 
-// setup() and loop() are defined in core0.cpp
-// setup1() and loop1() are defined in core1.cpp
-//
-// The Earles F. Philhower RP2040/RP2350 core automatically links them and 
-// launches Core 0 and Core 1 independently. No further code is needed here!
+void setup() {
+    // USB Serial (PC)
+    Serial.begin(115200);
+    
+    // RS485 Enable Pin
+    pinMode(RS485_EN_PIN, OUTPUT);
+    digitalWrite(RS485_EN_PIN, LOW);
+
+    // RS485 Serial (Motor)
+    Serial2.setTX(RS485_TX_PIN);
+    Serial2.setRX(RS485_RX_PIN);
+    Serial2.begin(RS485_BAUD);
+}
+
+void loop() {
+    // 1. PC to RS485
+    // Collect bytes from PC into a buffer so we send them in one TX burst
+    uint8_t count = 0;
+    while (Serial.available() > 0 && count < sizeof(relayBuf)) {
+        relayBuf[count++] = Serial.read();
+        // Small micro-delay to let the USB buffer fill if a packet is coming
+        delayMicroseconds(50); 
+    }
+
+    if (count > 0) {
+        rs485Send(relayBuf, count);
+    }
+
+    // 2. RS485 to PC
+    // If the motor replies, send it straight to the PC
+    while (Serial2.available() > 0) {
+        Serial.write(Serial2.read());
+    }
+}
