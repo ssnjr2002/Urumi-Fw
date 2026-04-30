@@ -38,7 +38,7 @@
 #define BELT_PITCH_MM   2.0f
 #define PULLEY_TEETH    20
 #define MOTOR_FULL_SPS  200
-#define MICROSTEP       1
+#define MICROSTEP       32
 #define MM_PER_REV      (BELT_PITCH_MM * PULLEY_TEETH)              // 40 mm
 #define STEPS_PER_MM    (MOTOR_FULL_SPS * MICROSTEP / MM_PER_REV)   // 80 steps/mm
 #define DEFAULT_SPD_MM_S  35.0f   // used when speed arg omitted

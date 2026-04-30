@@ -12,7 +12,7 @@ static uint8_t serialRxLen = 0;
 void processSerial();
 bool checkStop();
 bool queueCoreXY0(int16_t dx, int16_t dy, uint16_t sps);
-void drawCircle(float rMm, float spdMmS, uint8_t segs);
+void drawCircle(float rMm, float spdMmS, uint16_t segs);
 
 // ─── Core 0 Serial & UI Logic ─────────────────────────────────────────────────
 
@@ -113,7 +113,7 @@ bool queueCoreXY0(int16_t dx, int16_t dy, uint16_t sps) {
     return true;
 }
 
-void drawCircle(float rMm, float spdMmS, uint8_t segs) {
+void drawCircle(float rMm, float spdMmS, uint16_t segs) {
     segs = constrain(segs, 4, 1024);
     Serial.printf("Circle r=%.1f mm  @ %.1f mm/s  %d segs\n", rMm, spdMmS, segs);
 
@@ -125,7 +125,7 @@ void drawCircle(float rMm, float spdMmS, uint8_t segs) {
     // if (!queueCoreXY0((int16_t)rSteps, 0, sps)) return; 
 
     // Segmented circular path
-    for (uint8_t i = 1; i <= segs; i++) {
+    for (uint16_t i = 1; i <= segs; i++) {
         float   a   = 2.0f * (float)M_PI * i / segs;
         float   nx  = rSteps * cosf(a);
         float   ny  = rSteps * sinf(a);

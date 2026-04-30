@@ -39,7 +39,7 @@ def set_node_id(node_id, source, target, env):
 
     if node_id != None:
         result = upload()
-        # set_node_id(None, None, None, None) # block normal uploads
+        set_node_id(None, None, None, None) # block normal uploads
         return result
 
 TOTAL_NODES = 4
