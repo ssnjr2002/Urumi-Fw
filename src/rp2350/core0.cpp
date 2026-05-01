@@ -83,8 +83,11 @@ bool queueCoreXY0(int16_t dx, int16_t dy, uint16_t sps) {
     if (emergencyStop) return false;
 
     // CoreXY Kinematics translation
-    int32_t aSteps = (int32_t)dx + dy;
-    int32_t bSteps = (int32_t)dx - dy;
+    // int32_t xSteps = (int32_t)dx + dy;
+    // int32_t ySteps = (int32_t)dx - dy;
+    // Cartesian
+    int32_t aSteps = dx;
+    int32_t bSteps = dy;
     float maxM = max(abs(aSteps), abs(bSteps));
     if (maxM == 0) return true;
 
