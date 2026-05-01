@@ -44,22 +44,22 @@ void setup() {
 }
 
 void loop() {
-    // 1. PC to RS485
-    // Collect bytes from PC into a buffer so we send them in one TX burst
-    uint8_t count = 0;
-    while (Serial.available() > 0 && count < sizeof(relayBuf)) {
-        relayBuf[count++] = Serial.read();
-        // Small micro-delay to let the USB buffer fill if a packet is coming
-        delayMicroseconds(50); 
-    }
-
-    if (count > 0) {
-        rs485Send(relayBuf, count);
-    }
-
-    // 2. RS485 to PC
-    // If the motor replies, send it straight to the PC
+    // 2. RS485 to PC (DEBUG HEX VERSION)
     while (Serial2.available() > 0) {
-        Serial.write(Serial2.read());
+        uint8_t b = Serial2.read();
+        if (b < 0x10) Serial.print('0');
+        Serial.print(b, HEX);
+        Serial.print(" ");
+    }
+
+    // 1. PC to RS485 (Relay)
+    if (Serial.available()) {
+        digitalWrite(RS485_EN_PIN, HIGH);
+        while(Serial.available()) {
+            Serial2.write(Serial.read());
+        }
+        Serial2.flush();
+        delayMicroseconds(20); // Slightly longer for safety
+        digitalWrite(RS485_EN_PIN, LOW);
     }
 }
