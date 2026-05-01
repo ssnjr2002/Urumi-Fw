@@ -29,8 +29,8 @@
 #define CMD_ENABLE   0x06
 
 // ─── Machine config ────────────────────────────────────────────────────────────
-#define NODE_A  1
-#define NODE_B  2
+#define NODE_X  1
+#define NODE_Y  2
 #define NODE_Z  3
 
 // GT2 belt + 20-tooth pulley
@@ -54,9 +54,9 @@
 
 // ─── Shared Memory Structures ─────────────────────────────────────────────────
 struct Segment {
-    int16_t  aSteps, bSteps;
-    uint16_t aSps, bSps;
-    bool     aCw, bCw;
+    int16_t  xSteps, ySteps, zSteps;
+    uint16_t xSps, ySps, zSps;
+    bool     xCw, yCw, zCw;
 };
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────

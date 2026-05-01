@@ -121,70 +121,6 @@ void setup1() {
     Serial2.begin(RS485_BAUD);
 }
 
-bool cw_A = false;
-bool cw_B = false;
-
-void loop1Test() {
-    // 1. Periodically check status of NODE_A
-    SlaveStatus sA, sB;
-    if (getStatus1(NODE_A, sA)) {
-        
-        // 2. Logic: If motor is idle and the buffer is empty (free == 8)
-        if (sA.running == 0 && sA.free >= 8) {
-            
-            // Step A: Ensure the motor is enabled
-            uint8_t p = 1;
-            sendCmd1(NODE_A, CMD_ENABLE, &p, 1, nullptr, true);
-            delay(50); // Small delay to let the driver settle
-
-            // Step B: Queue the movement
-            // 6400 steps @ 1000 steps/sec
-            cmdQueueSlave1(NODE_A, cw_A, 6400, 1000);
-            cw_A = !cw_A; // Toggle direction for next time
-
-            // Step C: Start the movement
-            // We use BROADCAST so all nodes start at the same time
-            sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
-
-            // Step D: Wait a bit so we don't spam the command
-            // The motor will take 6.4 seconds to finish, so we wait a bit
-            delay(1000);
-        }
-    } else {
-        // If getStatus1 fails, the node isn't responding
-        // We can't use Serial.print here safely, so maybe toggle an onboard LED?
-    }
-
-    if (getStatus1(NODE_B, sB)) {
-        // 2. Logic: If motor is idle and the buffer is empty (free == 8)
-        if (sB.running == 0 && sB.free >= 8) {
-            
-            // Step A: Ensure the motor is enabled
-            uint8_t p = 1;
-            sendCmd1(NODE_B, CMD_ENABLE, &p, 1, nullptr, true);
-            delay(50); // Small delay to let the driver settle
-
-            // Step B: Queue the movement
-            // 6400 steps @ 1000 steps/sec
-            cmdQueueSlave1(NODE_B, cw_B, 6400, 1000);
-            cw_B = !cw_B; // Toggle direction for next time
-
-            // Step C: Start the movement
-            // We use BROADCAST so all nodes start at the same time
-            sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
-
-            // Step D: Wait a bit so we don't spam the command
-            // The motor will take 6.4 seconds to finish, so we wait a bit
-            delay(1000);
-        }
-    } else {
-        // If getStatus1 fails, the node isn't responding
-        // We can't use Serial.print here safely, so maybe toggle an onboard LED?
-    }
-
-    delay(100); // Poll every 100ms
-}
-
 void loop1() {
     // 1. Check for Emergency Stop immediately
     if (emergencyStop) {
@@ -212,8 +148,8 @@ void loop1() {
     if (mBufHead != mBufTail) {
         SlaveStatus sA, sB;
         // Only proceed if both nodes respond to status checks
-        bool nodeAStatus = getStatus1(NODE_A, sA);
-        bool nodeBStatus = getStatus1(NODE_B, sB);
+        bool nodeAStatus = getStatus1(NODE_X, sA);
+        bool nodeBStatus = getStatus1(NODE_Y, sB);
 
         // Serial.printf("Status A: %s, Status B: %s", (nodeAStatus ? "ok" : "nope"), (nodeBStatus? "ok" : "nope"));
 
@@ -233,8 +169,10 @@ void loop1() {
                 __asm__ volatile ("" ::: "memory"); 
 
                 // Send to Nodes
-                if (s.aSteps != 0) cmdQueueSlave1(NODE_A, s.aCw, abs(s.aSteps), s.aSps);
-                if (s.bSteps != 0) cmdQueueSlave1(NODE_B, s.bCw, abs(s.bSteps), s.bSps);
+
+                if (s.xSteps != 0) cmdQueueSlave1(NODE_X, s.xCw, abs(s.xSteps), s.xSps);
+                if (s.ySteps != 0) cmdQueueSlave1(NODE_Y, s.yCw, abs(s.ySteps), s.ySps);
+                if (s.zSteps != 0) cmdQueueSlave1(NODE_Z, s.zCw, abs(s.zSteps), s.zSps);
                 
                 // Advance head
                 mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
@@ -252,58 +190,5 @@ void loop1() {
     }
     
     // Tiny yield to prevent watchdog timeouts and allow core sync
-    delayMicroseconds(10); 
-}
-
-void loop1Immediate() {
-    // 1. Immediate Emergency Stop Check
-    if (emergencyStop) {
-        sendCmd1(BROADCAST, CMD_STOP, nullptr, 0, nullptr, false);
-        mBufHead = mBufTail; 
-        emergencyStop = false;
-        return;
-    }
-
-    // 2. Fast-Path UI Commands (Ping/Enable)
-    if (reqPingAddr != 0) {
-        uint8_t d[1];
-        pingResult = (sendCmd1(reqPingAddr, CMD_PING, nullptr, 0, d, true) > 0) ? 1 : 0;
-        reqPingAddr = 0;
-    }
-    if (reqEnableVal != -1) {
-        uint8_t p = (reqEnableVal != 0) ? 1u : 0u;
-        sendCmd1(reqEnableAddr, CMD_ENABLE, &p, 1, nullptr, (reqEnableAddr != BROADCAST));
-        reqEnableVal = -1;
-    }
-
-    // 3. Low-Latency Execution: POP AND GO
-    // As soon as head != tail, we process the segment immediately.
-    if (mBufHead != mBufTail) {
-        
-        // Grab the segment from the shared buffer
-        Segment s = masterBuf[mBufHead];
-        
-        // Compiler barrier: ensure we read the struct before updating the index
-        __asm__ volatile ("" ::: "memory");
-
-        // QUEUE: Send to nodes. 
-        // We wait for the response (true) to ensure the slave actually received 
-        // the data before we tell it to START.
-        if (s.aSteps != 0) {
-            cmdQueueSlave1(NODE_A, s.aCw, abs(s.aSteps), s.aSps);
-        }
-        if (s.bSteps != 0) {
-            cmdQueueSlave1(NODE_B, s.bCw, abs(s.bSteps), s.bSps);
-        }
-
-        // GO: Execute immediately.
-        // We use waitResp=false for GO to reduce latency.
-        sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
-
-        // Advance the buffer head
-        mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
-    }
-
-    // Smallest possible delay to prevent core lockup while maintaining speed
     delayMicroseconds(10); 
 }
