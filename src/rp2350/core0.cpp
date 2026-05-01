@@ -46,9 +46,9 @@ void processSerial() {
                         return;
                     }
 
-                    int16_t  dx = 0, dy = 0, dz = 0;
+                    int16_t  dx = 0, dy = 0, dz = 0, da = 0;
                     uint16_t xSps = 0, ySps = 0, zSps = 0;
-                    int8_t parsed = sscanf(input.c_str(), "xyz %hd %hd %hd %hu %hu %hu", &dx, &dy, &dz, &xSps, &ySps, &zSps);
+                    int8_t parsed = sscanf(input.c_str(), "xyz %hd %hd %hd %hu %hu %hu %hd", &dx, &dy, &dz, &xSps, &ySps, &zSps, &da);
                     if (parsed < 6) {
                         Serial.println("parse error");
                         return;
@@ -57,12 +57,15 @@ void processSerial() {
                     s.xSteps = dx;
                     s.ySteps = dy;
                     s.zSteps = dz;
+                    s.aSteps = da;
                     s.xSps = xSps;
                     s.ySps = ySps;
                     s.zSps = zSps;
+                    s.aSps = 1024;
                     s.xCw = (dx < 0);
                     s.yCw = (dy < 0);
                     s.zCw = (dz < 0);
+                    s.aCw = (da < 0);
                     // Push to buffer
                     masterBuf[mBufTail] = s;
                     

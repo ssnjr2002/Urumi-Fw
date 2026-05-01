@@ -173,6 +173,7 @@ void loop1() {
                 if (s.xSteps != 0) cmdQueueSlave1(NODE_X, s.xCw, abs(s.xSteps), s.xSps);
                 if (s.ySteps != 0) cmdQueueSlave1(NODE_Y, s.yCw, abs(s.ySteps), s.ySps);
                 if (s.zSteps != 0) cmdQueueSlave1(NODE_Z, s.zCw, abs(s.zSteps), s.zSps);
+                if (s.aSteps != 0) cmdQueueSlave1(NODE_A, s.aCw, abs(s.aSteps), s.aSps);
                 
                 // Advance head
                 mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;

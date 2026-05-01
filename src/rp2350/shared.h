@@ -32,6 +32,7 @@
 #define NODE_X  1
 #define NODE_Y  2
 #define NODE_Z  3
+#define NODE_A  4
 
 // GT2 belt + 20-tooth pulley
 // Set MICROSTEP to match your DRV8825 jumpers (1/2/4/8/16/32)
@@ -54,9 +55,9 @@
 
 // ─── Shared Memory Structures ─────────────────────────────────────────────────
 struct Segment {
-    int16_t  xSteps, ySteps, zSteps;
-    uint16_t xSps, ySps, zSps;
-    bool     xCw, yCw, zCw;
+    int16_t  xSteps, ySteps, zSteps, aSteps;
+    uint16_t xSps, ySps, zSps, aSps;
+    bool     xCw, yCw, zCw, aCw;
 };
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
