@@ -315,7 +315,7 @@ void setup() {
     pinMode(LED_PIN,      OUTPUT); digitalWrite(LED_PIN,      LOW);
     pinMode(STEP_PIN,     OUTPUT); digitalWrite(STEP_PIN,     LOW);
     pinMode(DIR_PIN,      OUTPUT); digitalWrite(DIR_PIN,      LOW);
-    pinMode(ENABLE_PIN,   OUTPUT); digitalWrite(ENABLE_PIN,   HIGH);
+    pinMode(ENABLE_PIN,   OUTPUT); digitalWrite(ENABLE_PIN,   LOW);
 
     Serial1.begin(RS485_BAUD);
 
