@@ -29,6 +29,8 @@
 
 #include <Arduino.h>
 
+#define DEBUG_SERIAL 0
+
 // ─── Board config ──────────────────────────────────────────────────────────────
 #include "nodeid.h"
 // #define NODE_ID 1
@@ -214,8 +216,21 @@ static void respond(bool isBroadcast, uint8_t status, const uint8_t *data, uint8
 }
 
 static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
+#ifdef DEBUG_SERIAL
+    Serial.print("Data (");
+    Serial.print(totalLen);
+    Serial.print(" bytes): ");
+    
+    for (uint8_t i = 0; i < totalLen; i++) {
+        // Print in Hexadecimal format for clarity
+        if (rxBuf[i] < 0x10) Serial.print("0"); // Leading zero for single digits
+        Serial.print(rxBuf[i], HEX);
+        Serial.print(" ");
+    }
+    Serial.println();
+#endif
+    
     if (totalLen < 5) return; // Check length
-
     // Check address 
     uint8_t addr = rxBuf[1];
     bool isBc = (addr == BROADCAST);
@@ -236,6 +251,11 @@ static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
     switch (cmd) {
         case CMD_PING:
             resp[0] = (uint8_t)NODE_ID;
+#ifdef DEBUG_SERIAL
+            Serial.println("Pong");
+#endif
+            digitalWrite(LED_PIN, HIGH); delay(150);
+            digitalWrite(LED_PIN, LOW);  delay(150);
             respond(isBc, STATUS_DATA, resp, 1);
             break;
 
@@ -318,6 +338,9 @@ void setup() {
     pinMode(ENABLE_PIN,   OUTPUT); digitalWrite(ENABLE_PIN,   LOW);
 
     Serial1.begin(RS485_BAUD);
+#ifdef DEBUG_SERIAL
+    Serial.begin(115200);
+#endif
 
     // Timer settings
     TCB0.CTRLB = TCB_CNTMODE_INT_gc; // Periodic interrupt
