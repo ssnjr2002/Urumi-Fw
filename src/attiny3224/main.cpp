@@ -230,16 +230,31 @@ static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
     Serial.println();
 #endif
     
-    if (totalLen < 5) return; // Check length
+    if (totalLen < 5) {
+#ifdef DEBUG_SERIAL
+            Serial.println("Frame too small, discarding it...");
+#endif
+        return;
+    }
     // Check address 
     uint8_t addr = rxBuf[1];
     bool isBc = (addr == BROADCAST);
-    if (addr != (uint8_t)NODE_ID && !isBc) return;
+    if (addr != (uint8_t)NODE_ID && !isBc) {
+#ifdef DEBUG_SERIAL
+            Serial.println("Wrong address, discarding frame...");
+#endif
+        return;
+    }
 
     // Check crc
     uint16_t calcCrc = crc16(rxBuf, totalLen - 2);
     uint16_t rxCrc   = (uint16_t)rxBuf[totalLen-2] | ((uint16_t)rxBuf[totalLen-1] << 8);
-    if (calcCrc != rxCrc) return;
+    if (calcCrc != rxCrc) {
+#ifdef DEBUG_SERIAL
+            Serial.println("Bad crc, discarding frame...");
+#endif
+        return;
+    }
 
     // Get command and payload
     uint8_t cmd = rxBuf[2];
