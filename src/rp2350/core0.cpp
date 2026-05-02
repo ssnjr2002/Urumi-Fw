@@ -45,34 +45,24 @@ void processSerial() {
                         Serial.println("nope");
                         return;
                     }
-
-                    int16_t  dx = 0, dy = 0, dz = 0, da = 0;
-                    uint16_t xSps = 0, ySps = 0, zSps = 0;
-                    int8_t parsed = sscanf(input.c_str(), "xyz %hd %hd %hd %hu %hu %hu %hd", &dx, &dy, &dz, &xSps, &ySps, &zSps, &da);
+                    Segment *s = &masterBuf[mBufTail];
+                    int8_t parsed = sscanf(input.c_str(), 
+                        "xyz %hd         %hd         %hd         %hu       %hu       %hu       %hd", 
+                             &s->xSteps, &s->ySteps, &s->zSteps, &s->xSps, &s->ySps, &s->zSps, &s->aSteps
+                    );
                     if (parsed < 6) {
                         Serial.println("parse error");
                         return;
                     }
-                    Segment s;
-                    s.xSteps = dx;
-                    s.ySteps = dy;
-                    s.zSteps = dz;
-                    s.aSteps = da;
-                    s.xSps = xSps;
-                    s.ySps = ySps;
-                    s.zSps = zSps;
-                    s.aSps = 1024;
-                    s.xCw = (dx < 0);
-                    s.yCw = (dy < 0);
-                    s.zCw = (dz < 0);
-                    s.aCw = (da < 0);
-                    // Push to buffer
-                    masterBuf[mBufTail] = s;
+                    s->xCw = (s->xSteps < 0);
+                    s->yCw = (s->ySteps < 0);
+                    s->zCw = (s->zSteps < 0);
+                    s->aCw = (s->aSteps < 0);
+                    s->aSps = 1024;
                     
                     // Memory barrier ensures struct is fully written BEFORE advancing the tail.
                     // Critical for dual-core RP2350 stability.
                     __asm__ volatile ("dmb" ::: "memory"); 
-                    
                     mBufTail = next;
                     __asm__ volatile ("dsb" ::: "memory"); 
                     Serial.println("ok");
