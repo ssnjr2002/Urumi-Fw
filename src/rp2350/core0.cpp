@@ -71,9 +71,10 @@ void processSerial() {
                     
                     // Memory barrier ensures struct is fully written BEFORE advancing the tail.
                     // Critical for dual-core RP2350 stability.
-                    __asm__ volatile ("" ::: "memory"); 
+                    __asm__ volatile ("dmb" ::: "memory"); 
                     
                     mBufTail = next;
+                    __asm__ volatile ("dsb" ::: "memory"); 
                     Serial.println("ok");
                 }
             }
