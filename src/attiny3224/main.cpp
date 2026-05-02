@@ -269,9 +269,9 @@ static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
 #ifdef DEBUG_SERIAL
             Serial.println("Pong");
 #endif
+            respond(isBc, STATUS_DATA, resp, 1);  // respond immediately — before any delay
             digitalWrite(LED_PIN, HIGH); delay(150);
             digitalWrite(LED_PIN, LOW);  delay(150);
-            respond(isBc, STATUS_DATA, resp, 1);
             break;
 
         case CMD_QUEUE: {
