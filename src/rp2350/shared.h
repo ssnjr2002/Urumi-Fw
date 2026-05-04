@@ -52,6 +52,7 @@
 #define SLAVE_BUF_SIZE    8
 #define SLAVE_BUF_TARGET  6
 #define MASTER_BUF_SIZE   128
+#define MASTER_BUF_LOW_WATERMARK 96
 
 // ─── Shared Memory Structures ─────────────────────────────────────────────────
 struct Segment {

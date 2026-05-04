@@ -7,6 +7,7 @@
 // ─── Local State for Core 0 ───────────────────────────────────────────────────
 static char serialRxBuf[128];
 static uint8_t serialRxLen = 0;
+static bool bufWasFull = false;
 
 // ─── Core 0 Serial & UI Logic ─────────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ void processSerial() {
                 else if (input.startsWith("xyz")) {
                     uint8_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
                     if (next == mBufHead){
+                        bufWasFull = true;
                         Serial.println("nope");
                         return;
                     }
@@ -87,14 +89,25 @@ void setup() {
     pinMode(RS485_EN_PIN, OUTPUT);
     digitalWrite(RS485_EN_PIN, LOW);
 
-    Serial.println("Custom RS485 Master  (230400 baud)");
+    Serial.println("Custom RS485 Master (230400 baud)");
 }
 
 void loop() {
-    // 1. Check UI commands
+    // Check UI commands
     processSerial();
 
-    // 2. Process asynchronous UI responses from Core 1 safely
+    // Reply ready if buffer is cleared more than MASTER_BUF_LOW_WATERMARK 
+    if (bufWasFull) {
+        int16_t diff = (int16_t)mBufTail - (int16_t)mBufHead;
+        if (diff < 0) diff += MASTER_BUF_SIZE;
+        uint8_t usedSlots = (uint8_t)diff;
+        bufWasFull = (usedSlots < MASTER_BUF_LOW_WATERMARK);
+        Serial.print("Used slots: ");
+        Serial.println(usedSlots);
+        if (!bufWasFull) Serial.println("ready");
+    }
+
+    // Process asynchronous UI responses from Core 1 safely
     if (pingResult != -1) {
         Serial.printf("Ping response: %s\n", pingResult == 1 ? "OK" : "TIMEOUT");
         pingResult = -1; // Reset
