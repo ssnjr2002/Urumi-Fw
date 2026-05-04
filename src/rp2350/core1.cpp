@@ -146,59 +146,46 @@ void loop1() {
 
     // 3. Process the Streaming Motion Buffer
     if (mBufHead != mBufTail) {
-        SlaveStatus sX, sY, sZ, sA;
-        // Poll all four axes. X and Y are mandatory; Z and A are optional —
-        // if a node isn't on the bus its status check simply returns false and
-        // we skip it entirely (no 20 ms timeout wasted per segment).
-        bool okX = getStatus1(NODE_X, sX);
-        bool okY = getStatus1(NODE_Y, sY);
-        bool okZ = getStatus1(NODE_Z, sZ);
-        bool okA = getStatus1(NODE_A, sA);
+        SlaveStatus sA, sB;
+        // Only proceed if both nodes respond to status checks
+        bool nodeAStatus = getStatus1(NODE_X, sA);
+        bool nodeBStatus = getStatus1(NODE_Y, sB);
 
-        // X and Y are required — abort this cycle if either is missing
-        if (!okX || !okY) {
-            delayMicroseconds(10);
-            return;
-        }
+        // Serial.printf("Status A: %s, Status B: %s", (nodeAStatus ? "ok" : "nope"), (nodeBStatus? "ok" : "nope"));
 
-        // groupFree = tightest free-slot count across every connected node.
-        // All axes must have room before we push anything, so that a segment
-        // queued to X/Y is always matched by Z/A arriving in the same slot.
-        uint8_t groupFree = min(sX.free, sY.free);
-        if (okZ) groupFree = min(groupFree, sZ.free);
-        if (okA) groupFree = min(groupFree, sA.free);
+        if (nodeAStatus && nodeBStatus) {
+            
+            uint8_t groupFree = (sA.free < sB.free) ? sA.free : sB.free;
+            bool groupIdle = (sA.running == 0 && sB.running == 0);
 
-        // groupIdle = every connected node has finished its last move.
-        // CMD_GO via broadcast restarts all of them simultaneously.
-        bool groupIdle = (sX.running == 0 && sY.running == 0);
-        if (okZ) groupIdle = groupIdle && (sZ.running == 0);
-        if (okA) groupIdle = groupIdle && (sA.running == 0);
+            // Drain Core 0's buffer into the physical slaves
+            while (groupFree > (SLAVE_BUF_SIZE - SLAVE_BUF_TARGET) && mBufHead != mBufTail) {
+                // Serial.println("draining core 0 buffer");
 
-        // Drain Core 0's buffer into the physical slaves
-        while (groupFree > (SLAVE_BUF_SIZE - SLAVE_BUF_TARGET) && mBufHead != mBufTail) {
+                // Read from Ring Buffer
+                Segment s = masterBuf[mBufHead];
+                
+                // Memory Barrier ensures struct is read fully before head advances
+                __asm__ volatile ("" ::: "memory"); 
 
-            // Read from Ring Buffer
-            Segment s = masterBuf[mBufHead];
+                // Send to Nodes
 
-            // Memory Barrier ensures struct is read fully before head advances
-            __asm__ volatile ("" ::: "memory");
+                if (s.xSteps != 0) cmdQueueSlave1(NODE_X, s.xCw, abs(s.xSteps), s.xSps);
+                if (s.ySteps != 0) cmdQueueSlave1(NODE_Y, s.yCw, abs(s.ySteps), s.ySps);
+                if (s.zSteps != 0) cmdQueueSlave1(NODE_Z, s.zCw, abs(s.zSteps), s.zSps);
+                if (s.aSteps != 0) cmdQueueSlave1(NODE_A, s.aCw, abs(s.aSteps), s.aSps);
+                
+                // Advance head
+                mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
+                groupFree--;
 
-            // Dispatch each axis only if the node is present and has steps to move.
-            // X and Y are always present (guarded above). Z and A are skipped when
-            // their node didn't respond to the status check, keeping the bus clean.
-            if (s.xSteps != 0)        cmdQueueSlave1(NODE_X, s.xCw, abs(s.xSteps), s.xSps);
-            if (s.ySteps != 0)        cmdQueueSlave1(NODE_Y, s.yCw, abs(s.ySteps), s.ySps);
-            if (s.zSteps != 0 && okZ) cmdQueueSlave1(NODE_Z, s.zCw, abs(s.zSteps), s.zSps);
-            if (s.aSteps != 0 && okA) cmdQueueSlave1(NODE_A, s.aCw, abs(s.aSteps), s.aSps);
+                // If engines were halted, restart them together
+                if (groupIdle) {
+                    // Serial.println("go A and B!");
 
-            // Advance head
-            mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
-            groupFree--;
-
-            // If all connected engines were halted, kick them off together
-            if (groupIdle) {
-                sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
-                groupIdle = false;
+                    sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
+                    groupIdle = false;
+                }
             }
         }
     }
