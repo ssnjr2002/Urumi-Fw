@@ -23,7 +23,7 @@ void processSerial() {
 
                 if (input == "stop") {
                     emergencyStop = true;
-                    mBufHead = mBufTail; // Instantly clear producer's view of the buffer
+                    // mBufHead = mBufTail; // Instantly clear producer's view of the buffer
                     Serial.println("!!! STOP DETECTED !!!");
                 } 
                 else if (input.startsWith("enable")) {
