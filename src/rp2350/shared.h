@@ -29,10 +29,14 @@
 #define CMD_ENABLE   0x06
 
 // ─── Machine config ────────────────────────────────────────────────────────────
-#define NODE_X  1
+#define NODE_X  3
 #define NODE_Y  2
-#define NODE_Z  3
+#define NODE_Z  1
 #define NODE_A  4
+// #define NODE_X  1
+// #define NODE_Y  2
+// #define NODE_Z  3
+// #define NODE_A  4
 
 // GT2 belt + 20-tooth pulley
 // Set MICROSTEP to match your DRV8825 jumpers (1/2/4/8/16/32)
