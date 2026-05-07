@@ -11,7 +11,7 @@
 #define RS485_EN_PIN  6
 
 // ─── Bus ───────────────────────────────────────────────────────────────────────
-#define RS485_BAUD          230400
+#define RS485_BAUD          115200
 #define RESPONSE_TIMEOUT_MS    20
 #define POLL_INTERVAL_MS       10
 

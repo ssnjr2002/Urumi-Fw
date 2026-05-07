@@ -87,7 +87,7 @@ void processSerial() {
                         }
                         ptr = endPtr;
                         s.steps[i] = (uint16_t)abs(val);
-                        s.cw[i] = (val >= 0);
+                        s.cw[i] = (val < 0);
                     }
 
                     // 4. Parse SPS

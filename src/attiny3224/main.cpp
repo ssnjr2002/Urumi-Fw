@@ -44,7 +44,7 @@
 #define STEP_BM       PIN0_bm
 
 // ─── Protocol constants ────────────────────────────────────────────────────────
-#define RS485_BAUD    230400
+#define RS485_BAUD    115200
 #define BROADCAST     0xFF
 #define RESP_CHAR     0xFD
 
