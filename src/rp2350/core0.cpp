@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <math.h>
 #include "shared.h"
+#include "hardware/sync.h"
 
 // ─── Local State for Core 0 ───────────────────────────────────────────────────
 static char serialRxBuf[128];
@@ -23,7 +24,7 @@ void processSerial() {
 
                 if (input == "stop") {
                     emergencyStop = true;
-                    // mBufHead = mBufTail; // Instantly clear producer's view of the buffer
+                    mBufHead = mBufTail; // Instantly clear producer's view of the buffer
                     Serial.println("!!! STOP DETECTED !!!");
                 } 
                 else if (input.startsWith("enable")) {
@@ -40,33 +41,81 @@ void processSerial() {
                     reqPingAddr = addr; // Pass to Core 1
                     Serial.printf("Ping request sent to node %u...\n", addr);
                 }
-                else if (input.startsWith("xyz")) {
+                else if (input.startsWith("move")) {
                     uint8_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
-                    if (next == mBufHead){
-                        bufWasFull = true;
+                    if (next == mBufHead) {
                         Serial.println("nope");
                         return;
                     }
-                    Segment *s = &masterBuf[mBufTail];
-                    int8_t parsed = sscanf(input.c_str(), 
-                        "xyz %hd         %hd         %hd         %hu       %hu       %hu       %hd", 
-                             &s->xSteps, &s->ySteps, &s->zSteps, &s->xSps, &s->ySps, &s->zSps, &s->aSteps
-                    );
-                    if (parsed < 6) {
-                        Serial.println("parse error");
+
+                    // Skip "move" and any leading spaces
+                    char* ptr = (char*)input.c_str() + 4; 
+                    while (*ptr == ' ') ptr++; 
+                    char* endPtr;
+
+                    // 1. Parse Number of Motors
+                    uint8_t count = (uint8_t)strtoul(ptr, &endPtr, 10);
+                    if (ptr == endPtr || count == 0 || count > MAX_MOTORS) {
+                        Serial.print("Error: Invalid motor count: ");
+                        Serial.println(count);
                         return;
                     }
-                    s->xCw = (s->xSteps < 0);
-                    s->yCw = (s->ySteps < 0);
-                    s->zCw = (s->zSteps < 0);
-                    s->aCw = (s->aSteps < 0);
-                    s->aSps = 1024;
+                    ptr = endPtr;
+
+                    // LOCAL struct to build the command. 
+                    Segment s; 
+                    s.numMotors = count;
+
+                    // 2. Parse Addresses
+                    for (int i = 0; i < count; i++) {
+                        s.addr[i] = (uint8_t)strtoul(ptr, &endPtr, 10);
+                        if (ptr == endPtr) {
+                            Serial.print("Error: Couldn't parse address for motor: ");
+                            Serial.println(i);
+                            return; 
+                        }
+                        ptr = endPtr;
+                    }
+
+                    // 3. Parse Steps (Signed)
+                    for (int i = 0; i < count; i++) {
+                        long val = strtol(ptr, &endPtr, 10);
+                        if (ptr == endPtr) { 
+                            Serial.print("Error: Couldn't parse steps for motor: ");
+                            Serial.println(i);
+                            return; 
+                        }
+                        ptr = endPtr;
+                        s.steps[i] = (uint16_t)abs(val);
+                        s.cw[i] = (val >= 0);
+                    }
+
+                    // 4. Parse SPS
+                    for (int i = 0; i < count; i++) {
+                        s.sps[i] = (uint16_t)strtoul(ptr, &endPtr, 10);
+                        if (ptr == endPtr) { 
+                            Serial.print("Error: Couldn't parse sps for motor: ");
+                            Serial.println(i);
+                            return; 
+                        }
+                        ptr = endPtr;
+                    }
+
+                    // --- CRITICAL SECTION: Shared Memory Update ---
                     
-                    // Memory barrier ensures struct is fully written BEFORE advancing the tail.
-                    // Critical for dual-core RP2350 stability.
-                    __asm__ volatile ("dmb" ::: "memory"); 
+                    // Copy the entire validated struct to shared memory at once
+                    masterBuf[mBufTail] = s;
+
+                    // Hardware Barrier: Ensure all data is physically in RAM 
+                    // before the tail index is updated.
+                    __dmb(); 
+                    
                     mBufTail = next;
-                    __asm__ volatile ("dsb" ::: "memory"); 
+                    
+                    // Data Synchronization Barrier: Ensure the tail update 
+                    // is visible to Core 1 immediately.
+                    __dsb(); // is this necessary? 
+
                     Serial.println("ok");
                 }
             }

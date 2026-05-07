@@ -75,7 +75,7 @@ static uint8_t sendCmd1(uint8_t addr, uint8_t cmd, const uint8_t *pay, uint8_t p
     buf[n++] = (uint8_t)(crc >> 8);
 
     rs485Send(buf, n);
-    if (!waitResp) return 0;
+    if (!waitResp) return 0; // TODO: add not waiting if addr is broadcast? 
 
     uint8_t resp[32];
     uint8_t rlen = rs485Recv(resp, sizeof(resp));
@@ -105,12 +105,46 @@ bool getStatus1(uint8_t addr, SlaveStatus &s) {
     return true;
 }
 
-void cmdQueueSlave1(uint8_t addr, bool cw, uint16_t steps, uint16_t sps) {
+bool cmdQueueSlave1(uint8_t addr, bool cw, uint16_t steps, uint16_t sps, SlaveStatus &outStatus) {
     uint8_t p[5];
     p[0] = cw ? 0u : 1u;
     p[1] = (uint8_t)steps; p[2] = (uint8_t)(steps >> 8);
-    p[3] = (uint8_t)sps;   p[4] = (uint8_t)(sps   >> 8);
-    sendCmd1(addr, CMD_QUEUE, p, 5, nullptr, true); // Wait for ACK to ensure sync
+    p[3] = (uint8_t)sps;   p[4] = (uint8_t)(sps >> 8);
+    
+    // TODO: update Slave AVR's CMD_QUEUE to respond with these 3 bytes 
+    // instead of just 1 byte, exactly like CMD_STATUS does).
+    uint8_t respData[3] = {0};
+    uint8_t len = sendCmd1(addr, CMD_QUEUE, p, 5, respData, true);
+    
+    if (len >= 3) {
+        outStatus.running = respData[0];
+        outStatus.used    = respData[1];
+        outStatus.free    = respData[2];
+        return true;
+    }
+    return false; // Comm failure
+}
+
+void cmdDummyQueueSlave1(uint8_t numMotors, const uint8_t* addr, bool cw, uint16_t steps, uint16_t sps) {
+    uint8_t pLen = 6 + numMotors;
+    uint8_t p[pLen];
+
+    p[0] = numMotors; // Motor exclusion count
+    
+    // Copy the exclusion addresses
+    for (int i = 0; i < numMotors; i++) {
+        p[1 + i] = addr[i]; 
+    }
+    
+    // Append the dummy segment parameters
+    uint8_t offset = 1 + numMotors;
+    p[offset]     = cw ? 0u : 1u;
+    p[offset + 1] = (uint8_t)steps; 
+    p[offset + 2] = (uint8_t)(steps >> 8);
+    p[offset + 3] = (uint8_t)sps;   
+    p[offset + 4] = (uint8_t)(sps >> 8);
+
+    sendCmd1(BROADCAST, CMD_QUEUE_DUMMY, p, pLen, nullptr, false);
 }
 
 // ─── Core 1 Setup & Loop (RS485 Engine) ───────────────────────────────────────
@@ -122,6 +156,9 @@ void setup1() {
 }
 
 void loop1() {
+    static uint8_t globalFreeSpace = SLAVE_BUF_SIZE;
+    static uint32_t lastPollTime = 0;
+
     // 1. Check for Emergency Stop immediately
     if (emergencyStop) {
         sendCmd1(BROADCAST, CMD_STOP, nullptr, 0, nullptr, false);
@@ -143,48 +180,68 @@ void loop1() {
         sendCmd1(reqEnableAddr, CMD_ENABLE, &p, 1, nullptr, (reqEnableAddr != BROADCAST));
         reqEnableVal = -1;       // Clear request flag
     }
-
+    
     // 3. Process the Streaming Motion Buffer
     if (mBufHead != mBufTail) {
-        SlaveStatus sA, sB;
-        // Only proceed if both nodes respond to status checks
-        bool nodeAStatus = getStatus1(NODE_X, sA);
-        bool nodeBStatus = getStatus1(NODE_Y, sB);
+        if (globalFreeSpace > (SLAVE_BUF_SIZE - SLAVE_BUF_TARGET)) {
+            volatile Segment &s = masterBuf[mBufHead];
 
-        // Serial.printf("Status A: %s, Status B: %s", (nodeAStatus ? "ok" : "nope"), (nodeBStatus? "ok" : "nope"));
+            // 1 & 2. Calculate Max Duration AND Send Unicasts
+            uint8_t mIdx = 0; // store index of longest node
+            float maxDur = 0.0f;
+            uint8_t lowestReportedFree = SLAVE_BUF_SIZE;
+            bool anyIdle = false; 
 
-        if (nodeAStatus && nodeBStatus) {
-            
-            uint8_t groupFree = (sA.free < sB.free) ? sA.free : sB.free;
-            bool groupIdle = (sA.running == 0 && sB.running == 0);
+            for (int i = 0; i < s.numMotors; i++) {
+                // A. Find longest move
+                if (s.sps[i] > 0) {
+                    float d = (float)s.steps[i] / (float)s.sps[i];
+                    if (d > maxDur) {
+                        maxDur = d;
+                        mIdx = i;
+                    }
+                }
 
-            // Drain Core 0's buffer into the physical slaves
-            while (groupFree > (SLAVE_BUF_SIZE - SLAVE_BUF_TARGET) && mBufHead != mBufTail) {
-                // Serial.println("draining core 0 buffer");
+                // B. Queue command & get status
+                SlaveStatus ss;
+                if (cmdQueueSlave1(s.addr[i], s.cw[i], s.steps[i], s.sps[i], ss)) {
+                    if (ss.free < lowestReportedFree) lowestReportedFree = ss.free;
+                    if (ss.running == 0) anyIdle = true;
+                } else {
+                    // Critical failure handling. A targeted node disconnected.
+                    sendCmd1(BROADCAST, CMD_STOP, nullptr, 0, nullptr, false);
+                    emergencyStop = true;
+                    return;
+                }
+            }
 
-                // Read from Ring Buffer
-                Segment s = masterBuf[mBufHead];
+            // Update local tracking based on worst-case node
+            globalFreeSpace = lowestReportedFree;
+
+            // 3. Send Broadcast Dummy to the rest of the nodes
+            // They will clone the steps/sps of the longest move (mIdx)
+            cmdDummyQueueSlave1(s.numMotors, (const uint8_t*)s.addr, s.cw[mIdx], s.steps[mIdx], s.sps[mIdx]);
+
+            // 4. Trigger & Advance
+            if (anyIdle) {
+                delayMicroseconds(100);
+                sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
+            }
+
+            __dmb();
+            mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
+
+        } else { 
+            // THE WAIT PATH: Buffers are full.
+            if (millis() - lastPollTime >= POLL_INTERVAL_MS) {
+                lastPollTime = millis();
                 
-                // Memory Barrier ensures struct is read fully before head advances
-                __asm__ volatile ("" ::: "memory"); 
-
-                // Send to Nodes
-
-                if (s.xSteps != 0) cmdQueueSlave1(NODE_X, s.xCw, abs(s.xSteps), s.xSps);
-                if (s.ySteps != 0) cmdQueueSlave1(NODE_Y, s.yCw, abs(s.ySteps), s.ySps);
-                if (s.zSteps != 0) cmdQueueSlave1(NODE_Z, s.zCw, abs(s.zSteps), s.zSps);
-                if (s.aSteps != 0) cmdQueueSlave1(NODE_A, s.aCw, abs(s.aSteps), s.aSps);
+                volatile Segment &sPeek = masterBuf[mBufHead];
+                SlaveStatus ss;
                 
-                // Advance head
-                mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
-                groupFree--;
-
-                // If engines were halted, restart them together
-                if (groupIdle) {
-                    // Serial.println("go A and B!");
-
-                    sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
-                    groupIdle = false;
+                // Poll just the first active node
+                if (getStatus1(sPeek.addr[0], ss)) {
+                    globalFreeSpace = ss.free;
                 }
             }
         }
