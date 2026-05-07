@@ -52,12 +52,13 @@
 #define STATUS_DATA   0x01
 #define STATUS_ERR    0xFF
 
-#define CMD_PING      0x01
-#define CMD_QUEUE     0x02
-#define CMD_GO        0x03
-#define CMD_STOP      0x04
-#define CMD_STATUS    0x05
-#define CMD_ENABLE    0x06
+#define CMD_PING            0x01
+#define CMD_QUEUE           0x02
+#define CMD_GO              0x03
+#define CMD_STOP            0x04
+#define CMD_STATUS          0x05
+#define CMD_ENABLE          0x06
+#define CMD_QUEUE_DUMMY     0x07
 
 // ─── Motor limits ──────────────────────────────────────────────────────────────
 #define MAX_STEPS     60000
@@ -70,7 +71,9 @@
 struct Segment {
     uint16_t steps;
     uint16_t speed;
+    // TODO: Maybe use a byte and bitmasks instead of bools
     bool     cw;
+    bool     isDummy;
 };
 
 static Segment segBuf[BUF_SIZE];
@@ -82,13 +85,14 @@ static uint8_t getBufCount() {
     return (BUF_SIZE - bufHead + bufTail);
 }
 
-static bool bufPush(uint16_t steps, uint16_t speed, bool cw) {
+static bool bufPush(uint16_t steps, uint16_t speed, bool cw, bool isDummy) {
     uint8_t nextTail = (bufTail + 1) % BUF_SIZE;
     if (nextTail == bufHead) return false; // Full
     
     segBuf[bufTail].steps = steps;
     segBuf[bufTail].speed = speed;
     segBuf[bufTail].cw    = cw;
+    segBuf[bufTail].isDummy = isDummy;
     
     // Memory barrier ensures struct is written to RAM before tail updates
     __asm__ volatile ("" ::: "memory");
@@ -114,7 +118,9 @@ enum MotorState { IDLE, ARMED, RUNNING };
 static volatile MotorState motorState = IDLE; 
 static bool drvEnabled = false;
 static volatile uint16_t stepsRemaining = 0;
-static volatile bool segmentFinished = false; 
+static volatile bool segmentFinished = false;
+static volatile uint8_t activeStepMask = 0; // The "Virtual Port" mask
+static volatile bool isStepPhase = false;   // Software toggle for cycle tracking
 
 // ─── Read-Twice Pattern for 16-bit atomicity on 8-bit AVR ────────────────────
 uint16_t getStepsRemainingSafe() {
@@ -144,10 +150,20 @@ static void loadNextSegment() {
     Segment s;
     if (bufPop(s)) {
         stepsRemaining = s.steps;
-        digitalWrite(DIR_PIN, s.cw ? HIGH : LOW);
         segmentFinished = false;
         motorState = RUNNING;
-        digitalWrite(LED_PIN, HIGH);
+        isStepPhase = false; // Reset phase tracking
+        
+        // Handle whether this is a real move or a dummy wait
+        if (s.isDummy) {
+            activeStepMask = 0;         // Dummy: Toggle nothing
+            digitalWrite(LED_PIN, LOW); // Visual indicator
+        } else {
+            activeStepMask = STEP_BM;   // Real: Toggle the actual pin
+            digitalWrite(DIR_PIN, s.cw ? HIGH : LOW);
+            digitalWrite(LED_PIN, HIGH);
+        }
+        
         startTimer(s.speed);
     } else {
         motorState = IDLE;
@@ -168,14 +184,19 @@ static void stopMotor() {
 
 // ─── Timer Interrupt (ISR) ─────────────────────────────────────────────────────
 ISR(TCB0_INT_vect) {
-    TCB0.INTFLAGS = TCB_CAPT_bm; // Clear interrupt flag
-    STEP_PORT.OUTTGL = STEP_BM;
+    TCB0.INTFLAGS = TCB_CAPT_bm; 
     
-    // Toggling the pin takes two interrupts to make one full step pulse
-    if (STEP_PORT.OUT & STEP_BM) {
+    // Toggle based on mask. If mask is 0 (dummy), nothing happens to the pin.
+    STEP_PORT.OUTTGL = activeStepMask; 
+    
+    // We toggle a software boolean to track the "high" phase of the step cycle
+    // This ensures we decrement stepsRemaining even for dummy segments.
+    isStepPhase = !isStepPhase;
+    
+    if (isStepPhase) {
         if (--stepsRemaining == 0) {
-            TCB0.CTRLA &= ~TCB_ENABLE_bm;
-            segmentFinished = true;
+            TCB0.CTRLA &= ~TCB_ENABLE_bm; // Stop timer
+            segmentFinished = true;      // Signal main loop
         }
     }
 }
@@ -279,12 +300,53 @@ static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
             bool cw = (pay[0] == 0);
             uint16_t steps = (uint16_t)pay[1] | ((uint16_t)pay[2] << 8);
             uint16_t speed = (uint16_t)pay[3] | ((uint16_t)pay[4] << 8);
-            if (steps == 0 || steps > MAX_STEPS) { respond(isBc, STATUS_ERR, 0, 0); break; }
+            
+            if (steps == 0 || steps > MAX_STEPS) { 
+                respond(isBc, STATUS_ERR, 0, 0); 
+                break; 
+            }
+            
             speed = constrain(speed, MIN_SPEED, MAX_SPEED);
-            bool ok = bufPush(steps, speed, cw);
+            bool ok = bufPush(steps, speed, cw, false); // false = Not a dummy
+            
             if (ok && motorState == IDLE && drvEnabled) motorState = ARMED;
-            resp[0] = ok ? (uint8_t)(8 - getBufCount()) : 0u; 
-            respond(isBc, ok ? STATUS_DATA : STATUS_ERR, resp, 1);
+            
+            // 3-Byte Response [running, used, free]
+            resp[0] = (motorState == RUNNING) ? 1u : 0u;
+            uint8_t used = getBufCount();
+            resp[1] = used;
+            resp[2] = 8 - used; 
+
+            respond(isBc, ok ? STATUS_DATA : STATUS_ERR, resp, 3);
+            break;
+        }
+
+        case CMD_QUEUE_DUMMY: {
+            uint8_t numMotors = pay[0];
+            bool iAmExcluded = false;
+            
+            // 1. Check if my NODE_ID is in the exclusion list
+            for (uint8_t i = 0; i < numMotors; i++) {
+                if (pay[1 + i] == NODE_ID) {
+                    iAmExcluded = true;
+                    break; // break from loop
+                }
+            }
+            if (iAmExcluded) break; // break from switch
+
+            uint8_t offset = 1 + numMotors;    
+            bool cw = (pay[offset] == 0);
+            uint16_t steps = (uint16_t)pay[offset + 1] | ((uint16_t)pay[offset + 2] << 8);
+            uint16_t speed = (uint16_t)pay[offset + 3] | ((uint16_t)pay[offset + 4] << 8);
+            // TODO: think about what happens when master sends a dummy outside step constraints 
+            // but the non dummy nodes had steps within constraint. Maybe not an issue since 
+            // at least one of the non dummy nodes would also fail which would halt execution.
+            if (steps == 0 || steps > MAX_STEPS) break;
+
+            speed = constrain(speed, MIN_SPEED, MAX_SPEED);
+            bool ok = bufPush(steps, speed, cw, true);
+            if (ok && motorState == IDLE && drvEnabled) motorState = ARMED;
+
             break;
         }
 
