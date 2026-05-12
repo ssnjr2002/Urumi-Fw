@@ -44,6 +44,7 @@ void processSerial() {
                 else if (input.startsWith("move")) {
                     uint8_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
                     if (next == mBufHead) {
+                        bufWasFull = true;
                         Serial.println("nope");
                         return;
                     }
