@@ -29,7 +29,7 @@
 
 #include <Arduino.h>
 
-#define DEBUG_SERIAL 0
+// #define DEBUG_SERIAL
 
 // ─── Board config ──────────────────────────────────────────────────────────────
 #include "nodeid.h"
