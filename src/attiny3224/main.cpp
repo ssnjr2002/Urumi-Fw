@@ -28,6 +28,7 @@
 // Baud: 230400 (matches servomotor firmware convention)
 
 #include <Arduino.h>
+#include "common.h"
 
 // #define DEBUG_SERIAL
 
@@ -42,23 +43,6 @@
 
 #define STEP_PORT     PORTB
 #define STEP_BM       PIN0_bm
-
-// ─── Protocol constants ────────────────────────────────────────────────────────
-#define RS485_BAUD    115200
-#define BROADCAST     0xFF
-#define RESP_CHAR     0xFD
-
-#define STATUS_OK     0x00
-#define STATUS_DATA   0x01
-#define STATUS_ERR    0xFF
-
-#define CMD_PING            0x01
-#define CMD_QUEUE           0x02
-#define CMD_GO              0x03
-#define CMD_STOP            0x04
-#define CMD_STATUS          0x05
-#define CMD_ENABLE          0x06
-#define CMD_QUEUE_DUMMY     0x07
 
 // ─── Motor limits ──────────────────────────────────────────────────────────────
 #define MAX_STEPS     60000
