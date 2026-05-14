@@ -24,7 +24,7 @@ void processSerial() {
 
                 if (input == "stop") {
                     emergencyStop = true;
-                    mBufHead = mBufTail; // Instantly clear producer's view of the buffer
+                    // mBufHead = mBufTail; // Instantly clear producer's view of the buffer    
                     Serial.println("!!! STOP DETECTED !!!");
                 } 
                 else if (input.startsWith("enable")) {
@@ -33,6 +33,7 @@ void processSerial() {
                     sscanf(input.c_str(), "enable %7s %d", enStr, &enVal);
                     reqEnableAddr = (strcmp(enStr, "all") == 0) ? BROADCAST : (uint8_t)atoi(enStr);
                     reqEnableVal = (enVal != 0) ? 1 : 0; // Pass to Core 1
+                    Serial.println("ok");
                     Serial.printf("Enable request sent: node %s = %d\n", enStr, enVal);
                 }
                 else if (input.startsWith("ping")) {
@@ -41,7 +42,16 @@ void processSerial() {
                     reqPingAddr = addr; // Pass to Core 1
                     Serial.printf("Ping request sent to node %u...\n", addr);
                 }
+                else if (input.startsWith("unalarm")) {
+                    alarmTriggered = false;
+                    Serial.println("Alarm cleared!");
+                }
                 else if (input.startsWith("move")) {
+                    if (alarmTriggered) {
+                        Serial.println("Error: Alarm triggered! Type 'unalarm' to continue.");
+                        return;
+                    }
+
                     uint8_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
                     if (next == mBufHead) {
                         bufWasFull = true;
@@ -145,21 +155,29 @@ void setup() {
 void loop() {
     // Check UI commands
     processSerial();
-
+    
     // Reply ready if buffer is cleared more than MASTER_BUF_LOW_WATERMARK 
+    static uint8_t usedSlots = 0;
     if (bufWasFull) {
         int16_t diff = (int16_t)mBufTail - (int16_t)mBufHead;
         if (diff < 0) diff += MASTER_BUF_SIZE;
-        uint8_t usedSlots = (uint8_t)diff;
-        bufWasFull = (usedSlots < MASTER_BUF_LOW_WATERMARK);
-        Serial.print("Used slots: ");
-        Serial.println(usedSlots);
-        if (!bufWasFull) Serial.println("ready");
+        if (usedSlots != (uint8_t)diff) {
+            usedSlots = (uint8_t)diff;
+            bufWasFull = (usedSlots < MASTER_BUF_LOW_WATERMARK);
+            Serial.print("Used slots: ");
+            Serial.println(usedSlots);
+            if (!bufWasFull) Serial.println("ready");
+        }
     }
 
     // Process asynchronous UI responses from Core 1 safely
     if (pingResult != -1) {
         Serial.printf("Ping response: %s\n", pingResult == 1 ? "OK" : "TIMEOUT");
         pingResult = -1; // Reset
+    }
+
+    if (failedNode > 0) {
+        Serial.printf("Failed Node: %d\n", failedNode);
+        failedNode = 0;
     }
 }

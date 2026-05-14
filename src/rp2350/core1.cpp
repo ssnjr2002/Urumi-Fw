@@ -209,8 +209,10 @@ void loop1() {
                     if (ss.running == 0) anyIdle = true;
                 } else {
                     // Critical failure handling. A targeted node disconnected.
+                    failedNode = s.addr[i];
                     sendCmd1(BROADCAST, CMD_STOP, nullptr, 0, nullptr, false);
                     emergencyStop = true;
+                    alarmTriggered = true;
                     return;
                 }
             }

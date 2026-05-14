@@ -51,12 +51,14 @@ volatile uint8_t mBufTail = 0;
 
 // Emergency Stop Flag
 volatile bool emergencyStop = false;
+volatile bool alarmTriggered = false;
 
 // UI Command Flags
 volatile uint8_t reqPingAddr = 0;
 volatile uint8_t reqEnableAddr = 0;
+volatile uint8_t failedNode = 0;
 volatile int8_t  reqEnableVal = -1;  
-volatile int8_t  pingResult = -1;    
+volatile int8_t  pingResult = -1;
 
 // Note: 
 // setup() and loop() are defined in core0.cpp
