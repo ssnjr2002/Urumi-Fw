@@ -3,6 +3,10 @@
 #include <Arduino.h>
 #include "shared.h"
 
+#define OSCOPE_PROBING
+#define OSCOPE_PIN 11 // Physically Pin 15 (GPIO11)
+#define OSCOPE_PERIOD_MS 4
+
 // ─── RS485 & Protocol Helpers (Local to Core 1) ───────────────────────────────
 
 static uint16_t crc16(const uint8_t *data, uint16_t len) {
@@ -149,10 +153,45 @@ void cmdDummyQueueSlave1(uint8_t numMotors, const uint8_t* addr, bool cw, uint16
 
 // ─── Core 1 Setup & Loop (RS485 Engine) ───────────────────────────────────────
 
+#ifdef OSCOPE_PROBING
+    static struct repeating_timer myScopeTimer;
+    bool timerRunning = false;
+
+    // The callback function that toggles the pin for the oscilloscope
+    bool timer_callback(struct repeating_timer *t) {
+        digitalWrite(OSCOPE_PIN, !digitalRead(OSCOPE_PIN));
+        return true; 
+    }
+
+    void start_waveform() {
+        if (!timerRunning) {
+            add_repeating_timer_ms(OSCOPE_PERIOD_MS, timer_callback, NULL, &myScopeTimer);
+            timer_callback(&myScopeTimer);
+            timerRunning = true;
+        }
+    }
+
+    void stop_waveform() {
+        if (timerRunning) {
+            // Stop and destroy the active timer
+            cancel_repeating_timer(&myScopeTimer);
+            timerRunning = false;
+            
+            // Force the pin LOW so the scope shows a flatline baseline
+            digitalWrite(OSCOPE_PIN, LOW); 
+        }
+    }
+#endif
+
 void setup1() {
     Serial2.setTX(RS485_TX_PIN);
     Serial2.setRX(RS485_RX_PIN);
     Serial2.begin(RS485_BAUD);
+    
+    #ifdef OSCOPE_PROBING
+        pinMode(OSCOPE_PIN, OUTPUT);
+        start_waveform();
+    #endif
 }
 
 void loop1() {
@@ -226,8 +265,10 @@ void loop1() {
 
             // 4. Trigger & Advance
             if (anyIdle) {
-                delayMicroseconds(100);
+                stop_waveform();
+                delayMicroseconds(1000);
                 sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
+                start_waveform();
             }
 
             __dmb();
