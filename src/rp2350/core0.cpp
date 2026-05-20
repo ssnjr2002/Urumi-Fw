@@ -149,7 +149,12 @@ void setup() {
     pinMode(RS485_EN_PIN, OUTPUT);
     digitalWrite(RS485_EN_PIN, LOW);
 
-    Serial.println("Custom RS485 Master (230400 baud)");
+    Serial.printf("Custom RS485 Master (%d baud)\n", RS485_BAUD);
+}
+
+static uint8_t getBufCount() {
+    if (mBufTail >= mBufHead) return (mBufTail - mBufHead);
+    return (MASTER_BUF_SIZE - mBufHead + mBufTail);
 }
 
 void loop() {
@@ -159,15 +164,10 @@ void loop() {
     // Reply ready if buffer is cleared more than MASTER_BUF_LOW_WATERMARK 
     static uint8_t usedSlots = 0;
     if (bufWasFull) {
-        int16_t diff = (int16_t)mBufTail - (int16_t)mBufHead;
-        if (diff < 0) diff += MASTER_BUF_SIZE;
-        if (usedSlots != (uint8_t)diff) {
-            usedSlots = (uint8_t)diff;
-            bufWasFull = (usedSlots < MASTER_BUF_LOW_WATERMARK);
-            Serial.print("Used slots: ");
-            Serial.println(usedSlots);
-            if (!bufWasFull) Serial.println("ready");
-        }
+        usedSlots = getBufCount();
+        bufWasFull = (usedSlots > MASTER_BUF_LOW_WATERMARK);
+        // Serial.printf("Used slots: %d, low watermark: %d\n", usedSlots, MASTER_BUF_LOW_WATERMARK);
+        if (!bufWasFull) Serial.println("ready");
     }
 
     // Process asynchronous UI responses from Core 1 safely
