@@ -28,6 +28,7 @@
 // Baud: 230400 (matches servomotor firmware convention)
 
 #include <Arduino.h>
+#include <util/atomic.h>
 #include "common.h"
 
 // #define DEBUG_SERIAL
@@ -41,20 +42,31 @@
 #define STEP_PIN      PIN_PB0
 #define DIR_PIN       PIN_PB1
 
+#define LED_PORT      PORTA
+#define LED_BM        PIN5_bm
+
+#define DIR_PORT      PORTB
+#define DIR_BM        PIN1_bm
+
 #define STEP_PORT     PORTB
 #define STEP_BM       PIN0_bm
 
 // ─── Motor limits ──────────────────────────────────────────────────────────────
-#define MAX_STEPS     60000
-#define MAX_SPEED     10000
-#define MIN_SPEED     10
+#define MAX_STEPS       32000
+#define MAX_SPEED       32000
+#define MIN_SPEED       153         
+#define STEP_CLOCK_FREQ (F_CPU / 2)
+// MIN_SPEED any lower than 153 will cause an overflow if period is an uint16
+// period = STEP_CLOCK_FREQ/SPEED
+// STEP_CLOCK_FREQ = 20MHz / 2
+// STEP_CLOCK_FREQ/MIN_SPEED < 2^16
 
 // ─── Lock-Free Ring Buffer ─────────────────────────────────────────────────────
 #define BUF_SIZE  8 // Powers of 2 recommended for optimised wraps
 
 struct Segment {
     uint16_t steps;
-    uint16_t speed;
+    uint16_t period;
     // TODO: Maybe use a byte and bitmasks instead of bools
     bool     cw;
     bool     isDummy;
@@ -69,12 +81,12 @@ static uint8_t getBufCount() {
     return (BUF_SIZE - bufHead + bufTail);
 }
 
-static bool bufPush(uint16_t steps, uint16_t speed, bool cw, bool isDummy) {
+static bool bufPush(uint16_t steps, uint16_t period, bool cw, bool isDummy) {
     uint8_t nextTail = (bufTail + 1) % BUF_SIZE;
     if (nextTail == bufHead) return false; // Full
     
     segBuf[bufTail].steps = steps;
-    segBuf[bufTail].speed = speed;
+    segBuf[bufTail].period = period;
     segBuf[bufTail].cw    = cw;
     segBuf[bufTail].isDummy = isDummy;
     
@@ -85,7 +97,7 @@ static bool bufPush(uint16_t steps, uint16_t speed, bool cw, bool isDummy) {
     return true;
 }
 
-static bool bufPop(Segment &s) {
+static inline bool bufPop(Segment &s) {
     if (bufHead == bufTail) return false; // Empty
     
     s = segBuf[bufHead];
@@ -106,7 +118,7 @@ static volatile bool segmentFinished = false;
 static volatile uint8_t activeStepMask = 0; // The "Virtual Port" mask
 static volatile bool isStepPhase = false;   // Software toggle for cycle tracking
 
-// ─── Read-Twice Pattern for 16-bit atomicity on 8-bit AVR ────────────────────
+// Read-Twice Pattern for 16-bit atomicity on 8-bit AVR
 uint16_t getStepsRemainingSafe() {
     while (true) {
         uint16_t a = stepsRemaining;
@@ -115,55 +127,61 @@ uint16_t getStepsRemainingSafe() {
     }
 }
 
-// ─── Hardware Timer Control ────────────────────────────────────────────────────
-void startTimer(uint16_t speed) {
-    uint32_t period = (F_CPU / 2) / speed;
+// ─── Timer Helpers ───────────────────────────────────────────────────────────
+uint16_t spsToPeriod(uint16_t sps) {
+    uint32_t period = STEP_CLOCK_FREQ / sps;
     if (period > 0xFFFF) period = 0xFFFF;
-    TCB0.CCMP = (uint16_t)period;
-    TCB0.CNT = 0;
-    TCB0.INTFLAGS = TCB_CAPT_bm; // Clear any pending interrupts!
-    TCB0.CTRLA |= TCB_ENABLE_bm;
+    return (uint16_t)period;
 }
 
-void stopTimer() {
-    TCB0.CTRLA &= ~TCB_ENABLE_bm;
-    STEP_PORT.OUTCLR = STEP_BM;
-}
-
-static void loadNextSegment() {
-    Segment s;
-    if (bufPop(s)) {
-        stepsRemaining = s.steps;
-        segmentFinished = false;
-        motorState = RUNNING;
-        isStepPhase = false; // Reset phase tracking
-        
-        // Handle whether this is a real move or a dummy wait
-        if (s.isDummy) {
-            activeStepMask = 0;         // Dummy: Toggle nothing
-            digitalWrite(LED_PIN, LOW); // Visual indicator
-        } else {
-            activeStepMask = STEP_BM;   // Real: Toggle the actual pin
-            digitalWrite(DIR_PIN, s.cw ? HIGH : LOW);
-            digitalWrite(LED_PIN, HIGH);
-        }
-        
-        startTimer(s.speed);
+static inline void applySegment(const Segment &s) {
+    stepsRemaining = s.steps;
+    isStepPhase = false;
+    
+    STEP_PORT.OUTCLR = STEP_BM; // Step will be low at start
+    if (s.isDummy) {
+        activeStepMask = 0; // Dummy: Toggles nothing
+        LED_PORT.OUTCLR = LED_BM; // Turn off LED
     } else {
-        motorState = IDLE;
-        digitalWrite(LED_PIN, LOW);
-        stopTimer();
+        activeStepMask = STEP_BM; // Real: Toggles the actual pin
+        if (s.cw) DIR_PORT.OUTSET = DIR_BM; // Set direction
+        else DIR_PORT.OUTCLR = DIR_BM;
+        LED_PORT.OUTSET = LED_BM; // Turn on LED
+    }
+    
+    TCB0.CCMP = s.period; // Update speed immediately
+}
+
+void startMotor() {
+    if (motorState == RUNNING) return;
+
+    Segment first;
+    if (bufPop(first)) {
+        motorState = RUNNING;
+        applySegment(first);
+        
+        TCB0.CNT = 0; // Set timer to 0
+        TCB0.INTFLAGS = TCB_CAPT_bm; // Clear any pending interrupts!
+        TCB0.CTRLA |= TCB_ENABLE_bm; // Enable timer
     }
 }
 
-static void stopMotor() {
-    stopTimer();
-    bufHead = 0;
-    bufTail = 0;
-    stepsRemaining = 0;
-    motorState = IDLE;
-    segmentFinished = false; // Fixed: prevent accidental restart!
-    digitalWrite(LED_PIN, LOW);
+void stopMotor() {
+    // ATOMIC_BLOCK makes sure no interrupts are interfering
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        TCB0.CTRLA          &= ~TCB_ENABLE_bm; // Disable timer
+        TCB0.INTFLAGS       =   TCB_CAPT_bm;   // Clear pending interrupts
+        STEP_PORT.OUTCLR    =   STEP_BM;       // Ensure step pin is LOW
+        LED_PORT.OUTCLR     =   LED_BM;        // LED off
+    
+        // Reset buffer
+        bufHead = 0;
+        bufTail = 0;
+        stepsRemaining = 0;
+        motorState = IDLE;
+        activeStepMask = 0;
+        isStepPhase = false;
+    }
 }
 
 // ─── Timer Interrupt (ISR) ─────────────────────────────────────────────────────
@@ -177,10 +195,18 @@ ISR(TCB0_INT_vect) {
     // This ensures we decrement stepsRemaining even for dummy segments.
     isStepPhase = !isStepPhase;
     
-    if (isStepPhase) {
+    if (!isStepPhase) { // falling edge to make sure we end our segments with step pin set to low
         if (--stepsRemaining == 0) {
-            TCB0.CTRLA &= ~TCB_ENABLE_bm; // Stop timer
-            segmentFinished = true;      // Signal main loop
+            Segment next;
+            if (bufPop(next)) {
+                applySegment(next); // apply next segment
+            } else {
+                TCB0.CTRLA &= ~TCB_ENABLE_bm; // Stop timer
+                activeStepMask = 0;
+                STEP_PORT.OUTCLR = STEP_BM;
+                LED_PORT.OUTCLR = LED_BM; // LED off
+                motorState = IDLE;
+            }
         }
     }
 }
@@ -275,6 +301,7 @@ static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
             Serial.println("Pong");
 #endif
             respond(isBc, STATUS_DATA, resp, 1);
+            // TODO: get rid of this blocking jank
             digitalWrite(LED_PIN, HIGH); delay(150);
             digitalWrite(LED_PIN, LOW);  delay(150);
             break;
@@ -291,7 +318,8 @@ static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
             }
             
             speed = constrain(speed, MIN_SPEED, MAX_SPEED);
-            bool ok = bufPush(steps, speed, cw, false); // false = Not a dummy
+            uint16_t period = spsToPeriod(speed);
+            bool ok = bufPush(steps, period, cw, false); // false = Not a dummy
             
             if (ok && motorState == IDLE && drvEnabled) motorState = ARMED;
             
@@ -328,14 +356,15 @@ static void processFrame(const uint8_t *rxBuf, uint8_t totalLen) {
             if (steps == 0 || steps > MAX_STEPS) break;
 
             speed = constrain(speed, MIN_SPEED, MAX_SPEED);
-            bool ok = bufPush(steps, speed, cw, true);
+            uint16_t period = spsToPeriod(speed);
+            bool ok = bufPush(steps, period, cw, true);
             if (ok && motorState == IDLE && drvEnabled) motorState = ARMED;
 
             break;
         }
 
         case CMD_GO:
-            if (motorState == ARMED && drvEnabled) loadNextSegment();
+            if (motorState == ARMED && drvEnabled) startMotor();
             respond(isBc, STATUS_OK, 0, 0);
             break;
 
@@ -417,6 +446,5 @@ void setup() {
 }
 
 void loop() {
-    if (segmentFinished) loadNextSegment();
     while (Serial1.available()) rxByte((uint8_t)Serial1.read());
 }
