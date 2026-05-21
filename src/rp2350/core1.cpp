@@ -5,7 +5,7 @@
 
 #define OSCOPE_PROBING
 #define OSCOPE_PIN 11 // Physically Pin 15 (GPIO11)
-#define OSCOPE_PERIOD_MS 4
+#define OSCOPE_PIN_TOGGLE_DUR_MS 2
 
 // ─── RS485 & Protocol Helpers (Local to Core 1) ───────────────────────────────
 
@@ -157,16 +157,19 @@ void cmdDummyQueueSlave1(uint8_t numMotors, const uint8_t* addr, bool cw, uint16
     static struct repeating_timer myScopeTimer;
     bool timerRunning = false;
 
+    #include "hardware/gpio.h"
+    
     // The callback function that toggles the pin for the oscilloscope
     bool timer_callback(struct repeating_timer *t) {
-        digitalWrite(OSCOPE_PIN, !digitalRead(OSCOPE_PIN));
+        // Atomically flips the pin state in 1 clock cycle without reading it first
+        gpio_xor_mask(1u << OSCOPE_PIN); 
         return true; 
     }
 
     void start_waveform() {
         if (!timerRunning) {
-            add_repeating_timer_ms(OSCOPE_PERIOD_MS, timer_callback, NULL, &myScopeTimer);
-            timer_callback(&myScopeTimer);
+            add_repeating_timer_ms(OSCOPE_PIN_TOGGLE_DUR_MS, timer_callback, NULL, &myScopeTimer);
+            // timer_callback(&myScopeTimer);
             timerRunning = true;
         }
     }
@@ -190,7 +193,7 @@ void setup1() {
     
     #ifdef OSCOPE_PROBING
         pinMode(OSCOPE_PIN, OUTPUT);
-        start_waveform();
+        // start_waveform();
     #endif
 }
 
@@ -266,7 +269,8 @@ void loop1() {
             // 4. Trigger & Advance
             if (anyIdle) {
                 stop_waveform();
-                delayMicroseconds(1000);
+                // delayMicroseconds(100);
+                delay(1000);
                 sendCmd1(BROADCAST, CMD_GO, nullptr, 0, nullptr, false);
                 start_waveform();
             }
