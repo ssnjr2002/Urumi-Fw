@@ -1,31 +1,5 @@
 // ATtiny3224 + MAX485E + DRV8825
-// Hardware-timed Step Generation (TCB0)
-// Lock-Free Implementation
-
-// Custom RS485 protocol — same framing style as tomrodinger/servomotor
-//
-// Frame structure (request):
-//   [SIZE] [ADDR] [CMD] [PAYLOAD...] [CRC16 LE 2 bytes]
-//   SIZE = ((remaining_bytes_after_size) << 1) | 1
-//   LSB of SIZE is always 1 — used for self-synchronizing frame detection
-//
-// Frame structure (response):
-//   [SIZE] [STATUS] [DATA...] [CRC16 LE 2 bytes]
-//   STATUS: 0x00=ok/no data, 0x01=ok/data follows, 0xFF=error
-//
-// Broadcast address 0xFF: all slaves execute, none respond.
-//
-// Commands:
-//   0x01 CMD_PING    → reply: node_id (1 byte)
-//   0x02 CMD_QUEUE   → payload: dir(1)+steps(2 LE)+speed(2 LE)
-//                    → reply: buf_free (1 byte);
-//   0x03 CMD_GO      → broadcast: start all armed motors simultaneously
-//   0x04 CMD_STOP    → stop immediately, clear buffer; reply: STATUS_OK if not broadcast
-//   0x05 CMD_STATUS  → reply: running(1)+buf_used(1)+buf_free(1)+steps_remaining(2)
-//   0x06 CMD_ENABLE  → payload: enable(1); reply: STATUS_OK if not broadcast
-//
-// Build with megaTinyCore.
-// Baud: 230400 (matches servomotor firmware convention)
+// TODO: make this dumb
 
 #include <Arduino.h>
 #include <util/atomic.h>
