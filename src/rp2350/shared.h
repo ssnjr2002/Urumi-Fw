@@ -57,15 +57,13 @@
 
 struct Segment {
     uint8_t  numMotors;           // How many motors are in this specific move
-    uint8_t  addr[MAX_MOTORS];    // RS485 addresses for this move
+    uint8_t  nodeId[MAX_MOTORS];  // Node IDs for this move (1 to 4)
     uint16_t steps[MAX_MOTORS];
     uint16_t sps[MAX_MOTORS];
     bool     cw[MAX_MOTORS];
 };
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
-// These tell Core 0 and Core 1 that these variables exist, allowing them to 
-// share the exact same memory addresses safely.
 
 extern Segment masterBuf[MASTER_BUF_SIZE];
 extern volatile uint8_t mBufHead; 
@@ -74,11 +72,7 @@ extern volatile uint8_t mBufTail;
 extern volatile bool emergencyStop;
 extern volatile bool alarmTriggered;
 
-// Shared variables for simple UI commands (Core 0 requests, Core 1 executes)
-extern volatile uint8_t reqPingAddr;
-extern volatile uint8_t reqEnableAddr;
-extern volatile int8_t  reqEnableVal; // -1 = no request, 0 = off, 1 = on
-extern volatile int8_t  pingResult;   // -1 = pending/none, 0 = timeout, 1 = OK
-extern volatile uint8_t failedNode;
+// For tracking buffer fullness without a reverse comm channel
+extern volatile uint8_t globalFreeSpace; 
 
 #endif // SHARED_H

@@ -24,24 +24,8 @@ void processSerial() {
 
                 if (input == "stop") {
                     emergencyStop = true;
-                    // mBufHead = mBufTail; // Instantly clear producer's view of the buffer    
                     Serial.println("!!! STOP DETECTED !!!");
                 } 
-                else if (input.startsWith("enable")) {
-                    char enStr[8] = {};
-                    int enVal = 0;
-                    sscanf(input.c_str(), "enable %7s %d", enStr, &enVal);
-                    reqEnableAddr = (strcmp(enStr, "all") == 0) ? BROADCAST : (uint8_t)atoi(enStr);
-                    reqEnableVal = (enVal != 0) ? 1 : 0; // Pass to Core 1
-                    Serial.println("ok");
-                    Serial.printf("Enable request sent: node %s = %d\n", enStr, enVal);
-                }
-                else if (input.startsWith("ping")) {
-                    uint8_t addr = 0;
-                    sscanf(input.c_str(), "ping %hhu", &addr);
-                    reqPingAddr = addr; // Pass to Core 1
-                    Serial.printf("Ping request sent to node %u...\n", addr);
-                }
                 else if (input.startsWith("unalarm")) {
                     alarmTriggered = false;
                     Serial.println("Alarm cleared!");
@@ -77,9 +61,9 @@ void processSerial() {
                     Segment s; 
                     s.numMotors = count;
 
-                    // 2. Parse Addresses
+                    // 2. Parse Addresses (Node IDs 0-3)
                     for (int i = 0; i < count; i++) {
-                        s.addr[i] = (uint8_t)strtoul(ptr, &endPtr, 10);
+                        s.nodeId[i] = (uint8_t)strtoul(ptr, &endPtr, 10);
                         if (ptr == endPtr) {
                             Serial.print("Error: Couldn't parse address for motor: ");
                             Serial.println(i);
@@ -98,7 +82,7 @@ void processSerial() {
                         }
                         ptr = endPtr;
                         s.steps[i] = (uint16_t)abs(val);
-                        s.cw[i] = (val < 0);
+                        s.cw[i] = (val > 0); // Positive is CW, Negative is CCW
                     }
 
                     // 4. Parse SPS
@@ -123,10 +107,6 @@ void processSerial() {
                     
                     mBufTail = next;
                     
-                    // Data Synchronization Barrier: Ensure the tail update 
-                    // is visible to Core 1 immediately.
-                    __dsb(); // is this necessary? 
-
                     Serial.println("ok");
                 }
             }
@@ -142,14 +122,9 @@ void processSerial() {
 
 void setup() {
     Serial.begin(115200);
-    // Optional: wait for serial, but keep it brief
     while (!Serial && millis() < 10000) {}
 
-    // Init the RS485 enable pin (Core 1 handles UART tx/rx pins)
-    pinMode(RS485_EN_PIN, OUTPUT);
-    digitalWrite(RS485_EN_PIN, LOW);
-
-    Serial.printf("Custom RS485 Master (%d baud)\n", RS485_BAUD);
+    Serial.printf("Custom RS485 Master (%d baud) [1-Byte Protocol]\n", RS485_BAUD);
 }
 
 static uint8_t getBufCount() {
@@ -166,18 +141,6 @@ void loop() {
     if (bufWasFull) {
         usedSlots = getBufCount();
         bufWasFull = (usedSlots > MASTER_BUF_LOW_WATERMARK);
-        // Serial.printf("Used slots: %d, low watermark: %d\n", usedSlots, MASTER_BUF_LOW_WATERMARK);
         if (!bufWasFull) Serial.println("ready");
-    }
-
-    // Process asynchronous UI responses from Core 1 safely
-    if (pingResult != -1) {
-        Serial.printf("Ping response: %s\n", pingResult == 1 ? "OK" : "TIMEOUT");
-        pingResult = -1; // Reset
-    }
-
-    if (failedNode > 0) {
-        Serial.printf("Failed Node: %d\n", failedNode);
-        failedNode = 0;
     }
 }
