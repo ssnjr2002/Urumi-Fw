@@ -72,7 +72,14 @@ extern volatile uint8_t mBufTail;
 extern volatile bool emergencyStop;
 extern volatile bool alarmTriggered;
 
-// For tracking buffer fullness without a reverse comm channel
-extern volatile uint8_t globalFreeSpace; 
+// Ping command interaction between core0 and core1
+enum PingStatus {
+    PING_IDLE = 0,
+    PING_PENDING,
+    PING_OK,
+    PING_TIMEOUT
+};
+extern volatile uint8_t pendingPingNode;
+extern volatile PingStatus pingStatus;
 
 #endif // SHARED_H
