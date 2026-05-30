@@ -4,22 +4,75 @@
 #include "shared.h"
 #include "hardware/gpio.h"
 
+#include "hardware/gpio.h"
+
+#include "RS485Bus.h"
+
+RS485Bus rs485;
+
 // ─── Core 1 Setup & Loop (RS485 Engine) ───────────────────────────────────────
 
 void setup1() {
-    Serial2.setTX(RS485_TX_PIN);
-    Serial2.setRX(RS485_RX_PIN);
+    rs485.begin(RS485_BAUD, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
     
-    // Configure UART with 2 Stop Bits for maximum frame-alignment reliability
-    Serial2.begin(RS485_BAUD, SERIAL_8N2);
-    
-    // Set RS485 transceiver to continuous TX mode
-    pinMode(RS485_EN_PIN, OUTPUT);
-    digitalWrite(RS485_EN_PIN, HIGH); 
     pinMode(11, OUTPUT);
 }
 
 void loop1() {
+    // 0. Process Core0 Ping Request
+    if (pendingPingNode != 0) {
+        uint8_t node = pendingPingNode;
+        pendingPingNode = 0;
+        
+        while(!rs485.txEmpty());
+        
+        // Flush RX FIFO of any stray noise or garbage before we send
+        rs485.flushRX();
+        
+        // --- SEND NOP STREAM BYTE ---
+        // This is the universal hard-reset for all ATtiny command parsers.
+        // It forces all nodes to return to WAIT_NODE_ID state.
+        rs485.writeStream(0); 
+        
+        uint8_t packet[4] = {node, CMD_PING, 0, 0};
+        packet[3] = crc8(packet, 3);
+        
+        for (int i=0; i<4; i++) {
+            rs485.writeCommand(packet[i]);
+        }
+        
+        uint32_t startWait = millis();
+        uint8_t rxBuf[4];
+        int rxIdx = 0;
+        bool success = false;
+        
+        while (millis() - startWait < RESPONSE_TIMEOUT_MS) {
+            if (rs485.available()) {
+                uint16_t rcv = rs485.read();
+                
+                // DEBUG: Print exactly what we get
+                Serial.printf("[Core1] RX: %03X\n", rcv);
+                
+                if (rcv & (1 << 8)) { // Command byte
+                    rxBuf[rxIdx++] = (uint8_t)(rcv & 0xFF);
+                    if (rxIdx == 4) {
+                        if (rxBuf[0] == node && rxBuf[1] == CMD_PONG && rxBuf[2] == 0 && rxBuf[3] == crc8(rxBuf, 3)) {
+                            success = true;
+                            break;
+                        }
+                        rxIdx = 0; 
+                    }
+                }
+            }
+        }
+        
+        if (success) {
+            pingStatus = PING_OK;
+        } else {
+            pingStatus = PING_TIMEOUT;
+        }
+    }
+
     // 1. Check for Emergency Stop immediately
     if (emergencyStop) {
         mBufHead = mBufTail; // Instantly dump the buffer
@@ -101,9 +154,8 @@ void loop1() {
                 gpio_xor_mask(1u << 11); 
                 lastStepTime += stepInterval;
 
-                // Send the step packet
-                // Blocks if TX FIFO is full, implicitly throttling step rate to baud rate
-                Serial2.write(outByte);
+                // Send the step packet (Stream Data -> 9th bit = 0)
+                rs485.writeStream(outByte);
             }
         }
 
