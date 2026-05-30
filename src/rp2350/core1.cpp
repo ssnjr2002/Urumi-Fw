@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "shared.h"
+#include "hardware/gpio.h"
 
 // ─── Core 1 Setup & Loop (RS485 Engine) ───────────────────────────────────────
 
@@ -15,6 +16,7 @@ void setup1() {
     // Set RS485 transceiver to continuous TX mode
     pinMode(RS485_EN_PIN, OUTPUT);
     digitalWrite(RS485_EN_PIN, HIGH); 
+    pinMode(11, OUTPUT);
 }
 
 void loop1() {
@@ -45,7 +47,7 @@ void loop1() {
 
         if (maxSteps > 0 && majorAxisIdx != -1) {
             if (s.sps[majorAxisIdx] > 0) {
-                stepInterval = 1000000 / s.sps[majorAxisIdx]; // Microseconds per step of the major axis
+                stepInterval = F_CPU / s.sps[majorAxisIdx]; // CPU cycles per step of the major axis
             }
 
             // 2. Initialize Error Counters for Minor Axes
@@ -67,7 +69,7 @@ void loop1() {
             }
 
             // 3. Bresenham Execution Loop
-            uint32_t lastStepTime = micros();
+            uint32_t lastStepTime = rp2040.getCycleCount();
             for (uint32_t stepCount = 0; stepCount < maxSteps; stepCount++) {
                 if (emergencyStop) return; // Exit loop immediately
 
@@ -92,9 +94,11 @@ void loop1() {
                 }
 
                 // Wait for the exact time interval dictated by the major axis
-                while ((micros() - lastStepTime) < stepInterval) {
+                gpio_xor_mask(1u << 11);
+                while ((rp2040.getCycleCount() - lastStepTime) < stepInterval) {
                     if (emergencyStop) return;
                 }
+                gpio_xor_mask(1u << 11); 
                 lastStepTime += stepInterval;
 
                 // Send the step packet
