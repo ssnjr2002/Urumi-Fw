@@ -33,8 +33,49 @@ volatile uint8_t timerState = 0;
 // Macros for exact cycle counts at 20MHz
 #define CYCLES_5US  100
 
+#define MAX_COMMANDS 4
+#define MAX_PACKET_LEN 32
+
+typedef struct {
+    uint8_t data[MAX_PACKET_LEN];
+    uint8_t length;
+} CommandPacket;
+
+CommandPacket cmdQueue[MAX_COMMANDS];
+volatile uint8_t cmdHead = 0; // Where ISR writes
+volatile uint8_t cmdTail = 0; // Where loop reads
+
+volatile bool inCommand = false;
+volatile uint8_t rxIdx = 0;
+
+void sendPong() {
+    // VISUAL DEBUG: Toggle LED when we attempt to send a PONG
+    PORTA.OUTTGL = PIN5_bm;
+
+    digitalWrite(RS485_DE_PIN, HIGH);
+    delayMicroseconds(1); // Give transceiver time to switch
+    
+    uint8_t pongPacket[4] = {NODE_ID, CMD_PONG, 0, 0};
+    pongPacket[3] = crc8(pongPacket, 3);
+    
+    USART1.STATUS = USART_TXCIF_bm; // Clear any old TX complete flag!
+    
+    for (int i = 0; i < 4; i++) {
+        while (!(USART1.STATUS & USART_DREIF_bm)); // Wait for Data Register Empty
+        USART1.TXDATAH = 0x01; // 9th bit = 1
+        USART1.TXDATAL = pongPacket[i];
+    }
+    
+    while (!(USART1.STATUS & USART_TXCIF_bm)); // Wait for physical Shift Register Empty
+    USART1.STATUS = USART_TXCIF_bm; // Clear flag
+    
+    delayMicroseconds(1); // Ensure stop bit fully propagates
+    digitalWrite(RS485_DE_PIN, LOW); // Back to RX
+}
+
 void setup() {
     pinMode(RS485_DE_PIN, OUTPUT); digitalWrite(RS485_DE_PIN, LOW); // RX Mode
+    pinMode(PIN_PA1,      OUTPUT); digitalWrite(PIN_PA1,      HIGH); // USART1 TX explicitly driven HIGH (idle)
     pinMode(LED_PIN,      OUTPUT); digitalWrite(LED_PIN,      LOW);
     pinMode(STEP_PIN,     OUTPUT); digitalWrite(STEP_PIN,     LOW);
     pinMode(DIR_PIN,      OUTPUT); digitalWrite(DIR_PIN,      LOW);
@@ -46,13 +87,13 @@ void setup() {
 
     // Hardware USART Initialization
     USART1.BAUD = (uint16_t)( (F_CPU * 64.0) / (16.0 * RS485_BAUD) + 0.5 );
+    USART1.CTRLC = USART_CHSIZE_9BITH_gc; // Enable 9-bit mode!
     USART1.CTRLA = USART_RXCIE_bm; // Enable RX Complete Interrupt
-    USART1.CTRLB = USART_RXEN_bm;  // Enable Receiver
+    USART1.CTRLB = USART_RXEN_bm | USART_TXEN_bm;  // Enable BOTH Receiver and Transmitter
     
     // TCB0 Hardware Timer Initialization (Single Shot Mode)
     TCB0.CTRLB = TCB_CNTMODE_SINGLE_gc;
     TCB0.INTCTRL = TCB_CAPT_bm; // Enable TCB interrupt
-    // We will enable the timer and set the clock (DIV1) dynamically in the ISR
 
     // Enable Global Interrupts
     sei();
@@ -66,17 +107,66 @@ void setup() {
 }
 
 void loop() {
-    // Handled in USART1_RXC_vect ISR
+    if (cmdHead != cmdTail) {
+        // Offload processing from ISR
+        CommandPacket* pkt = &cmdQueue[cmdTail];
+        uint8_t len = pkt->length;
+        
+        bool validNode = (pkt->data[0] == NODE_ID || pkt->data[0] == 0xFF);
+        bool validCrc = (pkt->data[len - 1] == crc8(pkt->data, len - 1));
+        
+        if (validNode && validCrc) {
+            uint8_t cmdId = pkt->data[1];
+            
+            switch (cmdId) {
+                case CMD_PING:
+                    sendPong();
+                    break;
+                // Future commands will go here
+            }
+        }
+        
+        cmdTail = (cmdTail + 1) % MAX_COMMANDS; // Move to next command
+    }
 }
 
 ISR(USART1_RXC_vect) {
-    uint8_t b = USART1.RXDATAL; // Reading RXDATAL clears the interrupt flag
+    uint8_t status = USART1.RXDATAH; // MUST read high byte first to get 9th bit
+    uint8_t b = USART1.RXDATAL;      // Reading low byte clears the interrupt flag
+    
+    bool isCommand = (status & 0x01); // 9th bit is bit 0 of RXDATAH
+    
+    if (isCommand) {
+        uint8_t nextHead = (cmdHead + 1) % MAX_COMMANDS;
+        if (nextHead == cmdTail) return; // Queue full, drop incoming command
+        
+        if (!inCommand) {
+            inCommand = true;
+            rxIdx = 0;
+        }
+        
+        if (rxIdx < MAX_PACKET_LEN) {
+            cmdQueue[cmdHead].data[rxIdx++] = b;
+        }
+        
+        if (rxIdx >= 4) { // Node, Cmd, Len, CRC (min size)
+            uint8_t expectedLen = cmdQueue[cmdHead].data[2];
+            if (rxIdx == 3 + expectedLen + 1) { // Node + Cmd + Len + Payload + CRC
+                cmdQueue[cmdHead].length = rxIdx;
+                cmdHead = nextHead; // Commit command to queue
+                inCommand = false;
+            }
+        }
+        return; // Ignore command bytes for spatial processing
+    }
+    
+    // 9th bit = 0. Instantly abort any active command parse to prevent desync!
+    inCommand = false;
     
     bool stepReq = (b & stepBitMask) != 0;
     bool newDir = (b & dirBitMask) != 0;
     
     // If a pulse is actively executing, drop this incoming step command.
-    // At physical speeds, this overlap should only happen if SPS > 40,000.
     if (timerState != 0) {
         return; 
     }
