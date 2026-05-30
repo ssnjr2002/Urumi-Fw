@@ -74,20 +74,20 @@ void processSerial() {
 
                     // 3. Parse Steps (Signed)
                     for (int i = 0; i < count; i++) {
-                        long val = strtol(ptr, &endPtr, 10);
+                        long long val = strtoll(ptr, &endPtr, 10);
                         if (ptr == endPtr) { 
                             Serial.print("Error: Couldn't parse steps for motor: ");
                             Serial.println(i);
                             return; 
                         }
                         ptr = endPtr;
-                        s.steps[i] = (uint16_t)abs(val);
-                        s.cw[i] = (val > 0); // Positive is CW, Negative is CCW
+                        s.steps[i] = (uint32_t)llabs(val);
+                        s.cw[i] = (val < 0); // Inverted: Positive is CCW, Negative is CW
                     }
 
                     // 4. Parse SPS
                     for (int i = 0; i < count; i++) {
-                        s.sps[i] = (uint16_t)strtoul(ptr, &endPtr, 10);
+                        s.sps[i] = (uint32_t)strtoul(ptr, &endPtr, 10);
                         if (ptr == endPtr) { 
                             Serial.print("Error: Couldn't parse sps for motor: ");
                             Serial.println(i);
