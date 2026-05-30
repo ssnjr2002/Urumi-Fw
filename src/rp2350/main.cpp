@@ -49,16 +49,13 @@ Segment masterBuf[MASTER_BUF_SIZE];
 volatile uint8_t mBufHead = 0; 
 volatile uint8_t mBufTail = 0;
 
-// Emergency Stop Flag
+// System Flags
 volatile bool emergencyStop = false;
 volatile bool alarmTriggered = false;
 
-// UI Command Flags
-volatile uint8_t reqPingAddr = 0;
-volatile uint8_t reqEnableAddr = 0;
-volatile uint8_t failedNode = 0;
-volatile int8_t  reqEnableVal = -1;  
-volatile int8_t  pingResult = -1;
+// Ping/Pong State
+volatile uint8_t pendingPingNode = 0;
+volatile PingStatus pingStatus = PING_IDLE;
 
 // Note: 
 // setup() and loop() are defined in core0.cpp

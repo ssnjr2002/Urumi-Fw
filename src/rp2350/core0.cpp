@@ -10,6 +10,9 @@ static char serialRxBuf[128];
 static uint8_t serialRxLen = 0;
 static bool bufWasFull = false;
 
+static bool pingAllActive = false;
+static uint8_t pingAllCurrentNode = 1;
+
 // ─── Core 0 Serial & UI Logic ─────────────────────────────────────────────────
 
 // Single, non-blocking serial parser to prevent buffer conflicts
@@ -29,6 +32,35 @@ void processSerial() {
                 else if (input.startsWith("unalarm")) {
                     alarmTriggered = false;
                     Serial.println("Alarm cleared!");
+                }
+                else if (input.startsWith("ping all")) {
+                    if (pingStatus == PING_PENDING || pingAllActive) {
+                        Serial.println("Error: Ping already in progress.");
+                    } else {
+                        Serial.println("Starting PING ALL sequence...");
+                        pingAllActive = true;
+                        pingAllCurrentNode = 1;
+                        pingStatus = PING_PENDING;
+                        pendingPingNode = pingAllCurrentNode;
+                        Serial.printf("Sending PING to Node %d...\n", pingAllCurrentNode);
+                    }
+                }
+                else if (input.startsWith("ping")) {
+                    char* ptr = (char*)input.c_str() + 4; 
+                    while (*ptr == ' ') ptr++; 
+                    uint8_t targetNode = (uint8_t)strtoul(ptr, NULL, 10);
+                    
+                    if (targetNode >= 1 && targetNode <= 4) {
+                        if (pingStatus == PING_PENDING || pingAllActive) {
+                            Serial.println("Error: Ping already in progress.");
+                        } else {
+                            Serial.printf("Sending PING to Node %d...\n", targetNode);
+                            pingStatus = PING_PENDING;
+                            pendingPingNode = targetNode;
+                        }
+                    } else {
+                        Serial.println("Error: Invalid Node ID for ping.");
+                    }
                 }
                 else if (input.startsWith("move")) {
                     if (alarmTriggered) {
@@ -135,6 +167,39 @@ static uint8_t getBufCount() {
 void loop() {
     // Check UI commands
     processSerial();
+    
+    // Check non-blocking ping status
+    if (pingStatus == PING_OK) {
+        Serial.println("Received PONG!");
+        pingStatus = PING_IDLE;
+        
+        if (pingAllActive) {
+            pingAllCurrentNode++;
+            if (pingAllCurrentNode <= 4) {
+                pingStatus = PING_PENDING;
+                pendingPingNode = pingAllCurrentNode;
+                Serial.printf("Sending PING to Node %d...\n", pingAllCurrentNode);
+            } else {
+                pingAllActive = false;
+                Serial.println("PING ALL Complete.");
+            }
+        }
+    } else if (pingStatus == PING_TIMEOUT) {
+        Serial.println("Timeout waiting for PONG.");
+        pingStatus = PING_IDLE;
+        
+        if (pingAllActive) {
+            pingAllCurrentNode++;
+            if (pingAllCurrentNode <= 4) {
+                pingStatus = PING_PENDING;
+                pendingPingNode = pingAllCurrentNode;
+                Serial.printf("Sending PING to Node %d...\n", pingAllCurrentNode);
+            } else {
+                pingAllActive = false;
+                Serial.println("PING ALL Complete.");
+            }
+        }
+    }
     
     // Reply ready if buffer is cleared more than MASTER_BUF_LOW_WATERMARK 
     static uint8_t usedSlots = 0;
