@@ -3,7 +3,6 @@
 
 #include <Arduino.h>
 #include "common.h"
-#include "nodeid.h"
 
 // ─── Board config ──────────────────────────────────────────────────────────────
 #define RS485_DE_PIN  PIN_PA3
@@ -28,6 +27,12 @@ static uint8_t stepBitMask;
 static uint8_t dirBitMask;
 static bool currentDir = false;
 
+// 0 = Idle, 1 = Waiting for 5us Dir setup, 2 = 5us Step Pulse HIGH
+volatile uint8_t timerState = 0; 
+
+// Macros for exact cycle counts at 20MHz
+#define CYCLES_5US  100
+
 void setup() {
     pinMode(RS485_DE_PIN, OUTPUT); digitalWrite(RS485_DE_PIN, LOW); // RX Mode
     pinMode(LED_PIN,      OUTPUT); digitalWrite(LED_PIN,      LOW);
@@ -44,6 +49,11 @@ void setup() {
     USART1.CTRLA = USART_RXCIE_bm; // Enable RX Complete Interrupt
     USART1.CTRLB = USART_RXEN_bm;  // Enable Receiver
     
+    // TCB0 Hardware Timer Initialization (Single Shot Mode)
+    TCB0.CTRLB = TCB_CNTMODE_SINGLE_gc;
+    TCB0.INTCTRL = TCB_CAPT_bm; // Enable TCB interrupt
+    // We will enable the timer and set the clock (DIV1) dynamically in the ISR
+
     // Enable Global Interrupts
     sei();
 
@@ -62,23 +72,51 @@ void loop() {
 ISR(USART1_RXC_vect) {
     uint8_t b = USART1.RXDATAL; // Reading RXDATAL clears the interrupt flag
     
-    // 1. Set Direction Pin
+    bool stepReq = (b & stepBitMask) != 0;
     bool newDir = (b & dirBitMask) != 0;
+    
+    // If a pulse is actively executing, drop this incoming step command.
+    // At physical speeds, this overlap should only happen if SPS > 40,000.
+    if (timerState != 0) {
+        return; 
+    }
+
     if (newDir != currentDir) {
         if (newDir) DIR_PORT.OUTSET = DIR_BM;
         else DIR_PORT.OUTCLR = DIR_BM;
-        
         currentDir = newDir;
         
-        // DM542 driver direction setup time
-        delayMicroseconds(5);
+        if (stepReq) {
+            timerState = 1; // Waiting for Dir setup
+            TCB0.CCMP = CYCLES_5US;
+            TCB0.CNT = 0;
+            TCB0.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm; 
+        }
+    } else {
+        if (stepReq) {
+            STEP_PORT.OUTSET = STEP_BM;
+            timerState = 2; // Step Pulse HIGH
+            TCB0.CCMP = CYCLES_5US;
+            TCB0.CNT = 0;
+            TCB0.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm;
+        }
     }
+}
 
-    // 2. Pulse Step Pin if requested
-    if (b & stepBitMask) {
+ISR(TCB0_INT_vect) {
+    TCB0.INTFLAGS = TCB_CAPT_bm; // Clear the interrupt flag
+    
+    if (timerState == 1) {
+        // The 5us Dir setup is complete. Start the step pulse.
         STEP_PORT.OUTSET = STEP_BM;
-        // DM542 requires a minimum of 2.5us high pulse
-        delayMicroseconds(5);
+        timerState = 2;
+        TCB0.CCMP = CYCLES_5US;
+        TCB0.CNT = 0;
+        // Timer is still enabled, it will instantly restart for the next 5us
+    } else if (timerState == 2) {
+        // The 5us Step pulse is complete. Stop.
         STEP_PORT.OUTCLR = STEP_BM;
+        timerState = 0;
+        TCB0.CTRLA &= ~TCB_ENABLE_bm; // Disable timer
     }
 }
