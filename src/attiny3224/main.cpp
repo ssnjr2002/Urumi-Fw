@@ -26,9 +26,9 @@
 static uint8_t stepBitMask;
 static uint8_t dirBitMask;
 static bool currentDir = false;
+volatile bool streamEnabled = false;
 
-// 0 = Idle, 1 = Waiting for 5us Dir setup, 2 = 5us Step Pulse HIGH
-volatile uint8_t timerState = 0; 
+volatile int32_t absolutePosition = 0;
 
 // Macros for exact cycle counts at 20MHz
 #define CYCLES_5US  100
@@ -48,22 +48,26 @@ volatile uint8_t cmdTail = 0; // Where loop reads
 volatile bool inCommand = false;
 volatile uint8_t rxIdx = 0;
 
-void sendPong() {
-    // VISUAL DEBUG: Toggle LED when we attempt to send a PONG
-    PORTA.OUTTGL = PIN5_bm;
-
+void sendCommandPacket(uint8_t* packet, uint8_t len) {
+    LED_PORT.OUTSET = LED_PIN; // LED on
+    packet[len - 1] = crc8(packet, len - 1);
+    
     digitalWrite(RS485_DE_PIN, HIGH);
     delayMicroseconds(1); // Give transceiver time to switch
     
-    uint8_t pongPacket[4] = {NODE_ID, CMD_PONG, 0, 0};
-    pongPacket[3] = crc8(pongPacket, 3);
-    
     USART1.STATUS = USART_TXCIF_bm; // Clear any old TX complete flag!
     
-    for (int i = 0; i < 4; i++) {
+    // 1. Send a single Stream Byte (9th bit = 0) as a synchronization preamble.
+    // This perfectly mirrors how the Pico resets the ATtiny's parser!
+    while (!(USART1.STATUS & USART_DREIF_bm));
+    USART1.TXDATAH = 0x00; // 9th bit = 0 (Stream/Reset Byte)
+    USART1.TXDATAL = 0x00; // Payload = 0 (NOP)
+    
+    // 2. Send the actual Command Packet (9th bit = 1)
+    for (int i = 0; i < len; i++) {
         while (!(USART1.STATUS & USART_DREIF_bm)); // Wait for Data Register Empty
         USART1.TXDATAH = 0x01; // 9th bit = 1
-        USART1.TXDATAL = pongPacket[i];
+        USART1.TXDATAL = packet[i];
     }
     
     while (!(USART1.STATUS & USART_TXCIF_bm)); // Wait for physical Shift Register Empty
@@ -71,6 +75,7 @@ void sendPong() {
     
     delayMicroseconds(1); // Ensure stop bit fully propagates
     digitalWrite(RS485_DE_PIN, LOW); // Back to RX
+    LED_PORT.OUTCLR = LED_PIN; // LED off
 }
 
 void setup() {
@@ -79,7 +84,9 @@ void setup() {
     pinMode(LED_PIN,      OUTPUT); digitalWrite(LED_PIN,      LOW);
     pinMode(STEP_PIN,     OUTPUT); digitalWrite(STEP_PIN,     LOW);
     pinMode(DIR_PIN,      OUTPUT); digitalWrite(DIR_PIN,      LOW);
-    pinMode(ENABLE_PIN,   OUTPUT); digitalWrite(ENABLE_PIN,   LOW); // Driver enabled
+    
+    // DM542: HIGH = Disabled, LOW = Enabled. We start disabled.
+    pinMode(ENABLE_PIN,   OUTPUT); ENABLE_PORT.OUTSET = ENABLE_BM;
 
     // Node ID Bit Masks
     stepBitMask = 1 << ((NODE_ID - 1) * 2);
@@ -106,6 +113,16 @@ void setup() {
     }
 }
 
+// Lock-free atomic read of 32-bit counter
+int32_t readPositionAtomic() {
+    int32_t val1, val2;
+    do {
+        val1 = absolutePosition;
+        val2 = absolutePosition;
+    } while (val1 != val2);
+    return val1;
+}
+
 void loop() {
     if (cmdHead != cmdTail) {
         // Offload processing from ISR
@@ -119,10 +136,35 @@ void loop() {
             uint8_t cmdId = pkt->data[1];
             
             switch (cmdId) {
-                case CMD_PING:
-                    sendPong();
+                case CMD_PING: {
+                    uint8_t pkt[4] = {NODE_ID, CMD_PONG, 0, 0};
+                    sendCommandPacket(pkt, 4);
                     break;
-                // Future commands will go here
+                }
+                case CMD_GET_POS: {
+                    int32_t pos = readPositionAtomic();
+                    uint8_t pkt[8] = {NODE_ID, CMD_GET_POS, 4, 0, 0, 0, 0, 0};
+                    pkt[3] = (pos >> 24) & 0xFF;
+                    pkt[4] = (pos >> 16) & 0xFF;
+                    pkt[5] = (pos >> 8) & 0xFF;
+                    pkt[6] = pos & 0xFF;
+                    sendCommandPacket(pkt, 8);
+                    break;
+                }
+                case CMD_ENABLE: {
+                    streamEnabled = true;
+                    ENABLE_PORT.OUTCLR = ENABLE_BM; // LOW = Enabled
+                    uint8_t pkt[4] = {NODE_ID, CMD_ENABLE, 0, 0};
+                    sendCommandPacket(pkt, 4);
+                    break;
+                }
+                case CMD_DISABLE: {
+                    streamEnabled = false;
+                    ENABLE_PORT.OUTSET = ENABLE_BM; // HIGH = Disabled
+                    uint8_t pkt[4] = {NODE_ID, CMD_DISABLE, 0, 0};
+                    sendCommandPacket(pkt, 4);
+                    break;
+                }
             }
         }
         
@@ -163,50 +205,37 @@ ISR(USART1_RXC_vect) {
     // 9th bit = 0. Instantly abort any active command parse to prevent desync!
     inCommand = false;
     
+    // Software Lockout: If disabled, drop stream bytes.
+    if (!streamEnabled) return;
+    
     bool stepReq = (b & stepBitMask) != 0;
     bool newDir = (b & dirBitMask) != 0;
     
-    // If a pulse is actively executing, drop this incoming step command.
-    if (timerState != 0) {
-        return; 
-    }
-
+    // Removed timerState check since pulses are now guaranteed to finish before the next byte.
     if (newDir != currentDir) {
         if (newDir) DIR_PORT.OUTSET = DIR_BM;
         else DIR_PORT.OUTCLR = DIR_BM;
         currentDir = newDir;
         
-        if (stepReq) {
-            timerState = 1; // Waiting for Dir setup
-            TCB0.CCMP = CYCLES_5US;
-            TCB0.CNT = 0;
-            TCB0.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm; 
-        }
-    } else {
-        if (stepReq) {
-            STEP_PORT.OUTSET = STEP_BM;
-            timerState = 2; // Step Pulse HIGH
-            TCB0.CCMP = CYCLES_5US;
-            TCB0.CNT = 0;
-            TCB0.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm;
-        }
+        // DM542 requires ~5us direction setup time because of slow optocouplers.
+        // We ONLY need to pay this penalty on the exact step where direction flips!
+        delayMicroseconds(5); 
+    }
+    
+    if (stepReq) {
+        STEP_PORT.OUTSET = STEP_BM;
+        absolutePosition += (currentDir ? 1 : -1);
+        
+        // Start timer to pull STEP low after 3us (60 cycles at 20MHz). 
+        // DM542 requires >2.5us pulse width.
+        TCB0.CCMP = 60;
+        TCB0.CNT = 0;
+        TCB0.CTRLA = TCB_CLKSEL_CLKDIV1_gc | TCB_ENABLE_bm; 
     }
 }
 
 ISR(TCB0_INT_vect) {
-    TCB0.INTFLAGS = TCB_CAPT_bm; // Clear the interrupt flag
-    
-    if (timerState == 1) {
-        // The 5us Dir setup is complete. Start the step pulse.
-        STEP_PORT.OUTSET = STEP_BM;
-        timerState = 2;
-        TCB0.CCMP = CYCLES_5US;
-        TCB0.CNT = 0;
-        // Timer is still enabled, it will instantly restart for the next 5us
-    } else if (timerState == 2) {
-        // The 5us Step pulse is complete. Stop.
-        STEP_PORT.OUTCLR = STEP_BM;
-        timerState = 0;
-        TCB0.CTRLA &= ~TCB_ENABLE_bm; // Disable timer
-    }
+    TCB0.INTFLAGS = TCB_CAPT_bm; // Clear interrupt flag
+    STEP_PORT.OUTCLR = STEP_BM;  // Pull STEP low
+    TCB0.CTRLA &= ~TCB_ENABLE_bm; // Disable timer
 }

@@ -10,8 +10,158 @@ static char serialRxBuf[128];
 static uint8_t serialRxLen = 0;
 static bool bufWasFull = false;
 
-static bool pingAllActive = false;
-static uint8_t pingAllCurrentNode = 1;
+// ─── Command Handlers ─────────────────────────────────────────────────────────
+
+// 1. Control Commands (Volatile Flags - Instant Execution)
+static bool handleControlCommand(const String& input) {
+    if (input == "stop") {
+        emergencyStop = true;
+        Serial.println("!!! STOP DETECTED !!!");
+        return true;
+    } 
+    else if (input.startsWith("unalarm")) {
+        alarmTriggered = false;
+        Serial.println("Alarm cleared!");
+        return true;
+    }
+    return false;
+}
+
+// 2. Non-Streaming Commands (Multicore FIFO Queue)
+static bool handleNonStreamingCommand(const String& input) {
+    bool isCommand = input.startsWith("ping") || input.startsWith("enable") || 
+                     input.startsWith("disable") || input.startsWith("getpos") || input.startsWith("suction");
+    
+    if (!isCommand) return false;
+
+    // Check FIFO queue space once for all non-streaming commands
+    if (!multicore_fifo_wready()) {
+        Serial.println("Error: Command queue full.");
+        return true; // Handled (by rejecting it)
+    }
+
+    if (input.startsWith("ping all")) {
+        Serial.println("Queued PING ALL sequence...");
+        for (uint8_t i = 1; i <= 4; i++) multicore_fifo_push_blocking((CMD_PING << 8) | i);
+    }
+    else if (input.startsWith("enable all")) {
+        Serial.println("Queued ENABLE ALL sequence...");
+        for (uint8_t i = 1; i <= 4; i++) multicore_fifo_push_blocking((CMD_ENABLE << 8) | i);
+    }
+    else if (input.startsWith("disable all")) {
+        Serial.println("Queued DISABLE ALL sequence...");
+        for (uint8_t i = 1; i <= 4; i++) multicore_fifo_push_blocking((CMD_DISABLE << 8) | i);
+    }
+    else if (input.startsWith("ping")) {
+        char* ptr = (char*)input.c_str() + 4; 
+        while (*ptr == ' ') ptr++; 
+        uint8_t targetNode = (uint8_t)strtoul(ptr, NULL, 10);
+        if (targetNode >= 1 && targetNode <= 4) {
+            Serial.printf("Queued PING for Node %d...\n", targetNode);
+            multicore_fifo_push_blocking((CMD_PING << 8) | targetNode);
+        } else Serial.println("Error: Invalid Node ID for ping.");
+    }
+    else if (input.startsWith("enable")) {
+        char* ptr = (char*)input.c_str() + 6; 
+        while (*ptr == ' ') ptr++; 
+        uint8_t targetNode = (uint8_t)strtoul(ptr, NULL, 10);
+        if (targetNode >= 1 && targetNode <= 4) {
+            Serial.printf("Queued ENABLE for Node %d...\n", targetNode);
+            multicore_fifo_push_blocking((CMD_ENABLE << 8) | targetNode);
+        } else Serial.println("Error: Invalid Node ID for enable.");
+    }
+    else if (input.startsWith("disable")) {
+        char* ptr = (char*)input.c_str() + 7; 
+        while (*ptr == ' ') ptr++; 
+        uint8_t targetNode = (uint8_t)strtoul(ptr, NULL, 10);
+        if (targetNode >= 1 && targetNode <= 4) {
+            Serial.printf("Queued DISABLE for Node %d...\n", targetNode);
+            multicore_fifo_push_blocking((CMD_DISABLE << 8) | targetNode);
+        } else Serial.println("Error: Invalid Node ID for disable.");
+    }
+    else if (input.startsWith("getpos")) {
+        char* ptr = (char*)input.c_str() + 6; 
+        while (*ptr == ' ') ptr++; 
+        uint8_t targetNode = (uint8_t)strtoul(ptr, NULL, 10);
+        if (targetNode >= 1 && targetNode <= 4) {
+            Serial.printf("Queued Position Query for Node %d...\n", targetNode);
+            multicore_fifo_push_blocking((CMD_GET_POS << 8) | targetNode);
+        } else Serial.println("Error: Invalid Node ID for getpos.");
+    }
+    else if (input.startsWith("suction")) {
+        Serial.println("ok");
+    }
+    
+    return true;
+}
+
+// 3. Streaming Commands (Ring Buffer)
+static bool handleStreamingCommand(const String& input) {
+    if (!input.startsWith("move")) return false;
+
+    if (alarmTriggered) {
+        Serial.println("Error: Alarm triggered! Type 'unalarm' to continue.");
+        return true;
+    }
+
+    uint8_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
+    if (next == mBufHead) {
+        bufWasFull = true;
+        Serial.println("nope");
+        return true;
+    }
+
+    char* ptr = (char*)input.c_str() + 4; 
+    while (*ptr == ' ') ptr++; 
+    char* endPtr;
+
+    uint8_t count = (uint8_t)strtoul(ptr, &endPtr, 10);
+    if (ptr == endPtr || count == 0 || count > MAX_MOTORS) {
+        Serial.printf("Error: Invalid motor count: %d\n", count);
+        return true;
+    }
+    ptr = endPtr;
+
+    Segment s; 
+    s.numMotors = count;
+
+    for (int i = 0; i < count; i++) {
+        s.nodeId[i] = (uint8_t)strtoul(ptr, &endPtr, 10);
+        if (ptr == endPtr) {
+            Serial.printf("Error: Couldn't parse address for motor: %d\n", i);
+            return true; 
+        }
+        ptr = endPtr;
+    }
+
+    for (int i = 0; i < count; i++) {
+        long long val = strtoll(ptr, &endPtr, 10);
+        if (ptr == endPtr) { 
+            Serial.printf("Error: Couldn't parse steps for motor: %d\n", i);
+            return true; 
+        }
+        ptr = endPtr;
+        s.steps[i] = (uint32_t)llabs(val);
+        s.cw[i] = (val < 0); 
+    }
+
+    for (int i = 0; i < count; i++) {
+        s.sps[i] = (uint32_t)strtoul(ptr, &endPtr, 10);
+        if (ptr == endPtr) { 
+            Serial.printf("Error: Couldn't parse sps for motor: %d\n", i);
+            return true; 
+        }
+        ptr = endPtr;
+    }
+
+    // --- CRITICAL SECTION: Shared Memory Update ---
+    masterBuf[mBufTail] = s;
+    __dmb(); // Hardware Barrier
+    mBufTail = next;
+    
+    Serial.println("ok");
+    return true;
+}
 
 // ─── Core 0 Serial & UI Logic ─────────────────────────────────────────────────
 
@@ -25,121 +175,11 @@ void processSerial() {
                 String input = String(serialRxBuf);
                 serialRxLen = 0; // Reset for next command
 
-                if (input == "stop") {
-                    emergencyStop = true;
-                    Serial.println("!!! STOP DETECTED !!!");
-                } 
-                else if (input.startsWith("unalarm")) {
-                    alarmTriggered = false;
-                    Serial.println("Alarm cleared!");
-                }
-                else if (input.startsWith("ping all")) {
-                    if (pingStatus == PING_PENDING || pingAllActive) {
-                        Serial.println("Error: Ping already in progress.");
-                    } else {
-                        Serial.println("Starting PING ALL sequence...");
-                        pingAllActive = true;
-                        pingAllCurrentNode = 1;
-                        pingStatus = PING_PENDING;
-                        pendingPingNode = pingAllCurrentNode;
-                        Serial.printf("Sending PING to Node %d...\n", pingAllCurrentNode);
-                    }
-                }
-                else if (input.startsWith("ping")) {
-                    char* ptr = (char*)input.c_str() + 4; 
-                    while (*ptr == ' ') ptr++; 
-                    uint8_t targetNode = (uint8_t)strtoul(ptr, NULL, 10);
-                    
-                    if (targetNode >= 1 && targetNode <= 4) {
-                        if (pingStatus == PING_PENDING || pingAllActive) {
-                            Serial.println("Error: Ping already in progress.");
-                        } else {
-                            Serial.printf("Sending PING to Node %d...\n", targetNode);
-                            pingStatus = PING_PENDING;
-                            pendingPingNode = targetNode;
-                        }
-                    } else {
-                        Serial.println("Error: Invalid Node ID for ping.");
-                    }
-                }
-                else if (input.startsWith("move")) {
-                    if (alarmTriggered) {
-                        Serial.println("Error: Alarm triggered! Type 'unalarm' to continue.");
-                        return;
-                    }
-
-                    uint8_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
-                    if (next == mBufHead) {
-                        bufWasFull = true;
-                        Serial.println("nope");
-                        return;
-                    }
-
-                    // Skip "move" and any leading spaces
-                    char* ptr = (char*)input.c_str() + 4; 
-                    while (*ptr == ' ') ptr++; 
-                    char* endPtr;
-
-                    // 1. Parse Number of Motors
-                    uint8_t count = (uint8_t)strtoul(ptr, &endPtr, 10);
-                    if (ptr == endPtr || count == 0 || count > MAX_MOTORS) {
-                        Serial.print("Error: Invalid motor count: ");
-                        Serial.println(count);
-                        return;
-                    }
-                    ptr = endPtr;
-
-                    // LOCAL struct to build the command. 
-                    Segment s; 
-                    s.numMotors = count;
-
-                    // 2. Parse Addresses (Node IDs 0-3)
-                    for (int i = 0; i < count; i++) {
-                        s.nodeId[i] = (uint8_t)strtoul(ptr, &endPtr, 10);
-                        if (ptr == endPtr) {
-                            Serial.print("Error: Couldn't parse address for motor: ");
-                            Serial.println(i);
-                            return; 
-                        }
-                        ptr = endPtr;
-                    }
-
-                    // 3. Parse Steps (Signed)
-                    for (int i = 0; i < count; i++) {
-                        long long val = strtoll(ptr, &endPtr, 10);
-                        if (ptr == endPtr) { 
-                            Serial.print("Error: Couldn't parse steps for motor: ");
-                            Serial.println(i);
-                            return; 
-                        }
-                        ptr = endPtr;
-                        s.steps[i] = (uint32_t)llabs(val);
-                        s.cw[i] = (val < 0); // Inverted: Positive is CCW, Negative is CW
-                    }
-
-                    // 4. Parse SPS
-                    for (int i = 0; i < count; i++) {
-                        s.sps[i] = (uint32_t)strtoul(ptr, &endPtr, 10);
-                        if (ptr == endPtr) { 
-                            Serial.print("Error: Couldn't parse sps for motor: ");
-                            Serial.println(i);
-                            return; 
-                        }
-                        ptr = endPtr;
-                    }
-
-                    // --- CRITICAL SECTION: Shared Memory Update ---
-                    
-                    // Copy the entire validated struct to shared memory at once
-                    masterBuf[mBufTail] = s;
-
-                    // Hardware Barrier: Ensure all data is physically in RAM 
-                    // before the tail index is updated.
-                    __dmb(); 
-                    
-                    mBufTail = next;
-                    
-                    Serial.println("ok");
+                if (handleControlCommand(input)) { /* Handled */ }
+                else if (handleStreamingCommand(input)) { /* Handled */ }
+                else if (handleNonStreamingCommand(input)) { /* Handled */ }
+                else {
+                    Serial.println("Error: Unknown command.");
                 }
             }
         } 
@@ -168,36 +208,37 @@ void loop() {
     // Check UI commands
     processSerial();
     
-    // Check non-blocking ping status
-    if (pingStatus == PING_OK) {
-        Serial.println("Received PONG!");
-        pingStatus = PING_IDLE;
+    // Stateless Asynchronous FIFO Polling
+    while (multicore_fifo_rvalid()) {
+        uint32_t resp = multicore_fifo_pop_blocking();
+        uint8_t cmd = (resp >> 24) & 0xFF;
+        uint8_t node = (resp >> 16) & 0xFF;
+        uint16_t success = resp & 0xFFFF;
         
-        if (pingAllActive) {
-            pingAllCurrentNode++;
-            if (pingAllCurrentNode <= 4) {
-                pingStatus = PING_PENDING;
-                pendingPingNode = pingAllCurrentNode;
-                Serial.printf("Sending PING to Node %d...\n", pingAllCurrentNode);
-            } else {
-                pingAllActive = false;
-                Serial.println("PING ALL Complete.");
-            }
-        }
-    } else if (pingStatus == PING_TIMEOUT) {
-        Serial.println("Timeout waiting for PONG.");
-        pingStatus = PING_IDLE;
-        
-        if (pingAllActive) {
-            pingAllCurrentNode++;
-            if (pingAllCurrentNode <= 4) {
-                pingStatus = PING_PENDING;
-                pendingPingNode = pingAllCurrentNode;
-                Serial.printf("Sending PING to Node %d...\n", pingAllCurrentNode);
-            } else {
-                pingAllActive = false;
-                Serial.println("PING ALL Complete.");
-            }
+        switch (cmd) {
+            case CMD_PING:
+                if (success) Serial.printf("Node %d: Received PONG!\n", node);
+                else Serial.printf("Node %d: Timeout waiting for PONG.\n", node);
+                break;
+                
+            case CMD_GET_POS:
+                if (success) {
+                    int32_t pos = (int32_t)multicore_fifo_pop_blocking();
+                    Serial.printf("Node %d Position: %ld\n", node, pos);
+                } else {
+                    Serial.printf("Node %d: Timeout querying position.\n", node);
+                }
+                break;
+                
+            case CMD_ENABLE:
+                if (success) {Serial.printf("Node %d: Enabled!\nok\n", node);}
+                else Serial.printf("Node %d: Timeout enabling.\n", node);
+                break;
+                
+            case CMD_DISABLE:
+                if (success) Serial.printf("Node %d: Disabled!\nok\n", node);
+                else Serial.printf("Node %d: Timeout disabling.\n", node);
+                break;
         }
     }
     

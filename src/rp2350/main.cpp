@@ -53,10 +53,6 @@ volatile uint8_t mBufTail = 0;
 volatile bool emergencyStop = false;
 volatile bool alarmTriggered = false;
 
-// Ping/Pong State
-volatile uint8_t pendingPingNode = 0;
-volatile PingStatus pingStatus = PING_IDLE;
-
 // Note: 
 // setup() and loop() are defined in core0.cpp
 // setup1() and loop1() are defined in core1.cpp

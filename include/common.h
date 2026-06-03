@@ -7,6 +7,9 @@
 #define RESPONSE_TIMEOUT_MS    20
 #define CMD_PING 0x01
 #define CMD_PONG 0x02
+#define CMD_GET_POS 0x03
+#define CMD_ENABLE 0x04
+#define CMD_DISABLE 0x05
 
 static inline uint8_t crc8(const uint8_t *data, uint8_t len) {
     uint8_t crc = 0x00;
