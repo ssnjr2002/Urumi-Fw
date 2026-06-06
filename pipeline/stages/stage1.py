@@ -168,9 +168,11 @@ def load_svg(path):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys, os
-    svg = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "test_snake.svg")
-    curves = load_svg(svg)
-    print(f"Loaded {len(curves)} cubic Bezier(s) from {os.path.basename(svg)}\n")
+    import sys, argparse
+    parser = argparse.ArgumentParser(description="Stage 1: SVG path -> cubic Beziers")
+    parser.add_argument("svg", help="Path to SVG file")
+    args = parser.parse_args()
+    curves = load_svg(args.svg)
+    print(f"Loaded {len(curves)} cubic Bezier(s) from {args.svg}\n")
     for i, c in enumerate(curves):
         print(f"  [{i}] p0={c.p0}  p1={c.p1}  p2={c.p2}  p3={c.p3}")

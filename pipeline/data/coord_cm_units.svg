@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="10cm" height="10cm">
+  <!-- 10cm = 100mm, viewBox 100px → scale 1.0 px/mm -->
+  <!-- p0=(10,10)px → (10, 90)mm after Y-flip -->
+  <path d="M 10 10 L 90 90" fill="none" stroke="blue"/>
+</svg>
