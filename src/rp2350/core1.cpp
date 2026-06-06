@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include "shared.h"
 #include "hardware/gpio.h"
+#include <math.h>
 
 #include "hardware/gpio.h"
 
@@ -98,8 +99,24 @@ static void __time_critical_func(processStreamingBuffer)() {
         }
 
         if (maxSteps > 0 && majorAxisIdx != -1) {
-            if (s.sps[majorAxisIdx] > 0) {
-                stepInterval = F_CPU / s.sps[majorAxisIdx]; // CPU cycles per step of the major axis
+            // Pre-calculate kinematic profile steps
+            uint32_t accel_steps = 0;
+            uint32_t decel_steps = 0;
+            
+            if (s.accel > 0) {
+                float v_in_sq = s.v_entry * s.v_entry;
+                float v_cr_sq = s.v_cruise * s.v_cruise;
+                float v_out_sq = s.v_exit * s.v_exit;
+                float two_a = 2.0f * s.accel;
+                
+                float d_accel = (v_cr_sq - v_in_sq) / two_a;
+                float d_decel = (v_cr_sq - v_out_sq) / two_a;
+                
+                if (d_accel < 0) d_accel = 0;
+                if (d_decel < 0) d_decel = 0;
+                
+                accel_steps = (uint32_t)d_accel;
+                decel_steps = (uint32_t)d_decel;
             }
 
             // 2. Initialize Error Counters for Minor Axes
@@ -144,6 +161,20 @@ static void __time_critical_func(processStreamingBuffer)() {
                         }
                     }
                 }
+
+                // 4. Calculate instantaneous velocity using FPU (sqrtf)
+                float v_current;
+                if (stepCount < accel_steps) {
+                    v_current = sqrtf(s.v_entry * s.v_entry + 2.0f * s.accel * stepCount);
+                } else if (stepCount >= maxSteps - decel_steps) {
+                    uint32_t steps_from_end = maxSteps - stepCount;
+                    v_current = sqrtf(s.v_exit * s.v_exit + 2.0f * s.accel * steps_from_end);
+                } else {
+                    v_current = s.v_cruise;
+                }
+                
+                if (v_current < 1.0f) v_current = 1.0f; // Prevent division by zero
+                uint32_t stepInterval = (uint32_t)(F_CPU / v_current);
 
                 // Wait for the exact time interval dictated by the major axis
                 gpio_xor_mask(1u << 11);

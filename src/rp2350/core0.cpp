@@ -145,14 +145,22 @@ static bool handleStreamingCommand(const String& input) {
         s.cw[i] = (val < 0); 
     }
 
-    for (int i = 0; i < count; i++) {
-        s.sps[i] = (uint32_t)strtoul(ptr, &endPtr, 10);
-        if (ptr == endPtr) { 
-            Serial.printf("Error: Couldn't parse sps for motor: %d\n", i);
-            return true; 
-        }
-        ptr = endPtr;
-    }
+    // Parse the 4 global kinematic parameters
+    s.v_entry = strtof(ptr, &endPtr);
+    if (ptr == endPtr) { Serial.println("Error: Couldn't parse v_entry"); return true; }
+    ptr = endPtr;
+    
+    s.v_cruise = strtof(ptr, &endPtr);
+    if (ptr == endPtr) { Serial.println("Error: Couldn't parse v_cruise"); return true; }
+    ptr = endPtr;
+    
+    s.v_exit = strtof(ptr, &endPtr);
+    if (ptr == endPtr) { Serial.println("Error: Couldn't parse v_exit"); return true; }
+    ptr = endPtr;
+    
+    s.accel = strtof(ptr, &endPtr);
+    if (ptr == endPtr) { Serial.println("Error: Couldn't parse accel"); return true; }
+    ptr = endPtr;
 
     // --- CRITICAL SECTION: Shared Memory Update ---
     masterBuf[mBufTail] = s;

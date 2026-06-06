@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200mm" height="200mm">
+
+  <!-- Absolute C with implicit repetition (two cubics, one C command) -->
+  <path d="M 10 10 C 20 0, 40 0, 50 10 60 20, 80 20, 90 10" fill="none" stroke="red"/>
+
+  <!-- Absolute S chained after C -->
+  <path d="M 10 40 C 20 30, 40 30, 50 40 S 80 50, 90 40" fill="none" stroke="orange"/>
+
+  <!-- S with no preceding C (control point falls back to current point) -->
+  <path d="M 10 60 S 40 50, 50 60 S 80 70, 90 60" fill="none" stroke="gold"/>
+
+  <!-- Absolute Q -->
+  <path d="M 10 80 Q 50 60, 90 80" fill="none" stroke="green"/>
+
+  <!-- Absolute H and V -->
+  <path d="M 10 100 H 90 V 120 H 10 V 100" fill="none" stroke="teal"/>
+
+  <!-- Absolute L with Z close -->
+  <path d="M 10 140 L 50 130 L 90 140 Z" fill="none" stroke="blue"/>
+
+  <!-- Relative commands: m, l, c, s, q, h, v, z -->
+  <path d="m 10 160 l 20 -10 l 20 10 c 5 -10, 15 -10, 20 0 s 15 10, 20 0 q 10 -15, 20 0 h 10 v 10 z" fill="none" stroke="purple"/>
+
+  <!-- Implicit L after M (multiple coords on M) -->
+  <path d="M 10 185 20 185 30 190 40 185 50 185" fill="none" stroke="magenta"/>
+
+  <!-- Relative m starting a second subpath mid-path -->
+  <path d="M 100 10 L 150 10 m 0 20 l 50 0 m 0 20 l -50 0" fill="none" stroke="brown"/>
+
+</svg>

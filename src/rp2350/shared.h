@@ -59,8 +59,13 @@ struct Segment {
     uint8_t  numMotors;           // How many motors are in this specific move
     uint8_t  nodeId[MAX_MOTORS];  // Node IDs for this move (1 to 4)
     uint32_t steps[MAX_MOTORS];
-    uint32_t sps[MAX_MOTORS];
     bool     cw[MAX_MOTORS];
+    
+    // Kinematic Profile Parameters (Major Axis)
+    float v_entry;
+    float v_cruise;
+    float v_exit;
+    float accel;
 };
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
