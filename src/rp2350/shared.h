@@ -41,38 +41,62 @@
 // #define PEN_UP_MM      2.0f
 // #define PEN_SPEED_SPS  800
 
-#define SLAVE_BUF_SIZE    8
-#define SLAVE_BUF_TARGET  6
-#define MASTER_BUF_SIZE   128
-#define MASTER_BUF_LOW_WATERMARK 96
+#define MASTER_BUF_SIZE          512
+#define MASTER_BUF_LOW_WATERMARK 384
 
-// ─── Shared Memory Structures ─────────────────────────────────────────────────
-// struct Segment {
-//     int16_t  steps[NUM_MOTORS];
-//     uint16_t sps[NUM_MOTORS];
-//     bool     cw[NUM_MOTORS];
-// };
+// ─── MicroSegment ─────────────────────────────────────────────────────────────
+// One pre-computed step event produced by the host PC and consumed by Core 1.
+// All kinematics are resolved on the PC; the Pico is a dumb step emitter.
+//
+// dx/dy/dz/da: signed step counts per axis for this segment (major axis = 1).
+// interval:    time to wait before emitting, in RP2350 CPU cycles.
+// flags:       MSEG_FLAG_* bitmask (see below).
 
-#define MAX_MOTORS 4 // Maximum motors that can move in a single synchronized segment
+#define MSEG_FLAG_NONE      0x00
+#define MSEG_FLAG_PATH_END  0x01  // Last segment in a path — Core 1 can signal idle
+#define MSEG_FLAG_ESTOP     0x02  // Poison pill — flush and halt immediately
 
-struct Segment {
-    uint8_t  numMotors;           // How many motors are in this specific move
-    uint8_t  nodeId[MAX_MOTORS];  // Node IDs for this move (1 to 4)
-    uint32_t steps[MAX_MOTORS];
-    bool     cw[MAX_MOTORS];
-    
-    // Kinematic Profile Parameters (Major Axis)
-    float v_entry;
-    float v_cruise;
-    float v_exit;
-    float accel;
+struct MicroSegment {
+    int32_t  dx;        // X axis steps (signed)
+    int32_t  dy;        // Y axis steps (signed)
+    int32_t  dz;        // Z axis steps (signed, +lift / -lower)
+    int32_t  da;        // A axis steps (signed, tangential rotation)
+    uint32_t interval;  // Step interval in CPU cycles (major axis timing)
+    uint8_t  flags;     // MSEG_FLAG_* bitmask
+    uint8_t  pad[3];    // Alignment padding — total struct size = 24 bytes
 };
+
+// ─── USB Wire Packet ──────────────────────────────────────────────────────────
+// Binary packet framing for MicroSegments sent from host PC over USB CDC.
+//
+// Layout (26 bytes total):
+//   [0]      magic  = 0xAB
+//   [1..24]  MicroSegment (24 bytes, little-endian)
+//   [25]     CRC8 over bytes [0..24]
+
+#define MSEG_MAGIC       0xAB   // host production  — pre-computed step events
+#define TILE_MAGIC       0xAD   // local production — SplineTile geometry packets
+#define TOOL_MAGIC       0xAC   // local production — ToolConfig packets
+#define MSEG_PACKET_SIZE 26     // magic(1) + MicroSegment(24) + CRC8(1)
+
+// ACK/NACK responses (Pico → Host, 3 bytes each):
+//   ACK:  [0xAA] [seq_lo] [seq_hi]
+//   NACK: [0xBB] [reason] [0x00]
+//     reason 0x01 = CRC error
+//     reason 0x02 = buffer full (backpressure)
+//     reason 0x03 = bad magic
+
+#define MSEG_ACK         0xAA
+#define MSEG_NACK        0xBB
+#define MSEG_NACK_CRC    0x01
+#define MSEG_NACK_FULL   0x02
+#define MSEG_NACK_MAGIC  0x03
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
-extern Segment masterBuf[MASTER_BUF_SIZE];
-extern volatile uint8_t mBufHead; 
-extern volatile uint8_t mBufTail;
+extern MicroSegment masterBuf[MASTER_BUF_SIZE];
+extern volatile uint16_t mBufHead;
+extern volatile uint16_t mBufTail;
 
 extern volatile bool emergencyStop;
 extern volatile bool alarmTriggered;

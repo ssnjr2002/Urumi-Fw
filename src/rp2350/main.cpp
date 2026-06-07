@@ -45,9 +45,9 @@
 // ─── Cross-Core Global Variables (Memory Allocation) ──────────────────────────
 
 // The Ring Buffer
-Segment masterBuf[MASTER_BUF_SIZE];
-volatile uint8_t mBufHead = 0; 
-volatile uint8_t mBufTail = 0;
+MicroSegment masterBuf[MASTER_BUF_SIZE];
+volatile uint16_t mBufHead = 0;
+volatile uint16_t mBufTail = 0;
 
 // System Flags
 volatile bool emergencyStop = false;
