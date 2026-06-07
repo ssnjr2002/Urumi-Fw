@@ -155,14 +155,81 @@ def path_to_cubics(d):
 
 SVG_NS = "http://www.w3.org/2000/svg"
 
+# Cubic Bézier approximation constant for a quarter-circle arc
+_KAPPA = 0.5522847498
+
+def _float(elem, attr, default=0.0):
+    v = elem.get(attr)
+    return float(v) if v is not None else default
+
+def _circle_to_cubics(cx, cy, rx, ry):
+    """Approximate an ellipse (or circle when rx==ry) with 4 cubic Béziers."""
+    kx, ky = rx * _KAPPA, ry * _KAPPA
+    # Four quarter-arcs, starting at right (3 o'clock), going clockwise
+    quarters = [
+        CubicBezier((cx+rx, cy),      (cx+rx, cy+ky),  (cx+kx, cy+ry),  (cx, cy+ry)),
+        CubicBezier((cx, cy+ry),      (cx-kx, cy+ry),  (cx-rx, cy+ky),  (cx-rx, cy)),
+        CubicBezier((cx-rx, cy),      (cx-rx, cy-ky),  (cx-kx, cy-ry),  (cx, cy-ry)),
+        CubicBezier((cx, cy-ry),      (cx+kx, cy-ry),  (cx+rx, cy-ky),  (cx+rx, cy)),
+    ]
+    return quarters
+
+def _rect_to_cubics(x, y, w, h, rx=0.0, ry=0.0):
+    """Convert a rect (optionally rounded) to cubic Béziers."""
+    if rx == 0.0 and ry == 0.0:
+        # Sharp corners — four line segments as degenerate cubics
+        corners = [
+            (x,   y),   (x+w, y),
+            (x+w, y+h), (x,   y+h),
+        ]
+        return [_line_to_cubic(corners[i], corners[(i+1) % 4]) for i in range(4)]
+    # Rounded rect: clamp radii
+    rx = min(rx, w / 2); ry = min(ry, h / 2)
+    kx, ky = rx * _KAPPA, ry * _KAPPA
+    # 8-segment path: 4 straight sides + 4 rounded corners
+    return path_to_cubics(
+        f"M {x+rx},{y} "
+        f"H {x+w-rx} C {x+w-rx+kx},{y} {x+w},{y+ky} {x+w},{y+ry} "
+        f"V {y+h-ry} C {x+w},{y+h-ry+ky} {x+w-rx+kx},{y+h} {x+w-rx},{y+h} "
+        f"H {x+rx} C {x+rx-kx},{y+h} {x},{y+h-ry+ky} {x},{y+h-ry} "
+        f"V {y+ry} C {x},{y+ry-ky} {x+rx-kx},{y} {x+rx},{y} Z"
+    )
+
 def load_svg(path):
     tree = ET.parse(path)
     root = tree.getroot()
     all_curves = []
-    for elem in root.iter(f"{{{SVG_NS}}}path"):
-        d = elem.get("d", "")
-        if d:
-            all_curves.extend(path_to_cubics(d))
+
+    for elem in root.iter():
+        tag = elem.tag.replace(f"{{{SVG_NS}}}", "")
+
+        if tag == "path":
+            d = elem.get("d", "")
+            if d:
+                all_curves.extend(path_to_cubics(d))
+
+        elif tag in ("circle", "ellipse"):
+            cx = _float(elem, "cx"); cy = _float(elem, "cy")
+            if tag == "circle":
+                r = _float(elem, "r")
+                rx = ry = r
+            else:
+                rx = _float(elem, "rx"); ry = _float(elem, "ry")
+            if rx > 0 and ry > 0:
+                all_curves.extend(_circle_to_cubics(cx, cy, rx, ry))
+
+        elif tag == "rect":
+            x = _float(elem, "x"); y = _float(elem, "y")
+            w = _float(elem, "width"); h = _float(elem, "height")
+            rx = _float(elem, "rx"); ry = _float(elem, "ry") or rx
+            if w > 0 and h > 0:
+                all_curves.extend(_rect_to_cubics(x, y, w, h, rx, ry))
+
+        elif tag == "line":
+            x1 = _float(elem, "x1"); y1 = _float(elem, "y1")
+            x2 = _float(elem, "x2"); y2 = _float(elem, "y2")
+            all_curves.append(_line_to_cubic((x1, y1), (x2, y2)))
+
     return all_curves
 
 # ── main ──────────────────────────────────────────────────────────────────────

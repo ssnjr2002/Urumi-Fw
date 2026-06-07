@@ -73,6 +73,49 @@ def test_total_saturate_count():
     curves = load_svg(svg("test_saturate.svg"))
     assert len(curves) == 29
 
+def test_circle_element():
+    # <circle cx=50 cy=50 r=40> -> 4 cubic Béziers approximating full circle
+    import io, sys
+    from xml.etree import ElementTree as ET
+    from stage1 import _circle_to_cubics, _KAPPA
+    curves = _circle_to_cubics(50, 50, 40, 40)
+    assert len(curves) == 4
+    # Each segment starts where the previous one ends
+    for i in range(4):
+        assert approx(curves[i].p3, curves[(i+1) % 4].p0)
+    # Start point should be (cx+r, cy) = (90, 50)
+    assert approx(curves[0].p0, (90, 50))
+    # Control arm length should be r * kappa
+    kx = 40 * _KAPPA
+    assert approx(curves[0].p1, (90, 50 + kx))
+
+def test_circle_via_load_svg():
+    curves = load_svg(svg("test_circle.svg"))
+    assert len(curves) == 4
+    assert approx(curves[-1].p3, curves[0].p0)
+
+def test_ellipse_element():
+    curves = load_svg(svg("test_ellipse.svg"))
+    assert len(curves) == 4
+    # cx=50 cy=30 rx=40 ry=20 — rightmost point is (cx+rx, cy)
+    assert approx(curves[0].p0, (90, 30))
+    assert approx(curves[-1].p3, curves[0].p0)
+
+def test_rect_sharp():
+    curves = load_svg(svg("test_rect.svg"))
+    assert len(curves) == 4
+    # x=10 y=20 w=80 h=60 -> corners (10,20)->(90,20)->(90,80)->(10,80)->back
+    assert approx(curves[0].p0, (10, 20))
+    assert approx(curves[0].p3, (90, 20))
+    assert approx(curves[3].p3, (10, 20))
+
+def test_line_element():
+    curves = load_svg(svg("test_line.svg"))
+    assert len(curves) == 1
+    assert approx(curves[0].p0, (0, 0))
+    assert approx(curves[0].p3, (100, 50))
+    assert approx(curves[0].p1, (100/3, 50/3))
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     passed = failed = 0
