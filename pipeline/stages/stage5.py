@@ -1,0 +1,230 @@
+"""
+Stage 5: Velocity planner — forward + backward trapezoidal pass.
+Input:  list of CurveMetrics + parallel flags list + feed_max + a_max
+Output: list of PlannedCurve, each annotated with v_entry, v_cruise, v_exit (mm/s)
+
+Flags (from mock_stage5):
+  PATH_START      = 0x01  → v_entry forced to 0
+  PATH_END        = 0x02  → v_exit  forced to 0
+  MERGE_WITH_PREV = 0x04  → curve shares velocity envelope with previous
+
+Velocity caps (lowest wins):
+  1. feed_max          — tool config cruise limit
+  2. centripetal limit — sqrt(a_max / kappa_max), skipped when kappa_max == 0
+  3. reachable speed   — what forward/backward pass can actually reach
+"""
+
+import math
+import argparse
+import sys, os
+sys.path.insert(0, os.path.dirname(__file__))
+from stage1 import CubicBezier
+from stage2 import load_svg_mm
+from stage3 import enforce_c1
+from stage4 import compute_metrics
+from collections import namedtuple
+
+# ── flags (mirrors mock_stage5) ───────────────────────────────────────────────
+
+PATH_START      = 0x01
+PATH_END        = 0x02
+MERGE_WITH_PREV = 0x04
+
+# ── output structure ──────────────────────────────────────────────────────────
+
+PlannedCurve = namedtuple("PlannedCurve", [
+    "metrics",      # original CurveMetrics
+    "flags",        # int flag set
+    "v_entry",      # mm/s at curve start
+    "v_cruise",     # mm/s peak (may never be reached on short/triangular curves)
+    "v_exit",       # mm/s at curve end
+    "merged",       # bool — part of a merged group
+])
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _v_reachable(v_from, a_max, length):
+    """Max speed reachable from v_from over a given distance."""
+    return math.sqrt(max(0.0, v_from**2 + 2 * a_max * length))
+
+def _v_cruise_cap(m, feed_max, a_max):
+    """Lowest applicable cruise cap for this curve."""
+    cap = feed_max
+    if m.kappa_max > 1e-9:
+        cap = min(cap, math.sqrt(a_max / m.kappa_max))
+    return cap
+
+def _triangular_peak(v_entry, v_exit, a_max, length):
+    """
+    Peak velocity for a triangular profile (when cruise can't be reached).
+    Derived from: d_accel + d_decel = length
+      (v_peak² - v_entry²)/(2a) + (v_peak² - v_exit²)/(2a) = length
+    """
+    return math.sqrt(max(0.0, (v_entry**2 + v_exit**2) / 2 + a_max * length))
+
+# ── merge groups ──────────────────────────────────────────────────────────────
+
+def _build_merge_groups(metrics, flags):
+    """
+    Returns list of groups, each a list of indices belonging to that group.
+    MERGE_WITH_PREV attaches a curve to the previous group.
+    """
+    groups = []
+    for i in range(len(metrics)):
+        if i > 0 and (flags[i] & MERGE_WITH_PREV) and groups:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    return groups
+
+# ── main planner ──────────────────────────────────────────────────────────────
+
+def plan_velocities(metrics, flags, feed_max, a_max):
+    """
+    Returns list of PlannedCurve.
+    """
+    n = len(metrics)
+    if n == 0:
+        return []
+
+    groups = _build_merge_groups(metrics, flags)
+
+    # Working arrays — one entry per curve
+    v_entry = [0.0] * n
+    v_exit  = [0.0] * n
+    v_cruise= [0.0] * n
+    merged  = [False] * n
+
+    # Mark merged curves
+    for g in groups:
+        if len(g) > 1:
+            for idx in g:
+                merged[idx] = True
+
+    # ── forward pass ──────────────────────────────────────────────────────────
+    # Operate on groups as atomic units
+
+    group_v_entry = [0.0] * len(groups)  # entry velocity of each group
+
+    for gi, g in enumerate(groups):
+        # group entry velocity
+        first_flags = flags[g[0]]
+        if first_flags & PATH_START:
+            gv_entry = 0.0
+        elif gi == 0:
+            gv_entry = 0.0
+        else:
+            gv_entry = group_v_entry[gi]  # set by previous group's exit
+
+        group_length = sum(metrics[i].path_length_mm for i in g)
+        group_cap    = min(_v_cruise_cap(metrics[i], feed_max, a_max) for i in g)
+
+        gv_reachable = _v_reachable(gv_entry, a_max, group_length)
+        gv_exit      = min(group_cap, gv_reachable)
+
+        # propagate to next group
+        if gi + 1 < len(groups):
+            next_first_flags = flags[groups[gi+1][0]]
+            if next_first_flags & PATH_START:
+                group_v_entry[gi+1] = 0.0
+            else:
+                group_v_entry[gi+1] = gv_exit
+
+        # distribute entry/exit across curves in group
+        v_cur = gv_entry
+        for idx in g:
+            v_entry[idx] = v_cur
+            reachable = _v_reachable(v_cur, a_max, metrics[idx].path_length_mm)
+            cap = _v_cruise_cap(metrics[idx], feed_max, a_max)
+            v_exit[idx] = min(cap, reachable)
+            v_cur = v_exit[idx]
+
+    # ── backward pass ─────────────────────────────────────────────────────────
+
+    for gi in range(len(groups) - 1, -1, -1):
+        g = groups[gi]
+        last_flags = flags[g[-1]]
+
+        # force exit to 0 at PATH_END
+        if last_flags & PATH_END:
+            v_exit[g[-1]] = 0.0
+
+        # walk backward within group
+        for j in range(len(g) - 1, -1, -1):
+            idx = g[j]
+            v_ex = v_exit[idx]
+            # what entry is needed to decelerate to v_exit within this length?
+            v_limited = _v_reachable(v_ex, a_max, metrics[idx].path_length_mm)
+            v_entry[idx] = min(v_entry[idx], v_limited)
+            if j > 0:
+                prev = g[j-1]
+                v_exit[prev] = min(v_exit[prev], v_entry[idx])
+
+        # propagate back to previous group's exit
+        if gi > 0:
+            prev_g = groups[gi - 1]
+            v_exit[prev_g[-1]] = min(v_exit[prev_g[-1]], v_entry[g[0]])
+
+    # ── compute v_cruise and build output ─────────────────────────────────────
+
+    result = []
+    for gi, g in enumerate(groups):
+        group_length = sum(metrics[i].path_length_mm for i in g)
+        group_cap    = min(_v_cruise_cap(metrics[i], feed_max, a_max) for i in g)
+        gv_entry     = v_entry[g[0]]
+        gv_exit      = v_exit[g[-1]]
+
+        # triangular check: can we reach group_cap?
+        d_accel = (group_cap**2 - gv_entry**2) / (2 * a_max)
+        d_decel = (group_cap**2 - gv_exit**2)  / (2 * a_max)
+        if d_accel + d_decel > group_length:
+            group_cruise = _triangular_peak(gv_entry, gv_exit, a_max, group_length)
+        else:
+            group_cruise = group_cap
+
+        for idx in g:
+            v_cruise[idx] = group_cruise
+
+    for i in range(n):
+        result.append(PlannedCurve(
+            metrics=metrics[i],
+            flags=flags[i],
+            v_entry=v_entry[i],
+            v_cruise=v_cruise[i],
+            v_exit=v_exit[i],
+            merged=merged[i],
+        ))
+
+    return result
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Stage 5: velocity planner")
+    parser.add_argument("svg",       help="Path to SVG file")
+    parser.add_argument("--feed-max",type=float, default=80.0,   help="Max feed mm/s")
+    parser.add_argument("--a-max",   type=float, default=1000.0, help="Acceleration mm/s^2")
+    parser.add_argument("--angle-tol",type=float,default=5.0)
+    parser.add_argument("--gap-tol",  type=float,default=0.01)
+    args = parser.parse_args()
+
+    curves_mm, _ = load_svg_mm(args.svg)
+    repaired, _  = enforce_c1(curves_mm, args.angle_tol, args.gap_tol)
+    metrics      = compute_metrics(repaired)
+
+    # default: first curve PATH_START, last curve PATH_END, all others 0
+    flags = [0] * len(metrics)
+    if flags:
+        flags[0]  |= PATH_START
+        flags[-1] |= PATH_END
+
+    planned = plan_velocities(metrics, flags, args.feed_max, args.a_max)
+
+    total_len = sum(p.metrics.path_length_mm for p in planned)
+    print(f"Curves: {len(planned)}   Total: {total_len:.2f} mm   "
+          f"feed_max={args.feed_max}  a_max={args.a_max}\n")
+    print(f"  {'#':>3}  {'length':>8}  {'v_entry':>8}  {'v_cruise':>8}  {'v_exit':>8}  {'merged'}")
+    print(f"  {'-'*3}  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*8}  {'------'}")
+    for i, p in enumerate(planned):
+        print(f"  {i:3d}  {p.metrics.path_length_mm:8.2f}  "
+              f"{p.v_entry:8.2f}  {p.v_cruise:8.2f}  {p.v_exit:8.2f}  {p.merged}")
