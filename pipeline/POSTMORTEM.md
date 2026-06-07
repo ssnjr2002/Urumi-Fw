@@ -4,7 +4,7 @@ Seven stages, Python-only, no hardware. SVG in, binary packets out, with a full 
 
 | Stage | What it does |
 |---|---|
-| 1 | SVG `<path>` → cubic Bezier namedtuples |
+| 1 | SVG elements → cubic Bezier namedtuples, subpath-aware |
 | 2 | Pixel coords → mm + Y-flip |
 | 3 | C1 continuity repair at joins |
 | 4 | Arc length (Gauss-Legendre) + curvature κ |
@@ -12,7 +12,7 @@ Seven stages, Python-only, no hardware. SVG in, binary packets out, with a full 
 | 6 | Bezier → MicroSegments (integer steps + clock intervals) |
 | 7 | Binary SplineTile / ToolConfig packet serialiser |
 
-126 tests. No external dependencies.
+147 tests. No external dependencies in the pipeline itself.
 
 ---
 
