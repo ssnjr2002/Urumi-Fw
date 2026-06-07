@@ -1,6 +1,6 @@
 # Pipeline Prototype Post-Mortem
 
-Seven stages, Python-only, no hardware. SVG in, binary packets out, with a full Pico motion reference in between.
+Six stages, Python-only, no hardware. SVG in, MicroSegments out, with a full Pico motion reference in between. Serialisation to wire packets is not a pipeline concern — it lives in `host/serialise.py`.
 
 | Stage | What it does |
 |---|---|
@@ -10,7 +10,6 @@ Seven stages, Python-only, no hardware. SVG in, binary packets out, with a full 
 | 4 | Arc length (Gauss-Legendre) + curvature κ |
 | 5 | Trapezoidal velocity planner |
 | 6 | Bezier → MicroSegments (integer steps + clock intervals) |
-| 7 | Binary SplineTile / ToolConfig packet serialiser |
 
 147 tests. No external dependencies in the pipeline itself.
 
@@ -18,7 +17,7 @@ Seven stages, Python-only, no hardware. SVG in, binary packets out, with a full 
 
 ## 1. Tweaks from the plan
 
-**Stage order was wrong.** The plan describes a single pipeline 1→6. We built it that way, then realised stage 7 (the actual host output) belongs after stage 3 — stages 4–6 are Pico-side logic, not host-side. This isn't actually a problem: the stages are independent modules that import from each other, not a coupled sequence. Re-ordering them in the final system means nothing more than changing which platform runs which file. The Python implementations of 4–6 remain valid as the ground-truth reference for the C++ port.
+**Stage order was wrong.** The plan described a single pipeline 1→7, with stage 7 as the packet serialiser. In practice stages 4–6 are Pico-side logic, not host-side — the serialiser doesn't belong in the pipeline at all. The stages are independent modules; re-ordering them means nothing more than changing which platform runs which file. Serialisation moved to `host/serialise.py`. The Python implementations of 4–6 remain the ground-truth reference for the future C++ port.
 
 **`dt_vel` formula.** Plan says `dt ≤ Δv_max / (a · |ds/dt|)`. Implemented literally, this produced 55k segments on a simple snake because `|B'(t)|` is large for long curves. Replaced with numerical `dv/dt` from the velocity profile — zero subdivisions during cruise, fine subdivisions during accel/decel only.
 
