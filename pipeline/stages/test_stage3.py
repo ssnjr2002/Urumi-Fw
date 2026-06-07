@@ -35,11 +35,12 @@ def test_empty_list():
 
 # ── repair cases ──────────────────────────────────────────────────────────────
 
-def test_sharp_corner_inserts_blend():
+def test_sharp_corner_logged_as_cusp():
+    # Zero-gap sharp corners are logged but not modified — no loop inserted
     repaired, logs = enforce_c1(CASES["c0_only_sharp_corner"])
-    assert len(repaired) == 3
+    assert len(repaired) == 2   # original curves unchanged
     assert len(logs) == 1
-    assert logs[0].kind == "blend"
+    assert logs[0].kind == "cusp"
     assert abs(logs[0].angle_deg - 90.0) < 0.1
 
 def test_gap_inserts_bridge():
@@ -49,52 +50,54 @@ def test_gap_inserts_bridge():
     assert logs[0].kind == "bridge"
     assert logs[0].gap_mm > 0.01
 
-def test_multi_bad_joins_both_repaired():
+def test_multi_bad_joins_both_logged():
+    # Zero-gap sharp corners are now logged as cusps, not modified
     repaired, logs = enforce_c1(CASES["multi_bad_joins"])
-    assert len(repaired) == 5
+    assert len(repaired) == 3   # no extra curves inserted
     assert len(logs) == 2
-    assert all(l.kind == "blend" for l in logs)
+    assert all(l.kind == "cusp" for l in logs)
 
-def test_cusp_repaired():
+def test_cusp_logged_not_modified():
     repaired, logs = enforce_c1(CASES["cusp"])
-    assert len(repaired) == 3
+    assert len(repaired) == 2   # no blend cubic inserted
     assert len(logs) == 1
+    assert logs[0].kind == "cusp"
     assert abs(logs[0].angle_deg - 180.0) < 0.1
 
 # ── blend cubic geometry ──────────────────────────────────────────────────────
 
 def test_blend_endpoints_preserved():
-    # original curve endpoints must be unchanged after blend insertion
-    repaired, _ = enforce_c1(CASES["c0_only_sharp_corner"])
-    original = CASES["c0_only_sharp_corner"]
+    # original curve endpoints must be unchanged after bridge insertion
+    repaired, _ = enforce_c1(CASES["c0_broken_gap"])
+    original = CASES["c0_broken_gap"]
     assert approx(repaired[0].p0, original[0].p0)
     assert approx(repaired[0].p3, original[0].p3)
     assert approx(repaired[2].p0, original[1].p0)
     assert approx(repaired[2].p3, original[1].p3)
 
 def test_blend_connects_at_join():
-    # blend cubic p0 == curve[0].p3, blend p3 == curve[1].p0
-    repaired, _ = enforce_c1(CASES["c0_only_sharp_corner"])
-    blend = repaired[1]
-    assert approx(blend.p0, repaired[0].p3)
-    assert approx(blend.p3, repaired[2].p0)
+    # bridge cubic p0 == curve[0].p3, bridge p3 == curve[1].p0
+    repaired, _ = enforce_c1(CASES["c0_broken_gap"])
+    bridge = repaired[1]
+    assert approx(bridge.p0, repaired[0].p3)
+    assert approx(bridge.p3, repaired[2].p0)
 
 def test_blend_respects_exit_tangent():
-    # blend p1 must lie along the exit tangent of the preceding curve
-    repaired, _ = enforce_c1(CASES["c0_only_sharp_corner"])
+    # bridge p1 must lie along the exit tangent of the preceding curve
+    repaired, _ = enforce_c1(CASES["c0_broken_gap"])
     exit_t = _exit_tangent(repaired[0])
-    blend = repaired[1]
-    handle = (blend.p1[0] - blend.p0[0], blend.p1[1] - blend.p0[1])
+    bridge = repaired[1]
+    handle = (bridge.p1[0] - bridge.p0[0], bridge.p1[1] - bridge.p0[1])
     l = math.sqrt(handle[0]**2 + handle[1]**2) or 1
     angle = _angle_between_deg(exit_t, (handle[0]/l, handle[1]/l))
-    assert angle < 1.0  # blend p1 within 1° of exit tangent
+    assert angle < 1.0
 
 def test_blend_respects_entry_tangent():
-    # blend p2 must lie along the entry tangent of the following curve
-    repaired, _ = enforce_c1(CASES["c0_only_sharp_corner"])
+    # bridge p2 must lie along the entry tangent of the following curve
+    repaired, _ = enforce_c1(CASES["c0_broken_gap"])
     entry_t = _entry_tangent(repaired[2])
-    blend = repaired[1]
-    handle = (blend.p3[0] - blend.p2[0], blend.p3[1] - blend.p2[1])
+    bridge = repaired[1]
+    handle = (bridge.p3[0] - bridge.p2[0], bridge.p3[1] - bridge.p2[1])
     l = math.sqrt(handle[0]**2 + handle[1]**2) or 1
     angle = _angle_between_deg(entry_t, (handle[0]/l, handle[1]/l))
     assert angle < 1.0

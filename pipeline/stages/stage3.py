@@ -103,16 +103,16 @@ def enforce_c1(curves, angle_tol_deg=5.0, gap_tol_mm=0.01):
         angle = _angle_between_deg(exit_t, entry_t)
 
         if gap > gap_tol_mm:
-            # C0 broken: bridge the gap with a line-cubic, log it
+            # C0 broken: bridge the gap
             logs.append(RepairLog(i, "bridge", angle, gap))
             bridge = _blend_cubic(a.p3, exit_t, b.p0, entry_t)
             repaired.append(bridge)
 
         elif angle > angle_tol_deg:
-            # G1 broken: insert blending cubic
-            logs.append(RepairLog(i, "blend", angle, gap))
-            blend = _blend_cubic(a.p3, exit_t, b.p0, entry_t)
-            repaired.append(blend)
+            # Sharp corner at a shared point — log as cusp, leave as-is.
+            # Inserting a blend here produces a tiny loop (p0==p3) which a
+            # plotter would trace. Velocity planning handles cornering instead.
+            logs.append(RepairLog(i, "cusp", angle, gap))
 
         repaired.append(b)
 
