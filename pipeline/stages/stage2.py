@@ -97,11 +97,19 @@ def apply_transform(curves, transform):
 # ── public entry point ────────────────────────────────────────────────────────
 
 def load_svg_mm(svg_path):
-    """Full stage 1+2 pipeline: SVG file -> cubic Beziers in mm."""
+    """Full stage 1+2 pipeline: SVG file -> cubic Beziers in mm (flat list)."""
     curves_px = load_svg(svg_path)
     viewport  = parse_viewport(svg_path)
     transform = make_transform(*viewport)
     return apply_transform(curves_px, transform), viewport
+
+def load_svg_mm_subpaths(svg_path):
+    """Full stage 1+2 pipeline: SVG file -> list[list[CubicBezier]] in mm."""
+    from stage1 import load_svg_subpaths
+    subpaths_px = load_svg_subpaths(svg_path)
+    viewport    = parse_viewport(svg_path)
+    transform   = make_transform(*viewport)
+    return [apply_transform(sp, transform) for sp in subpaths_px], viewport
 
 # ── main ──────────────────────────────────────────────────────────────────────
 

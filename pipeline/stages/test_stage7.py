@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
 from stage7 import (
     pack_spline_tile, unpack_spline_tile,
     pack_tool_config, unpack_tool_config,
-    serialise_path, _crc8,
+    serialise_path, serialise_paths, _crc8,
     TILE_PATH_START, TILE_PATH_END, TILE_MERGE_WITH_PREV,
     TOOL_CUT, TOOL_JOG, TOOL_CONFIG_DEFAULT,
 )
@@ -202,6 +202,57 @@ def test_snake_svg_roundtrip():
                           [recovered.p0,recovered.p1,recovered.p2,recovered.p3]):
             assert approx(op[0], rp[0], tol=1e-3)
             assert approx(op[1], rp[1], tol=1e-3)
+
+# ── serialise_paths (multi-subpath) ──────────────────────────────────────────
+
+def test_serialise_paths_each_subpath_has_start_end():
+    subpaths = [S3_CASES["c1_perfect"], S3_CASES["single_curve"]]
+    packets = [p for p in serialise_paths(subpaths) if p[0] == 0xAB]
+    # first and last of each subpath must carry the right flags
+    sp1 = packets[:2]
+    sp2 = packets[2:]
+    _, _, f0 = unpack_spline_tile(sp1[0]);  assert f0 & TILE_PATH_START
+    _, _, f1 = unpack_spline_tile(sp1[-1]); assert f1 & TILE_PATH_END
+    _, _, f2 = unpack_spline_tile(sp2[0]);  assert f2 & TILE_PATH_START
+    _, _, f3 = unpack_spline_tile(sp2[-1]); assert f3 & TILE_PATH_END
+
+def test_serialise_paths_seq_global():
+    subpaths = [S3_CASES["c1_perfect"], S3_CASES["c1_perfect"]]
+    packets = list(serialise_paths(subpaths, tool_config=TOOL_CONFIG_DEFAULT))
+    for i, pkt in enumerate(packets):
+        seq = struct.unpack_from("<H", pkt, 1)[0]
+        assert seq == i
+
+def test_serialise_paths_all_crcs():
+    subpaths = [S3_CASES["c1_perfect"], S3_CASES["single_curve"]]
+    for pkt in serialise_paths(subpaths, tool_config=TOOL_CONFIG_DEFAULT):
+        assert _crc8(pkt[:-1]) == pkt[-1]
+
+def test_serialise_paths_inner_tiles_no_start_end():
+    # middle tiles of a multi-curve subpath should have neither flag
+    subpaths = [S3_CASES["multi_bad_joins"]]  # 3 curves
+    tiles = [p for p in serialise_paths(subpaths) if p[0] == 0xAB]
+    _, _, mid_flags = unpack_spline_tile(tiles[1])
+    assert not (mid_flags & TILE_PATH_START)
+    assert not (mid_flags & TILE_PATH_END)
+
+# ── load_svg_subpaths ─────────────────────────────────────────────────────────
+
+def test_fish_subpath_count():
+    import os
+    fish = os.path.join(os.path.dirname(__file__), "..", "..", "fish.svg")
+    if not os.path.exists(fish):
+        return  # skip if fish.svg not present
+    from stage1 import load_svg_subpaths
+    subpaths = load_svg_subpaths(fish)
+    # fish.svg has multiple distinct shapes — expect more than 1 subpath
+    assert len(subpaths) > 1
+
+def test_circle_svg_one_subpath():
+    from stage1 import load_svg_subpaths
+    subpaths = load_svg_subpaths(svg("test_circle.svg"))
+    assert len(subpaths) == 1
+    assert len(subpaths[0]) == 4  # 4-arc approximation
 
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]

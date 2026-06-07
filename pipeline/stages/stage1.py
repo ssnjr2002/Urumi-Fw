@@ -42,21 +42,13 @@ def _quad_to_cubic(p0, qp1, p2):
 
 # ── main parser ───────────────────────────────────────────────────────────────
 
-def path_to_cubics(d):
+def path_to_subpaths(d):
+    """
+    Parse an SVG path d attribute and return list[list[CubicBezier]].
+    Each M/m command that is not the first starts a new subpath.
+    cur is preserved across subpath boundaries so relative m works correctly.
+    """
     tokens = _tokenise(d)
-    it = iter(tokens)
-    curves = []
-
-    cur = (0.0, 0.0)   # current point
-    start = (0.0, 0.0) # subpath start (for Z)
-    last_cp = None      # last control point (for S/T reflection)
-    last_cmd = None
-
-    cmd = None
-    pending = list(tokens)
-    idx = 0
-
-    # re-parse with index for implicit command repetition
     nums = []
     cmds = []
     for t in tokens:
@@ -66,8 +58,13 @@ def path_to_cubics(d):
             nums.append(t)
     cmds.append(("__end__", len(nums)))
 
-    def n(i):
-        return nums[i]
+    subpaths = []
+    current = []
+    cur = (0.0, 0.0)
+    start = (0.0, 0.0)
+    last_cp = None
+    last_cmd = None
+    first_cmd = True
 
     for ci, (cmd, ni) in enumerate(cmds[:-1]):
         next_ni = cmds[ci + 1][1]
@@ -75,81 +72,97 @@ def path_to_cubics(d):
         rel = cmd.islower()
         C = cmd.upper()
 
-        def abs_pt(x, y):
-            if rel:
-                return (cur[0] + x, cur[1] + y)
+        def abs_pt(x, y, _rel=rel, _cur=None):
+            c = _cur if _cur is not None else cur
+            if _rel:
+                return (c[0] + x, c[1] + y)
             return (x, y)
 
+        # New subpath boundary: M/m after the very first command
+        if C == "M" and not first_cmd:
+            if current:
+                subpaths.append(current)
+            current = []
+
         i = 0
-        while i < len(chunk) or (C == "Z"):
+        while i < len(chunk) or C == "Z":
             if C == "M":
                 x, y = chunk[i], chunk[i+1]; i += 2
-                cur = abs_pt(x, y)
+                cur = (cur[0] + x, cur[1] + y) if rel else (x, y)
                 start = cur
                 last_cp = None
-                # subsequent coords in M are implicit L
-                C = "L"; rel = cmd.islower()
+                C = "L"
                 if i >= len(chunk):
                     break
                 continue
 
             elif C == "L":
                 x, y = chunk[i], chunk[i+1]; i += 2
-                p1 = abs_pt(x, y)
-                curves.append(_line_to_cubic(cur, p1))
+                p1 = (cur[0] + x, cur[1] + y) if rel else (x, y)
+                current.append(_line_to_cubic(cur, p1))
                 cur = p1; last_cp = None
 
             elif C == "H":
                 x = chunk[i]; i += 1
                 p1 = (cur[0] + x if rel else x, cur[1])
-                curves.append(_line_to_cubic(cur, p1))
+                current.append(_line_to_cubic(cur, p1))
                 cur = p1; last_cp = None
 
             elif C == "V":
                 y = chunk[i]; i += 1
                 p1 = (cur[0], cur[1] + y if rel else y)
-                curves.append(_line_to_cubic(cur, p1))
+                current.append(_line_to_cubic(cur, p1))
                 cur = p1; last_cp = None
 
             elif C == "C":
                 x1,y1,x2,y2,x,y = chunk[i:i+6]; i += 6
-                p1 = abs_pt(x1, y1)
-                p2 = abs_pt(x2, y2)
-                p3 = abs_pt(x, y)
-                curves.append(CubicBezier(cur, p1, p2, p3))
+                if rel:
+                    p1 = (cur[0]+x1, cur[1]+y1)
+                    p2 = (cur[0]+x2, cur[1]+y2)
+                    p3 = (cur[0]+x,  cur[1]+y)
+                else:
+                    p1, p2, p3 = (x1,y1), (x2,y2), (x,y)
+                current.append(CubicBezier(cur, p1, p2, p3))
                 last_cp = p2; cur = p3
 
             elif C == "S":
                 x2,y2,x,y = chunk[i:i+4]; i += 4
-                # reflect last control point
                 if last_cmd in ("C","c","S","s") and last_cp is not None:
                     p1 = (2*cur[0] - last_cp[0], 2*cur[1] - last_cp[1])
                 else:
                     p1 = cur
-                p2 = abs_pt(x2, y2)
-                p3 = abs_pt(x, y)
-                curves.append(CubicBezier(cur, p1, p2, p3))
+                p2 = (cur[0]+x2, cur[1]+y2) if rel else (x2, y2)
+                p3 = (cur[0]+x,  cur[1]+y)  if rel else (x,  y)
+                current.append(CubicBezier(cur, p1, p2, p3))
                 last_cp = p2; cur = p3
 
             elif C == "Q":
                 x1,y1,x,y = chunk[i:i+4]; i += 4
-                qp1 = abs_pt(x1, y1)
-                p2  = abs_pt(x, y)
-                curves.append(_quad_to_cubic(cur, qp1, p2))
+                qp1 = (cur[0]+x1, cur[1]+y1) if rel else (x1, y1)
+                p2  = (cur[0]+x,  cur[1]+y)  if rel else (x,  y)
+                current.append(_quad_to_cubic(cur, qp1, p2))
                 last_cp = qp1; cur = p2
 
             elif C == "Z":
                 if cur != start:
-                    curves.append(_line_to_cubic(cur, start))
+                    current.append(_line_to_cubic(cur, start))
                 cur = start; last_cp = None
                 break
 
             else:
-                break  # unknown command, skip
+                break
 
         last_cmd = cmd
+        first_cmd = False
 
-    return curves
+    if current:
+        subpaths.append(current)
+    return subpaths
+
+
+def path_to_cubics(d):
+    """Flat list of CubicBeziers from an SVG path d attribute."""
+    return [c for sp in path_to_subpaths(d) for c in sp]
 
 # ── SVG file loader ───────────────────────────────────────────────────────────
 
@@ -196,9 +209,18 @@ def _rect_to_cubics(x, y, w, h, rx=0.0, ry=0.0):
     )
 
 def load_svg(path):
+    """Returns a flat list of CubicBeziers from all elements in the SVG."""
+    subpaths = load_svg_subpaths(path)
+    return [c for sp in subpaths for c in sp]
+
+def load_svg_subpaths(path):
+    """
+    Returns list[list[CubicBezier]], one inner list per subpath.
+    Each SVG primitive element is one subpath; <path> elements are split on M.
+    """
     tree = ET.parse(path)
     root = tree.getroot()
-    all_curves = []
+    all_subpaths = []
 
     for elem in root.iter():
         tag = elem.tag.replace(f"{{{SVG_NS}}}", "")
@@ -206,31 +228,30 @@ def load_svg(path):
         if tag == "path":
             d = elem.get("d", "")
             if d:
-                all_curves.extend(path_to_cubics(d))
+                all_subpaths.extend(path_to_subpaths(d))
 
         elif tag in ("circle", "ellipse"):
             cx = _float(elem, "cx"); cy = _float(elem, "cy")
             if tag == "circle":
-                r = _float(elem, "r")
-                rx = ry = r
+                r = _float(elem, "r"); rx = ry = r
             else:
                 rx = _float(elem, "rx"); ry = _float(elem, "ry")
             if rx > 0 and ry > 0:
-                all_curves.extend(_circle_to_cubics(cx, cy, rx, ry))
+                all_subpaths.append(_circle_to_cubics(cx, cy, rx, ry))
 
         elif tag == "rect":
             x = _float(elem, "x"); y = _float(elem, "y")
             w = _float(elem, "width"); h = _float(elem, "height")
             rx = _float(elem, "rx"); ry = _float(elem, "ry") or rx
             if w > 0 and h > 0:
-                all_curves.extend(_rect_to_cubics(x, y, w, h, rx, ry))
+                all_subpaths.append(_rect_to_cubics(x, y, w, h, rx, ry))
 
         elif tag == "line":
             x1 = _float(elem, "x1"); y1 = _float(elem, "y1")
             x2 = _float(elem, "x2"); y2 = _float(elem, "y2")
-            all_curves.append(_line_to_cubic((x1, y1), (x2, y2)))
+            all_subpaths.append([_line_to_cubic((x1, y1), (x2, y2))])
 
-    return all_curves
+    return all_subpaths
 
 # ── main ──────────────────────────────────────────────────────────────────────
 

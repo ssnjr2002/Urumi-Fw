@@ -128,6 +128,30 @@ def unpack_spline_tile(data: bytes):
 
 # ── stream serialiser ─────────────────────────────────────────────────────────
 
+def serialise_paths(subpaths, tool_config=None):
+    """
+    Serialise a list of subpaths (each a list[CubicBezier]) into packets.
+    Emits one optional ToolConfig then SplineTiles with correct START/END flags
+    per subpath. seq_num increments globally across all subpaths.
+    The receiver should lift the tool on PATH_END and lower it on PATH_START.
+    """
+    seq = 0
+    if tool_config is not None:
+        yield pack_tool_config(tool_config, seq)
+        seq = (seq + 1) & 0xFFFF
+
+    for subpath in subpaths:
+        if not subpath:
+            continue
+        for i, curve in enumerate(subpath):
+            flags = 0
+            if i == 0:
+                flags |= TILE_PATH_START
+            if i == len(subpath) - 1:
+                flags |= TILE_PATH_END
+            yield pack_spline_tile(curve, seq, flags)
+            seq = (seq + 1) & 0xFFFF
+
 def serialise_path(curves, tool_config=None, first_flags=None):
     """
     Serialise a list of CubicBeziers into a sequence of packets.
