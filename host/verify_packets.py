@@ -1,28 +1,24 @@
 """
-verify_packets.py — decode and verify binary RS485 packet stream
+verify_packets.py — offline validator and trajectory visualiser for MicroSegment streams
 
-Usage (pipe):
+Usage:
+  python svg_to_packets.py input.svg --out job.bin
+  python verify_packets.py --in job.bin
+  python verify_packets.py --in job.bin --plot
   python svg_to_packets.py input.svg | python verify_packets.py
-  python svg_to_packets.py input.svg | python verify_packets.py --plot
-  python svg_to_packets.py input.svg | python verify_packets.py --serial COM3
-  python svg_to_packets.py input.svg | python verify_packets.py --serial /dev/ttyUSB0
 
-Read from file:
-  python verify_packets.py --in file.bin
-  python verify_packets.py --in file.bin --plot
-
-On Windows stdin is opened in text mode which corrupts binary data.
-This script always reads from sys.stdin.buffer (binary mode).
+Reads a length-prefixed binary stream (written by svg_to_packets.py), validates
+every packet (magic, size, CRC), and optionally plots the reconstructed XY
+trajectory by accumulating dx/dy step deltas.
 """
 
-import sys, os, argparse, struct, time
+import sys, os, argparse, struct
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pipeline", "stages"))
-from stage7 import unpack_spline_tile, unpack_tool_config, _crc8, TILE_PATH_START, TILE_PATH_END
-
-MAGIC_SPLINE = 0xAB
-MAGIC_TOOL   = 0xAC
-PKT_SIZES    = {MAGIC_SPLINE: 37, MAGIC_TOOL: 21}
+sys.path.insert(0, os.path.dirname(__file__))
+from serialise import (
+    validate_packet, unpack_microsegment,
+    MAGIC_MICROSEG, MSEG_FLAG_PATH_END,
+)
 
 
 # ── framing reader ─────────────────────────────────────────────────────────────
@@ -39,196 +35,130 @@ def read_packets(src):
         (length,) = struct.unpack("<H", header)
         data = src.read(length)
         if len(data) < length:
-            print(f"WARN: expected {length}B payload, got {len(data)}B", file=sys.stderr)
+            print(f"WARN: expected {length}B, got {len(data)}B", file=sys.stderr)
             break
         yield data
 
 
-# ── verification ───────────────────────────────────────────────────────────────
+# ── stats ──────────────────────────────────────────────────────────────────────
 
 class Stats:
     def __init__(self):
-        self.total = self.ok = self.crc_fail = self.bad_magic = self.bad_size = 0
-        self.tool_configs = []
-        self.spline_tiles = []   # (curve, seq_num, flags)
-        self.seq_errors   = 0
+        self.total      = 0
+        self.ok         = 0
+        self.crc_fail   = 0
+        self.bad_magic  = 0
+        self.bad_size   = 0
+        self.segments   = []   # list of unpacked dicts
 
     def report(self):
         print(f"\n{'-'*50}")
-        print(f"Packets total   : {self.total}")
-        print(f"  OK            : {self.ok}")
-        print(f"  CRC failures  : {self.crc_fail}")
-        print(f"  Bad magic     : {self.bad_magic}")
-        print(f"  Bad size      : {self.bad_size}")
-        print(f"  Seq errors    : {self.seq_errors}")
-        print(f"ToolConfig pkts : {len(self.tool_configs)}")
-        print(f"SplineTile pkts : {len(self.spline_tiles)}")
-        if self.tool_configs:
-            tc, seq = self.tool_configs[0]
-            print(f"\nTool            : {['JOG','CUT','CREASE'][tc.tool_type]}")
-            print(f"Feed max        : {tc.feed_max} mm/s")
-            print(f"Lift kappa      : {tc.lift_kappa} 1/mm")
-        ok = self.crc_fail == 0 and self.bad_magic == 0 and self.seq_errors == 0
-        print(f"\nResult          : {'PASS' if ok else 'FAIL'}")
+        print(f"Packets total  : {self.total}")
+        print(f"  OK           : {self.ok}")
+        print(f"  CRC failures : {self.crc_fail}")
+        print(f"  Bad magic    : {self.bad_magic}")
+        print(f"  Bad size     : {self.bad_size}")
+        if self.segments:
+            total_x = sum(s['dx'] for s in self.segments)
+            total_y = sum(s['dy'] for s in self.segments)
+            total_a = sum(s['da'] for s in self.segments)
+            ivs = [s['interval'] for s in self.segments]
+            print(f"Net steps      : dx={total_x}  dy={total_y}  da={total_a}")
+            print(f"Interval range : {min(ivs)} – {max(ivs)} cycles")
+        ok = self.crc_fail == 0 and self.bad_magic == 0 and self.bad_size == 0
+        print(f"\nResult         : {'PASS' if ok else 'FAIL'}")
         return ok
 
 
+# ── verification ───────────────────────────────────────────────────────────────
+
 def verify_stream(src, verbose=False):
     stats = Stats()
-    expected_seq = None
 
     for raw in read_packets(src):
         stats.total += 1
-        magic = raw[0] if raw else None
 
-        if magic not in PKT_SIZES:
-            stats.bad_magic += 1
-            print(f"  [{stats.total:4d}] BAD MAGIC 0x{magic:02X}", file=sys.stderr)
+        ok, reason = validate_packet(raw)
+        if not ok:
+            if 'magic' in reason:   stats.bad_magic += 1
+            elif 'size' in reason:  stats.bad_size  += 1
+            elif 'CRC'  in reason:  stats.crc_fail  += 1
+            else:                   stats.bad_magic  += 1
+            print(f"  [{stats.total:5d}] FAIL — {reason}", file=sys.stderr)
             continue
 
-        expected_len = PKT_SIZES[magic]
-        if len(raw) != expected_len:
-            stats.bad_size += 1
-            print(f"  [{stats.total:4d}] BAD SIZE {len(raw)} (expected {expected_len})", file=sys.stderr)
-            continue
-
-        crc_ok = _crc8(raw[:-1]) == raw[-1]
-        if not crc_ok:
-            stats.crc_fail += 1
-            print(f"  [{stats.total:4d}] CRC FAIL  magic=0x{magic:02X}", file=sys.stderr)
-            continue
-
-        seq = int.from_bytes(raw[1:3], "little")
-        if expected_seq is not None and seq != expected_seq:
-            stats.seq_errors += 1
-            print(f"  [{stats.total:4d}] SEQ ERROR got={seq} expected={expected_seq}", file=sys.stderr)
-        expected_seq = (seq + 1) & 0xFFFF
-
-        if magic == MAGIC_TOOL:
-            tc, s = unpack_tool_config(raw)
-            stats.tool_configs.append((tc, s))
-            if verbose:
-                print(f"  [{stats.total:4d}] ToolConfig  seq={s:5d}  tool={tc.tool_type}  feed={tc.feed_max}")
-        else:
-            curve, s, flags = unpack_spline_tile(raw)
-            stats.spline_tiles.append((curve, s, flags))
-            if verbose:
-                flag_str = "|".join(f for f, b in [
-                    ("START", flags & 0x02), ("END", flags & 0x04), ("MERGE", flags & 0x01)
-                ] if b)
-                print(f"  [{stats.total:4d}] SplineTile  seq={s:5d}  flags={flag_str or '-'}  "
-                      f"p0=({curve.p0[0]:.2f},{curve.p0[1]:.2f})")
-
+        ms = unpack_microsegment(raw)
+        stats.segments.append(ms)
         stats.ok += 1
+
+        if verbose:
+            flag_str = '|'.join(f for f, b in [
+                ('PATH_END', ms['flags'] & MSEG_FLAG_PATH_END),
+            ] if b) or '-'
+            print(f"  [{stats.total:5d}]  dx={ms['dx']:6d}  dy={ms['dy']:6d}"
+                  f"  dz={ms['dz']:5d}  da={ms['da']:5d}"
+                  f"  iv={ms['interval']:10d}  flags={flag_str}")
 
     return stats
 
 
-# ── optional plot ──────────────────────────────────────────────────────────────
+# ── trajectory plot ────────────────────────────────────────────────────────────
 
-def plot_path(spline_tiles):
+def plot_trajectory(segments, steps_per_mm=80.0):
     try:
         import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
-        import matplotlib.widgets as mwidgets
         import numpy as np
     except ImportError:
         print("matplotlib not installed — skipping plot", file=sys.stderr)
         return
 
-    subpath_count = sum(1 for _, _, flags in spline_tiles if flags & TILE_PATH_START)
-    colors = cm.tab10.colors if subpath_count <= 10 else cm.tab20.colors
-    color_idx = -1
-    current_color = colors[0]
+    # Reconstruct XY position by accumulating dx/dy
+    xs, ys = [0.0], [0.0]
+    x = y = 0.0
+    path_breaks = []   # indices where PATH_END occurs
 
-    fig, ax = plt.subplots(figsize=(8, 9))
-    plt.subplots_adjust(bottom=0.12)
-    ax.set_aspect("equal")
-    ax.set_title(f"Decoded spline path ({subpath_count} subpath(s))")
+    for i, ms in enumerate(segments):
+        x += ms['dx'] / steps_per_mm
+        y += ms['dy'] / steps_per_mm
+        xs.append(x)
+        ys.append(y)
+        if ms['flags'] & MSEG_FLAG_PATH_END:
+            path_breaks.append(len(xs) - 1)
 
-    cut_lines = []
-    jog_lines = []
-    last_end = None   # last point of the previous subpath (for jog drawing)
+    xs = np.array(xs)
+    ys = np.array(ys)
 
-    for curve, seq, flags in spline_tiles:
-        if flags & TILE_PATH_START:
-            color_idx = (color_idx + 1) % len(colors)
-            current_color = colors[color_idx]
-            # Draw jog from previous subpath end to this subpath start
-            if last_end is not None:
-                jx = [last_end[0], curve.p0[0]]
-                jy = [last_end[1], curve.p0[1]]
-                ln, = ax.plot(jx, jy, color="gray", lw=0.6, linestyle="--", alpha=0.5)
-                jog_lines.append(ln)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_aspect('equal')
+    ax.set_title(f"Reconstructed trajectory  ({len(segments)} MicroSegments)")
+    ax.set_xlabel("X (mm)")
+    ax.set_ylabel("Y (mm)")
 
-        t = np.linspace(0, 1, 40)
-        p0, p1, p2, p3 = (np.array(curve.p0), np.array(curve.p1),
-                          np.array(curve.p2), np.array(curve.p3))
-        pts = ((1-t)**3)[:,None]*p0 + 3*((1-t)**2*t)[:,None]*p1 + \
-              3*((1-t)*t**2)[:,None]*p2 + (t**3)[:,None]*p3
-        ln, = ax.plot(pts[:,0], pts[:,1], color=current_color, lw=0.8)
-        cut_lines.append(ln)
+    # Split into subpaths at PATH_END boundaries and plot each
+    prev = 0
+    color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    for ci, end_idx in enumerate(path_breaks + [len(xs) - 1]):
+        sl = slice(prev, end_idx + 1)
+        ax.plot(xs[sl], ys[sl], color=color_cycle[ci % len(color_cycle)], lw=0.8)
+        prev = end_idx
 
-        if flags & TILE_PATH_END:
-            last_end = tuple(curve.p3)
-
-    ax.invert_yaxis()   # SVG Y-down convention
-
-    # Checkbox to toggle jog visibility (only shown if there are jog lines)
-    if jog_lines:
-        ax_check = plt.axes([0.72, 0.02, 0.22, 0.06])
-        check = mwidgets.CheckButtons(ax_check, ["Show jog paths"], [True])
-
-        def _toggle(label):
-            visible = check.get_status()[0]
-            for ln in jog_lines:
-                ln.set_visible(visible)
-            fig.canvas.draw_idle()
-
-        check.on_clicked(_toggle)
-
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        plt.tight_layout(rect=[0, 0.08, 1, 1])
+    ax.invert_yaxis()  # match SVG Y-down convention
+    plt.tight_layout()
     plt.show()
-
-
-# ── optional serial replay ─────────────────────────────────────────────────────
-
-def replay_serial(spline_tiles, tool_configs, port, baud=921600):
-    try:
-        import serial
-    except ImportError:
-        print("pyserial not installed — cannot replay to hardware", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Opening {port} @ {baud}…", file=sys.stderr)
-    with serial.Serial(port, baud, timeout=1) as ser:
-        if tool_configs:
-            tc, seq = tool_configs[0]
-            from stage7 import pack_tool_config
-            ser.write(pack_tool_config(tc, seq))
-
-        for curve, seq, flags in spline_tiles:
-            from stage7 import pack_spline_tile
-            ser.write(pack_spline_tile(curve, seq, flags))
-            time.sleep(0.001)
-
-    print("Replay complete.", file=sys.stderr)
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Decode and verify binary RS485 packet stream"
+        description="Validate and visualise a MicroSegment binary stream"
     )
-    parser.add_argument("--in",     dest="infile", help="Read from file instead of stdin")
-    parser.add_argument("--plot",   action="store_true", help="Plot decoded spline path")
-    parser.add_argument("--serial", metavar="PORT",
-                        help="Replay raw packets to serial port (e.g. COM3 or /dev/ttyUSB0)")
-    parser.add_argument("--baud",   type=int, default=921600)
+    parser.add_argument("--in",          dest="infile",
+                        help="Read from file instead of stdin")
+    parser.add_argument("--plot",        action="store_true",
+                        help="Plot reconstructed XY trajectory")
+    parser.add_argument("--steps-per-mm", type=float, default=80.0,
+                        help="Steps per mm for trajectory plot (default 80)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -243,11 +173,8 @@ def main():
     if args.infile:
         src.close()
 
-    if args.plot:
-        plot_path(stats.spline_tiles)
-
-    if args.serial and ok:
-        replay_serial(stats.spline_tiles, stats.tool_configs, args.serial, args.baud)
+    if args.plot and stats.segments:
+        plot_trajectory(stats.segments, args.steps_per_mm)
 
     sys.exit(0 if ok else 1)
 
