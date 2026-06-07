@@ -251,6 +251,17 @@ def load_svg_subpaths(path):
             x2 = _float(elem, "x2"); y2 = _float(elem, "y2")
             all_subpaths.append([_line_to_cubic((x1, y1), (x2, y2))])
 
+        elif tag in ("polygon", "polyline"):
+            pts_str = elem.get("points", "").strip()
+            if pts_str:
+                coords = [float(v) for v in re.split(r"[\s,]+", pts_str) if v]
+                pts = [(coords[i], coords[i+1]) for i in range(0, len(coords)-1, 2)]
+                if len(pts) >= 2:
+                    segs = [_line_to_cubic(pts[i], pts[i+1]) for i in range(len(pts)-1)]
+                    if tag == "polygon":
+                        segs.append(_line_to_cubic(pts[-1], pts[0]))
+                    all_subpaths.append(segs)
+
     return all_subpaths
 
 # ── main ──────────────────────────────────────────────────────────────────────

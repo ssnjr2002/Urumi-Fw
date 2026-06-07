@@ -116,6 +116,26 @@ def test_line_element():
     assert approx(curves[0].p3, (100, 50))
     assert approx(curves[0].p1, (100/3, 50/3))
 
+def test_polygon_element():
+    curves = load_svg(svg("test_polygon.svg"))
+    # triangle: 3 points -> 3 line segments (closed)
+    assert len(curves) == 3
+    assert approx(curves[0].p0, (50, 10))
+    assert approx(curves[0].p3, (90, 90))
+    assert approx(curves[2].p3, (50, 10))  # closes back to start
+
+def test_polyline_element(tmp_path=None):
+    import os, tempfile
+    p = os.path.join(tempfile.gettempdir(), "test_polyline.svg")
+    with open(p, "w") as f:
+        f.write('<svg xmlns="http://www.w3.org/2000/svg"><polyline points="0,0 50,50 100,0"/></svg>')
+    curves = load_svg(p)
+    # 2 segments, NOT closed
+    assert len(curves) == 2
+    assert approx(curves[0].p0, (0, 0))
+    assert approx(curves[1].p3, (100, 0))
+    os.unlink(p)
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     passed = failed = 0
