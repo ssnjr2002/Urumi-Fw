@@ -113,14 +113,14 @@ void setup() {
     }
 }
 
-// Lock-free atomic read of 32-bit counter
+// Atomic read of 32-bit counter. Double-check is not safe on 8-bit AVR —
+// a 32-bit volatile read is 4 separate LD instructions; the ISR can fire
+// between any two and two torn reads can coincidentally match.
 int32_t readPositionAtomic() {
-    int32_t val1, val2;
-    do {
-        val1 = absolutePosition;
-        val2 = absolutePosition;
-    } while (val1 != val2);
-    return val1;
+    cli();
+    int32_t pos = absolutePosition;
+    sei();
+    return pos;
 }
 
 void loop() {
