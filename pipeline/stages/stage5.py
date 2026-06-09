@@ -55,6 +55,36 @@ def _v_cruise_cap(m, feed_max, a_max):
         cap = min(cap, math.sqrt(a_max / m.kappa_max))
     return cap
 
+def _unit(v):
+    l = math.hypot(v[0], v[1])
+    return (v[0]/l, v[1]/l) if l > 1e-12 else (0.0, 0.0)
+
+def _junction_velocity(curve_a, curve_b, a_max, deviation, feed_max):
+    """
+    GRBL-style junction-deviation cornering speed at the joint between two
+    curves. Models the corner as a circular arc deviating from the exact corner
+    by at most `deviation` mm; returns the speed that keeps centripetal accel at
+    a_max on that arc.
+
+      straight join  -> feed_max (no slowdown)
+      90-degree turn -> sqrt(a_max * 2.41 * deviation)
+      full reversal  -> 0
+
+    Tangent directions are direction-of-travel: exit of A, entry of B.
+    """
+    d_prev = _unit((curve_a.p3[0] - curve_a.p2[0], curve_a.p3[1] - curve_a.p2[1]))
+    d_next = _unit((curve_b.p1[0] - curve_b.p0[0], curve_b.p1[1] - curve_b.p0[1]))
+    if d_prev == (0.0, 0.0) or d_next == (0.0, 0.0):
+        return feed_max  # degenerate tangent — don't constrain
+
+    dot = max(-1.0, min(1.0, d_prev[0]*d_next[0] + d_prev[1]*d_next[1]))
+    # half_cos = cos(turn_angle/2): 1 when straight, 0 at full reversal
+    half_cos = math.sqrt(0.5 * (1.0 + dot))
+    if half_cos >= 1.0 - 1e-9:
+        return feed_max  # effectively straight
+    radius = deviation * half_cos / (1.0 - half_cos)
+    return min(feed_max, math.sqrt(a_max * radius))
+
 def _triangular_peak(v_entry, v_exit, a_max, length):
     """
     Peak velocity for a triangular profile (when cruise can't be reached).
@@ -80,13 +110,31 @@ def _build_merge_groups(metrics, flags):
 
 # ── main planner ──────────────────────────────────────────────────────────────
 
-def plan_velocities(metrics, flags, feed_max, a_max):
+def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None):
     """
     Returns list of PlannedCurve.
+
+    junction_deviation enables GRBL-style cornering: at each internal cusp
+    (sharp join stage3 left unblended) the joint velocity is capped by the
+    corner's turn angle, so the machine decelerates into sharp corners and
+    accelerates out instead of charging through at full speed. Defaults to
+    config.default().motion.junction_deviation.
     """
     n = len(metrics)
     if n == 0:
         return []
+
+    if junction_deviation is None:
+        junction_deviation = _config_default().motion.junction_deviation
+
+    # Per-curve cap on v_exit[i] from the junction to curve i+1. inf where there
+    # is no continuous junction (last curve, end of a path, or a path break).
+    corner_cap = [float("inf")] * n
+    for i in range(n - 1):
+        if (flags[i] & PATH_END) or (flags[i + 1] & PATH_START):
+            continue  # path boundary — a jog separates these, not a corner
+        corner_cap[i] = _junction_velocity(
+            metrics[i].curve, metrics[i + 1].curve, a_max, junction_deviation, feed_max)
 
     groups = _build_merge_groups(metrics, flags)
 
@@ -121,7 +169,7 @@ def plan_velocities(metrics, flags, feed_max, a_max):
         group_cap    = min(_v_cruise_cap(metrics[i], feed_max, a_max) for i in g)
 
         gv_reachable = _v_reachable(gv_entry, a_max, group_length)
-        gv_exit      = min(group_cap, gv_reachable)
+        gv_exit      = min(group_cap, gv_reachable, corner_cap[g[-1]])
 
         # propagate to next group
         if gi + 1 < len(groups):
@@ -137,7 +185,7 @@ def plan_velocities(metrics, flags, feed_max, a_max):
             v_entry[idx] = v_cur
             reachable = _v_reachable(v_cur, a_max, metrics[idx].path_length_mm)
             cap = _v_cruise_cap(metrics[idx], feed_max, a_max)
-            v_exit[idx] = min(cap, reachable)
+            v_exit[idx] = min(cap, reachable, corner_cap[idx])
             v_cur = v_exit[idx]
 
     # ── backward pass ─────────────────────────────────────────────────────────

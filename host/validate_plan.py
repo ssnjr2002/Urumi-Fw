@@ -128,23 +128,41 @@ def check_velocity_ceiling(segments, machine, feed_max, jog_feed, eps=0.05):
     return c
 
 
-def check_acceleration(segments, machine, a_max, slack=2.0):
+def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
+    """
+    Acceleration estimated over a small distance window via a = |v_i^2-v_j^2|/(2d),
+    NOT per-segment dv/dt. Stage6's adaptive subdivision produces uneven segment
+    sizes — a lone 1-step segment between larger ones has a tiny dt that makes a
+    per-pair dv/dt explode even when the continuous profile respects a_max. The
+    distance-window kinematic estimate is robust to that quantization.
+
+    Slack is 2.0 because stage6 interpolates velocity LINEARLY in the curve
+    parameter t (not arc-length with exact a_max ramps), which overshoots a_max
+    by up to ~1.7x at the sharpest corners. That is a velocity-profile-model
+    limitation (the jerk/profile layer), independent of junction-deviation
+    cornering; tighten this slack once stage6 gets an arc-length-accurate ramp.
+    """
     c = Check("acceleration continuity")
+    spm = machine.steps_per_mm
+    vs = [seg_kinematics(s, machine)[2] for s in segments]
     worst = 0.0
-    vs = [seg_kinematics(s, machine) for s in segments]
-    for i in range(1, len(segments)):
-        # Jogs are unramped rapids by design — skip transitions touching one.
-        if is_jog(segments[i]) or is_jog(segments[i - 1]):
+    for i in range(len(segments)):
+        if is_jog(segments[i]):
             continue
-        (_, t1, v1) = vs[i]
-        (_, t0, v0) = vs[i - 1]
-        dt = (t0 + t1) / 2
-        if dt <= 0:
+        # walk back accumulating tool distance until the window is filled
+        dist = 0.0
+        j = i
+        while j > 0 and dist < window_mm:
+            if is_jog(segments[j - 1]):
+                break
+            j -= 1
+            dist += math.hypot(segments[j].dx, segments[j].dy) / spm
+        if dist < 1e-6:
             continue
-        a = abs(v1 - v0) / dt
+        a = abs(vs[i]**2 - vs[j]**2) / (2 * dist)
         worst = max(worst, a)
         if a > a_max * slack:
-            c.fail(f"|dv|/dt = {a:.0f} > a_max {a_max} mm/s^2 (x{slack} slack)")
+            c.fail(f"a = {a:.0f} > a_max {a_max} mm/s^2 (x{slack} slack)")
     if c.passed:
         c.ok(f"peak {worst:.0f} mm/s^2 <= {a_max}x{slack}")
     return c

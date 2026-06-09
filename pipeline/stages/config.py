@@ -122,6 +122,7 @@ class MotionConfig:
     feed_max: float = 80.0      # mm/s — cruise ceiling
     a_max:    float = 1000.0    # mm/s^2
     jog_feed: float = 80.0      # mm/s — travel between subpaths
+    junction_deviation: float = 0.05   # mm — max corner rounding for junction-deviation cornering
 
 
 @dataclass(frozen=True)
