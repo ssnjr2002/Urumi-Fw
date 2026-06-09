@@ -24,8 +24,7 @@ extern void drivers_init() __attribute__((weak));
 void sendCommandPacket(uint8_t* packet, uint8_t len) {
     packet[len - 1] = crc8(packet, len - 1);
 
-    digitalWrite(RS485_DE_PIN, HIGH);
-    delayMicroseconds(10);
+    RS485_TX_BEGIN();
 
     NODE_USART.STATUS = USART_TXCIF_bm;
 
@@ -43,8 +42,7 @@ void sendCommandPacket(uint8_t* packet, uint8_t len) {
     while (!(NODE_USART.STATUS & USART_TXCIF_bm));
     NODE_USART.STATUS = USART_TXCIF_bm;
 
-    delayMicroseconds(10);
-    digitalWrite(RS485_DE_PIN, LOW);
+    RS485_TX_END();
 }
 
 // ─── Position ─────────────────────────────────────────────────────────────────

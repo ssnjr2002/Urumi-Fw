@@ -38,12 +38,26 @@
 // USART baud register
 #define USART_BAUD_VAL  ((uint16_t)((F_CPU * 64.0) / (16.0 * RS485_BAUD) + 0.5))
 
+// RS485 direction control.
+// USART2's default mux puts XDIR on PF3 — the same pin as RS485_DE_PIN — so with
+// hardware XDIR the USART drives DE automatically (hardware-timed, no collision).
+// Toggle via -DRS485_USE_XDIR build flag; without it, fall back to manual toggle.
+#ifdef RS485_USE_XDIR
+#define USART_RS485_CFG  USART_RS485_ENABLE_gc
+#define RS485_TX_BEGIN() do {} while(0)
+#define RS485_TX_END()   do {} while(0)
+#else
+#define USART_RS485_CFG  0
+#define RS485_TX_BEGIN() do { digitalWrite(RS485_DE_PIN, HIGH); delayMicroseconds(10); } while(0)
+#define RS485_TX_END()   do { delayMicroseconds(1); digitalWrite(RS485_DE_PIN, LOW); } while(0)
+#endif
+
 // USART init — AVR DB bare-metal (USART2 on PF0/PF1)
 // PORTMUX default routes USART2 to PF0(TX)/PF1(RX) — no PORTMUX change needed.
 #define USART_INIT() do { \
     NODE_USART.BAUD  = USART_BAUD_VAL; \
     NODE_USART.CTRLC = USART_CHSIZE_9BITH_gc; \
-    NODE_USART.CTRLA = USART_RXCIE_bm; \
+    NODE_USART.CTRLA = USART_RXCIE_bm | USART_RS485_CFG; \
     NODE_USART.CTRLB = USART_RXEN_bm | USART_TXEN_bm; \
 } while(0)
 

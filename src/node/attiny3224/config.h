@@ -40,6 +40,10 @@
     NODE_USART.CTRLB = USART_RXEN_bm | USART_TXEN_bm; \
 } while(0)
 
+// RS485 direction control — ATtiny has no hardware XDIR, so toggle DE manually.
+#define RS485_TX_BEGIN() do { digitalWrite(RS485_DE_PIN, HIGH); delayMicroseconds(10); } while(0)
+#define RS485_TX_END()   do { delayMicroseconds(1); digitalWrite(RS485_DE_PIN, LOW); } while(0)
+
 // Driver enable polarity: DM542 — LOW = enabled
 #define MOTOR_ENABLE()   ENABLE_PORT.OUTCLR = ENABLE_BM
 #define MOTOR_DISABLE()  ENABLE_PORT.OUTSET = ENABLE_BM
