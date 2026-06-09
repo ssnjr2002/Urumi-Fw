@@ -34,6 +34,7 @@ MicroSegment = namedtuple("MicroSegment", [
 ])
 
 MICRO_PATH_END = 0x01
+MICRO_JOG      = 0x04   # travel move between subpaths (0x02 reserved for ESTOP)
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ DV_MAX     = 3.0    # mm/s — max velocity change per segment
 V_MIN      = 0.5    # mm/s — floor to avoid divide-by-zero
 DT_MAX     = 0.05   # max parameter step (never skip >5% of curve at once)
 DT_MIN     = 1e-6   # guard against infinite loops
+JOG_FEED   = 80.0   # mm/s — travel speed between subpaths (pen-up rapid)
 
 # ── velocity at parameter t ───────────────────────────────────────────────────
 
@@ -172,22 +174,45 @@ def _evaluate_curve(planned, machine, theta_current, pos_x, pos_y, is_last):
 
 # ── main stage ────────────────────────────────────────────────────────────────
 
-def evaluate_microsegments(planned_curves, machine):
+def evaluate_microsegments(planned_curves, machine, jog_feed=JOG_FEED):
     """
     Returns flat list of MicroSegment.
+
+    Between subpaths a travel (jog) MicroSegment is inserted to move the tool
+    from the end of one path to the start of the next, so paths land at their
+    correct absolute positions. Without it, every closed subpath would be drawn
+    relative to the previous path's endpoint (all stacked at the origin).
+
+    The jog is a single constant-velocity move at jog_feed — pen-lift during
+    travel and jog acceleration ramping are separate concerns (Z axis / future).
     """
     all_segments = []
     theta = 0.0
     pos_x = 0.0
     pos_y = 0.0
+    started = False
 
     for i, planned in enumerate(planned_curves):
         # reset position and angle at each PATH_START
         if planned.flags & PATH_START:
             p0 = planned.metrics.curve.p0
-            pos_x = p0[0] * machine.steps_per_mm
-            pos_y = p0[1] * machine.steps_per_mm
+            target_x = p0[0] * machine.steps_per_mm
+            target_y = p0[1] * machine.steps_per_mm
+
+            # Insert a travel move from the previous path's end to this start
+            if started:
+                jog_dx = int(round(target_x)) - int(round(pos_x))
+                jog_dy = int(round(target_y)) - int(round(pos_y))
+                if jog_dx != 0 or jog_dy != 0:
+                    all_segments.append(MicroSegment(
+                        dx=jog_dx, dy=jog_dy, dz=0, da=0,
+                        interval=_interval(jog_feed, machine), flags=MICRO_JOG,
+                    ))
+
+            pos_x = target_x
+            pos_y = target_y
             theta = _tangent_angle(planned.metrics.curve, 0.0)
+            started = True
 
         is_last = bool(planned.flags & PATH_END)
         segs, theta, pos_x, pos_y = _evaluate_curve(

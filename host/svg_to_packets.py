@@ -47,7 +47,7 @@ def _build_flags(subpaths):
     return flags
 
 
-def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol):
+def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=None):
     """
     Full host pipeline: SVG → MicroSegment packets.
     Returns list of 26-byte bytes objects.
@@ -68,8 +68,11 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol):
     # Stage 5: velocity planning
     planned = plan_velocities(metrics, flags, feed_max, a_max)
 
-    # Stage 6: Bezier → MicroSegments
-    segments = evaluate_microsegments(planned, machine)
+    # Stage 6: Bezier → MicroSegments (jog_feed defaults to stage6.JOG_FEED)
+    if jog_feed is None:
+        segments = evaluate_microsegments(planned, machine)
+    else:
+        segments = evaluate_microsegments(planned, machine, jog_feed=jog_feed)
 
     # Serialise to wire packets
     return list(serialise_microsegments(segments))
@@ -95,6 +98,8 @@ def main():
                         help="Max feed rate mm/s (default 80)")
     parser.add_argument("--a-max",          type=float, default=1000.0,
                         help="Acceleration mm/s² (default 1000)")
+    parser.add_argument("--jog-feed",       type=float, default=None,
+                        help="Travel speed between subpaths, mm/s (default 80)")
     parser.add_argument("--steps-per-mm",   type=float, default=80.0,
                         help="Steps per mm XY (default 80)")
     parser.add_argument("--steps-per-deg",  type=float, default=10.0,
@@ -110,7 +115,7 @@ def main():
     machine = MachineConfig(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
 
     packets = run(args.svg, machine, args.feed_max, args.a_max,
-                  args.angle_tol, args.gap_tol)
+                  args.angle_tol, args.gap_tol, jog_feed=args.jog_feed)
 
     total_bytes = sum(len(p) for p in packets)
     print(f"MicroSegments : {len(packets)}", file=sys.stderr)
