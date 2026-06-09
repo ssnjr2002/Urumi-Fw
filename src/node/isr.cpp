@@ -17,6 +17,7 @@ extern CommandPacket        cmdQueue[];
 static bool    currentDir  = false;
 static uint8_t stepBitMask = 0;
 static uint8_t dirBitMask  = 0;
+static bool    discardCmd  = false;  // dropping a packet not addressed to us
 
 void isr_init() {
     stepBitMask = 1 << ((NODE_ID - 1) * 2);
@@ -30,16 +31,32 @@ ISR(USART_RXC_vect_) {
     bool isCommand = (status & 0x01);
 
     if (isCommand) {
+        if (!inCommand) {
+            inCommand   = true;
+            rxIdx       = 0;
+            discardCmd  = false;
+        }
+
+        // Foreign-traffic filter: the first byte is the destination node ID.
+        // Every node on the bus hears every packet (including other nodes'
+        // PONG replies). Without this, those packets pile into cmdQueue and
+        // evict our own commands once the ring fills. Drop anything not
+        // addressed to us (or broadcast) before it ever touches the queue.
+        if (discardCmd) return;
+
         uint8_t nextHead = (cmdHead + 1) % MAX_COMMANDS;
         if (nextHead == cmdTail) return;
 
-        if (!inCommand) {
-            inCommand = true;
-            rxIdx = 0;
-        }
-
         if (rxIdx < MAX_PACKET_LEN) {
             cmdQueue[cmdHead].data[rxIdx++] = b;
+        }
+
+        if (rxIdx == 1) {
+            uint8_t dest = cmdQueue[cmdHead].data[0];
+            if (dest != NODE_ID && dest != 0xFF) {
+                discardCmd = true;
+                return;
+            }
         }
 
         if (rxIdx >= 4) {
@@ -54,7 +71,8 @@ ISR(USART_RXC_vect_) {
     }
 
     // Stream byte (9th bit = 0) — reset command parser
-    inCommand = false;
+    inCommand  = false;
+    discardCmd = false;
     if (!streamEnabled) return;
 
     bool stepReq = (b & stepBitMask) != 0;
