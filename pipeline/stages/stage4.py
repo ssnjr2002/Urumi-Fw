@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from stage1 import CubicBezier
 from stage2 import load_svg_mm
 from stage3 import enforce_c1
+from config import default as _config_default
 from collections import namedtuple
 
 CurveMetrics = namedtuple("CurveMetrics", [
@@ -80,7 +81,7 @@ def arc_length(c):
 
 # ── curvature ─────────────────────────────────────────────────────────────────
 
-N_KAPPA = 20  # sample points for curvature scan
+N_KAPPA = _config_default().quality.n_kappa  # curvature scan sample count (single-sourced)
 
 def curvature(c, t):
     """κ(t) = |B'×B''| / |B'|³  (2D cross product = scalar)."""
@@ -113,10 +114,11 @@ def compute_metrics(curves):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    _q = _config_default().quality
     parser = argparse.ArgumentParser(description="Stage 4: arc length + curvature")
     parser.add_argument("svg", help="Path to SVG file")
-    parser.add_argument("--angle-tol", type=float, default=5.0)
-    parser.add_argument("--gap-tol",   type=float, default=0.01)
+    parser.add_argument("--angle-tol", type=float, default=_q.angle_tol)
+    parser.add_argument("--gap-tol",   type=float, default=_q.gap_tol)
     args = parser.parse_args()
 
     curves_mm, _ = load_svg_mm(args.svg)

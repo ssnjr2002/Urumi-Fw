@@ -24,13 +24,10 @@ from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
 from stage4 import compute_metrics, _bezier_point
 from stage5 import plan_velocities, PATH_START, PATH_END
-from stage6 import evaluate_microsegments, MICRO_JOG, JOG_FEED
+from stage6 import evaluate_microsegments, MICRO_JOG
+from config import default as config_default, MachineConfig
 
-try:
-    from mock_stage6 import MachineConfig
-except ImportError:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pipeline", "data"))
-    from mock_stage6 import MachineConfig
+JOG_FEED = config_default().motion.jog_feed
 
 
 # ── result plumbing ─────────────────────────────────────────────────────────────

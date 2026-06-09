@@ -14,12 +14,10 @@ from stage5 import PlannedCurve, PATH_START, PATH_END, MERGE_WITH_PREV
 from collections import namedtuple
 
 # ── machine config ────────────────────────────────────────────────────────────
+# MachineConfig now lives in pipeline/config.py (single source of truth).
+# Re-exported here so existing test imports keep working.
 
-MachineConfig = namedtuple("MachineConfig", [
-    "steps_per_mm",     # XY resolution
-    "steps_per_deg",    # A axis resolution
-    "f_cpu",            # RP2350 clock Hz (for interval computation)
-])
+from config import MachineConfig
 
 MACHINE_DEFAULT = MachineConfig(
     steps_per_mm=80,

@@ -15,6 +15,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 from stage1 import CubicBezier
 from stage2 import load_svg_mm
+from config import default as _config_default
 from collections import namedtuple
 
 RepairLog = namedtuple("RepairLog", ["join_index", "kind", "angle_deg", "gap_mm"])
@@ -72,12 +73,18 @@ def _blend_cubic(p0, exit_tan, p3, entry_tan):
 
 # ── main stage ────────────────────────────────────────────────────────────────
 
-def enforce_c1(curves, angle_tol_deg=5.0, gap_tol_mm=0.01):
+def enforce_c1(curves, angle_tol_deg=None, gap_tol_mm=None):
     """
     Returns (repaired_curves, logs).
     repaired_curves: original curves with blending cubics inserted at bad joins.
     logs: list of RepairLog for every join that needed intervention.
+    Tolerances default to config.default().quality when not given.
     """
+    if angle_tol_deg is None or gap_tol_mm is None:
+        _q = _config_default().quality
+        if angle_tol_deg is None: angle_tol_deg = _q.angle_tol
+        if gap_tol_mm   is None: gap_tol_mm   = _q.gap_tol
+
     if len(curves) <= 1:
         return list(curves), []
 
@@ -121,10 +128,11 @@ def enforce_c1(curves, angle_tol_deg=5.0, gap_tol_mm=0.01):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    _q = _config_default().quality
     parser = argparse.ArgumentParser(description="Stage 3: C1 continuity enforcement")
     parser.add_argument("svg", help="Path to SVG file")
-    parser.add_argument("--angle-tol", type=float, default=5.0, help="Angle tolerance in degrees (default 5)")
-    parser.add_argument("--gap-tol",   type=float, default=0.01, help="Gap tolerance in mm (default 0.01)")
+    parser.add_argument("--angle-tol", type=float, default=_q.angle_tol, help="Angle tolerance in degrees")
+    parser.add_argument("--gap-tol",   type=float, default=_q.gap_tol, help="Gap tolerance in mm")
     args = parser.parse_args()
 
     curves_mm, _ = load_svg_mm(args.svg)

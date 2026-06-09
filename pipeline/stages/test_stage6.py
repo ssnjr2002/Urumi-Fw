@@ -4,7 +4,10 @@ import sys, os, math
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
 
-from stage6 import evaluate_microsegments, MicroSegment, MICRO_PATH_END, V_MIN
+from stage6 import evaluate_microsegments, MicroSegment, MICRO_PATH_END
+from config import default as _cfg_default
+
+V_MIN = _cfg_default().quality.v_min
 from stage2 import load_svg_mm
 from stage3 import enforce_c1
 from stage4 import compute_metrics

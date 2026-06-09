@@ -27,12 +27,7 @@ from stage4 import compute_metrics
 from stage5 import plan_velocities, PATH_START, PATH_END, MERGE_WITH_PREV
 from stage6 import evaluate_microsegments
 from serialise import serialise_microsegments
-
-try:
-    from pipeline.data.mock_stage6 import MachineConfig
-except ImportError:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pipeline", "data"))
-    from mock_stage6 import MachineConfig
+from config import default as config_default, MachineConfig
 
 
 def _build_flags(subpaths):
@@ -47,11 +42,15 @@ def _build_flags(subpaths):
     return flags
 
 
-def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=None):
+def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
+        jog_feed=None, quality=None):
     """
     Full host pipeline: SVG → MicroSegment packets.
     Returns list of 26-byte bytes objects.
+    quality defaults to config.default().quality.
     """
+    if quality is None:
+        quality = config_default().quality
     # Stage 2: SVG → mm subpaths
     subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
 
@@ -68,11 +67,9 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=None):
     # Stage 5: velocity planning
     planned = plan_velocities(metrics, flags, feed_max, a_max)
 
-    # Stage 6: Bezier → MicroSegments (jog_feed defaults to stage6.JOG_FEED)
-    if jog_feed is None:
-        segments = evaluate_microsegments(planned, machine)
-    else:
-        segments = evaluate_microsegments(planned, machine, jog_feed=jog_feed)
+    # Stage 6: Bezier → MicroSegments (jog_feed defaults to config motion tier)
+    segments = evaluate_microsegments(planned, machine,
+                                      quality=quality, jog_feed=jog_feed)
 
     # Serialise to wire packets
     return list(serialise_microsegments(segments))
@@ -87,6 +84,7 @@ def write_stream(packets, dest):
 
 
 def main():
+    cfg = config_default()
     parser = argparse.ArgumentParser(
         description="SVG → binary MicroSegment packet stream (host production)"
     )
@@ -94,22 +92,22 @@ def main():
     parser.add_argument("--out",            help="Write to file instead of stdout")
     parser.add_argument("--summary",        action="store_true",
                         help="Print stats to stderr only, no binary output")
-    parser.add_argument("--feed-max",       type=float, default=80.0,
-                        help="Max feed rate mm/s (default 80)")
-    parser.add_argument("--a-max",          type=float, default=1000.0,
-                        help="Acceleration mm/s² (default 1000)")
+    parser.add_argument("--feed-max",       type=float, default=cfg.motion.feed_max,
+                        help="Max feed rate mm/s")
+    parser.add_argument("--a-max",          type=float, default=cfg.motion.a_max,
+                        help="Acceleration mm/s²")
     parser.add_argument("--jog-feed",       type=float, default=None,
-                        help="Travel speed between subpaths, mm/s (default 80)")
-    parser.add_argument("--steps-per-mm",   type=float, default=80.0,
-                        help="Steps per mm XY (default 80)")
-    parser.add_argument("--steps-per-deg",  type=float, default=10.0,
-                        help="Steps per degree A axis (default 10)")
-    parser.add_argument("--f-cpu",          type=int,   default=150_000_000,
-                        help="RP2350 CPU frequency Hz (default 150000000)")
-    parser.add_argument("--angle-tol",      type=float, default=5.0,
-                        help="C1 angle tolerance degrees (default 5.0)")
-    parser.add_argument("--gap-tol",        type=float, default=0.01,
-                        help="Gap tolerance mm (default 0.01)")
+                        help="Travel speed between subpaths, mm/s")
+    parser.add_argument("--steps-per-mm",   type=float, default=cfg.machine.steps_per_mm,
+                        help="Steps per mm XY")
+    parser.add_argument("--steps-per-deg",  type=float, default=cfg.machine.steps_per_deg,
+                        help="Steps per degree A axis")
+    parser.add_argument("--f-cpu",          type=int,   default=cfg.machine.f_cpu,
+                        help="RP2350 CPU frequency Hz")
+    parser.add_argument("--angle-tol",      type=float, default=cfg.quality.angle_tol,
+                        help="C1 angle tolerance degrees")
+    parser.add_argument("--gap-tol",        type=float, default=cfg.quality.gap_tol,
+                        help="Gap tolerance mm")
     args = parser.parse_args()
 
     machine = MachineConfig(args.steps_per_mm, args.steps_per_deg, args.f_cpu)

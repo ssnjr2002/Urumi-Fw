@@ -20,6 +20,7 @@ from stage2 import load_svg_mm
 from stage3 import enforce_c1
 from stage4 import compute_metrics, _bezier_deriv1, _bezier_deriv2, _bezier_point
 from stage5 import plan_velocities, PATH_START, PATH_END
+from config import default as _config_default
 from collections import namedtuple
 
 # ── output structure ──────────────────────────────────────────────────────────
@@ -38,16 +39,13 @@ MICRO_JOG      = 0x04   # travel move between subpaths (0x02 reserved for ESTOP)
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-CHORD_TOL  = 0.01   # mm — max chord deviation per segment
-DV_MAX     = 3.0    # mm/s — max velocity change per segment
-V_MIN      = 0.5    # mm/s — floor to avoid divide-by-zero
-DT_MAX     = 0.05   # max parameter step (never skip >5% of curve at once)
-DT_MIN     = 1e-6   # guard against infinite loops
-JOG_FEED   = 80.0   # mm/s — travel speed between subpaths (pen-up rapid)
+# Tuning constants live in pipeline/config.py (QualityConfig / MotionConfig).
+# They are threaded in explicitly as `q` (QualityConfig) so each stage stays a
+# pure function and standalone runs use config.default().
 
 # ── velocity at parameter t ───────────────────────────────────────────────────
 
-def _velocity_at_t(planned, t):
+def _velocity_at_t(planned, t, q):
     """
     Linearly interpolate velocity along arc length parameter.
     We approximate arc-length fraction ≈ t (close enough for interval calc).
@@ -58,35 +56,35 @@ def _velocity_at_t(planned, t):
         v = v_e + (v_c - v_e) * (t * 2)
     else:
         v = v_c + (v_x - v_c) * ((t - 0.5) * 2)
-    return max(v, V_MIN)
+    return max(v, q.v_min)
 
 # ── adaptive dt ───────────────────────────────────────────────────────────────
 
-def _dt_geom(c, t):
-    """Geometry-based step limit: chord deviation < CHORD_TOL."""
+def _dt_geom(c, t, q):
+    """Geometry-based step limit: chord deviation < q.chord_tol."""
     d2 = _bezier_deriv2(c, t)
     mag2 = d2[0]**2 + d2[1]**2
     if mag2 < 1e-20:
-        return DT_MAX
-    return min(DT_MAX, math.sqrt(8 * CHORD_TOL / math.sqrt(mag2)))
+        return q.dt_max
+    return min(q.dt_max, math.sqrt(8 * q.chord_tol / math.sqrt(mag2)))
 
-def _dt_vel(c, t, planned):
+def _dt_vel(c, t, planned, q):
     """
-    Velocity-based step limit: speed change < DV_MAX per segment.
+    Velocity-based step limit: speed change < q.dv_max per segment.
     Numerically differentiates the velocity profile — during cruise
-    dv/dt ≈ 0 so dt falls back to DT_MAX; during accel/decel it
+    dv/dt ≈ 0 so dt falls back to q.dt_max; during accel/decel it
     subdivides finely.
     """
     eps = 1e-4
-    v0 = _velocity_at_t(planned, t)
-    v1 = _velocity_at_t(planned, min(t + eps, 1.0))
+    v0 = _velocity_at_t(planned, t, q)
+    v1 = _velocity_at_t(planned, min(t + eps, 1.0), q)
     dvdt = abs(v1 - v0) / eps
     if dvdt < 1e-6:
-        return DT_MAX
-    return min(DT_MAX, DV_MAX / dvdt)
+        return q.dt_max
+    return min(q.dt_max, q.dv_max / dvdt)
 
-def _choose_dt(c, t, planned):
-    return max(DT_MIN, min(_dt_geom(c, t), _dt_vel(c, t, planned)))
+def _choose_dt(c, t, planned, q):
+    return max(q.dt_min, min(_dt_geom(c, t, q), _dt_vel(c, t, planned, q)))
 
 # ── angle helpers ─────────────────────────────────────────────────────────────
 
@@ -106,9 +104,9 @@ def _angle_delta(a, b):
 
 # ── interval ──────────────────────────────────────────────────────────────────
 
-def _interval(v, machine):
+def _interval(v, machine, q):
     """Clock cycles for one major-axis step at velocity v (mm/s)."""
-    v = max(v, V_MIN)
+    v = max(v, q.v_min)
     step_rate = v * machine.steps_per_mm   # steps/sec
     if step_rate < 1e-6:
         return machine.f_cpu              # saturate at 1 step/sec
@@ -117,7 +115,7 @@ def _interval(v, machine):
 
 # ── single curve evaluator ────────────────────────────────────────────────────
 
-def _evaluate_curve(planned, machine, theta_current, pos_x, pos_y, is_last):
+def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last):
     """
     Evaluate one PlannedCurve into a list of MicroSegments.
     Returns (segments, theta_current, pos_x, pos_y).
@@ -133,7 +131,7 @@ def _evaluate_curve(planned, machine, theta_current, pos_x, pos_y, is_last):
     y_mm = c.p0[1]
 
     while t < 1.0:
-        dt = _choose_dt(c, t, planned)
+        dt = _choose_dt(c, t, planned, q)
         t_next = min(t + dt, 1.0)
 
         p_next = _bezier_point(c, t_next)
@@ -152,8 +150,8 @@ def _evaluate_curve(planned, machine, theta_current, pos_x, pos_y, is_last):
         da_steps  = int(round(delta_deg * machine.steps_per_deg))
 
         # velocity and interval
-        v = _velocity_at_t(planned, t_next)
-        iv = _interval(v, machine)
+        v = _velocity_at_t(planned, t_next, q)
+        iv = _interval(v, machine, q)
 
         # flags
         f = MICRO_PATH_END if (t_next >= 1.0 and is_last) else 0
@@ -174,9 +172,12 @@ def _evaluate_curve(planned, machine, theta_current, pos_x, pos_y, is_last):
 
 # ── main stage ────────────────────────────────────────────────────────────────
 
-def evaluate_microsegments(planned_curves, machine, jog_feed=JOG_FEED):
+def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None):
     """
     Returns flat list of MicroSegment.
+
+    quality  — QualityConfig (tuning constants). Defaults to config.default().
+    jog_feed — travel speed mm/s. Defaults to config.default().motion.jog_feed.
 
     Between subpaths a travel (jog) MicroSegment is inserted to move the tool
     from the end of one path to the start of the next, so paths land at their
@@ -186,6 +187,11 @@ def evaluate_microsegments(planned_curves, machine, jog_feed=JOG_FEED):
     The jog is a single constant-velocity move at jog_feed — pen-lift during
     travel and jog acceleration ramping are separate concerns (Z axis / future).
     """
+    _cfg = _config_default()
+    q = quality if quality is not None else _cfg.quality
+    if jog_feed is None:
+        jog_feed = _cfg.motion.jog_feed
+
     all_segments = []
     theta = 0.0
     pos_x = 0.0
@@ -206,7 +212,7 @@ def evaluate_microsegments(planned_curves, machine, jog_feed=JOG_FEED):
                 if jog_dx != 0 or jog_dy != 0:
                     all_segments.append(MicroSegment(
                         dx=jog_dx, dy=jog_dy, dz=0, da=0,
-                        interval=_interval(jog_feed, machine), flags=MICRO_JOG,
+                        interval=_interval(jog_feed, machine, q), flags=MICRO_JOG,
                     ))
 
             pos_x = target_x
@@ -216,7 +222,7 @@ def evaluate_microsegments(planned_curves, machine, jog_feed=JOG_FEED):
 
         is_last = bool(planned.flags & PATH_END)
         segs, theta, pos_x, pos_y = _evaluate_curve(
-            planned, machine, theta, pos_x, pos_y, is_last
+            planned, machine, q, theta, pos_x, pos_y, is_last
         )
         all_segments.extend(segs)
 
@@ -225,17 +231,18 @@ def evaluate_microsegments(planned_curves, machine, jog_feed=JOG_FEED):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    from config import default as _default, MachineConfig
+    cfg = _default()
+
     parser = argparse.ArgumentParser(description="Stage 6: Bezier -> MicroSegments")
     parser.add_argument("svg",            help="Path to SVG file")
-    parser.add_argument("--feed-max",     type=float, default=80.0)
-    parser.add_argument("--a-max",        type=float, default=1000.0)
-    parser.add_argument("--steps-per-mm", type=float, default=80.0)
-    parser.add_argument("--steps-per-deg",type=float, default=10.0)
-    parser.add_argument("--f-cpu",        type=int,   default=150_000_000)
+    parser.add_argument("--feed-max",     type=float, default=cfg.motion.feed_max)
+    parser.add_argument("--a-max",        type=float, default=cfg.motion.a_max)
+    parser.add_argument("--steps-per-mm", type=float, default=cfg.machine.steps_per_mm)
+    parser.add_argument("--steps-per-deg",type=float, default=cfg.machine.steps_per_deg)
+    parser.add_argument("--f-cpu",        type=int,   default=cfg.machine.f_cpu)
     args = parser.parse_args()
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
-    from mock_stage6 import MachineConfig
     machine = MachineConfig(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
 
     curves_mm, _ = load_svg_mm(args.svg)
@@ -246,7 +253,7 @@ if __name__ == "__main__":
         flags_list = [PATH_START | PATH_END]
 
     planned  = plan_velocities(metrics, flags_list, args.feed_max, args.a_max)
-    segments = evaluate_microsegments(planned, machine)
+    segments = evaluate_microsegments(planned, machine, quality=cfg.quality)
 
     total_x = sum(s.dx for s in segments)
     total_y = sum(s.dy for s in segments)

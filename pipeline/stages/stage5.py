@@ -22,6 +22,7 @@ from stage1 import CubicBezier
 from stage2 import load_svg_mm
 from stage3 import enforce_c1
 from stage4 import compute_metrics
+from config import default as _config_default
 from collections import namedtuple
 
 # ── flags (mirrors mock_stage5) ───────────────────────────────────────────────
@@ -200,12 +201,13 @@ def plan_velocities(metrics, flags, feed_max, a_max):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    cfg = _config_default()
     parser = argparse.ArgumentParser(description="Stage 5: velocity planner")
     parser.add_argument("svg",       help="Path to SVG file")
-    parser.add_argument("--feed-max",type=float, default=80.0,   help="Max feed mm/s")
-    parser.add_argument("--a-max",   type=float, default=1000.0, help="Acceleration mm/s^2")
-    parser.add_argument("--angle-tol",type=float,default=5.0)
-    parser.add_argument("--gap-tol",  type=float,default=0.01)
+    parser.add_argument("--feed-max",type=float, default=cfg.motion.feed_max, help="Max feed mm/s")
+    parser.add_argument("--a-max",   type=float, default=cfg.motion.a_max,    help="Acceleration mm/s^2")
+    parser.add_argument("--angle-tol",type=float,default=cfg.quality.angle_tol)
+    parser.add_argument("--gap-tol",  type=float,default=cfg.quality.gap_tol)
     args = parser.parse_args()
 
     curves_mm, _ = load_svg_mm(args.svg)
