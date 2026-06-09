@@ -88,6 +88,13 @@ struct MicroSegment {
 
 #define MSEG_ACK         0xAA
 #define MSEG_NACK        0xBB
+
+// ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
+// Normal command word : (CMD << 8) | node          — top 16 bits zero
+// Debug step word      : (FIFO_STEP_DEBUG << 24) | (node << 16) | (count & 0xFFFF)
+//   count is signed-magnitude: bit15 of the low word = direction (1 = negative)
+#define FIFO_STEP_DEBUG  0xF0
+#define STEP_DEBUG_SPS   1000   // fixed emit rate for debug stepping (steps/sec)
 #define MSEG_NACK_CRC    0x01
 #define MSEG_NACK_FULL   0x02
 #define MSEG_NACK_MAGIC  0x03

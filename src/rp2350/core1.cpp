@@ -130,6 +130,40 @@ static void __time_critical_func(processMicroSegments)() {
     }
 }
 
+// ─── Debug Step Emitter ───────────────────────────────────────────────────────
+// Emits `count` raw stream bytes for one node at a fixed slow rate. Bypasses the
+// MicroSegment path entirely — used to verify the Pico→ATtiny stream path in
+// isolation. The target node must already be enabled (CMD_ENABLE).
+
+static void emitDebugSteps(uint32_t req) {
+    uint8_t  node = (req >> 16) & 0xFF;
+    uint16_t low  =  req & 0xFFFF;
+    bool     neg  = (low & 0x8000) != 0;
+    uint16_t count = low & 0x7FFF;
+
+    if (node < 1 || node > 4) return;
+
+    uint8_t bit = (node - 1) * 2;
+    uint8_t streamByte = (1 << bit);                  // step bit
+    if (!neg) streamByte |= (1 << (bit + 1));         // dir bit (positive = CW)
+
+    uint32_t interval = F_CPU / STEP_DEBUG_SPS;
+
+    while (!rs485.txEmpty());
+    rs485.flushRX();
+    rs485.writeStream(0);  // NOP to reset slave parsers
+
+    uint32_t t0 = rp2040.getCycleCount();
+    for (uint16_t i = 0; i < count; i++) {
+        if (emergencyStop) break;
+        while ((rp2040.getCycleCount() - t0) < interval) {
+            if (emergencyStop) break;
+        }
+        t0 += interval;
+        rs485.writeStream(streamByte);
+    }
+}
+
 // ─── Core 1 Setup & Loop ──────────────────────────────────────────────────────
 
 void setup1() {
@@ -151,6 +185,13 @@ void loop1() {
     // 3. Handle text commands from Core 0 (ping / enable / disable / getpos)
     if (multicore_fifo_rvalid()) {
         uint32_t req  = multicore_fifo_pop_blocking();
+
+        // Debug step word — emit raw stream bytes, skip command relay
+        if ((req >> 24) == FIFO_STEP_DEBUG) {
+            emitDebugSteps(req);
+            return;
+        }
+
         uint8_t  cmd  = (req >> 8) & 0xFF;
         uint8_t  node =  req & 0xFF;
 

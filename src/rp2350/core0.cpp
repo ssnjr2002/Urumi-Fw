@@ -58,6 +58,7 @@ static bool handleNonStreamingCommand(const String& input) {
                      input.startsWith("enable")  ||
                      input.startsWith("disable") ||
                      input.startsWith("getpos")  ||
+                     input.startsWith("step")    ||
                      input.startsWith("suction");
 
     if (!isCommand) return false;
@@ -106,6 +107,25 @@ static bool handleNonStreamingCommand(const String& input) {
         uint8_t node = (uint8_t)strtoul(ptr, NULL, 10);
         if (node >= 1 && node <= 4) { Serial.printf("Queued Position Query for Node %d...\n", node); multicore_fifo_push_blocking((CMD_GET_POS << 8) | node); }
         else Serial.println("Error: Invalid Node ID for getpos.");
+    }
+    else if (input.startsWith("step")) {
+        // step <node> <count>  — direct debug stepping, bypasses MicroSegment path.
+        // Negative count steps in the reverse direction. Node must be enabled first.
+        char* ptr = (char*)input.c_str() + 4;
+        while (*ptr == ' ') ptr++;
+        char* endPtr;
+        uint8_t node = (uint8_t)strtoul(ptr, &endPtr, 10);
+        ptr = endPtr;
+        long count = strtol(ptr, &endPtr, 10);
+        if (node >= 1 && node <= 4 && count != 0) {
+            uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
+            if (count < 0) mag |= 0x8000;
+            uint32_t word = ((uint32_t)FIFO_STEP_DEBUG << 24) | ((uint32_t)node << 16) | mag;
+            Serial.printf("Queued STEP DEBUG node %d count %ld...\n", node, count);
+            multicore_fifo_push_blocking(word);
+        } else {
+            Serial.println("Error: usage: step <node 1-4> <count != 0>");
+        }
     }
     else if (input.startsWith("suction")) {
         Serial.println("ok");
