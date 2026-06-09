@@ -20,7 +20,6 @@ Protocol:
 """
 
 import sys, os, argparse, struct, time, threading, queue
-from collections import deque
 
 sys.path.insert(0, os.path.dirname(__file__))
 from serialise import (
@@ -32,9 +31,11 @@ from serialise import (
 # ── constants ─────────────────────────────────────────────────────────────────
 
 DEFAULT_WINDOW   = 16       # max in-flight unACKed packets
-ACK_TIMEOUT_S    = 0.1      # seconds before retransmit
-BACKPRESSURE_S   = 0.01     # wait before retrying on NACK_FULL
-MAX_RETRIES      = 5        # abort after this many consecutive failures
+ACK_TIMEOUT_S    = 0.2      # per-response wait before assuming loss
+STALL_TIMEOUT_S  = 3.0      # total silence before fatal abort
+BACKPRESSURE_S   = 0.05     # wait for buffer to drain on NACK_FULL
+SETTLE_S         = 0.005    # absorb in-transit stale responses after go-back
+MAX_CRC_ERRORS   = 20       # fatal only after this many CRC failures
 
 
 # ── framing reader (mirrors verify_packets) ───────────────────────────────────
@@ -101,10 +102,6 @@ class Sender:
         )
         self._thread.start()
 
-        # Sliding window state
-        self._in_flight = deque()   # deque of (seq, packet, send_time)
-        self._seq       = 0         # rolling packet counter (for logging)
-
         # Stats
         self.sent       = 0
         self.acked      = 0
@@ -115,106 +112,86 @@ class Sender:
         self.ser.write(packet)
         self.ser.flush()
 
-    def _drain_acks(self, block=False, timeout=ACK_TIMEOUT_S):
-        """Process all available ACKs/NACKs. Returns list of NACK reasons."""
-        nack_reasons = []
+    def _flush_responses(self):
+        """Discard all queued responses. Used on go-back: every outstanding
+        response is for a packet we are about to resend, so it is stale."""
         try:
-            resp_type, value = self.ack_queue.get(block=block, timeout=timeout)
-            if resp_type == 'ACK':
-                # Remove from in-flight — ACK confirms oldest in-flight packet
-                if self._in_flight:
-                    self._in_flight.popleft()
-                    self.acked += 1
-                    if self.verbose:
-                        print(f"  ACK  seq={value}", file=sys.stderr)
-            elif resp_type == 'NACK':
-                nack_reasons.append(value)
-                self.nacks += 1
-                if self.verbose:
-                    print(f"  NACK reason=0x{value:02X}", file=sys.stderr)
+            while True:
+                self.ack_queue.get_nowait()
         except queue.Empty:
             pass
 
-        # Drain any additional immediately available responses
-        while True:
-            try:
-                resp_type, value = self.ack_queue.get_nowait()
-                if resp_type == 'ACK':
-                    if self._in_flight:
-                        self._in_flight.popleft()
-                        self.acked += 1
-                elif resp_type == 'NACK':
-                    nack_reasons.append(value)
-                    self.nacks += 1
-            except queue.Empty:
-                break
-
-        return nack_reasons
-
     def send_stream(self, packets):
         """
-        Send a list of pre-validated packets with sliding window ACK/NACK.
+        Send a list of pre-validated packets using Go-Back-N.
+
+        The Pico processes packets strictly in order and replies one ACK/NACK
+        per packet. When its ring buffer fills it NACKs (NACK_FULL) — this is
+        flow control, NOT an error. Because rejection is in-order, the accepted
+        packets always form a prefix; on any NACK we discard stale responses,
+        back off, and resend from `base`. This preserves ordering (critical for
+        motion) and never buffers duplicates.
+
         Returns True on success, False on fatal error.
         """
-        pending   = list(packets)
-        idx       = 0
-        retries   = 0
+        pending    = list(packets)
+        n          = len(pending)
+        base       = 0          # oldest unconfirmed packet
+        next_send  = 0          # next packet to transmit
+        crc_errors = 0
+        last_progress = time.monotonic()
 
-        while idx < len(pending) or self._in_flight:
+        def go_back(reason, settle):
+            """Discard stale responses, back off, rewind to base."""
+            nonlocal next_send
+            self._flush_responses()
+            time.sleep(settle)
+            self._flush_responses()   # absorb in-transit stale responses
+            next_send = base
+            self.retries += 1
+            if self.verbose:
+                print(f"  GO-BACK to {base} (reason 0x{reason:02X})", file=sys.stderr)
+
+        while base < n:
             # Fill the window
-            while idx < len(pending) and len(self._in_flight) < self.window:
-                pkt = pending[idx]
-                self._send_packet(pkt)
-                self._in_flight.append((self._seq, pkt, time.monotonic()))
-                if self.verbose:
-                    print(f"  SEND [{idx+1}/{len(pending)}] seq={self._seq}",
-                          file=sys.stderr)
-                self._seq += 1
+            while next_send < n and (next_send - base) < self.window:
+                self._send_packet(pending[next_send])
                 self.sent += 1
-                idx += 1
+                if self.verbose:
+                    print(f"  SEND [{next_send+1}/{n}]", file=sys.stderr)
+                next_send += 1
 
-            # Wait for ACKs
-            block   = len(self._in_flight) >= self.window or idx >= len(pending)
-            nacks   = self._drain_acks(block=block)
-
-            for reason in nacks:
-                if reason == NACK_BAD_MAGIC:
-                    print("FATAL: Pico reported bad magic — aborting.", file=sys.stderr)
+            # Wait for the next in-order response (corresponds to packet `base`)
+            try:
+                rtype, val = self.ack_queue.get(timeout=ACK_TIMEOUT_S)
+            except queue.Empty:
+                if time.monotonic() - last_progress > STALL_TIMEOUT_S:
+                    print(f"FATAL: stalled — no response for {STALL_TIMEOUT_S}s "
+                          f"(ACKed {self.acked}/{n}).", file=sys.stderr)
                     return False
+                go_back(0x00, SETTLE_S)   # assume loss, resend from base
+                continue
 
-                if reason == NACK_FULL:
-                    time.sleep(BACKPRESSURE_S)
+            if rtype == 'ACK':
+                base += 1
+                self.acked += 1
+                last_progress = time.monotonic()
+                continue
 
-                # Resend oldest in-flight packet
-                if self._in_flight:
-                    seq, pkt, _ = self._in_flight[0]
-                    self._in_flight[0] = (seq, pkt, time.monotonic())
-                    self._send_packet(pkt)
-                    self.retries += 1
-                    retries += 1
-                    if self.verbose:
-                        print(f"  RETRY seq={seq} reason=0x{reason:02X}",
-                              file=sys.stderr)
-
-                if retries >= MAX_RETRIES:
-                    print(f"FATAL: {MAX_RETRIES} consecutive failures — aborting.",
-                          file=sys.stderr)
+            # NACK
+            self.nacks += 1
+            if val == NACK_BAD_MAGIC:
+                print("FATAL: Pico reported bad magic — aborting.", file=sys.stderr)
+                return False
+            if val == NACK_CRC:
+                crc_errors += 1
+                if crc_errors > MAX_CRC_ERRORS:
+                    print(f"FATAL: {crc_errors} CRC errors — aborting.", file=sys.stderr)
                     return False
-
-            # Reset retry counter on progress
-            if self.acked > 0:
-                retries = 0
-
-            # Timeout check on oldest in-flight packet
-            if self._in_flight:
-                seq, pkt, t_sent = self._in_flight[0]
-                if time.monotonic() - t_sent > ACK_TIMEOUT_S:
-                    self._send_packet(pkt)
-                    self._in_flight[0] = (seq, pkt, time.monotonic())
-                    self.retries += 1
-                    retries += 1
-                    if self.verbose:
-                        print(f"  TIMEOUT retransmit seq={seq}", file=sys.stderr)
+                go_back(val, SETTLE_S)
+            else:  # NACK_FULL — backpressure, not an error
+                go_back(val, BACKPRESSURE_S)
+            last_progress = time.monotonic()
 
         return True
 
