@@ -175,6 +175,39 @@ def _float(elem, attr, default=0.0):
     v = elem.get(attr)
     return float(v) if v is not None else default
 
+def _style_prop(elem, prop):
+    """Resolve a paint property from the element's `style=` declaration first,
+    then its presentation attribute. Returns a lowercased string or None."""
+    style = elem.get("style", "")
+    for decl in style.split(";"):
+        if ":" in decl:
+            k, v = decl.split(":", 1)
+            if k.strip() == prop:
+                return v.strip().lower()
+    val = elem.get(prop)
+    return val.strip().lower() if val else None
+
+_NO_PAINT = ("none", "transparent")
+
+def _is_paintable(elem):
+    """
+    True if the element would draw anything — i.e. it has a visible fill or
+    stroke. SVG defaults fill to black and stroke to none, so an element with
+    no paint info at all is paintable (black fill). It is dropped only when fill
+    is explicitly none/transparent AND there is no real stroke. This filters
+    Inkscape helper/bounding boxes (fill:none;stroke:none) out of the toolpath.
+
+    Note: only the element's own style is inspected, not inherited group paint —
+    fine for the common case; an inherited fill:none is left as a known gap.
+    """
+    fill = _style_prop(elem, "fill")
+    stroke = _style_prop(elem, "stroke")
+    if fill is None or fill not in _NO_PAINT:
+        return True                      # default-black or explicit fill
+    return bool(stroke) and stroke not in _NO_PAINT  # fill none -> need a stroke
+
+_DRAWABLE_TAGS = ("path", "circle", "ellipse", "rect", "line", "polygon", "polyline")
+
 def _circle_to_cubics(cx, cy, rx, ry):
     """Approximate an ellipse (or circle when rx==ry) with 4 cubic Béziers."""
     kx, ky = rx * _KAPPA, ry * _KAPPA
@@ -224,6 +257,10 @@ def load_svg_subpaths(path):
 
     for elem in root.iter():
         tag = elem.tag.replace(f"{{{SVG_NS}}}", "")
+
+        # Skip non-paintable geometry (e.g. Inkscape fill:none;stroke:none boxes)
+        if tag in _DRAWABLE_TAGS and not _is_paintable(elem):
+            continue
 
         if tag == "path":
             d = elem.get("d", "")
