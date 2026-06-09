@@ -104,14 +104,43 @@ def _angle_delta(a, b):
 
 # ── interval ──────────────────────────────────────────────────────────────────
 
-def _interval(v, machine, q):
-    """Clock cycles for one major-axis step at velocity v (mm/s)."""
+def _interval(v, machine, q, dx=None, dy=None, dz=0, da=0):
+    """
+    Clock cycles per major-axis step so the XY TOOL moves at v mm/s.
+
+    The Pico times a segment by its major axis (max steps over all driven axes),
+    but the tool travels the XY hypotenuse — longer than the major leg on a
+    diagonal. Without correction the realized tool speed overshoots v by up to
+    sqrt(2) (a 45-degree move runs at v*sqrt(2)). Scaling the interval by
+    hypot(dx,dy)/major restores the commanded feed; for a pure axis move
+    hypot == major and it reduces to the plain major-axis rate.
+
+    Called without dx/dy (legacy / non-geometric) it governs the major axis
+    directly at v, matching the old behaviour.
+    """
     v = max(v, q.v_min)
-    step_rate = v * machine.steps_per_mm   # steps/sec
-    if step_rate < 1e-6:
-        return machine.f_cpu              # saturate at 1 step/sec
-    cycles = machine.f_cpu / step_rate
-    return min(int(cycles), machine.f_cpu)  # cap at 1 step/sec
+    spm = machine.steps_per_mm
+
+    def _major_rate():
+        step_rate = v * spm
+        if step_rate < 1e-6:
+            return machine.f_cpu
+        return max(1, min(int(machine.f_cpu / step_rate), machine.f_cpu))
+
+    if dx is None or dy is None:
+        return _major_rate()
+
+    major = max(abs(dx), abs(dy), abs(dz), abs(da))
+    if major == 0:
+        return machine.f_cpu
+    tool_steps = math.hypot(dx, dy)
+    if tool_steps < 1e-9:
+        # pure rotation / Z move — no XY to govern; time the major axis at v
+        return _major_rate()
+
+    seg_time = (tool_steps / spm) / v          # seconds for this segment
+    cycles = seg_time / major * machine.f_cpu  # per major-axis step
+    return max(1, min(int(cycles), machine.f_cpu))
 
 # ── single curve evaluator ────────────────────────────────────────────────────
 
@@ -149,9 +178,9 @@ def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last):
         delta_deg = _angle_delta(theta_current, theta_new)
         da_steps  = int(round(delta_deg * machine.steps_per_deg))
 
-        # velocity and interval
+        # velocity and interval (geometry-aware so the tool honors v on diagonals)
         v = _velocity_at_t(planned, t_next, q)
-        iv = _interval(v, machine, q)
+        iv = _interval(v, machine, q, dx_steps, dy_steps, 0, da_steps)
 
         # flags
         f = MICRO_PATH_END if (t_next >= 1.0 and is_last) else 0
@@ -212,7 +241,8 @@ def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None)
                 if jog_dx != 0 or jog_dy != 0:
                     all_segments.append(MicroSegment(
                         dx=jog_dx, dy=jog_dy, dz=0, da=0,
-                        interval=_interval(jog_feed, machine, q), flags=MICRO_JOG,
+                        interval=_interval(jog_feed, machine, q, jog_dx, jog_dy),
+                        flags=MICRO_JOG,
                     ))
 
             pos_x = target_x
@@ -243,7 +273,7 @@ if __name__ == "__main__":
     parser.add_argument("--f-cpu",        type=int,   default=cfg.machine.f_cpu)
     args = parser.parse_args()
 
-    machine = MachineConfig(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
+    machine = MachineConfig.uniform(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
 
     curves_mm, _ = load_svg_mm(args.svg)
     repaired, _  = enforce_c1(curves_mm)
