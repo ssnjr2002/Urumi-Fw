@@ -64,31 +64,51 @@ static uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
 //   Node 1 = X,  Node 2 = Y,  Node 3 = Z,  Node 4 = A
 
 static void __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
-    // Determine step and direction per node from signed axis deltas
-    // Node bit layout: bit(2n) = step, bit(2n+1) = dir (1 = CW / positive)
-    uint8_t streamByte = 0;
+    // A MicroSegment describes a block of steps: the major axis takes
+    // max(|dx|,|dy|,|dz|,|da|) steps, minor axes are Bresenham-distributed
+    // against it. `interval` is the time (CPU cycles) per major-axis step.
+    // The host has already resolved velocity — the Pico just executes.
+    //
+    // Node bit layout: bit(2n) = step, bit(2n+1) = dir (1 = CW / positive).
 
-    struct { int32_t delta; uint8_t nodeIdx; } axes[4] = {
-        { ms.dx, 0 },   // Node 1 = X
-        { ms.dy, 1 },   // Node 2 = Y
-        { ms.dz, 2 },   // Node 3 = Z
-        { ms.da, 3 },   // Node 4 = A
-    };
+    int32_t  delta[4] = { ms.dx, ms.dy, ms.dz, ms.da };
+    uint32_t absSteps[4];
+    uint8_t  dirBits = 0;
+    uint32_t maxSteps = 0;
 
-    for (auto& ax : axes) {
-        if (ax.delta == 0) continue;
-        uint8_t bit = ax.nodeIdx * 2;
-        streamByte |= (1 << bit);                         // step bit
-        if (ax.delta > 0) streamByte |= (1 << (bit + 1)); // dir bit (positive = CW)
+    for (int i = 0; i < 4; i++) {
+        absSteps[i] = (delta[i] < 0) ? (uint32_t)(-delta[i]) : (uint32_t)delta[i];
+        if (absSteps[i] > maxSteps) maxSteps = absSteps[i];
+        if (delta[i] > 0) dirBits |= (1 << (i * 2 + 1)); // positive = CW
     }
 
-    // Wait the prescribed interval (CPU cycles), then emit
+    if (maxSteps == 0) return; // no motion this segment
+
+    // Bresenham error accumulators — symmetric init for centred distribution
+    uint32_t err[4] = { maxSteps / 2, maxSteps / 2, maxSteps / 2, maxSteps / 2 };
+
     uint32_t t0 = rp2040.getCycleCount();
-    while ((rp2040.getCycleCount() - t0) < ms.interval) {
+    for (uint32_t s = 0; s < maxSteps; s++) {
         if (emergencyStop) return;
-    }
 
-    rs485.writeStream(streamByte);
+        uint8_t streamByte = dirBits;
+        for (int i = 0; i < 4; i++) {
+            if (absSteps[i] == 0) continue;
+            err[i] += absSteps[i];
+            if (err[i] >= maxSteps) {
+                err[i] -= maxSteps;
+                streamByte |= (1 << (i * 2));   // step bit
+            }
+        }
+
+        // Wait the prescribed per-step interval, then emit
+        while ((rp2040.getCycleCount() - t0) < ms.interval) {
+            if (emergencyStop) return;
+        }
+        t0 += ms.interval;
+
+        rs485.writeStream(streamByte);
+    }
 }
 
 static void __time_critical_func(processMicroSegments)() {
