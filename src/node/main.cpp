@@ -60,9 +60,12 @@ void setup() {
     pinMode(RS485_DE_PIN, OUTPUT); digitalWrite(RS485_DE_PIN, LOW);
     pinMode(STEP_PIN,     OUTPUT); digitalWrite(STEP_PIN,     LOW);
     pinMode(DIR_PIN,      OUTPUT); digitalWrite(DIR_PIN,      LOW);
-    pinMode(EN_PIN,       OUTPUT); MOTOR_DISABLE();
+    pinMode(EN_PIN,       OUTPUT);
 
+    // Init driver (brings up SPI for TMC2660) BEFORE the first MOTOR_DISABLE,
+    // which for TMC issues a toff() over SPI.
     if (drivers_init) drivers_init();
+    MOTOR_DISABLE();
     USART_TX_IDLE_INIT();
     pinMode(LED_PIN, OUTPUT); digitalWrite(LED_PIN, LOW);
 
