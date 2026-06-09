@@ -110,7 +110,7 @@ def main():
                         help="Gap tolerance mm")
     args = parser.parse_args()
 
-    machine = MachineConfig(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
+    machine = MachineConfig.uniform(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
 
     packets = run(args.svg, machine, args.feed_max, args.a_max,
                   args.angle_tol, args.gap_tol, jog_feed=args.jog_feed)

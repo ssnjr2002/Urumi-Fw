@@ -19,7 +19,7 @@ from collections import namedtuple
 
 from config import MachineConfig
 
-MACHINE_DEFAULT = MachineConfig(
+MACHINE_DEFAULT = MachineConfig.uniform(
     steps_per_mm=80,
     steps_per_deg=10,
     f_cpu=150_000_000,

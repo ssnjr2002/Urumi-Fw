@@ -299,7 +299,7 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
-    machine = MachineConfig(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
+    machine = MachineConfig.uniform(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
     planned, segments, _ = build(args.svg, machine, args.feed_max, args.a_max,
                                  args.angle_tol, args.gap_tol, jog_feed=args.jog_feed)
 
