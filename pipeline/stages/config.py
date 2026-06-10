@@ -152,7 +152,7 @@ def _default_machine() -> MachineConfig:
     it at a low feed (the jog tool's --feed is units/s, so a few mm/s for Z).
     """
     return MachineConfig(
-        x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
+        x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0, invert=True),
         y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
         z=AxisConfig(node=3, steps_per_unit=1200.0),
         a=AxisConfig(node=4, steps_per_unit=120.0, rotary=True),
