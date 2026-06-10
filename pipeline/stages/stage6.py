@@ -118,12 +118,16 @@ def _interval(v, machine, q, dx=None, dy=None, dz=0, da=0):
 
     Called without dx/dy (legacy / non-geometric) it governs the major axis
     directly at v, matching the old behaviour.
+
+    Per-axis: the XY tool distance is hypot(dx/x_spu, dy/y_spu), so X and Y may
+    have different resolutions (non-square machine).
     """
     v = max(v, q.v_min)
-    spm = machine.steps_per_mm
+    x_spu = machine.x.steps_per_unit
+    y_spu = machine.y.steps_per_unit
 
     def _major_rate():
-        step_rate = v * spm
+        step_rate = v * x_spu
         if step_rate < 1e-6:
             return machine.f_cpu
         return max(1, min(int(machine.f_cpu / step_rate), machine.f_cpu))
@@ -134,12 +138,12 @@ def _interval(v, machine, q, dx=None, dy=None, dz=0, da=0):
     major = max(abs(dx), abs(dy), abs(dz), abs(da))
     if major == 0:
         return machine.f_cpu
-    tool_steps = math.hypot(dx, dy)
-    if tool_steps < 1e-9:
+    dist_mm = math.hypot(dx / x_spu, dy / y_spu)   # true XY tool distance (mm)
+    if dist_mm < 1e-9:
         # pure rotation / Z move — no XY to govern; time the major axis at v
         return _major_rate()
 
-    seg_time = (tool_steps / spm) / v          # seconds for this segment
+    seg_time = dist_mm / v                      # seconds for this segment
     cycles = seg_time / major * machine.f_cpu  # per major-axis step
     return max(1, min(int(cycles), machine.f_cpu))
 
@@ -172,9 +176,11 @@ def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
         dx_mm = p_next[0] - x_mm
         dy_mm = p_next[1] - y_mm
 
-        # integer steps: round to nearest, accumulate sub-step error via float pos
-        new_x = pos_x + dx_mm * machine.steps_per_mm
-        new_y = pos_y + dy_mm * machine.steps_per_mm
+        # integer steps via per-axis resolution; accumulate sub-step error in
+        # the float position (TRUE geometry — invert is applied only to the
+        # emitted delta sign, not the accumulator, so the shape stays correct).
+        new_x = pos_x + dx_mm * machine.x.steps_per_unit
+        new_y = pos_y + dy_mm * machine.y.steps_per_unit
         dx_steps = int(round(new_x)) - int(round(pos_x))
         dy_steps = int(round(new_y)) - int(round(pos_y))
 
@@ -182,7 +188,7 @@ def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
         theta_new = _tangent_angle(c, t_next)
         if tangential:
             delta_deg = _angle_delta(theta_current, theta_new)
-            da_steps  = int(round(delta_deg * machine.steps_per_deg))
+            da_steps  = int(round(delta_deg * machine.a.steps_per_unit))
         else:
             da_steps = 0
 
@@ -194,7 +200,10 @@ def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
         f = MICRO_PATH_END if (t_next >= 1.0 and is_last) else 0
 
         segments.append(MicroSegment(
-            dx=dx_steps, dy=dy_steps, dz=0, da=da_steps,
+            dx=-dx_steps if machine.x.invert else dx_steps,
+            dy=-dy_steps if machine.y.invert else dy_steps,
+            dz=0,
+            da=-da_steps if machine.a.invert else da_steps,
             interval=iv, flags=f,
         ))
 
@@ -244,8 +253,10 @@ def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
     z_interval = max(1, min(int(machine.f_cpu / z_rate), machine.f_cpu))
 
     def _z_move(dz):
-        # dz > 0 raises (pen up), dz < 0 lowers (pen down) — see MicroSegment.dz
-        return MicroSegment(dx=0, dy=0, dz=dz, da=0,
+        # dz > 0 raises (pen up), dz < 0 lowers (pen down) — see MicroSegment.dz.
+        # z.invert flips the emitted sign for a Z wired opposite the convention.
+        return MicroSegment(dx=0, dy=0,
+                            dz=(-dz if machine.z.invert else dz), da=0,
                             interval=z_interval, flags=MICRO_LIFT)
 
     all_segments = []
@@ -258,16 +269,19 @@ def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
         # reset position and angle at each PATH_START
         if planned.flags & PATH_START:
             p0 = planned.metrics.curve.p0
-            target_x = p0[0] * machine.steps_per_mm
-            target_y = p0[1] * machine.steps_per_mm
+            target_x = p0[0] * machine.x.steps_per_unit
+            target_y = p0[1] * machine.y.steps_per_unit
 
-            # Insert a travel move from the previous path's end to this start
+            # Insert a travel move from the previous path's end to this start.
+            # jog_dx/dy are TRUE geometry; invert applies only to emitted sign.
             if started:
                 jog_dx = int(round(target_x)) - int(round(pos_x))
                 jog_dy = int(round(target_y)) - int(round(pos_y))
                 if jog_dx != 0 or jog_dy != 0:
                     all_segments.append(MicroSegment(
-                        dx=jog_dx, dy=jog_dy, dz=0, da=0,
+                        dx=-jog_dx if machine.x.invert else jog_dx,
+                        dy=-jog_dy if machine.y.invert else jog_dy,
+                        dz=0, da=0,
                         interval=_interval(jog_feed, machine, q, jog_dx, jog_dy),
                         flags=MICRO_JOG,
                     ))

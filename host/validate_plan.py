@@ -78,6 +78,19 @@ def is_jog(seg):
     return bool(seg.flags & (MICRO_JOG | MICRO_LIFT))
 
 
+# ── emitted-delta -> true geometry (mm) ──────────────────────────────────────────
+# Emitted deltas are in physical step space: per-axis resolution and sign flipped
+# by axis.invert. Undo both to recover the intended SVG geometry for the checks.
+
+def _x_mm(seg, machine):
+    s = -seg.dx if machine.x.invert else seg.dx
+    return s / machine.x.steps_per_unit
+
+def _y_mm(seg, machine):
+    s = -seg.dy if machine.y.invert else seg.dy
+    return s / machine.y.steps_per_unit
+
+
 # ── per-segment kinematics ──────────────────────────────────────────────────────
 
 def seg_kinematics(seg, machine):
@@ -86,7 +99,7 @@ def seg_kinematics(seg, machine):
     if major == 0:
         return 0, 0.0, 0.0
     time_s = major * seg.interval / machine.f_cpu
-    dist = math.hypot(seg.dx / machine.steps_per_mm, seg.dy / machine.steps_per_mm)
+    dist = math.hypot(_x_mm(seg, machine), _y_mm(seg, machine))
     speed = dist / time_s if time_s > 0 else 0.0
     return major, time_s, speed
 
@@ -147,7 +160,6 @@ def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
     cornering; tighten this slack once stage6 gets an arc-length-accurate ramp.
     """
     c = Check("acceleration continuity")
-    spm = machine.steps_per_mm
     vs = [seg_kinematics(s, machine)[2] for s in segments]
     worst = 0.0
     for i in range(len(segments)):
@@ -160,7 +172,7 @@ def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
             if is_jog(segments[j - 1]):
                 break
             j -= 1
-            dist += math.hypot(segments[j].dx, segments[j].dy) / spm
+            dist += math.hypot(_x_mm(segments[j], machine), _y_mm(segments[j], machine))
         if dist < 1e-6:
             continue
         a = abs(vs[i]**2 - vs[j]**2) / (2 * dist)
@@ -175,7 +187,8 @@ def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
 def check_interval_bounds(segments, machine, feed_max, jog_feed):
     c = Check("interval bounds")
     fastest_feed = max(feed_max, jog_feed)
-    floor = (machine.f_cpu / (fastest_feed * machine.steps_per_mm)) * 0.9  # fastest legal step
+    fastest_spu = max(machine.x.steps_per_unit, machine.y.steps_per_unit)
+    floor = (machine.f_cpu / (fastest_feed * fastest_spu)) * 0.9  # fastest legal step
     ceiling = machine.f_cpu  # 1 step/sec — stage6's saturation cap
     lo, hi = None, None
     for s in segments:
@@ -213,12 +226,15 @@ def check_step_conservation(segments, planned, machine):
         c.fail(f"path count mismatch: {len(spans)} segment-paths vs {len(path_geom)} geometry-paths")
         return c
 
+    xinv = -1 if machine.x.invert else 1
+    yinv = -1 if machine.y.invert else 1
     for (s0, s1), (p_start, p_end) in zip(spans, path_geom):
         # Sum drawing segments only — jogs are inter-path travel, not geometry.
-        net_x = sum(segments[i].dx for i in range(s0, s1 + 1) if not is_jog(segments[i]))
-        net_y = sum(segments[i].dy for i in range(s0, s1 + 1) if not is_jog(segments[i]))
-        exp_x = round((p_end[0] - p_start[0]) * machine.steps_per_mm)
-        exp_y = round((p_end[1] - p_start[1]) * machine.steps_per_mm)
+        # Un-invert to compare emitted steps against true geometry.
+        net_x = xinv * sum(segments[i].dx for i in range(s0, s1 + 1) if not is_jog(segments[i]))
+        net_y = yinv * sum(segments[i].dy for i in range(s0, s1 + 1) if not is_jog(segments[i]))
+        exp_x = round((p_end[0] - p_start[0]) * machine.x.steps_per_unit)
+        exp_y = round((p_end[1] - p_start[1]) * machine.y.steps_per_unit)
         if net_x != exp_x or net_y != exp_y:
             c.fail(f"net steps ({net_x},{net_y}) != geometry ({exp_x},{exp_y})")
     if c.passed:
@@ -272,19 +288,19 @@ def check_geometry(segments, planned, machine, tol=0.1, samples_per_curve=60):
         c.fail(f"path count mismatch ({len(spans)} vs {len(ref)})")
         return c
 
-    spm = machine.steps_per_mm
     worst = 0.0
     for (s0, s1), poly in zip(spans, ref):
         # Anchor at the path's true start and apply DRAWING segments only.
         # The leading jog repositioned the tool here; it isn't part of the path.
+        # Deltas are mapped back to true geometry (per-axis + un-invert).
         x = poly[0][0]
         y = poly[0][1]
         recon = [(x, y)]
         for i in range(s0, s1 + 1):
             if is_jog(segments[i]):
                 continue
-            x += segments[i].dx / spm
-            y += segments[i].dy / spm
+            x += _x_mm(segments[i], machine)
+            y += _y_mm(segments[i], machine)
             recon.append((x, y))
         # For each reconstructed vertex, min distance to the reference polyline
         # SEGMENTS (not sample points) — independent of sampling resolution.
@@ -306,8 +322,10 @@ def main():
     cfg = config_default()
     ap = argparse.ArgumentParser(description="Offline invariant checker for the MicroSegment planner")
     ap.add_argument("svg")
-    ap.add_argument("--steps-per-mm",  type=float, default=cfg.machine.steps_per_mm)
-    ap.add_argument("--steps-per-deg", type=float, default=cfg.machine.steps_per_deg)
+    ap.add_argument("--steps-per-mm",  type=float, default=None,
+                    help="Override XY steps/mm (default: real per-axis config)")
+    ap.add_argument("--steps-per-deg", type=float, default=None,
+                    help="Override A steps/deg (default: real per-axis config)")
     ap.add_argument("--f-cpu",         type=int,   default=cfg.machine.f_cpu)
     ap.add_argument("--feed-max",      type=float, default=cfg.motion.feed_max)
     ap.add_argument("--a-max",         type=float, default=cfg.motion.a_max)
@@ -324,7 +342,15 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
-    machine = MachineConfig.uniform(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
+    # Default to the real per-axis machine (honours Z/A resolution + invert);
+    # scalar flags force a uniform machine only when explicitly given.
+    if args.steps_per_mm is not None or args.steps_per_deg is not None:
+        spm = args.steps_per_mm if args.steps_per_mm is not None else cfg.machine.steps_per_mm
+        spd = args.steps_per_deg if args.steps_per_deg is not None else cfg.machine.steps_per_deg
+        machine = MachineConfig.uniform(spm, spd, args.f_cpu)
+    else:
+        machine = cfg.machine
+
     planned, segments, _ = build(args.svg, machine, args.feed_max, args.a_max,
                                  args.angle_tol, args.gap_tol, jog_feed=args.jog_feed,
                                  tangential=args.tangential)
@@ -332,7 +358,9 @@ def main():
     print(f"SVG        : {args.svg}")
     print(f"Curves     : {len(planned)}")
     print(f"Segments   : {len(segments)}")
-    print(f"Config     : {args.steps_per_mm} steps/mm, feed_max {args.feed_max}, a_max {args.a_max}\n")
+    print(f"Config     : X={machine.x.steps_per_unit} Y={machine.y.steps_per_unit} "
+          f"A={machine.a.steps_per_unit} steps/unit, x.invert={machine.x.invert}, "
+          f"feed_max {args.feed_max}, a_max {args.a_max}\n")
 
     if not segments:
         print("No segments generated — nothing to validate.")
