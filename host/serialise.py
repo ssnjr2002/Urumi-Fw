@@ -24,7 +24,10 @@ MicroSegment   (26 bytes)  magic = 0xAB
   [13..16] da       int32 LE   A steps (signed, tangential rotation)
   [17..20] interval uint32 LE  step interval in RP2350 CPU cycles
   [21]     flags    uint8      MSEG_FLAG_* bitmask
-  [22..24] pad      3 bytes    zero (matches C struct alignment)
+  [22]     seq      uint8      rolling sequence number (stamped by the sender;
+                               lets the Pico drop Go-Back-N retransmits of
+                               packets it already accepted — see stamp_seq)
+  [23..24] pad      2 bytes    zero (matches C struct alignment)
   [25]     CRC8 over bytes [0..24]
 
 ToolConfig     (21 bytes)  magic = 0xAC
@@ -154,6 +157,22 @@ def pack_microsegment(ms) -> bytes:
         ms.flags,
     )
     return body + bytes([_crc8(body)])
+
+
+def stamp_seq(packet: bytes, seq: int) -> bytes:
+    """
+    Stamp a rolling 8-bit sequence number into pad byte [22] of a MicroSegment
+    packet and recompute the CRC. The Pico only executes a packet whose seq
+    matches the one it expects next; a stale Go-Back-N retransmit (packet it
+    already accepted) is ACKed but NOT executed. Without this, any go-back
+    after the Pico accepted in-flight packets duplicates motion — a permanent
+    position offset.
+    """
+    if len(packet) != 26 or packet[0] != MAGIC_MICROSEG:
+        raise ValueError("stamp_seq: not a MicroSegment packet")
+    body = bytearray(packet[:25])
+    body[22] = seq & 0xFF
+    return bytes(body) + bytes([_crc8(body)])
 
 
 def unpack_microsegment(data: bytes):

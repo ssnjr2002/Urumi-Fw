@@ -15,6 +15,7 @@ static uint8_t  pktBuf[MSEG_PACKET_SIZE];
 static uint8_t  pktIdx        = 0;
 static bool     inPacket      = false;
 static uint16_t pktSeq        = 0;   // rolling counter for ACK echo
+static uint8_t  expectedSeq   = 0;   // next wire seq (pktBuf[22]) we will execute
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,14 @@ static bool handleControlCommand(const String& input) {
         positionValid = true;
         if (machineState == STATE_ALARM) machineState = STATE_IDLE;
         Serial.println("Origin set");
+        return true;
+    }
+    if (input == "seqreset") {
+        // Host sends this before every stream so its packet index 0 lines up
+        // with our duplicate-guard expectation. Also resets the ACK echo.
+        expectedSeq = 0;
+        pktSeq      = 0;
+        Serial.println("seq reset");
         return true;
     }
     if (input == "status" || input == "?") {
@@ -171,7 +180,8 @@ static bool handleNonStreamingCommand(const String& input) {
 // ─── Binary MicroSegment Ingest ───────────────────────────────────────────────
 // Packet layout (MSEG_PACKET_SIZE = 26 bytes):
 //   [0]      magic  0xAB
-//   [1..24]  MicroSegment (24 bytes, little-endian)
+//   [1..24]  MicroSegment (24 bytes, little-endian; byte [22] = rolling seq
+//            stamped by the host sender, used for the duplicate guard)
 //   [25]     CRC8 over bytes [0..24]
 //
 // On success: push to ring buffer, send ACK (3 bytes).
@@ -202,6 +212,17 @@ static void processBinaryByte(uint8_t b) {
         return;
     }
 
+    // Duplicate guard: byte [22] carries the host's rolling 8-bit seq. After a
+    // NACK the host rewinds (Go-Back-N) and may resend packets we already
+    // accepted; executing them again would duplicate motion — a permanent
+    // position offset. A seq we are not expecting is a stale retransmit: ACK it
+    // (so the host's window advances) but do not execute. The host resets this
+    // counter with the "seqreset" text command before each stream.
+    if (pktBuf[22] != expectedSeq) {
+        sendAck();
+        return;
+    }
+
     // Check buffer space
     uint16_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
     if (next == mBufHead) {
@@ -225,6 +246,7 @@ static void processBinaryByte(uint8_t b) {
     __dmb();
     mBufTail = next;
 
+    expectedSeq++;
     sendAck();
 }
 

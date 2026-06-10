@@ -23,7 +23,7 @@ import sys, os, argparse, struct, time, threading, queue
 
 sys.path.insert(0, os.path.dirname(__file__))
 from serialise import (
-    validate_packet, unpack_microsegment,
+    validate_packet, unpack_microsegment, stamp_seq,
     MAGIC_ACK, MAGIC_NACK,
     NACK_CRC, NACK_FULL, NACK_BAD_MAGIC,
 )
@@ -130,14 +130,24 @@ class Sender:
 
         The Pico processes packets strictly in order and replies one ACK/NACK
         per packet. When its ring buffer fills it NACKs (NACK_FULL) — this is
-        flow control, NOT an error. Because rejection is in-order, the accepted
-        packets always form a prefix; on any NACK we discard stale responses,
-        back off, and resend from `base`. This preserves ordering (critical for
-        motion) and never buffers duplicates.
+        flow control, NOT an error. On any NACK we discard stale responses,
+        back off, and resend from `base`.
+
+        Duplicate protection: each packet carries an 8-bit rolling seq (pad
+        byte [22]). After a NACK the Pico may already have accepted packets
+        that were in flight BEHIND the rejected one; when we rewind to `base`
+        and resend them, the Pico sees a seq it has already consumed, ACKs it,
+        and skips execution. Without the seq, every go-back could duplicate
+        motion (permanent position offset between subpaths).
 
         Returns True on success, False on fatal error.
         """
-        pending    = list(packets)
+        # Stamp the rolling seq (and reset the Pico's expectation first)
+        pending = [stamp_seq(p, i) for i, p in enumerate(packets)]
+        self.ser.write(b"\nseqreset\n")
+        self.ser.flush()
+        time.sleep(0.05)
+        self._flush_responses()
         n          = len(pending)
         base       = 0          # oldest unconfirmed packet
         next_send  = 0          # next packet to transmit
