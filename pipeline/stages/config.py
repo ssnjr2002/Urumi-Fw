@@ -163,7 +163,7 @@ def _default_machine() -> MachineConfig:
     return MachineConfig(
         x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0, invert=True),
         y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
-        z=AxisConfig(node=3, steps_per_unit=1200.0, max_rate=10.0),    # PLACEHOLDER mm/s
+        z=AxisConfig(node=3, steps_per_unit=1200.0, max_rate=10.0, invert=True),    # PLACEHOLDER mm/s
         a=AxisConfig(node=4, steps_per_unit=120.0, rotary=True, max_rate=360.0),  # PLACEHOLDER deg/s
     )
 
