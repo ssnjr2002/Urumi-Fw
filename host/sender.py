@@ -58,31 +58,34 @@ def read_packets(src):
 
 def _ack_reader(ser, ack_queue, stop_event):
     """
-    Runs in a background thread. Reads 3-byte ACK/NACK responses from the
-    Pico and pushes them onto ack_queue as (type, seq_or_reason) tuples.
+    Runs in a background thread. Reads ACK/NACK responses and pushes them onto
+    ack_queue as (type, seq_or_reason) tuples.
+
+    Framing is anchored on the magic byte: a response begins only when 0xAA/0xBB
+    is seen, then exactly two more bytes are read. The Pico interleaves ASCII
+    text on the same stream (command echoes like "Node 2: Enabled", status
+    replies); since 0xAA/0xBB never occur in that text, every other byte is
+    discarded individually and the 3-byte framing can never drift out of sync.
+    (The old fixed 3-byte grouping desynced permanently on any odd-length text,
+    stalling the transfer.)
     """
-    buf = bytearray()
     while not stop_event.is_set():
         try:
-            byte = ser.read(1)
+            b = ser.read(1)
         except Exception:
             break
-        if not byte:
+        if not b:
             continue
-        buf += byte
-        if len(buf) < 3:
-            continue
-        b0, b1, b2 = buf[0], buf[1], buf[2]
-        buf = bytearray()
-        if b0 == MAGIC_ACK:
-            seq = b1 | (b2 << 8)
-            ack_queue.put(('ACK', seq))
-        elif b0 == MAGIC_NACK:
-            ack_queue.put(('NACK', b1))
-        else:
-            # Unexpected byte — could be a text response from the Pico.
-            # Swallow and continue; text responses only appear when idle.
-            pass
+        b0 = b[0]
+        if b0 == MAGIC_ACK or b0 == MAGIC_NACK:
+            rest = ser.read(2)
+            if len(rest) < 2:
+                continue
+            if b0 == MAGIC_ACK:
+                ack_queue.put(('ACK', rest[0] | (rest[1] << 8)))
+            else:
+                ack_queue.put(('NACK', rest[0]))
+        # else: ASCII text byte — discard; framing stays aligned
 
 
 # ── sender ────────────────────────────────────────────────────────────────────
