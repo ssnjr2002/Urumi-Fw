@@ -153,11 +153,18 @@ def _default_machine() -> MachineConfig:
     planning consumes them. NOTE: Z at 1200 steps/mm is slow mechanically — drive
     it at a low feed (the jog tool's --feed is units/s, so a few mm/s for Z).
     """
+    # ── PLACEHOLDER max_rate for Z and A — MEASURE AND REPLACE ────────────────
+    # Per-axis rate limiting (stage6._interval) slows a segment so no axis
+    # exceeds max_rate * steps_per_unit. A value of 0 means "unlimited". The
+    # numbers below are conservative guesses so the limiter is active; replace
+    # with the real physical ceilings once characterised:
+    #   a.max_rate — how fast the tangential knife can actually slew (deg/s)
+    #   z.max_rate — Z raise/lower ceiling (mm/s); 1200 steps/mm is slow, keep low
     return MachineConfig(
         x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0, invert=True),
         y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
-        z=AxisConfig(node=3, steps_per_unit=1200.0),
-        a=AxisConfig(node=4, steps_per_unit=120.0, rotary=True),
+        z=AxisConfig(node=3, steps_per_unit=1200.0, max_rate=10.0),    # PLACEHOLDER mm/s
+        a=AxisConfig(node=4, steps_per_unit=120.0, rotary=True, max_rate=360.0),  # PLACEHOLDER deg/s
     )
 
 

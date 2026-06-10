@@ -184,25 +184,38 @@ def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
     return c
 
 
-def check_interval_bounds(segments, machine, feed_max, jog_feed):
-    c = Check("interval bounds")
-    fastest_feed = max(feed_max, jog_feed)
-    fastest_spu = max(machine.x.steps_per_unit, machine.y.steps_per_unit)
-    floor = (machine.f_cpu / (fastest_feed * fastest_spu)) * 0.9  # fastest legal step
-    ceiling = machine.f_cpu  # 1 step/sec — stage6's saturation cap
+def check_interval_bounds(segments, machine, feed_max, jog_feed, eps=0.02):
+    """
+    Verify no axis exceeds its per-axis step-rate ceiling (max_rate * spu) and no
+    interval overflows. The old XY-only floor misread legitimate fast-A segments
+    (A as major axis steps faster than XY would) as violations; this checks each
+    axis's actual rate instead. Axes with max_rate == 0 are unconstrained.
+    """
+    c = Check("axis rate / interval bounds")
+    ceiling = machine.f_cpu  # 1 step/sec saturation cap
+    axes = (("X", machine.x), ("Y", machine.y), ("Z", machine.z), ("A", machine.a))
     lo, hi = None, None
     for s in segments:
         iv = s.interval
         lo = iv if lo is None else min(lo, iv)
         hi = iv if hi is None else max(hi, iv)
         if iv <= 0:
-            c.fail(f"non-positive interval {iv}")
-        elif iv < floor:
-            c.fail(f"interval {iv} below floor {floor:.0f} (faster than feed_max)")
-        elif iv > ceiling:
-            c.fail(f"interval {iv} above ceiling {ceiling:.0f} (overflow risk)")
+            c.fail(f"non-positive interval {iv}"); continue
+        if iv > ceiling:
+            c.fail(f"interval {iv} above ceiling {ceiling:.0f} (overflow risk)"); continue
+        deltas = (s.dx, s.dy, s.dz, s.da)
+        major = max(abs(d) for d in deltas)
+        if major == 0:
+            continue
+        t_s = major * iv / machine.f_cpu
+        for (name, ax), d in zip(axes, deltas):
+            R = ax.max_rate * ax.steps_per_unit
+            if R > 0 and d != 0:
+                rate = abs(d) / t_s
+                if rate > R * (1 + eps):
+                    c.fail(f"{name} step rate {rate:.0f} > ceiling {R:.0f} steps/s")
     if c.passed:
-        c.ok(f"range {lo}-{hi} cycles, within [{floor:.0f}, {ceiling:.0f}]")
+        c.ok(f"interval range {lo}-{hi} cycles, all axis rates within ceilings")
     return c
 
 

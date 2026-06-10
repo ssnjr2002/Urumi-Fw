@@ -138,12 +138,28 @@ def _interval(v, machine, q, dx=None, dy=None, dz=0, da=0):
     major = max(abs(dx), abs(dy), abs(dz), abs(da))
     if major == 0:
         return machine.f_cpu
+
+    # Per-axis rate limit (Phase 2): the segment must be slow enough that no
+    # axis exceeds its physical step-rate ceiling R_i = max_rate_i * spu_i.
+    # |d_i| steps in time T -> rate |d_i|/T <= R_i  =>  T >= |d_i|/R_i.
+    # max_rate_i == 0 means "unlimited" (axis skipped). This is what stops the A
+    # axis demanding ~37 MHz on tight curves — the whole segment slows so the
+    # knife stays within its slew rate (and XY slows with it).
+    t_rate = 0.0
+    for d, ax in ((dx, machine.x), (dy, machine.y), (dz, machine.z), (da, machine.a)):
+        R = ax.max_rate * ax.steps_per_unit
+        if R > 0 and d != 0:
+            t_rate = max(t_rate, abs(d) / R)
+
     dist_mm = math.hypot(dx / x_spu, dy / y_spu)   # true XY tool distance (mm)
     if dist_mm < 1e-9:
-        # pure rotation / Z move — no XY to govern; time the major axis at v
+        # pure rotation / Z move — no XY feed to govern; use the rate floor if any
+        if t_rate > 0.0:
+            cycles = t_rate / major * machine.f_cpu
+            return max(1, min(int(cycles), machine.f_cpu))
         return _major_rate()
 
-    seg_time = dist_mm / v                      # seconds for this segment
+    seg_time = max(dist_mm / v, t_rate)         # feed time, floored by axis rates
     cycles = seg_time / major * machine.f_cpu  # per major-axis step
     return max(1, min(int(cycles), machine.f_cpu))
 
