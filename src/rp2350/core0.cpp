@@ -39,15 +39,49 @@ static void sendNack(uint8_t reason) {
 
 // ─── Command Handlers ─────────────────────────────────────────────────────────
 
+static const char* stateName(uint8_t s) {
+    switch (s) {
+        case STATE_IDLE:    return "IDLE";
+        case STATE_RUNNING: return "RUNNING";
+        case STATE_ESTOP:   return "ESTOP";
+        case STATE_ALARM:   return "ALARM";
+        default:            return "?";
+    }
+}
+
 static bool handleControlCommand(const String& input) {
     if (input == "stop") {
-        emergencyStop = true;
+        machineState = STATE_ESTOP;            // Core 1 flushes and drops to ALARM
         Serial.println("!!! STOP DETECTED !!!");
         return true;
     }
     if (input.startsWith("unalarm")) {
-        alarmTriggered = false;
-        Serial.println("Alarm cleared!");
+        // Acknowledge the alarm but leave position invalid — use setorigin to
+        // re-establish a known origin before running again.
+        if (machineState == STATE_ALARM || machineState == STATE_ESTOP)
+            machineState = STATE_IDLE;
+        Serial.println("Alarm cleared! (position still invalid — run setorigin)");
+        return true;
+    }
+    if (input == "setorigin") {
+        if (machineState == STATE_RUNNING) {
+            Serial.println("Error: cannot set origin while RUNNING");
+            return true;
+        }
+        machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
+        positionValid = true;
+        if (machineState == STATE_ALARM) machineState = STATE_IDLE;
+        Serial.println("Origin set");
+        return true;
+    }
+    if (input == "status" || input == "?") {
+        uint8_t s = machineState;
+        Serial.printf("state=%s pos=%ld,%ld,%ld,%ld valid=%d buf=%u/%u\n",
+                      stateName(s),
+                      (long)machinePos[0], (long)machinePos[1],
+                      (long)machinePos[2], (long)machinePos[3],
+                      positionValid ? 1 : 0,
+                      getBufCount(), MASTER_BUF_SIZE);
         return true;
     }
     return false;

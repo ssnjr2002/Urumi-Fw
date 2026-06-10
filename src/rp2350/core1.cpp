@@ -63,7 +63,9 @@ static uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
 // Node assignment (matches host PC convention):
 //   Node 1 = X,  Node 2 = Y,  Node 3 = Z,  Node 4 = A
 
-static void __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
+// Returns true if the segment was emitted in full; false if estop aborted it
+// mid-way (in which case the caller must NOT accumulate its position delta).
+static bool __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
     // A MicroSegment describes a block of steps: the major axis takes
     // max(|dx|,|dy|,|dz|,|da|) steps, minor axes are Bresenham-distributed
     // against it. `interval` is the time (CPU cycles) per major-axis step.
@@ -82,14 +84,14 @@ static void __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
         if (delta[i] > 0) dirBits |= (1 << (i * 2 + 1)); // positive = CW
     }
 
-    if (maxSteps == 0) return; // no motion this segment
+    if (maxSteps == 0) return true; // no motion this segment
 
     // Bresenham error accumulators — symmetric init for centred distribution
     uint32_t err[4] = { maxSteps / 2, maxSteps / 2, maxSteps / 2, maxSteps / 2 };
 
     uint32_t t0 = rp2040.getCycleCount();
     for (uint32_t s = 0; s < maxSteps; s++) {
-        if (emergencyStop) return;
+        if (machineState == STATE_ESTOP) return false;
 
         uint8_t streamByte = dirBits;
         for (int i = 0; i < 4; i++) {
@@ -103,31 +105,44 @@ static void __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
 
         // Wait the prescribed per-step interval, then emit
         while ((rp2040.getCycleCount() - t0) < ms.interval) {
-            if (emergencyStop) return;
+            if (machineState == STATE_ESTOP) return false;
         }
         t0 += ms.interval;
 
         rs485.writeStream(streamByte);
     }
+    return true;
 }
 
 static void __time_critical_func(processMicroSegments)() {
+    if (machineState == STATE_IDLE) machineState = STATE_RUNNING;
+
     while (mBufHead != mBufTail) {
-        if (emergencyStop) return;
+        if (machineState == STATE_ESTOP) return;
 
         MicroSegment ms = masterBuf[mBufHead];
 
-        // Poison pill — flush and signal estop
+        // Poison pill — signal estop, leave the flush/ALARM to loop1
         if (ms.flags & MSEG_FLAG_ESTOP) {
-            emergencyStop = true;
+            machineState = STATE_ESTOP;
             return;
         }
 
-        emitMicroSegment(ms);
+        // Abort without accumulating if estop cut the segment short
+        if (!emitMicroSegment(ms)) return;
+
+        // Exact machine position: the deltas are integer step counts
+        machinePos[0] += ms.dx;
+        machinePos[1] += ms.dy;
+        machinePos[2] += ms.dz;
+        machinePos[3] += ms.da;
 
         __dmb();
         mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
     }
+
+    // Queue drained — return to idle unless a sticky state intervened
+    if (machineState == STATE_RUNNING) machineState = STATE_IDLE;
 }
 
 // ─── Debug Step Emitter ───────────────────────────────────────────────────────
@@ -155,13 +170,16 @@ static void emitDebugSteps(uint32_t req) {
 
     uint32_t t0 = rp2040.getCycleCount();
     for (uint16_t i = 0; i < count; i++) {
-        if (emergencyStop) break;
+        if (machineState == STATE_ESTOP) break;
         while ((rp2040.getCycleCount() - t0) < interval) {
-            if (emergencyStop) break;
+            if (machineState == STATE_ESTOP) break;
         }
         t0 += interval;
         rs485.writeStream(streamByte);
     }
+
+    // Debug stepping moves a node untracked — machine position is now stale.
+    positionValid = false;
 }
 
 // ─── Core 1 Setup & Loop ──────────────────────────────────────────────────────
@@ -171,11 +189,13 @@ void setup1() {
 }
 
 void loop1() {
-    // 1. Handle emergency stop — flush the buffer and clear the flag
-    if (emergencyStop) {
+    // 1. Estop — flush the queue, invalidate position, settle into ALARM.
+    //    ALARM is sticky until Core 0 issues setorigin / unalarm.
+    if (machineState == STATE_ESTOP) {
         mBufHead = mBufTail;
+        positionValid = false;
         __dmb();
-        emergencyStop = false;
+        machineState = STATE_ALARM;
         return;
     }
 

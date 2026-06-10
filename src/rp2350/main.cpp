@@ -49,9 +49,10 @@ MicroSegment masterBuf[MASTER_BUF_SIZE];
 volatile uint16_t mBufHead = 0;
 volatile uint16_t mBufTail = 0;
 
-// System Flags
-volatile bool emergencyStop = false;
-volatile bool alarmTriggered = false;
+// Machine state + position (see shared.h for the transition map)
+volatile uint8_t machineState  = STATE_IDLE;
+volatile int32_t machinePos[4] = {0, 0, 0, 0};   // X, Y, Z, A steps
+volatile bool    positionValid = false;          // unknown until first setorigin
 
 // Note: 
 // setup() and loop() are defined in core0.cpp

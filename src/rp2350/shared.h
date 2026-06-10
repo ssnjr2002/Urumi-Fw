@@ -99,13 +99,37 @@ struct MicroSegment {
 #define MSEG_NACK_FULL   0x02
 #define MSEG_NACK_MAGIC  0x03
 
+// ─── Machine State ──────────────────────────────────────────────────────────
+// Single authoritative state for the controller, owned across both cores.
+//   IDLE/RUNNING transition freely (Core 1, driven by the segment queue).
+//   ESTOP/ALARM are sticky — only cleared by setorigin / unalarm (Core 0).
+//
+// Transition map:
+//   IDLE    → RUNNING   Core 1, queue non-empty
+//   RUNNING → IDLE      Core 1, queue drained
+//   any     → ESTOP     Core 0 `stop`, or MSEG_FLAG_ESTOP poison pill
+//   ESTOP   → ALARM     Core 1, after flushing the queue (position now invalid)
+//   ALARM   → IDLE      Core 0 `setorigin` (zeros position) or `unalarm`
+enum MachineState : uint8_t {
+    STATE_IDLE    = 0,
+    STATE_RUNNING = 1,
+    STATE_ESTOP   = 2,
+    STATE_ALARM   = 3,
+};
+
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
 extern MicroSegment masterBuf[MASTER_BUF_SIZE];
 extern volatile uint16_t mBufHead;
 extern volatile uint16_t mBufTail;
 
-extern volatile bool emergencyStop;
-extern volatile bool alarmTriggered;
+extern volatile uint8_t machineState;     // one of MachineState
+
+// Machine position in steps (X,Y,Z,A), owned and accumulated by Core 1 per
+// completed segment. The consumer (Core 1) is the single source of truth so it
+// stays correct regardless of whether segments came from the host or, later,
+// a local on-Pico planner. Invalid until a setorigin; invalidated by estop.
+extern volatile int32_t machinePos[4];
+extern volatile bool    positionValid;
 
 #endif // SHARED_H
