@@ -36,6 +36,7 @@ MicroSegment = namedtuple("MicroSegment", [
 
 MICRO_PATH_END = 0x01
 MICRO_JOG      = 0x04   # travel move between subpaths (0x02 reserved for ESTOP)
+MICRO_LIFT     = 0x08   # pen/tool Z raise or lower (pen-up/down around a jog)
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
@@ -144,12 +145,16 @@ def _interval(v, machine, q, dx=None, dy=None, dz=0, da=0):
 
 # ── single curve evaluator ────────────────────────────────────────────────────
 
-def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last):
+def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
+                    tangential=True):
     """
     Evaluate one PlannedCurve into a list of MicroSegments.
     Returns (segments, theta_current, pos_x, pos_y).
     pos_x/y are in steps (float accumulator, rounded at each segment).
     theta_current is in degrees (unwrapped).
+
+    tangential — when True (drag-knife / creasing tool), the A axis tracks the
+    path tangent (da). When False (pen / non-rotating tool), da = 0.
     """
     c = planned.metrics.curve
     segments = []
@@ -173,10 +178,13 @@ def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last):
         dx_steps = int(round(new_x)) - int(round(pos_x))
         dy_steps = int(round(new_y)) - int(round(pos_y))
 
-        # tangent rotation
+        # tangent rotation (A axis) — only for tangential tools (knife/crease)
         theta_new = _tangent_angle(c, t_next)
-        delta_deg = _angle_delta(theta_current, theta_new)
-        da_steps  = int(round(delta_deg * machine.steps_per_deg))
+        if tangential:
+            delta_deg = _angle_delta(theta_current, theta_new)
+            da_steps  = int(round(delta_deg * machine.steps_per_deg))
+        else:
+            da_steps = 0
 
         # velocity and interval (geometry-aware so the tool honors v on diagonals)
         v = _velocity_at_t(planned, t_next, q)
@@ -201,25 +209,44 @@ def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last):
 
 # ── main stage ────────────────────────────────────────────────────────────────
 
-def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None):
+def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
+                           lift_height=0.0, z_feed=None, tangential=True):
     """
     Returns flat list of MicroSegment.
 
-    quality  — QualityConfig (tuning constants). Defaults to config.default().
-    jog_feed — travel speed mm/s. Defaults to config.default().motion.jog_feed.
+    quality     — QualityConfig (tuning constants). Defaults to config.default().
+    jog_feed    — travel speed mm/s. Defaults to config.default().motion.jog_feed.
+    lift_height — pen/tool Z lift between subpaths, mm. 0 (default) draws through
+                  every jog (no Z motion). When > 0, the pen is raised after each
+                  path, the XY jog runs pen-up, and the pen is lowered before the
+                  next path. The first path lowers before drawing; the last path
+                  raises at the end. Tool starts and ends pen-up.
+    z_feed      — Z raise/lower speed mm/s. Defaults to config.default().motion.z_feed.
 
-    Between subpaths a travel (jog) MicroSegment is inserted to move the tool
-    from the end of one path to the start of the next, so paths land at their
-    correct absolute positions. Without it, every closed subpath would be drawn
-    relative to the previous path's endpoint (all stacked at the origin).
-
-    The jog is a single constant-velocity move at jog_feed — pen-lift during
-    travel and jog acceleration ramping are separate concerns (Z axis / future).
+    Between subpaths a travel (jog) MicroSegment moves the tool from the end of
+    one path to the start of the next, so paths land at their correct absolute
+    positions. Without it, every closed subpath would be drawn relative to the
+    previous path's endpoint (all stacked at the origin).
     """
     _cfg = _config_default()
     q = quality if quality is not None else _cfg.quality
     if jog_feed is None:
         jog_feed = _cfg.motion.jog_feed
+    if z_feed is None:
+        z_feed = _cfg.motion.z_feed
+
+    # Pre-compute the Z lift move (pure Z, timed by z_feed on the Z axis)
+    lift = lift_height > 0.0
+    z_steps = int(round(lift_height * machine.z.steps_per_unit)) if lift else 0
+    if z_steps == 0:
+        lift = False
+    z_rate = max(z_feed * machine.z.steps_per_unit, 1e-9)
+    z_interval = max(1, min(int(machine.f_cpu / z_rate), machine.f_cpu))
+
+    def _z_move(dz):
+        # dz > 0 raises (pen up), dz < 0 lowers (pen down) — see MicroSegment.dz
+        return MicroSegment(dx=0, dy=0, dz=dz, da=0,
+                            interval=z_interval, flags=MICRO_LIFT)
 
     all_segments = []
     theta = 0.0
@@ -250,11 +277,17 @@ def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None)
             theta = _tangent_angle(planned.metrics.curve, 0.0)
             started = True
 
+            if lift:
+                all_segments.append(_z_move(-z_steps))  # lower pen to draw
+
         is_last = bool(planned.flags & PATH_END)
         segs, theta, pos_x, pos_y = _evaluate_curve(
-            planned, machine, q, theta, pos_x, pos_y, is_last
+            planned, machine, q, theta, pos_x, pos_y, is_last, tangential
         )
         all_segments.extend(segs)
+
+        if is_last and lift:
+            all_segments.append(_z_move(+z_steps))  # raise pen after drawing
 
     return all_segments
 

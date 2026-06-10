@@ -123,6 +123,8 @@ class MotionConfig:
     a_max:    float = 1000.0    # mm/s^2
     jog_feed: float = 80.0      # mm/s — travel between subpaths
     junction_deviation: float = 0.05   # mm — max corner rounding for junction-deviation cornering
+    lift_height: float = 0.0    # mm — pen/tool lift between subpaths (0 = no lift, draw-through)
+    z_feed:      float = 20.0   # mm/s — Z raise/lower speed
 
 
 @dataclass(frozen=True)

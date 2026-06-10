@@ -24,7 +24,7 @@ from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
 from stage4 import compute_metrics, _bezier_point
 from stage5 import plan_velocities, PATH_START, PATH_END
-from stage6 import evaluate_microsegments, MICRO_JOG
+from stage6 import evaluate_microsegments, MICRO_JOG, MICRO_LIFT
 from config import default as config_default, MachineConfig
 
 JOG_FEED = config_default().motion.jog_feed
@@ -50,7 +50,8 @@ class Check:
 
 # ── pipeline driver ─────────────────────────────────────────────────────────────
 
-def build(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=JOG_FEED):
+def build(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=JOG_FEED,
+          tangential=True):
     """Return (planned_curves, microsegments, subpaths_repaired)."""
     subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
     repaired = [enforce_c1(sp, angle_tol, gap_tol)[0] for sp in subpaths_mm]
@@ -66,12 +67,15 @@ def build(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=JOG_F
 
     metrics = compute_metrics(flat)
     planned = plan_velocities(metrics, flags, feed_max, a_max)
-    segments = evaluate_microsegments(planned, machine, jog_feed=jog_feed)
+    segments = evaluate_microsegments(planned, machine, jog_feed=jog_feed,
+                                      tangential=tangential)
     return planned, segments, repaired
 
 
 def is_jog(seg):
-    return bool(seg.flags & MICRO_JOG)
+    # "travel" — any non-drawing move (XY jog or Z pen lift). Excluded from the
+    # XY drawing checks (geometry, conservation, velocity ceiling, boundaries).
+    return bool(seg.flags & (MICRO_JOG | MICRO_LIFT))
 
 
 # ── per-segment kinematics ──────────────────────────────────────────────────────
@@ -313,6 +317,8 @@ def main():
                     help="Max allowed trajectory deviation, mm (default 0.2)")
     ap.add_argument("--geom-samples",  type=int,   default=200,
                     help="Reference samples per curve for fidelity check (default 200)")
+    ap.add_argument("--tangential",    action=argparse.BooleanOptionalAction, default=True,
+                    help="A-axis tangent tracking (knife/crease); --no-tangential for a pen")
     ap.add_argument("--jog-feed",      type=float, default=JOG_FEED,
                     help=f"Travel speed between subpaths, mm/s (default {JOG_FEED})")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -320,7 +326,8 @@ def main():
 
     machine = MachineConfig.uniform(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
     planned, segments, _ = build(args.svg, machine, args.feed_max, args.a_max,
-                                 args.angle_tol, args.gap_tol, jog_feed=args.jog_feed)
+                                 args.angle_tol, args.gap_tol, jog_feed=args.jog_feed,
+                                 tangential=args.tangential)
 
     print(f"SVG        : {args.svg}")
     print(f"Curves     : {len(planned)}")

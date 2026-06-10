@@ -43,11 +43,14 @@ def _build_flags(subpaths):
 
 
 def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
-        jog_feed=None, quality=None):
+        jog_feed=None, quality=None, lift_height=0.0, z_feed=None,
+        tangential=True):
     """
     Full host pipeline: SVG → MicroSegment packets.
     Returns list of 26-byte bytes objects.
     quality defaults to config.default().quality.
+    lift_height > 0 enables Z pen-lift between subpaths.
+    tangential — A-axis tangent tracking (knife/crease). Off for a pen.
     """
     if quality is None:
         quality = config_default().quality
@@ -67,9 +70,11 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
     # Stage 5: velocity planning
     planned = plan_velocities(metrics, flags, feed_max, a_max)
 
-    # Stage 6: Bezier → MicroSegments (jog_feed defaults to config motion tier)
+    # Stage 6: Bezier → MicroSegments (jog_feed/z_feed default to config motion tier)
     segments = evaluate_microsegments(planned, machine,
-                                      quality=quality, jog_feed=jog_feed)
+                                      quality=quality, jog_feed=jog_feed,
+                                      lift_height=lift_height, z_feed=z_feed,
+                                      tangential=tangential)
 
     # Serialise to wire packets
     return list(serialise_microsegments(segments))
@@ -98,10 +103,18 @@ def main():
                         help="Acceleration mm/s²")
     parser.add_argument("--jog-feed",       type=float, default=None,
                         help="Travel speed between subpaths, mm/s")
-    parser.add_argument("--steps-per-mm",   type=float, default=cfg.machine.steps_per_mm,
-                        help="Steps per mm XY")
-    parser.add_argument("--steps-per-deg",  type=float, default=cfg.machine.steps_per_deg,
-                        help="Steps per degree A axis")
+    parser.add_argument("--lift-height",    type=float, default=cfg.motion.lift_height,
+                        help="Pen/tool Z lift between subpaths, mm (0 = draw through)")
+    parser.add_argument("--z-feed",         type=float, default=None,
+                        help="Z raise/lower speed, mm/s")
+    parser.add_argument("--tangential",     action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="A-axis tangent tracking for knife/crease; "
+                             "use --no-tangential for a pen")
+    parser.add_argument("--steps-per-mm",   type=float, default=None,
+                        help="Override XY steps/mm (default: real per-axis config)")
+    parser.add_argument("--steps-per-deg",  type=float, default=None,
+                        help="Override A steps/deg (default: real per-axis config)")
     parser.add_argument("--f-cpu",          type=int,   default=cfg.machine.f_cpu,
                         help="RP2350 CPU frequency Hz")
     parser.add_argument("--angle-tol",      type=float, default=cfg.quality.angle_tol,
@@ -110,10 +123,19 @@ def main():
                         help="Gap tolerance mm")
     args = parser.parse_args()
 
-    machine = MachineConfig.uniform(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
+    # Default to the real per-axis machine (honours Z=1200, A=120, etc.).
+    # Scalar flags force a uniform machine only when explicitly given.
+    if args.steps_per_mm is not None or args.steps_per_deg is not None:
+        spm = args.steps_per_mm if args.steps_per_mm is not None else cfg.machine.steps_per_mm
+        spd = args.steps_per_deg if args.steps_per_deg is not None else cfg.machine.steps_per_deg
+        machine = MachineConfig.uniform(spm, spd, args.f_cpu)
+    else:
+        machine = cfg.machine
 
     packets = run(args.svg, machine, args.feed_max, args.a_max,
-                  args.angle_tol, args.gap_tol, jog_feed=args.jog_feed)
+                  args.angle_tol, args.gap_tol, jog_feed=args.jog_feed,
+                  lift_height=args.lift_height, z_feed=args.z_feed,
+                  tangential=args.tangential)
 
     total_bytes = sum(len(p) for p in packets)
     print(f"MicroSegments : {len(packets)}", file=sys.stderr)
