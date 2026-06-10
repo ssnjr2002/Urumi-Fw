@@ -299,15 +299,16 @@ def check_geometry(segments, planned, machine, tol=0.1, samples_per_curve=60):
 # ── main ─────────────────────────────────────────────────────────────────────────
 
 def main():
+    cfg = config_default()
     ap = argparse.ArgumentParser(description="Offline invariant checker for the MicroSegment planner")
     ap.add_argument("svg")
-    ap.add_argument("--steps-per-mm",  type=float, default=80.0)
-    ap.add_argument("--steps-per-deg", type=float, default=10.0)
-    ap.add_argument("--f-cpu",         type=int,   default=150_000_000)
-    ap.add_argument("--feed-max",      type=float, default=80.0)
-    ap.add_argument("--a-max",         type=float, default=1000.0)
-    ap.add_argument("--angle-tol",     type=float, default=5.0)
-    ap.add_argument("--gap-tol",       type=float, default=0.01)
+    ap.add_argument("--steps-per-mm",  type=float, default=cfg.machine.steps_per_mm)
+    ap.add_argument("--steps-per-deg", type=float, default=cfg.machine.steps_per_deg)
+    ap.add_argument("--f-cpu",         type=int,   default=cfg.machine.f_cpu)
+    ap.add_argument("--feed-max",      type=float, default=cfg.motion.feed_max)
+    ap.add_argument("--a-max",         type=float, default=cfg.motion.a_max)
+    ap.add_argument("--angle-tol",     type=float, default=cfg.quality.angle_tol)
+    ap.add_argument("--gap-tol",       type=float, default=cfg.quality.gap_tol)
     ap.add_argument("--geom-tol",      type=float, default=0.2,
                     help="Max allowed trajectory deviation, mm (default 0.2)")
     ap.add_argument("--geom-samples",  type=int,   default=200,

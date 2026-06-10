@@ -138,9 +138,30 @@ class QualityConfig:
     n_kappa:   int   = 20       # curvature samples per curve (stage 4)
 
 
+def _default_machine() -> MachineConfig:
+    """
+    The physical machine: DM542 @ 1/32 microstepping.
+      X/Y : GT2 20T pulley, 40 mm/rev -> 160 steps/mm
+      Z   : lead screw -> 1200 steps/mm
+      A   : tangential rotary -> 120 steps/deg
+    Node map X=1, Y=2, Z=3, A=4. All four axes fitted (present).
+
+    Per-axis max_rate/accel are PROVISIONAL: X/Y mirror the scalar motion limits
+    the pipeline still uses; Z/A are left 0 (uncharacterised) until per-axis
+    planning consumes them. NOTE: Z at 1200 steps/mm is slow mechanically — drive
+    it at a low feed (the jog tool's --feed is units/s, so a few mm/s for Z).
+    """
+    return MachineConfig(
+        x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
+        y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
+        z=AxisConfig(node=3, steps_per_unit=1200.0),
+        a=AxisConfig(node=4, steps_per_unit=120.0, rotary=True),
+    )
+
+
 @dataclass(frozen=True)
 class PipelineConfig:
-    machine: MachineConfig = field(default_factory=lambda: MachineConfig.uniform(80.0, 10.0))
+    machine: MachineConfig = field(default_factory=_default_machine)
     motion:  MotionConfig  = field(default_factory=MotionConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
 
