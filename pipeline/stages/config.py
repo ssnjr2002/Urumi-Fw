@@ -129,27 +129,40 @@ class MotionConfig:
 
 # ── tool tier ─────────────────────────────────────────────────────────────────
 
+# Blade offset below this (mm) is treated as a centre-pivot tangential tool and
+# run uncompensated — the worst-case error is ~offset, concentrated at corners,
+# and below this it sits within real cut tolerance (~0.1 mm). Above it, offset
+# compensation (XY_pivot = XY_cut - offset * tangent; PLAN_svg_tile_motion P6)
+# is required and not implemented yet — build_toolpath raises rather than
+# silently cutting wrong. Raise this only once compensation exists.
+OFFSET_TOLERANCE_MM = 0.05
+
+
 @dataclass(frozen=True)
 class ToolProfile:
     """
-    One mounted tool's kinematic behaviour. The choreography layer (toolpath.py)
-    reads this to decide tangent tracking, lift, and corner handling — so a new
-    tool is a new preset here, never a code change.
+    One mounted tool's kinematic behaviour. The choreography in stage6
+    (build_toolpath) reads this to decide tangent tracking, lift, and corner
+    handling — so a new tool is a new preset here, never a code change.
+
+    There is ONE knife model, not two. "Tangential vs drag" is not a tool type;
+    on a driven-A machine the blade is always actively oriented, and the only
+    difference is the blade's caster offset (offset_mm) — a single parameter.
+    offset_mm = 0 is the clean centre-pivot case; a larger offset would need
+    offset compensation (PLAN_svg_tile_motion P6), the SAME formula with the
+    offset as a term (identity at 0). Until that lands, offset_mm above
+    OFFSET_TOLERANCE_MM is rejected by build_toolpath. Tool TYPES (pen / cut /
+    crease) are the real distinctions; see PLAN_svg_tile_motion tool table.
 
     Designed so every tool-specific behaviour degrades to a no-op at its
-    zero/off value: offset_mm=0 makes blade-offset compensation the identity, so
-    pen/crease/tangential-knife all share the same code path with no special
-    casing. A non-zero offset means a DRAG knife, which is not supported yet —
-    build_toolpath raises rather than silently approximating it.
+    zero/off value, so pen/crease/knife share one code path with no special
+    casing.
 
-    corner_strategy / corner_angle_deg / min_radius_mm are CARRIED but not yet
-    consumed (pivot-in-place corners are the next step); they pin down the
-    intended behaviour so the consumer can land additively.
+    corner_* / min_radius_mm tune corner handling (lift-pivot-lower).
     """
     name:            str
     tangential:      bool  = False   # A-axis tracks the path tangent
-    offset_mm:       float = 0.0     # blade trailing distance; 0 = tangential/none, >0 = drag (unsupported)
-    corner_strategy: str   = "none"  # "none" | "pivot_in_place" (future: "overcut" | "lift")
+    offset_mm:       float = 0.0     # blade caster offset; 0 = centre-pivot, >tol needs compensation
     corner_angle_deg: float = 20.0   # tangent jump above which a corner action fires
     min_radius_mm:   float = 0.0     # curvature floor; tighter arcs need special handling (0 = unset)
     lift_height:     float = 0.0     # Z lift between subpaths, mm (0 = draw-through)
@@ -157,30 +170,26 @@ class ToolProfile:
     jog_feed:        float = 0.0     # travel speed between subpaths, mm/s (0 = use MotionConfig default)
 
     @property
-    def is_drag(self) -> bool:
-        return self.offset_mm > 0.0
+    def needs_offset_comp(self) -> bool:
+        """True if the offset is large enough to require (unimplemented) compensation."""
+        return self.offset_mm > OFFSET_TOLERANCE_MM
 
 
-# Presets. PEN and TANGENTIAL_KNIFE are wired; CREASE rides the same tangential
-# path; DRAG_KNIFE is defined but unsupported (build_toolpath raises on it).
+# Presets keyed to tool TYPE (PLAN_svg_tile_motion: pen/cut/crease). One knife
+# model (KNIFE); a larger-offset blade just sets offset_mm, not a new profile.
 PEN = ToolProfile(name="pen", tangential=False)
 
-TANGENTIAL_KNIFE = ToolProfile(
-    name="tangential_knife", tangential=True, offset_mm=0.0,
-    corner_strategy="pivot_in_place", corner_angle_deg=20.0,
+KNIFE = ToolProfile(
+    name="knife", tangential=True, offset_mm=0.0,   # centre-pivot; raise offset_mm per blade
+    corner_angle_deg=20.0,
 )
 
 CREASE = ToolProfile(
     name="crease", tangential=True, offset_mm=0.0,
-    corner_strategy="pivot_in_place", corner_angle_deg=30.0,
+    corner_angle_deg=30.0,
 )
 
-DRAG_KNIFE = ToolProfile(
-    name="drag_knife", tangential=True, offset_mm=0.5,   # >0 => unsupported
-    corner_strategy="overcut",
-)
-
-TOOL_PROFILES = {p.name: p for p in (PEN, TANGENTIAL_KNIFE, CREASE, DRAG_KNIFE)}
+TOOL_PROFILES = {p.name: p for p in (PEN, KNIFE, CREASE)}
 
 
 @dataclass(frozen=True)

@@ -249,9 +249,9 @@ def evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
 # Everything below stitches the per-curve step events above into a whole job:
 # travel jogs between subpaths, Z pen/tool lift, and A-axis orientation for
 # tangential tools. All tool-specific behaviour is selected by a ToolProfile
-# (config.py), so adding a tool is a new preset, not new code. offset_mm == 0
-# (pen / crease / tangential knife) shares one path; offset_mm > 0 (drag knife)
-# is not supported yet and raises rather than silently approximating it.
+# (config.py), so adding a tool is a new preset, not new code. There is one
+# knife model parameterized by offset_mm; a large offset would need offset
+# compensation (PLAN P6, not implemented) and is rejected, not approximated.
 # This is the outer loop that drives the geometry core — not a separate stage.
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -273,17 +273,19 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
     """
     if profile is None:
         profile = PEN
-    if profile.is_drag:
+    if profile.needs_offset_comp:
         raise NotImplementedError(
             f"tool profile '{profile.name}' has offset_mm={profile.offset_mm} "
-            "(drag knife). Blade-offset compensation and overcut corners are "
-            "not implemented yet -- only zero-offset (tangential) tools are "
-            "supported. Use TANGENTIAL_KNIFE, CREASE, or PEN."
+            f"(> OFFSET_TOLERANCE_MM). Blade-offset compensation "
+            "(XY_pivot = XY_cut - offset * tangent; PLAN_svg_tile_motion P6) is "
+            "not implemented yet. Use a centre-pivot tool (offset_mm <= "
+            "tolerance) until it lands."
         )
 
     _cfg = _config_default()
     q = quality if quality is not None else _cfg.quality
     tangential = profile.tangential
+    corner_angle = profile.corner_angle_deg
 
     # Resolve feeds: explicit arg > profile > MotionConfig default.
     if jog_feed is None:
@@ -320,6 +322,23 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
         return MicroSegment(dx=0, dy=0, dz=0,
                             da=(-da if machine.a.invert else da),
                             interval=a_interval, flags=MICRO_JOG)
+
+    def _pivot(da_steps):
+        """
+        Reorient the tangential tool by da_steps. With lift available this is the
+        lift-pivot-lower corner sequence (raise -> rotate -> lower) so the blade
+        never rotates while embedded in the material — the tip would otherwise
+        sweep a divot at a corner. Without a Z to lift, it degrades to an
+        in-place rotation (the caller should bring XY to ~0 first; that v=0
+        corner constraint is stage5's job). Returns the list of segments.
+        """
+        out = []
+        if lift:
+            out.append(_z_move(+z_steps))   # raise
+        out.append(_a_move(da_steps))       # pivot to new tangent
+        if lift:
+            out.append(_z_move(-z_steps))   # lower
+        return out
 
     all_segments = []
     theta = 0.0
@@ -368,6 +387,19 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
 
             if lift:
                 all_segments.append(_z_move(-z_steps))  # lower pen to draw
+
+        elif tangential:
+            # Within-path corner: if the tangent jumps sharply between this curve
+            # and the previous one, the blade would otherwise pivot while down
+            # and tear an arc. Lift-pivot-lower instead. Smooth (C1) joins fall
+            # below corner_angle and are tracked continuously by evaluate_curve.
+            entry_theta = _tangent_angle(planned.metrics.curve, 0.0)
+            jump = _angle_delta(theta, entry_theta)
+            if abs(jump) >= corner_angle:
+                da_steps = int(round(jump * machine.a.steps_per_unit))
+                if da_steps != 0:
+                    all_segments.extend(_pivot(da_steps))
+                    theta = entry_theta   # blade is now at entry; no re-rotation
 
         is_last = bool(planned.flags & PATH_END)
         segs, theta, pos_x, pos_y = evaluate_curve(

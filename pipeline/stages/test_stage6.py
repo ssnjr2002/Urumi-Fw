@@ -159,6 +159,44 @@ def test_no_preorient_when_not_tangential():
     s = evaluate_microsegments(case["planned"], case["machine"], tangential=False)
     assert all(x.da == 0 for x in s)
 
+# ── lift-pivot-lower corners (tangential tool) ───────────────────────────────
+
+def _L_path():
+    # Horizontal (exit tangent 0deg) into vertical (entry tangent 90deg): a 90deg
+    # internal corner that must trigger lift-pivot-lower.
+    from mock_stage6 import make_planned
+    horiz = make_planned((0, 0), (3.3, 0), (6.7, 0), (10, 0),
+                         0, 50, 50, flags=PATH_START)
+    vert  = make_planned((10, 0), (10, 3.3), (10, 6.7), (10, 10),
+                         50, 50, 0, flags=PATH_END)
+    return [horiz, vert]
+
+def test_corner_lift_pivot_lower():
+    from config import KNIFE
+    from stage6 import build_toolpath
+    s = build_toolpath(_L_path(), MACHINE_DEFAULT, profile=KNIFE, lift_height=3.0)
+    # Find the within-path corner: a pure-A pivot (MICRO_JOG, da!=0, no XY)
+    # flanked by two Z-lift moves (raise then lower).
+    flav = [(i, x) for i, x in enumerate(s)
+            if (x.flags & MICRO_JOG) and x.da != 0 and x.dx == 0 and x.dy == 0]
+    assert len(flav) == 1, "expected exactly one corner pivot"
+    i, pivot = flav[0]
+    spd = MACHINE_DEFAULT.a.steps_per_unit
+    assert approx(abs(pivot.da), 90 * spd, tol=2 * spd)   # ~90deg turn
+    assert s[i - 1].flags & MICRO_LIFT and s[i - 1].dz != 0   # raised before
+    assert s[i + 1].flags & MICRO_LIFT and s[i + 1].dz != 0   # lowered after
+
+def test_corner_no_pivot_when_smooth():
+    # A straight two-curve chain (no tangent jump) gets no corner pivot.
+    from config import KNIFE
+    from stage6 import build_toolpath
+    case = CASES["two_curve_chain"]
+    s = build_toolpath(case["planned"], MACHINE_DEFAULT, profile=KNIFE, lift_height=3.0)
+    # Only the PATH_START pre-orientation pivot may exist; no mid-path corner.
+    pivots = [x for x in s if (x.flags & MICRO_JOG) and x.da != 0
+              and x.dx == 0 and x.dy == 0]
+    assert len(pivots) <= 1
+
 # ── near-zero velocity: no crash, finite intervals ───────────────────────────
 
 def test_near_zero_no_crash():
