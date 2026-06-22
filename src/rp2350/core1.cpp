@@ -115,7 +115,17 @@ static bool __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
 }
 
 static void __time_critical_func(processMicroSegments)() {
-    if (machineState == STATE_IDLE) machineState = STATE_RUNNING;
+#ifdef DEBUG_TIMING
+    static uint32_t jobStartUs = 0;
+#endif
+    if (machineState == STATE_IDLE) {
+        machineState = STATE_RUNNING;
+#ifdef DEBUG_TIMING
+        jobExpectedUs = 0;   // new job — reset the timing diagnostic
+        jobMeasuredUs = 0;
+        jobStartUs    = micros();
+#endif
+    }
 
     while (mBufHead != mBufTail) {
         if (machineState == STATE_ESTOP) return;
@@ -129,7 +139,26 @@ static void __time_critical_func(processMicroSegments)() {
         }
 
         // Abort without accumulating if estop cut the segment short
+#ifdef DEBUG_TIMING
+        // Timing diagnostic: expected duration from intervals vs wall time by
+        // the 1 MHz hardware timer (independent of the cycle-counter domain)
+        uint32_t maxSteps = 0;
+        {
+            int32_t d[4] = { ms.dx, ms.dy, ms.dz, ms.da };
+            for (int i = 0; i < 4; i++) {
+                uint32_t a = (d[i] < 0) ? (uint32_t)(-d[i]) : (uint32_t)d[i];
+                if (a > maxSteps) maxSteps = a;
+            }
+        }
+        uint32_t tStart = micros();
+#endif
+
         if (!emitMicroSegment(ms)) return;
+
+#ifdef DEBUG_TIMING
+        jobMeasuredUs += micros() - tStart;
+        jobExpectedUs += (uint32_t)(((uint64_t)ms.interval * maxSteps) / (F_CPU / 1000000));
+#endif
 
         // Exact machine position: the deltas are integer step counts
         machinePos[0] += ms.dx;
@@ -142,7 +171,12 @@ static void __time_critical_func(processMicroSegments)() {
     }
 
     // Queue drained — return to idle unless a sticky state intervened
-    if (machineState == STATE_RUNNING) machineState = STATE_IDLE;
+    if (machineState == STATE_RUNNING) {
+#ifdef DEBUG_TIMING
+        jobWallUs = micros() - jobStartUs;
+#endif
+        machineState = STATE_IDLE;
+    }
 }
 
 // ─── Debug Step Emitter ───────────────────────────────────────────────────────

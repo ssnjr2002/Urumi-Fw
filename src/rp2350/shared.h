@@ -132,4 +132,17 @@ extern volatile uint8_t machineState;     // one of MachineState
 extern volatile int32_t machinePos[4];
 extern volatile bool    positionValid;
 
+// Job timing diagnostic (owned by Core 1, reset at each RUNNING transition).
+// Gated behind DEBUG_TIMING (define it in platformio.ini build_flags to enable).
+//   expected = sum of interval*maxSteps converted to us at F_CPU
+//   measured = time spent inside segment emission, by the 1 MHz hardware timer
+//   wall     = whole job (RUNNING -> IDLE), including buffer-empty gaps
+// A ratio measured/expected != 1.0 means the cycle-counter wait loop runs at a
+// different rate than F_CPU assumes; wall >> measured means streaming starvation.
+#ifdef DEBUG_TIMING
+extern volatile uint32_t jobExpectedUs;
+extern volatile uint32_t jobMeasuredUs;
+extern volatile uint32_t jobWallUs;
+#endif
+
 #endif // SHARED_H

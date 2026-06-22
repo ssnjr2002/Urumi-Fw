@@ -85,12 +85,19 @@ static bool handleControlCommand(const String& input) {
     }
     if (input == "status" || input == "?") {
         uint8_t s = machineState;
-        Serial.printf("state=%s pos=%ld,%ld,%ld,%ld valid=%d buf=%u/%u\n",
+        Serial.printf("state=%s pos=%ld,%ld,%ld,%ld valid=%d buf=%u/%u",
                       stateName(s),
                       (long)machinePos[0], (long)machinePos[1],
                       (long)machinePos[2], (long)machinePos[3],
                       positionValid ? 1 : 0,
                       getBufCount(), MASTER_BUF_SIZE);
+#ifdef DEBUG_TIMING
+        Serial.printf(" texp=%lu tmeas=%lu twall=%lu",
+                      (unsigned long)jobExpectedUs,
+                      (unsigned long)jobMeasuredUs,
+                      (unsigned long)jobWallUs);
+#endif
+        Serial.printf("\n");
         return true;
     }
     return false;

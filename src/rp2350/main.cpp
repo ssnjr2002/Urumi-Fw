@@ -54,6 +54,13 @@ volatile uint8_t machineState  = STATE_IDLE;
 volatile int32_t machinePos[4] = {0, 0, 0, 0};   // X, Y, Z, A steps
 volatile bool    positionValid = false;          // unknown until first setorigin
 
+// Job timing diagnostic (see shared.h) — gated behind DEBUG_TIMING
+#ifdef DEBUG_TIMING
+volatile uint32_t jobExpectedUs = 0;
+volatile uint32_t jobMeasuredUs = 0;
+volatile uint32_t jobWallUs     = 0;
+#endif
+
 // Note: 
 // setup() and loop() are defined in core0.cpp
 // setup1() and loop1() are defined in core1.cpp
