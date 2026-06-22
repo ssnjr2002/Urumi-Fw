@@ -127,6 +127,62 @@ class MotionConfig:
     z_feed:      float = 20.0   # mm/s — Z raise/lower speed
 
 
+# ── tool tier ─────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ToolProfile:
+    """
+    One mounted tool's kinematic behaviour. The choreography layer (toolpath.py)
+    reads this to decide tangent tracking, lift, and corner handling — so a new
+    tool is a new preset here, never a code change.
+
+    Designed so every tool-specific behaviour degrades to a no-op at its
+    zero/off value: offset_mm=0 makes blade-offset compensation the identity, so
+    pen/crease/tangential-knife all share the same code path with no special
+    casing. A non-zero offset means a DRAG knife, which is not supported yet —
+    build_toolpath raises rather than silently approximating it.
+
+    corner_strategy / corner_angle_deg / min_radius_mm are CARRIED but not yet
+    consumed (pivot-in-place corners are the next step); they pin down the
+    intended behaviour so the consumer can land additively.
+    """
+    name:            str
+    tangential:      bool  = False   # A-axis tracks the path tangent
+    offset_mm:       float = 0.0     # blade trailing distance; 0 = tangential/none, >0 = drag (unsupported)
+    corner_strategy: str   = "none"  # "none" | "pivot_in_place" (future: "overcut" | "lift")
+    corner_angle_deg: float = 20.0   # tangent jump above which a corner action fires
+    min_radius_mm:   float = 0.0     # curvature floor; tighter arcs need special handling (0 = unset)
+    lift_height:     float = 0.0     # Z lift between subpaths, mm (0 = draw-through)
+    z_feed:          float = 0.0     # Z raise/lower speed, mm/s (0 = use MotionConfig default)
+    jog_feed:        float = 0.0     # travel speed between subpaths, mm/s (0 = use MotionConfig default)
+
+    @property
+    def is_drag(self) -> bool:
+        return self.offset_mm > 0.0
+
+
+# Presets. PEN and TANGENTIAL_KNIFE are wired; CREASE rides the same tangential
+# path; DRAG_KNIFE is defined but unsupported (build_toolpath raises on it).
+PEN = ToolProfile(name="pen", tangential=False)
+
+TANGENTIAL_KNIFE = ToolProfile(
+    name="tangential_knife", tangential=True, offset_mm=0.0,
+    corner_strategy="pivot_in_place", corner_angle_deg=20.0,
+)
+
+CREASE = ToolProfile(
+    name="crease", tangential=True, offset_mm=0.0,
+    corner_strategy="pivot_in_place", corner_angle_deg=30.0,
+)
+
+DRAG_KNIFE = ToolProfile(
+    name="drag_knife", tangential=True, offset_mm=0.5,   # >0 => unsupported
+    corner_strategy="overcut",
+)
+
+TOOL_PROFILES = {p.name: p for p in (PEN, TANGENTIAL_KNIFE, CREASE, DRAG_KNIFE)}
+
+
 @dataclass(frozen=True)
 class QualityConfig:
     """Algorithm tuning — the parity spec the C++ port must reproduce."""
@@ -164,7 +220,7 @@ def _default_machine() -> MachineConfig:
         x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0, invert=True),
         y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
         z=AxisConfig(node=3, steps_per_unit=1200.0, max_rate=10.0, invert=True),    # PLACEHOLDER mm/s
-        a=AxisConfig(node=4, steps_per_unit=120.0, rotary=True, max_rate=360.0),  # PLACEHOLDER deg/s
+        a=AxisConfig(node=4, steps_per_unit=103.0, rotary=True, max_rate=360.0),  # PLACEHOLDER deg/s
     )
 
 

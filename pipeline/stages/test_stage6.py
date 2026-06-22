@@ -4,7 +4,8 @@ import sys, os, math
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
 
-from stage6 import evaluate_microsegments, MicroSegment, MICRO_PATH_END
+from stage6 import (evaluate_microsegments, MicroSegment, MICRO_PATH_END,
+                    MICRO_JOG, MICRO_LIFT)
 from config import default as _cfg_default
 
 V_MIN = _cfg_default().quality.v_min
@@ -78,8 +79,12 @@ def test_diagonal_dx_equals_dy():
     assert approx(total_dx, total_dy, tol=2)
 
 def test_diagonal_da_zero():
+    # A straight diagonal needs no tangent rotation DURING the cut. (The blade
+    # is oriented to the line by a pre-orientation jog before the cut — that
+    # segment is flagged MICRO_JOG and excluded here.)
     s = segs("diagonal_constant_v")
-    assert all(x.da == 0 for x in s)
+    cut = [x for x in s if not (x.flags & (MICRO_JOG | MICRO_LIFT))]
+    assert all(x.da == 0 for x in cut)
 
 # ── acceleration: intervals decrease ─────────────────────────────────────────
 
@@ -117,9 +122,11 @@ def test_decel_last_interval_largest():
 # ── arc tangent tracking ──────────────────────────────────────────────────────
 
 def test_arc_total_da():
+    # Tangent tracking over the arc itself — exclude the pre-orientation jog
+    # that rotates the blade to the arc's entry tangent before cutting.
     case = CASES["arc_tangent_tracking"]
     s = evaluate_microsegments(case["planned"], case["machine"])
-    total_da = sum(x.da for x in s)
+    total_da = sum(x.da for x in s if not (x.flags & (MICRO_JOG | MICRO_LIFT)))
     expected = case["expected"]["total_da_approx"]
     assert approx(abs(total_da), expected, tol=20)
 
@@ -131,6 +138,26 @@ def test_arc_net_displacement():
     expected = case["expected"]["net_dx_approx"]
     assert approx(total_dx, expected, tol=5)
     assert approx(total_dy, expected, tol=5)
+
+# ── A-axis pre-orientation (tangential tool) ─────────────────────────────────
+
+def test_diagonal_preorient_emitted():
+    # The blade must orient to the 45deg line before cutting: exactly one
+    # pre-orientation jog with da != 0 and no XY motion, pen-up.
+    s = segs("diagonal_constant_v")
+    preorient = [x for x in s if (x.flags & MICRO_JOG) and x.da != 0]
+    assert len(preorient) == 1
+    p = preorient[0]
+    assert p.dx == 0 and p.dy == 0          # pure rotation
+    # 45deg line, ~120 steps/deg on the mock machine -> ~45*spu steps
+    spd = MACHINE_DEFAULT.a.steps_per_unit
+    assert approx(abs(p.da), 45 * spd, tol=spd)  # within ~1 degree
+
+def test_no_preorient_when_not_tangential():
+    # With tangential off (pen), no A motion at all.
+    case = CASES["diagonal_constant_v"]
+    s = evaluate_microsegments(case["planned"], case["machine"], tangential=False)
+    assert all(x.da == 0 for x in s)
 
 # ── near-zero velocity: no crash, finite intervals ───────────────────────────
 

@@ -1,26 +1,33 @@
 """
-Stage 6: Bezier evaluation -> MicroSegments.
+Stage 6: Bezier evaluation -> MicroSegments (the geometry->step-events core).
+
 Walks each PlannedCurve at adaptive dt driven by two constraints:
   1. Geometric:  dt <= sqrt(8 * CHORD_TOL / |B''(t)|)
   2. Velocity:   dt <= DV_MAX / (a_max * |B'(t)|)   [never change v by > DV_MAX per segment]
 At each sample computes:
-  dx, dy  — integer step deltas (steps_per_mm * position delta, rounded)
+  dx, dy  — integer step deltas (steps_per_unit * position delta, rounded)
   da      — integer rotation steps (steps_per_deg * tangent angle delta)
-  dz      — 0 for now (Z lift scheduled separately in a later stage)
+  dz      — 0 (Z lift is choreography, see the lower half of this file)
   interval — RP2350 clock cycles for the major axis step
 Output: list of MicroSegment(dx, dy, dz, da, interval, flags)
+
+This module has two parts, kept separate function-wise:
+
+  1. GEOMETRY CORE (evaluate_curve + dt/interval/tangent helpers) — turns one
+     PlannedCurve into MicroSegments. Pure, deterministic; the parity spec the
+     future C++ local-production port must reproduce.
+  2. TOOL CHOREOGRAPHY (build_toolpath / evaluate_microsegments) — stitches the
+     per-curve output into a whole job: travel jogs, Z pen-lift, and A-axis
+     orientation, all selected by a ToolProfile. This is the outer loop that
+     drives the core; it is not a separate pipeline stage.
 """
 
 import math
-import argparse
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
-from stage1 import CubicBezier
-from stage2 import load_svg_mm
-from stage3 import enforce_c1
-from stage4 import compute_metrics, _bezier_deriv1, _bezier_deriv2, _bezier_point
-from stage5 import plan_velocities, PATH_START, PATH_END
-from config import default as _config_default
+from stage4 import _bezier_deriv1, _bezier_deriv2, _bezier_point
+from stage5 import PATH_START, PATH_END
+from config import default as _config_default, ToolProfile, PEN
 from collections import namedtuple
 
 # ── output structure ──────────────────────────────────────────────────────────
@@ -165,10 +172,14 @@ def _interval(v, machine, q, dx=None, dy=None, dz=0, da=0):
 
 # ── single curve evaluator ────────────────────────────────────────────────────
 
-def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
-                    tangential=True):
+def evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
+                   tangential=True):
     """
     Evaluate one PlannedCurve into a list of MicroSegments.
+
+    This is the geometry->step-events core (the parity spec). Path stitching,
+    jogs, Z-lift and A choreography live in build_toolpath (below), which calls
+    this per curve.
     Returns (segments, theta_current, pos_x, pos_y).
     pos_x/y are in steps (float accumulator, rounded at each segment).
     theta_current is in degrees (unwrapped).
@@ -232,33 +243,55 @@ def _evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
 
     return segments, theta_current, pos_x, pos_y
 
-# ── main stage ────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# TOOL CHOREOGRAPHY
+# ──────────────────────────────────────────────────────────────────────────────
+# Everything below stitches the per-curve step events above into a whole job:
+# travel jogs between subpaths, Z pen/tool lift, and A-axis orientation for
+# tangential tools. All tool-specific behaviour is selected by a ToolProfile
+# (config.py), so adding a tool is a new preset, not new code. offset_mm == 0
+# (pen / crease / tangential knife) shares one path; offset_mm > 0 (drag knife)
+# is not supported yet and raises rather than silently approximating it.
+# This is the outer loop that drives the geometry core — not a separate stage.
+# ══════════════════════════════════════════════════════════════════════════════
 
-def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
-                           lift_height=0.0, z_feed=None, tangential=True):
+def build_toolpath(planned_curves, machine, profile=None, quality=None,
+                   jog_feed=None, lift_height=None, z_feed=None):
     """
-    Returns flat list of MicroSegment.
+    Stitch PlannedCurves into a flat list of MicroSegment, applying the tool's
+    choreography.
 
-    quality     — QualityConfig (tuning constants). Defaults to config.default().
-    jog_feed    — travel speed mm/s. Defaults to config.default().motion.jog_feed.
-    lift_height — pen/tool Z lift between subpaths, mm. 0 (default) draws through
-                  every jog (no Z motion). When > 0, the pen is raised after each
-                  path, the XY jog runs pen-up, and the pen is lowered before the
-                  next path. The first path lowers before drawing; the last path
-                  raises at the end. Tool starts and ends pen-up.
-    z_feed      — Z raise/lower speed mm/s. Defaults to config.default().motion.z_feed.
+    profile     — ToolProfile selecting tool behaviour. Defaults to PEN.
+    quality     — QualityConfig. Defaults to config.default().quality.
+    jog_feed / lift_height / z_feed — explicit overrides; when None they fall
+                  back to the profile, then to MotionConfig defaults.
 
-    Between subpaths a travel (jog) MicroSegment moves the tool from the end of
-    one path to the start of the next, so paths land at their correct absolute
-    positions. Without it, every closed subpath would be drawn relative to the
-    previous path's endpoint (all stacked at the origin).
+    A travel (jog) MicroSegment moves the tool from the end of one path to the
+    start of the next so paths land at their correct absolute positions; without
+    it every closed subpath would be drawn relative to the previous endpoint
+    (all stacked at the origin).
     """
+    if profile is None:
+        profile = PEN
+    if profile.is_drag:
+        raise NotImplementedError(
+            f"tool profile '{profile.name}' has offset_mm={profile.offset_mm} "
+            "(drag knife). Blade-offset compensation and overcut corners are "
+            "not implemented yet -- only zero-offset (tangential) tools are "
+            "supported. Use TANGENTIAL_KNIFE, CREASE, or PEN."
+        )
+
     _cfg = _config_default()
     q = quality if quality is not None else _cfg.quality
+    tangential = profile.tangential
+
+    # Resolve feeds: explicit arg > profile > MotionConfig default.
     if jog_feed is None:
-        jog_feed = _cfg.motion.jog_feed
+        jog_feed = profile.jog_feed or _cfg.motion.jog_feed
+    if lift_height is None:
+        lift_height = profile.lift_height or _cfg.motion.lift_height
     if z_feed is None:
-        z_feed = _cfg.motion.z_feed
+        z_feed = profile.z_feed or _cfg.motion.z_feed
 
     # Pre-compute the Z lift move (pure Z, timed by z_feed on the Z axis)
     lift = lift_height > 0.0
@@ -275,13 +308,26 @@ def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
                             dz=(-dz if machine.z.invert else dz), da=0,
                             interval=z_interval, flags=MICRO_LIFT)
 
+    # Pre-compute the A reorientation rate (pure rotation, pen-up). Rotate at the
+    # A axis ceiling; fall back to a sane default if max_rate is unset (0).
+    a_rate = max((machine.a.max_rate if machine.a.max_rate > 0 else 180.0)
+                 * machine.a.steps_per_unit, 1e-9)
+    a_interval = max(1, min(int(machine.f_cpu / a_rate), machine.f_cpu))
+
+    def _a_move(da):
+        # Pure-A rotation to orient the tangential tool before a path (pen-up).
+        # Flagged MICRO_JOG so validators exclude it from XY conservation checks.
+        return MicroSegment(dx=0, dy=0, dz=0,
+                            da=(-da if machine.a.invert else da),
+                            interval=a_interval, flags=MICRO_JOG)
+
     all_segments = []
     theta = 0.0
     pos_x = 0.0
     pos_y = 0.0
     started = False
 
-    for i, planned in enumerate(planned_curves):
+    for planned in planned_curves:
         # reset position and angle at each PATH_START
         if planned.flags & PATH_START:
             p0 = planned.metrics.curve.p0
@@ -302,16 +348,29 @@ def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
                         flags=MICRO_JOG,
                     ))
 
+            # Orient the tangential tool to this path's entry tangent BEFORE
+            # lowering. Covers both first-path pre-orientation (from rest at
+            # theta=0) and between-path reorientation (from the previous path's
+            # exit angle). Without this the planner's theta jumps to the new
+            # entry while the physical blade stays put — it would tear the entry
+            # of every path. Pen-up, so it runs between the jog and the lower.
+            entry_theta = _tangent_angle(planned.metrics.curve, 0.0)
+            if tangential:
+                da_deg   = _angle_delta(theta, entry_theta)
+                da_steps = int(round(da_deg * machine.a.steps_per_unit))
+                if da_steps != 0:
+                    all_segments.append(_a_move(da_steps))
+
             pos_x = target_x
             pos_y = target_y
-            theta = _tangent_angle(planned.metrics.curve, 0.0)
+            theta = entry_theta
             started = True
 
             if lift:
                 all_segments.append(_z_move(-z_steps))  # lower pen to draw
 
         is_last = bool(planned.flags & PATH_END)
-        segs, theta, pos_x, pos_y = _evaluate_curve(
+        segs, theta, pos_x, pos_y = evaluate_curve(
             planned, machine, q, theta, pos_x, pos_y, is_last, tangential
         )
         all_segments.extend(segs)
@@ -321,22 +380,45 @@ def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
 
     return all_segments
 
-# ── main ──────────────────────────────────────────────────────────────────────
+
+def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
+                           lift_height=0.0, z_feed=None, tangential=True,
+                           profile=None):
+    """
+    Backward-compatible entry point. Prefer build_toolpath() with a ToolProfile.
+
+    When `profile` is given it drives behaviour. Otherwise the loose tangential/
+    lift_height/z_feed args build an ad-hoc profile, preserving the old call
+    sites (and the old default of a tangential tool with no lift).
+    """
+    if profile is None:
+        profile = ToolProfile(name="adhoc", tangential=tangential)
+    return build_toolpath(planned_curves, machine, profile=profile,
+                          quality=quality, jog_feed=jog_feed,
+                          lift_height=lift_height, z_feed=z_feed)
+
+
+# ── standalone demo ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from config import default as _default, MachineConfig
-    cfg = _default()
+    import argparse
+    from stage2 import load_svg_mm
+    from stage3 import enforce_c1
+    from stage4 import compute_metrics
+    from stage5 import plan_velocities
+    from config import MachineConfig, TOOL_PROFILES
 
-    parser = argparse.ArgumentParser(description="Stage 6: Bezier -> MicroSegments")
+    cfg = _config_default()
+    parser = argparse.ArgumentParser(description="Stage 6: SVG -> MicroSegments")
     parser.add_argument("svg",            help="Path to SVG file")
+    parser.add_argument("--tool",         default="pen", choices=list(TOOL_PROFILES))
     parser.add_argument("--feed-max",     type=float, default=cfg.motion.feed_max)
     parser.add_argument("--a-max",        type=float, default=cfg.motion.a_max)
-    parser.add_argument("--steps-per-mm", type=float, default=cfg.machine.steps_per_mm)
-    parser.add_argument("--steps-per-deg",type=float, default=cfg.machine.steps_per_deg)
-    parser.add_argument("--f-cpu",        type=int,   default=cfg.machine.f_cpu)
+    parser.add_argument("--lift-height",  type=float, default=None)
     args = parser.parse_args()
 
-    machine = MachineConfig.uniform(args.steps_per_mm, args.steps_per_deg, args.f_cpu)
+    machine = cfg.machine
+    profile = TOOL_PROFILES[args.tool]
 
     curves_mm, _ = load_svg_mm(args.svg)
     repaired, _  = enforce_c1(curves_mm)
@@ -346,22 +428,15 @@ if __name__ == "__main__":
         flags_list = [PATH_START | PATH_END]
 
     planned  = plan_velocities(metrics, flags_list, args.feed_max, args.a_max)
-    segments = evaluate_microsegments(planned, machine, quality=cfg.quality)
+    segments = build_toolpath(planned, machine, profile=profile,
+                              quality=cfg.quality, lift_height=args.lift_height)
 
     total_x = sum(s.dx for s in segments)
     total_y = sum(s.dy for s in segments)
     total_a = sum(s.da for s in segments)
+    print(f"Tool          : {profile.name}")
     print(f"MicroSegments : {len(segments)}")
     print(f"Net steps     : dx={total_x}  dy={total_y}  da={total_a}")
     if segments:
         print(f"Interval range: {min(s.interval for s in segments)} - "
               f"{max(s.interval for s in segments)} cycles")
-    else:
-        print("No segments generated (no path elements?)")
-    print()
-    print(f"  {'#':>5}  {'dx':>6}  {'dy':>6}  {'da':>6}  {'interval':>10}  flags")
-    print(f"  {'-'*5}  {'-'*6}  {'-'*6}  {'-'*6}  {'-'*10}  -----")
-    for i, s in enumerate(segments[:40]):
-        print(f"  {i:5d}  {s.dx:6d}  {s.dy:6d}  {s.da:6d}  {s.interval:10d}  {s.flags}")
-    if len(segments) > 40:
-        print(f"  ... ({len(segments) - 40} more)")
