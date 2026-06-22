@@ -59,6 +59,19 @@ def _unit(v):
     l = math.hypot(v[0], v[1])
     return (v[0]/l, v[1]/l) if l > 1e-12 else (0.0, 0.0)
 
+def _turn_angle_deg(curve_a, curve_b):
+    """
+    Turn angle at the joint between two curves, in degrees: 0 = straight,
+    180 = full reversal. Direction-of-travel tangents (exit of A, entry of B).
+    Returns 0.0 for a degenerate tangent (don't treat as a corner).
+    """
+    d_prev = _unit((curve_a.p3[0] - curve_a.p2[0], curve_a.p3[1] - curve_a.p2[1]))
+    d_next = _unit((curve_b.p1[0] - curve_b.p0[0], curve_b.p1[1] - curve_b.p0[1]))
+    if d_prev == (0.0, 0.0) or d_next == (0.0, 0.0):
+        return 0.0
+    dot = max(-1.0, min(1.0, d_prev[0]*d_next[0] + d_prev[1]*d_next[1]))
+    return math.degrees(math.acos(dot))
+
 def _junction_velocity(curve_a, curve_b, a_max, deviation, feed_max):
     """
     GRBL-style junction-deviation cornering speed at the joint between two
@@ -110,7 +123,8 @@ def _build_merge_groups(metrics, flags):
 
 # ── main planner ──────────────────────────────────────────────────────────────
 
-def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None):
+def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None,
+                    corner_stop_angle_deg=None):
     """
     Returns list of PlannedCurve.
 
@@ -119,6 +133,13 @@ def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None):
     corner's turn angle, so the machine decelerates into sharp corners and
     accelerates out instead of charging through at full speed. Defaults to
     config.default().motion.junction_deviation.
+
+    corner_stop_angle_deg, when set, forces v=0 at any internal junction whose
+    turn angle meets or exceeds it. This pairs with the tangential tool's
+    lift-pivot-lower (stage6): the blade can only pivot cleanly at a corner if
+    XY has truly stopped first, so the planner must decelerate to 0 there — a
+    stronger constraint than junction-deviation's low-but-nonzero corner speed.
+    None (default) keeps the old behaviour (no forced stops).
     """
     n = len(metrics)
     if n == 0:
@@ -133,6 +154,12 @@ def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None):
     for i in range(n - 1):
         if (flags[i] & PATH_END) or (flags[i + 1] & PATH_START):
             continue  # path boundary — a jog separates these, not a corner
+        # A sharp corner where the tool will lift-pivot needs a full stop.
+        if (corner_stop_angle_deg is not None and
+                _turn_angle_deg(metrics[i].curve, metrics[i + 1].curve)
+                >= corner_stop_angle_deg):
+            corner_cap[i] = 0.0
+            continue
         corner_cap[i] = _junction_velocity(
             metrics[i].curve, metrics[i + 1].curve, a_max, junction_deviation, feed_max)
 

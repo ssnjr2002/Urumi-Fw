@@ -145,6 +145,36 @@ def test_empty_input():
     p = plan_velocities([], [], 100.0, 1000.0)
     assert p == []
 
+# ── corner-stop (tangential lift-pivot) ──────────────────────────────────────
+
+def _L_metrics():
+    # Horizontal then vertical = 90deg internal corner in one path.
+    from mock_stage6 import make_planned
+    h = make_planned((0, 0), (3.3, 0), (6.7, 0), (10, 0), 0, 50, 50, flags=PATH_START)
+    v = make_planned((10, 0), (10, 3.3), (10, 6.7), (10, 10), 50, 50, 0, flags=PATH_END)
+    return [h.metrics, v.metrics], [PATH_START, PATH_END]
+
+def test_corner_stop_forces_zero():
+    metrics, flags = _L_metrics()
+    p = plan_velocities(metrics, flags, 80.0, 1000.0, corner_stop_angle_deg=20.0)
+    assert p[0].v_exit == 0.0    # decelerate fully into the corner
+    assert p[1].v_entry == 0.0   # accelerate from rest out of it
+
+def test_no_corner_stop_by_default():
+    # Without the flag, junction-deviation keeps a low but nonzero corner speed.
+    metrics, flags = _L_metrics()
+    p = plan_velocities(metrics, flags, 80.0, 1000.0)
+    assert p[0].v_exit > 0.0
+
+def test_corner_stop_ignores_straight_join():
+    # A straight two-curve chain has no corner -> no forced stop even with the flag.
+    from mock_stage6 import straight_planned
+    a = straight_planned(0, 10, v_entry=0, v_cruise=50, v_exit=50, flags=PATH_START)
+    b = straight_planned(10, 20, v_entry=50, v_cruise=50, v_exit=0, flags=PATH_END)
+    metrics, flags = [a.metrics, b.metrics], [PATH_START, PATH_END]
+    p = plan_velocities(metrics, flags, 80.0, 1000.0, corner_stop_angle_deg=20.0)
+    assert p[0].v_exit > 0.0
+
 # ── real SVG regression ───────────────────────────────────────────────────────
 
 def test_snake_svg_planned():

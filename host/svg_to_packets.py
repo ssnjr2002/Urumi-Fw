@@ -27,7 +27,7 @@ from stage4 import compute_metrics
 from stage5 import plan_velocities, PATH_START, PATH_END, MERGE_WITH_PREV
 from stage6 import evaluate_microsegments
 from serialise import serialise_microsegments
-from config import default as config_default, MachineConfig
+from config import default as config_default, MachineConfig, KNIFE
 
 
 def _build_flags(subpaths):
@@ -67,8 +67,11 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
     # Stage 4: metrics (arc length + curvature)
     metrics = compute_metrics(flat_curves)
 
-    # Stage 5: velocity planning
-    planned = plan_velocities(metrics, flags, feed_max, a_max)
+    # Stage 5: velocity planning. A tangential tool stops at sharp corners so
+    # the blade can lift-pivot there; match the toolpath's corner threshold.
+    corner_stop = KNIFE.corner_angle_deg if tangential else None
+    planned = plan_velocities(metrics, flags, feed_max, a_max,
+                              corner_stop_angle_deg=corner_stop)
 
     # Stage 6: Bezier → MicroSegments (jog_feed/z_feed default to config motion tier)
     segments = evaluate_microsegments(planned, machine,
