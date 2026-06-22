@@ -146,7 +146,7 @@ class Sender:
         pending = [stamp_seq(p, i) for i, p in enumerate(packets)]
         self.ser.write(b"\nseqreset\n")
         self.ser.flush()
-        time.sleep(0.05)
+        time.sleep(0.005)
         self._flush_responses()
         n          = len(pending)
         base       = 0          # oldest unconfirmed packet

@@ -48,8 +48,14 @@ def make_jog(steps, feed_sps, accel_sps2, f_cpu, v_start_sps=50.0):
     steps      : (sx, sy, sz, sa) signed target step counts
     feed_sps   : cruise step rate of the MAJOR axis (steps/s)
     accel_sps2 : acceleration of the major axis (steps/s^2)
-    One MicroSegment per major-axis step; minor axes are host-side Bresenham
-    distributed. Velocity follows v = sqrt(v0^2 + 2*a*d), giving a smooth ramp.
+
+    Steps are packed into chunks (~10 ms of motion each) so the packet count
+    stays small regardless of step count — a 10800-step A move becomes ~25
+    packets instead of 10800. The Pico's Bresenham loop handles multi-step
+    deltas identically to single-step ones.
+
+    Velocity follows v = sqrt(v0^2 + 2*a*d) at the start of each chunk,
+    giving a smooth trapezoidal ramp.
     """
     sx, sy, sz, sa = steps
     abss = [abs(sx), abs(sy), abs(sz), abs(sa)]
@@ -69,9 +75,10 @@ def make_jog(steps, feed_sps, accel_sps2, f_cpu, v_start_sps=50.0):
 
     err = [major // 2] * 4   # Bresenham accumulators for minor axes
     packets = []
+    n = 0
 
-    for n in range(major):
-        # velocity at this step
+    while n < major:
+        # velocity at start of this chunk
         if n < d_acc:
             v = math.sqrt(v0**2 + 2.0 * accel_sps2 * n)
         elif n >= major - d_dec:
@@ -79,22 +86,30 @@ def make_jog(steps, feed_sps, accel_sps2, f_cpu, v_start_sps=50.0):
         else:
             v = feed_sps
         v = max(v, v0)
+
+        # Adaptive chunk: ~10 ms at current velocity. Small during accel/decel
+        # so the interval is accurate; large at cruise for streaming efficiency.
+        chunk_size = min(max(1, int(v / 100)), major - n)
         interval = max(1, min(int(f_cpu / v), f_cpu))
 
-        # which axes step this tick — major always, minors via Bresenham
+        # per-axis deltas for this chunk via Bresenham
         delta = [0, 0, 0, 0]
         for ax in range(4):
             if abss[ax] == 0:
                 continue
             if abss[ax] == major:
-                delta[ax] = signs[ax]
+                delta[ax] = signs[ax] * chunk_size
             else:
-                err[ax] += abss[ax]
-                if err[ax] >= major:
-                    err[ax] -= major
-                    delta[ax] = signs[ax]
+                count = 0
+                for _ in range(chunk_size):
+                    err[ax] += abss[ax]
+                    if err[ax] >= major:
+                        err[ax] -= major
+                        count += 1
+                delta[ax] = signs[ax] * count
 
-        flags = MSEG_FLAG_PATH_END if n == major - 1 else MSEG_FLAG_NONE
+        n += chunk_size
+        flags = MSEG_FLAG_PATH_END if n >= major else MSEG_FLAG_NONE
         packets.append(pack_microsegment(
             _MS(dx=delta[0], dy=delta[1], dz=delta[2], da=delta[3],
                 interval=interval, flags=flags)))
