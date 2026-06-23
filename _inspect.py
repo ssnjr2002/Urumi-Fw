@@ -2,10 +2,12 @@
 _inspect.py — scratch inspector for the host pipeline (knife/pen plans).
 
 Usage:
-  uv run python _inspect.py [svg] [--pen] [--feed F] [--amax A]
+  uv run python _inspect.py [svg] [--pen] [--feed F] [--amax A] [--window LO HI]
 
-Reports: segment count, slowest segments, in-curve cusps (count + angles), and
-any pen-down segment carrying a large rotation (which would tear material).
+Reports: segment count + estimated time, pen-down segments carrying a large
+rotation (tear risk), and cumulative physical A winding (end + peak = wire twist).
+Runs the per-sample look-ahead pipeline (flatten -> constrain -> plan ->
+discretize).
 """
 import sys, os, argparse
 base = os.path.dirname(os.path.abspath(__file__))
@@ -13,10 +15,11 @@ sys.path.insert(0, os.path.join(base, "pipeline", "stages"))
 
 from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
-from stage4 import compute_metrics
-from stage5 import plan_velocities, PATH_START, PATH_END
-from stage6 import (build_toolpath, evaluate_curve, _tangent_angle,
-                    MICRO_JOG, MICRO_LIFT, MICRO_PATH_END)
+from flatten import flatten
+from constrain import constrain
+from plan_lookahead import plan
+from discretize import discretize
+from microsegment import MICRO_JOG, MICRO_LIFT, MICRO_PATH_END
 from config import default, KNIFE, PEN
 
 ap = argparse.ArgumentParser()
@@ -24,8 +27,6 @@ ap.add_argument("svg", nargs="?", default="fish_norect.svg")
 ap.add_argument("--pen", action="store_true")
 ap.add_argument("--feed", type=float, default=15.0)
 ap.add_argument("--amax", type=float, default=200.0)
-ap.add_argument("--engine", choices=("tile", "sample"), default="tile",
-                help="tile = per-curve stage4-6; sample = redesign per-sample")
 ap.add_argument("--window", type=int, nargs=2, metavar=("LO", "HI"))
 args = ap.parse_args()
 
@@ -35,57 +36,21 @@ tang = profile.tangential
 
 subs, _ = load_svg_mm_subpaths(os.path.join(base, args.svg))
 rep = [enforce_c1(sp, cfg.quality.angle_tol, cfg.quality.gap_tol)[0] for sp in subs]
-corner_stop = profile.corner_angle_deg if tang else None
+corner = profile.corner_angle_deg if tang else None
 a_rate = m.a.max_rate if tang else 0.0
 
-planned = None  # tile-only; used by the cusp section below
-if args.engine == "sample":
-    from flatten import flatten
-    from constrain import constrain
-    from plan_lookahead import plan
-    from discretize import discretize
-    samples = flatten(rep, quality=cfg.quality)
-    constrain(samples, args.feed, args.amax, a_rate_deg_s=a_rate,
-              corner_stop_angle_deg=corner_stop)
-    plan(samples, m, a_max=args.amax)
-    segs = discretize(samples, m, profile=profile, quality=cfg.quality,
-                      lift_height=3.0, jog_feed=args.feed, z_feed=8)
-else:
-    flat = [c for sp in rep for c in sp]
-    flags = []
-    for sp in rep:
-        for i in range(len(sp)):
-            f = PATH_START if i == 0 else 0
-            if i == len(sp) - 1: f |= PATH_END
-            flags.append(f)
-    metrics = compute_metrics(flat)
-    planned = plan_velocities(metrics, flags, args.feed, args.amax,
-                              corner_stop_angle_deg=corner_stop, a_rate_deg_s=a_rate)
-    segs = build_toolpath(planned, m, profile=profile, lift_height=3.0,
-                          jog_feed=args.feed, z_feed=8, a_max=args.amax)
+samples = flatten(rep, quality=cfg.quality)
+constrain(samples, args.feed, args.amax, a_rate_deg_s=a_rate, corner_stop_angle_deg=corner)
+plan(samples, m, a_max=args.amax)
+segs = discretize(samples, m, profile=profile, quality=cfg.quality,
+                  lift_height=3.0, jog_feed=args.feed, z_feed=8)
 
 def dur_ms(s):
     major = max(abs(s.dx), abs(s.dy), abs(s.dz), abs(s.da))
     return s.interval * major / (m.f_cpu / 1e6) / 1000
 
-print(f"engine={args.engine}  tool={profile.name}  segments={len(segs)}  "
+print(f"tool={profile.name}  samples={len(samples)}  segments={len(segs)}  "
       f"total~{sum(dur_ms(s) for s in segs)/1000:.1f}s")
-
-# in-curve cusps (tile engine exposes them via evaluate_curve; the sample engine
-# folds between-curve corners and in-curve cusps into one rule, so they're not a
-# distinct category there)
-if planned is not None:
-    theta = 0.0; px = py = 0.0
-    cusp_angles = []
-    for p in planned:
-        if p.flags & PATH_START:
-            theta = _tangent_angle(p.metrics.curve, 0.0); px = py = 0.0
-        _, theta, px, py, cusps = evaluate_curve(
-            p, m, cfg.quality, theta, px, py, bool(p.flags & PATH_END), tang,
-            corner_angle_deg=(profile.corner_angle_deg if tang else 360.0))
-        cusp_angles += [pivot / spd for _, pivot in cusps]
-    print(f"in-curve cusps: {len(cusp_angles)}  angles(deg)="
-          f"{[f'{a:.0f}' for a in cusp_angles]}")
 
 bad = [(i, s) for i, s in enumerate(segs)
        if not (s.flags & (MICRO_JOG | MICRO_LIFT)) and abs(s.da) > 20 * spd]

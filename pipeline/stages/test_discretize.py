@@ -1,8 +1,9 @@
 """Tests for the Discretize stage (redesign stages 7+8): Sample stream -> MicroSegments.
 
-The decisive check is XY conservation parity with the tile-era pipeline: same
-geometry in, same NET step deltas out (the tool lands at the same place and the
-blade ends at the same net rotation), even though the segment density differs.
+The decisive check is XY conservation: the emitted net step deltas move the tool
+exactly from the path's first sample to its last (the accumulator telescopes to
+round(last) - round(first)), with per-axis invert applied. Geometry in, correct
+net displacement out, regardless of segment density.
 """
 
 import sys, os, math
@@ -13,14 +14,12 @@ from flatten import flatten
 from constrain import constrain
 from plan_lookahead import plan
 from discretize import discretize
-from stage6 import build_toolpath, MICRO_PATH_END, MICRO_JOG, MICRO_LIFT
-from stage4 import compute_metrics
-from stage5 import plan_velocities, PATH_START, PATH_END
+from microsegment import MICRO_PATH_END, MICRO_JOG, MICRO_LIFT
 from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
 from config import default, KNIFE, PEN
 from stage1 import CubicBezier
-from mock_stage4 import CASES
+from mock_curves import CASES
 
 CFG = default()
 MACH = CFG.machine
@@ -39,41 +38,32 @@ def _new(subpaths, profile):
     plan(s, MACH, a_max=A_MAX)
     return discretize(s, MACH, profile=profile, quality=CFG.quality)
 
-def _old(subpaths, profile):
-    flat = [c for sp in subpaths for c in sp]
-    flags = []
-    for sp in subpaths:
-        for i in range(len(sp)):
-            f = 0
-            if i == 0: f |= PATH_START
-            if i == len(sp)-1: f |= PATH_END
-            flags.append(f)
-    metrics = compute_metrics(flat)
-    a_rate = MACH.a.max_rate if profile.tangential else 0.0
-    corner = profile.corner_angle_deg if profile.tangential else None
-    planned = plan_velocities(metrics, flags, FEED, A_MAX,
-                              corner_stop_angle_deg=corner, a_rate_deg_s=a_rate)
-    return build_toolpath(planned, MACH, profile=profile, quality=CFG.quality, a_max=A_MAX)
-
 def _net(segs):
     return (sum(s.dx for s in segs), sum(s.dy for s in segs), sum(s.da for s in segs))
 
-# ── XY/A conservation parity with the tile-era pipeline ───────────────────────
+def _expected_xy(subpaths):
+    """Net emitted XY steps the tool must travel from first to last sample."""
+    s = flatten(subpaths, quality=CFG.quality)
+    x_spu, y_spu = MACH.x.steps_per_unit, MACH.y.steps_per_unit
+    dx = round(s[-1].x * x_spu) - round(s[0].x * x_spu)
+    dy = round(s[-1].y * y_spu) - round(s[0].y * y_spu)
+    if MACH.x.invert: dx = -dx
+    if MACH.y.invert: dy = -dy
+    return dx, dy
 
-def test_net_steps_match_old_knife_snake():
+# ── XY conservation: net steps land the tool at the geometric endpoint ────────
+
+def test_net_xy_matches_geometry_snake():
     subpaths_mm, _ = load_svg_mm_subpaths(os.path.join(
         os.path.dirname(__file__), "..", "data", "test_snake.svg"))
     repaired = [enforce_c1(sp)[0] for sp in subpaths_mm]
-    nx, ny, na = _net(_new(repaired, KNIFE))
-    ox, oy, oa = _net(_old(repaired, KNIFE))
-    assert (nx, ny) == (ox, oy), f"new XY {(nx,ny)} != old {(ox,oy)}"
-    assert na == oa, f"new A {na} != old {oa}"
+    nx, ny, _ = _net(_new(repaired, KNIFE))
+    assert (nx, ny) == _expected_xy(repaired)
 
-def test_net_xy_matches_old_cases():
+def test_net_xy_matches_geometry_cases():
     for name, (curves, _) in CASES.items():
         nx, ny, _ = _net(_new([curves], KNIFE))
-        ox, oy, _ = _net(_old([curves], KNIFE))
-        assert (nx, ny) == (ox, oy), f"{name}: new {(nx,ny)} old {(ox,oy)}"
+        assert (nx, ny) == _expected_xy([curves]), f"{name}: {(nx,ny)}"
 
 # ── pen tool: no A rotation, no lift unless asked ─────────────────────────────
 

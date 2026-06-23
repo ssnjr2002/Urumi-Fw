@@ -22,9 +22,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
-from stage4 import compute_metrics, _bezier_point
-from stage5 import plan_velocities, PATH_START, PATH_END
-from stage6 import evaluate_microsegments, MICRO_JOG, MICRO_LIFT
+from flatten import flatten
+from constrain import constrain
+from plan_lookahead import plan
+from discretize import discretize
+from microsegment import MICRO_JOG, MICRO_LIFT, MICRO_PATH_END
+from sample import PATH_START, PATH_END
 from config import default as config_default, MachineConfig, KNIFE, PEN
 
 JOG_FEED = config_default().motion.jog_feed
@@ -52,31 +55,22 @@ class Check:
 
 def build(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=JOG_FEED,
           tangential=True):
-    """Return (planned_curves, microsegments, subpaths_repaired)."""
+    """Return (samples, microsegments, subpaths_repaired) via the per-sample pipeline."""
     subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
     repaired = [enforce_c1(sp, angle_tol, gap_tol)[0] for sp in subpaths_mm]
 
-    flat = [c for sp in repaired for c in sp]
-    flags = []
-    for sp in repaired:
-        for i in range(len(sp)):
-            f = 0
-            if i == 0:           f |= PATH_START
-            if i == len(sp) - 1: f |= PATH_END
-            flags.append(f)
-
-    metrics = compute_metrics(flat)
     # Validate against the real tool profile (KNIFE/PEN) so corner stop, A-rate
     # cap and the A unwind all match what the host actually emits.
     profile = KNIFE if tangential else PEN
     corner_stop = profile.corner_angle_deg if tangential else None
     a_rate = machine.a.max_rate if tangential else 0.0
-    planned = plan_velocities(metrics, flags, feed_max, a_max,
-                              corner_stop_angle_deg=corner_stop,
-                              a_rate_deg_s=a_rate)
-    segments = evaluate_microsegments(planned, machine, jog_feed=jog_feed,
-                                      profile=profile, a_max=a_max)
-    return planned, segments, repaired
+
+    samples = flatten(repaired, quality=config_default().quality)
+    constrain(samples, feed_max, a_max, a_rate_deg_s=a_rate,
+              corner_stop_angle_deg=corner_stop)
+    plan(samples, machine, a_max=a_max)
+    segments = discretize(samples, machine, profile=profile, jog_feed=jog_feed)
+    return samples, segments, repaired
 
 
 def is_jog(seg):
@@ -125,7 +119,6 @@ def _dist_point_to_segment(px, py, ax, ay, bx, by):
 
 def path_spans(segments):
     """Yield (start_idx, end_idx_inclusive) for each PATH (split on PATH_END flag)."""
-    from stage6 import MICRO_PATH_END
     start = 0
     for i, s in enumerate(segments):
         if s.flags & MICRO_PATH_END:
@@ -155,16 +148,18 @@ def check_velocity_ceiling(segments, machine, feed_max, jog_feed, eps=0.05):
 def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
     """
     Acceleration estimated over a small distance window via a = |v_i^2-v_j^2|/(2d),
-    NOT per-segment dv/dt. Stage6's adaptive subdivision produces uneven segment
-    sizes — a lone 1-step segment between larger ones has a tiny dt that makes a
-    per-pair dv/dt explode even when the continuous profile respects a_max. The
-    distance-window kinematic estimate is robust to that quantization.
+    NOT per-segment dv/dt. Discretize's velocity-aware subdivision produces uneven
+    segment sizes — a lone 1-step segment between larger ones has a tiny dt that
+    makes a per-pair dv/dt explode even when the continuous profile respects a_max.
+    The distance-window kinematic estimate is robust to that quantization.
 
-    Slack is 2.0 because stage6 interpolates velocity LINEARLY in the curve
-    parameter t (not arc-length with exact a_max ramps), which overshoots a_max
-    by up to ~1.7x at the sharpest corners. That is a velocity-profile-model
-    limitation (the jerk/profile layer), independent of junction-deviation
-    cornering; tighten this slack once stage6 gets an arc-length-accurate ramp.
+    Slack is 2.0 to absorb two effects that legitimately push the measured tool
+    acceleration above the scalar a_max: (1) per-axis accel projection lets the
+    tool accelerate up to ~sqrt(2)*a_max on a diagonal while each axis stays within
+    its own limit, and (2) discretize interpolates v linearly within a sample pair,
+    so a window straddling a corner's v=0 dip reads a slightly high a. The Plan
+    stage itself is acceleration-continuous at the samples; this slack covers the
+    discretization, not a planning gap.
     """
     c = Check("acceleration continuity")
     vs = [seg_kinematics(s, machine)[2] for s in segments]
@@ -226,21 +221,19 @@ def check_interval_bounds(segments, machine, feed_max, jog_feed, eps=0.02):
     return c
 
 
-def check_step_conservation(segments, planned, machine):
+def check_step_conservation(segments, samples, machine):
     c = Check("step conservation")
     spans = list(path_spans(segments))
-    # Map planned curves to paths the same way (PATH_START boundaries)
-    path_idx = -1
-    path_geom = []  # (net_dx_mm, net_dy_mm) per path
-    cur_start = None
-    for p in planned:
-        if p.flags & PATH_START:
-            if cur_start is not None:
-                path_geom.append((cur_start, last_end))
-            cur_start = p.metrics.curve.p0
-        last_end = p.metrics.curve.p3
-    if cur_start is not None:
-        path_geom.append((cur_start, last_end))
+    # Per-subpath geometry endpoints straight from the sample stream:
+    # (first sample position, last sample position) between PATH_START/PATH_END.
+    path_geom = []  # ((x0,y0), (x1,y1)) per path
+    start = None
+    for s in samples:
+        if s.flags & PATH_START:
+            start = (s.x, s.y)
+        if s.flags & PATH_END and start is not None:
+            path_geom.append((start, (s.x, s.y)))
+            start = None
 
     if len(spans) != len(path_geom):
         c.fail(f"path count mismatch: {len(spans)} segment-paths vs {len(path_geom)} geometry-paths")
@@ -284,22 +277,23 @@ def check_boundaries(segments, machine, frac=0.5):
     return c
 
 
-def check_geometry(segments, planned, machine, tol=0.1, samples_per_curve=60):
-    """Reconstruct XY trajectory from steps; assert it tracks the Beziers."""
+def check_geometry(segments, samples, machine, tol=0.1):
+    """Reconstruct XY trajectory from steps; assert it tracks the flattened path.
+
+    The flattened sample positions ARE the reference polyline — discretize
+    quantizes exactly that, so the reconstructed trajectory must track it.
+    """
     c = Check("geometric fidelity")
 
-    # Dense reference polyline per path from the planned Beziers
+    # Reference polyline per path = the sample positions between PATH_START/END.
     ref = []  # list of paths, each a list of (x,y) sample points
     cur = None
-    for p in planned:
-        if p.flags & PATH_START:
+    for s in samples:
+        if s.flags & PATH_START:
             if cur is not None:
                 ref.append(cur)
             cur = []
-        crv = p.metrics.curve
-        for k in range(samples_per_curve + 1):
-            t = k / samples_per_curve
-            cur.append(_bezier_point(crv, t))
+        cur.append((s.x, s.y))
     if cur is not None:
         ref.append(cur)
 
@@ -353,8 +347,6 @@ def main():
     ap.add_argument("--gap-tol",       type=float, default=cfg.quality.gap_tol)
     ap.add_argument("--geom-tol",      type=float, default=0.2,
                     help="Max allowed trajectory deviation, mm (default 0.2)")
-    ap.add_argument("--geom-samples",  type=int,   default=200,
-                    help="Reference samples per curve for fidelity check (default 200)")
     ap.add_argument("--tangential",    action=argparse.BooleanOptionalAction, default=True,
                     help="A-axis tangent tracking (knife/crease); --no-tangential for a pen")
     ap.add_argument("--jog-feed",      type=float, default=JOG_FEED,
@@ -371,12 +363,12 @@ def main():
     else:
         machine = cfg.machine
 
-    planned, segments, _ = build(args.svg, machine, args.feed_max, args.a_max,
+    samples, segments, _ = build(args.svg, machine, args.feed_max, args.a_max,
                                  args.angle_tol, args.gap_tol, jog_feed=args.jog_feed,
                                  tangential=args.tangential)
 
     print(f"SVG        : {args.svg}")
-    print(f"Curves     : {len(planned)}")
+    print(f"Samples    : {len(samples)}")
     print(f"Segments   : {len(segments)}")
     print(f"Config     : X={machine.x.steps_per_unit} Y={machine.y.steps_per_unit} "
           f"A={machine.a.steps_per_unit} steps/unit, x.invert={machine.x.invert}, "
@@ -390,10 +382,9 @@ def main():
         check_velocity_ceiling(segments, machine, args.feed_max, args.jog_feed),
         check_acceleration(segments, machine, args.a_max),
         check_interval_bounds(segments, machine, args.feed_max, args.jog_feed),
-        check_step_conservation(segments, planned, machine),
+        check_step_conservation(segments, samples, machine),
         check_boundaries(segments, machine),
-        check_geometry(segments, planned, machine, tol=args.geom_tol,
-                       samples_per_curve=args.geom_samples),
+        check_geometry(segments, samples, machine, tol=args.geom_tol),
     ]
 
     print(f"{'Check':28s}  Result  Detail")

@@ -16,7 +16,7 @@ from plan_lookahead import plan, _seg_accel, _subpath_ranges
 from sample import PATH_START, PATH_END
 from config import default
 from stage1 import CubicBezier
-from mock_stage4 import CASES
+from mock_curves import CASES
 
 CFG = default()
 MACH = CFG.machine

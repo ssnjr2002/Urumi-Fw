@@ -1,8 +1,8 @@
 """
-Mock input data for stage 4 (arc length + curvature computation).
-Each case is a list of CubicBezier namedtuples in mm coordinates,
-as produced by stage 3. Where possible, expected values are noted
-analytically so tests can assert real numbers.
+Mock curve fixtures for the pipeline tests (flatten / constrain / plan).
+Each case is a list of CubicBezier namedtuples in mm coordinates, as produced by
+stage 3, paired with analytically-known arc length / curvature where possible so
+tests can assert real numbers.
 """
 
 import sys, os, math

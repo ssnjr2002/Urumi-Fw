@@ -28,7 +28,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from stage1 import CubicBezier
 from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
-from stage4 import _bezier_point, _bezier_deriv1, _bezier_deriv2, curvature
+from bezier import (bezier_point as _bezier_point,
+                    bezier_deriv1 as _bezier_deriv1,
+                    bezier_deriv2 as _bezier_deriv2, curvature)
 from config import default as _config_default
 from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 

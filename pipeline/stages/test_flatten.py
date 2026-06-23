@@ -11,10 +11,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
 
 from flatten import flatten
 from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
-from stage4 import compute_metrics
+from bezier import arc_length
 from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
-from mock_stage4 import CASES
+from mock_curves import CASES
+
+def _analytic_len(curves):
+    return sum(arc_length(c) for c in curves)
 
 DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -34,7 +37,7 @@ def test_total_length_matches_stage4():
             continue
         samples = flatten([curves])
         chord_total = sum(s.ds for s in samples)
-        analytic = sum(m.path_length_mm for m in compute_metrics(curves))
+        analytic = _analytic_len(curves)
         err = abs(chord_total - analytic) / analytic
         assert err < 0.005, f"{name}: chord len {chord_total} vs analytic {analytic}"
 
@@ -43,7 +46,7 @@ def test_near_cusp_length_reasonable():
     # the cusp spike) — a sanity floor, not a parity assert.
     samples = flatten([CASES["near_cusp"][0]])
     chord_total = sum(s.ds for s in samples)
-    gl5 = sum(m.path_length_mm for m in compute_metrics(CASES["near_cusp"][0]))
+    gl5 = _analytic_len(CASES["near_cusp"][0])
     assert chord_total >= gl5 - 1e-6
 
 def test_straight_line_length():

@@ -34,8 +34,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import default as _config_default, ToolProfile, PEN
 from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 from plan_lookahead import _subpath_ranges
-from stage6 import (MicroSegment, _interval, _angle_delta,
-                    MICRO_PATH_END, MICRO_JOG, MICRO_LIFT)
+from microsegment import (MicroSegment, interval as _interval,
+                          angle_delta as _angle_delta,
+                          MICRO_PATH_END, MICRO_JOG, MICRO_LIFT)
 
 
 def discretize(samples, machine, profile=None, quality=None, a_max=None,

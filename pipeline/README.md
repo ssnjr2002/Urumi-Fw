@@ -2,18 +2,32 @@
 
 SVG-to-MicroSegment motion planning pipeline. Pure Python, no external dependencies. Takes an SVG file and produces a flat list of `MicroSegment` step events ready for serialisation and transmission to the RP2350.
 
+The pipeline plans velocity **per arc-length sample**, not per Bézier curve. An earlier per-curve ("tile") engine was retired once the per-sample engine passed on hardware — the sample engine subsumes it (lowering `a_max` reproduces tile's whole-arc conservatism) and maintaining two planners was pure tax. See [`PLAN_pipeline_redesign.md`](../PLAN_pipeline_redesign.md) for the tile-vs-sample rationale.
+
 ## Stages
 
-| Stage | File | Input | Output |
-|---|---|---|---|
-| 1 | `stages/stage1.py` | SVG file | `list[CubicBezier]` — all paths as cubic Béziers in SVG pixel coords |
-| 2 | `stages/stage2.py` | Stage 1 output + SVG viewport | Same curves in **mm**, Y-axis flipped (machine origin = bottom-left) |
-| 3 | `stages/stage3.py` | Stage 2 output | Repaired curves with C1 continuity enforced at joins |
-| 4 | `stages/stage4.py` | Stage 3 output | `list[CurveMetrics]` — arc length (mm) and curvature κ per curve |
-| 5 | `stages/stage5.py` | Stage 4 output | `list[PlannedCurve]` — trapezoidal velocity plan (v_entry, v_cruise, v_exit) |
-| 6 | `stages/stage6.py` | Stage 5 output | `list[MicroSegment]` — integer step deltas (dx, dy, dz, da) + clock intervals |
+The representation is **lowered exactly one level per stage** — curves → mm-curves → repaired-curves → samples → constrained-samples → planned-samples → step-events. After Flatten, the unit is the `Sample` (a point + tangent + local curvature + step-to-next), and nothing downstream re-derives curvature from the Béziers.
 
-Stages 4–6 are the ground-truth Python reference for a future C++ port on the RP2350. The Python implementations and the C++ port must emit identical `MicroSegment` streams.
+| # | File | Input | Output |
+|---|---|---|---|
+| 1 Parse | `stages/stage1.py` | SVG file | `list[CubicBezier]` — paths as cubic Béziers, SVG pixels |
+| 2 Normalize | `stages/stage2.py` | curves + viewport | same curves in **mm**, Y-flipped (machine origin bottom-left) |
+| 3 Repair | `stages/stage3.py` | mm curves | curves with C1 continuity enforced at joins |
+| 4 Flatten | `stages/flatten.py` | repaired curves | `list[Sample]` — arc-length sample stream, **per-sample local κ** |
+| 5 Constrain | `stages/constrain.py` | samples | samples + `v_ceiling[i]` — local speed cap per sample |
+| 6 Plan | `stages/plan_lookahead.py` | samples + ceilings | samples + `v[i]` — look-ahead resolved, accel-continuous |
+| 7+8 Discretize | `stages/discretize.py` | planned samples | `list[MicroSegment]` — step deltas (dx,dy,dz,da) + intervals + choreography |
+| 9 Serialise | `../host/serialise.py` | MicroSegments | 26-byte wire packets (magic `0xAB`) |
+
+Supporting modules (the spine and the shared primitives):
+
+| File | Role |
+|---|---|
+| `stages/sample.py` | the `Sample` dataclass + `PATH_START`/`PATH_END`/`CURVE_BOUNDARY` flags — the currency of stages 4–8 |
+| `stages/bezier.py` | cubic Bézier primitives: point, 1st/2nd derivative, arc length (GL5), curvature |
+| `stages/microsegment.py` | the `MicroSegment` wire type, `MICRO_*` flags, per-axis `interval`, `angle_delta` |
+
+Stages 4–8 are the ground-truth Python reference for a future C++ port on the RP2350 (local-production mode); the host/firmware handoff stays between stages 3 and 4 — repaired Béziers go over the wire, the firmware flattens and plans from there.
 
 ## Configuration
 
@@ -21,92 +35,64 @@ All tuning lives in `stages/config.py`. Three tiers:
 
 | Tier | Class | Governs |
 |---|---|---|
-| `machine` | `MachineConfig` / `AxisConfig` | Steps/unit, axis→node map, invert, max_rate, Z/A resolution |
-| `motion`  | `MotionConfig` | feed_max, a_max, jog_feed, junction_deviation, lift_height, z_feed |
-| `quality` | `QualityConfig` | chord_tol, dv_max, v_min, dt limits, angle_tol, gap_tol, n_kappa |
+| `machine` | `MachineConfig` / `AxisConfig` | steps/unit, axis→node map, invert, **per-axis** `max_rate` / `accel`, Z/A resolution |
+| `motion`  | `MotionConfig` | `feed_max`, `a_max` (lateral/centripetal accel + scalar fallback), `jog_feed`, `junction_deviation`, `lift_height`, `z_feed` |
+| `quality` | `QualityConfig` | `chord_tol`, `ds_max`, `dtheta_max`, `dv_max`, `v_min`, dt limits, `angle_tol`, `gap_tol` |
 
-`config.default()` returns the current physical machine (DM542 @ 1/32 micro-step, GT2 20T pulley, X/Y = 160 steps/mm, Z = 1200 steps/mm, A = 120 steps/deg).
+`config.default()` returns the current physical machine (DM542/TMC drivers, GT2 20T pulley, X/Y = 160 steps/mm, Z = 1200 steps/mm, A = 51.667 steps/deg @ 1/16 micro-step, `x/z/a.invert=True`).
 
-Each stage CLI sources its `argparse` defaults from `config.default()` and still accepts per-flag overrides, so every stage is independently runnable.
+Each stage CLI sources its `argparse` defaults from `config.default()` and accepts per-flag overrides, so every stage is independently runnable.
 
 ## Running a stage standalone
 
-Each stage is executable as a script. All take an SVG file as the first argument:
+Each stage is executable as a script taking an SVG file as the first argument; later stages run all earlier ones internally:
 
 ```sh
-# SVG → cubic Béziers (stage 1)
-python stages/stage1.py data/test.svg
-
-# SVG → mm coords (stages 1+2)
-python stages/stage2.py data/test.svg
-
-# C1 continuity repair (stages 1–3)
-python stages/stage3.py data/test.svg --angle-tol 5 --gap-tol 0.01
-
-# Arc length + curvature (stages 1–4)
-python stages/stage4.py data/test.svg
-
-# Velocity plan (stages 1–5)
-python stages/stage5.py data/test.svg --feed-max 80 --a-max 1000
-
-# Full pipeline → MicroSegments (stages 1–6)
-python stages/stage6.py data/test.svg --feed-max 80 --a-max 1000
+python stages/stage1.py          data/test.svg   # SVG → cubic Béziers
+python stages/stage2.py          data/test.svg   # → mm coords, Y-flipped
+python stages/stage3.py          data/test.svg   # → C1-repaired
+python stages/flatten.py         data/test.svg   # → Sample stream (count, length, κ range)
+python stages/constrain.py       data/test.svg   # → per-sample v_ceiling + corner-stop count
+python stages/plan_lookahead.py  data/test.svg   # → resolved v + est. cut time
+python stages/discretize.py      data/test.svg --tool knife   # → MicroSegments
 ```
+
+Full production run (SVG → wire packets) is driven from `../host/svg_to_packets.py`.
 
 ## Stage detail
 
-### Stage 1 — SVG parser
-Handles `<path>`, `<circle>`, `<ellipse>`, `<rect>` (including rounded corners), `<line>`, `<polygon>`, `<polyline>`. SVG commands M, L, H, V, C, S, Q, Z — both absolute and relative. Lines and quadratic curves are converted to degenerate cubics. Elements with `fill:none; stroke:none` are skipped.
+### 1 — Parse (`stage1.py`)
+Handles `<path>`, `<circle>`, `<ellipse>`, `<rect>` (incl. rounded), `<line>`, `<polygon>`, `<polyline>`. Path commands M, L, H, V, C, S, Q, Z, absolute and relative. Lines/quadratics become degenerate cubics. `fill:none; stroke:none` elements are skipped. Returns subpath-aware `list[list[CubicBezier]]`.
 
-Returns `list[list[CubicBezier]]` (subpath-aware) or a flat `list[CubicBezier]`.
+### 2 — Normalize (`stage2.py`)
+Reads `viewBox` + `width`/`height`, resolves units (mm/cm/in/pt/px), applies viewBox offset, scales to mm, flips Y so machine +Y is up.
 
-### Stage 2 — Coordinate transform
-Reads `viewBox` and `width`/`height` from the SVG root. Resolves physical units (mm, cm, in, pt, px). Applies: (1) viewBox offset, (2) scale to mm, (3) Y-axis flip so machine +Y is up.
+### 3 — Repair (`stage3.py`)
+At each join checks C0 (endpoints meet) and G1 (tangents parallel): gaps > `gap_tol` get a bridging cubic; angle > `angle_tol` is logged as a cusp and **left sharp** so the planner handles it (corner-stop / lift-pivot). This is the last stage where the Bézier is the unit.
 
-### Stage 3 — C1 continuity repair
-At each curve join, checks C0 (endpoints meet) and G1 (exit tangent parallel to entry tangent):
-- **Gap > `gap_tol`** → inserts a bridging cubic with tangent-preserving handles.
-- **Angle > `angle_tol`** → logs a `"cusp"` repair. Sharp corners are left as-is so the velocity planner (stage 5) can apply junction-deviation cornering instead of producing a tiny loop.
-- **Degenerate tangents** → inserts a fallback blend.
+### 4 — Flatten (`flatten.py`)
+Walks each curve at an adaptive `dt` bounded by three geometry-only caps: chord deviation (`chord_tol`), facet length (`ds_max`), and — crucial for a tangential knife — **tangent change per sample** (`dtheta_max`, ≈2°). Emits a flat `Sample` stream carrying position, tangent θ, **local** curvature κ, and ds-to-next. Curve boundaries are kept as adjacent samples (ds≈0); a sharp corner appears as two samples with the same position but a large θ jump — the corner signal read downstream. This early flatten is what makes per-curve `kappa_max` conservatism structurally impossible.
 
-### Stage 4 — Arc length + curvature
-Arc length: 5-point Gauss-Legendre quadrature of |B′(t)| over [0,1]. Curvature: κ(t) = |B′ × B″| / |B′|³, sampled at `n_kappa` evenly-spaced t values. Returns `CurveMetrics(curve, path_length_mm, kappa_max, kappa_samples)`.
+### 5 — Constrain (`constrain.py`)
+Pure per-sample ceiling, no propagation: `v_ceiling = min(feed_max, sqrt(a_max/κ), rad(a_rate)/κ, junction-deviation, 0-at-corner)`. Local κ means a degenerate curvature spike caps one sample, not a whole curve.
 
-### Stage 5 — Velocity planner
-Forward + backward trapezoidal pass. Velocity caps (lowest wins):
-1. `feed_max` — cruise ceiling
-2. Centripetal limit — `sqrt(a_max / kappa_max)`
-3. GRBL-style junction-deviation cornering at cusps
+### 6 — Plan (`plan_lookahead.py`)
+The look-ahead. Backward decel sweep + forward accel sweep over each subpath's samples resolve `v[i]` from the ceilings, **acceleration-continuous by construction** (junctions are no longer planning boundaries). Acceleration is per-axis: the tool-path accel over a segment is `min(x.accel/|uₓ|, y.accel/|u_y|)`, so a diagonal accelerates faster while each axis stays within its limit. `PATH_START`/`PATH_END` and corner-stops pin `v=0`; a zero-length corner gap propagates the stop to both sides (the lift-pivot precondition).
 
-Flags: `PATH_START` (v_entry = 0), `PATH_END` (v_exit = 0), `MERGE_WITH_PREV` (curves share one velocity envelope). Returns `PlannedCurve(metrics, flags, v_entry, v_cruise, v_exit, merged)`.
+### 7+8 — Discretize (`discretize.py`)
+Two jobs in one file, kept separate function-wise. **Choreograph** (the outer walk) inserts non-cutting motion around the cut: a travel jog between subpaths, A pre-orientation + Z-lower at each `PATH_START`, lift-pivot-lower at corners, Z-raise at `PATH_END`, and bounded A unwind for a wired tool — all driven by a `ToolProfile`. **Discretize** (the per-pair emit) turns each consecutive sample pair into MicroSegments: per-axis integer step deltas (float accumulators, invert applied to emitted sign only), tangent-tracking `da`, and an interval from the planned `v`. A velocity-aware sub-split keeps the speed change under `dv_max` within one segment, and a per-axis rate floor (`max_rate * steps_per_unit`) stops the A axis demanding multi-MHz rates on tight curves. Because Plan already brought the tool to `v=0` at every corner, between-curve corners and in-curve cusps collapse into one rule.
 
-### Stage 6 — MicroSegment evaluator
-Adaptive `dt` driven by two constraints:
-- **Geometric**: chord deviation < `chord_tol` (≈ 0.01 mm)
-- **Velocity**: speed change < `dv_max` per segment (≈ 3 mm/s)
+## Tool profiles
 
-At each sample: integer step deltas via per-axis resolution + sub-step accumulator, tangential A-axis rotation (`da`), clock interval in RP2350 cycles. Travel jogs (between subpaths) and Z pen-lift moves are also emitted here.
+`config.py` defines `ToolProfile` presets keyed to tool **type**: `PEN` (no A tracking), `KNIFE` (tangential, wired → unwinds), `CREASE` (tangential, free-spinning). One knife model parameterised by `offset_mm`; an offset above `OFFSET_TOLERANCE_MM` needs blade-offset compensation (PLAN P6, not yet implemented) and is rejected rather than cut wrong. Adding a tool is a new preset, never a code change.
 
-Per-axis rate limiting (`max_rate * steps_per_unit`) floors the clock interval so no axis exceeds its physical step-rate ceiling — prevents the A axis from demanding multi-MHz step rates on tight curves.
+## Test data & tests
 
-## Test data
-
-`data/` contains SVG fixtures used by the stage tests:
-
-| File | Tests |
-|---|---|
-| `test_rect.svg`, `test_circle.svg`, `test_ellipse.svg`, `test_line.svg`, `test_polygon.svg` | Primitive element parsing |
-| `test_snake.svg`, `test_star.svg`, `test_triangle.svg` | Multi-segment paths |
-| `coord_mm_units.svg`, `coord_cm_units.svg`, `coord_px_units.svg` | Unit conversion |
-| `coord_nonzero_origin.svg`, `coord_nonsquare.svg`, `coord_no_size.svg` | Viewport edge cases |
-| `coord_yfliip_verify.svg` | Y-flip correctness |
-| `test_saturate.svg` | Curvature saturation |
-
-## Running tests
+`data/` holds SVG fixtures (primitives, multi-segment paths, unit/viewport edge cases, Y-flip) plus `mock_curves.py` (analytically-known Bézier cases for the flatten/constrain/plan tests).
 
 ```sh
 cd pipeline/stages
-python -m pytest test_stage*.py -v
+python -m pytest test_*.py -v        # or: for f in test_*.py; do python "$f"; done
 ```
 
-147 tests, no external dependencies beyond Python's standard library.
+76 tests, standard library only. The headline invariants under test: Flatten reproduces analytic arc length/curvature; Constrain ceilings are bounded and corner-stops fire; Plan is acceleration-continuous across every case; Discretize conserves net XY steps to the geometric endpoint. Host-level invariants (velocity/accel/interval bounds, step conservation, geometric fidelity) are checked end-to-end by `../host/validate_plan.py`.

@@ -8,7 +8,7 @@ from flatten import flatten
 from constrain import constrain, _junction_cap
 from sample import Sample, CURVE_BOUNDARY
 from stage1 import CubicBezier
-from mock_stage4 import CASES
+from mock_curves import CASES
 
 FEED = 80.0
 A_MAX = 1000.0
