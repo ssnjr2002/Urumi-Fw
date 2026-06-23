@@ -44,7 +44,7 @@ def _build_flags(subpaths):
 
 def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
         jog_feed=None, quality=None, lift_height=0.0, z_feed=None,
-        tangential=True, profile=None):
+        tangential=True, profile=None, engine="tile"):
     """
     Full host pipeline: SVG → MicroSegment packets.
     Returns list of 26-byte bytes objects.
@@ -55,43 +55,64 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
     selected from `tangential` (KNIFE / PEN). Using the real profile here — not
     the loose tangential bool — is what enables the knife's A unwind in
     production; the bool path built an ad-hoc profile with unwind off.
+    engine — "tile" (default, the shipped per-curve stage4-6 path) or "sample"
+    (the redesigned per-sample flatten->constrain->plan->discretize path). Both
+    emit identical MicroSegment wire packets; the switch exists so the sample
+    engine can be A/B-tested on hardware against the trusted tile engine.
     """
     if quality is None:
         quality = config_default().quality
     if profile is None:
         profile = KNIFE if tangential else PEN
     tangential = profile.tangential
+
     # Stage 2: SVG → mm subpaths
     subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
-
     # Stage 3: C1 continuity repair
     repaired = [enforce_c1(sp, angle_tol, gap_tol)[0] for sp in subpaths_mm]
 
-    # Flatten for stages 4-5, keeping flags aligned
-    flat_curves = [c for sp in repaired for c in sp]
-    flags = _build_flags(repaired)
-
-    # Stage 4: metrics (arc length + curvature)
-    metrics = compute_metrics(flat_curves)
-
-    # Stage 5: velocity planning. A tangential tool stops at sharp corners so
-    # the blade can lift-pivot there (match the toolpath's corner threshold), and
-    # its A slew ceiling caps XY speed on tight curves so the plan stays in step
-    # with what the A axis can follow.
     corner_stop = profile.corner_angle_deg if tangential else None
     a_rate = machine.a.max_rate if tangential else 0.0
-    planned = plan_velocities(metrics, flags, feed_max, a_max,
-                              corner_stop_angle_deg=corner_stop,
-                              a_rate_deg_s=a_rate)
 
-    # Stage 6: Bezier → MicroSegments (jog_feed/z_feed default to config motion tier)
-    segments = evaluate_microsegments(planned, machine,
-                                      quality=quality, jog_feed=jog_feed,
-                                      lift_height=lift_height, z_feed=z_feed,
-                                      profile=profile, a_max=a_max)
+    if engine == "sample":
+        segments = _run_sample(repaired, machine, feed_max, a_max, profile,
+                               quality, jog_feed, lift_height, z_feed,
+                               corner_stop, a_rate)
+    else:
+        segments = _run_tile(repaired, machine, feed_max, a_max, profile,
+                             quality, jog_feed, lift_height, z_feed,
+                             corner_stop, a_rate)
 
     # Serialise to wire packets
     return list(serialise_microsegments(segments))
+
+
+def _run_tile(repaired, machine, feed_max, a_max, profile, quality, jog_feed,
+              lift_height, z_feed, corner_stop, a_rate):
+    """Tile-era per-curve pipeline (stages 4-6)."""
+    flat_curves = [c for sp in repaired for c in sp]
+    flags = _build_flags(repaired)
+    metrics = compute_metrics(flat_curves)
+    planned = plan_velocities(metrics, flags, feed_max, a_max,
+                              corner_stop_angle_deg=corner_stop, a_rate_deg_s=a_rate)
+    return evaluate_microsegments(planned, machine, quality=quality,
+                                  jog_feed=jog_feed, lift_height=lift_height,
+                                  z_feed=z_feed, profile=profile, a_max=a_max)
+
+
+def _run_sample(repaired, machine, feed_max, a_max, profile, quality, jog_feed,
+                lift_height, z_feed, corner_stop, a_rate):
+    """Redesigned per-sample pipeline (flatten -> constrain -> plan -> discretize)."""
+    from flatten import flatten
+    from constrain import constrain
+    from plan_lookahead import plan
+    from discretize import discretize
+    samples = flatten(repaired, quality=quality)
+    constrain(samples, feed_max, a_max, a_rate_deg_s=a_rate,
+              corner_stop_angle_deg=corner_stop)
+    plan(samples, machine, a_max=a_max)
+    return discretize(samples, machine, profile=profile, quality=quality,
+                      jog_feed=jog_feed, lift_height=lift_height, z_feed=z_feed)
 
 
 def write_stream(packets, dest):
@@ -125,6 +146,9 @@ def main():
                         default=True,
                         help="A-axis tangent tracking for knife/crease; "
                              "use --no-tangential for a pen")
+    parser.add_argument("--engine",         choices=("tile", "sample"), default="tile",
+                        help="tile = shipped per-curve pipeline; "
+                             "sample = redesigned per-sample look-ahead pipeline")
     parser.add_argument("--steps-per-mm",   type=float, default=None,
                         help="Override XY steps/mm (default: real per-axis config)")
     parser.add_argument("--steps-per-deg",  type=float, default=None,
@@ -149,7 +173,7 @@ def main():
     packets = run(args.svg, machine, args.feed_max, args.a_max,
                   args.angle_tol, args.gap_tol, jog_feed=args.jog_feed,
                   lift_height=args.lift_height, z_feed=args.z_feed,
-                  tangential=args.tangential)
+                  tangential=args.tangential, engine=args.engine)
 
     total_bytes = sum(len(p) for p in packets)
     print(f"MicroSegments : {len(packets)}", file=sys.stderr)
