@@ -41,25 +41,35 @@ def _tangent_deg(c, t, fallback=0.0):
     return math.degrees(math.atan2(d1[1], d1[0]))
 
 
-def _dt_at(c, t, chord_tol, ds_max, dt_max):
-    """Geometry-only adaptive step: min of chord-deviation and spacing caps."""
+def _dt_at(c, t, chord_tol, ds_max, dtheta_max, dt_max):
+    """
+    Geometry-only adaptive step: min of three caps —
+      chord deviation  (position error)         : dt <= sqrt(8*chord_tol/|B''|)
+      spacing          (facet length)           : dt <= ds_max/|B'|
+      tangent step     (angular turn per sample) : dt <= dtheta_max/(kappa*|B'|)
+    The angular cap is what keeps a tangential knife smooth on curves: chord
+    deviation alone allows a large tangent jog over a low-deviation chord.
+    """
     dt = dt_max
+    speed = math.hypot(*_bezier_deriv1(c, t))
     d2 = _bezier_deriv2(c, t)
     mag2 = d2[0] * d2[0] + d2[1] * d2[1]
     if mag2 > 1e-20:
         dt = min(dt, math.sqrt(8.0 * chord_tol / math.sqrt(mag2)))
-    speed = math.hypot(*_bezier_deriv1(c, t))
     if speed > 1e-12:
         dt = min(dt, ds_max / speed)
+        k = curvature(c, t)
+        if k > 1e-9:
+            dt = min(dt, math.radians(dtheta_max) / (k * speed))
     return dt
 
 
-def _ts_for_curve(c, chord_tol, ds_max, dt_max, dt_min):
+def _ts_for_curve(c, chord_tol, ds_max, dtheta_max, dt_max, dt_min):
     """Parameter values [0..1] at which to sample one curve (both ends inclusive)."""
     ts = [0.0]
     t = 0.0
     while t < 1.0:
-        dt = max(dt_min, _dt_at(c, t, chord_tol, ds_max, dt_max))
+        dt = max(dt_min, _dt_at(c, t, chord_tol, ds_max, dtheta_max, dt_max))
         t = min(t + dt, 1.0)
         ts.append(t)
     return ts
@@ -88,7 +98,8 @@ def flatten(subpaths, quality=None):
         prev_theta = _tangent_deg(subpath[0], 0.0)
 
         for ci, c in enumerate(subpath):
-            ts = _ts_for_curve(c, q.chord_tol, q.ds_max, q.dt_max, q.dt_min)
+            ts = _ts_for_curve(c, q.chord_tol, q.ds_max, q.dtheta_max,
+                               q.dt_max, q.dt_min)
             for k, t in enumerate(ts):
                 # Skip a curve's t=0 when it coincides with the previous curve's
                 # t=1 AND the join is smooth — otherwise keep it (corners need the

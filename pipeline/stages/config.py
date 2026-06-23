@@ -209,12 +209,20 @@ class QualityConfig:
     angle_tol: float = 5.0      # deg — C1 continuity tolerance (stage 3)
     gap_tol:   float = 0.01     # mm — join gap tolerance (stage 3)
     n_kappa:   int   = 20       # curvature samples per curve (stage 4)
-    ds_max:    float = 1.0      # mm — max spacing between flattened samples
+    ds_max:    float = 0.5      # mm — max spacing between flattened samples
                                 # (redesign Flatten stage). Caps sample spacing so
                                 # the look-ahead velocity passes have enough
                                 # resolution for smooth accel/decel ramps even on
                                 # long straight runs (premortem P3). Geometry
                                 # (chord_tol) subdivides finer where curved.
+    dtheta_max: float = 2.0     # deg — max tangent change between flattened
+                                # samples (redesign Flatten stage). chord_tol
+                                # bounds POSITION error but a tangential knife
+                                # also needs bounded ANGULAR steps: on a curve,
+                                # ds*kappa radians of tangent turn per sample. Cap
+                                # it so the blade tracks smoothly instead of
+                                # jogging in visible facets. Dominant cap on
+                                # curves; ds_max/chord_tol dominate on straights.
 
 
 def _default_machine() -> MachineConfig:
