@@ -98,6 +98,24 @@ def kappa_samples(c, n=N_KAPPA):
 
 # ── main stage ────────────────────────────────────────────────────────────────
 
+def _kappa_max_moving(c, samples):
+    """
+    Curve's max curvature, IGNORING near-stationary samples.
+
+    κ = |B'×B''|/|B'|³ blows up where |B'| -> 0 (a near-cusp / degenerate
+    endpoint with nearly coincident control points). Such a spike spans almost
+    zero arc length, but a plain max() lets it dominate kappa_max and drag the
+    whole curve's planned speed to the floor (stage5 caps by kappa_max). Exclude
+    samples whose speed is far below the curve's mean; the genuine tight features
+    (tight AND moving) are kept, and stage6's per-axis interval limiter still
+    slows the A axis locally at the artifact point.
+    """
+    speeds = [math.hypot(*_bezier_deriv1(c, t)) for t, _ in samples]
+    mean_speed = sum(speeds) / len(speeds) if speeds else 0.0
+    thresh = 0.1 * mean_speed
+    moving = [k for (t, k), sp in zip(samples, speeds) if sp >= thresh]
+    return max(moving) if moving else max((k for _, k in samples), default=0.0)
+
 def compute_metrics(curves):
     """Returns list of CurveMetrics, one per input curve."""
     result = []
@@ -106,7 +124,7 @@ def compute_metrics(curves):
         result.append(CurveMetrics(
             curve=c,
             path_length_mm=arc_length(c),
-            kappa_max=max(k for _, k in samples),
+            kappa_max=_kappa_max_moving(c, samples),
             kappa_samples=samples,
         ))
     return result

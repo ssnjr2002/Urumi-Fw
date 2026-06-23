@@ -83,10 +83,16 @@ def test_tighter_circle_higher_curvature():
     ratio = m5[0].kappa_max / m50[0].kappa_max
     assert abs(ratio - 10.0) < 0.5
 
-def test_near_cusp_high_curvature():
+def test_near_cusp_excluded_from_kappa_max():
+    # A near-cusp spikes curvature at a near-stationary point (|B'|->0). That
+    # spike is a numerical artifact over ~zero arc length, so it is EXCLUDED
+    # from kappa_max (the near-cusp is handled downstream by stage6's lift-pivot,
+    # not by dragging the whole curve's planned speed to the floor).
     curves, _ = CASES["near_cusp"]
     m = compute_metrics(curves)
-    assert m[0].kappa_max > 1.0  # clearly high
+    raw_max = max(k for _, k in m[0].kappa_samples)
+    assert raw_max > 1.0                 # the spike is present in the raw samples
+    assert m[0].kappa_max < raw_max      # but excluded from kappa_max
 
 def test_full_circle_curvature():
     curves, expected = CASES["full_circle_r30"]
@@ -116,11 +122,13 @@ def test_kappa_samples_nonnegative():
             for t, k in m.kappa_samples:
                 assert k >= 0, f"{name}: negative curvature at t={t}"
 
-def test_kappa_max_equals_sample_max():
+def test_kappa_max_within_samples():
+    # kappa_max is a max over the curve's MOVING samples, so it never exceeds the
+    # raw sample max (and equals it for curves with no near-stationary points).
     for name, (curves, _) in CASES.items():
         for m in compute_metrics(curves):
             sample_max = max(k for _, k in m.kappa_samples)
-            assert abs(m.kappa_max - sample_max) < 1e-12, f"{name}: kappa_max mismatch"
+            assert m.kappa_max <= sample_max + 1e-12, f"{name}: kappa_max > sample max"
 
 # ── output structure ──────────────────────────────────────────────────────────
 
