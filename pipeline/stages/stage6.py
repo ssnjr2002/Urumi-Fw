@@ -310,18 +310,48 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
                             dz=(-dz if machine.z.invert else dz), da=0,
                             interval=z_interval, flags=MICRO_LIFT)
 
-    # Pre-compute the A reorientation rate (pure rotation, pen-up). Rotate at the
-    # A axis ceiling; fall back to a sane default if max_rate is unset (0).
-    a_rate = max((machine.a.max_rate if machine.a.max_rate > 0 else 180.0)
-                 * machine.a.steps_per_unit, 1e-9)
-    a_interval = max(1, min(int(machine.f_cpu / a_rate), machine.f_cpu))
+    # A reorientation profile (pure rotation, pen-up). Cruise at the A ceiling
+    # and accelerate at the A axis accel; fall back to sane defaults if unset.
+    a_spd       = machine.a.steps_per_unit
+    a_cruise_sps = max((machine.a.max_rate if machine.a.max_rate > 0 else 180.0) * a_spd, 1.0)
+    a_accel_sps2 = max((machine.a.accel    if machine.a.accel    > 0 else 2000.0) * a_spd, 1.0)
+    a_v0_sps     = min(a_cruise_sps, 50.0)   # gentle start, like the jog ramp
 
     def _a_move(da):
-        # Pure-A rotation to orient the tangential tool before a path (pen-up).
-        # Flagged MICRO_JOG so validators exclude it from XY conservation checks.
-        return MicroSegment(dx=0, dy=0, dz=0,
-                            da=(-da if machine.a.invert else da),
-                            interval=a_interval, flags=MICRO_JOG)
+        """
+        Pure-A rotation by `da` true steps as a RAMPED trapezoidal sequence of
+        MicroSegments (accelerate from rest, cruise, decelerate) — NOT a single
+        constant-rate segment. An unramped slam to the A ceiling stalls the
+        stepper and drops steps, which accumulates as blade-angle drift over a
+        path (worst at the last corner). Mirrors the host jog ramp. Flagged
+        MICRO_JOG so validators exclude it from XY conservation checks; invert is
+        applied to the emitted sign only.
+        """
+        N = abs(int(da))
+        if N == 0:
+            return []
+        sign = (1 if da > 0 else -1) * (-1 if machine.a.invert else 1)
+        v0, vc, acc = a_v0_sps, a_cruise_sps, a_accel_sps2
+
+        d_acc = (vc**2 - v0**2) / (2.0 * acc)
+        if 2 * d_acc > N:                       # triangular — never reach cruise
+            d_acc = N / 2.0
+        out = []
+        n = 0
+        while n < N:
+            if n < d_acc:
+                v = math.sqrt(v0**2 + 2.0 * acc * n)
+            elif n >= N - d_acc:
+                v = math.sqrt(max(v0**2, v0**2 + 2.0 * acc * (N - n)))
+            else:
+                v = vc
+            v = max(v, v0)
+            chunk = min(max(1, int(v / 100)), N - n)   # adaptive, ~10ms/segment
+            iv = max(1, min(int(machine.f_cpu / v), machine.f_cpu))
+            out.append(MicroSegment(dx=0, dy=0, dz=0, da=sign * chunk,
+                                    interval=iv, flags=MICRO_JOG))
+            n += chunk
+        return out
 
     def _pivot(da_steps):
         """
@@ -335,7 +365,7 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
         out = []
         if lift:
             out.append(_z_move(+z_steps))   # raise
-        out.append(_a_move(da_steps))       # pivot to new tangent
+        out.extend(_a_move(da_steps))       # pivot to new tangent (ramped)
         if lift:
             out.append(_z_move(-z_steps))   # lower
         return out
@@ -378,7 +408,7 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
                 da_deg   = _angle_delta(theta, entry_theta)
                 da_steps = int(round(da_deg * machine.a.steps_per_unit))
                 if da_steps != 0:
-                    all_segments.append(_a_move(da_steps))
+                    all_segments.extend(_a_move(da_steps))
 
             pos_x = target_x
             pos_y = target_y

@@ -142,16 +142,16 @@ def test_arc_net_displacement():
 # ── A-axis pre-orientation (tangential tool) ─────────────────────────────────
 
 def test_diagonal_preorient_emitted():
-    # The blade must orient to the 45deg line before cutting: exactly one
-    # pre-orientation jog with da != 0 and no XY motion, pen-up.
+    # The blade must orient to the 45deg line before cutting. The pre-orientation
+    # is a RAMPED pure-A move (multiple MICRO_JOG segments, no XY); their da sums
+    # to ~45 deg.
     s = segs("diagonal_constant_v")
     preorient = [x for x in s if (x.flags & MICRO_JOG) and x.da != 0]
-    assert len(preorient) == 1
-    p = preorient[0]
-    assert p.dx == 0 and p.dy == 0          # pure rotation
-    # 45deg line, ~120 steps/deg on the mock machine -> ~45*spu steps
+    assert len(preorient) >= 1
+    assert all(x.dx == 0 and x.dy == 0 for x in preorient)   # pure rotation
     spd = MACHINE_DEFAULT.a.steps_per_unit
-    assert approx(abs(p.da), 45 * spd, tol=spd)  # within ~1 degree
+    total_da = sum(x.da for x in preorient)
+    assert approx(abs(total_da), 45 * spd, tol=spd)  # within ~1 degree
 
 def test_no_preorient_when_not_tangential():
     # With tangential off (pen), no A motion at all.
@@ -175,27 +175,31 @@ def test_corner_lift_pivot_lower():
     from config import KNIFE
     from stage6 import build_toolpath
     s = build_toolpath(_L_path(), MACHINE_DEFAULT, profile=KNIFE, lift_height=3.0)
-    # Find the within-path corner: a pure-A pivot (MICRO_JOG, da!=0, no XY)
-    # flanked by two Z-lift moves (raise then lower).
-    flav = [(i, x) for i, x in enumerate(s)
+    # The within-path corner is a ramped pure-A pivot (one or more MICRO_JOG
+    # segments, no XY) bracketed by Z raise/lower.
+    idxs = [i for i, x in enumerate(s)
             if (x.flags & MICRO_JOG) and x.da != 0 and x.dx == 0 and x.dy == 0]
-    assert len(flav) == 1, "expected exactly one corner pivot"
-    i, pivot = flav[0]
+    assert idxs, "expected a corner pivot"
     spd = MACHINE_DEFAULT.a.steps_per_unit
-    assert approx(abs(pivot.da), 90 * spd, tol=2 * spd)   # ~90deg turn
-    assert s[i - 1].flags & MICRO_LIFT and s[i - 1].dz != 0   # raised before
-    assert s[i + 1].flags & MICRO_LIFT and s[i + 1].dz != 0   # lowered after
+    total_da = sum(s[i].da for i in idxs)
+    assert approx(abs(total_da), 90 * spd, tol=2 * spd)       # ~90deg turn
+    # A Z raise precedes the first pivot segment, a Z lower follows the last.
+    first, last = idxs[0], idxs[-1]
+    assert s[first - 1].flags & MICRO_LIFT and s[first - 1].dz != 0
+    assert s[last + 1].flags & MICRO_LIFT and s[last + 1].dz != 0
 
 def test_corner_no_pivot_when_smooth():
-    # A straight two-curve chain (no tangent jump) gets no corner pivot.
+    # A straight two-curve chain (no tangent jump) gets no mid-path corner pivot.
+    # Pre-orientation (a pure-A ramp) may run at the start; once XY drawing
+    # begins, no further pure-A pivot should appear.
     from config import KNIFE
     from stage6 import build_toolpath
     case = CASES["two_curve_chain"]
     s = build_toolpath(case["planned"], MACHINE_DEFAULT, profile=KNIFE, lift_height=3.0)
-    # Only the PATH_START pre-orientation pivot may exist; no mid-path corner.
-    pivots = [x for x in s if (x.flags & MICRO_JOG) and x.da != 0
-              and x.dx == 0 and x.dy == 0]
-    assert len(pivots) <= 1
+    first_draw = next(i for i, x in enumerate(s) if x.dx or x.dy)
+    post = [x for x in s[first_draw:]
+            if (x.flags & MICRO_JOG) and x.da != 0 and x.dx == 0 and x.dy == 0]
+    assert not post, "no mid-path corner pivot on a straight chain"
 
 # ── near-zero velocity: no crash, finite intervals ───────────────────────────
 
