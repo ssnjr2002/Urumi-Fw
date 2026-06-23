@@ -5,3 +5,5 @@
 .vscode/ipch
 **/__pycache__
 **/*.pyc
+pipeline/**/__pycache__/
+*.pyc
