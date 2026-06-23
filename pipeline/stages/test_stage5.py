@@ -166,6 +166,28 @@ def test_no_corner_stop_by_default():
     p = plan_velocities(metrics, flags, 80.0, 1000.0)
     assert p[0].v_exit > 0.0
 
+def test_a_rate_cap_lowers_cruise_on_curve():
+    # On a curved arc, a tight A slew ceiling caps cruise below the centripetal
+    # cap; a pen (a_rate=0) is unaffected.
+    from mock_stage6 import make_planned
+    # quarter-circle-ish arc, radius ~10mm -> moderate curvature
+    arc = make_planned((10, 0), (10, 5.5), (5.5, 10), (0, 10),
+                       0, 80, 0, flags=PATH_START | PATH_END)
+    metrics, flags = [arc.metrics], [PATH_START | PATH_END]
+    pen = plan_velocities(metrics, flags, 80.0, 1000.0, a_rate_deg_s=0.0)
+    knife = plan_velocities(metrics, flags, 80.0, 1000.0, a_rate_deg_s=30.0)
+    assert knife[0].v_cruise < pen[0].v_cruise
+
+def test_a_rate_cap_noop_on_straight():
+    # Straight line has zero curvature -> A cap never binds.
+    from mock_stage6 import straight_planned
+    s = straight_planned(0, 20, v_entry=0, v_cruise=80, v_exit=0,
+                         flags=PATH_START | PATH_END)
+    metrics, flags = [s.metrics], [PATH_START | PATH_END]
+    pen = plan_velocities(metrics, flags, 80.0, 1000.0, a_rate_deg_s=0.0)
+    knife = plan_velocities(metrics, flags, 80.0, 1000.0, a_rate_deg_s=10.0)
+    assert approx(pen[0].v_cruise, knife[0].v_cruise, tol=0.01)
+
 def test_corner_stop_ignores_straight_join():
     # A straight two-curve chain has no corner -> no forced stop even with the flag.
     from mock_stage6 import straight_planned

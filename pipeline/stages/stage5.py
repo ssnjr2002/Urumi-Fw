@@ -48,11 +48,26 @@ def _v_reachable(v_from, a_max, length):
     """Max speed reachable from v_from over a given distance."""
     return math.sqrt(max(0.0, v_from**2 + 2 * a_max * length))
 
-def _v_cruise_cap(m, feed_max, a_max):
-    """Lowest applicable cruise cap for this curve."""
+def _v_cruise_cap(m, feed_max, a_max, a_rate_deg_s=0.0):
+    """
+    Lowest applicable cruise cap for this curve.
+
+    Two curvature-based caps (lowest wins):
+      centripetal : v <= sqrt(a_max / kappa)          — XY radial acceleration
+      A-axis slew : v <= a_rate / kappa               — tangential tool rotation
+
+    A tangential tool rotates at dθ/dt = kappa·v (curvature × tool speed). Capping
+    v so this stays within the A axis's slew rate (a_rate_deg_s, converted to
+    rad/s) keeps the planned XY speed in step with what the A axis can actually
+    follow — without it, stage6's per-axis interval limiter silently slows
+    A-bound segments below their planned speed, creating velocity jumps. a_rate=0
+    (non-tangential / unset) skips this cap.
+    """
     cap = feed_max
     if m.kappa_max > 1e-9:
         cap = min(cap, math.sqrt(a_max / m.kappa_max))
+        if a_rate_deg_s > 0.0:
+            cap = min(cap, math.radians(a_rate_deg_s) / m.kappa_max)
     return cap
 
 def _unit(v):
@@ -124,7 +139,7 @@ def _build_merge_groups(metrics, flags):
 # ── main planner ──────────────────────────────────────────────────────────────
 
 def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None,
-                    corner_stop_angle_deg=None):
+                    corner_stop_angle_deg=None, a_rate_deg_s=0.0):
     """
     Returns list of PlannedCurve.
 
@@ -140,6 +155,12 @@ def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None,
     XY has truly stopped first, so the planner must decelerate to 0 there — a
     stronger constraint than junction-deviation's low-but-nonzero corner speed.
     None (default) keeps the old behaviour (no forced stops).
+
+    a_rate_deg_s is the tangential tool's A-axis slew ceiling (deg/s). When > 0
+    it adds a per-curve curvature cap (v <= a_rate/kappa) so planned XY speed
+    stays within what the A axis can follow on tight curves — eliminating the
+    velocity jumps that arise when stage6's interval limiter slows A-bound
+    segments below their planned speed. 0 (default) disables it (e.g. a pen).
     """
     n = len(metrics)
     if n == 0:
@@ -193,7 +214,7 @@ def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None,
             gv_entry = group_v_entry[gi]  # set by previous group's exit
 
         group_length = sum(metrics[i].path_length_mm for i in g)
-        group_cap    = min(_v_cruise_cap(metrics[i], feed_max, a_max) for i in g)
+        group_cap    = min(_v_cruise_cap(metrics[i], feed_max, a_max, a_rate_deg_s) for i in g)
 
         gv_reachable = _v_reachable(gv_entry, a_max, group_length)
         gv_exit      = min(group_cap, gv_reachable, corner_cap[g[-1]])
@@ -211,7 +232,7 @@ def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None,
         for idx in g:
             v_entry[idx] = v_cur
             reachable = _v_reachable(v_cur, a_max, metrics[idx].path_length_mm)
-            cap = _v_cruise_cap(metrics[idx], feed_max, a_max)
+            cap = _v_cruise_cap(metrics[idx], feed_max, a_max, a_rate_deg_s)
             v_exit[idx] = min(cap, reachable, corner_cap[idx])
             v_cur = v_exit[idx]
 
@@ -246,7 +267,7 @@ def plan_velocities(metrics, flags, feed_max, a_max, junction_deviation=None,
     result = []
     for gi, g in enumerate(groups):
         group_length = sum(metrics[i].path_length_mm for i in g)
-        group_cap    = min(_v_cruise_cap(metrics[i], feed_max, a_max) for i in g)
+        group_cap    = min(_v_cruise_cap(metrics[i], feed_max, a_max, a_rate_deg_s) for i in g)
         gv_entry     = v_entry[g[0]]
         gv_exit      = v_exit[g[-1]]
 
