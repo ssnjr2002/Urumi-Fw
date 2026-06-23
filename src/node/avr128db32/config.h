@@ -64,9 +64,9 @@
 // TMC2660 SPI
 #ifdef TMC_2660
 #define TMC_CS_PIN        PIN_PA7
-#define TMC_CURRENT       500   // mA RMS — MATCH THE MOTOR. NEMA 11 ~0.5-0.67A;
+#define TMC_CURRENT       670   // mA RMS — MATCH THE MOTOR. NEMA 11 ~0.5-0.67A;
                                 // NEMA 23 was 2000. Too high mismatches the chopper.
-#define TMC_MICROSTEPPING 32
+#define TMC_MICROSTEPPING 16
 #define TMC_R_SENSE       0.1f
 #endif
 
