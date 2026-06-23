@@ -188,6 +188,62 @@ def test_corner_lift_pivot_lower():
     assert s[first - 1].flags & MICRO_LIFT and s[first - 1].dz != 0
     assert s[last + 1].flags & MICRO_LIFT and s[last + 1].dz != 0
 
+def test_in_curve_cusp_lift_pivot():
+    # A cubic with P1==P2 traces out-and-back along the x-axis: B'(t)=0 at t=0.5,
+    # a 180deg cusp INSIDE one curve. The blade must NOT pivot 180 while down;
+    # the turn is deferred to a lift-pivot.
+    from config import KNIFE
+    from stage6 import build_toolpath
+    from mock_stage6 import make_planned
+    cusp = make_planned((0, 0), (10, 0), (10, 0), (0, 0),
+                        0, 30, 0, flags=PATH_START | PATH_END)
+    s = build_toolpath([cusp], MACHINE_DEFAULT, profile=KNIFE, lift_height=3.0)
+    spd = MACHINE_DEFAULT.a.steps_per_unit
+    # no pen-down segment carries a large rotation
+    big_down = [x for x in s if not (x.flags & (MICRO_JOG | MICRO_LIFT))
+                and abs(x.da) > 20 * spd]
+    assert not big_down, "cusp rotation must not be tracked pen-down"
+    # a pure-A lift-pivot appears (the deferred turn)
+    pivots = [x for x in s if (x.flags & MICRO_JOG) and x.da != 0
+              and x.dx == 0 and x.dy == 0]
+    assert pivots, "expected a lift-pivot for the in-curve cusp"
+
+def _square_subpath(x0, y0):
+    # CCW square as four straight cubics; net tangent winds +360 around it.
+    from mock_stage6 import make_planned
+    def line(ax, ay, bx, by, flags):
+        return make_planned((ax, ay), ((2*ax+bx)/3, (2*ay+by)/3),
+                            ((ax+2*bx)/3, (ay+2*by)/3), (bx, by), 0, 30, 0, flags)
+    return [
+        line(x0,    y0,    x0+10, y0,    PATH_START),
+        line(x0+10, y0,    x0+10, y0+10, 0),
+        line(x0+10, y0+10, x0,    y0+10, 0),
+        line(x0,    y0+10, x0,    y0,    PATH_END),
+    ]
+
+def _peak_wind_deg(segs):
+    inv = -1 if MACHINE_DEFAULT.a.invert else 1
+    spd = MACHINE_DEFAULT.a.steps_per_unit
+    w = pk = 0.0
+    for s in segs:
+        w += s.da * inv / spd
+        pk = max(pk, abs(w))
+    return pk
+
+def test_unwind_bounds_winding():
+    # Two same-direction closed contours each wind +360. With unwind the wire
+    # twist stays bounded (~one turn); without it, it grows per contour.
+    from config import KNIFE
+    from stage6 import build_toolpath
+    from dataclasses import replace
+    job = _square_subpath(0, 0) + _square_subpath(50, 0)
+    on  = build_toolpath(job, MACHINE_DEFAULT, profile=KNIFE, lift_height=3.0)
+    off = build_toolpath(job, MACHINE_DEFAULT,
+                         profile=replace(KNIFE, name="free", unwind=False),
+                         lift_height=3.0)
+    assert _peak_wind_deg(on) < _peak_wind_deg(off)   # unwind helps
+    assert _peak_wind_deg(on) <= 560                  # bounded ~one turn + entry
+
 def test_corner_no_pivot_when_smooth():
     # A straight two-curve chain (no tangent jump) gets no mid-path corner pivot.
     # Pre-orientation (a pure-A ramp) may run at the start; once XY drawing

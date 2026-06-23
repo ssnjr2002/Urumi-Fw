@@ -163,6 +163,10 @@ class ToolProfile:
     name:            str
     tangential:      bool  = False   # A-axis tracks the path tangent
     offset_mm:       float = 0.0     # blade caster offset; 0 = centre-pivot, >tol needs compensation
+    unwind:          bool  = False   # bounded rotation (e.g. wired tool): unwind
+                                     # accumulated full turns during pen-up moves
+                                     # so the cable never twists past ~one turn.
+                                     # False = free-spinning tool (crease wheel).
     corner_angle_deg: float = 20.0   # tangent jump above which a corner action fires
     min_radius_mm:   float = 0.0     # curvature floor; tighter arcs need special handling (0 = unset)
     lift_height:     float = 0.0     # Z lift between subpaths, mm (0 = draw-through)
@@ -181,11 +185,13 @@ PEN = ToolProfile(name="pen", tangential=False)
 
 KNIFE = ToolProfile(
     name="knife", tangential=True, offset_mm=0.0,   # centre-pivot; raise offset_mm per blade
+    unwind=True,                                     # oscillating knife is wired
     corner_angle_deg=20.0,
 )
 
 CREASE = ToolProfile(
     name="crease", tangential=True, offset_mm=0.0,
+    unwind=False,                                    # crease wheel spins freely
     corner_angle_deg=30.0,
 )
 
@@ -229,7 +235,7 @@ def _default_machine() -> MachineConfig:
         x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0, invert=True),
         y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
         z=AxisConfig(node=3, steps_per_unit=1200.0, max_rate=10.0, invert=True),    # PLACEHOLDER mm/s
-        a=AxisConfig(node=4, steps_per_unit=51.667, rotary=True, max_rate=60, invert=True),  # PLACEHOLDER deg/s; invert confirmed by corner cut (vert edges flipped)
+        a=AxisConfig(node=4, steps_per_unit=51.667, rotary=True, max_rate=100.0, invert=True),  # PLACEHOLDER deg/s; invert confirmed by corner cut (vert edges flipped)
     )
 
 

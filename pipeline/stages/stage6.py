@@ -51,20 +51,26 @@ MICRO_LIFT     = 0x08   # pen/tool Z raise or lower (pen-up/down around a jog)
 # They are threaded in explicitly as `q` (QualityConfig) so each stage stays a
 # pure function and standalone runs use config.default().
 
-# ── velocity at parameter t ───────────────────────────────────────────────────
+# ── velocity at arc length s ──────────────────────────────────────────────────
 
-def _velocity_at_t(planned, t, q):
+def _velocity_at_s(planned, s, length, a_max, q):
     """
-    Linearly interpolate velocity along arc length parameter.
-    We approximate arc-length fraction ≈ t (close enough for interval calc).
+    Trapezoidal velocity at arc-length position s along a curve of `length` mm.
+
+    A real trapezoid in ARC LENGTH, not the curve parameter: accelerate from
+    v_entry at a_max, cruise at v_cruise, decelerate to v_exit at a_max, taking
+    only the physically-needed v²/2a distances. The old linear-in-t model
+    decelerated over the whole second half of the curve regardless of distance,
+    which on a long edge into a corner-stop crawled to a halt over many mm
+    instead of the ~v²/2a it actually needs.
     """
     v_e, v_c, v_x = planned.v_entry, planned.v_cruise, planned.v_exit
-    # ramp up then ramp down: use t as proxy for arc-length fraction
-    if t <= 0.5:
-        v = v_e + (v_c - v_e) * (t * 2)
-    else:
-        v = v_c + (v_x - v_c) * ((t - 0.5) * 2)
-    return max(v, q.v_min)
+    if length <= 1e-9:
+        return max(v_c, q.v_min)
+    s = min(max(s, 0.0), length)
+    v_acc = math.sqrt(max(0.0, v_e * v_e + 2.0 * a_max * s))
+    v_dec = math.sqrt(max(0.0, v_x * v_x + 2.0 * a_max * (length - s)))
+    return max(min(v_c, v_acc, v_dec), q.v_min)
 
 # ── adaptive dt ───────────────────────────────────────────────────────────────
 
@@ -76,23 +82,23 @@ def _dt_geom(c, t, q):
         return q.dt_max
     return min(q.dt_max, math.sqrt(8 * q.chord_tol / math.sqrt(mag2)))
 
-def _dt_vel(c, t, planned, q):
+def _dt_vel(c, t, planned, q, s, length, a_max):
     """
-    Velocity-based step limit: speed change < q.dv_max per segment.
-    Numerically differentiates the velocity profile — during cruise
-    dv/dt ≈ 0 so dt falls back to q.dt_max; during accel/decel it
-    subdivides finely.
+    Velocity-based step limit: keep the speed change per segment under q.dv_max.
+    Arc-length aware so the (now short) accel/decel ramps are sampled finely:
+    dt <= dv_max / |dv/dt|, with dv/dt = (dv/ds)·(ds/dt). In a ramp |dv/ds| =
+    a_max/v, and ds/dt = |B'(t)|, so dt <= dv_max·v / (a_max·|B'|).
     """
-    eps = 1e-4
-    v0 = _velocity_at_t(planned, t, q)
-    v1 = _velocity_at_t(planned, min(t + eps, 1.0), q)
-    dvdt = abs(v1 - v0) / eps
-    if dvdt < 1e-6:
+    d1 = _bezier_deriv1(c, t)
+    speed = math.hypot(d1[0], d1[1])           # ds/dt
+    if speed < 1e-9:
         return q.dt_max
-    return min(q.dt_max, q.dv_max / dvdt)
+    v = _velocity_at_s(planned, s, length, a_max, q)
+    return min(q.dt_max, q.dv_max * v / (a_max * speed))
 
-def _choose_dt(c, t, planned, q):
-    return max(q.dt_min, min(_dt_geom(c, t, q), _dt_vel(c, t, planned, q)))
+def _choose_dt(c, t, planned, q, s, length, a_max):
+    return max(q.dt_min, min(_dt_geom(c, t, q),
+                             _dt_vel(c, t, planned, q, s, length, a_max)))
 
 # ── angle helpers ─────────────────────────────────────────────────────────────
 
@@ -173,35 +179,52 @@ def _interval(v, machine, q, dx=None, dy=None, dz=0, da=0):
 # ── single curve evaluator ────────────────────────────────────────────────────
 
 def evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
-                   tangential=True):
+                   a_max, tangential=True, corner_angle_deg=360.0):
     """
     Evaluate one PlannedCurve into a list of MicroSegments.
 
     This is the geometry->step-events core (the parity spec). Path stitching,
     jogs, Z-lift and A choreography live in build_toolpath (below), which calls
     this per curve.
-    Returns (segments, theta_current, pos_x, pos_y).
+    Returns (segments, theta_current, pos_x, pos_y, cusps).
     pos_x/y are in steps (float accumulator, rounded at each segment).
     theta_current is in degrees (unwrapped).
+    cusps is a list of (segment_index, pivot_true_steps): IN-CURVE corners where
+    the tangent jumps by >= corner_angle_deg in a single step. At a near-cusp
+    (e.g. the path spikes to a point and reverses) the position barely moves but
+    the tangent swings up to 180deg; the chord-based dt does not subdivide there,
+    so it would otherwise emit one giant da while the blade is DOWN (tearing the
+    material). Instead the rotation is suppressed (da=0) and reported as a cusp,
+    so build_toolpath inserts a lift-pivot-lower exactly as for between-curve
+    corners. corner_angle_deg defaults to 360 (off) for non-knife callers.
 
     tangential — when True (drag-knife / creasing tool), the A axis tracks the
     path tangent (da). When False (pen / non-rotating tool), da = 0.
     """
     c = planned.metrics.curve
     segments = []
+    cusps = []
     t = 0.0
+    s = 0.0                                   # arc length walked (mm)
+    length = planned.metrics.path_length_mm
+    a_spu = machine.a.steps_per_unit
+    a_accum = 0.0                             # cumulative true A (float steps);
+                                              # round the running total and diff,
+                                              # so per-segment da telescopes to
+                                              # the exact net rotation (no bias).
 
     # step accumulators in mm (convert to steps at each segment)
     x_mm = c.p0[0]
     y_mm = c.p0[1]
 
     while t < 1.0:
-        dt = _choose_dt(c, t, planned, q)
+        dt = _choose_dt(c, t, planned, q, s, length, a_max)
         t_next = min(t + dt, 1.0)
 
         p_next = _bezier_point(c, t_next)
         dx_mm = p_next[0] - x_mm
         dy_mm = p_next[1] - y_mm
+        s_next = s + math.hypot(dx_mm, dy_mm)   # chord ~ arc length increment
 
         # integer steps via per-axis resolution; accumulate sub-step error in
         # the float position (TRUE geometry — invert is applied only to the
@@ -213,14 +236,36 @@ def evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
 
         # tangent rotation (A axis) — only for tangential tools (knife/crease)
         theta_new = _tangent_angle(c, t_next)
+        is_cusp = False
+        da_steps = 0
         if tangential:
             delta_deg = _angle_delta(theta_current, theta_new)
-            da_steps  = int(round(delta_deg * machine.a.steps_per_unit))
-        else:
-            da_steps = 0
+            a_new  = a_accum + delta_deg * a_spu
+            da_inc = int(round(a_new)) - int(round(a_accum))
+            a_accum = a_new
+            if abs(delta_deg) >= corner_angle_deg:
+                # In-curve cusp: defer the turn to a lift-pivot (don't rotate in
+                # material). Emit this XY step with da=0; report the pivot.
+                is_cusp = True
+                cusps.append((len(segments), da_inc))
+            else:
+                da_steps = da_inc
+
+        # Sub-step sample (the arc-length ramp subdivides finely near v=0): no
+        # axis actually steps. Accumulate into the float position and move on
+        # rather than emit a zero-motion segment. (Keep cusps — they anchor a
+        # pivot — and the final sample, which carries MICRO_PATH_END.)
+        final = (t_next >= 1.0 and is_last)
+        if not is_cusp and not final and dx_steps == 0 and dy_steps == 0 and da_steps == 0:
+            pos_x, pos_y = new_x, new_y
+            x_mm, y_mm = p_next[0], p_next[1]
+            s = s_next
+            theta_current = theta_new
+            t = t_next
+            continue
 
         # velocity and interval (geometry-aware so the tool honors v on diagonals)
-        v = _velocity_at_t(planned, t_next, q)
+        v = _velocity_at_s(planned, s_next, length, a_max, q)
         iv = _interval(v, machine, q, dx_steps, dy_steps, 0, da_steps)
 
         # flags
@@ -238,10 +283,11 @@ def evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
         pos_y = new_y
         x_mm  = p_next[0]
         y_mm  = p_next[1]
+        s     = s_next
         theta_current = theta_new
         t = t_next
 
-    return segments, theta_current, pos_x, pos_y
+    return segments, theta_current, pos_x, pos_y, cusps
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOL CHOREOGRAPHY
@@ -256,13 +302,16 @@ def evaluate_curve(planned, machine, q, theta_current, pos_x, pos_y, is_last,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_toolpath(planned_curves, machine, profile=None, quality=None,
-                   jog_feed=None, lift_height=None, z_feed=None):
+                   jog_feed=None, lift_height=None, z_feed=None, a_max=None):
     """
     Stitch PlannedCurves into a flat list of MicroSegment, applying the tool's
     choreography.
 
     profile     — ToolProfile selecting tool behaviour. Defaults to PEN.
     quality     — QualityConfig. Defaults to config.default().quality.
+    a_max       — acceleration mm/s² for the arc-length velocity ramp inside
+                  each curve. Defaults to config.default().motion.a_max. Must
+                  match the a_max stage5 planned with.
     jog_feed / lift_height / z_feed — explicit overrides; when None they fall
                   back to the profile, then to MotionConfig defaults.
 
@@ -284,8 +333,12 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
 
     _cfg = _config_default()
     q = quality if quality is not None else _cfg.quality
+    if a_max is None:
+        a_max = _cfg.motion.a_max
     tangential = profile.tangential
     corner_angle = profile.corner_angle_deg
+    unwind = profile.unwind          # bounded-rotation tool: undo full turns pen-up
+    a_inv = -1 if machine.a.invert else 1   # emitted-da sign -> true rotation
 
     # Resolve feeds: explicit arg > profile > MotionConfig default.
     if jog_feed is None:
@@ -375,6 +428,8 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
     pos_x = 0.0
     pos_y = 0.0
     started = False
+    a_phys = 0   # cumulative PHYSICAL A angle in true steps (sum of emitted da,
+                 # un-inverted). Tracks wire wind-up so we can unwind it pen-up.
 
     for planned in planned_curves:
         # reset position and angle at each PATH_START
@@ -405,10 +460,18 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
             # of every path. Pen-up, so it runs between the jog and the lower.
             entry_theta = _tangent_angle(planned.metrics.curve, 0.0)
             if tangential:
-                da_deg   = _angle_delta(theta, entry_theta)
-                da_steps = int(round(da_deg * machine.a.steps_per_unit))
+                if unwind:
+                    # Rotate to entry_theta's nearest-zero representative (its own
+                    # value, in -180..180), unwinding any accumulated full turns:
+                    # the full rotation a_phys -> target removes the wind-up while
+                    # leaving the blade pointing along the entry tangent.
+                    target   = int(round(entry_theta * a_spd))
+                    da_steps = target - a_phys
+                else:
+                    da_steps = int(round(_angle_delta(theta, entry_theta) * a_spd))
                 if da_steps != 0:
                     all_segments.extend(_a_move(da_steps))
+                    a_phys += da_steps
 
             pos_x = target_x
             pos_y = target_y
@@ -426,16 +489,31 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
             entry_theta = _tangent_angle(planned.metrics.curve, 0.0)
             jump = _angle_delta(theta, entry_theta)
             if abs(jump) >= corner_angle:
-                da_steps = int(round(jump * machine.a.steps_per_unit))
+                da_steps = int(round(jump * a_spd))
                 if da_steps != 0:
                     all_segments.extend(_pivot(da_steps))
+                    a_phys += da_steps
                     theta = entry_theta   # blade is now at entry; no re-rotation
 
         is_last = bool(planned.flags & PATH_END)
-        segs, theta, pos_x, pos_y = evaluate_curve(
-            planned, machine, q, theta, pos_x, pos_y, is_last, tangential
+        segs, theta, pos_x, pos_y, cusps = evaluate_curve(
+            planned, machine, q, theta, pos_x, pos_y, is_last, a_max, tangential,
+            corner_angle_deg=corner_angle if tangential else 360.0,
         )
-        all_segments.extend(segs)
+        # Insert a lift-pivot-lower at each in-curve cusp evaluate_curve flagged
+        # (the tangent reversed mid-curve; the rotation was deferred to here so
+        # the blade doesn't pivot while embedded).
+        if cusps:
+            cusp_at = dict(cusps)
+            for j, s in enumerate(segs):
+                all_segments.append(s)
+                if j in cusp_at:
+                    all_segments.extend(_pivot(cusp_at[j]))
+                    a_phys += cusp_at[j]
+        else:
+            all_segments.extend(segs)
+        # Tracking rotation winds the physical A too (cusp segments carry da=0).
+        a_phys += sum(s.da for s in segs) * a_inv
 
         if is_last and lift:
             all_segments.append(_z_move(+z_steps))  # raise pen after drawing
@@ -445,19 +523,20 @@ def build_toolpath(planned_curves, machine, profile=None, quality=None,
 
 def evaluate_microsegments(planned_curves, machine, quality=None, jog_feed=None,
                            lift_height=0.0, z_feed=None, tangential=True,
-                           profile=None):
+                           profile=None, a_max=None):
     """
     Backward-compatible entry point. Prefer build_toolpath() with a ToolProfile.
 
     When `profile` is given it drives behaviour. Otherwise the loose tangential/
     lift_height/z_feed args build an ad-hoc profile, preserving the old call
-    sites (and the old default of a tangential tool with no lift).
+    sites (and the old default of a tangential tool with no lift). a_max should
+    match the value stage5 planned with (defaults to MotionConfig.a_max).
     """
     if profile is None:
         profile = ToolProfile(name="adhoc", tangential=tangential)
     return build_toolpath(planned_curves, machine, profile=profile,
                           quality=quality, jog_feed=jog_feed,
-                          lift_height=lift_height, z_feed=z_feed)
+                          lift_height=lift_height, z_feed=z_feed, a_max=a_max)
 
 
 # ── standalone demo ─────────────────────────────────────────────────────────────
@@ -491,7 +570,8 @@ if __name__ == "__main__":
 
     planned  = plan_velocities(metrics, flags_list, args.feed_max, args.a_max)
     segments = build_toolpath(planned, machine, profile=profile,
-                              quality=cfg.quality, lift_height=args.lift_height)
+                              quality=cfg.quality, lift_height=args.lift_height,
+                              a_max=args.a_max)
 
     total_x = sum(s.dx for s in segments)
     total_y = sum(s.dy for s in segments)
