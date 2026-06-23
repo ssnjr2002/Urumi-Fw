@@ -27,7 +27,7 @@ from stage4 import compute_metrics
 from stage5 import plan_velocities, PATH_START, PATH_END, MERGE_WITH_PREV
 from stage6 import evaluate_microsegments
 from serialise import serialise_microsegments
-from config import default as config_default, MachineConfig, KNIFE
+from config import default as config_default, MachineConfig, KNIFE, PEN
 
 
 def _build_flags(subpaths):
@@ -44,16 +44,23 @@ def _build_flags(subpaths):
 
 def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
         jog_feed=None, quality=None, lift_height=0.0, z_feed=None,
-        tangential=True):
+        tangential=True, profile=None):
     """
     Full host pipeline: SVG → MicroSegment packets.
     Returns list of 26-byte bytes objects.
     quality defaults to config.default().quality.
     lift_height > 0 enables Z pen-lift between subpaths.
-    tangential — A-axis tangent tracking (knife/crease). Off for a pen.
+    profile — the ToolProfile (KNIFE/CREASE/PEN); carries tangent tracking,
+    corner threshold, AND the unwind flag (wire protection). When None it is
+    selected from `tangential` (KNIFE / PEN). Using the real profile here — not
+    the loose tangential bool — is what enables the knife's A unwind in
+    production; the bool path built an ad-hoc profile with unwind off.
     """
     if quality is None:
         quality = config_default().quality
+    if profile is None:
+        profile = KNIFE if tangential else PEN
+    tangential = profile.tangential
     # Stage 2: SVG → mm subpaths
     subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
 
@@ -68,16 +75,20 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
     metrics = compute_metrics(flat_curves)
 
     # Stage 5: velocity planning. A tangential tool stops at sharp corners so
-    # the blade can lift-pivot there; match the toolpath's corner threshold.
-    corner_stop = KNIFE.corner_angle_deg if tangential else None
+    # the blade can lift-pivot there (match the toolpath's corner threshold), and
+    # its A slew ceiling caps XY speed on tight curves so the plan stays in step
+    # with what the A axis can follow.
+    corner_stop = profile.corner_angle_deg if tangential else None
+    a_rate = machine.a.max_rate if tangential else 0.0
     planned = plan_velocities(metrics, flags, feed_max, a_max,
-                              corner_stop_angle_deg=corner_stop)
+                              corner_stop_angle_deg=corner_stop,
+                              a_rate_deg_s=a_rate)
 
     # Stage 6: Bezier → MicroSegments (jog_feed/z_feed default to config motion tier)
     segments = evaluate_microsegments(planned, machine,
                                       quality=quality, jog_feed=jog_feed,
                                       lift_height=lift_height, z_feed=z_feed,
-                                      tangential=tangential)
+                                      profile=profile, a_max=a_max)
 
     # Serialise to wire packets
     return list(serialise_microsegments(segments))

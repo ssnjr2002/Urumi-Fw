@@ -25,7 +25,7 @@ from stage3 import enforce_c1
 from stage4 import compute_metrics, _bezier_point
 from stage5 import plan_velocities, PATH_START, PATH_END
 from stage6 import evaluate_microsegments, MICRO_JOG, MICRO_LIFT
-from config import default as config_default, MachineConfig, KNIFE
+from config import default as config_default, MachineConfig, KNIFE, PEN
 
 JOG_FEED = config_default().motion.jog_feed
 
@@ -66,13 +66,16 @@ def build(svg_path, machine, feed_max, a_max, angle_tol, gap_tol, jog_feed=JOG_F
             flags.append(f)
 
     metrics = compute_metrics(flat)
-    # For a tangential tool the planner must stop at sharp corners so the blade
-    # can lift-pivot there; match the toolpath's corner threshold (KNIFE).
-    corner_stop = KNIFE.corner_angle_deg if tangential else None
+    # Validate against the real tool profile (KNIFE/PEN) so corner stop, A-rate
+    # cap and the A unwind all match what the host actually emits.
+    profile = KNIFE if tangential else PEN
+    corner_stop = profile.corner_angle_deg if tangential else None
+    a_rate = machine.a.max_rate if tangential else 0.0
     planned = plan_velocities(metrics, flags, feed_max, a_max,
-                              corner_stop_angle_deg=corner_stop)
+                              corner_stop_angle_deg=corner_stop,
+                              a_rate_deg_s=a_rate)
     segments = evaluate_microsegments(planned, machine, jog_feed=jog_feed,
-                                      tangential=tangential)
+                                      profile=profile, a_max=a_max)
     return planned, segments, repaired
 
 
