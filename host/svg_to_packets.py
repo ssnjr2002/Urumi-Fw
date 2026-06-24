@@ -103,6 +103,9 @@ def main():
                         default=True,
                         help="A-axis tangent tracking for knife/crease; "
                              "use --no-tangential for a pen")
+    parser.add_argument("--a-accel",        type=float, default=None,
+                        help="Override A-axis angular accel, deg/s^2 (gentles "
+                             "pivots + bounds in-cut tracking accel; 0 disables)")
     parser.add_argument("--steps-per-mm",   type=float, default=None,
                         help="Override XY steps/mm (default: real per-axis config)")
     parser.add_argument("--steps-per-deg",  type=float, default=None,
@@ -123,6 +126,11 @@ def main():
         machine = MachineConfig.uniform(spm, spd, args.f_cpu)
     else:
         machine = cfg.machine
+
+    # A-accel override (hardware sweep): replace only machine.a.accel.
+    if args.a_accel is not None:
+        from dataclasses import replace
+        machine = replace(machine, a=replace(machine.a, accel=args.a_accel))
 
     packets = run(args.svg, machine, args.feed_max, args.a_max,
                   args.angle_tol, args.gap_tol, jog_feed=args.jog_feed,
