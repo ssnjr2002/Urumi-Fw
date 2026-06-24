@@ -59,11 +59,12 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
     repaired = [enforce_c1(sp, angle_tol, gap_tol)[0] for sp in subpaths_mm]
 
     corner_stop = profile.corner_angle_deg if tangential else None
-    a_rate = machine.a.max_rate if tangential else 0.0
+    a_rate  = machine.a.max_rate if tangential else 0.0
+    a_accel = machine.a.accel    if tangential else 0.0
 
     samples = flatten(repaired, quality=quality)
     constrain(samples, feed_max, a_max, a_rate_deg_s=a_rate,
-              corner_stop_angle_deg=corner_stop)
+              a_accel_deg_s2=a_accel, corner_stop_angle_deg=corner_stop)
     plan(samples, machine, a_max=a_max)
     segments = discretize(samples, machine, profile=profile, quality=quality,
                           jog_feed=jog_feed, lift_height=lift_height, z_feed=z_feed)

@@ -38,9 +38,11 @@ subs, _ = load_svg_mm_subpaths(os.path.join(base, args.svg))
 rep = [enforce_c1(sp, cfg.quality.angle_tol, cfg.quality.gap_tol)[0] for sp in subs]
 corner = profile.corner_angle_deg if tang else None
 a_rate = m.a.max_rate if tang else 0.0
+a_accel = m.a.accel   if tang else 0.0
 
 samples = flatten(rep, quality=cfg.quality)
-constrain(samples, args.feed, args.amax, a_rate_deg_s=a_rate, corner_stop_angle_deg=corner)
+constrain(samples, args.feed, args.amax, a_rate_deg_s=a_rate,
+          a_accel_deg_s2=a_accel, corner_stop_angle_deg=corner)
 plan(samples, m, a_max=args.amax)
 segs = discretize(samples, m, profile=profile, quality=cfg.quality,
                   lift_height=3.0, jog_feed=args.feed, z_feed=8)

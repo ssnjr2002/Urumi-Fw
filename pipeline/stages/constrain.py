@@ -26,7 +26,11 @@ import argparse
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 from config import default as _config_default
-from sample import Sample, CURVE_BOUNDARY
+from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
+
+# κ-discontinuity flags: a finite difference of curvature must not straddle a
+# curve/subpath boundary (κ is discontinuous there).
+_KAPPA_BREAK = PATH_START | PATH_END | CURVE_BOUNDARY
 
 
 def _angle_delta(a, b):
@@ -53,7 +57,25 @@ def _junction_cap(turn_deg, a_lat, deviation, feed_max):
     return min(feed_max, math.sqrt(a_lat * radius))
 
 
-def constrain(samples, feed_max, a_max, a_rate_deg_s=0.0,
+def _kappa_prime(samples, i):
+    """
+    |dκ/ds| at sample i by central difference, 0 where it would straddle a
+    κ-discontinuity (curve/subpath boundary) or a ~zero-length span. Units: κ is
+    rad/mm, s is mm, so κ' is rad/mm^2.
+    """
+    n = len(samples)
+    if i == 0 or i == n - 1:
+        return 0.0
+    s = samples[i]
+    if s.flags & _KAPPA_BREAK or samples[i + 1].flags & _KAPPA_BREAK:
+        return 0.0
+    span = samples[i - 1].ds + samples[i].ds        # arc length i-1 -> i+1
+    if span < 1e-6:
+        return 0.0
+    return abs(samples[i + 1].kappa - samples[i - 1].kappa) / span
+
+
+def constrain(samples, feed_max, a_max, a_rate_deg_s=0.0, a_accel_deg_s2=0.0,
               corner_stop_angle_deg=None, junction_deviation=None):
     """
     Set sample.v_ceiling in place for every sample; returns the list.
@@ -61,8 +83,14 @@ def constrain(samples, feed_max, a_max, a_rate_deg_s=0.0,
     feed_max  — programmed cruise ceiling (mm/s).
     a_max     — lateral acceleration for the centripetal cap (mm/s^2); also the
                 accel the Plan stage ramps with, so they agree.
-    a_rate_deg_s — tangential tool A-slew ceiling (deg/s); 0 disables the A cap
-                (e.g. a pen).
+    a_rate_deg_s — tangential tool A-slew (velocity) ceiling (deg/s); 0 disables
+                the A velocity cap (e.g. a pen).
+    a_accel_deg_s2 — tangential tool A angular-acceleration ceiling (deg/s^2); 0
+                disables. This caps the CURVATURE-GRADIENT term of A's angular
+                accel: tracking the tangent at speed v through a changing κ needs
+                α = v^2·(dκ/ds), so v <= sqrt(rad(a_accel)/|dκ/ds|). (The other
+                term, κ·a_tangential, is bounded in the Plan stage's per-axis
+                accel projection — see plan_lookahead._seg_accel.)
     corner_stop_angle_deg — boundary tangent jump (deg) at/above which v_ceiling
                 is forced to 0 so the tool can lift-pivot there. None disables
                 forced stops (e.g. a pen corners via junction deviation only).
@@ -71,27 +99,32 @@ def constrain(samples, feed_max, a_max, a_rate_deg_s=0.0,
     """
     if junction_deviation is None:
         junction_deviation = _config_default().motion.junction_deviation
-    a_rate_rad = math.radians(a_rate_deg_s) if a_rate_deg_s > 0.0 else 0.0
+    a_rate_rad = math.radians(a_rate_deg_s)  if a_rate_deg_s  > 0.0 else 0.0
+    a_acc_rad  = math.radians(a_accel_deg_s2) if a_accel_deg_s2 > 0.0 else 0.0
 
-    prev = None
-    for s in samples:
+    for i, s in enumerate(samples):
         cap = feed_max
         if s.kappa > 1e-9:
-            cap = min(cap, math.sqrt(a_max / s.kappa))
+            cap = min(cap, math.sqrt(a_max / s.kappa))      # centripetal (XY)
             if a_rate_rad > 0.0:
-                cap = min(cap, a_rate_rad / s.kappa)
+                cap = min(cap, a_rate_rad / s.kappa)         # A slew (velocity)
 
-        # Tangent jump across a curve boundary (the corner signal). prev is the
-        # previous curve's t=1 sample; this one is the next curve's t=0 (ds~0).
-        if (s.flags & CURVE_BOUNDARY) and prev is not None:
-            turn = _angle_delta(prev.theta, s.theta)
+        # A angular-accel, curvature-gradient term: v <= sqrt(α_max / |κ'|).
+        if a_acc_rad > 0.0:
+            kp = _kappa_prime(samples, i)
+            if kp > 1e-9:
+                cap = min(cap, math.sqrt(a_acc_rad / kp))
+
+        # Tangent jump across a curve boundary (the corner signal). The previous
+        # sample is the prior curve's t=1; this one is the next curve's t=0 (ds~0).
+        if (s.flags & CURVE_BOUNDARY) and i > 0:
+            turn = _angle_delta(samples[i - 1].theta, s.theta)
             if corner_stop_angle_deg is not None and abs(turn) >= corner_stop_angle_deg:
                 cap = 0.0
             elif abs(turn) > 1e-6:
                 cap = min(cap, _junction_cap(turn, a_max, junction_deviation, feed_max))
 
         s.v_ceiling = cap
-        prev = s
 
     return samples
 
@@ -109,6 +142,7 @@ if __name__ == "__main__":
     parser.add_argument("--feed-max", type=float, default=cfg.motion.feed_max)
     parser.add_argument("--a-max",    type=float, default=cfg.motion.a_max)
     parser.add_argument("--a-rate",   type=float, default=cfg.machine.a.max_rate)
+    parser.add_argument("--a-accel",  type=float, default=cfg.machine.a.accel)
     parser.add_argument("--corner-stop", type=float, default=20.0)
     args = parser.parse_args()
 
@@ -116,7 +150,7 @@ if __name__ == "__main__":
     repaired = [enforce_c1(sp)[0] for sp in subpaths_mm]
     samples  = flatten(repaired, quality=cfg.quality)
     constrain(samples, args.feed_max, args.a_max, a_rate_deg_s=args.a_rate,
-              corner_stop_angle_deg=args.corner_stop)
+              a_accel_deg_s2=args.a_accel, corner_stop_angle_deg=args.corner_stop)
 
     caps = [s.v_ceiling for s in samples]
     n_stop = sum(1 for c in caps if c == 0.0)

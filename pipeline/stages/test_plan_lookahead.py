@@ -97,6 +97,26 @@ def test_corner_brings_both_sides_to_zero():
     assert s[bi].v == 0.0
     assert s[bi-1].v < 1.0   # coincident prior sample also ~0 (zero-gap decel)
 
+# ── A-axis tracking accel cap (term 2 in _seg_accel) ──────────────────────────
+
+def test_seg_accel_a_term_caps_on_curve():
+    # On a tight arc (kappa~0.2) the A-tracking accel cap rad(a.accel)/kappa
+    # should pull the segment accel below the scalar a_max.
+    s = flatten([CASES["quarter_circle_r5"][0]], quality=CFG.quality)
+    i = len(s) // 2
+    a = _seg_accel(s[i], s[i + 1], MACH, A_MAX)
+    kap = max(s[i].kappa, s[i + 1].kappa)
+    assert a < A_MAX
+    assert abs(a - math.radians(MACH.a.accel) / kap) / a < 0.1
+
+def test_seg_accel_straight_not_a_capped():
+    # A straight pure-X move: kappa~0 so the A term is inactive; the projection
+    # returns x.accel.
+    s = flatten([CASES["straight_line"][0]], quality=CFG.quality)
+    i = len(s) // 2
+    a = _seg_accel(s[i], s[i + 1], MACH, A_MAX)
+    assert abs(a - MACH.x.accel) < 1e-6
+
 # ── per-axis accel ────────────────────────────────────────────────────────────
 
 def test_diagonal_accel_exceeds_scalar():

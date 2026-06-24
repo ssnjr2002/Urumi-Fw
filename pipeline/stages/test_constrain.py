@@ -57,6 +57,23 @@ def test_a_rate_cap_lowers_ceiling():
     # value: rad(100)/0.2
     assert abs(mid_a - math.radians(100.0)/0.2) / mid_a < 0.05
 
+# ── A-accel curvature-gradient cap (term 1) ───────────────────────────────────
+
+def test_a_accel_gradient_caps_on_changing_curvature():
+    # s_curve's curvature changes along the path, so the curvature-gradient cap
+    # (v <= sqrt(rad(a_accel)/|dk/ds|)) should bite somewhere with a tight a_accel.
+    s0 = flatten([CASES["s_curve"][0]]); constrain(s0, FEED, A_MAX, a_accel_deg_s2=0.0)
+    s1 = flatten([CASES["s_curve"][0]]); constrain(s1, FEED, A_MAX, a_accel_deg_s2=50.0)
+    assert min(x.v_ceiling for x in s1) < min(x.v_ceiling for x in s0)
+
+def test_a_accel_no_effect_on_constant_curvature():
+    # A constant-curvature arc has dk/ds = 0 -> term 1 inactive; an interior
+    # sample's ceiling is unchanged whether a_accel is set or not.
+    s0 = flatten([CASES["quarter_circle_r50"][0]]); constrain(s0, FEED, A_MAX, a_accel_deg_s2=0.0)
+    s1 = flatten([CASES["quarter_circle_r50"][0]]); constrain(s1, FEED, A_MAX, a_accel_deg_s2=50.0)
+    mid = len(s0) // 2
+    assert abs(s0[mid].v_ceiling - s1[mid].v_ceiling) < 1e-9
+
 # ── corner stop ───────────────────────────────────────────────────────────────
 
 def test_sharp_corner_forces_zero():

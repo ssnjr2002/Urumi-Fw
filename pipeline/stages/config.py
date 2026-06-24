@@ -249,7 +249,14 @@ def _default_machine() -> MachineConfig:
         x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0, invert=True),
         y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
         z=AxisConfig(node=3, steps_per_unit=1200.0, max_rate=10.0, invert=True),    # PLACEHOLDER mm/s
-        a=AxisConfig(node=4, steps_per_unit=51.667, rotary=True, max_rate=100.0, invert=True),  # PLACEHOLDER deg/s; invert confirmed by corner cut (vert edges flipped)
+        a=AxisConfig(node=4, steps_per_unit=51.667, rotary=True, max_rate=100.0,
+                     accel=2000.0, invert=True),  # PLACEHOLDER deg/s & deg/s^2;
+        # invert confirmed by corner cut (vert edges flipped). a.accel bounds the
+        # tangential A axis directly: it caps in-cut tracking acceleration (so the
+        # TMC isn't commanded past its torque limit and drop steps) AND sets the
+        # ramp for pure-A pivots. 2000 deg/s^2 leaves the current jobs unaffected
+        # (the cap is slack at their curvature/feed) while protecting tighter/
+        # faster cuts -- MEASURE the real TMC accel ceiling and replace.
     )
 
 

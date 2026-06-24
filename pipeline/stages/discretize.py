@@ -271,13 +271,14 @@ if __name__ == "__main__":
     machine = cfg.machine
     profile = TOOL_PROFILES[args.tool]
     a_rate  = machine.a.max_rate if profile.tangential else 0.0
+    a_accel = machine.a.accel    if profile.tangential else 0.0
     corner  = profile.corner_angle_deg if profile.tangential else None
 
     subpaths_mm, _ = load_svg_mm_subpaths(args.svg)
     repaired = [enforce_c1(sp)[0] for sp in subpaths_mm]
     samples  = flatten(repaired, quality=cfg.quality)
     constrain(samples, args.feed_max, args.a_max, a_rate_deg_s=a_rate,
-              corner_stop_angle_deg=corner)
+              a_accel_deg_s2=a_accel, corner_stop_angle_deg=corner)
     plan(samples, machine, a_max=args.a_max)
     segs = discretize(samples, machine, profile=profile, quality=cfg.quality,
                       lift_height=args.lift_height)

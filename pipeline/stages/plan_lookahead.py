@@ -51,7 +51,18 @@ def _subpath_ranges(samples):
 
 
 def _seg_accel(s0, s1, machine, a_max):
-    """Tool-path accel over the segment s0->s1 honouring per-axis accel limits."""
+    """
+    Tool-path accel over the segment s0->s1 honouring per-axis accel limits.
+
+    X and Y: the tool accel projects onto each axis as a*|u_axis|, so to keep each
+    within its own limit, a <= min(x.accel/|ux|, y.accel/|uy|).
+
+    A (tangential tracking): the tool speeding up while curved drives A angular
+    accel α = κ·a_tan, so to keep A within its accel ceiling, a_tan <= rad(a.accel)/κ.
+    This is the κ·a_tangential term that pairs with the curvature-gradient term
+    Constrain handles as a velocity ceiling — together they bound A's total
+    angular acceleration. a.accel == 0 (unset) skips it.
+    """
     dx = s1.x - s0.x
     dy = s1.y - s0.y
     d = math.hypot(dx, dy)
@@ -63,6 +74,10 @@ def _seg_accel(s0, s1, machine, a_max):
         cands.append(machine.x.accel / ux)
     if machine.y.accel > 0 and uy > 1e-9:
         cands.append(machine.y.accel / uy)
+    if machine.a.accel > 0:
+        kap = max(s0.kappa, s1.kappa)
+        if kap > 1e-9:
+            cands.append(math.radians(machine.a.accel) / kap)
     return min(cands) if cands else a_max
 
 
