@@ -50,13 +50,21 @@ the config before a job.
 
 ### 4. Config is embedded in the binary file
 
-Every `.bin` produced by the host embeds the `MachineConfig` (and optionally
-`QualityConfig`/`MotionConfig`) as a header before the packet stream. This makes
-binaries self-describing and enables the Pico to validate them.
+Every `.bin` produced by the host embeds a config checksum (CRC32 over the
+`MachineConfigFlash` struct) as a header before the packet stream. On playback
+the Pico compares the header CRC32 against its own stored CRC32 — match proceeds,
+mismatch rejects with `NACK_STREAM_CONFIG_MISMATCH`. No field-by-field comparison,
+no major/minor split — any difference is a rejection.
 
-On playback the Pico reads the header, compares it against its own stored config,
-and **rejects or warns** on mismatch. This is the runtime tripwire for calibration
-drift — it catches the "host re-calibrated but Pico wasn't updated" failure mode.
+The CRC32 stored on Pico flash is the same one computed and stored after a valid
+`CMD_SET_CONFIG` push. `CMD_GET_CONFIG` returns the struct + this CRC32; the host
+embeds that CRC32 directly in the binary header. The operator workflow on mismatch:
+`pico_config pull` → diff `machine.toml` against what was used for production →
+fix and re-push or re-produce.
+
+CRC32 is used for config (stronger collision resistance than CRC8 for a
+correctness gate — 1-in-4-billion false-match rate). CRC8 stays for all other
+packets (MSEG, jog, etc).
 
 ### 5. Pull/push workflow replaces config file sync
 
@@ -111,26 +119,35 @@ binary.
   versioned with a magic number so old stored configs are detected and rejected
   rather than silently misread.
 - Load on boot; fall back to hardcoded defaults if flash is blank/corrupt.
-- Expose via two new USB serial commands (or RS485 commands):
-  - `config get` → serialise current config to TOML on stdout
-  - `config set <toml>` → parse, validate (range checks), store to flash,
-    echo back the stored values for confirmation
+- Expose via two new binary protocol commands:
+  - `CMD_GET_CONFIG` → respond with `MachineConfigFlash` binary struct + CRC32
+    (the stored config checksum, used for binary header validation)
+  - `CMD_SET_CONFIG` → receive struct + CRC32, validate, store struct + CRC32
+    to flash. On success: ACK. On failure: NACK with reason byte:
+    - `NACK_CONFIG_CRC = 0x01` — transport corruption (CRC32 mismatch)
+    - `NACK_CONFIG_INVALID = 0x02` — semantic validation failed (zero
+      `steps_per_unit`, zero `f_cpu`, node id out of range, duplicate node ids,
+      zero `max_travel` on present axes)
+    - `NACK_CONFIG_VERSION = 0x03` — struct version unknown
+    Validation failure does **not** overwrite the existing flash config.
 
 ### B. Binary file config header
 
 Extend the `.bin` file format: a header block before the first packet.
 
-Suggested framing (fits the existing length-prefixed packet stream):
+Suggested framing:
 
 ```
-[magic 4B: 0x4D434647 "MCFG"] [version 1B] [payload_len 2B LE] [payload…] [CRC8 1B]
+[magic 4B: 0x4D434647 "MCFG"] [version 1B] [config_crc32 4B LE]
 ```
 
-Payload is the same compact binary struct as the flash format. The host
-serialises `MachineConfig` into this header before writing packets; the Pico
-reads and validates it before accepting the stream.
+The `config_crc32` is the CRC32 returned by `CMD_GET_CONFIG` — the Pico's
+precomputed checksum over its own `MachineConfigFlash` struct. On playback the
+Pico compares this against its stored CRC32; any mismatch → reject with
+`NACK_STREAM_CONFIG_MISMATCH = 0x04`. No full struct in the header, just the
+checksum — keeps the header small.
 
-`serialise_microsegments()` (or a wrapper in `svg_to_packets.py`) adds the
+`serialise_microsegments()` (or a wrapper in `svg_to_packets.py`) prepends the
 header. `verify_packets.py` learns to parse and display it.
 
 ### C. Host pull/push tool
@@ -143,12 +160,33 @@ python pico_config.py push [--port COM3] machine.toml
 python pico_config.py show [--port COM3]          # pretty-print current Pico config
 ```
 
-- `pull`: sends `config get`, parses the TOML response, writes to file (or
-  stdout). The output is a valid `machine.toml` the host pipeline can `load()`.
-- `push`: reads `machine.toml`, sends `config set`, confirms stored values match.
+- `pull`: sends `CMD_GET_CONFIG`, receives binary struct, converts to
+  `machine.toml` for human editing. Output is a valid TOML the pipeline
+  can `load()`.
+- `push`: reads `machine.toml`, converts to binary struct, sends
+  `CMD_SET_CONFIG`. On NACK, prints the reason and exits non-zero — existing
+  flash config is untouched. May do a best-effort pre-validation before sending
+  to surface obvious errors without a round-trip.
+- TOML is the human layer, lives solely on the host. Pico never sees TOML.
 - Uses the same serial connection as the existing host tools.
 
-### D. Implement `config.load()` in `pipeline/stages/config.py`
+### D. Connect-time handshake — `CMD_HANDSHAKE`
+
+New binary command. Pico responds with a structured packet:
+- Firmware version (2B)
+- Config CRC32 (4B) — same value stored after `CMD_SET_CONFIG`
+- `machineState` (1B)
+- `axes_homed` bitmask (1B)
+
+Host tool sends this on connect before anything else. On config CRC32 mismatch
+the host warns the operator and offers to pull+diff or push. No Pico state change
+on mismatch — enforcement stays at the stream header check. Pico stays in
+whatever state it was in; the host decides how to resolve it.
+
+Designed to be extensible — additional fields can be appended in future versions
+without breaking older host tools (version field governs payload layout).
+
+### F. Implement `config.load()` in `pipeline/stages/config.py`
 
 Currently raises `NotImplementedError`. Wire it to read `machine.toml` (produced
 by `pico_config.py pull`) and return a `PipelineConfig`. The `_default_machine()`
@@ -157,28 +195,96 @@ factory stays as the in-code fallback when no TOML is present.
 `svg_to_packets.py` and `validate_plan.py` can then accept `--config machine.toml`
 to load a pulled config in one step.
 
-### E. Pico binary header validation
+### G. Pico binary header validation
 
 In `core0.cpp` (or a new `config.cpp`): before accepting a binary stream,
-parse the MCFG header packet, compare key fields against the flash config
-(steps_per_unit per axis, f_cpu). On mismatch:
-
-- **Minor mismatch** (e.g. QualityConfig differs): warn on USB serial, proceed.
-- **Major mismatch** (steps_per_unit, f_cpu): reject with an error message,
-  require `--force` flag or `unalarm` to override.
+parse the MCFG header, compare `config_crc32` against the stored flash CRC32.
+Any mismatch → `NACK_STREAM_CONFIG_MISMATCH = 0x04`, stream rejected. No
+major/minor split — any difference is a rejection. Operator runs
+`pico_config pull`, diffs against the config used for production, fixes and
+re-pushes or re-produces.
 
 ---
 
 ## Implementation Order
 
-1. **A — Pico flash storage + `config get/set` commands** (enables the rest)
+1. **A — Pico flash storage + `CMD_GET_CONFIG`/`CMD_SET_CONFIG`** (enables the rest)
 2. **B — Binary file config header** (host writes it, Pico reads it)
 3. **C — `pico_config.py` pull/push tool** (the operator workflow)
-4. **D — `config.load()` from TOML** (closes the host side)
-5. **E — Pico header validation** (the runtime enforcer)
+4. **D — `CMD_HANDSHAKE`** (connect-time config check)
+5. **F — `config.load()` from TOML** (closes the host side)
+6. **G — Pico header validation** (the runtime enforcer)
 
-Steps 1 and 2 are the critical path. 3 and 4 can be parallelised once 1 is done.
-5 depends on 1 and 2.
+Steps 1 and 2 are the critical path. 3, 4, and 5 can be parallelised once 1 is
+done. 6 depends on 1 and 2.
 
 ---
+
+## Premortem — issues to resolve before implementation
+
+### ~~1. `config get/set` over USB text protocol — fragile~~ ✓ RESOLVED
+No text command. Wire protocol is `CMD_GET_CONFIG` and `CMD_SET_CONFIG` binary
+packets only (fixed struct + CRC8). `pico_config.py` handles TOML↔struct
+conversion on the host side. TOML is the human layer, lives solely on the host.
+Pico never sees TOML.
+
+```
+pico_config.py pull  →  CMD_GET_CONFIG  →  Pico responds with binary struct
+                      →  tool converts to machine.toml
+
+pico_config.py push  ←  machine.toml
+                      →  tool converts to binary struct  →  CMD_SET_CONFIG
+```
+
+### ~~2. TOML as the wire format — unnecessary round-trip~~ ✓ RESOLVED
+Resolved by #1. Wire format is the compact binary struct in both directions.
+
+**Validation layers:**
+- **CRC** — transport integrity, symmetric, both directions, catches corruption.
+- **Semantic validation** — Pico-side only on `CMD_SET_CONFIG`: `steps_per_unit
+  == 0`, `f_cpu == 0`, node ids out of range, duplicate node ids, `max_travel
+  == 0` on present axes. Pico is the authority; host tool may do a best-effort
+  pre-check to avoid round-trips but Pico validation is the gate regardless.
+- **On rejection** — existing NACK mechanism, reason byte:
+  ```
+  NACK_CONFIG_CRC      = 0x01   // transport corruption
+  NACK_CONFIG_INVALID  = 0x02   // semantic validation failed
+  NACK_CONFIG_VERSION  = 0x03   // struct version unknown
+  ```
+  Validation failure does **not** overwrite existing flash config — bad push
+  leaves old config intact. Host tool surfaces the reason to the operator.
+
+### ~~3. `MachineConfigFlash` version mismatch — behaviour undefined~~ ✓ RESOLVED
+Covered by the state redesign doc. Version mismatch is invalid config —
+same path as any other validation failure: `ALARM_CONFIG` → `STATE_ALARM`.
+See `state_redesign.md` § "Config validity — boot check and push check".
+
+### ~~4. Major/minor mismatch split is Phase-1-specific, not durable~~ ✓ RESOLVED
+No major/minor split. Binary header carries only the config CRC32 (precomputed
+by Pico after a valid push, returned by `CMD_GET_CONFIG`). On playback Pico
+compares CRC32 against its stored value — any mismatch is a rejection
+(`NACK_STREAM_CONFIG_MISMATCH = 0x04`), no exceptions. CRC32 gives negligible
+false-match rate (1-in-4-billion). Struct layout divergence is prevented by
+the version field. CRC32 used for config packets; CRC8 stays for all other
+packets.
+
+### ~~5. Binary header ordering not enforced at the protocol level~~ ✓ RESOLVED
+Resolved by #4. The header is a compact 9-byte block (magic + version + CRC32).
+If it arrives out of order or after MSEG packets, the Pico sees unrecognised
+framing and rejects. The CRC32 comparison is stateless — no session gating
+needed.
+
+### ~~6. First-boot blank flash — defaults may silently disagree~~ ✓ RESOLVED
+Resolved by the connect-time handshake (see §F). On connect, `CMD_HANDSHAKE`
+returns the Pico's config CRC32. The host compares it against its local config
+and warns or blocks before the operator produces anything. A fresh Pico with
+hardcoded defaults will have a different CRC32 than any pulled config — the
+mismatch surfaces immediately on connect, not silently at playback. Hardcoded
+defaults are last-resort only; the handshake makes that visible.
+
+### ~~7. `--config` not required by host tools — pull step not enforced~~ ✓ RESOLVED
+Resolved by the connect-time handshake. The host tool checks config CRC32 on
+connect and warns or blocks before any production runs — no need to gate on
+`--config` being present or add special casing to `svg_to_packets.py`. Enforcement
+is at the connect-time workflow, not the production tool.
 
