@@ -44,18 +44,35 @@ def run(svg_path, machine, feed_max=None, a_max=None, angle_tol=None, gap_tol=No
     the loose tangential bool — is what enables the knife's A unwind in
     production; the bool path built an ad-hoc profile with unwind off.
     """
-    if quality is None:
-        quality = config_default().quality
     if profile is None:
         profile = KNIFE if tangential else PEN
+
+    # Stage 2: SVG → mm subpaths, then the shared subpaths→packets core.
+    subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
+    return subpaths_to_packets(subpaths_mm, machine, profile,
+                               feed_max=feed_max, a_max=a_max,
+                               angle_tol=angle_tol, gap_tol=gap_tol,
+                               jog_feed=jog_feed, quality=quality,
+                               lift_height=lift_height, z_feed=z_feed)
+
+
+def subpaths_to_packets(subpaths_mm, machine, profile, feed_max=None, a_max=None,
+                        angle_tol=None, gap_tol=None, jog_feed=None, quality=None,
+                        lift_height=0.0, z_feed=None):
+    """
+    The tool-aware core: mm subpaths + a ToolProfile → MicroSegment packets
+    (Stage 3 repair → flatten → constrain → plan → discretize → serialise). Shared
+    by run() (whole-SVG single tool) and the multi-tool planner (one call per
+    layer with that layer's tool). feed_max/a_max default to the tool/machine.
+    """
+    if quality is None:
+        quality = config_default().quality
     tangential = profile.tangential
     if feed_max is None:
         feed_max = profile.feed_max
     if a_max is None:
         a_max = machine.x.accel
 
-    # Stage 2: SVG → mm subpaths.  Stage 3: C1 continuity repair.
-    subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
     repaired = [enforce_c1(sp, angle_tol, gap_tol)[0] for sp in subpaths_mm]
 
     corner_stop = profile.corner_angle_deg if tangential else None

@@ -416,6 +416,60 @@ the first node category — not an axis-first machine with peripherals bolted on
 
 ---
 
+## 11. Multi-tool job model
+
+A job may use several tools. The structure that keeps the planner free and makes
+dual-head fall out cleanly:
+
+**The plan is an ordered sequence of tool-tagged operations** — each operation is
+a contiguous run of motion using one tool. The *planner* emits this and orders it
+however it likes (all of A then B; interleaved A/B/A for optimal travel; or a
+forced order the job requires). The plan carries **no `MSEG_FLAG_PAUSE`** — tool
+changes are just "the next op uses a different tool."
+
+**The sender resolves tool changes against the connected machine**, at stream
+time — the planner never decides pauses, the packet-sending host does:
+
+| Tool change | Single head | Dual head (other tool already mounted) |
+|---|---|---|
+| how | physical swap | host-side head switch + `x_offset` reposition |
+| pause? | yes — `MSEG_FLAG_PAUSE` + swap choreography | no — keep streaming |
+
+So **one plan runs on the single-head or dual-head version of the same machine**
+(same calibration, different head config) — the sender compiles it differently.
+Step packets are baked at production (machine calibration); only the
+pause-vs-head-switch decision is deferred to the sender.
+
+**Two-tier pre-flight:**
+1. *Upfront, config-level feasibility* — `can_run_tool(machine, profile)` for
+   every tool in the plan's tool set: tool requirements ⊆ machine topology
+   (`required_axes` ⊆ `present_axes()`, `required_peripheral_roles` ⊆
+   `machine.peripherals` roles). Catches "needs CREASE/A-axis but no A axis" or
+   "needs suction but no suction node" before a packet streams — no hardware
+   needed. Pure config math, no new fields.
+2. *Per-activation, physical pre-flight* — present + enabled + homed (+ peripherals)
+   for a tool when it becomes active: its first use in the session, or after a
+   swap brings it (back) in. You CANNOT physically pre-flight all tools upfront —
+   on a single head only one tool is mounted at a time.
+
+The session tracks a **validated-and-still-mounted** tool set: validated on
+physical pre-flight, cleared when physically swapped out. Dual-head head-switches
+don't invalidate (both tools stay mounted); a single-head A→B→A re-validates A
+after the swap back. Both behaviours fall out of the one rule.
+
+**Not modelled (not needed yet):** per-head tool compatibility (any head mounts
+any tool today — a `ToolHead` field if it ever matters); whether the physical
+tool exists in the shop (inherently physical — the per-activation check catches
+it). `ToolHead.profile` (currently mounted) is the sender's input for
+head-switch-vs-swap, not part of feasibility.
+
+**Layers:** Planner (SVG layers + logic → ordered tool-tagged ops; today trivial:
+one op per layer in order) → Sender (ops × head config → stream + pause
+resolution) → Execution (feasibility gate, then stream with lazy per-activation
+pre-flight + swap choreography).
+
+---
+
 ## Open Items
 
 - ~~`CMD_GET_STATE` payload definition → wire_protocol.md (step 1)~~ ✓ done —

@@ -334,6 +334,33 @@ def select_head(machine: MachineConfig, tool_name: str) -> int:
     raise ValueError(f"no head has tool '{tool_name}' mounted")
 
 
+_AXIS_BIT = {"x": 0b0001, "y": 0b0010, "z": 0b0100, "a": 0b1000}
+
+
+def can_run_tool(machine: MachineConfig, profile) -> tuple:
+    """
+    Config-only feasibility: can this machine's TOPOLOGY satisfy the tool's
+    requirements? Returns (ok, reason). Checks tool.required_axes are all fitted
+    (present_axes) and tool.required_peripheral_roles are all on the bus
+    (machine.peripherals). No hardware needed — this is the upfront "can the
+    machine even run this job" gate, separate from the per-activation physical
+    pre-flight (present/enabled/homed). It cannot know whether the physical tool
+    exists in the shop; that surfaces when the operator is asked to mount it.
+    """
+    present = 0
+    for ltr, _ in machine.present_axes():
+        present |= _AXIS_BIT.get(ltr, 0)
+    missing_axes = profile.required_axes & ~present
+    if missing_axes:
+        names = [l for l, b in _AXIS_BIT.items() if missing_axes & b]
+        return False, f"missing axes: {','.join(names)}"
+    have_roles = {n.role for n in machine.peripherals}
+    missing_roles = set(profile.required_peripheral_roles) - have_roles
+    if missing_roles:
+        return False, f"missing peripherals: {','.join(sorted(missing_roles))}"
+    return True, ""
+
+
 @dataclass(frozen=True)
 class QualityConfig:
     """Algorithm tuning — the parity spec the C++ port must reproduce."""
