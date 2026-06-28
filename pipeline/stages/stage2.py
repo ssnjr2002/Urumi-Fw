@@ -111,6 +111,19 @@ def load_svg_mm_subpaths(svg_path):
     transform   = make_transform(*viewport)
     return [apply_transform(sp, transform) for sp in subpaths_px], viewport
 
+def load_svg_mm_layers(svg_path):
+    """
+    Layer-aware stage 1+2: SVG file -> ordered {layer_name: list[subpath]} in mm.
+    The multi-tool ingest — each layer can be planned with its own tool.
+    """
+    from stage1 import load_svg_layers
+    layers_px = load_svg_layers(svg_path)
+    viewport  = parse_viewport(svg_path)
+    transform = make_transform(*viewport)
+    layers_mm = {name: [apply_transform(sp, transform) for sp in subs]
+                 for name, subs in layers_px.items()}
+    return layers_mm, viewport
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

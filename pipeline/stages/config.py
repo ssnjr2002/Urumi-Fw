@@ -197,6 +197,22 @@ CREASE = ToolProfile(
 TOOL_PROFILES = {p.name: p for p in (PEN, KNIFE, CREASE)}
 
 
+def tool_for_layer(layer_name, overrides=None):
+    """
+    Resolve an SVG layer name to a ToolProfile. Convention: the layer label
+    matches a tool name (pen / knife / crease), case-insensitive — so an Inkscape
+    "knife" layer cuts with KNIFE. `overrides` is an optional {layer_name: profile}
+    map for names that don't follow the convention. Returns None if unresolved
+    (caller decides whether that layer is skipped or an error).
+    """
+    name = (layer_name or "").strip().lower()
+    if overrides:
+        for k, v in overrides.items():
+            if k.strip().lower() == name:
+                return v
+    return TOOL_PROFILES.get(name)
+
+
 # ── head tier (a Z+A pair + the tool mounted on it) ───────────────────────────
 
 @dataclass(frozen=True)

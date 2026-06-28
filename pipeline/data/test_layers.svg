@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="100mm" height="100mm" viewBox="0 0 100 100">
+  <g inkscape:groupmode="layer" inkscape:label="knife">
+    <path d="M10,10 L90,10"/>
+    <rect x="20" y="20" width="10" height="10"/>
+  </g>
+  <g inkscape:groupmode="layer" inkscape:label="crease">
+    <path d="M10,50 L90,50"/>
+  </g>
+  <rect x="0" y="0" width="100" height="100" style="fill:none;stroke:none"/>
+</svg>

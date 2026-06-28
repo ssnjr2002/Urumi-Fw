@@ -241,6 +241,67 @@ def _rect_to_cubics(x, y, w, h, rx=0.0, ry=0.0):
         f"V {y+ry} C {x},{y+ry-ky} {x+rx-kx},{y} {x+rx},{y} Z"
     )
 
+INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"
+
+
+def _element_subpaths(elem):
+    """
+    Subpaths for a single SVG element: list[list[CubicBezier]]. Empty for
+    non-drawable tags, non-paintable geometry, and degenerate shapes. This is the
+    per-element core shared by the flat (`load_svg_subpaths`) and layer-aware
+    (`load_svg_layers`) loaders, so both handle every primitive identically.
+    """
+    tag = elem.tag.replace(f"{{{SVG_NS}}}", "")
+    if tag not in _DRAWABLE_TAGS:
+        return []
+    # Skip non-paintable geometry (e.g. Inkscape fill:none;stroke:none boxes)
+    if not _is_paintable(elem):
+        return []
+
+    if tag == "path":
+        d = elem.get("d", "")
+        return path_to_subpaths(d) if d else []
+
+    if tag in ("circle", "ellipse"):
+        cx = _float(elem, "cx"); cy = _float(elem, "cy")
+        if tag == "circle":
+            r = _float(elem, "r"); rx = ry = r
+        else:
+            rx = _float(elem, "rx"); ry = _float(elem, "ry")
+        return [_circle_to_cubics(cx, cy, rx, ry)] if rx > 0 and ry > 0 else []
+
+    if tag == "rect":
+        x = _float(elem, "x"); y = _float(elem, "y")
+        w = _float(elem, "width"); h = _float(elem, "height")
+        rx = _float(elem, "rx"); ry = _float(elem, "ry") or rx
+        return [_rect_to_cubics(x, y, w, h, rx, ry)] if w > 0 and h > 0 else []
+
+    if tag == "line":
+        x1 = _float(elem, "x1"); y1 = _float(elem, "y1")
+        x2 = _float(elem, "x2"); y2 = _float(elem, "y2")
+        return [[_line_to_cubic((x1, y1), (x2, y2))]]
+
+    if tag in ("polygon", "polyline"):
+        pts_str = elem.get("points", "").strip()
+        if not pts_str:
+            return []
+        coords = [float(v) for v in re.split(r"[\s,]+", pts_str) if v]
+        pts = [(coords[i], coords[i+1]) for i in range(0, len(coords)-1, 2)]
+        if len(pts) < 2:
+            return []
+        segs = [_line_to_cubic(pts[i], pts[i+1]) for i in range(len(pts)-1)]
+        if tag == "polygon":
+            segs.append(_line_to_cubic(pts[-1], pts[0]))
+        return [segs]
+
+    return []
+
+
+def _layer_label(elem):
+    """The layer name of a <g>: inkscape:label, else id, else None."""
+    return elem.get(f"{{{INKSCAPE_NS}}}label") or elem.get("id")
+
+
 def load_svg(path):
     """Returns a flat list of CubicBeziers from all elements in the SVG."""
     subpaths = load_svg_subpaths(path)
@@ -248,58 +309,45 @@ def load_svg(path):
 
 def load_svg_subpaths(path):
     """
-    Returns list[list[CubicBezier]], one inner list per subpath.
+    Returns list[list[CubicBezier]], one inner list per subpath, in document
+    order across ALL layers (layer-agnostic — the single-tool path).
     Each SVG primitive element is one subpath; <path> elements are split on M.
     """
-    tree = ET.parse(path)
-    root = tree.getroot()
+    root = ET.parse(path).getroot()
     all_subpaths = []
-
     for elem in root.iter():
-        tag = elem.tag.replace(f"{{{SVG_NS}}}", "")
-
-        # Skip non-paintable geometry (e.g. Inkscape fill:none;stroke:none boxes)
-        if tag in _DRAWABLE_TAGS and not _is_paintable(elem):
-            continue
-
-        if tag == "path":
-            d = elem.get("d", "")
-            if d:
-                all_subpaths.extend(path_to_subpaths(d))
-
-        elif tag in ("circle", "ellipse"):
-            cx = _float(elem, "cx"); cy = _float(elem, "cy")
-            if tag == "circle":
-                r = _float(elem, "r"); rx = ry = r
-            else:
-                rx = _float(elem, "rx"); ry = _float(elem, "ry")
-            if rx > 0 and ry > 0:
-                all_subpaths.append(_circle_to_cubics(cx, cy, rx, ry))
-
-        elif tag == "rect":
-            x = _float(elem, "x"); y = _float(elem, "y")
-            w = _float(elem, "width"); h = _float(elem, "height")
-            rx = _float(elem, "rx"); ry = _float(elem, "ry") or rx
-            if w > 0 and h > 0:
-                all_subpaths.append(_rect_to_cubics(x, y, w, h, rx, ry))
-
-        elif tag == "line":
-            x1 = _float(elem, "x1"); y1 = _float(elem, "y1")
-            x2 = _float(elem, "x2"); y2 = _float(elem, "y2")
-            all_subpaths.append([_line_to_cubic((x1, y1), (x2, y2))])
-
-        elif tag in ("polygon", "polyline"):
-            pts_str = elem.get("points", "").strip()
-            if pts_str:
-                coords = [float(v) for v in re.split(r"[\s,]+", pts_str) if v]
-                pts = [(coords[i], coords[i+1]) for i in range(0, len(coords)-1, 2)]
-                if len(pts) >= 2:
-                    segs = [_line_to_cubic(pts[i], pts[i+1]) for i in range(len(pts)-1)]
-                    if tag == "polygon":
-                        segs.append(_line_to_cubic(pts[-1], pts[0]))
-                    all_subpaths.append(segs)
-
+        all_subpaths.extend(_element_subpaths(elem))
     return all_subpaths
+
+
+def load_svg_layers(path):
+    """
+    Group subpaths by the layer they live in: returns an ordered
+    dict {layer_name: list[subpath]}, keyed by the nearest ancestor <g>'s
+    inkscape:label (else id). Geometry with no named-group ancestor goes under
+    the key '' (the default layer). Insertion order follows first appearance.
+
+    This is the multi-tool ingest: a "knife" layer and a "crease" layer become
+    separate groups the planner can drive with different tools.
+    """
+    root = ET.parse(path).getroot()
+    layers = {}
+
+    def visit(elem, layer):
+        tag = elem.tag.replace(f"{{{SVG_NS}}}", "")
+        if tag == "g":
+            label = _layer_label(elem)
+            child_layer = label if label is not None else layer
+            for child in elem:
+                visit(child, child_layer)
+            return
+        subs = _element_subpaths(elem)
+        if subs:
+            layers.setdefault(layer, []).extend(subs)
+
+    for child in root:
+        visit(child, "")
+    return layers
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
