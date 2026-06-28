@@ -144,11 +144,10 @@ class OperatorUI:
         self.enable_btn = ttk.Button(frm, text="Enable", command=self._toggle_enable)
         self.enable_btn.grid(row=0, column=0, padx=4, pady=4)
         self.ctrl_widgets.append(self.enable_btn)
+        # Machine-scope control only — job lifecycle (pause/resume/cancel) lives
+        # in the Job panel.
         defs = [
             ("Set Origin", lambda: self._control(cmd.setorigin)),
-            ("Pause",      lambda: self._control(cmd.pause)),
-            ("Resume",     lambda: self._control(cmd.resume)),
-            ("Cancel",     lambda: self._control(cmd.cancel)),
             ("Unalarm",    lambda: self._control(cmd.unalarm)),
         ]
         for i, (label, fn) in enumerate(defs, start=1):
@@ -196,6 +195,15 @@ class OperatorUI:
         self.run_btn = ttk.Button(frm, text="Run Job", command=self._run_job,
                                   state="disabled")
         self.run_btn.grid(row=2, column=4, padx=4, pady=4)
+
+        # row 3: job lifecycle (acts on the running/paused job)
+        life = ttk.Frame(frm)
+        life.grid(row=3, column=0, columnspan=5, padx=4, pady=(0, 4), sticky="w")
+        for i, (label, fn) in enumerate(
+                [("Pause", cmd.pause), ("Resume", cmd.resume), ("Cancel", cmd.cancel)]):
+            b = ttk.Button(life, text=label, command=lambda f=fn: self._control(f))
+            b.grid(row=0, column=i, padx=(0, 6))
+            self.job_widgets.append(b)
 
     # ── connection ────────────────────────────────────────────────────────────
 
