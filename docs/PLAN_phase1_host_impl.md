@@ -228,20 +228,23 @@ some are proposed additions to `pipeline/stages/config.py`:
 
 ---
 
-## 6. Protocol Gaps for Phase 1
+## 6. Protocol — frozen (step 1 done)
 
-Everything the operator-dialog needs already exists in the state machine except
-one read command:
+The Phase 1 wire contract is frozen in [wire_protocol.md](wire_protocol.md). The
+relevant additions for this orchestration:
 
-- **CMD_GET_STATE** *(needs adding)* — returns at minimum `machineState` (1B)
-  and `axes_homed` (1B). The host polls this to know what is blocking resume and
-  what to show the operator. `CMD_GET_POS` already exists for position;
-  CMD_GET_STATE is the missing status query. (This is the Phase 1 subset of what
-  the Phase 2 `CMD_HANDSHAKE` would also report — no config CRC32 in Phase 1.)
+- **`getstate`** (text control command) — replies
+  `state=<s> homed=<hex> alarm=<a> running=<r>`. The host polls this during
+  pre-flight and the PAUSE choreography to know what is blocking a resume.
+  (Phase 1 subset of the Phase 2 `CMD_HANDSHAKE` — no config CRC32.)
+- **`pingnode <id>`** (text) — relays an RS485 ping to a bus node; the pre-flight
+  node-presence check (axis + peripheral nodes).
+- **`JOG_MAGIC` = 0xAE** — host-driven jog bursts (manual jog + return-to-pausePos).
+- Control plane is text lines; data plane (MSEG/JOG/MCFG) is binary,
+  magic-dispatched. See wire_protocol.md "Two planes on one USB pipe".
 
-No other new commands are required. Jog uses `JOG_MAGIC`; pause/resume/cancel,
-enable/disable, setorigin, and ping already exist or are specified in
-state_redesign.md.
+pause/resume/cancel/stop/unalarm/enable/disable/setorigin are text control
+commands with the allowed-state matrix in wire_protocol.md.
 
 ---
 
@@ -292,7 +295,8 @@ flagged below get filled as their step is reached.
 
 ## Open Items
 
-- `CMD_GET_STATE` payload definition → add to wire_protocol.md (step 1).
+- ~~`CMD_GET_STATE` payload definition → wire_protocol.md (step 1)~~ ✓ done —
+  frozen as the `getstate` text command.
 - `ToolProfile.required_peripheral_roles` + `select_head()` → add to config.py
   (step 7).
 - `active_head` runtime-vs-plan separation → note only, revisit later.

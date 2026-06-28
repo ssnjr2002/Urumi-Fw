@@ -1,25 +1,49 @@
 # Wire Protocol
 
-**Branch:** `pipeline-redesign`
-**Date:** 2026-06-27
-**Status:** Phase 1 — MSEG/ACK/NACK/jog in firmware; config commands (CMD_GET_CONFIG, CMD_SET_CONFIG, CMD_HANDSHAKE) deferred to Phase 2
+**Branch:** `phase1-impl`
+**Date:** 2026-06-28
+**Status:** Phase 1 contract FROZEN — data plane (MSEG/JOG/MCFG, ACK/NACK) and control plane (text) defined below. Config commands (CMD_GET_CONFIG, CMD_SET_CONFIG, CMD_HANDSHAKE) deferred to Phase 2.
 
 Single source of truth for all USB CDC framing between host and Pico.
 All other docs cross-reference here rather than defining constants.
 
+## Two planes on one USB pipe
+
+Phase 1 splits the host↔Pico link into two planes that share the USB CDC pipe:
+
+- **Data plane — binary, magic-dispatched.** High-rate streaming: MSEG, JOG,
+  the MCFG preamble. Pico replies ACK/NACK. Each binary packet is a fixed
+  length keyed by its magic byte.
+- **Control plane — text lines.** Low-rate commands the operator/host issues:
+  `getstate`, `getpos`, `enable`, `disable`, `pause`, `resume`, `cancel`,
+  `setorigin`, `stop`, `unalarm`, `ping`, `pingnode`. One command per line,
+  `\n`-terminated; the Pico replies with a text line. This matches the existing
+  Core 0 text CLI (`move`/`stop`/`ping`/`enable`/`disable`/`getpos`).
+
+**Dispatch rule (Core 0 ingest):** at a packet boundary, peek the first byte. If
+it is a known data-plane magic, read the whole fixed-length binary packet. Any
+other byte begins a text line, read to `\n`. Packets and lines are **atomic** —
+never interleaved — so a control command issued mid-stream (e.g. `pause` during
+RUNNING) is recognised at the next boundary between MSEG packets, not byte-wise
+inside one. The data-plane magics all have bit 7 set (0xA?/0xB?) and the text
+commands are lowercase ASCII, so the two never collide at a boundary.
+
 ---
 
-## Magic Bytes — Packet Type Dispatch
+## Magic Bytes — Packet Type Dispatch (data plane)
 
 | Constant | Value | Direction | Description |
 |---|---|---|---|
 | `MSEG_MAGIC` | `0xAB` | Host → Pico | MicroSegment — pre-computed step event |
+| `JOG_MAGIC`  | `0xAE` | Host → Pico | Jog packet (separate from MSEG) |
 | `TILE_MAGIC` | `0xAD` | Host → Pico | SplineTile — local production (future) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
-| `JOG_MAGIC`  | TBD | Host → Pico | Jog packet (separate from MSEG) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
 | `MSEG_NACK`  | `0xBB` | Pico → Host | NACK response |
+
+All single-byte magics have bit 7 set, keeping them disjoint from the lowercase
+ASCII that begins every control-plane line.
 
 ---
 
@@ -60,15 +84,27 @@ Must precede any MSEG packets in a job stream.
 Phase 2: Pico compares `config_crc32` against stored flash CRC32; mismatch →
 NACK `NACK_STREAM_CONFIG_MISMATCH`.
 
-### Jog Packet — `JOG_MAGIC` (TBD)
+### Jog Packet — `JOG_MAGIC` (0xAE, 26 bytes)
 ```
-[0]      magic = JOG_MAGIC (TBD)
-[1]      jogSeq  uint8   — 1-byte rolling duplicate guard (independent of MSEG seq)
-[2..N]   MicroSegment payload (same fields as MSEG, minus seq byte)
-[N+1]    CRC8 over bytes [0..N]
+[0]      magic = 0xAE
+[1..4]   dx        int32 LE   — X axis steps
+[5..8]   dy        int32 LE   — Y axis steps
+[9..12]  dz        int32 LE   — Z axis steps
+[13..16] da        int32 LE   — A axis steps
+[17..20] interval  uint32 LE  — step interval in CPU cycles
+[21]     flags     uint8      — MSEG_FLAG_* bitmask (PATH_END terminates a jog burst)
+[22]     jogSeq    uint8      — 1-byte rolling duplicate guard (independent of MSEG seq)
+[23..24] pad       uint8[2]
+[25]     CRC8 over bytes [0..24]
 ```
-Accepted in `STATE_IDLE` and `STATE_PAUSED`. No seqnum window — window-1
-fire-and-wait; jogSeq provides duplicate rejection only.
+Same 26-byte layout as MSEG (so one parser serves both), differing only in the
+magic and in byte [22] carrying `jogSeq` instead of the stream `seq`. Accepted
+in `STATE_IDLE` and `STATE_PAUSED`. No seqnum window — window-1 fire-and-wait;
+jogSeq provides duplicate rejection only. A jog burst (host-computed move, e.g.
+the return to `pausePos`) is one or more jog packets ending with
+`MSEG_FLAG_PATH_END`; the Pico runs `runningReason = JOG` while emitting and
+returns to its prior state (IDLE, or PAUSED when `PausedJobContext.active`) when
+the burst drains.
 
 ### ACK — `0xAA` (3 bytes)
 ```
@@ -145,16 +181,71 @@ The reason byte meaning depends on which command the NACK is responding to.
 
 ---
 
+## Control Plane — Text Commands (Phase 1)
+
+One command per line, `\n`-terminated, lowercase ASCII. The Pico replies with a
+single text line. Arguments are space-separated. Numbers are decimal unless
+prefixed `0x`.
+
+| Command | Args | Reply | Meaning |
+|---|---|---|---|
+| `ping` | — | `pong` | Is the Pico alive (USB link)? |
+| `pingnode` | `<id>` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
+| `getstate` | — | `state=<s> homed=<hex> alarm=<a> running=<r>` | Operational status snapshot (see below) |
+| `getpos` | — | `pos <x> <y> <z> <a>` | Absolute machinePos in steps (signed) |
+| `enable` | — | `ok` / `err <reason>` | Energise motors (per allowed-state matrix) |
+| `disable` | — | `ok` / `err <reason>` | De-energise; clears `axes_homed`, resets `axisBounds` |
+| `setorigin` | `[axes]` | `ok` / `err <reason>` | Set datum for given axes (default all): home bits + zero pos + real bounds |
+| `pause` | — | `ok` / `err <reason>` | Request pause of the running job (Core 0 sets flag, Core 1 drains) |
+| `resume` | — | `ok` / `err <reason>` | Continue a paused job (gated on `axes_homed & required_axes`) |
+| `cancel` | — | `ok` | Abandon the paused job → IDLE |
+| `stop` | — | `ok` | Emergency stop — flush, ALARM(ESTOP); always available |
+| `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved) |
+
+### `getstate` reply fields
+
+```
+state=<s>    machineState   0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
+homed=<hex>  axes_homed     bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
+alarm=<a>    alarmReason    0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL
+running=<r>  runningReason  0=JOB 1=JOG  (only meaningful while state=RUNNING)
+```
+
+This is the read the host polls during pre-flight and the PAUSE choreography to
+know what is blocking a resume. (It is the Phase 1 subset of what the Phase 2
+`CMD_HANDSHAKE` also reports — minus `config_crc32`.) Fields are key=value so
+the host parser tolerates later additions.
+
+---
+
 ## Command Allowed-State Matrix
 
-Stream and jog acceptance depend on state. Config commands are Phase 2.
+Stream, jog, and control-command acceptance depend on state. Config commands are
+Phase 2.
 
-**Phase 1:**
+**Phase 1 — data plane:**
 
 | | IDLE | RUNNING | PAUSED | ALARM | HOMING |
 |---|---|---|---|---|---|
 | MSEG / job stream | ✓ | ✓ (enqueue) | ✗ | ✗ | ✗ |
 | Jog packet | ✓ | ✗ | ✓ | ✗ | ✗ |
+
+**Phase 1 — control plane:**
+
+| | IDLE | RUNNING | PAUSED | ALARM | HOMING |
+|---|---|---|---|---|---|
+| `ping` / `getstate` / `getpos` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `pingnode` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| `enable` / `disable` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| `setorigin` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| `pause` | ✗ | ✓ | ✗ | ✗ | ✗ |
+| `resume` / `cancel` | ✗ | ✗ | ✓ | ✗ | ✗ |
+| `stop` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `unalarm` | ✗ | ✗ | ✗ | ✓ | ✗ |
+
+`pingnode` is blocked in RUNNING because the RS485 bus is saturated with stream
+traffic; node presence is checked at pre-flight (IDLE) and tool change (PAUSED).
+Rejected commands reply `err <reason>` and change nothing.
 
 **Phase 2 additions** (`CMD_HANDSHAKE`, `CMD_GET_CONFIG`, `CMD_SET_CONFIG`):
 
