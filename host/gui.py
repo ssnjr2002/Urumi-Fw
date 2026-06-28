@@ -16,16 +16,18 @@ Run:
   python -m host.gui --sim           # force the simulator
 """
 
-import argparse, threading, queue
+import argparse, threading, queue, os
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog
 
-from config import default as _config_default
+from config import default as _config_default, TOOL_PROFILES
 from host.protocol.link import Link
 from host.protocol.packets import make_jog
+from host.protocol.stream import read_packets
 from host.protocol import commands as cmd
 from host.protocol.state import MachineState
+from host.preflight import preflight
 
 try:
     from serial.tools import list_ports
@@ -46,10 +48,15 @@ class OperatorUI:
         self.root = root
         self.machine = _config_default().machine
         self.link = None
-        self.busy = False          # a jog is streaming — pause status polling
+        self.busy = False          # a burst is streaming — pause status polling
         self.enabled = False       # UI view of energise state
-        self.jog_q = queue.Queue()
-        self._worker_err = None     # last error from the jog worker (Tk-free thread)
+        self.jog_q = queue.Queue() # (activity_label, packets) bursts for the worker
+        self._worker_err = None     # last error from the worker (Tk-free thread)
+        self._activity = "JOGGING"  # label shown while busy (worker-set, plain str)
+
+        # job state
+        self.job_packets = None     # loaded production packets, or None
+        self.preflight_ok = False
 
         root.title("RS485 Operator")
         root.resizable(False, False)
@@ -57,6 +64,7 @@ class OperatorUI:
         self._build_status()
         self._build_jog()
         self._build_controls()
+        self._build_job()
 
         self._worker = threading.Thread(target=self._jog_worker, daemon=True)
         self._worker.start()
@@ -151,12 +159,53 @@ class OperatorUI:
                          font=("TkDefaultFont", 10, "bold"), command=self._stop)
         stop.grid(row=0, column=len(defs) + 1, padx=8, pady=4)
 
+    def _build_job(self):
+        frm = ttk.LabelFrame(self.root, text="Job")
+        frm.grid(row=4, column=0, padx=8, pady=6, sticky="ew")
+        self.job_widgets = []
+
+        # row 0: file + tool
+        self.job_file_var = tk.StringVar(value="(no job loaded)")
+        load = ttk.Button(frm, text="Load .bin…", command=self._load_job)
+        load.grid(row=0, column=0, padx=4, pady=4)
+        self.job_widgets.append(load)
+        ttk.Label(frm, textvariable=self.job_file_var, width=24).grid(
+            row=0, column=1, columnspan=2, sticky="w")
+        ttk.Label(frm, text="Tool:").grid(row=0, column=3, sticky="e", padx=4)
+        self.tool_var = tk.StringVar(value="knife")
+        tool = ttk.Combobox(frm, textvariable=self.tool_var, width=8,
+                            values=list(TOOL_PROFILES), state="readonly")
+        tool.grid(row=0, column=4, padx=4)
+        self.job_widgets.append(tool)
+
+        # row 1: pre-flight button + results
+        pf = ttk.Button(frm, text="Pre-flight", command=self._run_preflight)
+        pf.grid(row=1, column=0, padx=4, pady=4, sticky="n")
+        self.job_widgets.append(pf)
+        self.pf_text = tk.Text(frm, width=46, height=7, state="disabled",
+                               font=("TkFixedFont", 8))
+        self.pf_text.grid(row=1, column=1, columnspan=4, padx=4, pady=4, sticky="ew")
+
+        # row 2: operator tool-mounted confirmation + Run
+        self.confirm_var = tk.BooleanVar(value=False)
+        self.confirm_chk = ttk.Checkbutton(
+            frm, text="Confirm tool mounted", variable=self.confirm_var,
+            command=self._refresh_run_state)
+        self.confirm_chk.grid(row=2, column=0, columnspan=3, padx=4, sticky="w")
+        self.job_widgets.append(self.confirm_chk)
+        self.run_btn = ttk.Button(frm, text="Run Job", command=self._run_job,
+                                  state="disabled")
+        self.run_btn.grid(row=2, column=4, padx=4, pady=4)
+
     # ── connection ────────────────────────────────────────────────────────────
 
     def _set_connected(self, connected):
         state = "normal" if connected else "disabled"
-        for w in self.jog_widgets + self.ctrl_widgets:
+        for w in self.jog_widgets + self.ctrl_widgets + self.job_widgets:
             w.config(state=state)
+        if not connected:
+            self.preflight_ok = False
+        self._refresh_run_state()
         self.connect_btn.config(text="Disconnect" if connected else "Connect")
 
     def _toggle_connect(self):
@@ -232,7 +281,7 @@ class OperatorUI:
         # Reflects the worker's flags; never touches the port while a jog streams.
         self.enable_btn.config(text="Disable" if self.enabled else "Enable")
         if self.busy:
-            self.state_var.set("JOGGING")
+            self.state_var.set(self._activity)
             self.state_lbl.config(foreground="blue")
         elif self._worker_err:
             self.state_var.set(self._worker_err)
@@ -274,7 +323,7 @@ class OperatorUI:
         accel_sps2 = max(feed * 8.0, 50.0) * ax.steps_per_unit   # gentle ramp
         packets = make_jog(tuple(vec), feed_sps, accel_sps2, self.machine.f_cpu)
         if packets:
-            self.jog_q.put(packets)
+            self.jog_q.put(("JOGGING", packets))
             self._update_queue_label()
 
     def _update_queue_label(self):
@@ -285,9 +334,10 @@ class OperatorUI:
         # widget/var (Tkinter is single-threaded). It only flips plain flags;
         # _poll_status reflects them onto the UI on the main thread.
         while True:
-            packets = self.jog_q.get()             # blocks until a press arrives
+            label, packets = self.jog_q.get()      # blocks until a burst arrives
             if self.link is None:
                 self.jog_q.task_done(); continue
+            self._activity = label
             self.busy = True
             try:
                 if not self.enabled:               # energise once before motion
@@ -299,6 +349,65 @@ class OperatorUI:
             finally:
                 self.busy = False
                 self.jog_q.task_done()
+
+    # ── job: load / pre-flight / run ──────────────────────────────────────────
+
+    def _set_pf_text(self, text):
+        self.pf_text.config(state="normal")
+        self.pf_text.delete("1.0", "end")
+        self.pf_text.insert("1.0", text)
+        self.pf_text.config(state="disabled")
+
+    def _load_job(self):
+        path = filedialog.askopenfilename(
+            title="Load production .bin",
+            filetypes=[("Job binary", "*.bin"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "rb") as f:
+                packets = list(read_packets(f))
+        except Exception as e:
+            self._set_pf_text(f"load failed: {e}")
+            return
+        self.job_packets = packets
+        self.job_file_var.set(f"{os.path.basename(path)}  ({len(packets)} pkts)")
+        self.preflight_ok = False
+        self.confirm_var.set(False)
+        self._set_pf_text("loaded — run pre-flight")
+        self._refresh_run_state()
+
+    def _run_preflight(self):
+        if not self.link or self.busy:
+            return
+        profile = TOOL_PROFILES[self.tool_var.get()]
+        try:
+            pf = preflight(self.link, self.machine, profile)
+        except Exception as e:
+            self.preflight_ok = False
+            self._set_pf_text(f"pre-flight error: {e}")
+            self._refresh_run_state()
+            return
+        self.preflight_ok = pf.ok
+        self._set_pf_text(str(pf))
+        self.confirm_chk.config(text=f"Confirm '{profile.name}' mounted")
+        self._refresh_run_state()
+
+    def _refresh_run_state(self):
+        ready = bool(self.link) and self.preflight_ok \
+            and bool(self.job_packets) and self.confirm_var.get()
+        if hasattr(self, "run_btn"):
+            self.run_btn.config(state="normal" if ready else "disabled")
+
+    def _run_job(self):
+        if self.busy or not (self.link and self.preflight_ok
+                             and self.job_packets and self.confirm_var.get()):
+            return
+        # Stream the production burst through the worker (state label RUNNING).
+        # NOTE: the MCFG preamble (required_axes) is not emitted by svg_to_packets
+        # yet — Phase 1 streams MSEG packets as-is; the preamble lands with step 8.
+        self.jog_q.put(("RUNNING", self.job_packets))
+        self._update_queue_label()
 
 
 def main():
