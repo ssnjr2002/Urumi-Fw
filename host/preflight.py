@@ -82,7 +82,7 @@ def preflight(link, machine, profile) -> Preflight:
 
     # 3. Required axis nodes present on the bus
     for ax, nid in _required_axis_nodes(machine, profile, head).items():
-        pf.add(f"axis {ax} node {nid}", cmd.ping_node(link, nid))
+        pf.add(f"axis {ax} node {nid} present", cmd.ping_node(link, nid))
 
     # 4. Required peripheral nodes present (resolve role -> machine.peripherals)
     for role in profile.required_peripheral_roles:
@@ -94,8 +94,12 @@ def preflight(link, machine, profile) -> Preflight:
             pf.add(f"peripheral '{role}' node {node.node_id}",
                    cmd.ping_node(link, node.node_id))
 
-    # 5. Required axes homed
     mask = profile.required_axes
+    # 5. Required axes energised (a present-but-disabled axis drops steps silently)
+    pf.add("required axes enabled", st.all_enabled(mask),
+           f"enabled=0x{st.axes_enabled:02x} need=0x{mask:02x}")
+
+    # 6. Required axes homed
     pf.add("required axes homed", st.all_homed(mask),
            f"homed=0x{st.axes_homed:02x} need=0x{mask:02x}")
 

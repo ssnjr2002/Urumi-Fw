@@ -74,11 +74,12 @@ class SimBackend:
     _CHUNK_DIV = 20         # packets applied per tick ≈ remaining // this (min 1)
 
     def __init__(self):
-        self.state      = MachineState.IDLE
-        self.alarm      = AlarmReason.NONE
-        self.running    = RunningReason.JOB
-        self.axes_homed = 0
-        self.pos        = [0, 0, 0, 0]
+        self.state        = MachineState.IDLE
+        self.alarm        = AlarmReason.NONE
+        self.running      = RunningReason.JOB
+        self.axes_homed   = 0
+        self.axes_enabled = 0          # energised-axis bitmask (enable -> all present)
+        self.pos          = [0, 0, 0, 0]
         self._replies   = []                 # queued reply lines (bytes)
         self._lock      = threading.RLock()  # guards state/pos/motion vs executor
         self._motion    = deque()            # pending (dx,dy,dz,da) step deltas
@@ -147,19 +148,24 @@ class SimBackend:
         if cmd == "pingnode":
             return f"node {args[0] if args else '?'} ok"
         if cmd == "getstate":
-            return (f"state={int(S.state)} homed=0x{S.axes_homed:02x} "
+            return (f"state={int(S.state)} enabled=0x{S.axes_enabled:02x} "
+                    f"homed=0x{S.axes_homed:02x} "
                     f"alarm={int(S.alarm)} running={int(S.running)}")
         if cmd == "getpos":
             return "pos " + " ".join(str(p) for p in S.pos)
-        if cmd == "stop":                       # always available
-            S.state, S.alarm, S.axes_homed = MS.ALARM, AlarmReason.ESTOP, 0
+        if cmd == "stop":                       # always available; de-energises
+            S.state, S.alarm = MS.ALARM, AlarmReason.ESTOP
+            S.axes_homed = S.axes_enabled = 0
             S._motion.clear(); S._executing = False
             return "ok"
         if cmd == "enable":
-            return "ok" if S.state in idle_paused_alarm else "err bad_state"
+            if S.state in idle_paused_alarm:
+                S.axes_enabled = axis_mask("xyza")   # energise all present axes
+                return "ok"
+            return "err bad_state"
         if cmd == "disable":
             if S.state in idle_paused_alarm:
-                S.axes_homed = 0
+                S.axes_homed = S.axes_enabled = 0    # de-energise -> position invalid
                 return "ok"
             return "err bad_state"
         if cmd == "setorigin":

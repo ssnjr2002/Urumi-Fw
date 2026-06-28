@@ -137,6 +137,30 @@ def test_preflight_fails_unhomed():
     assert any("homed" in c.name and not c.ok for c in pf.checks)
 
 
+def test_preflight_fails_disabled():
+    link = Link.open_sim()
+    cmd.setorigin(link)                                # homed but NOT enabled
+    pf = preflight(link, default().machine, KNIFE)
+    assert not pf.ok
+    assert any("enabled" in c.name and not c.ok for c in pf.checks)
+
+
+def test_setorigin_does_not_enable():
+    link = Link.open_sim()
+    cmd.setorigin(link)
+    assert cmd.get_state(link).axes_enabled == 0       # homing != energising
+    cmd.enable(link)
+    assert cmd.get_state(link).all_enabled(axis_mask("xyza"))
+
+
+def test_disable_clears_enabled():
+    link = Link.open_sim()
+    cmd.enable(link)
+    assert cmd.get_state(link).axes_enabled != 0
+    cmd.disable(link)
+    assert cmd.get_state(link).axes_enabled == 0
+
+
 def test_preflight_fails_tool_not_mounted():
     link = Link.open_sim()
     cmd.enable(link); cmd.setorigin(link)

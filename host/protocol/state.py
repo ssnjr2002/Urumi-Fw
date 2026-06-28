@@ -47,21 +47,30 @@ def axis_mask(axes: str) -> int:
 @dataclass(frozen=True)
 class MachineStatus:
     """Parsed snapshot from a `getstate` reply."""
-    state:      MachineState
-    axes_homed: int
-    alarm:      AlarmReason
-    running:    RunningReason
+    state:        MachineState
+    axes_homed:   int
+    axes_enabled: int
+    alarm:        AlarmReason
+    running:      RunningReason
 
     def homed(self, axis: str) -> bool:
         return bool(self.axes_homed & AXIS_BITS[axis])
+
+    def enabled(self, axis: str) -> bool:
+        return bool(self.axes_enabled & AXIS_BITS[axis])
 
     def all_homed(self, required_mask: int) -> bool:
         """True if every axis in required_mask is homed (the pre-flight/resume gate)."""
         return (self.axes_homed & required_mask) == required_mask
 
+    def all_enabled(self, required_mask: int) -> bool:
+        """True if every axis in required_mask is energised (a pre-flight gate)."""
+        return (self.axes_enabled & required_mask) == required_mask
+
     def __str__(self) -> str:
         homed = "".join(a for a in "xyza" if self.axes_homed & AXIS_BITS[a]) or "-"
-        return (f"{self.state.name} homed={homed} "
+        en    = "".join(a for a in "xyza" if self.axes_enabled & AXIS_BITS[a]) or "-"
+        return (f"{self.state.name} enabled={en} homed={homed} "
                 f"alarm={self.alarm.name} running={self.running.name}")
 
 
@@ -82,11 +91,12 @@ def _enum_or(cls, fields, key, default):
 def parse_getstate(line: str) -> MachineStatus:
     """
     Parse a `getstate` reply line:
-        state=<s> homed=<hex> alarm=<a> running=<r>
+        state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r>
 
     Key=value tokens, space-separated. Tolerant of unknown trailing tokens
     (forward-compatible) and of out-of-range enum values. Requires at least
-    `state` and `homed`; raises ValueError if the line is not a status reply.
+    `state` and `homed`; `enabled` defaults to 0 if absent. Raises ValueError if
+    the line is not a status reply.
     """
     fields = {}
     for tok in line.strip().split():
@@ -98,6 +108,7 @@ def parse_getstate(line: str) -> MachineStatus:
     return MachineStatus(
         state=_enum_or(MachineState, fields, "state", MachineState.IDLE),
         axes_homed=_to_int(fields["homed"]),
+        axes_enabled=_to_int(fields.get("enabled", "0")),
         alarm=_enum_or(AlarmReason, fields, "alarm", AlarmReason.NONE),
         running=_enum_or(RunningReason, fields, "running", RunningReason.JOB),
     )

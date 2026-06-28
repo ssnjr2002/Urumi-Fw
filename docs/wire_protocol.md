@@ -191,7 +191,7 @@ prefixed `0x`.
 |---|---|---|---|
 | `ping` | — | `pong` | Is the Pico alive (USB link)? |
 | `pingnode` | `<id>` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
-| `getstate` | — | `state=<s> homed=<hex> alarm=<a> running=<r>` | Operational status snapshot (see below) |
+| `getstate` | — | `state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r>` | Operational status snapshot (see below) |
 | `getpos` | — | `pos <x> <y> <z> <a>` | Absolute machinePos in steps (signed) |
 | `enable` | — | `ok` / `err <reason>` | Energise motors (per allowed-state matrix) |
 | `disable` | — | `ok` / `err <reason>` | De-energise; clears `axes_homed`, resets `axisBounds` |
@@ -205,11 +205,14 @@ prefixed `0x`.
 ### `getstate` reply fields
 
 ```
-state=<s>    machineState   0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
-homed=<hex>  axes_homed     bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
-alarm=<a>    alarmReason    0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL
-running=<r>  runningReason  0=JOB 1=JOG  (only meaningful while state=RUNNING)
+state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
+enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
+homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
+alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL
+running=<r>   runningReason   0=JOB 1=JOG  (only meaningful while state=RUNNING)
 ```
+Pre-flight checks every required axis is **present** (pingnode), **enabled**
+(this mask), and **homed** — a present-but-disabled axis would drop steps.
 
 This is the read the host polls during pre-flight and the PAUSE choreography to
 know what is blocking a resume. (It is the Phase 1 subset of what the Phase 2

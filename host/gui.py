@@ -90,17 +90,20 @@ class OperatorUI:
         frm = ttk.LabelFrame(self.root, text="Status")
         frm.grid(row=1, column=0, padx=8, pady=6, sticky="ew")
         self.state_var = tk.StringVar(value="—")
+        self.enabled_var = tk.StringVar(value="—")
         self.homed_var = tk.StringVar(value="—")
         self.alarm_var = tk.StringVar(value="—")
         self.pos_vars  = {ax: tk.StringVar(value="—") for ax in ("x", "y", "z", "a")}
 
         ttk.Label(frm, text="State:").grid(row=0, column=0, sticky="e", padx=4)
-        self.state_lbl = ttk.Label(frm, textvariable=self.state_var, width=10)
+        self.state_lbl = ttk.Label(frm, textvariable=self.state_var, width=9)
         self.state_lbl.grid(row=0, column=1, sticky="w")
-        ttk.Label(frm, text="Homed:").grid(row=0, column=2, sticky="e", padx=4)
-        ttk.Label(frm, textvariable=self.homed_var, width=6).grid(row=0, column=3, sticky="w")
-        ttk.Label(frm, text="Alarm:").grid(row=0, column=4, sticky="e", padx=4)
-        ttk.Label(frm, textvariable=self.alarm_var, width=10).grid(row=0, column=5, sticky="w")
+        ttk.Label(frm, text="En:").grid(row=0, column=2, sticky="e", padx=4)
+        ttk.Label(frm, textvariable=self.enabled_var, width=5).grid(row=0, column=3, sticky="w")
+        ttk.Label(frm, text="Homed:").grid(row=0, column=4, sticky="e", padx=4)
+        ttk.Label(frm, textvariable=self.homed_var, width=5).grid(row=0, column=5, sticky="w")
+        ttk.Label(frm, text="Alarm:").grid(row=0, column=6, sticky="e", padx=4)
+        ttk.Label(frm, textvariable=self.alarm_var, width=10).grid(row=0, column=7, sticky="w")
 
         units = {"x": "mm", "y": "mm", "z": "mm", "a": "deg"}
         for i, ax in enumerate(("x", "y", "z", "a")):
@@ -299,8 +302,10 @@ class OperatorUI:
                 st = cmd.get_state(self.link)
                 self.state_var.set(st.state.name)
                 self.state_lbl.config(foreground=_STATE_COLOR.get(st.state.name, "black"))
+                self.enabled_var.set("".join(a for a in "xyza" if st.enabled(a)) or "-")
                 self.homed_var.set("".join(a for a in "xyza" if st.homed(a)) or "-")
                 self.alarm_var.set(st.alarm.name if st.alarm.value else "—")
+                self.enabled = bool(st.axes_enabled)   # sync toggle from Pico truth
                 pos = cmd.get_pos(self.link)
                 spu = [self.machine.x.steps_per_unit, self.machine.y.steps_per_unit,
                        self.machine.z.steps_per_unit, self.machine.a.steps_per_unit]
