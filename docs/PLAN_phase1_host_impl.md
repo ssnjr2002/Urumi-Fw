@@ -293,6 +293,97 @@ flagged below get filled as their step is reached.
 
 ---
 
+## 9. Host Application Architecture (step 6 expanded)
+
+**Decision:** full package restructure, GUI-first. The scattered `host/` scripts
+become a proper Python package; the protocol library is the one thing that owns
+the Pico link; the operator GUI is the priority frontend (the Phase 1
+pause/swap/resume workflow is inherently interactive); a thin CLI stays for
+bring-up and scripting.
+
+### Why a library, not a CLI or GUI
+
+Today `sender.py`, `serialise.py`, `jog.py`, and `jog_ui.py` each open serial
+and build packets independently. The restructure makes **one** component own the
+wire contract; CLI and GUI are thin frontends over it.
+
+### Target layout
+
+```
+host/
+  __init__.py            # marks the package; adds pipeline/stages to sys.path
+                         #   (pipeline stays unpackaged — see import strategy)
+  protocol/
+    __init__.py
+    link.py              # serial open/close, two-plane dispatch, RX read loop
+    packets.py           # ← serialise.py: binary packers/parsers (MSEG/JOG/MCFG/ACK/NACK)
+    commands.py          # text control plane: getstate/pause/resume/... + reply parsing
+    stream.py            # ← sender.py: windowed ACK/NACK streaming engine
+    state.py             # MachineState/AlarmReason/RunningReason enums + getstate parse
+  production/            # offline, no serial — pure pipeline orchestration
+    svg_to_packets.py    # ← unchanged logic; imports adjust
+    validate_plan.py
+    verify_packets.py
+  gui.py                 # ← jog_ui.py, grown into the operator frontend
+  cli.py                 # thin argparse frontend over protocol + production
+  diagnostics/
+    sim_duplicates.py
+    test_comms.py
+```
+
+### File mapping
+
+| Current | New | Notes |
+|---|---|---|
+| `serialise.py` | `protocol/packets.py` | the binary packers — 6 consumers, do first |
+| `sender.py` | `protocol/stream.py` | windowed ACK/NACK engine |
+| `jog.py` (`make_jog`) | `protocol/packets.py` (builder) + `cli.py` (CLI) | split lib core from CLI |
+| `jog_ui.py` | `gui.py` | grown into operator GUI (pre-flight + pause choreography) |
+| `svg_to_packets.py` | `production/svg_to_packets.py` | import adjust only |
+| `validate_plan.py` | `production/validate_plan.py` | import adjust only |
+| `verify_packets.py` | `production/verify_packets.py` | import adjust only |
+| `sim_duplicates.py` | `diagnostics/sim_duplicates.py` | |
+| `test_comms.py` | `diagnostics/test_comms.py` | |
+| `main.py` | deleted | 82-byte hello stub |
+
+### Import strategy
+
+Host becomes a real package: absolute imports (`from host.protocol.packets
+import …`), invoked `python -m host.gui` / `python -m host.cli` /
+`python -m host.production.svg_to_packets`. `host/__init__.py` inserts
+`pipeline/stages` onto `sys.path` so the production modules' existing flat
+pipeline imports (`from config import …`, `from flatten import …`) keep working
+**without** packaging the pipeline (out of scope here). So host code mixes
+package-absolute imports (host-internal) with flat imports (pipeline) — contained
+and pragmatic.
+
+### Migration order (each step verified before the next)
+
+1. Create package skeleton (`__init__.py` files + the path shim). Additive, safe.
+2. Move `serialise.py → protocol/packets.py`; update its 6 consumers' imports.
+   Verify: production byte-identical output + `test_discretize` still pass.
+3. Move `sender.py → protocol/stream.py`; update consumers.
+4. Move production scripts into `production/`; adjust imports. Verify byte-identical.
+5. Move diagnostics; delete `main.py`.
+6. Add `protocol/link.py`, `commands.py`, `state.py` (the genuinely new code the
+   frozen contract calls for).
+7. Grow `jog_ui.py → gui.py` on the library; build the operator workflow.
+8. Add the thin `cli.py`.
+
+Verification gate throughout: the production path (`svg_to_packets`) must stay
+**byte-identical** on `test_snake.svg` and `test_discretize` must stay green —
+the restructure is mechanical, not behavioural.
+
+### Firmware dependency
+
+The library and GUI build against the **frozen contract**, but live integration
+(getstate/pause/jog round-trips) needs the firmware track (steps 2–5). Until
+then, `protocol/link.py` gets a loopback/simulator backend so the host side is
+testable standalone. GUI-first does not mean hardware-first — it means the
+operator frontend leads the host code, validated against a simulated Pico.
+
+---
+
 ## Open Items
 
 - ~~`CMD_GET_STATE` payload definition → wire_protocol.md (step 1)~~ ✓ done —
