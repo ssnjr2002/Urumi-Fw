@@ -20,9 +20,13 @@ Backends:
 `link.serial` exposes the raw port to a Sender (real backend only).
 """
 
+import threading, time
+from collections import deque
+
 from host.protocol.state import (
     MachineState, AlarmReason, RunningReason, AXIS_BITS, axis_mask,
 )
+from host.protocol.packets import unpack_microsegment
 
 try:
     import serial as _pyserial
@@ -54,14 +58,20 @@ class SerialBackend:
 
 class SimBackend:
     """
-    In-process fake Pico — control plane only.
+    In-process fake Pico — control plane + a paced motion executor.
 
-    Maintains a minimal operational state (machineState, axes_homed, position)
-    and answers text commands per the wire_protocol.md allowed-state matrix.
-    Binary data-plane packets are accepted and dropped (no motion simulation).
+    Answers text commands per the wire_protocol.md allowed-state matrix, AND
+    "executes" streamed data-plane packets: their step deltas integrate into the
+    tracked position over time while the state holds RUNNING, so the GUI shows a
+    job/jog actually move and finish (returning to IDLE, or to PAUSED for a jog
+    issued during a pause). pause holds the executor; resume continues it; stop /
+    cancel flush the remaining motion. A test double — not real-time accurate.
     """
 
     serial = None   # no raw port to lend a Sender
+
+    FRAME_S = 0.04          # executor wall-clock tick
+    _CHUNK_DIV = 20         # packets applied per tick ≈ remaining // this (min 1)
 
     def __init__(self):
         self.state      = MachineState.IDLE
@@ -69,24 +79,63 @@ class SimBackend:
         self.running    = RunningReason.JOB
         self.axes_homed = 0
         self.pos        = [0, 0, 0, 0]
-        self._replies   = []          # queued reply lines (bytes)
+        self._replies   = []                 # queued reply lines (bytes)
+        self._lock      = threading.RLock()  # guards state/pos/motion vs executor
+        self._motion    = deque()            # pending (dx,dy,dz,da) step deltas
+        self._executing = False              # a burst is in progress
+        self._return_state = MachineState.IDLE
+        self._exec = threading.Thread(target=self._executor, daemon=True)
+        self._exec.start()
 
     def write(self, data: bytes):
         # Text line (control) vs binary packet (data plane): control commands are
-        # lowercase ASCII ending in newline; everything else is a data packet.
+        # lowercase ASCII ending in newline; everything else is a motion packet.
         if data[:1].isalpha() and data.rstrip().isascii():
             line = data.decode("ascii", "replace").strip()
             if line:
-                self._replies.append((self._handle(line) + "\n").encode())
-        # binary packets: accepted, not simulated
+                with self._lock:
+                    self._replies.append((self._handle(line) + "\n").encode())
+            return
+        try:
+            ms = unpack_microsegment(bytes(data))
+        except Exception:
+            return                            # not a recognised packet — drop
+        with self._lock:
+            if not self._executing and self.state in (MachineState.IDLE, MachineState.PAUSED):
+                # a jog issued during PAUSE returns to PAUSED; a job from IDLE → IDLE
+                self._return_state = self.state
+                self.running = (RunningReason.JOG if self.state == MachineState.PAUSED
+                                else RunningReason.JOB)
+                self.state = MachineState.RUNNING
+                self._executing = True
+            self._motion.append((ms["dx"], ms["dy"], ms["dz"], ms["da"]))
 
     def readline(self, timeout=1.0) -> bytes:
-        return self._replies.pop(0) if self._replies else b""
+        with self._lock:
+            return self._replies.pop(0) if self._replies else b""
 
     def close(self):
         pass
 
-    # one place that mirrors the control-plane behaviour
+    def _executor(self):
+        """Drain queued motion into position while RUNNING; finish -> return_state."""
+        while True:
+            time.sleep(self.FRAME_S)
+            with self._lock:
+                if not self._executing or self.state != MachineState.RUNNING:
+                    continue                  # idle, or paused/alarmed — hold
+                if not self._motion:
+                    self._executing = False   # burst complete
+                    self.state = self._return_state
+                    self.running = RunningReason.JOB
+                    continue
+                n = max(1, len(self._motion) // self._CHUNK_DIV)
+                for _ in range(min(n, len(self._motion))):
+                    dx, dy, dz, da = self._motion.popleft()
+                    self.pos[0] += dx; self.pos[1] += dy
+                    self.pos[2] += dz; self.pos[3] += da
+
+    # one place that mirrors the control-plane behaviour (called under _lock)
     def _handle(self, line: str) -> str:
         parts = line.split()
         cmd, args = parts[0], parts[1:]
@@ -104,6 +153,7 @@ class SimBackend:
             return "pos " + " ".join(str(p) for p in S.pos)
         if cmd == "stop":                       # always available
             S.state, S.alarm, S.axes_homed = MS.ALARM, AlarmReason.ESTOP, 0
+            S._motion.clear(); S._executing = False
             return "ok"
         if cmd == "enable":
             return "ok" if S.state in idle_paused_alarm else "err bad_state"
@@ -125,17 +175,18 @@ class SimBackend:
             return "err bad_state"
         if cmd == "pause":
             if S.state == MS.RUNNING:
-                S.state = MS.PAUSED
+                S.state = MS.PAUSED             # executor holds; motion retained
                 return "ok"
             return "err bad_state"
         if cmd == "resume":
             if S.state == MS.PAUSED:
-                S.state, S.running = MS.RUNNING, RunningReason.JOB
+                S.state = MS.RUNNING            # executor resumes draining
                 return "ok"
             return "err bad_state"
         if cmd == "cancel":
             if S.state == MS.PAUSED:
                 S.state = MS.IDLE
+                S._motion.clear(); S._executing = False
                 return "ok"
             return "err bad_state"
         if cmd == "unalarm":
@@ -147,7 +198,8 @@ class SimBackend:
 
     # test-only hook: drive the sim into RUNNING so pause/resume can be exercised
     def _force_running(self):
-        self.state = MachineState.RUNNING
+        with self._lock:
+            self.state = MachineState.RUNNING
 
 
 # ── link ──────────────────────────────────────────────────────────────────────
