@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 
 from config import default as _config_default, TOOL_PROFILES
+from host.sim_config import sim_machine
 from host.protocol.link import Link
 from host.protocol.packets import make_jog
 from host.protocol.stream import read_packets
@@ -44,9 +45,10 @@ _STATE_COLOR = {
 
 
 class OperatorUI:
-    def __init__(self, root, default_port=None):
+    def __init__(self, root, default_port=None, machine=None):
         self.root = root
-        self.machine = _config_default().machine
+        self.machine = machine if machine is not None else _config_default().machine
+        self.axes = self.machine.present_axes()   # [(letter, AxisConfig)] from config
         self.link = None
         self.busy = False          # a burst is streaming — pause status polling
         self.enabled = False       # UI view of energise state
@@ -64,6 +66,7 @@ class OperatorUI:
         self._build_status()
         self._build_jog()
         self._build_controls()
+        self._build_peripherals()
         self._build_job()
 
         self._worker = threading.Thread(target=self._jog_worker, daemon=True)
@@ -93,7 +96,8 @@ class OperatorUI:
         self.enabled_var = tk.StringVar(value="—")
         self.homed_var = tk.StringVar(value="—")
         self.alarm_var = tk.StringVar(value="—")
-        self.pos_vars  = {ax: tk.StringVar(value="—") for ax in ("x", "y", "z", "a")}
+        # position vars only for axes the config actually fits
+        self.pos_vars = {ltr: tk.StringVar(value="—") for ltr, _ in self.axes}
 
         ttk.Label(frm, text="State:").grid(row=0, column=0, sticky="e", padx=4)
         self.state_lbl = ttk.Label(frm, textvariable=self.state_var, width=9)
@@ -105,40 +109,47 @@ class OperatorUI:
         ttk.Label(frm, text="Alarm:").grid(row=0, column=6, sticky="e", padx=4)
         ttk.Label(frm, textvariable=self.alarm_var, width=10).grid(row=0, column=7, sticky="w")
 
-        units = {"x": "mm", "y": "mm", "z": "mm", "a": "deg"}
-        for i, ax in enumerate(("x", "y", "z", "a")):
-            ttk.Label(frm, text=f"{ax.upper()} ({units[ax]}):").grid(
+        # one position readout per present axis, unit from config (rotary -> deg)
+        for i, (ltr, ax) in enumerate(self.axes):
+            unit = "deg" if ax.rotary else "mm"
+            ttk.Label(frm, text=f"{ltr.upper()} ({unit}):").grid(
                 row=1, column=i, sticky="e", padx=4, pady=(4, 2))
-            ttk.Label(frm, textvariable=self.pos_vars[ax], width=8).grid(row=2, column=i, padx=4)
+            ttk.Label(frm, textvariable=self.pos_vars[ltr], width=8).grid(row=2, column=i, padx=4)
+
+    def _jog_defaults(self, ltr, ax):
+        """(dist, feed) defaults for an axis, drawn from config where it has them."""
+        if ax.rotary:
+            return 90.0, (min(ax.max_rate, 60.0) if ax.max_rate else 60.0)
+        if ltr == "z":
+            return 2.0, self.machine.z_feed
+        return 10.0, self.machine.jog_feed
 
     def _build_jog(self):
         frm = ttk.LabelFrame(self.root, text="Jog")
         frm.grid(row=2, column=0, padx=8, pady=6, sticky="ew")
         self.jog_widgets = []
-        groups = [
-            ("XY", ["x", "y"], 10.0, 20.0, "mm  /  mm/s"),
-            ("Z",  ["z"],       2.0,  3.0, "mm  /  mm/s"),
-            ("A",  ["a"],      90.0, 60.0, "deg / deg/s"),
-        ]
         self.dist_vars, self.feed_vars = {}, {}
-        for r, (name, axes, dd, df, units) in enumerate(groups):
-            ttk.Label(frm, text=name).grid(row=r, column=0, padx=4, sticky="w")
-            dv, fv = tk.DoubleVar(value=dd), tk.DoubleVar(value=df)
-            self.dist_vars[name], self.feed_vars[name] = dv, fv
+        # one jog row per present axis — generated from the config, not hardcoded
+        for r, (ltr, ax) in enumerate(self.axes):
+            unit = "deg" if ax.rotary else "mm"
+            rate = "deg/s" if ax.rotary else "mm/s"
+            dd, df = self._jog_defaults(ltr, ax)
+            ttk.Label(frm, text=ltr.upper()).grid(row=r, column=0, padx=4, sticky="w")
+            dv, fv = tk.DoubleVar(value=dd), tk.DoubleVar(value=round(df, 2))
+            self.dist_vars[ltr], self.feed_vars[ltr] = dv, fv
             d = ttk.Entry(frm, textvariable=dv, width=7); d.grid(row=r, column=1)
             f = ttk.Entry(frm, textvariable=fv, width=7); f.grid(row=r, column=2)
-            ttk.Label(frm, text=units).grid(row=r, column=3, padx=4, sticky="w")
+            ttk.Label(frm, text=f"{unit} / {rate}").grid(row=r, column=3, padx=4, sticky="w")
             self.jog_widgets += [d, f]
-            col = 4
-            for ax in axes:
-                for sign, sym in ((1, f"{ax.upper()}+"), (-1, f"{ax.upper()}-")):
-                    b = ttk.Button(frm, text=sym, width=4,
-                                   command=lambda a=ax, s=sign, g=name: self._jog(a, s, g))
-                    b.grid(row=r, column=col, padx=2, pady=2)
-                    self.jog_widgets.append(b); col += 1
+            for col, (sign, sym) in enumerate(((1, f"{ltr.upper()}+"),
+                                               (-1, f"{ltr.upper()}-")), start=4):
+                b = ttk.Button(frm, text=sym, width=4,
+                               command=lambda a=ltr, s=sign: self._jog(a, s))
+                b.grid(row=r, column=col, padx=2, pady=2)
+                self.jog_widgets.append(b)
         self.queue_var = tk.StringVar(value="Queue: 0")
         ttk.Label(frm, textvariable=self.queue_var).grid(
-            row=len(groups), column=0, columnspan=4, padx=4, pady=(2, 4), sticky="w")
+            row=len(self.axes), column=0, columnspan=4, padx=4, pady=(2, 4), sticky="w")
 
     def _build_controls(self):
         frm = ttk.LabelFrame(self.root, text="Control")
@@ -161,9 +172,41 @@ class OperatorUI:
                          font=("TkDefaultFont", 10, "bold"), command=self._stop)
         stop.grid(row=0, column=len(defs) + 1, padx=8, pady=4)
 
+    def _build_peripherals(self):
+        # Only appears if the config declares non-axis bus nodes. Presence-only:
+        # the wire protocol has no peripheral actuation commands yet, so each row
+        # shows role + node id + a Ping result. Controls land when the protocol
+        # defines them (see deferred bus-overview work).
+        periph = getattr(self.machine, "peripherals", ())
+        self.periph_vars = {}
+        self.periph_widgets = []
+        if not periph:
+            return
+        frm = ttk.LabelFrame(self.root, text="Peripherals")
+        frm.grid(row=4, column=0, padx=8, pady=6, sticky="ew")
+        for r, node in enumerate(periph):
+            ttk.Label(frm, text=f"{node.role}  (node {node.node_id})").grid(
+                row=r, column=0, padx=4, pady=2, sticky="w")
+            var = tk.StringVar(value="—")
+            self.periph_vars[node.node_id] = var
+            ttk.Label(frm, textvariable=var, width=10).grid(row=r, column=1, padx=4)
+            b = ttk.Button(frm, text="Ping", width=6,
+                           command=lambda n=node.node_id: self._ping_peripheral(n))
+            b.grid(row=r, column=2, padx=4)
+            self.periph_widgets.append(b)
+
+    def _ping_peripheral(self, node_id):
+        if not self.link or self.busy:
+            return
+        try:
+            ok = cmd.ping_node(self.link, node_id)
+        except Exception as e:
+            self.periph_vars[node_id].set(f"err: {e}"); return
+        self.periph_vars[node_id].set("present" if ok else "no-response")
+
     def _build_job(self):
         frm = ttk.LabelFrame(self.root, text="Job")
-        frm.grid(row=4, column=0, padx=8, pady=6, sticky="ew")
+        frm.grid(row=5, column=0, padx=8, pady=6, sticky="ew")
         self.job_widgets = []
 
         # row 0: file + tool
@@ -212,7 +255,7 @@ class OperatorUI:
 
     def _set_connected(self, connected):
         state = "normal" if connected else "disabled"
-        for w in self.jog_widgets + self.ctrl_widgets + self.job_widgets:
+        for w in self.jog_widgets + self.ctrl_widgets + self.job_widgets + self.periph_widgets:
             w.config(state=state)
         if not connected:
             self.preflight_ok = False
@@ -302,15 +345,14 @@ class OperatorUI:
                 st = cmd.get_state(self.link)
                 self.state_var.set(st.state.name)
                 self.state_lbl.config(foreground=_STATE_COLOR.get(st.state.name, "black"))
-                self.enabled_var.set("".join(a for a in "xyza" if st.enabled(a)) or "-")
-                self.homed_var.set("".join(a for a in "xyza" if st.homed(a)) or "-")
+                self.enabled_var.set("".join(l for l, _ in self.axes if st.enabled(l)) or "-")
+                self.homed_var.set("".join(l for l, _ in self.axes if st.homed(l)) or "-")
                 self.alarm_var.set(st.alarm.name if st.alarm.value else "—")
                 self.enabled = bool(st.axes_enabled)   # sync toggle from Pico truth
-                pos = cmd.get_pos(self.link)
-                spu = [self.machine.x.steps_per_unit, self.machine.y.steps_per_unit,
-                       self.machine.z.steps_per_unit, self.machine.a.steps_per_unit]
-                for ax, s, u in zip(("x", "y", "z", "a"), pos, spu):
-                    self.pos_vars[ax].set(f"{s / u:.2f}")
+                pos = cmd.get_pos(self.link)            # (x, y, z, a) steps
+                idx = {"x": 0, "y": 1, "z": 2, "a": 3}
+                for ltr, ax in self.axes:
+                    self.pos_vars[ltr].set(f"{pos[idx[ltr]] / ax.steps_per_unit:.2f}")
             except Exception as e:
                 self.state_var.set(f"err: {e}")
         self._update_queue_label()
@@ -318,20 +360,20 @@ class OperatorUI:
 
     # ── jog ─────────────────────────────────────────────────────────────────────
 
-    def _jog(self, axis, sign, group):
+    def _jog(self, ltr, sign):
         if not self.link:
             return
         try:
-            dist = self.dist_vars[group].get() * sign
-            feed = self.feed_vars[group].get()
+            dist = self.dist_vars[ltr].get() * sign
+            feed = self.feed_vars[ltr].get()
         except tk.TclError:
             return
-        ax = getattr(self.machine, axis)
+        ax = getattr(self.machine, ltr)
         steps_n = int(round(dist * ax.steps_per_unit)) * (-1 if ax.invert else 1)
         if steps_n == 0:
             return
         vec = [0, 0, 0, 0]
-        vec[("x", "y", "z", "a").index(axis)] = steps_n
+        vec[("x", "y", "z", "a").index(ltr)] = steps_n
         feed_sps = feed * ax.steps_per_unit
         accel_sps2 = max(feed * 8.0, 50.0) * ax.steps_per_unit   # gentle ramp
         packets = make_jog(tuple(vec), feed_sps, accel_sps2, self.machine.f_cpu)
@@ -426,10 +468,14 @@ class OperatorUI:
 def main():
     ap = argparse.ArgumentParser(description="RS485 operator UI")
     ap.add_argument("--port", default=None, help="Preselect a port (or 'Simulator')")
-    ap.add_argument("--sim", action="store_true", help="Force the in-process simulator")
+    ap.add_argument("--sim", action="store_true",
+                    help="Force the simulator + use the editable host/sim_config machine")
     args = ap.parse_args()
+    # --sim runs against the sim machine (host/sim_config) so the config-driven UI
+    # has peripherals etc. to show; real hardware uses the production config.
+    machine = sim_machine() if args.sim else None
     root = tk.Tk()
-    OperatorUI(root, default_port=SIM_PORT if args.sim else args.port)
+    OperatorUI(root, default_port=SIM_PORT if args.sim else args.port, machine=machine)
     root.mainloop()
 
 

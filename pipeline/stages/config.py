@@ -293,6 +293,16 @@ class MachineConfig:
     def a(self) -> AxisConfig:
         return self.heads[self.active_head].a
 
+    def present_axes(self):
+        """
+        [(letter, AxisConfig)] for axes whose bus node is fitted, in x,y,z,a
+        order. Z and A resolve to the active head. Lets the host/GUI iterate the
+        machine's real axes instead of assuming a fixed x/y/z/a set — drop a node
+        (node.present = False) and it disappears from the UI.
+        """
+        return [(ltr, getattr(self, ltr)) for ltr in ("x", "y", "z", "a")
+                if getattr(self, ltr).node.present]
+
 
 def select_head(machine: MachineConfig, tool_name: str) -> int:
     """
