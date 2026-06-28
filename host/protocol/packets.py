@@ -55,6 +55,7 @@ NACK (3 bytes): [0xBB] [reason] [0x00]
 """
 
 import struct
+import math
 from collections import namedtuple
 
 # ── magic bytes ───────────────────────────────────────────────────────────────
@@ -280,3 +281,84 @@ def serialise_spline_path(subpaths, tool_config=None):
                 flags |= TILE_PATH_END
             yield pack_spline_tile(curve, seq, flags)
             seq = (seq + 1) & 0xFFFF
+
+
+# ── jog builder ─────────────────────────────────────────────────────────────────
+
+_MS = namedtuple("MS", ["dx", "dy", "dz", "da", "interval", "flags"])
+
+
+def make_jog(steps, feed_sps, accel_sps2, f_cpu, v_start_sps=50.0):
+    """
+    Trapezoidal jog as a list of MicroSegment packets.
+
+    steps      : (sx, sy, sz, sa) signed target step counts
+    feed_sps   : cruise step rate of the MAJOR axis (steps/s)
+    accel_sps2 : acceleration of the major axis (steps/s^2)
+
+    Steps are packed into chunks (~10 ms of motion each) so the packet count
+    stays small regardless of step count — a 10800-step A move becomes ~25
+    packets instead of 10800. The Pico's Bresenham loop handles multi-step
+    deltas identically to single-step ones.
+
+    Velocity follows v = sqrt(v0^2 + 2*a*d) at the start of each chunk,
+    giving a smooth trapezoidal ramp.
+    """
+    sx, sy, sz, sa = steps
+    abss = [abs(sx), abs(sy), abs(sz), abs(sa)]
+    major = max(abss)
+    if major == 0:
+        return []
+
+    signs = [(1 if s >= 0 else -1) for s in steps]
+    v0 = max(1.0, min(v_start_sps, feed_sps))
+
+    # Trapezoid geometry (in major-axis steps)
+    d_acc = (feed_sps**2 - v0**2) / (2.0 * accel_sps2)
+    if 2 * d_acc > major:  # triangular — never reach cruise
+        peak = math.sqrt(v0**2 + accel_sps2 * major)
+        d_acc = (peak**2 - v0**2) / (2.0 * accel_sps2)
+    d_dec = d_acc
+
+    err = [major // 2] * 4   # Bresenham accumulators for minor axes
+    packets = []
+    n = 0
+
+    while n < major:
+        # velocity at start of this chunk
+        if n < d_acc:
+            v = math.sqrt(v0**2 + 2.0 * accel_sps2 * n)
+        elif n >= major - d_dec:
+            v = math.sqrt(v0**2 + 2.0 * accel_sps2 * (major - n))
+        else:
+            v = feed_sps
+        v = max(v, v0)
+
+        # Adaptive chunk: ~10 ms at current velocity. Small during accel/decel
+        # so the interval is accurate; large at cruise for streaming efficiency.
+        chunk_size = min(max(1, int(v / 100)), major - n)
+        interval = max(1, min(int(f_cpu / v), f_cpu))
+
+        # per-axis deltas for this chunk via Bresenham
+        delta = [0, 0, 0, 0]
+        for ax in range(4):
+            if abss[ax] == 0:
+                continue
+            if abss[ax] == major:
+                delta[ax] = signs[ax] * chunk_size
+            else:
+                count = 0
+                for _ in range(chunk_size):
+                    err[ax] += abss[ax]
+                    if err[ax] >= major:
+                        err[ax] -= major
+                        count += 1
+                delta[ax] = signs[ax] * count
+
+        n += chunk_size
+        flags = MSEG_FLAG_PATH_END if n >= major else MSEG_FLAG_NONE
+        packets.append(pack_microsegment(
+            _MS(dx=delta[0], dy=delta[1], dz=delta[2], da=delta[3],
+                interval=interval, flags=flags)))
+
+    return packets

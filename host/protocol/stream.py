@@ -21,8 +21,7 @@ Protocol:
 
 import sys, os, argparse, struct, time, threading, queue
 
-sys.path.insert(0, os.path.dirname(__file__))
-from serialise import (
+from host.protocol.packets import (
     validate_packet, unpack_microsegment, stamp_seq,
     MAGIC_ACK, MAGIC_NACK,
     NACK_CRC, NACK_FULL, NACK_BAD_MAGIC,

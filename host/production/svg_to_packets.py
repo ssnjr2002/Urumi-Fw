@@ -14,13 +14,7 @@ On Windows stdout is opened in text mode by default which corrupts binary data.
 This script always writes to sys.stdout.buffer (binary mode).
 """
 
-import sys, os, argparse, struct
-
-_PIPELINE = os.path.join(os.path.dirname(__file__), "..", "pipeline", "stages")
-sys.path.insert(0, _PIPELINE)
-
-_HOST = os.path.dirname(__file__)
-sys.path.insert(0, _HOST)
+import sys, argparse, struct
 
 from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
@@ -28,7 +22,7 @@ from flatten import flatten
 from constrain import constrain
 from plan_lookahead import plan
 from discretize import discretize
-from serialise import serialise_microsegments
+from host.protocol.packets import serialise_microsegments
 from config import default as config_default, MachineConfig, KNIFE, PEN
 
 

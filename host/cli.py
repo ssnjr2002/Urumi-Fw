@@ -1,16 +1,18 @@
 """
-jog.py — fixed-distance, ramped manual jog for testing.
+cli.py — thin command-line frontend over the host protocol package.
 
-Generates a single straight move with a trapezoidal velocity profile (accel
-from rest -> cruise -> decel to rest), so the machine starts and ends smoothly.
-Works on any axis (X/Y/Z/A) or a diagonal, using the per-axis map and
-calibration from pipeline/config.py. Streams over the Go-Back-N sender.
+Currently exposes fixed-distance ramped jog (the builder lives in
+host.protocol.packets.make_jog); more subcommands will hang off this as the
+orchestrator grows. Generates a single straight move with a trapezoidal velocity
+profile (accel from rest -> cruise -> decel to rest), so the machine starts and
+ends smoothly. Works on any axis (X/Y/Z/A) or a diagonal, using the per-axis map
+and calibration from pipeline/config.py. Streams over the Go-Back-N sender.
 
 Usage:
-  python jog.py --port COM8 --axis x --dist 10                 # +10 mm on X
-  python jog.py --port COM8 --axis y --dist -5  --feed 15      # -5 mm on Y, 15 mm/s
-  python jog.py --port COM8 --axis a --dist 90                 # +90 deg on A
-  python jog.py --port COM8 --dx 10 --dy 5                     # diagonal jog (mm)
+  python -m host.cli --port COM8 --axis x --dist 10              # +10 mm on X
+  python -m host.cli --port COM8 --axis y --dist -5  --feed 15   # -5 mm on Y, 15 mm/s
+  python -m host.cli --port COM8 --axis a --dist 90              # +90 deg on A
+  python -m host.cli --port COM8 --dx 10 --dy 5                  # diagonal jog (mm)
 
 Distances are mm for linear axes, degrees for the rotary A axis. Feed/accel are
 in the same units/s and units/s^2.
@@ -24,13 +26,10 @@ velocity and blend into the next command before the current move decelerates
 — this needs real-time jog planning, not fixed-distance pre-computed segments.
 """
 
-import sys, os, argparse, math
+import sys, argparse
 
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pipeline", "stages"))
-
-from serialise import pack_microsegment, MSEG_FLAG_PATH_END, MSEG_FLAG_NONE
-from sender import Sender
+from host.protocol.packets import make_jog
+from host.protocol.stream import Sender
 from config import default as _config_default
 
 try:
@@ -38,91 +37,11 @@ try:
 except ImportError:
     serial = None
 
-from collections import namedtuple
-_MS = namedtuple("MS", ["dx", "dy", "dz", "da", "interval", "flags"])
-
-# Axis name -> (MicroSegment field index, config AxisConfig attribute)
 _AXES = ["x", "y", "z", "a"]
 
 
 def _axis_cfg(machine, name):
     return getattr(machine, name)
-
-
-def make_jog(steps, feed_sps, accel_sps2, f_cpu, v_start_sps=50.0):
-    """
-    Trapezoidal jog as a list of MicroSegment packets.
-
-    steps      : (sx, sy, sz, sa) signed target step counts
-    feed_sps   : cruise step rate of the MAJOR axis (steps/s)
-    accel_sps2 : acceleration of the major axis (steps/s^2)
-
-    Steps are packed into chunks (~10 ms of motion each) so the packet count
-    stays small regardless of step count — a 10800-step A move becomes ~25
-    packets instead of 10800. The Pico's Bresenham loop handles multi-step
-    deltas identically to single-step ones.
-
-    Velocity follows v = sqrt(v0^2 + 2*a*d) at the start of each chunk,
-    giving a smooth trapezoidal ramp.
-    """
-    sx, sy, sz, sa = steps
-    abss = [abs(sx), abs(sy), abs(sz), abs(sa)]
-    major = max(abss)
-    if major == 0:
-        return []
-
-    signs = [(1 if s >= 0 else -1) for s in steps]
-    v0 = max(1.0, min(v_start_sps, feed_sps))
-
-    # Trapezoid geometry (in major-axis steps)
-    d_acc = (feed_sps**2 - v0**2) / (2.0 * accel_sps2)
-    if 2 * d_acc > major:  # triangular — never reach cruise
-        peak = math.sqrt(v0**2 + accel_sps2 * major)
-        d_acc = (peak**2 - v0**2) / (2.0 * accel_sps2)
-    d_dec = d_acc
-
-    err = [major // 2] * 4   # Bresenham accumulators for minor axes
-    packets = []
-    n = 0
-
-    while n < major:
-        # velocity at start of this chunk
-        if n < d_acc:
-            v = math.sqrt(v0**2 + 2.0 * accel_sps2 * n)
-        elif n >= major - d_dec:
-            v = math.sqrt(v0**2 + 2.0 * accel_sps2 * (major - n))
-        else:
-            v = feed_sps
-        v = max(v, v0)
-
-        # Adaptive chunk: ~10 ms at current velocity. Small during accel/decel
-        # so the interval is accurate; large at cruise for streaming efficiency.
-        chunk_size = min(max(1, int(v / 100)), major - n)
-        interval = max(1, min(int(f_cpu / v), f_cpu))
-
-        # per-axis deltas for this chunk via Bresenham
-        delta = [0, 0, 0, 0]
-        for ax in range(4):
-            if abss[ax] == 0:
-                continue
-            if abss[ax] == major:
-                delta[ax] = signs[ax] * chunk_size
-            else:
-                count = 0
-                for _ in range(chunk_size):
-                    err[ax] += abss[ax]
-                    if err[ax] >= major:
-                        err[ax] -= major
-                        count += 1
-                delta[ax] = signs[ax] * count
-
-        n += chunk_size
-        flags = MSEG_FLAG_PATH_END if n >= major else MSEG_FLAG_NONE
-        packets.append(pack_microsegment(
-            _MS(dx=delta[0], dy=delta[1], dz=delta[2], da=delta[3],
-                interval=interval, flags=flags)))
-
-    return packets
 
 
 def main():

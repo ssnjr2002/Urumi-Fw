@@ -14,10 +14,7 @@ duplicated jogs shift everything).
 
 import sys, os, struct, random, argparse
 
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pipeline", "stages"))
-
-from serialise import unpack_microsegment
+from host.protocol.packets import unpack_microsegment
 from config import default as config_default
 
 MICRO_JOG  = 0x04

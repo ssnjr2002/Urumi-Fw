@@ -13,14 +13,11 @@ Run:
 
 import sys, os, argparse, time, threading, queue
 
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pipeline", "stages"))
-
 import tkinter as tk
 from tkinter import ttk
 
-from jog import make_jog
-from sender import Sender
+from host.protocol.packets import make_jog
+from host.protocol.stream import Sender
 from config import default as _config_default
 
 try:

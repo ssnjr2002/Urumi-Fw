@@ -16,10 +16,6 @@ Exit code 0 = all checks pass, 1 = one or more failed.
 
 import sys, os, argparse, math
 
-_PIPELINE = os.path.join(os.path.dirname(__file__), "..", "pipeline", "stages")
-sys.path.insert(0, _PIPELINE)
-sys.path.insert(0, os.path.dirname(__file__))
-
 from stage2 import load_svg_mm_subpaths
 from stage3 import enforce_c1
 from flatten import flatten

@@ -14,8 +14,7 @@ trajectory by accumulating dx/dy step deltas.
 
 import sys, os, argparse, struct
 
-sys.path.insert(0, os.path.dirname(__file__))
-from serialise import (
+from host.protocol.packets import (
     validate_packet, unpack_microsegment,
     MAGIC_MICROSEG, MSEG_FLAG_PATH_END,
 )

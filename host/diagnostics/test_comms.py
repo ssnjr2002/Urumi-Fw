@@ -19,13 +19,12 @@ Usage:
 
 import sys, os, argparse, time, struct, threading, queue
 
-sys.path.insert(0, os.path.dirname(__file__))
-from serialise import (
+from host.protocol.packets import (
     pack_microsegment, validate_packet,
     MAGIC_ACK, MAGIC_NACK, NACK_FULL,
     MSEG_FLAG_PATH_END, MSEG_FLAG_NONE,
 )
-from sender import Sender, read_packets
+from host.protocol.stream import Sender, read_packets
 
 try:
     import serial
