@@ -147,11 +147,32 @@ class ToolProfile:
     lift_height:     float = 0.0     # Z lift between subpaths, mm (0 = draw-through)
     z_feed:          float = 0.0     # Z raise/lower speed, mm/s (0 = use MachineConfig.z_feed)
     jog_feed:        float = 0.0     # travel speed between subpaths, mm/s (0 = use MachineConfig.jog_feed)
+    required_peripheral_roles: tuple = ()  # bus-node roles this tool needs present
+                                     # and responsive (e.g. ("oscillator",) for the
+                                     # driven knife). Declared by ROLE, not node id,
+                                     # so the profile stays machine-agnostic;
+                                     # pre-flight resolves against machine.peripherals.
 
     @property
     def needs_offset_comp(self) -> bool:
         """True if the offset is large enough to require (unimplemented) compensation."""
         return self.offset_mm > OFFSET_TOLERANCE_MM
+
+    @property
+    def required_axes(self) -> int:
+        """
+        Axis bitmask (bit0=X bit1=Y bit2=Z bit3=A) that must be homed before a job
+        with this tool is accepted. X and Y are always required; Z only if the tool
+        lifts; A only if it tracks the tangent. Derived from existing fields — no
+        redundant stored value. Used by the pre-flight homed check and the resume
+        gate (see docs/state_redesign.md).
+        """
+        mask = 0b0011                       # X, Y always
+        if self.lift_height > 0:
+            mask |= 0b0100                  # Z — tool lift
+        if self.tangential:
+            mask |= 0b1000                  # A — tangent tracking
+        return mask
 
 
 # Presets keyed to tool TYPE (PLAN_svg_tile_motion: pen/cut/crease). One knife
@@ -162,6 +183,9 @@ KNIFE = ToolProfile(
     name="knife", tangential=True, offset_mm=0.0,   # centre-pivot; raise offset_mm per blade
     unwind=True,                                     # oscillating knife is wired
     corner_angle_deg=20.0,
+    # required_peripheral_roles left empty: today's machine drives the blade via
+    # the A stepper (node 4); a SEPARATE oscillator-controller node is future
+    # hardware. Add ("oscillator",) here once that node exists in machine.peripherals.
 )
 
 CREASE = ToolProfile(
@@ -268,6 +292,20 @@ class MachineConfig:
     @property
     def a(self) -> AxisConfig:
         return self.heads[self.active_head].a
+
+
+def select_head(machine: MachineConfig, tool_name: str) -> int:
+    """
+    Index of the head carrying the named tool. The planner/pre-flight calls this
+    per tool group — to run a knife job it picks the head whose profile is KNIFE.
+    Raises ValueError if no mounted head has that tool (the operator must mount
+    it). Does NOT mutate config; head selection is a runtime/plan concern, not a
+    config edit.
+    """
+    for i, head in enumerate(machine.heads):
+        if head.profile.name == tool_name:
+            return i
+    raise ValueError(f"no head has tool '{tool_name}' mounted")
 
 
 @dataclass(frozen=True)

@@ -180,6 +180,27 @@ class Link:
         """Send a raw data-plane packet (used by higher-level streaming)."""
         self.backend.write(data)
 
+    def stream(self, packets, window=16, verbose=False) -> bool:
+        """
+        Stream a data-plane burst (a job, or a jog burst like return-to-pausePos)
+        with Go-Back-N ACK/NACK. Borrows the raw port for the duration; the caller
+        must pause control-plane polling while streaming (the port is single-owner
+        during a stream — same discipline the old jog_ui used).
+
+        On the simulator (no raw port) the packets are accepted without an ACK
+        loop and True is returned, so the host side is exercisable offline.
+        """
+        if self.serial is None:
+            for p in packets:
+                self.write_packet(p)
+            return True
+        from host.protocol.stream import Sender
+        sender = Sender(self.serial, window=window, verbose=verbose)
+        try:
+            return sender.send_stream(packets)
+        finally:
+            sender.stop()
+
     def close(self):
         self.backend.close()
 
