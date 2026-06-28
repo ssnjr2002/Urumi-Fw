@@ -7,3 +7,7 @@
 **/*.pyc
 pipeline/**/__pycache__/
 *.pyc
+
+# Python virtual environments
+.venv/
+**/.venv/
