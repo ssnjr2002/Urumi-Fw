@@ -146,7 +146,7 @@ Grbl uses this exact pattern (`sys.state` + `sys.alarm`).
 enum AlarmReason : uint8_t {
     ALARM_NONE         = 0,
     ALARM_ESTOP        = 1,   // stop command or poison pill
-    ALARM_CONFIG       = 2,   // invalid config on boot or push
+    ALARM_CONFIG       = 2,   // invalid config on boot or push (Phase 2)
     ALARM_SOFT_LIMIT   = 3,   // position exceeded travel bounds
     ALARM_HOMING_FAIL  = 4,   // switch not found during auto-home (future)
 };
@@ -160,13 +160,16 @@ enum value — no state machine changes.
 
 **Recovery guidance per reason:**
 - `ALARM_ESTOP`       → inspect machine → `unalarm` or `setorigin`
-- `ALARM_CONFIG`      → push a valid config → `unalarm`
+- `ALARM_CONFIG`      → push a valid config → `unalarm` *(Phase 2)*
 - `ALARM_SOFT_LIMIT`  → position still known → `unalarm` then back off
 - `ALARM_HOMING_FAIL` → check switches → retry `home`
 
 ---
 
-### Config validity — boot check and push check
+### Config validity — boot check and push check *(Phase 2)*
+
+> **Phase 2 only.** In Phase 1 the Pico runs on hardcoded firmware defaults; no config is pushed from
+> the host. This section applies when local production (Phase 2) requires config to live on Pico flash.
 
 Config is validated on two occasions:
 1. **Boot** — Pico loads config from flash (or firmware defaults if flash is empty).
@@ -226,8 +229,8 @@ segments. Same flush path as estop.
 - Soft limit: `axes_homed` intact, `axisBounds` intact — position still valid, operator
   unalarms and backs off
 
-`axisBounds` is populated from machine config on flash at boot and on every
-`CMD_SET_CONFIG`.
+`axisBounds` is populated from firmware defaults at boot. In Phase 2, it will
+also be updated on every `CMD_SET_CONFIG` (see `PLAN_config_management.md`).
 
 ---
 
@@ -406,8 +409,10 @@ def required_axes(self) -> int:
 PEN (no lift) → `0b0011`, PEN with lift → `0b0111`, KNIFE/CREASE → `0b1111`.
 Derived from fields already on the profile — no redundant stored field.
 
-The mask is embedded in the binary job header so the Pico can check it at
-pre-flight without knowing the tool type.
+The mask is embedded in the binary job header (MCFG preamble, see
+`wire_protocol.md`) so the Pico can check it at pre-flight without knowing the
+tool type. The MCFG header also carries `config_crc32` for Phase 2 config
+agreement — Phase 1 Pico ignores the CRC32 field and only uses `required_axes`.
 
 **Pre-flight check (new job):**
 ```
@@ -610,4 +615,5 @@ always 0 and they are never bounds-checked.
 Updated to `setAlarm(ALARM_SOFT_LIMIT)` in the per-emit snippet.
 
 ### ~~7. NACK reason for PAUSED — not in the enum~~ ✓ RESOLVED
-Added `MSEG_NACK_PAUSED = 0x04` to the wire protocol NACK reason bytes.
+`MSEG_NACK_PAUSED` added to the MSEG stream NACK reasons. See `wire_protocol.md`
+for the full NACK reason tables.

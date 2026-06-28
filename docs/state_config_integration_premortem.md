@@ -2,7 +2,7 @@
 
 **Branch:** `pipeline-redesign`
 **Date:** 2026-06-27
-**Status:** open — cross-cutting issues to resolve before implementing either design
+**Status:** DEFERRED — Phase 2. All issues here are at the state×config seam, which does not exist in Phase 1 (config never reaches Pico; Pico only executes pre-baked microsegments).
 
 ---
 
@@ -24,60 +24,28 @@ The two designs share three touch points:
 
 ## Issues
 
-### 1. Flash write vs Core 1 timing — the hardware seam (critical)
-
-`CMD_SET_CONFIG` writes the config struct to flash. On the RP2350, a flash
-program/erase **stalls XIP for both cores** for the duration of the write. Core 1
-is `__time_critical_func` running from SRAM, but any flash access (or even a
-stalled XIP fetch on a function not yet cached) during an active stream will
-disrupt step timing — jitter or a missed interval at minimum.
-
-Neither doc states that `CMD_SET_CONFIG` is forbidden while Core 1 is emitting.
-It must be: config push is only legal in `STATE_IDLE` (and `STATE_ALARM` for the
-config-recovery path — see #6). Never in `RUNNING`, never in `PAUSED` (Core 1
-may resume emission at any moment in PAUSED).
-
-**Resolution direction:** Core 0 rejects `CMD_SET_CONFIG` unless
-`machineState == STATE_IDLE || (STATE_ALARM && alarmReason == ALARM_CONFIG)`.
-NACK reason for the rejected-state case needs defining.
+### ~~1. Flash write vs Core 1 timing — the hardware seam~~ ✓ RESOLVED
+`CMD_SET_CONFIG` blocked in RUNNING, PAUSED, and HOMING — RP2350 flash write
+stalls XIP for both cores, disrupting Core 1 step timing. Allowed only in IDLE
+and ALARM (the config-recovery path). Rejected with `NACK_CONFIG_BAD_STATE`.
+See `wire_protocol.md` §"Command Allowed-State Matrix" and §"Config command
+NACK reasons".
 
 ---
 
-### 2. `NACK_STREAM_CONFIG_MISMATCH` — state transition undefined (correctness)
-
-The config doc says a stream whose MCFG header CRC32 disagrees with flash is
-"rejected" with `NACK_STREAM_CONFIG_MISMATCH`. It never says what `machineState`
-does. Two readable interpretations:
-
-- **Reject and stay IDLE** — host gets the NACK, fixes config, retries. Clean,
-  but the host could spam retries and the operator might not notice.
-- **Reject and ALARM** (`ALARM_CONFIG`) — louder, requires acknowledgement, but
-  conflates "wrong file for this machine" with "machine config is broken," and
-  ALARM gates further operation.
-
-These are genuinely different operator experiences. The state doc's `AlarmReason`
-table has no entry for a stream-header mismatch, which suggests "stay IDLE" was
-the unstated assumption — but it was never decided.
-
-**Resolution direction:** lean stay-IDLE + NACK. The mismatch is a host-side
-"wrong binary" problem, not a machine fault; the handshake (#7) already catches
-it earlier. ALARM is for machine faults that need physical intervention.
+### ~~2. `MSEG_NACK_CONFIG_MISMATCH` — state transition undefined~~ ✓ RESOLVED
+Stay IDLE + NACK. A config CRC32 mismatch is a host-side "wrong binary for this
+machine" problem, not a machine fault — ALARM would conflate it with hardware
+faults that need physical intervention. Host gets `MSEG_NACK_CONFIG_MISMATCH`,
+fixes the config or re-produces the binary, retries. The connect-time handshake
+(issue #7) catches this earlier anyway. `machineState` unchanged.
 
 ---
 
-### 3. Config push during PAUSE — guard exists in one doc only (correctness)
-
-The state doc explicitly blocks config changes during PAUSE ("mid-job config
-change would corrupt remaining segments"). The config doc's push workflow never
-mentions PAUSE — `CMD_SET_CONFIG` reads as always-available.
-
-This is the same guard as #1 from a different angle, and #1's resolution
-(`CMD_SET_CONFIG` only in IDLE/ALARM-config) already covers it. But the config
-doc must say so explicitly, or an implementer reading only that doc will allow
-a push during PAUSE.
-
-**Resolution direction:** fold into #1's state guard; cross-reference it from
-the config doc's section A.
+### ~~3. Config push during PAUSE — guard missing from config doc~~ ✓ RESOLVED
+Covered by #1's resolution. `CMD_SET_CONFIG` blocked in PAUSED per the
+command/state matrix in `wire_protocol.md`. Config doc section A now points
+to `wire_protocol.md` for the full state guard — no separate mention needed.
 
 ---
 

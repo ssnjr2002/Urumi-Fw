@@ -2,7 +2,13 @@
 
 **Branch:** `pipeline-redesign`  
 **Date:** 2026-06-24  
-**Status:** Design decided — not yet implemented
+**Status:** DEFERRED — Phase 2 (local production on Pico). Not needed for Phase 1 host production.
+
+> **Why deferred:** In Phase 1 the host bakes all machine config into the microsegments — step counts
+> and intervals already encode `steps_per_unit`, `accel`, and `max_rate`. The Pico just executes what
+> arrives. Config agreement between host and Pico is only meaningful when the Pico runs its own planner
+> (Phase 2). Adding config sync, flash storage, and handshake commands before that point adds complexity
+> with no Phase 1 benefit. Revisit when local production is scoped.
 
 ---
 
@@ -53,7 +59,7 @@ the config before a job.
 Every `.bin` produced by the host embeds a config checksum (CRC32 over the
 `MachineConfigFlash` struct) as a header before the packet stream. On playback
 the Pico compares the header CRC32 against its own stored CRC32 — match proceeds,
-mismatch rejects with `NACK_STREAM_CONFIG_MISMATCH`. No field-by-field comparison,
+mismatch rejects with `MSEG_NACK_CONFIG_MISMATCH` (see `wire_protocol.md`). No field-by-field comparison,
 no major/minor split — any difference is a rejection.
 
 The CRC32 stored on Pico flash is the same one computed and stored after a valid
@@ -124,11 +130,7 @@ binary.
     (the stored config checksum, used for binary header validation)
   - `CMD_SET_CONFIG` → receive struct + CRC32, validate, store struct + CRC32
     to flash. On success: ACK. On failure: NACK with reason byte:
-    - `NACK_CONFIG_CRC = 0x01` — transport corruption (CRC32 mismatch)
-    - `NACK_CONFIG_INVALID = 0x02` — semantic validation failed (zero
-      `steps_per_unit`, zero `f_cpu`, node id out of range, duplicate node ids,
-      zero `max_travel` on present axes)
-    - `NACK_CONFIG_VERSION = 0x03` — struct version unknown
+    See `wire_protocol.md` §"Config command NACK reasons" for reason values.
     Validation failure does **not** overwrite the existing flash config.
 
 ### B. Binary file config header
@@ -199,10 +201,10 @@ to load a pulled config in one step.
 
 In `core0.cpp` (or a new `config.cpp`): before accepting a binary stream,
 parse the MCFG header, compare `config_crc32` against the stored flash CRC32.
-Any mismatch → `NACK_STREAM_CONFIG_MISMATCH = 0x04`, stream rejected. No
-major/minor split — any difference is a rejection. Operator runs
-`pico_config pull`, diffs against the config used for production, fixes and
-re-pushes or re-produces.
+Any mismatch → `MSEG_NACK_CONFIG_MISMATCH`, stream rejected (see
+`wire_protocol.md`). No major/minor split — any difference is a rejection.
+Operator runs `pico_config pull`, diffs against the config used for production,
+fixes and re-pushes or re-produces.
 
 ---
 
@@ -245,14 +247,10 @@ Resolved by #1. Wire format is the compact binary struct in both directions.
   == 0`, `f_cpu == 0`, node ids out of range, duplicate node ids, `max_travel
   == 0` on present axes. Pico is the authority; host tool may do a best-effort
   pre-check to avoid round-trips but Pico validation is the gate regardless.
-- **On rejection** — existing NACK mechanism, reason byte:
-  ```
-  NACK_CONFIG_CRC      = 0x01   // transport corruption
-  NACK_CONFIG_INVALID  = 0x02   // semantic validation failed
-  NACK_CONFIG_VERSION  = 0x03   // struct version unknown
-  ```
-  Validation failure does **not** overwrite existing flash config — bad push
-  leaves old config intact. Host tool surfaces the reason to the operator.
+- **On rejection** — NACK with reason byte. See `wire_protocol.md` §"Config
+  command NACK reasons" for the full table. Validation failure does **not**
+  overwrite existing flash config — bad push leaves old config intact. Host
+  tool surfaces the reason to the operator.
 
 ### ~~3. `MachineConfigFlash` version mismatch — behaviour undefined~~ ✓ RESOLVED
 Covered by the state redesign doc. Version mismatch is invalid config —
@@ -263,7 +261,7 @@ See `state_redesign.md` § "Config validity — boot check and push check".
 No major/minor split. Binary header carries only the config CRC32 (precomputed
 by Pico after a valid push, returned by `CMD_GET_CONFIG`). On playback Pico
 compares CRC32 against its stored value — any mismatch is a rejection
-(`NACK_STREAM_CONFIG_MISMATCH = 0x04`), no exceptions. CRC32 gives negligible
+(`MSEG_NACK_CONFIG_MISMATCH`, see `wire_protocol.md`), no exceptions. CRC32 gives negligible
 false-match rate (1-in-4-billion). Struct layout divergence is prevented by
 the version field. CRC32 used for config packets; CRC8 stays for all other
 packets.
