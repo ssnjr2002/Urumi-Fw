@@ -20,9 +20,15 @@ MicroSegment = namedtuple("MicroSegment", [
     "flags",     # MICRO_PATH_END etc.
 ])
 
+# The flags byte is ONE namespace shared with the wire (see docs/wire_protocol.md).
+# Low bits are wire/firmware semantics, high bits are host planning hints the
+# firmware ignores:
+#   0x01 PATH_END (shared)   0x02 ESTOP (wire)   0x04 PAUSE (wire, sender-inserted)
+#   0x08 LIFT (host hint)    0x10 JOG (host hint)
+# JOG must NOT be 0x04 — that would alias every travel move onto MSEG_FLAG_PAUSE.
 MICRO_PATH_END = 0x01
-MICRO_JOG      = 0x04   # travel move between subpaths (0x02 reserved for ESTOP)
-MICRO_LIFT     = 0x08   # pen/tool Z raise or lower
+MICRO_LIFT     = 0x08   # pen/tool Z raise or lower (host hint)
+MICRO_JOG      = 0x10   # travel move between subpaths (host hint)
 
 
 def angle_delta(a, b):

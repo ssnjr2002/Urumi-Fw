@@ -72,10 +72,14 @@ NACK_FULL        = 0x02
 NACK_BAD_MAGIC   = 0x03
 
 # ── MicroSegment flags ────────────────────────────────────────────────────────
+# One byte, one namespace (see docs/wire_protocol.md). Low bits are wire/firmware
+# semantics; high bits (0x08 LIFT, 0x10 JOG; defined as MICRO_* in microsegment.py)
+# are host planning hints the firmware masks off.
 
 MSEG_FLAG_NONE     = 0x00
 MSEG_FLAG_PATH_END = 0x01
 MSEG_FLAG_ESTOP    = 0x02
+MSEG_FLAG_PAUSE    = 0x04   # sender-inserted at a tool-change boundary (single head)
 
 # ── SplineTile flags ──────────────────────────────────────────────────────────
 

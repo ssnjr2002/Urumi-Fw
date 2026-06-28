@@ -145,12 +145,23 @@ Extensible — future fields appended; version field governs layout.
 
 ## MSEG Flags (`flags` byte in MicroSegment)
 
-| Constant | Value | Description |
-|---|---|---|
-| `MSEG_FLAG_NONE` | `0x00` | No flags |
-| `MSEG_FLAG_PATH_END` | `0x01` | Last segment in path — Core 1 signals idle |
-| `MSEG_FLAG_ESTOP` | `0x02` | Poison pill — flush and halt immediately |
-| `MSEG_FLAG_PAUSE` | `0x04` | Predetermined pause point — Core 1 drains and enters PAUSED |
+One byte, one namespace. **Low bits (0x01–0x04) are wire/firmware semantics**;
+**high bits (0x08, 0x10) are host planning hints** carried in the stream for
+host-side analysis — the firmware masks them off (`flags & 0x07`).
+
+| Constant | Value | Owner | Description |
+|---|---|---|---|
+| `MSEG_FLAG_NONE` | `0x00` | — | No flags |
+| `MSEG_FLAG_PATH_END` | `0x01` | wire | Last segment in path — Core 1 signals idle |
+| `MSEG_FLAG_ESTOP` | `0x02` | wire | Poison pill — flush and halt immediately |
+| `MSEG_FLAG_PAUSE` | `0x04` | wire | Pause point — Core 1 drains and enters PAUSED. **Sender-inserted** at a single-head tool-change boundary; the planner never sets it. |
+| `MICRO_LIFT` | `0x08` | host | Z raise/lower segment (planning hint; firmware ignores) |
+| `MICRO_JOG` | `0x10` | host | Travel move between subpaths (planning hint; firmware ignores) |
+
+`MICRO_JOG` was `0x04` historically — that aliased every travel move onto
+`MSEG_FLAG_PAUSE`, so it moved to `0x10`. Firmware must mask to the low 3 bits
+before interpreting; setting `PAUSE` on a jog/lift packet leaves its host hint
+bits intact.
 
 ---
 
