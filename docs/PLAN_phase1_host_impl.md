@@ -384,11 +384,46 @@ operator frontend leads the host code, validated against a simulated Pico.
 
 ---
 
+## 10. Bus-driven, not axis-driven
+
+The guiding direction for the host. The config refactor already made the machine
+model **bus-first** — `BusNode` is the primitive and axes/heads/peripherals are
+*views* over nodes. The host follows the same lens instead of assuming a fixed
+X/Y/Z/A machine.
+
+**Realised in Phase 1 (static / construction — no firmware needed):**
+- `MachineConfig.present_axes()` enumerates the fitted axes from the config.
+- The GUI is **generated from the config's bus topology**: jog rows + status
+  readouts per present axis (units from `AxisConfig.rotary`, feeds from config);
+  a Peripherals panel with a row per non-axis `BusNode` in `machine.peripherals`.
+  Declare a suction node → it appears; drop an axis (`node.present = False`) → its
+  row vanishes. `host/sim_config.py` is the editable bus the simulator presents.
+- Peripherals are **presence-only** for now (pingable) — the wire protocol has no
+  peripheral actuation command yet.
+
+**Deferred to firmware time (live / dynamic):**
+- A live per-node status layer — `NodeStatus` (present/enabled/homed/position +
+  TMC driver faults), fetched via a future `getbus` query backed by a heartbeat
+  cache, surfaced as a GUI **Bus panel**. Bus health is an *orthogonal* layer
+  (parallel to operational state) that *feeds* ALARM. Pre-flight then becomes a
+  thin filter over the live bus rather than axis-mask plumbing.
+- Opening the current **4-axis-only gating** to arbitrary nodes.
+
+For now: presence via `pingnode` / ping-all, and per-axis `enabled`/`homed`
+gating from `getstate`. The point on record: the host is moving toward
+*"what nodes does this job need on the bus, and are they healthy"*, with axes as
+the first node category — not an axis-first machine with peripherals bolted on.
+
+---
+
 ## Open Items
 
 - ~~`CMD_GET_STATE` payload definition → wire_protocol.md (step 1)~~ ✓ done —
   frozen as the `getstate` text command.
-- `ToolProfile.required_peripheral_roles` + `select_head()` → add to config.py
-  (step 7).
+- ~~`ToolProfile.required_peripheral_roles` + `select_head()` → config.py~~ ✓ done.
 - `active_head` runtime-vs-plan separation → note only, revisit later.
 - SVG layer → tool mapping → Stage 1 ingest (step 8).
+- Live bus overview (`NodeStatus`/`getbus`/driver faults/Bus panel) → firmware
+  time (see §10).
+- Peripheral actuation commands (e.g. suction on/off) → wire-protocol addition
+  when the hardware is real.
