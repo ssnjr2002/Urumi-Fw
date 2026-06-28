@@ -280,7 +280,7 @@ class JogUI:
         accel_sps2 = max(feed * 8.0, 50.0) * ax.steps_per_unit   # gentle ramp
         packets = make_jog(tuple(vec), feed_sps, accel_sps2, self.machine.f_cpu)
         if packets:
-            self.jog_q.put((ax.node, packets))
+            self.jog_q.put((ax.node.node_id, packets))
             self._update_queue_label()
 
     def _update_queue_label(self):

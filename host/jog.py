@@ -14,6 +14,14 @@ Usage:
 
 Distances are mm for linear axes, degrees for the rotary A axis. Feed/accel are
 in the same units/s and units/s^2.
+
+KNOWN ISSUE — no velocity blending between consecutive jog commands:
+Each call generates a full accel→cruise→decel profile from rest to rest.
+Issuing multiple jogs in quick succession produces a pulsed motion profile
+(accel→move→decel / accel→move→decel) instead of a blended one
+(accel→move→move→decel). Fix requires the Pico to accept a jog target
+velocity and blend into the next command before the current move decelerates
+— this needs real-time jog planning, not fixed-distance pre-computed segments.
 """
 
 import sys, os, argparse, math
@@ -145,15 +153,15 @@ def main():
         ax = _axis_cfg(machine, args.axis)
         s = int(round(args.dist * ax.steps_per_unit)) * (-1 if ax.invert else 1)
         steps[_AXES.index(args.axis)] = s
-        nodes.add(ax.node)
+        nodes.add(ax.node.node_id)
         major_axis = args.axis
     else:
         if args.dx == 0.0 and args.dy == 0.0:
             ap.error("nothing to jog: pass --axis/--dist or --dx/--dy")
         steps[0] = int(round(args.dx * machine.x.steps_per_unit)) * (-1 if machine.x.invert else 1)
         steps[1] = int(round(args.dy * machine.y.steps_per_unit)) * (-1 if machine.y.invert else 1)
-        if steps[0]: nodes.add(machine.x.node)
-        if steps[1]: nodes.add(machine.y.node)
+        if steps[0]: nodes.add(machine.x.node.node_id)
+        if steps[1]: nodes.add(machine.y.node.node_id)
         # major axis for feed scaling = the longer leg
         major_axis = "x" if abs(steps[0]) >= abs(steps[1]) else "y"
 

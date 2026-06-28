@@ -127,8 +127,8 @@ def main():
     # Default to the real per-axis machine (honours Z=1200, A=120, etc.).
     # Scalar flags force a uniform machine only when explicitly given.
     if args.steps_per_mm is not None or args.steps_per_deg is not None:
-        spm = args.steps_per_mm if args.steps_per_mm is not None else cfg.machine.steps_per_mm
-        spd = args.steps_per_deg if args.steps_per_deg is not None else cfg.machine.steps_per_deg
+        spm = args.steps_per_mm if args.steps_per_mm is not None else cfg.machine.x.steps_per_unit
+        spd = args.steps_per_deg if args.steps_per_deg is not None else cfg.machine.a.steps_per_unit
         machine = MachineConfig.uniform(spm, spd, args.f_cpu)
     else:
         machine = cfg.machine
