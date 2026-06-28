@@ -30,7 +30,7 @@ from microsegment import MICRO_JOG, MICRO_LIFT, MICRO_PATH_END
 from sample import PATH_START, PATH_END
 from config import default as config_default, MachineConfig, KNIFE, PEN
 
-JOG_FEED = config_default().motion.jog_feed
+JOG_FEED = config_default().machine.jog_feed
 
 
 # ── result plumbing ─────────────────────────────────────────────────────────────
@@ -146,23 +146,41 @@ def check_velocity_ceiling(segments, machine, feed_max, jog_feed, eps=0.05):
     return c
 
 
-def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
+def check_acceleration(segments, machine, a_max, slack=1.5, window_mm=1.0):
     """
-    Acceleration estimated over a small distance window via a = |v_i^2-v_j^2|/(2d),
+    Acceleration estimated over a distance window via a = |v_i^2-v_j^2|/(2d),
     NOT per-segment dv/dt. Discretize's velocity-aware subdivision produces uneven
     segment sizes — a lone 1-step segment between larger ones has a tiny dt that
-    makes a per-pair dv/dt explode even when the continuous profile respects a_max.
-    The distance-window kinematic estimate is robust to that quantization.
+    makes a per-pair dv/dt explode even when the continuous profile respects the
+    accel limit. The distance-window kinematic estimate is robust to that
+    quantization.
 
-    Slack is 2.0 to absorb two effects that legitimately push the measured tool
-    acceleration above the scalar a_max: (1) per-axis accel projection lets the
-    tool accelerate up to ~sqrt(2)*a_max on a diagonal while each axis stays within
-    its own limit, and (2) discretize interpolates v linearly within a sample pair,
-    so a window straddling a corner's v=0 dip reads a slightly high a. The Plan
-    stage itself is acceleration-continuous at the samples; this slack covers the
-    discretization, not a planning gap.
+    window_mm is 1.0 (not a fraction of a mm): the per-segment velocity is
+    RECONSTRUCTED from quantized step counts and the interval, so on short
+    segments (a few steps) it carries quantization noise — adjacent near-identical
+    segments can read v = 55, 71, 55 mm/s purely because the major axis flips
+    between 1 and 2 steps. A sub-mm window divides the difference of two noisy
+    reconstructions by a tiny distance and reports a spurious spike (6 kmm/s^2 on
+    a path actually cruising at 80). Averaging over ~1 mm washes the quantization
+    noise out and converges on the true planned accel — a window sweep shows the
+    estimate decaying toward the planar bound as it widens.
+
+    Ceiling is the true PLANAR accel bound hypot(x.accel, y.accel), not the scalar
+    a_max: per-axis accel projection lets the tool accelerate up to that magnitude
+    on a diagonal while each axis stays within its own limit (a pure 45° move at
+    x.accel == y.accel reaches sqrt(2)*a_max). Putting the diagonal in the BOUND
+    instead of a fudge slack keeps the check honest — it would still catch a
+    genuine over-acceleration. The residual `slack` covers only discretization:
+    discretize interpolates v linearly within a sample pair, so a window straddling
+    a corner's v=0 dip reads a slightly high a. The Plan stage itself is
+    acceleration-continuous at the samples.
+
+    a_max is retained only for the report line / as a fallback when the machine
+    carries no per-axis accel (uniform machine with accel == 0).
     """
     c = Check("acceleration continuity")
+    planar = math.hypot(machine.x.accel, machine.y.accel)
+    ceiling = planar if planar > 0 else a_max
     vs = [seg_kinematics(s, machine)[2] for s in segments]
     worst = 0.0
     for i in range(len(segments)):
@@ -180,10 +198,10 @@ def check_acceleration(segments, machine, a_max, slack=2.0, window_mm=0.2):
             continue
         a = abs(vs[i]**2 - vs[j]**2) / (2 * dist)
         worst = max(worst, a)
-        if a > a_max * slack:
-            c.fail(f"a = {a:.0f} > a_max {a_max} mm/s^2 (x{slack} slack)")
+        if a > ceiling * slack:
+            c.fail(f"a = {a:.0f} > planar accel {ceiling:.0f} mm/s^2 (x{slack} slack)")
     if c.passed:
-        c.ok(f"peak {worst:.0f} mm/s^2 <= {a_max}x{slack}")
+        c.ok(f"peak {worst:.0f} mm/s^2 <= {ceiling:.0f}x{slack}")
     return c
 
 
@@ -342,8 +360,8 @@ def main():
     ap.add_argument("--steps-per-deg", type=float, default=None,
                     help="Override A steps/deg (default: real per-axis config)")
     ap.add_argument("--f-cpu",         type=int,   default=cfg.machine.f_cpu)
-    ap.add_argument("--feed-max",      type=float, default=cfg.motion.feed_max)
-    ap.add_argument("--a-max",         type=float, default=cfg.motion.a_max)
+    ap.add_argument("--feed-max",      type=float, default=KNIFE.feed_max)
+    ap.add_argument("--a-max",         type=float, default=cfg.machine.x.accel)
     ap.add_argument("--angle-tol",     type=float, default=cfg.quality.angle_tol)
     ap.add_argument("--gap-tol",       type=float, default=cfg.quality.gap_tol)
     ap.add_argument("--geom-tol",      type=float, default=0.2,

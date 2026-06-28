@@ -32,7 +32,7 @@ from serialise import serialise_microsegments
 from config import default as config_default, MachineConfig, KNIFE, PEN
 
 
-def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
+def run(svg_path, machine, feed_max=None, a_max=None, angle_tol=None, gap_tol=None,
         jog_feed=None, quality=None, lift_height=0.0, z_feed=None,
         tangential=True, profile=None):
     """
@@ -41,6 +41,8 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
     Returns list of 26-byte bytes objects.
 
     quality defaults to config.default().quality.
+    feed_max defaults to the tool's profile.feed_max (cut-feed target).
+    a_max defaults to machine.x.accel (XY-plane ramp/centripetal accel).
     lift_height > 0 enables Z pen-lift between subpaths.
     profile — the ToolProfile (KNIFE/CREASE/PEN); carries tangent tracking,
     corner threshold, AND the unwind flag (wire protection). When None it is
@@ -53,6 +55,10 @@ def run(svg_path, machine, feed_max, a_max, angle_tol, gap_tol,
     if profile is None:
         profile = KNIFE if tangential else PEN
     tangential = profile.tangential
+    if feed_max is None:
+        feed_max = profile.feed_max
+    if a_max is None:
+        a_max = machine.x.accel
 
     # Stage 2: SVG → mm subpaths.  Stage 3: C1 continuity repair.
     subpaths_mm, _ = load_svg_mm_subpaths(svg_path)
@@ -89,13 +95,13 @@ def main():
     parser.add_argument("--out",            help="Write to file instead of stdout")
     parser.add_argument("--summary",        action="store_true",
                         help="Print stats to stderr only, no binary output")
-    parser.add_argument("--feed-max",       type=float, default=cfg.motion.feed_max,
-                        help="Max feed rate mm/s")
-    parser.add_argument("--a-max",          type=float, default=cfg.motion.a_max,
-                        help="Acceleration mm/s²")
+    parser.add_argument("--feed-max",       type=float, default=None,
+                        help="Cut feed mm/s (default: tool's profile feed_max)")
+    parser.add_argument("--a-max",          type=float, default=None,
+                        help="Acceleration mm/s² (default: machine X accel)")
     parser.add_argument("--jog-feed",       type=float, default=None,
                         help="Travel speed between subpaths, mm/s")
-    parser.add_argument("--lift-height",    type=float, default=cfg.motion.lift_height,
+    parser.add_argument("--lift-height",    type=float, default=0.0,
                         help="Pen/tool Z lift between subpaths, mm (0 = draw through)")
     parser.add_argument("--z-feed",         type=float, default=None,
                         help="Z raise/lower speed, mm/s")

@@ -9,10 +9,19 @@ stage remains independently runnable and debuggable.
 Three tiers, mirroring the host/local-production split:
 
   machine — calibration / controller-physical, now PER-AXIS. MUST match the
-            Pico when microsegment generation runs locally on the RP2350.
-  motion  — kinematic limits (feed / acceleration / jog).
+            Pico when microsegment generation runs locally on the RP2350. Also
+            carries machine-level travel defaults (jog_feed, z_feed).
   quality — algorithm tuning. This tier is the parity spec the future C++ port
-            must reproduce to emit identical microsegments.
+            must reproduce to emit identical microsegments. Carries
+            junction_deviation (corner-rounding budget).
+  tool    — ToolProfile: per-tool kinematic behaviour AND the programmed cut
+            feed (feed_max). The tool is a TARGET source; physical ceilings live
+            on AxisConfig (max_rate/accel) and are enforced regardless.
+
+MotionConfig retired: feed_max → ToolProfile (cut-feed target, not a limit);
+jog_feed/z_feed → MachineConfig (machine-level travel defaults);
+junction_deviation → QualityConfig; a_max → AxisConfig.accel (per-axis, the XY
+plane accel — X and Y share the value).
 
 TOML loading (load()) is intentionally deferred — default() is the only source
 for now.
@@ -36,11 +45,11 @@ class AxisConfig:
     axis->node map that previously lived only as prose in the PLAN docs.
 
     max_rate / accel / max_travel describe the axis's physical capability and
-    work envelope. They are the eventual source for per-axis velocity planning
-    and soft-limit (envelope) checks.
-    NOTE: the current stage5/stage6 pipeline still plans with the SCALAR
-    MotionConfig.{feed_max,a_max}; these per-axis limits are carried by the
-    config but not yet consumed. See the MachineConfig scalar-bridge note.
+    work envelope. accel is the per-axis acceleration the planner ramps with
+    (the XY value is what the old scalar a_max held); max_rate is the physical
+    velocity ceiling that clamps every programmed feed (cut feed_max and travel
+    jog_feed alike) — so a slow Z stays within its limit while XY run faster.
+    max_travel feeds soft-limit (envelope) checks.
     """
     node:           int            # ATtiny node id (1-4) driving this axis
     steps_per_unit: float          # steps/mm (linear) or steps/deg (rotary)
@@ -73,6 +82,10 @@ class MachineConfig:
     z: AxisConfig
     a: AxisConfig
     f_cpu: int = 150_000_000   # RP2350 clock Hz — the domain `interval` is expressed in
+    # Machine-level travel defaults (a ToolProfile may override per tool). These
+    # are TARGETS; AxisConfig.max_rate still clamps them per axis.
+    jog_feed: float = 80.0     # mm/s — XY travel speed between subpaths
+    z_feed:   float = 20.0     # mm/s — Z raise/lower speed
 
     @classmethod
     def uniform(cls, steps_per_mm, steps_per_deg, f_cpu=150_000_000,
@@ -108,23 +121,6 @@ class MachineConfig:
     @property
     def steps_per_deg(self) -> float:
         return self.a.steps_per_unit
-
-
-# ── motion + quality tiers ────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class MotionConfig:
-    """
-    Kinematic limits the SCALAR planner currently consumes.
-    When stage5 goes per-axis, a_max is derived from AxisConfig and retires here;
-    feed_max becomes the default programmed feed only.
-    """
-    feed_max: float = 80.0      # mm/s — cruise ceiling
-    a_max:    float = 1000.0    # mm/s^2
-    jog_feed: float = 80.0      # mm/s — travel between subpaths
-    junction_deviation: float = 0.05   # mm — max corner rounding for junction-deviation cornering
-    lift_height: float = 0.0    # mm — pen/tool lift between subpaths (0 = no lift, draw-through)
-    z_feed:      float = 20.0   # mm/s — Z raise/lower speed
 
 
 # ── tool tier ─────────────────────────────────────────────────────────────────
@@ -169,9 +165,11 @@ class ToolProfile:
                                      # False = free-spinning tool (crease wheel).
     corner_angle_deg: float = 20.0   # tangent jump above which a corner action fires
     min_radius_mm:   float = 0.0     # curvature floor; tighter arcs need special handling (0 = unset)
+    feed_max:        float = 80.0    # mm/s — programmed cut feed (TARGET, not a limit;
+                                     # AxisConfig.max_rate still clamps it per axis)
     lift_height:     float = 0.0     # Z lift between subpaths, mm (0 = draw-through)
-    z_feed:          float = 0.0     # Z raise/lower speed, mm/s (0 = use MotionConfig default)
-    jog_feed:        float = 0.0     # travel speed between subpaths, mm/s (0 = use MotionConfig default)
+    z_feed:          float = 0.0     # Z raise/lower speed, mm/s (0 = use MachineConfig.z_feed)
+    jog_feed:        float = 0.0     # travel speed between subpaths, mm/s (0 = use MachineConfig.jog_feed)
 
     @property
     def needs_offset_comp(self) -> bool:
@@ -209,6 +207,9 @@ class QualityConfig:
     angle_tol: float = 5.0      # deg — C1 continuity tolerance (stage 3)
     gap_tol:   float = 0.01     # mm — join gap tolerance (stage 3)
     n_kappa:   int   = 20       # curvature samples per curve (stage 4)
+    junction_deviation: float = 0.05   # mm — corner-rounding budget for the
+                                # GRBL junction-deviation cornering cap (constrain
+                                # stage). Algorithm tuning, so it lives here.
     ds_max:    float = 0.5      # mm — max spacing between flattened samples
                                 # (redesign Flatten stage). Caps sample spacing so
                                 # the look-ahead velocity passes have enough
@@ -249,7 +250,8 @@ def _default_machine() -> MachineConfig:
         x=AxisConfig(node=1, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0, invert=True),
         y=AxisConfig(node=2, steps_per_unit=160.0,  max_rate=80.0, accel=1000.0),
         z=AxisConfig(node=3, steps_per_unit=1200.0, max_rate=10.0, invert=True),    # PLACEHOLDER mm/s
-        a=AxisConfig(node=4, steps_per_unit=51.667, rotary=True, max_rate=100.0,
+        # a=AxisConfig(node=4, steps_per_unit=51.667, rotary=True, max_rate=100.0,
+        a=AxisConfig(node=4, steps_per_unit=8.890, rotary=True, max_rate=100.0,
                      accel=2000.0, invert=True),  # PLACEHOLDER deg/s & deg/s^2;
         # invert confirmed by corner cut (vert edges flipped). a.accel bounds the
         # tangential A axis directly: it caps in-cut tracking acceleration (so the
@@ -263,7 +265,6 @@ def _default_machine() -> MachineConfig:
 @dataclass(frozen=True)
 class PipelineConfig:
     machine: MachineConfig = field(default_factory=_default_machine)
-    motion:  MotionConfig  = field(default_factory=MotionConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
 
 

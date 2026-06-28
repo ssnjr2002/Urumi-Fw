@@ -84,11 +84,11 @@ def _seg_accel(s0, s1, machine, a_max):
 def plan(samples, machine, a_max=None):
     """
     Resolve sample.v in place via the backward+forward look-ahead. Returns the
-    list. a_max defaults to config.default().motion.a_max (the scalar fallback /
-    centripetal accel; per-axis accels in `machine` override it per segment).
+    list. a_max defaults to config.default().machine.x.accel (the XY-plane accel
+    fallback; per-axis accels in `machine` override it per segment).
     """
     if a_max is None:
-        a_max = _config_default().motion.a_max
+        a_max = _config_default().machine.x.accel
 
     for lo, hi in _subpath_ranges(samples):
         # init from ceilings; pin the endpoints to rest
@@ -129,12 +129,13 @@ if __name__ == "__main__":
     from stage3 import enforce_c1
     from flatten import flatten
     from constrain import constrain
+    from config import PEN
 
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Plan stage: look-ahead feedrate")
     parser.add_argument("svg", help="Path to SVG file")
-    parser.add_argument("--feed-max", type=float, default=cfg.motion.feed_max)
-    parser.add_argument("--a-max",    type=float, default=cfg.motion.a_max)
+    parser.add_argument("--feed-max", type=float, default=PEN.feed_max)
+    parser.add_argument("--a-max",    type=float, default=cfg.machine.x.accel)
     parser.add_argument("--a-rate",   type=float, default=cfg.machine.a.max_rate)
     parser.add_argument("--corner-stop", type=float, default=20.0)
     args = parser.parse_args()

@@ -25,7 +25,7 @@ import math
 import argparse
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
-from config import default as _config_default
+from config import default as _config_default, PEN
 from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 
 # κ-discontinuity flags: a finite difference of curvature must not straddle a
@@ -95,10 +95,10 @@ def constrain(samples, feed_max, a_max, a_rate_deg_s=0.0, a_accel_deg_s2=0.0,
                 is forced to 0 so the tool can lift-pivot there. None disables
                 forced stops (e.g. a pen corners via junction deviation only).
     junction_deviation — corner-rounding budget (mm); defaults to
-                config.default().motion.junction_deviation.
+                config.default().quality.junction_deviation.
     """
     if junction_deviation is None:
-        junction_deviation = _config_default().motion.junction_deviation
+        junction_deviation = _config_default().quality.junction_deviation
     a_rate_rad = math.radians(a_rate_deg_s)  if a_rate_deg_s  > 0.0 else 0.0
     a_acc_rad  = math.radians(a_accel_deg_s2) if a_accel_deg_s2 > 0.0 else 0.0
 
@@ -139,8 +139,8 @@ if __name__ == "__main__":
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Constrain stage: per-sample v ceiling")
     parser.add_argument("svg", help="Path to SVG file")
-    parser.add_argument("--feed-max", type=float, default=cfg.motion.feed_max)
-    parser.add_argument("--a-max",    type=float, default=cfg.motion.a_max)
+    parser.add_argument("--feed-max", type=float, default=PEN.feed_max)
+    parser.add_argument("--a-max",    type=float, default=cfg.machine.x.accel)
     parser.add_argument("--a-rate",   type=float, default=cfg.machine.a.max_rate)
     parser.add_argument("--a-accel",  type=float, default=cfg.machine.a.accel)
     parser.add_argument("--corner-stop", type=float, default=20.0)

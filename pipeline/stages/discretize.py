@@ -51,7 +51,7 @@ def discretize(samples, machine, profile=None, quality=None, a_max=None,
               from the per-sample v, so a_max is unused here (the ramp is already
               baked into v by the Plan stage). Accepted and ignored.
     jog_feed / lift_height / z_feed — explicit overrides; None falls back to the
-              profile, then to MotionConfig defaults.
+              profile, then to MachineConfig defaults (jog_feed, z_feed).
     """
     if profile is None:
         profile = PEN
@@ -69,11 +69,11 @@ def discretize(samples, machine, profile=None, quality=None, a_max=None,
     unwind       = profile.unwind
 
     if jog_feed is None:
-        jog_feed = profile.jog_feed or _cfg.motion.jog_feed
+        jog_feed = profile.jog_feed or machine.jog_feed
     if lift_height is None:
-        lift_height = profile.lift_height or _cfg.motion.lift_height
+        lift_height = profile.lift_height          # 0 = draw-through, no fallback
     if z_feed is None:
-        z_feed = profile.z_feed or _cfg.motion.z_feed
+        z_feed = profile.z_feed or machine.z_feed
 
     x_spu = machine.x.steps_per_unit
     y_spu = machine.y.steps_per_unit
@@ -263,13 +263,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Discretize: SVG -> MicroSegments (redesign)")
     parser.add_argument("svg", help="Path to SVG file")
     parser.add_argument("--tool",        default="knife", choices=list(TOOL_PROFILES))
-    parser.add_argument("--feed-max",    type=float, default=cfg.motion.feed_max)
-    parser.add_argument("--a-max",       type=float, default=cfg.motion.a_max)
+    parser.add_argument("--feed-max",    type=float, default=None,
+                        help="Cut feed mm/s (default: selected tool's feed_max)")
+    parser.add_argument("--a-max",       type=float, default=cfg.machine.x.accel)
     parser.add_argument("--lift-height", type=float, default=None)
     args = parser.parse_args()
 
     machine = cfg.machine
     profile = TOOL_PROFILES[args.tool]
+    feed_max = args.feed_max if args.feed_max is not None else profile.feed_max
     a_rate  = machine.a.max_rate if profile.tangential else 0.0
     a_accel = machine.a.accel    if profile.tangential else 0.0
     corner  = profile.corner_angle_deg if profile.tangential else None
@@ -277,7 +279,7 @@ if __name__ == "__main__":
     subpaths_mm, _ = load_svg_mm_subpaths(args.svg)
     repaired = [enforce_c1(sp)[0] for sp in subpaths_mm]
     samples  = flatten(repaired, quality=cfg.quality)
-    constrain(samples, args.feed_max, args.a_max, a_rate_deg_s=a_rate,
+    constrain(samples, feed_max, args.a_max, a_rate_deg_s=a_rate,
               a_accel_deg_s2=a_accel, corner_stop_angle_deg=corner)
     plan(samples, machine, a_max=args.a_max)
     segs = discretize(samples, machine, profile=profile, quality=cfg.quality,
