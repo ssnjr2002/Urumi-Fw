@@ -32,8 +32,12 @@ src/
     shared.h          — cross-core globals, Segment struct, ring buffer
     RS485Bus.h/.cpp   — PIO 9-bit UART abstraction
     uart_9bit.pio.h   — auto-generated PIO state machine header
-  attiny3224/
+  node/
     main.cpp          — slave node firmware (ISR-driven)
+    isr.cpp           — interrupt handlers
+    protocol.h        — node-side protocol
+    attiny3224/       — ATtiny3224 board-specific config
+    avr128db32/       — AVR128DB32 board-specific config + drivers
 include/
   common.h            — protocol constants, CMD_* defines, CRC8
 platformio.ini        — build targets: node1–node4 (ATtiny), pico (RP2350)
@@ -124,7 +128,7 @@ move <numMotors> <nodeId…> <steps…> <v_entry> <v_cruise> <v_exit> <accel>
 
 ---
 
-## ATtiny3224 Slave Node (`src/attiny3224/main.cpp`)
+## Slave Node (`src/node/main.cpp`)
 
 **Node ID** set at compile time: `-DNODE_ID=<1–4>` (platformio.ini per-env flag)
 
