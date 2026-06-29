@@ -180,6 +180,19 @@ def stamp_seq(packet: bytes, seq: int) -> bytes:
     return bytes(body) + bytes([_crc8(body)])
 
 
+def with_flag(packet: bytes, flag: int) -> bytes:
+    """
+    Copy of a 26-byte MSEG/jog packet with `flag` OR'd into the flags byte [21]
+    and the CRC recomputed. The sender uses this to mark a tool-change boundary
+    with MSEG_FLAG_PAUSE without disturbing the packet's host hint bits.
+    """
+    if len(packet) != 26:
+        raise ValueError("with_flag: not a 26-byte packet")
+    body = bytearray(packet[:25])
+    body[21] |= flag & 0xFF
+    return bytes(body) + bytes([_crc8(body)])
+
+
 def unpack_microsegment(data: bytes):
     """
     Unpack a 26-byte wire packet into a dict. Raises ValueError on bad magic/CRC.

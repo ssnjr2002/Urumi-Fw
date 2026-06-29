@@ -58,27 +58,42 @@ def _required_axis_nodes(machine, profile, head):
     return nodes
 
 
-def preflight(link, machine, profile) -> Preflight:
-    """Ordered pre-flight checks for a job using `profile` on `machine`."""
+def preflight(link, machine, profile, head_index=None, require_idle=True) -> Preflight:
+    """
+    Ordered pre-flight checks for a job using `profile` on `machine`.
+
+    head_index — which head will carry the tool. None (default) resolves it from
+    the config by tool name (select_head) and asserts the tool is configured on a
+    head — the static/dual-head case. The single-head sender passes the active
+    head explicitly: the mounted tool changes at runtime via swaps, so tool
+    IDENTITY is operator-confirmed (not a config check) and only the head's axes
+    are validated here.
+
+    require_idle — the upfront gate wants STATE_IDLE; a per-activation check
+    during a tool-change PAUSE passes require_idle=False (machine is PAUSED).
+    """
     pf = Preflight()
 
     # 1. Pico alive
     if not pf.add("pico alive", cmd.ping(link)):
         return pf
 
-    # 2. Pico ready (IDLE)
+    # 2. Pico ready
     st = cmd.get_state(link)
-    if not pf.add("pico ready", st.state == MachineState.IDLE,
-                  f"state={st.state.name}"):
+    if require_idle and not pf.add("pico ready", st.state == MachineState.IDLE,
+                                   f"state={st.state.name}"):
         return pf
 
-    # Tool mounted? (which head carries this tool) — gates the node lookups
-    try:
-        head = machine.heads[select_head(machine, profile.name)]
-    except ValueError as e:
-        pf.add(f"tool '{profile.name}' mounted", False, str(e))
-        return pf
-    pf.add(f"tool '{profile.name}' mounted", True, f"x_offset={head.x_offset}")
+    # Which head carries the tool?
+    if head_index is None:
+        try:
+            head = machine.heads[select_head(machine, profile.name)]
+        except ValueError as e:
+            pf.add(f"tool '{profile.name}' mounted", False, str(e))
+            return pf
+        pf.add(f"tool '{profile.name}' mounted", True, f"x_offset={head.x_offset}")
+    else:
+        head = machine.heads[head_index]   # tool identity operator-confirmed
 
     # 3. Required axis nodes present on the bus
     for ax, nid in _required_axis_nodes(machine, profile, head).items():

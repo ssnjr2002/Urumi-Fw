@@ -102,14 +102,20 @@ class SimBackend:
         except Exception:
             return                            # not a recognised packet — drop
         with self._lock:
-            if not self._executing and self.state in (MachineState.IDLE, MachineState.PAUSED):
-                # a jog issued during PAUSE returns to PAUSED; a job from IDLE → IDLE
-                self._return_state = self.state
+            if self.state in (MachineState.ALARM, MachineState.HOMING):
+                return                        # stream not accepted in these states
+            if not self._executing:
+                # start a burst. From IDLE → returns to IDLE (a job). From PAUSED
+                # → a jog during pause, returns to PAUSED. From RUNNING → the
+                # resumed continuation after a tool-change PAUSE; returns to IDLE.
+                self._return_state = (MachineState.PAUSED
+                                      if self.state == MachineState.PAUSED
+                                      else MachineState.IDLE)
                 self.running = (RunningReason.JOG if self.state == MachineState.PAUSED
                                 else RunningReason.JOB)
                 self.state = MachineState.RUNNING
                 self._executing = True
-            self._motion.append((ms["dx"], ms["dy"], ms["dz"], ms["da"]))
+            self._motion.append((ms["dx"], ms["dy"], ms["dz"], ms["da"], ms["flags"]))
 
     def readline(self, timeout=1.0) -> bytes:
         with self._lock:
@@ -132,9 +138,13 @@ class SimBackend:
                     continue
                 n = max(1, len(self._motion) // self._CHUNK_DIV)
                 for _ in range(min(n, len(self._motion))):
-                    dx, dy, dz, da = self._motion.popleft()
+                    dx, dy, dz, da, flags = self._motion.popleft()
                     self.pos[0] += dx; self.pos[1] += dy
                     self.pos[2] += dz; self.pos[3] += da
+                    if flags & 0x04:          # MSEG_FLAG_PAUSE — predetermined stop
+                        self.state = MachineState.PAUSED
+                        self._executing = False   # resume + next stream starts anew
+                        break
 
     # one place that mirrors the control-plane behaviour (called under _lock)
     def _handle(self, line: str) -> str:
