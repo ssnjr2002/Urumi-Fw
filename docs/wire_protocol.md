@@ -212,6 +212,7 @@ prefixed `0x`.
 | `cancel` | — | `ok` | Abandon the paused job → IDLE |
 | `stop` | — | `ok` | Emergency stop — flush, ALARM(ESTOP); always available |
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved) |
+| `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`) and ACK echo (`pktSeq`). Host sends this before each MSEG/jog stream so packet index 0 lines up. See "Duplicate guard" below. |
 
 ### `getstate` reply fields
 
@@ -231,6 +232,17 @@ know what is blocking a resume. (It is the Phase 1 subset of what the Phase 2
 the host parser tolerates later additions.
 
 ---
+
+### Duplicate guard (MSEG / jog seq)
+
+Each MSEG/jog packet carries a rolling 8-bit seq in byte [22]. The Go-Back-N
+sender, on a NACK, rewinds to `base` and resends packets that were in flight
+behind the rejected one — packets the Pico may have already accepted. The Pico
+tracks `expectedSeq`; a packet whose seq it has already consumed is ACKed (so the
+host window advances) but **not executed again** (re-executing = a permanent
+position offset). `seqreset` zeroes both `expectedSeq` and the `pktSeq` ACK echo
+at the start of each stream so both sides agree where seq 0 is. The host issues it
+before every `send_stream` (one per operation in a multi-tool plan).
 
 ## Command Allowed-State Matrix
 
