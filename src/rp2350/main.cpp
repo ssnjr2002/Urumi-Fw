@@ -49,10 +49,23 @@ MicroSegment masterBuf[MASTER_BUF_SIZE];
 volatile uint16_t mBufHead = 0;
 volatile uint16_t mBufTail = 0;
 
-// Machine state + position (see shared.h for the transition map)
-volatile uint8_t machineState  = STATE_IDLE;
-volatile int32_t machinePos[4] = {0, 0, 0, 0};   // X, Y, Z, A steps
-volatile bool    positionValid = false;          // unknown until first setorigin
+// Machine state + reason codes (see shared.h for the transition map)
+volatile uint8_t machineState   = STATE_IDLE;
+volatile uint8_t alarmReason    = ALARM_NONE;
+volatile uint8_t runningReason  = RUNNING_JOB;
+
+// Position model (Layer 4) — counts always retained; bits say the datum is known
+volatile int32_t machinePos[4]  = {0, 0, 0, 0};   // X, Y, Z, A steps
+volatile uint8_t axes_homed     = 0;              // none homed until first setorigin
+volatile uint8_t axes_enabled   = 0;              // none energised until enable
+
+// Paused-job context (slimmed for Phase 1 — see shared.h)
+volatile bool    jobActive      = false;
+volatile int32_t resumePos[4]   = {0, 0, 0, 0};
+
+// Inter-core request flags
+volatile bool    pauseRequested = false;
+volatile bool    streamIsJog    = false;
 
 // Job timing diagnostic (see shared.h) — gated behind DEBUG_TIMING
 #ifdef DEBUG_TIMING

@@ -8,7 +8,6 @@
 
 static char     serialRxBuf[128];
 static uint8_t  serialRxLen   = 0;
-static bool     bufWasFull    = false;
 
 // Binary ingest state machine
 static uint8_t  pktBuf[MSEG_PACKET_SIZE];
@@ -40,148 +39,219 @@ static void sendNack(uint8_t reason) {
 
 // ─── Command Handlers ─────────────────────────────────────────────────────────
 
+// ─── State predicates ─────────────────────────────────────────────────────────
+
+static inline bool stateIs(uint8_t a, uint8_t b, uint8_t c) {
+    uint8_t s = machineState;
+    return s == a || s == b || s == c;
+}
+
+// Relay a single-node command to Core 1 (which owns the RS485 bus) and block for
+// its result, so the control-plane reply is synchronous. Returns true if the node
+// responded (PONG/ACK) within the timeout. Not used for GET_POS (Core 1 pushes an
+// extra word for that — host getpos reads machinePos directly instead).
+static bool relayNode(uint8_t cmd, uint8_t node) {
+    multicore_fifo_push_blocking(((uint32_t)cmd << 8) | node);
+    uint32_t resp = multicore_fifo_pop_blocking();
+    return (resp & 0xFFFF) != 0;
+}
+
+// Map an axes string ("xyza", "xy", …) to a bitmask. Empty/absent → all axes.
+static uint8_t axisMask(const char* s) {
+    if (!s || !*s) return 0x0F;
+    uint8_t m = 0;
+    for (; *s; s++) {
+        switch (*s) {
+            case 'x': case 'X': m |= 0x01; break;
+            case 'y': case 'Y': m |= 0x02; break;
+            case 'z': case 'Z': m |= 0x04; break;
+            case 'a': case 'A': m |= 0x08; break;
+        }
+    }
+    return m ? m : 0x0F;
+}
+
 static const char* stateName(uint8_t s) {
     switch (s) {
         case STATE_IDLE:    return "IDLE";
         case STATE_RUNNING: return "RUNNING";
         case STATE_ESTOP:   return "ESTOP";
         case STATE_ALARM:   return "ALARM";
+        case STATE_PAUSED:  return "PAUSED";
+        case STATE_HOMING:  return "HOMING";
         default:            return "?";
     }
 }
 
-static bool handleControlCommand(const String& input) {
+// Skip the command word and any spaces, returning a pointer to the first arg.
+static const char* argAfter(const String& input, int wordLen) {
+    const char* p = input.c_str() + wordLen;
+    while (*p == ' ') p++;
+    return p;
+}
+
+// Handle one control-plane text line. Replies with exactly one line per the wire
+// contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
+static bool handleCommand(const String& input) {
+
+    // ── always available ──────────────────────────────────────────────────────
+    if (input == "ping") { Serial.println("pong"); return true; }
+
+    if (input == "getstate") {
+        Serial.printf("state=%d enabled=0x%02x homed=0x%02x alarm=%d running=%d\n",
+                      machineState, axes_enabled, axes_homed, alarmReason, runningReason);
+        return true;
+    }
+    if (input == "getpos") {
+        Serial.printf("pos %ld %ld %ld %ld\n",
+                      (long)machinePos[0], (long)machinePos[1],
+                      (long)machinePos[2], (long)machinePos[3]);
+        return true;
+    }
     if (input == "stop") {
-        machineState = STATE_ESTOP;            // Core 1 flushes and drops to ALARM
-        Serial.println("!!! STOP DETECTED !!!");
+        machineState = STATE_ESTOP;            // Core 1 flushes, clears axes, → ALARM
+        Serial.println("ok");
         return true;
     }
-    if (input.startsWith("unalarm")) {
-        // Acknowledge the alarm but leave position invalid — use setorigin to
-        // re-establish a known origin before running again.
-        if (machineState == STATE_ALARM || machineState == STATE_ESTOP)
-            machineState = STATE_IDLE;
-        Serial.println("Alarm cleared! (position still invalid — run setorigin)");
-        return true;
-    }
-    if (input == "setorigin") {
-        if (machineState == STATE_RUNNING) {
-            Serial.println("Error: cannot set origin while RUNNING");
-            return true;
-        }
-        machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
-        positionValid = true;
-        if (machineState == STATE_ALARM) machineState = STATE_IDLE;
-        Serial.println("Origin set");
-        return true;
-    }
-    if (input == "seqreset") {
-        // Host sends this before every stream so its packet index 0 lines up
-        // with our duplicate-guard expectation. Also resets the ACK echo.
+    if (input == "seqreset") {                 // data-plane support (see wire doc)
         expectedSeq = 0;
         pktSeq      = 0;
         Serial.println("seq reset");
         return true;
     }
-    if (input == "status" || input == "?") {
-        uint8_t s = machineState;
-        Serial.printf("state=%s pos=%ld,%ld,%ld,%ld valid=%d buf=%u/%u",
-                      stateName(s),
+    if (input == "status" || input == "?") {   // human-readable alias (not host-facing)
+        Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u\n",
+                      stateName(machineState),
                       (long)machinePos[0], (long)machinePos[1],
                       (long)machinePos[2], (long)machinePos[3],
-                      positionValid ? 1 : 0,
-                      getBufCount(), MASTER_BUF_SIZE);
-#ifdef DEBUG_TIMING
-        Serial.printf(" texp=%lu tmeas=%lu twall=%lu",
-                      (unsigned long)jobExpectedUs,
-                      (unsigned long)jobMeasuredUs,
-                      (unsigned long)jobWallUs);
-#endif
-        Serial.printf("\n");
-        return true;
-    }
-    return false;
-}
-
-static bool handleNonStreamingCommand(const String& input) {
-    bool isCommand = input.startsWith("ping")    ||
-                     input.startsWith("enable")  ||
-                     input.startsWith("disable") ||
-                     input.startsWith("getpos")  ||
-                     input.startsWith("step")    ||
-                     input.startsWith("suction");
-
-    if (!isCommand) return false;
-
-    if (!multicore_fifo_wready()) {
-        Serial.println("Error: Command queue full.");
+                      axes_homed, axes_enabled, getBufCount(), MASTER_BUF_SIZE);
         return true;
     }
 
-    if (input.startsWith("ping all")) {
-        Serial.println("Queued PING ALL sequence...");
-        for (uint8_t i = 1; i <= 4; i++) multicore_fifo_push_blocking((CMD_PING << 8) | i);
+    // ── pingnode [all|<id>] — relay an RS485 ping (IDLE/PAUSED/ALARM) ──────────
+    // Bare / `all` pings nodes 1-4 (one reply line each, bring-up convenience);
+    // `pingnode <id>` is the single-line form the host pre-flight uses.
+    if (input.startsWith("pingnode")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* a = argAfter(input, 8);
+        if (*a == '\0' || strcmp(a, "all") == 0) {
+            for (uint8_t n = 1; n <= 4; n++)
+                Serial.printf("node %d %s\n", n, relayNode(CMD_PING, n) ? "ok" : "timeout");
+        } else {
+            uint8_t node = (uint8_t)strtoul(a, NULL, 10);
+            if (node < 1 || node > 4) { Serial.println("err bad_node"); return true; }
+            Serial.printf("node %d %s\n", node, relayNode(CMD_PING, node) ? "ok" : "timeout");
+        }
+        return true;
     }
-    else if (input.startsWith("enable all")) {
-        Serial.println("Queued ENABLE ALL sequence...");
-        for (uint8_t i = 1; i <= 4; i++) multicore_fifo_push_blocking((CMD_ENABLE << 8) | i);
+
+    // ── enable / disable [all|<id>] (IDLE/PAUSED/ALARM) ───────────────────────
+    if (input.startsWith("enable")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* a = argAfter(input, 6);
+        if (*a == '\0' || strcmp(a, "all") == 0) {
+            for (uint8_t n = 1; n <= 4; n++) relayNode(CMD_ENABLE, n);
+            axes_enabled = 0x0F;
+        } else {
+            uint8_t node = (uint8_t)strtoul(a, NULL, 10);
+            if (node < 1 || node > 4) { Serial.println("err bad_node"); return true; }
+            relayNode(CMD_ENABLE, node);
+            axes_enabled |= (1 << (node - 1));
+        }
+        Serial.println("ok");
+        return true;
     }
-    else if (input.startsWith("disable all")) {
-        Serial.println("Queued DISABLE ALL sequence...");
-        for (uint8_t i = 1; i <= 4; i++) multicore_fifo_push_blocking((CMD_DISABLE << 8) | i);
+    if (input.startsWith("disable")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* a = argAfter(input, 7);
+        if (*a == '\0' || strcmp(a, "all") == 0) {
+            for (uint8_t n = 1; n <= 4; n++) relayNode(CMD_DISABLE, n);
+            axes_enabled = 0;
+            axes_homed   = 0;          // de-energised → datum lost on every axis
+        } else {
+            uint8_t node = (uint8_t)strtoul(a, NULL, 10);
+            if (node < 1 || node > 4) { Serial.println("err bad_node"); return true; }
+            relayNode(CMD_DISABLE, node);
+            axes_enabled &= ~(1 << (node - 1));
+            axes_homed   &= ~(1 << (node - 1));
+        }
+        Serial.println("ok");
+        return true;
     }
-    else if (input.startsWith("ping")) {
-        char* ptr = (char*)input.c_str() + 4;
-        while (*ptr == ' ') ptr++;
-        uint8_t node = (uint8_t)strtoul(ptr, NULL, 10);
-        if (node >= 1 && node <= 4) { Serial.printf("Queued PING for Node %d...\n", node); multicore_fifo_push_blocking((CMD_PING << 8) | node); }
-        else Serial.println("Error: Invalid Node ID for ping.");
+
+    // ── setorigin [axes] (IDLE/PAUSED/ALARM) ──────────────────────────────────
+    if (input.startsWith("setorigin")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        uint8_t m = axisMask(argAfter(input, 9));
+        for (int i = 0; i < 4; i++) if (m & (1 << i)) machinePos[i] = 0;
+        axes_homed |= m;
+        if (machineState == STATE_ALARM) {     // setorigin recovers from ALARM
+            machineState = STATE_IDLE;
+            alarmReason  = ALARM_NONE;
+        }
+        Serial.println("ok");
+        return true;
     }
-    else if (input.startsWith("enable")) {
-        char* ptr = (char*)input.c_str() + 6;
-        while (*ptr == ' ') ptr++;
-        uint8_t node = (uint8_t)strtoul(ptr, NULL, 10);
-        if (node >= 1 && node <= 4) { Serial.printf("Queued ENABLE for Node %d...\n", node); multicore_fifo_push_blocking((CMD_ENABLE << 8) | node); }
-        else Serial.println("Error: Invalid Node ID for enable.");
+
+    // ── pause / resume / cancel (job lifecycle) ───────────────────────────────
+    if (input == "pause") {
+        if (machineState != STATE_RUNNING) { Serial.println("err bad_state"); return true; }
+        pauseRequested = true;                 // Core 1 drains, then → PAUSED
+        Serial.println("ok");
+        return true;
     }
-    else if (input.startsWith("disable")) {
-        char* ptr = (char*)input.c_str() + 7;
-        while (*ptr == ' ') ptr++;
-        uint8_t node = (uint8_t)strtoul(ptr, NULL, 10);
-        if (node >= 1 && node <= 4) { Serial.printf("Queued DISABLE for Node %d...\n", node); multicore_fifo_push_blocking((CMD_DISABLE << 8) | node); }
-        else Serial.println("Error: Invalid Node ID for disable.");
+    if (input == "resume") {
+        if (machineState != STATE_PAUSED) { Serial.println("err bad_state"); return true; }
+        // Phase 1: the host has already pre-positioned the head, so resume simply
+        // leaves PAUSED. The next operation streams in fresh (IDLE accepts MSEG).
+        jobActive    = false;
+        machineState = STATE_IDLE;
+        Serial.println("ok");
+        return true;
     }
-    else if (input.startsWith("getpos")) {
-        char* ptr = (char*)input.c_str() + 6;
-        while (*ptr == ' ') ptr++;
-        uint8_t node = (uint8_t)strtoul(ptr, NULL, 10);
-        if (node >= 1 && node <= 4) { Serial.printf("Queued Position Query for Node %d...\n", node); multicore_fifo_push_blocking((CMD_GET_POS << 8) | node); }
-        else Serial.println("Error: Invalid Node ID for getpos.");
+    if (input == "cancel") {
+        if (machineState != STATE_PAUSED) { Serial.println("err bad_state"); return true; }
+        mBufHead = mBufTail;                   // buffer already drained at pause; defensive
+        jobActive    = false;
+        machineState = STATE_IDLE;
+        Serial.println("ok");
+        return true;
     }
-    else if (input.startsWith("step")) {
-        // step <node> <count>  — direct debug stepping, bypasses MicroSegment path.
-        // Negative count steps in the reverse direction. Node must be enabled first.
-        char* ptr = (char*)input.c_str() + 4;
-        while (*ptr == ' ') ptr++;
+    if (input == "unalarm") {
+        if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
+        machineState = STATE_IDLE;
+        alarmReason  = ALARM_NONE;
+        Serial.println("ok");                  // position still invalid — run setorigin
+        return true;
+    }
+
+    // ── step <node> <count> — debug stepping (bring-up only) ───────────────────
+    if (input.startsWith("step")) {
+        const char* p = argAfter(input, 4);
         char* endPtr;
-        uint8_t node = (uint8_t)strtoul(ptr, &endPtr, 10);
-        ptr = endPtr;
-        long count = strtol(ptr, &endPtr, 10);
+        uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
+        long count = strtol(endPtr, &endPtr, 10);
         if (node >= 1 && node <= 4 && count != 0) {
             uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
             if (count < 0) mag |= 0x8000;
             uint32_t word = ((uint32_t)FIFO_STEP_DEBUG << 24) | ((uint32_t)node << 16) | mag;
-            Serial.printf("Queued STEP DEBUG node %d count %ld...\n", node, count);
             multicore_fifo_push_blocking(word);
+            Serial.println("ok");
         } else {
-            Serial.println("Error: usage: step <node 1-4> <count != 0>");
+            Serial.println("err usage");
         }
-    }
-    else if (input.startsWith("suction")) {
-        Serial.println("ok");
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 // ─── Binary MicroSegment Ingest ───────────────────────────────────────────────
@@ -196,8 +266,8 @@ static bool handleNonStreamingCommand(const String& input) {
 
 static void processBinaryByte(uint8_t b) {
     if (!inPacket) {
-        if (b == MSEG_MAGIC) {
-            pktBuf[0] = b;
+        if (b == MSEG_MAGIC || b == JOG_MAGIC) {
+            pktBuf[0] = b;            // remember which stream type for the state gate
             pktIdx    = 1;
             inPacket  = true;
         }
@@ -219,6 +289,21 @@ static void processBinaryByte(uint8_t b) {
         return;
     }
 
+    // State gate (wire_protocol.md allowed-state matrix). The magic byte selects
+    // the stream type; we record it as the streamIsJog intent so Core 1 sets
+    // runningReason together with the RUNNING transition it owns.
+    //   MSEG job stream — IDLE/RUNNING; NACK_PAUSED while paused, else bad_state.
+    //   JOG burst       — IDLE/PAUSED  (manual jog or host return-to-pausePos).
+    uint8_t st = machineState;
+    if (pktBuf[0] == MSEG_MAGIC) {
+        if (st == STATE_PAUSED)                          { sendNack(MSEG_NACK_PAUSED);    return; }
+        if (st != STATE_IDLE && st != STATE_RUNNING)     { sendNack(MSEG_NACK_BAD_STATE); return; }
+        streamIsJog = false;
+    } else { // JOG_MAGIC
+        if (st != STATE_IDLE && st != STATE_PAUSED)      { sendNack(MSEG_NACK_BAD_STATE); return; }
+        streamIsJog = true;
+    }
+
     // Duplicate guard: byte [22] carries the host's rolling 8-bit seq. After a
     // NACK the host rewinds (Go-Back-N) and may resend packets we already
     // accepted; executing them again would duplicate motion — a permanent
@@ -233,8 +318,7 @@ static void processBinaryByte(uint8_t b) {
     // Check buffer space
     uint16_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
     if (next == mBufHead) {
-        bufWasFull = true;
-        sendNack(MSEG_NACK_FULL);
+        sendNack(MSEG_NACK_FULL);     // backpressure — windowed sender retries
         return;
     }
 
@@ -272,13 +356,13 @@ void processSerial() {
             continue;
         }
 
-        // Magic byte starts a binary packet
-        if (b == MSEG_MAGIC) {
+        // A data-plane magic byte starts a binary packet
+        if (b == MSEG_MAGIC || b == JOG_MAGIC) {
             processBinaryByte(b);
             continue;
         }
 
-        // Otherwise treat as text
+        // Otherwise treat as a control-plane text line
         char c = (char)b;
         if (c == '\n' || c == '\r') {
             if (serialRxLen > 0) {
@@ -286,9 +370,7 @@ void processSerial() {
                 String input = String(serialRxBuf);
                 serialRxLen = 0;
 
-                if      (handleControlCommand(input))    { /* handled */ }
-                else if (handleNonStreamingCommand(input)) { /* handled */ }
-                else    Serial.println("Error: Unknown command.");
+                if (!handleCommand(input)) Serial.println("err unknown");
             }
         } else if (serialRxLen < sizeof(serialRxBuf) - 1) {
             serialRxBuf[serialRxLen++] = c;
@@ -306,41 +388,8 @@ void setup() {
 
 void loop() {
     processSerial();
-
-    // Relay Core 1 FIFO responses to USB
-    while (multicore_fifo_rvalid()) {
-        uint32_t resp = multicore_fifo_pop_blocking();
-        uint8_t  cmd     = (resp >> 24) & 0xFF;
-        uint8_t  node    = (resp >> 16) & 0xFF;
-        uint16_t success =  resp & 0xFFFF;
-
-        switch (cmd) {
-            case CMD_PING:
-                if (success) Serial.printf("Node %d: PONG\n", node);
-                else         Serial.printf("Node %d: Timeout (PING)\n", node);
-                break;
-            case CMD_GET_POS:
-                if (success) {
-                    int32_t pos = (int32_t)multicore_fifo_pop_blocking();
-                    Serial.printf("Node %d pos=%ld\n", node, pos);
-                } else {
-                    Serial.printf("Node %d: Timeout (GET_POS)\n", node);
-                }
-                break;
-            case CMD_ENABLE:
-                if (success) Serial.printf("Node %d: Enabled\nok\n", node);
-                else         Serial.printf("Node %d: Timeout (ENABLE)\n", node);
-                break;
-            case CMD_DISABLE:
-                if (success) Serial.printf("Node %d: Disabled\nok\n", node);
-                else         Serial.printf("Node %d: Timeout (DISABLE)\n", node);
-                break;
-        }
-    }
-
-    // Signal host when buffer drains below watermark after a backpressure event
-    if (bufWasFull) {
-        bufWasFull = (getBufCount() > MASTER_BUF_LOW_WATERMARK);
-        if (!bufWasFull) Serial.println("ready");
-    }
+    // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
+    // responses synchronously inside handleCommand (relayNode), so there is no
+    // async response stream to drain here. Backpressure is handled by the
+    // windowed sender via NACK_FULL, not an out-of-band "ready" line.
 }

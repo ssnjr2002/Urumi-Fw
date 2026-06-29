@@ -118,22 +118,36 @@ static void __time_critical_func(processMicroSegments)() {
 #ifdef DEBUG_TIMING
     static uint32_t jobStartUs = 0;
 #endif
+    // Entry: a job starts from IDLE (runningReason=JOB); a jog burst starts from
+    // PAUSED (runningReason=JOG, set by Core 0 at ingest). Remember where to land
+    // when the buffer drains — a jog during pause returns to PAUSED (the job is
+    // still suspended), a job returns to IDLE.
+    uint8_t returnState = (machineState == STATE_PAUSED || jobActive)
+                          ? STATE_PAUSED : STATE_IDLE;
+
+    // Enact the RUNNING transition with its reason set together (the cross-core
+    // stand-in for setRunning(reason); streamIsJog is Core 0's ingest intent).
     if (machineState == STATE_IDLE) {
-        machineState = STATE_RUNNING;
+        runningReason = streamIsJog ? RUNNING_JOG : RUNNING_JOB;
+        machineState  = STATE_RUNNING;
 #ifdef DEBUG_TIMING
         jobExpectedUs = 0;   // new job — reset the timing diagnostic
         jobMeasuredUs = 0;
         jobStartUs    = micros();
 #endif
+    } else if (machineState == STATE_PAUSED) {
+        runningReason = RUNNING_JOG;    // only jogs are accepted during pause
+        machineState  = STATE_RUNNING;
     }
 
     while (mBufHead != mBufTail) {
         if (machineState == STATE_ESTOP) return;
 
         MicroSegment ms = masterBuf[mBufHead];
+        uint8_t flags = ms.flags & MSEG_FLAG_WIRE_MASK;   // ignore host hint bits
 
         // Poison pill — signal estop, leave the flush/ALARM to loop1
-        if (ms.flags & MSEG_FLAG_ESTOP) {
+        if (flags & MSEG_FLAG_ESTOP) {
             machineState = STATE_ESTOP;
             return;
         }
@@ -168,14 +182,31 @@ static void __time_critical_func(processMicroSegments)() {
 
         __dmb();
         mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
+
+        // Pause boundary: a host-placed tool-change marker (MSEG_FLAG_PAUSE) or
+        // an operator `pause` request (pauseRequested). Either way the segment
+        // just executed is the last before the stop — snapshot resumePos, mark
+        // the job suspended, and enter PAUSED. Core 0 already drains the rest
+        // (NACKs further MSEG packets), so the buffer is empty from here.
+        if ((flags & MSEG_FLAG_PAUSE) || pauseRequested) {
+            pauseRequested = false;
+            resumePos[0] = machinePos[0]; resumePos[1] = machinePos[1];
+            resumePos[2] = machinePos[2]; resumePos[3] = machinePos[3];
+            jobActive = true;
+            __dmb();
+            machineState = STATE_PAUSED;
+            return;
+        }
     }
 
-    // Queue drained — return to idle unless a sticky state intervened
+    // Queue drained — return to where we belong: PAUSED if this was a jog burst
+    // during a pause (the job stays suspended), otherwise IDLE.
     if (machineState == STATE_RUNNING) {
 #ifdef DEBUG_TIMING
         jobWallUs = micros() - jobStartUs;
 #endif
-        machineState = STATE_IDLE;
+        machineState = returnState;
+        if (returnState == STATE_IDLE) runningReason = RUNNING_JOB;
     }
 }
 
@@ -212,8 +243,8 @@ static void emitDebugSteps(uint32_t req) {
         rs485.writeStream(streamByte);
     }
 
-    // Debug stepping moves a node untracked — machine position is now stale.
-    positionValid = false;
+    // Debug stepping moves a node untracked — the datum is now stale.
+    axes_homed = 0;
 }
 
 // ─── Core 1 Setup & Loop ──────────────────────────────────────────────────────
@@ -226,8 +257,11 @@ void loop1() {
     // 1. Estop — flush the queue, invalidate position, settle into ALARM.
     //    ALARM is sticky until Core 0 issues setorigin / unalarm.
     if (machineState == STATE_ESTOP) {
-        mBufHead = mBufTail;
-        positionValid = false;
+        mBufHead = mBufTail;            // flush the queue
+        axes_homed   = 0;              // datum lost
+        axes_enabled = 0;              // de-energised
+        jobActive    = false;          // any suspended job is unrecoverable
+        alarmReason  = ALARM_ESTOP;    // set reason before the ALARM transition
         __dmb();
         machineState = STATE_ALARM;
         return;
