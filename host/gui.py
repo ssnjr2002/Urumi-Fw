@@ -19,16 +19,16 @@ Run:
 import argparse, threading, queue, os
 
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 
-from config import default as _config_default, TOOL_PROFILES
+from config import default as _config_default
 from host.sim_config import sim_machine
 from host.protocol.link import Link
 from host.protocol.packets import make_jog
-from host.protocol.stream import read_packets
 from host.protocol import commands as cmd
 from host.protocol.state import MachineState
-from host.preflight import preflight
+from host.job_runner import send_plan, Operator
+from host.plan_io import load_plan
 
 try:
     from serial.tools import list_ports
@@ -44,6 +44,35 @@ _STATE_COLOR = {
 }
 
 
+class GuiOperator(Operator):
+    """
+    Bridges send_plan's Operator callbacks to the Tk main thread.
+
+    mount() is called from the job worker thread. It sets _pending_mount and
+    blocks on an Event; _poll_status (main thread) sees the flag, shows a
+    modal askokcancel dialog (safe because it runs on the main thread), then
+    sets the event to unblock the worker. note() appends to a plain list that
+    _poll_status mirrors into the text area.
+    """
+    def __init__(self, ui):
+        self._ui           = ui
+        self._mount_event  = threading.Event()
+        self._pending_mount = None   # tool name; main thread watches this
+        self._mount_ok     = True    # False if operator cancelled
+
+    def mount(self, tool_name):
+        self._mount_ok = True
+        self._mount_event.clear()
+        self._pending_mount = tool_name
+        self._mount_event.wait()     # blocks worker until main thread confirms
+        self._pending_mount = None
+        if not self._mount_ok:
+            raise RuntimeError("job cancelled by operator")
+
+    def note(self, text):
+        self._ui._job_notes.append(text)
+
+
 class OperatorUI:
     def __init__(self, root, default_port=None, machine=None):
         self.root = root
@@ -57,8 +86,10 @@ class OperatorUI:
         self._activity = "JOGGING"  # label shown while busy (worker-set, plain str)
 
         # job state
-        self.job_packets = None     # loaded production packets, or None
-        self.preflight_ok = False
+        self.plan = None             # loaded Plan, or None
+        self._gui_op = None          # active GuiOperator while a job runs
+        self._mount_dialog_active = False
+        self._job_notes = []         # notes from GuiOperator.note(), reflected each poll
 
         root.title("RS485 Operator")
         root.resizable(False, False)
@@ -209,46 +240,28 @@ class OperatorUI:
         frm.grid(row=5, column=0, padx=8, pady=6, sticky="ew")
         self.job_widgets = []
 
-        # row 0: file + tool
-        self.job_file_var = tk.StringVar(value="(no job loaded)")
-        load = ttk.Button(frm, text="Load .bin…", command=self._load_job)
+        # row 0: load .plan file
+        self.job_file_var = tk.StringVar(value="(no plan loaded)")
+        load = ttk.Button(frm, text="Load .plan…", command=self._load_plan_file)
         load.grid(row=0, column=0, padx=4, pady=4)
         self.job_widgets.append(load)
-        ttk.Label(frm, textvariable=self.job_file_var, width=24).grid(
-            row=0, column=1, columnspan=2, sticky="w")
-        ttk.Label(frm, text="Tool:").grid(row=0, column=3, sticky="e", padx=4)
-        self.tool_var = tk.StringVar(value="knife")
-        tool = ttk.Combobox(frm, textvariable=self.tool_var, width=8,
-                            values=list(TOOL_PROFILES), state="readonly")
-        tool.grid(row=0, column=4, padx=4)
-        self.job_widgets.append(tool)
+        ttk.Label(frm, textvariable=self.job_file_var, width=36).grid(
+            row=0, column=1, columnspan=3, sticky="w")
 
-        # row 1: pre-flight button + results
-        pf = ttk.Button(frm, text="Pre-flight", command=self._run_preflight)
-        pf.grid(row=1, column=0, padx=4, pady=4, sticky="n")
-        self.job_widgets.append(pf)
-        self.pf_text = tk.Text(frm, width=46, height=7, state="disabled",
+        # row 1: status / notes — shows plan summary, pre-flight results, job notes
+        self.pf_text = tk.Text(frm, width=46, height=6, state="disabled",
                                font=("TkFixedFont", 8))
-        self.pf_text.grid(row=1, column=1, columnspan=4, padx=4, pady=4, sticky="ew")
+        self.pf_text.grid(row=1, column=0, columnspan=4, padx=4, pady=4, sticky="ew")
 
-        # row 2: operator tool-mounted confirmation + Run
-        self.confirm_var = tk.BooleanVar(value=False)
-        self.confirm_chk = ttk.Checkbutton(
-            frm, text="Confirm tool mounted", variable=self.confirm_var,
-            command=self._refresh_run_state)
-        self.confirm_chk.grid(row=2, column=0, columnspan=3, padx=4, sticky="w")
-        self.job_widgets.append(self.confirm_chk)
+        # row 2: Run + job lifecycle
         self.run_btn = ttk.Button(frm, text="Run Job", command=self._run_job,
                                   state="disabled")
-        self.run_btn.grid(row=2, column=4, padx=4, pady=4)
-
-        # row 3: job lifecycle (acts on the running/paused job)
-        life = ttk.Frame(frm)
-        life.grid(row=3, column=0, columnspan=5, padx=4, pady=(0, 4), sticky="w")
+        self.run_btn.grid(row=2, column=0, padx=4, pady=4)
         for i, (label, fn) in enumerate(
-                [("Pause", cmd.pause), ("Resume", cmd.resume), ("Cancel", cmd.cancel)]):
-            b = ttk.Button(life, text=label, command=lambda f=fn: self._control(f))
-            b.grid(row=0, column=i, padx=(0, 6))
+                [("Pause", cmd.pause), ("Resume", cmd.resume), ("Cancel", cmd.cancel)],
+                start=1):
+            b = ttk.Button(frm, text=label, command=lambda f=fn: self._control(f))
+            b.grid(row=2, column=i, padx=4, pady=4)
             self.job_widgets.append(b)
 
     # ── connection ────────────────────────────────────────────────────────────
@@ -257,8 +270,6 @@ class OperatorUI:
         state = "normal" if connected else "disabled"
         for w in self.jog_widgets + self.ctrl_widgets + self.job_widgets + self.periph_widgets:
             w.config(state=state)
-        if not connected:
-            self.preflight_ok = False
         self._refresh_run_state()
         self.connect_btn.config(text="Disconnect" if connected else "Connect")
 
@@ -355,6 +366,26 @@ class OperatorUI:
                     self.pos_vars[ltr].set(f"{pos[idx[ltr]] / ax.steps_per_unit:.2f}")
             except Exception as e:
                 self.state_var.set(f"err: {e}")
+        # Mount dialog: job worker sets _gui_op._pending_mount; we show it here
+        # (main thread) so Tk is never touched from the worker thread.
+        if (self._gui_op is not None
+                and self._gui_op._pending_mount is not None
+                and not self._mount_dialog_active):
+            self._mount_dialog_active = True
+            tool = self._gui_op._pending_mount
+            ok = messagebox.askokcancel(
+                "Mount Tool",
+                f"Mount: {tool}\n\nPhysically swap the tool, then click OK.",
+                parent=self.root)
+            self._gui_op._mount_ok = ok
+            self._gui_op._mount_event.set()
+            self._mount_dialog_active = False
+
+        # Reflect job notes accumulated by GuiOperator.note()
+        if self._job_notes:
+            self._set_pf_text("\n".join(self._job_notes))
+
+        self._refresh_run_state()
         self._update_queue_label()
         self.root.after(STATUS_INTERVAL_MS, self._poll_status)
 
@@ -405,7 +436,7 @@ class OperatorUI:
                 self.busy = False
                 self.jog_q.task_done()
 
-    # ── job: load / pre-flight / run ──────────────────────────────────────────
+    # ── job: load / run ───────────────────────────────────────────────────────
 
     def _set_pf_text(self, text):
         self.pf_text.config(state="normal")
@@ -413,56 +444,55 @@ class OperatorUI:
         self.pf_text.insert("1.0", text)
         self.pf_text.config(state="disabled")
 
-    def _load_job(self):
+    def _load_plan_file(self):
         path = filedialog.askopenfilename(
-            title="Load production .bin",
-            filetypes=[("Job binary", "*.bin"), ("All files", "*.*")])
+            title="Load job plan",
+            filetypes=[("Job plan", "*.plan"), ("All files", "*.*")])
         if not path:
             return
         try:
-            with open(path, "rb") as f:
-                packets = list(read_packets(f))
+            self.plan = load_plan(path, self.machine)
         except Exception as e:
             self._set_pf_text(f"load failed: {e}")
-            return
-        self.job_packets = packets
-        self.job_file_var.set(f"{os.path.basename(path)}  ({len(packets)} pkts)")
-        self.preflight_ok = False
-        self.confirm_var.set(False)
-        self._set_pf_text("loaded — run pre-flight")
-        self._refresh_run_state()
-
-    def _run_preflight(self):
-        if not self.link or self.busy:
-            return
-        profile = TOOL_PROFILES[self.tool_var.get()]
-        try:
-            pf = preflight(self.link, self.machine, profile)
-        except Exception as e:
-            self.preflight_ok = False
-            self._set_pf_text(f"pre-flight error: {e}")
+            self.plan = None
             self._refresh_run_state()
             return
-        self.preflight_ok = pf.ok
-        self._set_pf_text(str(pf))
-        self.confirm_chk.config(text=f"Confirm '{profile.name}' mounted")
+        summary = "\n".join(
+            f"  {i+1}. {op.tool}  ({len(op.packets)} segments)"
+            for i, op in enumerate(self.plan.operations))
+        self.job_file_var.set(os.path.basename(path))
+        self._set_pf_text(f"plan loaded — {len(self.plan.operations)} operations:\n{summary}")
+        self._job_notes = []
         self._refresh_run_state()
 
     def _refresh_run_state(self):
-        ready = bool(self.link) and self.preflight_ok \
-            and bool(self.job_packets) and self.confirm_var.get()
+        ready = bool(self.link) and bool(self.plan) and not self.busy
         if hasattr(self, "run_btn"):
             self.run_btn.config(state="normal" if ready else "disabled")
 
     def _run_job(self):
-        if self.busy or not (self.link and self.preflight_ok
-                             and self.job_packets and self.confirm_var.get()):
+        if self.busy or not (self.link and self.plan):
             return
-        # Stream the production burst through the worker (state label RUNNING).
-        # NOTE: the MCFG preamble (required_axes) is not emitted by svg_to_packets
-        # yet — Phase 1 streams MSEG packets as-is; the preamble lands with step 8.
-        self.jog_q.put(("RUNNING", self.job_packets))
-        self._update_queue_label()
+        self._gui_op = GuiOperator(self)
+        self._job_notes = []
+        self._set_pf_text("starting job…")
+        self.busy = True
+        self._activity = "RUNNING"
+        self._refresh_run_state()
+
+        plan, machine, link, gui_op = self.plan, self.machine, self.link, self._gui_op
+
+        def _worker():
+            try:
+                ok, msg = send_plan(plan, machine, link, gui_op)
+                gui_op.note("done: " + msg if ok else "failed: " + msg)
+            except Exception as e:
+                gui_op.note(f"error: {e}")
+            finally:
+                self.busy = False
+                self._gui_op = None
+
+        threading.Thread(target=_worker, daemon=True).start()
 
 
 def main():

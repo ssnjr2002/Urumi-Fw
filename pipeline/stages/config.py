@@ -49,6 +49,7 @@ for now.
 """
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 
 
 # ── bus tier (the RS485 topology primitive) ───────────────────────────────────
@@ -111,6 +112,13 @@ class AxisConfig:
 OFFSET_TOLERANCE_MM = 0.05
 
 
+class ToolType(IntEnum):
+    """Stable numeric identity for each tool type — used in the .plan file format."""
+    PEN    = 0x01
+    KNIFE  = 0x02
+    CREASE = 0x03
+
+
 @dataclass(frozen=True)
 class ToolProfile:
     """
@@ -134,6 +142,7 @@ class ToolProfile:
     corner_* / min_radius_mm tune corner handling (lift-pivot-lower).
     """
     name:            str
+    tool_type:       ToolType = ToolType.PEN
     tangential:      bool  = False   # A-axis tracks the path tangent
     offset_mm:       float = 0.0     # blade caster offset; 0 = centre-pivot, >tol needs compensation
     unwind:          bool  = False   # bounded rotation (e.g. wired tool): unwind
@@ -177,10 +186,11 @@ class ToolProfile:
 
 # Presets keyed to tool TYPE (PLAN_svg_tile_motion: pen/cut/crease). One knife
 # model (KNIFE); a larger-offset blade just sets offset_mm, not a new profile.
-PEN = ToolProfile(name="pen", tangential=False)
+PEN = ToolProfile(name="pen", tool_type=ToolType.PEN, tangential=False)
 
 KNIFE = ToolProfile(
-    name="knife", tangential=True, offset_mm=0.0,   # centre-pivot; raise offset_mm per blade
+    name="knife", tool_type=ToolType.KNIFE,
+    tangential=True, offset_mm=0.0,                 # centre-pivot; raise offset_mm per blade
     unwind=True,                                     # oscillating knife is wired
     corner_angle_deg=20.0,
     # required_peripheral_roles left empty: today's machine drives the blade via
@@ -189,12 +199,14 @@ KNIFE = ToolProfile(
 )
 
 CREASE = ToolProfile(
-    name="crease", tangential=True, offset_mm=0.0,
+    name="crease", tool_type=ToolType.CREASE,
+    tangential=True, offset_mm=0.0,
     unwind=False,                                    # crease wheel spins freely
     corner_angle_deg=30.0,
 )
 
-TOOL_PROFILES = {p.name: p for p in (PEN, KNIFE, CREASE)}
+TOOL_PROFILES         = {p.name:      p for p in (PEN, KNIFE, CREASE)}
+TOOL_PROFILES_BY_TYPE = {p.tool_type: p for p in (PEN, KNIFE, CREASE)}
 
 
 def tool_for_layer(layer_name, overrides=None):
