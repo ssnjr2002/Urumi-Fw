@@ -49,8 +49,16 @@ class OnlineTab(ttk.Frame):
             lambda e: self.canvas.itemconfig(self.scrollable_window, width=e.width)
         )
         
-        # Add basic mousewheel support for Windows
-        self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        # Add robust mousewheel support for Windows (handles precision trackpads and multi-tab isolation)
+        def _on_mousewheel(e):
+            if not self.winfo_ismapped():
+                return
+            units = int(-1 * (e.delta / 120))
+            if units == 0 and e.delta != 0:
+                units = -1 if e.delta > 0 else 1
+            self.canvas.yview_scroll(units, "units")
+            
+        self.canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
 
         # Create the Reorderable Container
         self.container = ReorderableContainer(self.scrollable_frame)
@@ -71,10 +79,36 @@ class OnlineTab(ttk.Frame):
 
     def _bind_logic(self):
         # TODO: Map buttons to self.session methods once OnlineSession is created.
-        pass
+        
+        # Subscribe to AppState to dynamically build UI when the Config is loaded
+        if hasattr(self.session, 'app_state'):
+            self.session.app_state.subscribe(self._on_app_state_changed)
+            self._on_app_state_changed()
 
+    def _on_app_state_changed(self):
+        config = self.session.app_state.config
+        if not config:
+            return
+            
+        machine = config.machine
+        
+        # Populate Bus Nodes (Peripherals)
+        # machine.peripherals is a tuple of BusNode
+        if hasattr(machine, 'peripherals'):
+            self.bus_nodes_view.populate(machine.peripherals)
+            
+        # Populate Axis Nodes
+        # machine.present_axes() returns [('x', AxisConfig), ('y', AxisConfig), ...]
+        if hasattr(machine, 'present_axes'):
+            axes_data = []
+            for ltr, axis_cfg in machine.present_axes():
+                axes_data.append((ltr, axis_cfg))
+            self.axis_nodes_view.populate(axes_data)
+            
+        # TODO: Also update JobExecutionView if app_state.active_plan_path changes
+        
     def _update_ui(self):
-        # TODO: Unpack state from self.session and update the views.
+        # TODO: Unpack state from self.session (OnlineSession) and update the views.
         pass
 
 # A simple runner to preview the complete online layout

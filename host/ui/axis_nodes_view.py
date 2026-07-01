@@ -65,7 +65,7 @@ class AxisNodesView(ttk.Frame):
             # =========================================================
             
             # Column 0: Definition
-            ttk.Label(self.inner_frame, text=f"Axis {letter.upper()} (Node {ax_config.node_id})", font=("TkDefaultFont", 9, "bold")).grid(row=row_setup, column=0, padx=4, pady=(8, 2), sticky="nw")
+            ttk.Label(self.inner_frame, text=f"Axis {letter.upper()} (Node {ax_config.node.node_id})", font=("TkDefaultFont", 9, "bold")).grid(row=row_setup, column=0, padx=4, pady=(8, 2), sticky="nw")
             # ---------------------------------------------------------
             # Column 1: State/Status (Homed)
             # ---------------------------------------------------------
@@ -137,8 +137,12 @@ if __name__ == "__main__":
     from dataclasses import dataclass
     
     @dataclass
-    class MockAxis:
+    class MockNode:
         node_id: int
+        
+    @dataclass
+    class MockAxis:
+        node: MockNode
         rotary: bool = False
         max_rate: float = 150.0
         
@@ -151,9 +155,9 @@ if __name__ == "__main__":
     
     # Mock data to preview the dynamic generation
     mock_axes = [
-        ("x", MockAxis(node_id=1, max_rate=250.0)),
-        ("y", MockAxis(node_id=2, max_rate=250.0)),
-        ("a", MockAxis(node_id=4, rotary=True, max_rate=60.0))
+        ("x", MockAxis(node=MockNode(1), max_rate=250.0)),
+        ("y", MockAxis(node=MockNode(2), max_rate=250.0)),
+        ("a", MockAxis(node=MockNode(4), rotary=True, max_rate=60.0))
     ]
     view.populate(mock_axes)
     

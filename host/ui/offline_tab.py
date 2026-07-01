@@ -50,8 +50,16 @@ class OfflineTab(ttk.Frame):
             lambda e: self.canvas.itemconfig(self.scrollable_window, width=e.width)
         )
         
-        # Add basic mousewheel support for Windows
-        self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        # Add robust mousewheel support for Windows (handles precision trackpads and multi-tab isolation)
+        def _on_mousewheel(e):
+            if not self.winfo_ismapped():
+                return
+            units = int(-1 * (e.delta / 120))
+            if units == 0 and e.delta != 0:
+                units = -1 if e.delta > 0 else 1
+            self.canvas.yview_scroll(units, "units")
+            
+        self.canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
 
         # Create the Reorderable Container
         self.container = ReorderableContainer(self.scrollable_frame)
@@ -177,7 +185,7 @@ class OfflineTab(ttk.Frame):
                 self.config_view.status_var.set(f"Status: Error - {self.session.config_error}")
                 self.config_view.status_lbl.config(foreground="red")
             else:
-                self.config_view.status_var.set("Status: Not Loaded")
+                self.config_view.status_var.set("Status: Not Loaded. (A valid config is required to unlock Online Execution)")
                 self.config_view.status_lbl.config(foreground="black")
             
             # --- Update SVG View (when config is invalid) ---
@@ -200,11 +208,14 @@ class OfflineTab(ttk.Frame):
 
 # A simple runner to preview the complete offline layout
 if __name__ == "__main__":
+    from host.ui.app_state import AppState
+    
     root = tk.Tk()
     root.title("Controller Preview: Full Offline Tab")
     root.geometry("650x800")
     
-    session = OfflineSession()
+    app_state = AppState()
+    session = OfflineSession(app_state)
     tab = OfflineTab(root, session)
     tab.pack(fill="both", expand=True)
     

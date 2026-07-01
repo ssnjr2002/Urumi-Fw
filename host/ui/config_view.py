@@ -16,7 +16,7 @@ class ConfigView(ttk.Frame):
         
         # Using a StringVar so the business logic can easily update it later.
         # wraplength ensures long validation errors wrap to a new line instead of stretching the window.
-        self.status_var = tk.StringVar(value="Status: Not Loaded")
+        self.status_var = tk.StringVar(value="Status: Not Loaded. (A valid config is required to unlock Online Execution)")
         self.status_lbl = ttk.Label(self, textvariable=self.status_var, wraplength=400)
         self.status_lbl.grid(row=0, column=1, padx=8, pady=8, sticky="w")
 

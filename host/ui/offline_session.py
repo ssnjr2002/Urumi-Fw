@@ -1,16 +1,19 @@
-import importlib
 from typing import Callable, List, Optional
+from host.ui.app_state import AppState
 
 class OfflineSession:
     """
     Business logic manager for the Offline Preparation & Planning phase.
     Acts as the single source of truth for state. UI components bind to this.
     """
-    def __init__(self):
+    def __init__(self, app_state: AppState):
+        self._app_state = app_state
         self._callbacks: List[Callable] = []
         
+        # We subscribe to app_state so our UI updates if the global state changes
+        self._app_state.subscribe(self._notify)
+        
         # --- Configuration State ---
-        self.config = None
         self.config_error: Optional[str] = None
         
         # --- SVG State ---
@@ -39,6 +42,14 @@ class OfflineSession:
         for cb in self._callbacks:
             cb()
 
+    @property
+    def config(self):
+        return self._app_state.config
+
+    @config.setter
+    def config(self, val):
+        self._app_state.config = val
+
     # ---------------------------------------------------------
     # 1. Configuration Management
     # ---------------------------------------------------------
@@ -47,6 +58,7 @@ class OfflineSession:
         Loads and validates the configuration.
         For now, we simply import the local 'config.py' module.
         """
+        import importlib
         try:
             # We import here to allow reloading if the user edits the file while the app is open
             import config
@@ -144,6 +156,7 @@ class OfflineSession:
             self.plan_file = os.path.basename(path)
             self.plan = plan_obj
             self.plan_error = None
+            self._app_state.active_plan_path = path
             
             # Extract header info
             self.plan_version = 1 
