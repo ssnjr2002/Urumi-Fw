@@ -1,13 +1,13 @@
 import tkinter as tk
 from tkinter import ttk
 
-class PlanView(ttk.LabelFrame):
+class PlanView(ttk.Frame):
     """
     UI Layout for the Plan Manager section (Offline Mode).
     Contains no business logic, just the visual elements.
     """
     def __init__(self, parent, *args, **kwargs):
-        super().__init__(parent, text="3. Plan Manager", *args, **kwargs)
+        super().__init__(parent, *args, **kwargs)
         self._build_ui()
 
     def _build_ui(self):

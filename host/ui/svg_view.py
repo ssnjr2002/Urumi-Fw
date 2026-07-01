@@ -1,13 +1,13 @@
 import tkinter as tk
 from tkinter import ttk
 
-class SvgView(ttk.LabelFrame):
+class SvgView(ttk.Frame):
     """
     UI Layout for the SVG Management section (Offline Mode).
     Contains no business logic, just the visual elements.
     """
     def __init__(self, parent, *args, **kwargs):
-        super().__init__(parent, text="2. SVG Management", *args, **kwargs)
+        super().__init__(parent, *args, **kwargs)
         self._build_ui()
 
     def _build_ui(self):

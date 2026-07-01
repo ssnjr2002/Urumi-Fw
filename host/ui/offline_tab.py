@@ -11,6 +11,7 @@ from host.ui.config_view import ConfigView
 from host.ui.svg_view import SvgView
 from host.ui.plan_view import PlanView
 from host.ui.offline_session import OfflineSession
+from host.ui.draggable_container import ReorderableContainer
 
 
 class OfflineTab(ttk.Frame):
@@ -25,14 +26,46 @@ class OfflineTab(ttk.Frame):
         self._bind_logic()
 
     def _build_ui(self):
-        self.config_view = ConfigView(self)
-        self.config_view.pack(fill="x", padx=8, pady=8)
+        # Create a scrollable canvas
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
-        self.svg_view = SvgView(self)
-        self.svg_view.pack(fill="both", expand=True, padx=8, pady=4)
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
         
-        self.plan_view = PlanView(self)
-        self.plan_view.pack(fill="both", expand=True, padx=8, pady=8)
+        # Inner frame to hold the actual views
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        self.scrollable_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        
+        # Configure scrolling boundaries when inner frame resizes
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+        
+        # Keep inner frame the same width as the canvas
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfig(self.scrollable_window, width=e.width)
+        )
+        
+        # Add basic mousewheel support for Windows
+        self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # Create the Reorderable Container
+        self.container = ReorderableContainer(self.scrollable_frame)
+        self.container.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Wrap and add each view to the container
+        self.config_wrapper = self.container.add_widget("1. Machine Configuration", ConfigView)
+        self.config_view = self.config_wrapper.inner_widget
+        
+        self.svg_wrapper = self.container.add_widget("2. SVG Load & Validation", SvgView)
+        self.svg_view = self.svg_wrapper.inner_widget
+        
+        self.plan_wrapper = self.container.add_widget("3. Plan Management", PlanView)
+        self.plan_view = self.plan_wrapper.inner_widget
 
     def _bind_logic(self):
         # 1. Bind UI events to Session actions
