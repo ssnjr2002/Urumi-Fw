@@ -1,0 +1,111 @@
+<mxfile host="65bd71144e">
+    <diagram id="C9cB_CFGFpgIpNLh87SF" name="Page-1">
+        <mxGraphModel dx="1985" dy="1165" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" background="#ffffff" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="18" value="" style="edgeStyle=none;html=1;" edge="1" parent="1" source="15" target="16">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="15" value="&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;Definition&lt;/span&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="70" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="20" style="edgeStyle=none;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="16" target="17">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="620" y="10"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="16" value="State/Status" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="70" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="21" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="17" target="16">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="620" y="200"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="17" value="Control" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="660" y="70" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="24" value="" style="edgeStyle=none;html=1;" edge="1" parent="1" source="22" target="23">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="22" value="Master" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="40" y="230" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="42" value="" style="edgeStyle=none;html=1;" edge="1" parent="1" source="23" target="41">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="23" value="Nodes" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="40" y="600" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="25" value="COM Port&amp;nbsp;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="230" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="28" value="State &amp;amp; Reason&lt;br&gt;Reason only for states that have reason" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="330" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="29" value="BusNode: id, role, present" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="600" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="30" value="Single button encapsulates control &amp;amp; state" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="230" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="31" value="Display the current state and reason" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="330" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="32" value="State Machine Controls: ESTOP, Alarm, Unalarm etc" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="660" y="330" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="33" value="If present, monitor last ping and last enabled status" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="600" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="34" value="&lt;font style=&quot;font-size: 11px;&quot;&gt;If present, separate enable button and disable button. Also ping button (if present)&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="660" y="600" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="36" value="AxisNode: Only if present, display axis, node id,&amp;nbsp;&amp;nbsp;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="710" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="37" value="Monitor Homed, Position (mm)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="710" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="38" value="&lt;font style=&quot;color: rgb(255, 51, 51);&quot;&gt;SetOrigin for this axis, Jog controls: increment, decrement, set value for relative position adjustment, target rate, target accel&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="660" y="710" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="41" value="Job Execution" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="40" y="820" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="43" value="Preflight: Assuming all offline checks are done" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="820" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="44" value="Overall all present axes Homed &amp;amp; Enabled" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="420" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="45" value="Display the state" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="420" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="46" value="Button to enable all, disable all&amp;nbsp;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="660" y="420" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="47" value="Global Machine Controls: SetOrigin, other commands etc" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="660" y="510" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="48" value="Master Global Last Command Ack Nack Display" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="510" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="49" value="No controls, just display all the preflight checks and their status" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="820" width="320" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="50" value="Job State: Are we in preflight? Paused? Running?&amp;nbsp;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="260" y="930" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="51" value="Pause &amp;amp; Resume button and state encapsulated, Start &amp;amp; Cancel button and state encapsulated" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="460" y="930" width="320" height="60" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
