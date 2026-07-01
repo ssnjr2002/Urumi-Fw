@@ -14,6 +14,7 @@ class BusNodesView(ttk.Frame):
         self.ping_btns = {}
         self.enable_btns = {}
         self.disable_btns = {}
+        self.node_presence = {}
         
         # Frame to hold the dynamic rows
         self.inner_frame = ttk.Frame(self)
@@ -37,6 +38,7 @@ class BusNodesView(ttk.Frame):
         self.ping_btns.clear()
         self.enable_btns.clear()
         self.disable_btns.clear()
+        self.node_presence.clear()
         
         if not bus_nodes:
             ttk.Label(self.inner_frame, text="No peripherals configured.", font=("TkDefaultFont", 9, "italic")).grid(row=0, column=0, padx=4, pady=4, sticky="w")
@@ -51,7 +53,10 @@ class BusNodesView(ttk.Frame):
             # ---------------------------------------------------------
             # Column 1: State/Status
             # ---------------------------------------------------------
-            var = tk.StringVar(value="Ping: —, State: —")
+            self.node_presence[node.node_id] = getattr(node, 'present', True)
+            status_text = "Ping: —, State: —" if self.node_presence[node.node_id] else "Ping: —, State: Not Fitted"
+            
+            var = tk.StringVar(value=status_text)
             self.status_vars[node.node_id] = var
             ttk.Label(self.inner_frame, textvariable=var).grid(row=row, column=1, padx=4, pady=4, sticky="w")
             
@@ -72,6 +77,15 @@ class BusNodesView(ttk.Frame):
             disable_btn = ttk.Button(ctrl_frm, text="Disable")
             disable_btn.pack(side="left", padx=2)
             self.disable_btns[node.node_id] = disable_btn
+
+        # ---------------------------------------------------------
+        # Last Row: Global Controls
+        # ---------------------------------------------------------
+        global_ctrl_frm = ttk.Frame(self.inner_frame)
+        global_ctrl_frm.grid(row=len(bus_nodes), column=2, padx=4, pady=12, sticky="w")
+        
+        self.ping_all_btn = ttk.Button(global_ctrl_frm, text="Ping All")
+        self.ping_all_btn.pack(side="left", padx=2)
 
 # Simple runner for preview
 if __name__ == "__main__":

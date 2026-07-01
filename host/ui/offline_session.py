@@ -59,6 +59,13 @@ class OfflineSession:
         For now, we simply import the local 'config.py' module.
         """
         import importlib
+        import sys
+        import os
+        
+        stages_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'pipeline', 'stages'))
+        if stages_path not in sys.path:
+            sys.path.insert(0, stages_path)
+            
         try:
             # We import here to allow reloading if the user edits the file while the app is open
             import config
@@ -71,12 +78,49 @@ class OfflineSession:
                 raise ValueError("Config is missing a 'machine' definition.")
                 
             # If we reach here, it's valid
+            self._app_state.is_sim = False
             self.config = loaded_config
             self.config_error = None
             
         except Exception as e:
             self.config = None
             self.config_error = str(e)
+            
+        self._notify()
+
+    def load_sim_config(self):
+        """Loads the simulator configuration."""
+        import importlib
+        import sys
+        import os
+        
+        stages_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'pipeline', 'stages'))
+        if stages_path not in sys.path:
+            sys.path.insert(0, stages_path)
+            
+        try:
+            import config
+            importlib.reload(config)
+            
+            import host.sim_config
+            importlib.reload(host.sim_config)
+            from host.sim_config import sim_machine
+            from dataclasses import replace
+            
+            # Get the sim machine
+            machine = sim_machine()
+            
+            # Wrap in PipelineConfig
+            base_config = config.default()
+            loaded_config = replace(base_config, machine=machine)
+            
+            self._app_state.is_sim = True
+            self.config = loaded_config
+            self.config_error = None
+            
+        except Exception as e:
+            self.config = None
+            self.config_error = f"Failed to load sim config: {e}"
             
         self._notify()
 

@@ -17,8 +17,10 @@ def ping(link) -> bool:
     return link.command("ping") == "pong"
 
 
-def ping_node(link, node_id: int) -> bool:
-    """Relay an RS485 ping to a bus node; True if it answered."""
+from typing import Union
+
+def ping_node(link, node_id: Union[int, str]) -> bool:
+    """Relay an RS485 ping to a bus node (or 'all'); True if it answered."""
     return link.command(f"pingnode {node_id}").endswith("ok")
 
 

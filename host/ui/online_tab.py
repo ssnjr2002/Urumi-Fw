@@ -78,24 +78,85 @@ class OnlineTab(ttk.Frame):
         self.job_execution_view = self.job_execution_wrapper.inner_widget
 
     def _bind_logic(self):
-        # TODO: Map buttons to self.session methods once OnlineSession is created.
-        
         # Subscribe to AppState to dynamically build UI when the Config is loaded
         if hasattr(self.session, 'app_state'):
             self.session.app_state.subscribe(self._on_app_state_changed)
             self._on_app_state_changed()
+
+        # Subscribe to OnlineSession for execution state changes
+        if hasattr(self.session, 'subscribe'):
+            self.session.subscribe(self._update_ui)
+            
+        # Populate available ports
+        if hasattr(self.session, 'available_ports'):
+            self.master_view.port_combo['values'] = self.session.available_ports
+            
+        # Bind Connect button
+        self.master_view.connect_btn.config(command=self._on_connect_clicked)
+        
+        # Bind Control buttons
+        if hasattr(self.session, 'enable_all'):
+            self.master_view.enable_all_btn.config(command=self.session.enable_all)
+            self.master_view.disable_all_btn.config(command=self.session.disable_all)
+            self.master_view.set_origin_btn.config(command=self.session.set_origin_all)
+            self.master_view.estop_btn.config(command=self.session.estop)
+            self.master_view.unalarm_btn.config(command=self.session.unalarm)
+        
+        # Start the polling loop
+        self._poll_loop()
+
+    def _poll_loop(self):
+        if hasattr(self.session, 'poll_status'):
+            self.session.poll_status()
+        self.after(400, self._poll_loop)
+
+    def _on_connect_clicked(self):
+        port = self.master_view.port_var.get()
+        if hasattr(self.session, 'toggle_connect'):
+            self.session.toggle_connect(port)
 
     def _on_app_state_changed(self):
         config = self.session.app_state.config
         if not config:
             return
             
+        # Update available ports based on config type
+        if hasattr(self.session, 'available_ports'):
+            ports = self.session.available_ports
+            self.master_view.port_combo['values'] = ports
+            
+            # Reset selection if the current one is no longer valid
+            if ports and self.master_view.port_var.get() not in ports:
+                self.master_view.port_var.set(ports[0])
+        
         machine = config.machine
         
-        # Populate Bus Nodes (Peripherals)
-        # machine.peripherals is a tuple of BusNode
-        if hasattr(machine, 'peripherals'):
-            self.bus_nodes_view.populate(machine.peripherals)
+        # Populate Bus Nodes (Peripherals + Axes)
+        all_nodes = []
+        self.node_to_axis = {}
+        if hasattr(machine, 'present_axes'):
+            for ltr, ax in machine.present_axes():
+                all_nodes.append(ax.node)
+                self.node_to_axis[ax.node.node_id] = ltr
+                
+        peripherals = getattr(machine, 'peripherals', [])
+        all_nodes.extend(peripherals)
+        
+        # Sort by node_id for predictable display
+        all_nodes.sort(key=lambda n: getattr(n, 'node_id', 0))
+        
+        self.bus_nodes_view.populate(all_nodes)
+        
+        # Bind Bus Nodes Ping Buttons dynamically
+        self.bus_nodes_view.ping_all_btn.config(command=self.session.ping_all)
+        for node_id, btn in self.bus_nodes_view.ping_btns.items():
+            btn.config(command=lambda n=node_id: self.session.ping_node(n))
+            
+        # Bind individual enable/disable buttons
+        for node_id, btn in self.bus_nodes_view.enable_btns.items():
+            btn.config(command=lambda n=node_id: self.session.enable_node(n))
+        for node_id, btn in self.bus_nodes_view.disable_btns.items():
+            btn.config(command=lambda n=node_id: self.session.disable_node(n))
             
         # Populate Axis Nodes
         # machine.present_axes() returns [('x', AxisConfig), ('y', AxisConfig), ...]
@@ -105,11 +166,120 @@ class OnlineTab(ttk.Frame):
                 axes_data.append((ltr, axis_cfg))
             self.axis_nodes_view.populate(axes_data)
             
-        # TODO: Also update JobExecutionView if app_state.active_plan_path changes
+        # Apply the current session state (e.g. connection status) to the newly populated views
+        self._update_ui()
         
     def _update_ui(self):
-        # TODO: Unpack state from self.session (OnlineSession) and update the views.
-        pass
+        if not hasattr(self.session, 'is_connected'):
+            return
+            
+        # Master View: Connection State
+        if self.session.is_connected:
+            self.master_view.connect_btn.config(text="Disconnect")
+            
+            # Bus Nodes View: Enable Controls (if node is present)
+            self.bus_nodes_view.ping_all_btn.config(state="normal")
+            for node_id, btn in self.bus_nodes_view.ping_btns.items():
+                is_present = getattr(self.bus_nodes_view, 'node_presence', {}).get(node_id, True)
+                btn.config(state="normal" if is_present else "disabled")
+            for node_id, btn in self.bus_nodes_view.enable_btns.items():
+                is_present = getattr(self.bus_nodes_view, 'node_presence', {}).get(node_id, True)
+                btn.config(state="normal" if is_present else "disabled")
+            for node_id, btn in self.bus_nodes_view.disable_btns.items():
+                is_present = getattr(self.bus_nodes_view, 'node_presence', {}).get(node_id, True)
+                btn.config(state="normal" if is_present else "disabled")
+            
+            # Fetch polling state
+            st = getattr(self.session, 'machine_state', None)
+            err = getattr(self.session, 'polling_error', None)
+            
+            # Update Bus Nodes State Text
+            for node_id, var in self.bus_nodes_view.status_vars.items():
+                is_present = getattr(self.bus_nodes_view, 'node_presence', {}).get(node_id, True)
+                if not is_present:
+                    var.set("Ping: —, State: Not Fitted")
+                else:
+                    ping_stat = getattr(self.session, 'node_ping_status', {}).get(node_id, "—")
+                    if st:
+                        ltr = getattr(self, 'node_to_axis', {}).get(node_id)
+                        if ltr:
+                            state_text = "ENABLED" if st.enabled(ltr) else "DISABLED"
+                        else:
+                            state_text = "N/A" # Peripheral node states are opaque in Phase 1
+                        var.set(f"Ping: {ping_stat}, State: {state_text}")
+                    else:
+                        var.set(f"Ping: {ping_stat}, State: —")
+            
+            # Fetch command state
+            cmd_stat = getattr(self.session, 'last_command_status', "—")
+            self.master_view.cmd_status_var.set(cmd_stat)
+            
+            if err:
+                self.master_view.state_var.set(f"Error: {err}")
+                self.master_view.state_lbl.config(foreground="red")
+            elif st:
+                # Update State & Reason
+                state_name = st.state.name
+                if st.alarm.value:
+                    state_name = f"{state_name} ({st.alarm.name})"
+                    
+                _STATE_COLOR = {
+                    "IDLE": "green", "RUNNING": "blue", "PAUSED": "orange",
+                    "ESTOP": "red", "ALARM": "red", "HOMING": "purple",
+                }
+                self.master_view.state_var.set(state_name)
+                self.master_view.state_lbl.config(foreground=_STATE_COLOR.get(st.state.name, "black"))
+                
+                # Update Enabled/Homed strings for MasterView
+                config = getattr(self.session.app_state, 'config', None)
+                if config and hasattr(config.machine, 'present_axes'):
+                    axes = config.machine.present_axes()
+                    
+                    enabled_str = "".join(l.upper() for l, _ in axes if st.enabled(l)) or "—"
+                    homed_str = "".join(l.upper() for l, _ in axes if st.homed(l)) or "—"
+                    self.master_view.enabled_status_var.set(enabled_str)
+                    self.master_view.homed_status_var.set(homed_str)
+                    
+                    # Update AxisNodesView positions and status
+                    pos_steps = getattr(self.session, 'machine_pos_steps', None)
+                    if pos_steps:
+                        idx_map = {"x": 0, "y": 1, "z": 2, "a": 3}
+                        for ltr, ax in axes:
+                            # Position
+                            if ltr in self.axis_nodes_view.pos_vars:
+                                pos_val = pos_steps[idx_map[ltr]] / ax.steps_per_unit
+                                unit = "deg" if getattr(ax, "rotary", False) else "mm"
+                                self.axis_nodes_view.pos_vars[ltr].set(f"Pos: {pos_val:.2f} {unit}")
+                                
+                            # Homed status per axis
+                            if ltr in self.axis_nodes_view.homed_vars:
+                                is_homed = st.homed(ltr)
+                                self.axis_nodes_view.homed_vars[ltr].set(f"Homed: {'Yes' if is_homed else 'No'}")
+            else:
+                self.master_view.state_var.set("CONNECTED")
+                self.master_view.state_lbl.config(foreground="green")
+        else:
+            self.master_view.connect_btn.config(text="Connect")
+            if self.session.connection_error:
+                self.master_view.state_var.set(f"Error: {self.session.connection_error}")
+                self.master_view.state_lbl.config(foreground="red")
+            else:
+                self.master_view.state_var.set("DISCONNECTED")
+                self.master_view.state_lbl.config(foreground="black")
+                
+            # Clear statuses when disconnected
+            self.master_view.enabled_status_var.set("—")
+            self.master_view.homed_status_var.set("—")
+            self.master_view.cmd_status_var.set("—")
+            
+            # Bus Nodes View: Disable Controls
+            self.bus_nodes_view.ping_all_btn.config(state="disabled")
+            for btn in self.bus_nodes_view.ping_btns.values():
+                btn.config(state="disabled")
+            for btn in self.bus_nodes_view.enable_btns.values():
+                btn.config(state="disabled")
+            for btn in self.bus_nodes_view.disable_btns.values():
+                btn.config(state="disabled")
 
 # A simple runner to preview the complete online layout
 if __name__ == "__main__":
