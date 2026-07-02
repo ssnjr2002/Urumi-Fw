@@ -21,16 +21,12 @@ class MasterView(ttk.Frame):
         # ---------------------------------------------------------
         ttk.Label(self, text="COM Port").grid(row=0, column=0, padx=8, pady=8, sticky="w")
         
-        # State & Control combined into one frame
-        port_frame = ttk.Frame(self)
-        port_frame.grid(row=0, column=1, columnspan=2, padx=8, pady=8, sticky="we")
-        
         self.port_var = tk.StringVar(value="Simulator")
-        self.port_combo = ttk.Combobox(port_frame, textvariable=self.port_var, values=["Simulator"], width=15)
-        self.port_combo.pack(side="left", padx=(0, 8))
+        self.port_combo = ttk.Combobox(self, textvariable=self.port_var, values=["Simulator"], width=15)
+        self.port_combo.grid(row=0, column=1, padx=8, pady=8, sticky="w")
         
-        self.connect_btn = ttk.Button(port_frame, text="Connect")
-        self.connect_btn.pack(side="left")
+        self.connect_btn = ttk.Button(self, text="Connect")
+        self.connect_btn.grid(row=0, column=2, padx=8, pady=8, sticky="w")
 
         # ---------------------------------------------------------
         # Row 1: State & Reason
@@ -46,9 +42,6 @@ class MasterView(ttk.Frame):
         
         self.estop_btn = tk.Button(state_ctrl_frm, text="ESTOP", bg="#cc2222", fg="white", font=("TkDefaultFont", 9, "bold"))
         self.estop_btn.pack(side="left", padx=2)
-        
-        self.alarm_btn = ttk.Button(state_ctrl_frm, text="Alarm")
-        self.alarm_btn.pack(side="left", padx=2)
         
         self.unalarm_btn = ttk.Button(state_ctrl_frm, text="Unalarm")
         self.unalarm_btn.pack(side="left", padx=2)

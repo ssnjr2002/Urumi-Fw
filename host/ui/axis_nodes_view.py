@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+from host.ui.tooltip import ToolTip
+
 class AxisNodesView(ttk.Frame):
     """
     The View for the Axis Nodes section of the Online Tab.
@@ -10,6 +12,10 @@ class AxisNodesView(ttk.Frame):
         super().__init__(parent, *args, **kwargs)
         
         # Dictionaries to hold references to dynamic widgets/vars keyed by axis letter
+        self.axis_name_labels = {}
+        self.axis_info_labels = {}
+        self.axis_tooltips = {}
+        self.axis_node_ids = {}
         self.homed_vars = {}
         self.pos_vars = {}
         self.set_origin_btns = {}
@@ -39,6 +45,10 @@ class AxisNodesView(ttk.Frame):
         for widget in self.inner_frame.winfo_children():
             widget.destroy()
             
+        self.axis_name_labels.clear()
+        self.axis_info_labels.clear()
+        self.axis_tooltips.clear()
+        self.axis_node_ids.clear()
         self.homed_vars.clear()
         self.pos_vars.clear()
         self.set_origin_btns.clear()
@@ -65,7 +75,19 @@ class AxisNodesView(ttk.Frame):
             # =========================================================
             
             # Column 0: Definition
-            ttk.Label(self.inner_frame, text=f"Axis {letter.upper()} (Node {ax_config.node.node_id})", font=("TkDefaultFont", 9, "bold")).grid(row=row_setup, column=0, padx=4, pady=(8, 2), sticky="nw")
+            name_frm = ttk.Frame(self.inner_frame)
+            name_frm.grid(row=row_setup, column=0, padx=4, pady=(8, 2), sticky="nw")
+            
+            lbl = ttk.Label(name_frm, text=f"Axis {letter.upper()} (Node {ax_config.node.node_id})", font=("TkDefaultFont", 9, "bold"))
+            lbl.pack(side="left")
+            self.axis_name_labels[letter] = lbl
+            
+            info_lbl = ttk.Label(name_frm, text="", foreground="#0078D7", cursor="hand2")
+            info_lbl.pack(side="left", padx=(4, 0))
+            self.axis_info_labels[letter] = info_lbl
+            
+            self.axis_tooltips[letter] = ToolTip(info_lbl)
+            self.axis_node_ids[letter] = ax_config.node.node_id
             # ---------------------------------------------------------
             # Column 1: State/Status (Homed)
             # ---------------------------------------------------------

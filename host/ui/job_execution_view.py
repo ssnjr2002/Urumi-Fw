@@ -3,69 +3,86 @@ from tkinter import ttk
 
 class JobExecutionView(ttk.Frame):
     """
-    The View for the Job Execution section of the Online Tab.
-    Displays preflight checks and provides job lifecycle controls (Start, Pause, Cancel).
+    View for the Job Execution component.
+    Provides a display for the currently loaded plan, a log console for pre-flight 
+    and job progress, and controls for the job lifecycle (Run, Pause, Resume, Cancel).
     """
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self._build_ui()
-
+        
     def _build_ui(self):
-        # Configure columns to match our UI Architecture Matrix
-        self.columnconfigure(0, weight=1, minsize=150)
-        self.columnconfigure(1, weight=1, minsize=150)
-        self.columnconfigure(2, weight=2, minsize=450)
+        # Frame to hold the dynamic rows (same alignment strategy as AxisNodesView)
+        self.inner_frame = ttk.Frame(self)
+        self.inner_frame.grid(row=0, column=0, columnspan=5, sticky="ew", padx=8, pady=4)
         
-        # ---------------------------------------------------------
-        # Row 0: Preflight
-        # ---------------------------------------------------------
-        ttk.Label(self, text="Preflight Checks").grid(row=0, column=0, padx=8, pady=8, sticky="nw")
+        self.inner_frame.columnconfigure(0, weight=1, minsize=150)
+        self.inner_frame.columnconfigure(1, weight=1, minsize=150)
+        self.inner_frame.columnconfigure(2, weight=2, minsize=450)
         
-        # The Preflight status spans across Status and Control columns.
-        # We use a Text widget because preflight logic usually outputs multiple lines.
-        self.pf_text = tk.Text(self, width=50, height=5, state="disabled", font=("TkFixedFont", 9), bg="#f0f0f0")
-        self.pf_text.grid(row=0, column=1, columnspan=2, padx=8, pady=8, sticky="we")
+        # Row 0: Plan Name
+        self.plan_name_var = tk.StringVar(value="(no plan loaded)")
+        ttk.Label(self.inner_frame, text="Plan:", font=("TkDefaultFont", 9, "bold")).grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        self.plan_name_lbl = ttk.Label(self.inner_frame, textvariable=self.plan_name_var)
+        self.plan_name_lbl.grid(row=0, column=1, padx=4, pady=2, sticky="w")
         
-        # ---------------------------------------------------------
-        # Row 1: Job State & Controls
-        # ---------------------------------------------------------
-        ttk.Label(self, text="Job State").grid(row=1, column=0, padx=8, pady=8, sticky="w")
+        self.load_btn = ttk.Button(self.inner_frame, text="Load...")
+        self.load_btn.grid(row=0, column=2, padx=4, pady=2, sticky="w")
         
-        # State and Controls are encapsulated in one frame spanning the remaining columns
-        job_frm = ttk.Frame(self)
-        job_frm.grid(row=1, column=1, columnspan=2, padx=8, pady=8, sticky="we")
+        # Row 1: Job Logs / Pre-Flight Output
+        self.logs_text = tk.Text(self, width=65, height=8, state="disabled", font=("TkFixedFont", 9))
+        self.logs_text.grid(row=1, column=0, columnspan=5, padx=8, pady=4, sticky="ew")
         
-        self.job_state_var = tk.StringVar(value="PREFLIGHT")
-        self.job_state_lbl = ttk.Label(job_frm, textvariable=self.job_state_var, width=12, font=("TkDefaultFont", 10, "bold"))
-        self.job_state_lbl.pack(side="left", padx=(0, 16))
+        # Row 2: Lifecycle Controls
+        self.run_btn = ttk.Button(self, text="Run Job", state="disabled")
+        self.run_btn.grid(row=2, column=0, padx=(8, 4), pady=(4, 8), sticky="w")
         
-        # This button toggles between "Start Job" and "Cancel Job"
-        self.start_cancel_btn = ttk.Button(job_frm, text="Start Job")
-        self.start_cancel_btn.pack(side="left", padx=4)
+        self.pause_btn = ttk.Button(self, text="Pause", state="disabled")
+        self.pause_btn.grid(row=2, column=1, padx=4, pady=(4, 8), sticky="w")
         
-        # This button toggles between "Pause" and "Resume", greyed out when not running
-        self.pause_resume_btn = ttk.Button(job_frm, text="Pause", state="disabled")
-        self.pause_resume_btn.pack(side="left", padx=4)
+        self.resume_btn = ttk.Button(self, text="Resume", state="disabled")
+        self.resume_btn.grid(row=2, column=2, padx=4, pady=(4, 8), sticky="w")
         
-    def set_preflight_text(self, text: str):
-        """Helper to safely update the read-only preflight text widget."""
-        self.pf_text.config(state="normal")
-        self.pf_text.delete("1.0", "end")
-        self.pf_text.insert("1.0", text)
-        self.pf_text.config(state="disabled")
+        self.cancel_btn = ttk.Button(self, text="Cancel", state="disabled")
+        self.cancel_btn.grid(row=2, column=3, padx=4, pady=(4, 8), sticky="w")
+        
+        # Configure expanding column for right-alignment of future elements if needed
+        self.columnconfigure(4, weight=1)
+
+    def set_logs(self, text: str):
+        """Helper to safely replace the contents of the read-only Text widget."""
+        current = self.logs_text.get("1.0", "end-1c")
+        if current == text:
+            return
+            
+        # Save scroll position
+        scroll_pos = self.logs_text.yview()
+        
+        self.logs_text.config(state="normal")
+        self.logs_text.delete("1.0", "end")
+        self.logs_text.insert("1.0", text)
+        self.logs_text.config(state="disabled")
+        
+        # Restore scroll position
+        self.logs_text.yview_moveto(scroll_pos[0])
+        
+    def append_log(self, text: str):
+        """Helper to safely append to the read-only Text widget."""
+        self.logs_text.config(state="normal")
+        self.logs_text.insert("end", text + "\n")
+        self.logs_text.see("end")
+        self.logs_text.config(state="disabled")
 
 # Simple runner for preview
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Preview: JobExecutionView")
-    root.geometry("650x250")
-    
-    root.columnconfigure(0, weight=1)
-    
+    root.title("Preview: Job Execution View")
+    root.geometry("600x300")
     view = JobExecutionView(root)
-    view.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+    view.pack(fill="both", expand=True, padx=10, pady=10)
     
-    # Mocking some output
-    view.set_preflight_text("Ready.\n - Config Matches\n - Plan Loaded\n - Axes Homed")
+    view.plan_name_var.set("my_project.plan")
+    view.set_logs("PRE-FLIGHT PASS\n  [OK] pico alive\n  [OK] tool 'vbit' mounted\n  [OK] axis x node 1 present")
+    view.run_btn.config(state="normal")
     
     root.mainloop()

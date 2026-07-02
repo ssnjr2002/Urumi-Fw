@@ -200,6 +200,7 @@ class OfflineSession:
             self.plan_file = os.path.basename(path)
             self.plan = plan_obj
             self.plan_error = None
+            self._app_state.plan = plan_obj
             self._app_state.active_plan_path = path
             
             # Extract header info

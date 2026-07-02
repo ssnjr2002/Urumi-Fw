@@ -53,6 +53,10 @@ class OnlineTab(ttk.Frame):
         def _on_mousewheel(e):
             if not self.winfo_ismapped():
                 return
+            # Don't scroll the main canvas if we're scrolling inside a Text widget
+            if e.widget and e.widget.winfo_class() == 'Text':
+                return
+                
             units = int(-1 * (e.delta / 120))
             if units == 0 and e.delta != 0:
                 units = -1 if e.delta > 0 else 1
@@ -101,6 +105,14 @@ class OnlineTab(ttk.Frame):
             self.master_view.set_origin_btn.config(command=self.session.set_origin_all)
             self.master_view.estop_btn.config(command=self.session.estop)
             self.master_view.unalarm_btn.config(command=self.session.unalarm)
+            
+        # Bind Job Execution buttons
+        if hasattr(self.session, 'run_job'):
+            self.job_execution_view.run_btn.config(command=self.on_run)
+        self.job_execution_view.pause_btn.config(command=self.session.pause_job)
+        self.job_execution_view.resume_btn.config(command=self.session.resume_job)
+        self.job_execution_view.cancel_btn.config(command=self.session.cancel_job)
+        self.job_execution_view.load_btn.config(command=self.on_load_plan)
         
         # Start the polling loop
         self._poll_loop()
@@ -115,6 +127,22 @@ class OnlineTab(ttk.Frame):
         if hasattr(self.session, 'toggle_connect'):
             self.session.toggle_connect(port)
 
+    def _on_jog_clicked(self, ltr: str, sign: int):
+        if not hasattr(self.session, 'jog'):
+            return
+            
+        try:
+            dist = self.axis_nodes_view.jog_dist_vars[ltr].get()
+            rate = self.axis_nodes_view.jog_rate_vars[ltr].get()
+            accel = self.axis_nodes_view.jog_accel_vars[ltr].get()
+            
+            self.session.jog(ltr, sign, dist, rate, accel)
+        except Exception as e:
+            if hasattr(self.session, 'last_command_status'):
+                self.session.last_command_status = f"Invalid jog input: {e}"
+                if hasattr(self.session, '_notify'):
+                    self.session._notify()
+
     def _on_app_state_changed(self):
         config = self.session.app_state.config
         if not config:
@@ -128,6 +156,24 @@ class OnlineTab(ttk.Frame):
             # Reset selection if the current one is no longer valid
             if ports and self.master_view.port_var.get() not in ports:
                 self.master_view.port_var.set(ports[0])
+                
+        # Update Job Execution plan name
+        if hasattr(self.session.app_state, 'plan'):
+            plan = self.session.app_state.plan
+            if plan:
+                import os
+                path = getattr(self.session.app_state, 'active_plan_path', '')
+                filename = os.path.basename(path) if path else "Plan Loaded"
+                self.job_execution_view.plan_name_var.set(filename)
+                
+                # Clear previous job notes if a new plan is loaded
+                if getattr(self, '_last_plan', None) is not plan:
+                    self.session.job_notes = []
+                    self._last_plan = plan
+            else:
+                self.job_execution_view.plan_name_var.set("(no plan loaded)")
+                self.session.job_notes = []
+                self._last_plan = None
         
         machine = config.machine
         
@@ -166,6 +212,12 @@ class OnlineTab(ttk.Frame):
                 axes_data.append((ltr, axis_cfg))
             self.axis_nodes_view.populate(axes_data)
             
+        # Bind Jogging Controls
+        for ltr, btn in self.axis_nodes_view.jog_dec_btns.items():
+            btn.config(command=lambda a=ltr: self._on_jog_clicked(a, -1))
+        for ltr, btn in self.axis_nodes_view.jog_inc_btns.items():
+            btn.config(command=lambda a=ltr: self._on_jog_clicked(a, 1))
+            
         # Apply the current session state (e.g. connection status) to the newly populated views
         self._update_ui()
         
@@ -188,9 +240,35 @@ class OnlineTab(ttk.Frame):
             for node_id, btn in self.bus_nodes_view.disable_btns.items():
                 is_present = getattr(self.bus_nodes_view, 'node_presence', {}).get(node_id, True)
                 btn.config(state="normal" if is_present else "disabled")
-            
             # Fetch polling state
             st = getattr(self.session, 'machine_state', None)
+            
+            # Axis Nodes View: Enable Controls (only if the axis is enabled)
+            for ltr, btn in self.axis_nodes_view.jog_dec_btns.items():
+                is_enabled = st and st.enabled(ltr) if st else False
+                btn.config(state="normal" if is_enabled else "disabled")
+            for ltr, btn in self.axis_nodes_view.jog_inc_btns.items():
+                is_enabled = st and st.enabled(ltr) if st else False
+                btn.config(state="normal" if is_enabled else "disabled")
+                
+            # Axis Nodes View: Labels and Tooltips
+            for ltr, lbl in self.axis_nodes_view.axis_name_labels.items():
+                node_id = self.axis_nodes_view.axis_node_ids.get(ltr)
+                is_present = getattr(self.bus_nodes_view, 'node_presence', {}).get(node_id, True)
+                is_enabled = st and st.enabled(ltr) if st else False
+                
+                if not is_present:
+                    lbl.config(foreground="gray")
+                    self.axis_nodes_view.axis_info_labels[ltr].config(text="ⓘ")
+                    self.axis_nodes_view.axis_tooltips[ltr].text = "Node is not present (ping failed)"
+                elif not is_enabled:
+                    lbl.config(foreground="gray")
+                    self.axis_nodes_view.axis_info_labels[ltr].config(text="ⓘ")
+                    self.axis_nodes_view.axis_tooltips[ltr].text = "Axis is disabled (click Enable All)"
+                else:
+                    lbl.config(foreground="")
+                    self.axis_nodes_view.axis_info_labels[ltr].config(text="")
+                    self.axis_nodes_view.axis_tooltips[ltr].text = ""
             err = getattr(self.session, 'polling_error', None)
             
             # Update Bus Nodes State Text
@@ -255,9 +333,66 @@ class OnlineTab(ttk.Frame):
                             if ltr in self.axis_nodes_view.homed_vars:
                                 is_homed = st.homed(ltr)
                                 self.axis_nodes_view.homed_vars[ltr].set(f"Homed: {'Yes' if is_homed else 'No'}")
+                                
             else:
                 self.master_view.state_var.set("CONNECTED")
                 self.master_view.state_lbl.config(foreground="green")
+
+            # Job Execution View Updates
+            import tkinter.messagebox as messagebox
+            
+            # Check mount pending
+            if getattr(self.session, 'pending_mount', None) is not None:
+                if not getattr(self, '_mount_dialog_active', False):
+                    self._mount_dialog_active = True
+                    tool = self.session.pending_mount
+                    ok = messagebox.askokcancel(
+                        "Mount Tool",
+                        f"Mount: {tool}\n\nPhysically swap the tool, then click OK.",
+                        parent=self.winfo_toplevel())
+                    self.session.mount_ok = ok
+                    self.session.mount_event.set()
+                    self._mount_dialog_active = False
+
+            plan = getattr(self.session.app_state, 'plan', None)
+            
+            if self.session.busy or getattr(self.session, 'job_notes', []):
+                notes = getattr(self.session, 'job_notes', [])
+                self.job_execution_view.set_logs("\n".join(notes))
+                
+                if self.session.busy:
+                    self.job_execution_view.run_btn.config(state="disabled")
+                    if st and st.state.name == "PAUSED":
+                        self.job_execution_view.pause_btn.config(state="disabled")
+                        self.job_execution_view.resume_btn.config(state="normal")
+                    else:
+                        self.job_execution_view.pause_btn.config(state="normal")
+                        self.job_execution_view.resume_btn.config(state="disabled")
+                    self.job_execution_view.cancel_btn.config(state="normal")
+                else:
+                    self.job_execution_view.run_btn.config(state="normal")
+                    self.job_execution_view.pause_btn.config(state="disabled")
+                    self.job_execution_view.resume_btn.config(state="disabled")
+                    self.job_execution_view.cancel_btn.config(state="disabled")
+                
+            elif plan:
+                op_count = len(plan.operations)
+                summary = "\n".join(f"  {i+1}. {op.tool}  ({len(op.packets)} segments)" for i, op in enumerate(plan.operations))
+                self.job_execution_view.set_logs(f"Plan summary ({op_count} operations):\n{summary}\n\n(Click 'Run Job' to begin pre-flight and execution)")
+                
+                self.job_execution_view.run_btn.config(state="normal")
+                self.job_execution_view.pause_btn.config(state="disabled")
+                self.job_execution_view.resume_btn.config(state="disabled")
+                self.job_execution_view.cancel_btn.config(state="disabled")
+                self.job_execution_view.pause_btn.config(state="disabled")
+                self.job_execution_view.resume_btn.config(state="disabled")
+                self.job_execution_view.cancel_btn.config(state="disabled")
+            else:
+                self.job_execution_view.set_logs("(Load a plan in the Offline tab to begin)")
+                self.job_execution_view.run_btn.config(state="disabled")
+                self.job_execution_view.pause_btn.config(state="disabled")
+                self.job_execution_view.resume_btn.config(state="disabled")
+                self.job_execution_view.cancel_btn.config(state="disabled")
         else:
             self.master_view.connect_btn.config(text="Connect")
             if self.session.connection_error:
@@ -280,6 +415,40 @@ class OnlineTab(ttk.Frame):
                 btn.config(state="disabled")
             for btn in self.bus_nodes_view.disable_btns.values():
                 btn.config(state="disabled")
+                
+            # Axis Nodes View: Disable Controls
+            for btn in self.axis_nodes_view.jog_dec_btns.values():
+                btn.config(state="disabled")
+            for btn in self.axis_nodes_view.jog_inc_btns.values():
+                btn.config(state="disabled")
+            for lbl in self.axis_nodes_view.axis_name_labels.values():
+                lbl.config(foreground="")
+            for info_lbl in getattr(self.axis_nodes_view, 'axis_info_labels', {}).values():
+                info_lbl.config(text="")
+            for tooltip in self.axis_nodes_view.axis_tooltips.values():
+                tooltip.text = ""
+                
+            # Job Execution View: Disable Controls
+            self.job_execution_view.run_btn.config(state="disabled")
+            self.job_execution_view.pause_btn.config(state="disabled")
+            self.job_execution_view.resume_btn.config(state="disabled")
+            self.job_execution_view.cancel_btn.config(state="disabled")
+            self.job_execution_view.set_logs("(Disconnected)")
+
+    def on_load_plan(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Load Job Plan",
+            filetypes=[("Plan Files", "*.plan"), ("All Files", "*.*")]
+        )
+        if path:
+            # Route the load call through the offline session so both tabs update
+            app = self.winfo_toplevel()
+            if hasattr(app, "offline_session"):
+                app.offline_session.load_plan(path)
+
+    def on_run(self):
+        self.session.run_job()
 
 # A simple runner to preview the complete online layout
 if __name__ == "__main__":

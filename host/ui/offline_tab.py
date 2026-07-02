@@ -76,9 +76,12 @@ class OfflineTab(ttk.Frame):
         self.plan_view = self.plan_wrapper.inner_widget
 
     def _bind_logic(self):
-        # 1. Bind UI events to Session actions
+        # 1. Config View
         self.config_view.load_btn.config(command=self.session.load_config)
+        if hasattr(self.config_view, 'load_sim_btn'):
+            self.config_view.load_sim_btn.config(command=self.session.load_sim_config)
         
+        # 2. SVG View
         def _do_load_svg():
             import tkinter.filedialog as fd
             path = fd.askopenfilename(filetypes=[("SVG Files", "*.svg")])
@@ -114,7 +117,9 @@ class OfflineTab(ttk.Frame):
         # --- Update Config View ---
         if self.session.has_valid_config:
             # We can show a little info about the loaded machine
-            self.config_view.status_var.set(f"Status: Valid (Loaded '{self.session.config.machine.__class__.__name__}')")
+            is_sim = getattr(self.session._app_state, 'is_sim', False)
+            config_type = "Simulator Config" if is_sim else "Production Config"
+            self.config_view.status_var.set(f"Status: Loaded [{config_type}]")
             self.config_view.status_lbl.config(foreground="green")
             self.svg_view.load_btn.config(state="normal")
             

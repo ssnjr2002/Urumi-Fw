@@ -6,8 +6,10 @@ class AppState:
     Acts as the bridge between the Offline Setup and Online Execution tabs.
     """
     def __init__(self):
+        # --- State Data ---
         self._config = None
         self._active_plan_path: Optional[str] = None
+        self._is_sim: bool = False
         
         self._subscribers: List[Callable] = []
         
@@ -36,6 +38,25 @@ class AppState:
         return self._active_plan_path
         
     @active_plan_path.setter
-    def active_plan_path(self, val):
+    def active_plan_path(self, val: Optional[str]):
         self._active_plan_path = val
+        self._notify()
+
+    @property
+    def plan(self):
+        """The currently loaded Plan object."""
+        return getattr(self, '_plan', None)
+        
+    @plan.setter
+    def plan(self, val):
+        self._plan = val
+        self._notify()
+
+    @property
+    def is_sim(self) -> bool:
+        return self._is_sim
+
+    @is_sim.setter
+    def is_sim(self, val: bool):
+        self._is_sim = val
         self._notify()

@@ -35,12 +35,8 @@ class App(tk.Tk):
         self.notebook.add(self.offline_tab, text="Offline Setup")
         
         # 4. Initialize Online Tab (Execution)
-        # TODO: Replace with the real OnlineSession once it's implemented.
-        class DummyOnlineSession:
-            def __init__(self, app_state):
-                self.app_state = app_state
-                
-        self.online_session = DummyOnlineSession(self.app_state)
+        from host.ui.online_session import OnlineSession
+        self.online_session = OnlineSession(self.app_state)
         self.online_tab = OnlineTab(self.notebook, self.online_session)
         
         # Start with the Online tab disabled (gated) until a config is loaded
