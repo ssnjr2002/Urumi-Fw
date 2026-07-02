@@ -259,13 +259,32 @@ class OnlineSession:
             
         self._notify()
 
+    def _send_node_command(self, cmd_fn, node_id: int, label: str) -> bool:
+        """Like _send_command, but for a per-node control-plane command
+        (enable/disable <id>) — cmd_fn takes (link, node_id)."""
+        if not self.is_connected or self.busy:
+            self.last_command_status = "Ignored: link busy or disconnected"
+            self._notify()
+            return False
+
+        try:
+            ok, reason = cmd_fn(self.link, node_id)
+            self.last_command_status = (f"OK: {label} {node_id}" if ok
+                                        else f"Rejected: {label} {node_id} — {reason}")
+            self._notify()
+            return ok
+        except Exception as e:
+            self.last_command_status = f"Error: {label} {node_id}: {e}"
+            self._notify()
+            return False
+
     def enable_node(self, node_id: int):
-        self.last_command_status = f"Rejected: node-level enable not supported by Phase 1 protocol"
-        self._notify()
-        
+        from host.protocol import commands as cmd
+        self._send_node_command(cmd.enable, node_id, "enable")
+
     def disable_node(self, node_id: int):
-        self.last_command_status = f"Rejected: node-level disable not supported by Phase 1 protocol"
-        self._notify()
+        from host.protocol import commands as cmd
+        self._send_node_command(cmd.disable, node_id, "disable")
 
     # ---------------------------------------------------------
     # 4. Data Plane (Jogging)

@@ -46,8 +46,8 @@ def _ok(link, cmd: str):
     return False, r
 
 
-def enable(link):              return _ok(link, "enable")
-def disable(link):             return _ok(link, "disable")
+def enable(link, node=None):   return _ok(link, f"enable {node}" if node is not None else "enable")
+def disable(link, node=None):  return _ok(link, f"disable {node}" if node is not None else "disable")
 def setorigin(link, axes=""):  return _ok(link, f"setorigin {axes}".strip())
 def pause(link):               return _ok(link, "pause")
 def resume(link):              return _ok(link, "resume")

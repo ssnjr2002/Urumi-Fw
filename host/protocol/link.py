@@ -172,12 +172,21 @@ class SimBackend:
             return "ok"
         if cmd == "enable":
             if S.state in idle_paused_alarm:
-                S.axes_enabled = axis_mask("xyza")   # energise all present axes
+                if not args or args[0] == "all":
+                    S.axes_enabled = axis_mask("xyza")   # energise all present axes
+                else:
+                    node = int(args[0])
+                    S.axes_enabled |= (1 << (node - 1))
                 return "ok"
             return "err bad_state"
         if cmd == "disable":
             if S.state in idle_paused_alarm:
-                S.axes_homed = S.axes_enabled = 0    # de-energise -> position invalid
+                if not args or args[0] == "all":
+                    S.axes_homed = S.axes_enabled = 0    # de-energise -> position invalid
+                else:
+                    node = int(args[0])
+                    S.axes_enabled &= ~(1 << (node - 1))
+                    S.axes_homed   &= ~(1 << (node - 1))
                 return "ok"
             return "err bad_state"
         if cmd == "setorigin":

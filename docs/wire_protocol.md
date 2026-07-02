@@ -204,8 +204,8 @@ prefixed `0x`.
 | `pingnode` | `<id>` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
 | `getstate` | — | `state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r>` | Operational status snapshot (see below) |
 | `getpos` | — | `pos <x> <y> <z> <a>` | Absolute machinePos in steps (signed) |
-| `enable` | — | `ok` / `err <reason>` | Energise motors (per allowed-state matrix) |
-| `disable` | — | `ok` / `err <reason>` | De-energise; clears `axes_homed`, resets `axisBounds` |
+| `enable` | `[all\|<id>]` | `ok` / `err <reason>` | Energise motors (per allowed-state matrix). Bare / `all` energises every present node; `enable <id>` relays CMD_ENABLE to that node only (mirrors `pingnode <id>`) |
+| `disable` | `[all\|<id>]` | `ok` / `err <reason>` | De-energise. Bare / `all` de-energises every node and clears `axes_homed`/`axisBounds` for all axes; `disable <id>` relays CMD_DISABLE to that node only and clears homing/bounds for that axis alone |
 | `setorigin` | `[axes]` | `ok` / `err <reason>` | Set datum for given axes (default all): home bits + zero pos + real bounds |
 | `pause` | — | `ok` / `err <reason>` | Request pause of the running job (Core 0 sets flag, Core 1 drains) |
 | `resume` | — | `ok` / `err <reason>` | Continue a paused job (gated on `axes_homed & required_axes`) |
