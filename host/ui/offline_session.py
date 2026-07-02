@@ -1,4 +1,8 @@
+import os
+import importlib
+from dataclasses import replace
 from typing import Callable, List, Optional
+
 from host.ui.app_state import AppState
 
 class OfflineSession:
@@ -9,20 +13,20 @@ class OfflineSession:
     def __init__(self, app_state: AppState):
         self._app_state = app_state
         self._callbacks: List[Callable] = []
-        
+
         # We subscribe to app_state so our UI updates if the global state changes
         self._app_state.subscribe(self._notify)
-        
+
         # --- Configuration State ---
         self.config_error: Optional[str] = None
-        
+
         # --- SVG State ---
         self.svg_file: Optional[str] = None
         self.svg_path: Optional[str] = None
         self.svg_error: Optional[str] = None
         self.svg_bounds: Optional[str] = None
         self.svg_layers: list = []
-        
+
         # --- Plan State ---
         self.plan = None
         self.plan_file: Optional[str] = None
@@ -54,74 +58,55 @@ class OfflineSession:
     # 1. Configuration Management
     # ---------------------------------------------------------
     def load_config(self):
-        """
-        Loads and validates the configuration.
-        For now, we simply import the local 'config.py' module.
-        """
-        import importlib
-        import sys
-        import os
-        
-        stages_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'pipeline', 'stages'))
-        if stages_path not in sys.path:
-            sys.path.insert(0, stages_path)
-            
+        """Loads and validates the production machine configuration."""
         try:
-            # We import here to allow reloading if the user edits the file while the app is open
-            import config
+            # Imported here (not at module level) to allow reloading if the
+            # user edits pipeline/stages/config.py while the app is open.
+            import pipeline.stages.config as config
             importlib.reload(config)
-            
+
             loaded_config = config.default()
-            
+
             # Simple validation: ensure it has a machine definition
             if not getattr(loaded_config, 'machine', None):
                 raise ValueError("Config is missing a 'machine' definition.")
-                
+
             # If we reach here, it's valid
             self._app_state.is_sim = False
             self.config = loaded_config
             self.config_error = None
-            
+
         except Exception as e:
             self.config = None
             self.config_error = str(e)
-            
+
         self._notify()
 
     def load_sim_config(self):
         """Loads the simulator configuration."""
-        import importlib
-        import sys
-        import os
-        
-        stages_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'pipeline', 'stages'))
-        if stages_path not in sys.path:
-            sys.path.insert(0, stages_path)
-            
         try:
-            import config
+            import pipeline.stages.config as config
             importlib.reload(config)
-            
+
             import host.diagnostics.sim_config
             importlib.reload(host.diagnostics.sim_config)
             from host.diagnostics.sim_config import sim_machine
-            from dataclasses import replace
-            
+
             # Get the sim machine
             machine = sim_machine()
-            
+
             # Wrap in PipelineConfig
             base_config = config.default()
             loaded_config = replace(base_config, machine=machine)
-            
+
             self._app_state.is_sim = True
             self.config = loaded_config
             self.config_error = None
-            
+
         except Exception as e:
             self.config = None
             self.config_error = f"Failed to load sim config: {e}"
-            
+
         self._notify()
 
     # ---------------------------------------------------------
@@ -134,49 +119,42 @@ class OfflineSession:
             self._notify()
             return
 
-        import os
-        import sys
-        # Ensure we can import the pipeline module from the root
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
         try:
-            from pipeline.stages.stage2 import load_svg_mm_layers
-            
+            from host.production.normalise import load_svg_mm_layers
+            from pipeline.stages.config import TOOL_PROFILES_BY_TYPE
+
             layers_mm, viewport = load_svg_mm_layers(path)
-            
+
             self.svg_file = os.path.basename(path)
             self.svg_path = path
-            
+
             # Simple bounding box string format (skipping strict limits check for now as requested)
             w_mm, h_mm = viewport[4], viewport[5]
             self.svg_bounds = f"{w_mm:.1f} x {h_mm:.1f} mm"
-            
+
             # Attempt to match layer names to known tools in the config
-            import config
-            valid_tool_names = []
-            if hasattr(config, 'TOOL_PROFILES_BY_TYPE'):
-                valid_tool_names = [t.name.lower() for t in config.TOOL_PROFILES_BY_TYPE.values()]
-                
+            valid_tool_names = [t.name.lower() for t in TOOL_PROFILES_BY_TYPE.values()]
+
             self.svg_layers = []
             for layer_name in layers_mm.keys():
                 match_status = "Unknown Tool"
                 display_name = layer_name
-                
+
                 if layer_name == "":
                     display_name = "(default layer)"
                     match_status = "No Tool Specified"
                 elif layer_name.lower() in valid_tool_names:
                     match_status = "Valid Match"
-                    
+
                 self.svg_layers.append({"name": display_name, "match": match_status})
-                
+
             self.svg_error = None
-            
+
         except Exception as e:
             self.svg_file = None
             self.svg_error = f"Failed to load SVG: {e}"
             self.svg_layers = []
-            
+
         self._notify()
 
     # ---------------------------------------------------------
@@ -187,30 +165,27 @@ class OfflineSession:
             self.plan_error = "Config must be valid to verify a plan against it."
             self._notify()
             return
-            
-        import os
-        import sys
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
         try:
             from host.production.plan_io import load_plan as plan_io_load
-            
+
             # This handles the magic/version check and throws ValueErrors on unrecognised tools
             plan_obj = plan_io_load(path, self.config.machine)
-            
+
             self.plan_file = os.path.basename(path)
             self.plan = plan_obj
             self.plan_error = None
             self._app_state.plan = plan_obj
             self._app_state.active_plan_path = path
-            
+
             # Extract header info
-            self.plan_version = 1 
-            
+            self.plan_version = 1
+
             # Extract tools (Manifest)
             unique_tools = list(dict.fromkeys(op.profile.name for op in plan_obj.operations))
             self.plan_tools = unique_tools
             self.plan_n_tools = len(unique_tools)
-            
+
             # Extract operations
             self.plan_n_ops = len(plan_obj.operations)
             self.plan_ops = []
@@ -220,65 +195,37 @@ class OfflineSession:
                     "tool": op.tool,
                     "packets": len(op.packets)
                 })
-                
+
         except Exception as e:
             self.plan = None
             self.plan_file = None
             self.plan_error = f"Failed to load plan: {e}"
             self.plan_tools = []
             self.plan_ops = []
-            
+
         self._notify()
-        
+
     def generate_plan(self, output_path: str):
         if not self.has_valid_config or not self.has_valid_svg:
             self.plan_error = "Config and SVG must be valid to generate a plan."
             self._notify()
             return
-            
-        import sys
-        import os
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
         try:
-            from host.production.plan_io import Plan, ToolOperation
-            from host.production.svg_to_packets import subpaths_to_packets
-            from pipeline.stages.stage2 import load_svg_mm_layers
-            import config
-            
-            # Reload layers from disk
-            layers_mm, _ = load_svg_mm_layers(self.svg_path)
-            
-            ops = []
-            for layer_name, subpaths in layers_mm.items():
-                if not subpaths: 
-                    continue
-                
-                # Match tool
-                profile = None
-                if hasattr(config, 'TOOL_PROFILES_BY_TYPE'):
-                    for t in config.TOOL_PROFILES_BY_TYPE.values():
-                        if t.name.lower() == layer_name.lower():
-                            profile = t
-                            break
-                            
-                if profile is None:
-                    continue # Ignore layers with no matching tool profile
-                    
-                packets = subpaths_to_packets(subpaths, self.config.machine, profile)
-                if packets:
-                    ops.append(ToolOperation(tool=profile.name, profile=profile, packets=packets))
-                    
-            if not ops:
-                raise ValueError("No layers matched valid tools, or matched layers had no valid paths.")
-                
-            new_plan = Plan(operations=ops)
-            
+            from host.production.planner import plan_job
             from host.production.plan_io import save_plan
+
+            # Same compile path as bake.py: orchestrate_layers + subpaths_to_packets
+            # per block. A layer whose name resolves to no tool raises here (a
+            # mislabelled layer should surface as an error, not be silently
+            # skipped) — reported through the same except below as everything else.
+            new_plan = plan_job(self.svg_path, self.config.machine)
+
             save_plan(new_plan, output_path)
-            
+
             # Immediately load the generated plan back into the UI for inspection
             self.load_plan(output_path)
-            
+
         except Exception as e:
             self.plan = None
             self.plan_error = f"Generation failed: {e}"
@@ -287,7 +234,7 @@ class OfflineSession:
     @property
     def has_valid_config(self) -> bool:
         return self.config is not None
-        
+
     @property
     def has_valid_svg(self) -> bool:
         return self.svg_file is not None and self.svg_error is None
