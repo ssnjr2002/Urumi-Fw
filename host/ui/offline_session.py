@@ -102,9 +102,9 @@ class OfflineSession:
             import config
             importlib.reload(config)
             
-            import host.sim_config
-            importlib.reload(host.sim_config)
-            from host.sim_config import sim_machine
+            import host.diagnostics.sim_config
+            importlib.reload(host.diagnostics.sim_config)
+            from host.diagnostics.sim_config import sim_machine
             from dataclasses import replace
             
             # Get the sim machine

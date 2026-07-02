@@ -1,5 +1,7 @@
 # pipeline/
 
+**NOTE:** This document is stale as of 02/07/26 20:40
+
 SVG-to-MicroSegment motion planning pipeline. Pure Python, no external dependencies. Takes an SVG file and produces a flat list of `MicroSegment` step events ready for serialisation and transmission to the RP2350.
 
 The pipeline plans velocity **per arc-length sample**, not per Bézier curve. An earlier per-curve ("tile") engine was retired once the per-sample engine passed on hardware — the sample engine subsumes it (lowering `a_max` reproduces tile's whole-arc conservatism) and maintaining two planners was pure tax. See [`PLAN_pipeline_redesign.md`](../PLAN_pipeline_redesign.md) for the tile-vs-sample rationale.
