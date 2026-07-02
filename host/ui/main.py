@@ -7,9 +7,9 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from host.ui.app_state import AppState
-from host.ui.offline_session import OfflineSession
-from host.ui.offline_tab import OfflineTab
-from host.ui.online_tab import OnlineTab
+from host.ui.offline.session import OfflineSession
+from host.ui.offline.tab import OfflineTab
+from host.ui.online.tab import OnlineTab
 
 class App(tk.Tk):
     """
@@ -35,7 +35,7 @@ class App(tk.Tk):
         self.notebook.add(self.offline_tab, text="Offline Setup")
         
         # 4. Initialize Online Tab (Execution)
-        from host.ui.online_session import OnlineSession
+        from host.ui.online.session import OnlineSession
         self.online_session = OnlineSession(self.app_state)
         self.online_tab = OnlineTab(self.notebook, self.online_session)
         

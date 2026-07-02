@@ -5,12 +5,12 @@ import os
 
 # Allow running this file directly for preview by adding the project root to sys.path
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
-from host.ui.master_view import MasterView
-from host.ui.bus_nodes_view import BusNodesView
-from host.ui.axis_nodes_view import AxisNodesView
-from host.ui.job_execution_view import JobExecutionView
+from host.ui.online.master_view import MasterView
+from host.ui.online.bus_nodes_view import BusNodesView
+from host.ui.online.axis_nodes_view import AxisNodesView
+from host.ui.online.job_execution_view import JobExecutionView
 from host.ui.draggable_container import ReorderableContainer
 
 class OnlineTab(ttk.Frame):

@@ -5,12 +5,12 @@ import os
 
 # Allow running this file directly for preview by adding the project root to sys.path
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
-from host.ui.config_view import ConfigView
-from host.ui.svg_view import SvgView
-from host.ui.plan_view import PlanView
-from host.ui.offline_session import OfflineSession
+from host.ui.offline.config_view import ConfigView
+from host.ui.offline.svg_view import SvgView
+from host.ui.offline.plan_view import PlanView
+from host.ui.offline.session import OfflineSession
 from host.ui.draggable_container import ReorderableContainer
 
 
