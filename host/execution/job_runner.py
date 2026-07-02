@@ -17,7 +17,7 @@ import time
 from host.protocol.packets import with_flag, MSEG_FLAG_PAUSE
 from host.protocol.state import MachineState
 from host.protocol import commands as cmd
-from host.preflight import preflight
+from host.execution.preflight import preflight
 
 
 class Operator:

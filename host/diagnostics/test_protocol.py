@@ -15,7 +15,7 @@ from dataclasses import replace
 from host.protocol.link import Link
 from host.protocol import commands as cmd
 from host.protocol.state import MachineState, AlarmReason, RunningReason, axis_mask
-from host.preflight import preflight
+from host.execution.preflight import preflight
 from host.protocol.packets import make_jog
 from pipeline.stages.config import default, KNIFE, PEN, BusNode
 

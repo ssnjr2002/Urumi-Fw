@@ -9,7 +9,7 @@ except ImportError:
 
 from host.protocol.link import Link
 from host.ui.app_state import AppState
-from host.job_runner import Operator
+from host.execution.job_runner import Operator
 
 class GuiOperator(Operator):
     def __init__(self, session: "OnlineSession"):
@@ -346,8 +346,8 @@ class OnlineSession:
         
         def _worker():
             try:
-                from host.job_runner import send_plan
-                from host.preflight import preflight
+                from host.execution.job_runner import send_plan
+                from host.execution.preflight import preflight
                 
                 gui_op.note("--- PRE-FLIGHT ---")
                 profile = plan.operations[0].profile

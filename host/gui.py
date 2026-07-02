@@ -27,8 +27,8 @@ from host.protocol.link import Link
 from host.protocol.packets import make_jog
 from host.protocol import commands as cmd
 from host.protocol.state import MachineState
-from host.job_runner import send_plan, Operator
-from host.plan_io import load_plan
+from host.execution.job_runner import send_plan, Operator
+from host.production.plan_io import load_plan
 
 try:
     from serial.tools import list_ports

@@ -1,5 +1,12 @@
 """
-plan_io.py — save and load a Plan as a self-describing binary .plan file.
+plan_io.py — the Plan data model, plus save/load as a self-describing binary
+.plan file.
+
+Plan/ToolOperation are the in-memory representation shared by every stage
+that touches a job after planner.plan_job builds it: this file's own
+save_plan/load_plan, host.execution.job_runner, and the GUI. They live here
+— next to the format they describe — rather than in planner.py, since nothing
+about them is specific to planning; they're just what a Plan *is*.
 
 Format (all little-endian):
   magic:    4B  b'\xAB\xCD\x50\x01'
@@ -20,8 +27,8 @@ Plans. One plan file runs on any machine (single or dual head).
 """
 
 import struct
-from host.production.planner import Plan, ToolOperation
-from pipeline.stages.config import ToolType, TOOL_PROFILES_BY_TYPE
+from dataclasses import dataclass, field
+from pipeline.stages.config import ToolType, TOOL_PROFILES_BY_TYPE, can_run_tool
 from host.protocol.packets import PACKET_SIZES
 
 MAGIC   = b'\xAB\xCD\x50\x01'
@@ -29,6 +36,40 @@ VERSION = 0x01
 
 _HDR     = struct.Struct("<4sBBH")   # magic, version, n_tools, n_ops
 _OP_HDR  = struct.Struct("<BI")      # tool_type (1B), pkt_count (4B)
+
+
+@dataclass
+class ToolOperation:
+    tool:    str           # ToolProfile.name
+    profile: object        # the ToolProfile
+    packets: list          # list[bytes] — MSEG step packets for this op
+
+
+@dataclass
+class Plan:
+    operations: list = field(default_factory=list)   # in execution order
+
+    @property
+    def tools(self):
+        """Unique tools the plan uses, in first-appearance order."""
+        seen = []
+        for op in self.operations:
+            if op.tool not in seen:
+                seen.append(op.tool)
+        return seen
+
+    def feasible_on(self, machine):
+        """
+        (ok, problems) — can `machine`'s topology run every tool this plan uses?
+        The upfront, config-only gate (no hardware). problems is a list of
+        (tool, reason) for the tools that don't fit.
+        """
+        problems = []
+        for op in self.operations:
+            ok, reason = can_run_tool(machine, op.profile)
+            if not ok and (op.tool, reason) not in problems:
+                problems.append((op.tool, reason))
+        return (not problems), problems
 
 
 def save_plan(plan: Plan, path: str):

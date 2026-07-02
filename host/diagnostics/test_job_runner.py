@@ -17,7 +17,7 @@ from host.protocol.link import Link
 from host.protocol import commands as cmd
 from host.protocol.state import MachineState
 from host.production.planner import plan_job
-from host.job_runner import send_plan, Operator
+from host.execution.job_runner import send_plan, Operator
 
 SVG = os.path.join(os.path.dirname(__file__), "..", "..",
                    "pipeline", "data", "test_layers.svg")

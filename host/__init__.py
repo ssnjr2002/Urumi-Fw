@@ -4,7 +4,10 @@ host — Phase 1 host application package.
 Subpackages:
   protocol/    the one component that owns the Pico USB link and speaks the
                frozen wire contract (see docs/wire_protocol.md).
-  production/  offline pipeline orchestration (SVG -> packets, validators).
+  production/  offline, bake-time: SVG -> Plan -> .plan file (parse,
+               normalise, repair, orchestrate, planner, plan_io, validators).
+  execution/   online, run-time: stream a Plan to the Pico (job_runner,
+               preflight).
   diagnostics/ comms simulators and bring-up checks.
 Plus gui.py (operator frontend).
 

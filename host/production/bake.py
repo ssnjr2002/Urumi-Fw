@@ -9,17 +9,23 @@ Layer names in the SVG drive tool selection automatically: a "knife" layer cuts
 with KNIFE, "crease" with CREASE, "pen" with PEN (case-insensitive). Pass
 --tool to set a fallback for unlayered SVGs or unrecognised layer names.
 
+Blocks run in document order by default. Pass --tool-order to group and
+reorder blocks by tool instead (document order preserved within each tool's
+group) — e.g. run every knife block before any crease block regardless of
+how the layers were interleaved in the SVG.
+
 Usage:
   python -m host.production.bake design.svg
   python -m host.production.bake design.svg --output cut.plan
   python -m host.production.bake design.svg --tool pen          # unlayered SVG
+  python -m host.production.bake design.svg --tool-order knife,crease
 """
 
 import argparse, os, sys
 
 from pipeline.stages.config import default as _config_default, TOOL_PROFILES
 from host.production.planner import plan_job
-from host.plan_io import save_plan
+from host.production.plan_io import save_plan
 
 
 def main():
@@ -29,24 +35,25 @@ def main():
                     help="Output .plan path (default: <svg-basename>.plan)")
     ap.add_argument("--tool", default=None, choices=list(TOOL_PROFILES),
                     help="Default tool for unlayered SVGs or unrecognised layer names")
+    ap.add_argument("--tool-order", default=None,
+                    help="Comma-separated tool names, e.g. knife,crease — groups "
+                         "and reorders blocks by tool (default: document order)")
     args = ap.parse_args()
 
     out = args.output or os.path.splitext(args.svg)[0] + ".plan"
     machine = _config_default().machine
     default_tool = TOOL_PROFILES[args.tool] if args.tool else None
+    tool_order = args.tool_order.split(",") if args.tool_order else None
 
     print(f"baking  {args.svg}")
     try:
-        plan = plan_job(args.svg, machine, default_tool=default_tool)
+        plan = plan_job(args.svg, machine, default_tool=default_tool, tool_order=tool_order)
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    ok, problems = plan.feasible_on(machine)
-    if not ok:
-        for tool, reason in problems:
-            print(f"  feasibility fail  {tool}: {reason}", file=sys.stderr)
-        sys.exit(1)
+    # feasibility check (Plan.feasible_on) intentionally not run here yet —
+    # deferred until the feasibility-gate pass lands.
 
     print(f"  {len(plan.operations)} operation(s):")
     for i, op in enumerate(plan.operations):

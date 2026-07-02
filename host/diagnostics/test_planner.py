@@ -9,7 +9,8 @@ import sys, os
 from dataclasses import replace
 
 from pipeline.stages.config import default, KNIFE, PEN, CREASE, can_run_tool
-from host.production.planner import plan_job, Plan, ToolOperation
+from host.production.planner import plan_job
+from host.production.plan_io import Plan, ToolOperation
 
 SVG = os.path.join(os.path.dirname(__file__), "..", "..",
                    "pipeline", "data", "test_layers.svg")

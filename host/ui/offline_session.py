@@ -192,7 +192,7 @@ class OfflineSession:
         import sys
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
         try:
-            from host.plan_io import load_plan as plan_io_load
+            from host.production.plan_io import load_plan as plan_io_load
             
             # This handles the magic/version check and throws ValueErrors on unrecognised tools
             plan_obj = plan_io_load(path, self.config.machine)
@@ -240,7 +240,7 @@ class OfflineSession:
         import os
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
         try:
-            from host.production.planner import Plan, ToolOperation
+            from host.production.plan_io import Plan, ToolOperation
             from host.production.svg_to_packets import subpaths_to_packets
             from pipeline.stages.stage2 import load_svg_mm_layers
             import config
@@ -273,7 +273,7 @@ class OfflineSession:
                 
             new_plan = Plan(operations=ops)
             
-            from host.plan_io import save_plan
+            from host.production.plan_io import save_plan
             save_plan(new_plan, output_path)
             
             # Immediately load the generated plan back into the UI for inspection
