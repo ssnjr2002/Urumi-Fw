@@ -61,6 +61,7 @@ from collections import namedtuple
 # ── magic bytes ───────────────────────────────────────────────────────────────
 
 MAGIC_MICROSEG   = 0xAB
+MAGIC_JOG        = 0xAE
 MAGIC_TOOL       = 0xAC
 MAGIC_SPLINE     = 0xAD
 
@@ -128,6 +129,7 @@ def _crc8(data: bytes) -> int:
 
 PACKET_SIZES = {
     MAGIC_MICROSEG: 26,
+    MAGIC_JOG:      26,
     MAGIC_TOOL:     21,
     MAGIC_SPLINE:   37,
 }
@@ -163,6 +165,18 @@ def pack_microsegment(ms) -> bytes:
     )
     return body + bytes([_crc8(body)])
 
+def pack_jog(ms) -> bytes:
+    """
+    Pack a MicroSegment namedtuple into a 26-byte JOG wire packet.
+    """
+    body = struct.pack("<B iiii I B 3x",
+        MAGIC_JOG,
+        ms.dx, ms.dy, ms.dz, ms.da,
+        ms.interval,
+        ms.flags,
+    )
+    return body + bytes([_crc8(body)])
+
 
 def stamp_seq(packet: bytes, seq: int) -> bytes:
     """
@@ -173,8 +187,8 @@ def stamp_seq(packet: bytes, seq: int) -> bytes:
     after the Pico accepted in-flight packets duplicates motion — a permanent
     position offset.
     """
-    if len(packet) != 26 or packet[0] != MAGIC_MICROSEG:
-        raise ValueError("stamp_seq: not a MicroSegment packet")
+    if len(packet) != 26 or packet[0] not in (MAGIC_MICROSEG, MAGIC_JOG):
+        raise ValueError("stamp_seq: not a MicroSegment or Jog packet")
     body = bytearray(packet[:25])
     body[22] = seq & 0xFF
     return bytes(body) + bytes([_crc8(body)])
@@ -199,8 +213,8 @@ def unpack_microsegment(data: bytes):
     """
     if len(data) != 26:
         raise ValueError(f"Expected 26 bytes, got {len(data)}")
-    if data[0] != MAGIC_MICROSEG:
-        raise ValueError(f"Bad magic: 0x{data[0]:02X} (expected 0x{MAGIC_MICROSEG:02X})")
+    if data[0] not in (MAGIC_MICROSEG, MAGIC_JOG):
+        raise ValueError(f"Bad magic: 0x{data[0]:02X} (expected MSEG or JOG)")
     if _crc8(data[:25]) != data[25]:
         raise ValueError("CRC mismatch")
     dx, dy, dz, da, interval, flags = struct.unpack_from("<iiii I B", data, 1)
@@ -374,7 +388,7 @@ def make_jog(steps, feed_sps, accel_sps2, f_cpu, v_start_sps=50.0):
 
         n += chunk_size
         flags = MSEG_FLAG_PATH_END if n >= major else MSEG_FLAG_NONE
-        packets.append(pack_microsegment(
+        packets.append(pack_jog(
             _MS(dx=delta[0], dy=delta[1], dz=delta[2], da=delta[3],
                 interval=interval, flags=flags)))
 

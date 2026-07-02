@@ -65,7 +65,8 @@ def test_resume_and_cancel():
     link.backend._force_running()
     cmd.pause(link)
     ok, _ = cmd.resume(link); assert ok
-    assert cmd.get_state(link).state == MachineState.RUNNING
+    # Phase 1: resume -> IDLE (host pre-positions, then streams fresh next op)
+    assert cmd.get_state(link).state == MachineState.IDLE
     # cancel path
     link2 = Link.open_sim()
     link2.backend._force_running()

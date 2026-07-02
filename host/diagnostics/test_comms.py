@@ -143,11 +143,17 @@ AXIS_NODE = {'x': 1, 'y': 2, 'z': 3, 'a': 4}
 
 def test_ping(ser, node):
     print(f"\n[1] PING node {node}")
-    resp = send_text(ser, f'ping {node}')
-    if 'PONG' in resp or 'pong' in resp.lower():
+    # First confirm the Pico is alive (control-plane ping)
+    resp_pico = send_text(ser, 'ping')
+    if resp_pico != 'pong':
+        print(f"    FAIL — Pico ping: {repr(resp_pico)}")
+        return False
+    # Then relay an RS485 ping to the node
+    resp = send_text(ser, f'pingnode {node}')
+    if resp.endswith('ok'):
         print(f"    PASS — {resp}")
         return True
-    print(f"    FAIL — got: {repr(resp)}")
+    print(f"    FAIL — got: {repr(resp)} (node may be offline — timeout is expected without hardware)")
     return False
 
 
@@ -265,7 +271,8 @@ def main():
         results = {}
 
         if args.test in ('ping', 'all'):
-            # Enable node first so it can respond
+            # setorigin first (IDLE -> homed) so enable is accepted
+            send_text(ser, 'setorigin')
             send_text(ser, f'enable {args.node}')
             results['ping'] = test_ping(ser, args.node)
 

@@ -25,7 +25,7 @@ def sim_machine():
     base = default().machine
     return replace(base, peripherals=(
         BusNode(7, role="oscillator"),   # driven-knife blade controller
-        BusNode(8, role="suction"),      # vacuum hold-down
+        BusNode(8, role="suction", present=False),      # vacuum hold-down (dropped)
         # add more bus nodes here — they show up in the GUI automatically
     ))
 

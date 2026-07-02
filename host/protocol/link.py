@@ -155,6 +155,8 @@ class SimBackend:
 
         if cmd == "ping":
             return "pong"
+        if cmd == "seqreset":
+            return "seq reset"    # sim doesn't track seq; just acknowledge
         if cmd == "pingnode":
             return f"node {args[0] if args else '?'} ok"
         if cmd == "getstate":
@@ -196,7 +198,10 @@ class SimBackend:
             return "err bad_state"
         if cmd == "resume":
             if S.state == MS.PAUSED:
-                S.state = MS.RUNNING            # executor resumes draining
+                # Phase 1: host pre-positions before resuming; Pico returns to IDLE
+                # and accepts a fresh stream for the next operation (mirrors firmware).
+                S.state = MS.IDLE
+                S._motion.clear(); S._executing = False
                 return "ok"
             return "err bad_state"
         if cmd == "cancel":

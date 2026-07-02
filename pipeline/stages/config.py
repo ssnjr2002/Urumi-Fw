@@ -20,7 +20,7 @@ Three tiers, mirroring the host/local-production split:
 
 Bus-first topology
 ──────────────────
-The RS485 bus has NODES (ATtiny3224 driver boards). A node can be anything —
+The RS485 bus has NODES (ATtiny3224/AVR128DB32 driver boards). A node can be anything —
 a stepper axis, an oscillating-knife controller, a suction valve. `BusNode`
 is the primitive: it captures what is physically on the bus (id, role,
 present/absent). Things that USE a node reference it:
@@ -57,7 +57,7 @@ from enum import IntEnum
 @dataclass(frozen=True)
 class BusNode:
     """
-    One ATtiny3224 driver board on the RS485 bus.
+    One ATtiny3224/AVR128DB32 driver board on the RS485 bus.
 
     node_id is the RS485 address (currently 1-4; the 4-node ceiling moves when
     dual heads + non-axis nodes land). role names what the board drives —
