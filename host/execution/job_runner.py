@@ -33,9 +33,15 @@ class Operator:
         """Surface a status line to the operator."""
 
 
-def send_plan(plan, machine, link, operator=None):
+def send_plan(plan, machine, link, operator=None, on_progress=None):
     """
     Stream `plan` to the Pico behind `link`, single head. Returns (ok, message).
+
+    on_progress(status, pos), if given, is called from this thread every time
+    `_wait_state` polls the Pico while draining an operation — the same poll
+    already happening internally, just also handed to the caller so a GUI can
+    show live state/position during the (often long) drain-to-IDLE wait
+    without a second thread reading `link`.
     """
     operator = operator or Operator()
     head = machine.active_head
@@ -69,17 +75,24 @@ def send_plan(plan, machine, link, operator=None):
         operator.note(f"running '{op.tool}' ({len(packets)} segments)")
         link.stream(packets)
         target = MachineState.PAUSED if tool_change_ahead else MachineState.IDLE
-        if not _wait_state(link, target):
+        if not _wait_state(link, target, on_progress=on_progress):
             return False, f"timed out waiting for {target.name} after '{op.tool}'"
 
     operator.note("job complete")
     return True, "job complete"
 
 
-def _wait_state(link, target, timeout=15.0, interval=0.02):
+def _wait_state(link, target, timeout=15.0, interval=0.02, on_progress=None):
     t0 = time.time()
     while time.time() - t0 < timeout:
-        if cmd.get_state(link).state == target:
+        status = cmd.get_state(link)
+        if on_progress:
+            try:
+                pos = cmd.get_pos(link)
+            except Exception:
+                pos = None
+            on_progress(status, pos)
+        if status.state == target:
             return True
         time.sleep(interval)
     return False

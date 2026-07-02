@@ -1,5 +1,6 @@
 import threading
 import queue
+import time
 from typing import Callable, List, Optional
 
 try:
@@ -59,13 +60,22 @@ class OnlineSession:
         self.jog_q = queue.Queue()
         self._worker = threading.Thread(target=self._jog_worker, daemon=True)
         self._worker.start()
-        
+
         # --- Job State ---
         self.job_notes = []
         self.pending_mount = None
         self.mount_ok = True
         self.mount_event = threading.Event()
         self._gui_op = None
+
+        # --- Background Status Poller ---
+        # Runs on its own thread so a wedged/disconnected Pico (blocking serial
+        # reads, up to Link.command's 1s timeout per call) can never freeze the
+        # Tk event loop. Skips itself whenever busy — the jog worker and job
+        # worker are each the sole owner of `link` while they run; the job
+        # worker pushes its own live updates via send_plan's on_progress hook.
+        self._poll_thread = threading.Thread(target=self._poll_worker, daemon=True)
+        self._poll_thread.start()
         
     def subscribe(self, callback: Callable):
         """UI components register here to be notified of state changes."""
@@ -114,7 +124,14 @@ class OnlineSession:
         self._notify()
         
     def disconnect(self):
-        """Close the active link."""
+        """Close the active link. Refuses while a job or jog is streaming —
+        closing the port mid-transfer orphans the machine (whatever's already
+        buffered in the Pico's ring buffer keeps executing with the host now
+        blind to it). Cancel/wait for the job to finish first."""
+        if self.busy:
+            self.last_command_status = "Ignored: cannot disconnect while busy"
+            self._notify()
+            return
         if self.link:
             try:
                 self.link.close()
@@ -130,20 +147,28 @@ class OnlineSession:
     # ---------------------------------------------------------
     # 2. Status Polling
     # ---------------------------------------------------------
-    def poll_status(self):
-        """Called periodically by the UI thread to fetch state without blocking long."""
-        if not self.is_connected or self.busy:
-            return
-            
-        from host.protocol import commands as cmd
-        try:
-            self.machine_state = cmd.get_state(self.link)
-            self.machine_pos_steps = cmd.get_pos(self.link)
-            self.polling_error = None
-        except Exception as e:
-            self.polling_error = str(e)
-            
-        self._notify()
+    def _poll_worker(self):
+        """
+        Background thread: polls machine state/position at ~400ms while idle.
+        Runs off the Tk thread so a wedged Pico (blocking serial reads, up to
+        Link.command's 1s timeout per call) degrades to a stale UI instead of
+        freezing the whole GUI. Skips itself while busy — the jog worker and
+        job worker each own `link` exclusively for their duration.
+        """
+        while True:
+            time.sleep(0.4)
+            if not self.is_connected or self.busy:
+                continue
+
+            from host.protocol import commands as cmd
+            try:
+                self.machine_state = cmd.get_state(self.link)
+                self.machine_pos_steps = cmd.get_pos(self.link)
+                self.polling_error = None
+            except Exception as e:
+                self.polling_error = str(e)
+
+            self._notify()
 
     # ---------------------------------------------------------
     # 3. Control Plane Commands
@@ -248,7 +273,16 @@ class OnlineSession:
     def jog(self, ltr: str, sign: int, dist: float, rate: float, accel: float):
         """Queue a jog burst for a specific axis."""
         from host.protocol.packets import make_jog
-        
+
+        if self.busy:
+            # A job or another jog already owns `link`. Queuing anyway would let
+            # _jog_worker stream onto the port while the job worker is mid-stream
+            # — two writers on one serial port, and the jog's seqreset resets the
+            # Pico's duplicate-guard counter mid-job, silently dropping job steps.
+            self.last_command_status = "Rejected: link busy (job or jog in progress)"
+            self._notify()
+            return
+
         if not self.app_state.config or not self.app_state.config.machine:
             return
             
@@ -343,23 +377,33 @@ class OnlineSession:
         self._notify()
         
         gui_op = self._gui_op
-        
+
+        def _on_progress(status, pos):
+            # Called from this same worker thread by send_plan's _wait_state
+            # poll — no second reader of `link` needed. Publishes the live
+            # state/position _poll_worker would otherwise have shown, since
+            # _poll_worker skips itself entirely while self.busy is True.
+            self.machine_state = status
+            if pos is not None:
+                self.machine_pos_steps = pos
+            self._notify()
+
         def _worker():
             try:
                 from host.execution.job_runner import send_plan
                 from host.execution.preflight import preflight
-                
+
                 gui_op.note("--- PRE-FLIGHT ---")
                 profile = plan.operations[0].profile
                 pf = preflight(link, machine, profile, require_idle=True)
                 gui_op.note(str(pf))
-                
+
                 if not pf.ok:
                     gui_op.note("\nPre-flight failed. Job aborted.")
                     return
-                    
+
                 gui_op.note("\n--- EXECUTION ---")
-                ok, msg = send_plan(plan, machine, link, gui_op)
+                ok, msg = send_plan(plan, machine, link, gui_op, on_progress=_on_progress)
                 gui_op.note("\nDone: " + msg if ok else "\nFailed: " + msg)
             except Exception as e:
                 gui_op.note(f"error: {e}")

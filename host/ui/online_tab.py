@@ -113,14 +113,6 @@ class OnlineTab(ttk.Frame):
         self.job_execution_view.resume_btn.config(command=self.session.resume_job)
         self.job_execution_view.cancel_btn.config(command=self.session.cancel_job)
         self.job_execution_view.load_btn.config(command=self.on_load_plan)
-        
-        # Start the polling loop
-        self._poll_loop()
-
-    def _poll_loop(self):
-        if hasattr(self.session, 'poll_status'):
-            self.session.poll_status()
-        self.after(400, self._poll_loop)
 
     def _on_connect_clicked(self):
         port = self.master_view.port_var.get()
@@ -225,10 +217,13 @@ class OnlineTab(ttk.Frame):
         if not hasattr(self.session, 'is_connected'):
             return
             
+        busy = getattr(self.session, 'busy', False)
+
         # Master View: Connection State
         if self.session.is_connected:
-            self.master_view.connect_btn.config(text="Disconnect")
-            
+            self.master_view.connect_btn.config(
+                text="Disconnect", state="disabled" if busy else "normal")
+
             # Bus Nodes View: Enable Controls (if node is present)
             self.bus_nodes_view.ping_all_btn.config(state="normal")
             for node_id, btn in self.bus_nodes_view.ping_btns.items():
@@ -243,12 +238,13 @@ class OnlineTab(ttk.Frame):
             # Fetch polling state
             st = getattr(self.session, 'machine_state', None)
             
-            # Axis Nodes View: Enable Controls (only if the axis is enabled)
+            # Axis Nodes View: Enable Controls (only if the axis is enabled, and
+            # never while a job/jog already owns the link — see OnlineSession.jog)
             for ltr, btn in self.axis_nodes_view.jog_dec_btns.items():
-                is_enabled = st and st.enabled(ltr) if st else False
+                is_enabled = (st and st.enabled(ltr) if st else False) and not busy
                 btn.config(state="normal" if is_enabled else "disabled")
             for ltr, btn in self.axis_nodes_view.jog_inc_btns.items():
-                is_enabled = st and st.enabled(ltr) if st else False
+                is_enabled = (st and st.enabled(ltr) if st else False) and not busy
                 btn.config(state="normal" if is_enabled else "disabled")
                 
             # Axis Nodes View: Labels and Tooltips
@@ -394,7 +390,7 @@ class OnlineTab(ttk.Frame):
                 self.job_execution_view.resume_btn.config(state="disabled")
                 self.job_execution_view.cancel_btn.config(state="disabled")
         else:
-            self.master_view.connect_btn.config(text="Connect")
+            self.master_view.connect_btn.config(text="Connect", state="normal")
             if self.session.connection_error:
                 self.master_view.state_var.set(f"Error: {self.session.connection_error}")
                 self.master_view.state_lbl.config(foreground="red")
