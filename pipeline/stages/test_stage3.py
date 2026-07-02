@@ -1,11 +1,11 @@
 """Tests for stage 3: C1 continuity enforcement."""
 
 import sys, os, math
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
 
-from stage3 import enforce_c1, _exit_tangent, _entry_tangent, _angle_between_deg
-from mock_stage3 import CASES
+from pipeline.stages.stage3 import enforce_c1, _exit_tangent, _entry_tangent, _angle_between_deg
+from pipeline.data.mock_stage3 import CASES
 
 def approx(a, b, tol=1e-6):
     return all(abs(x - y) < tol for x, y in zip(a, b))
@@ -115,8 +115,7 @@ def test_tighter_tolerance_triggers_repair():
 # ── real SVG passthrough ──────────────────────────────────────────────────────
 
 def test_snake_svg_no_repairs():
-    DATA = os.path.join(os.path.dirname(__file__), "..", "data")
-    from stage2 import load_svg_mm
+    from pipeline.stages.stage2 import load_svg_mm
     curves, _ = load_svg_mm(os.path.join(DATA, "test_snake.svg"))
     repaired, logs = enforce_c1(curves)
     assert len(logs) == 0

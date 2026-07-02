@@ -14,8 +14,8 @@ function without changing the plan format or anything below it.
 
 from dataclasses import dataclass, field
 
-from stage2 import load_svg_mm_layers
-from config import default as config_default, tool_for_layer, can_run_tool
+from pipeline.stages.stage2 import load_svg_mm_layers
+from pipeline.stages.config import default as config_default, tool_for_layer, can_run_tool
 from host.production.svg_to_packets import subpaths_to_packets
 
 

@@ -12,10 +12,10 @@ Output: repaired curve list + list of RepairLog entries.
 import math
 import argparse
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-from stage1 import CubicBezier
-from stage2 import load_svg_mm
-from config import default as _config_default
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from pipeline.stages.stage1 import CubicBezier
+from pipeline.stages.stage2 import load_svg_mm
+from pipeline.stages.config import default as _config_default
 from collections import namedtuple
 
 RepairLog = namedtuple("RepairLog", ["join_index", "kind", "angle_deg", "gap_mm"])

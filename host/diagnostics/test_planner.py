@@ -8,7 +8,7 @@ Run: python -m host.diagnostics.test_planner
 import sys, os
 from dataclasses import replace
 
-from config import default, KNIFE, PEN, CREASE, can_run_tool
+from pipeline.stages.config import default, KNIFE, PEN, CREASE, can_run_tool
 from host.production.planner import plan_job, Plan, ToolOperation
 
 SVG = os.path.join(os.path.dirname(__file__), "..", "..",
@@ -61,7 +61,7 @@ def test_can_run_tool_peripheral_gap():
 def test_unresolved_layer_needs_default_or_raises():
     # test_layers.svg layers DO resolve; a bogus override map leaves them resolvable
     # so just check the error path via an SVG-less synthetic: an unknown tool name.
-    from config import tool_for_layer
+    from pipeline.stages.config import tool_for_layer
     assert tool_for_layer("widget") is None
     assert tool_for_layer("widget", overrides={"widget": CREASE}) is CREASE
 

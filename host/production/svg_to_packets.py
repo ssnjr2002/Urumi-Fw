@@ -16,14 +16,14 @@ This script always writes to sys.stdout.buffer (binary mode).
 
 import sys, argparse, struct
 
-from stage2 import load_svg_mm_subpaths
-from stage3 import enforce_c1
-from flatten import flatten
-from constrain import constrain
-from plan_lookahead import plan
-from discretize import discretize
+from pipeline.stages.stage2 import load_svg_mm_subpaths
+from pipeline.stages.stage3 import enforce_c1
+from pipeline.stages.flatten import flatten
+from pipeline.stages.constrain import constrain
+from pipeline.stages.plan_lookahead import plan
+from pipeline.stages.discretize import discretize
 from host.protocol.packets import serialise_microsegments
-from config import default as config_default, MachineConfig, KNIFE, PEN
+from pipeline.stages.config import default as config_default, MachineConfig, KNIFE, PEN
 
 
 def run(svg_path, machine, feed_max=None, a_max=None, angle_tol=None, gap_tol=None,

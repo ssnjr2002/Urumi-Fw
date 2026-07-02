@@ -7,11 +7,11 @@ layer names resolve to tool profiles by convention.
 """
 
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from stage1 import load_svg_layers, load_svg_subpaths
-from stage2 import load_svg_mm_layers
-from config import tool_for_layer, KNIFE, CREASE, PEN
+from pipeline.stages.stage1 import load_svg_layers, load_svg_subpaths
+from pipeline.stages.stage2 import load_svg_mm_layers
+from pipeline.stages.config import tool_for_layer, KNIFE, CREASE, PEN
 
 SVG = os.path.join(os.path.dirname(__file__), "..", "data", "test_layers.svg")
 

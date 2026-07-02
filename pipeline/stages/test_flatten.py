@@ -6,20 +6,19 @@ agree with the trusted stage4 metrics.
 """
 
 import sys, os, math
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
 
-from flatten import flatten
-from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
-from bezier import arc_length
-from stage2 import load_svg_mm_subpaths
-from stage3 import enforce_c1
-from mock_curves import CASES
+from pipeline.stages.flatten import flatten
+from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
+from pipeline.stages.bezier import arc_length
+from pipeline.stages.stage2 import load_svg_mm_subpaths
+from pipeline.stages.stage3 import enforce_c1
+from pipeline.data.mock_curves import CASES
 
 def _analytic_len(curves):
     return sum(arc_length(c) for c in curves)
 
-DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 
 def svg(name):
     return os.path.join(DATA, name)
@@ -111,7 +110,7 @@ def test_two_subpaths_bracketed():
 
 def test_ds_max_respected():
     # No sample step exceeds ds_max (except the trailing 0). Use a long straight.
-    from config import default
+    from pipeline.stages.config import default
     q = default().quality
     samples = flatten([CASES["straight_line"][0]], quality=q)
     for s in samples[:-1]:
@@ -120,7 +119,7 @@ def test_ds_max_respected():
 def test_corner_shows_as_tangent_jump():
     # A sharp 90-degree corner between two straight subcurves shows up as a
     # large theta jump across the CURVE_BOUNDARY, with ~zero ds.
-    from stage1 import CubicBezier
+    from pipeline.stages.stage1 import CubicBezier
     def line(p0, p1):
         d = ((p1[0]-p0[0])/3, (p1[1]-p0[1])/3)
         return CubicBezier(p0, (p0[0]+d[0], p0[1]+d[1]),

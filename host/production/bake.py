@@ -17,7 +17,7 @@ Usage:
 
 import argparse, os, sys
 
-from config import default as _config_default, TOOL_PROFILES
+from pipeline.stages.config import default as _config_default, TOOL_PROFILES
 from host.production.planner import plan_job
 from host.plan_io import save_plan
 

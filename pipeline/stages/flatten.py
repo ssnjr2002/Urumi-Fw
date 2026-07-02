@@ -24,15 +24,15 @@ that jump is the corner signal the Constrain / Choreograph stages read.
 import math
 import argparse
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-from stage1 import CubicBezier
-from stage2 import load_svg_mm_subpaths
-from stage3 import enforce_c1
-from bezier import (bezier_point as _bezier_point,
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from pipeline.stages.stage1 import CubicBezier
+from pipeline.stages.stage2 import load_svg_mm_subpaths
+from pipeline.stages.stage3 import enforce_c1
+from pipeline.stages.bezier import (bezier_point as _bezier_point,
                     bezier_deriv1 as _bezier_deriv1,
                     bezier_deriv2 as _bezier_deriv2, curvature)
-from config import default as _config_default
-from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
+from pipeline.stages.config import default as _config_default
+from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 
 
 def _tangent_deg(c, t, fallback=0.0):

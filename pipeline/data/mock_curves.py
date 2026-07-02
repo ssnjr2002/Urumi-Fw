@@ -6,8 +6,8 @@ tests can assert real numbers.
 """
 
 import sys, os, math
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "stages"))
-from stage1 import CubicBezier
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from pipeline.stages.stage1 import CubicBezier
 
 def pt(x, y):
     return (float(x), float(y))

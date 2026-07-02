@@ -12,7 +12,7 @@ Run: python -m host.diagnostics.test_job_runner
 import sys, os
 from dataclasses import replace
 
-from config import default, KNIFE
+from pipeline.stages.config import default, KNIFE
 from host.protocol.link import Link
 from host.protocol import commands as cmd
 from host.protocol.state import MachineState

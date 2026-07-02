@@ -16,15 +16,15 @@ Exit code 0 = all checks pass, 1 = one or more failed.
 
 import sys, os, argparse, math
 
-from stage2 import load_svg_mm_subpaths
-from stage3 import enforce_c1
-from flatten import flatten
-from constrain import constrain
-from plan_lookahead import plan
-from discretize import discretize
-from microsegment import MICRO_JOG, MICRO_LIFT, MICRO_PATH_END
-from sample import PATH_START, PATH_END
-from config import default as config_default, MachineConfig, KNIFE, PEN
+from pipeline.stages.stage2 import load_svg_mm_subpaths
+from pipeline.stages.stage3 import enforce_c1
+from pipeline.stages.flatten import flatten
+from pipeline.stages.constrain import constrain
+from pipeline.stages.plan_lookahead import plan
+from pipeline.stages.discretize import discretize
+from pipeline.stages.microsegment import MICRO_JOG, MICRO_LIFT, MICRO_PATH_END
+from pipeline.stages.sample import PATH_START, PATH_END
+from pipeline.stages.config import default as config_default, MachineConfig, KNIFE, PEN
 
 JOG_FEED = config_default().machine.jog_feed
 

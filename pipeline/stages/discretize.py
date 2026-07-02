@@ -30,11 +30,11 @@ same kind the working pipeline produces.
 import math
 import argparse
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-from config import default as _config_default, ToolProfile, PEN
-from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
-from plan_lookahead import _subpath_ranges
-from microsegment import (MicroSegment, interval as _interval,
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from pipeline.stages.config import default as _config_default, ToolProfile, PEN
+from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
+from pipeline.stages.plan_lookahead import _subpath_ranges
+from pipeline.stages.microsegment import (MicroSegment, interval as _interval,
                           angle_delta as _angle_delta,
                           MICRO_PATH_END, MICRO_JOG, MICRO_LIFT)
 
@@ -252,12 +252,12 @@ def discretize(samples, machine, profile=None, quality=None, a_max=None,
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from stage2 import load_svg_mm_subpaths
-    from stage3 import enforce_c1
-    from flatten import flatten
-    from constrain import constrain
-    from plan_lookahead import plan
-    from config import TOOL_PROFILES
+    from pipeline.stages.stage2 import load_svg_mm_subpaths
+    from pipeline.stages.stage3 import enforce_c1
+    from pipeline.stages.flatten import flatten
+    from pipeline.stages.constrain import constrain
+    from pipeline.stages.plan_lookahead import plan
+    from pipeline.stages.config import TOOL_PROFILES
 
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Discretize: SVG -> MicroSegments (redesign)")

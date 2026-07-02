@@ -1,10 +1,10 @@
 """Tests for stage 1: SVG path -> cubic Beziers."""
 
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-DATA = os.path.join(os.path.dirname(__file__), "..", "data")
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
 
-from stage1 import load_svg, path_to_cubics
+from pipeline.stages.stage1 import load_svg, path_to_cubics
 
 def svg(name):
     return os.path.join(DATA, name)
@@ -77,7 +77,7 @@ def test_circle_element():
     # <circle cx=50 cy=50 r=40> -> 4 cubic Béziers approximating full circle
     import io, sys
     from xml.etree import ElementTree as ET
-    from stage1 import _circle_to_cubics, _KAPPA
+    from pipeline.stages.stage1 import _circle_to_cubics, _KAPPA
     curves = _circle_to_cubics(50, 50, 40, 40)
     assert len(curves) == 4
     # Each segment starts where the previous one ends

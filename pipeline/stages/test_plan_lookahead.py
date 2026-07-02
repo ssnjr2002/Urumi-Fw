@@ -7,16 +7,15 @@ construction.
 """
 
 import sys, os, math
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from flatten import flatten
-from constrain import constrain
-from plan_lookahead import plan, _seg_accel, _subpath_ranges
-from sample import PATH_START, PATH_END
-from config import default
-from stage1 import CubicBezier
-from mock_curves import CASES
+from pipeline.stages.flatten import flatten
+from pipeline.stages.constrain import constrain
+from pipeline.stages.plan_lookahead import plan, _seg_accel, _subpath_ranges
+from pipeline.stages.sample import PATH_START, PATH_END
+from pipeline.stages.config import default
+from pipeline.stages.stage1 import CubicBezier
+from pipeline.data.mock_curves import CASES
 
 CFG = default()
 MACH = CFG.machine
@@ -92,7 +91,7 @@ def test_corner_brings_both_sides_to_zero():
     horiz = _line((0.0, 0.0), (20.0, 0.0))
     vert  = _line((20.0, 0.0), (20.0, 20.0))
     s = _prep([[horiz, vert]], a_rate=100.0, corner=20.0)
-    from sample import CURVE_BOUNDARY
+    from pipeline.stages.sample import CURVE_BOUNDARY
     bi = next(i for i, x in enumerate(s) if x.flags & CURVE_BOUNDARY)
     assert s[bi].v == 0.0
     assert s[bi-1].v < 1.0   # coincident prior sample also ~0 (zero-gap decel)

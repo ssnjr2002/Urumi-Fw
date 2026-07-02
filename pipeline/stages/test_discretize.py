@@ -7,19 +7,18 @@ net displacement out, regardless of segment density.
 """
 
 import sys, os, math
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from flatten import flatten
-from constrain import constrain
-from plan_lookahead import plan
-from discretize import discretize
-from microsegment import MICRO_PATH_END, MICRO_JOG, MICRO_LIFT
-from stage2 import load_svg_mm_subpaths
-from stage3 import enforce_c1
-from config import default, KNIFE, PEN
-from stage1 import CubicBezier
-from mock_curves import CASES
+from pipeline.stages.flatten import flatten
+from pipeline.stages.constrain import constrain
+from pipeline.stages.plan_lookahead import plan
+from pipeline.stages.discretize import discretize
+from pipeline.stages.microsegment import MICRO_PATH_END, MICRO_JOG, MICRO_LIFT
+from pipeline.stages.stage2 import load_svg_mm_subpaths
+from pipeline.stages.stage3 import enforce_c1
+from pipeline.stages.config import default, KNIFE, PEN
+from pipeline.stages.stage1 import CubicBezier
+from pipeline.data.mock_curves import CASES
 
 CFG = default()
 MACH = CFG.machine

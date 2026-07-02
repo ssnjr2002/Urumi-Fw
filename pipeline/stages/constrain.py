@@ -24,9 +24,9 @@ _kappa_max_moving patch) cannot arise here.
 import math
 import argparse
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-from config import default as _config_default, PEN
-from sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from pipeline.stages.config import default as _config_default, PEN
+from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 
 # κ-discontinuity flags: a finite difference of curvature must not straddle a
 # curve/subpath boundary (κ is discontinuous there).
@@ -132,9 +132,9 @@ def constrain(samples, feed_max, a_max, a_rate_deg_s=0.0, a_accel_deg_s2=0.0,
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from stage2 import load_svg_mm_subpaths
-    from stage3 import enforce_c1
-    from flatten import flatten
+    from pipeline.stages.stage2 import load_svg_mm_subpaths
+    from pipeline.stages.stage3 import enforce_c1
+    from pipeline.stages.flatten import flatten
 
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Constrain stage: per-sample v ceiling")

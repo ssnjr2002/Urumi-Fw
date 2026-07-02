@@ -15,7 +15,7 @@ duplicated jogs shift everything).
 import sys, os, struct, random, argparse
 
 from host.protocol.packets import unpack_microsegment
-from config import default as config_default
+from pipeline.stages.config import default as config_default
 
 MICRO_JOG  = 0x04
 MICRO_LIFT = 0x08

@@ -8,7 +8,7 @@ Output: same CubicBezier list, coordinates in mm, machine origin at bottom-left.
 import re
 import argparse
 from xml.etree import ElementTree as ET
-from stage1 import load_svg, CubicBezier
+from pipeline.stages.stage1 import load_svg, CubicBezier
 
 # ── unit conversion to mm ─────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ def load_svg_mm(svg_path):
 
 def load_svg_mm_subpaths(svg_path):
     """Full stage 1+2 pipeline: SVG file -> list[list[CubicBezier]] in mm."""
-    from stage1 import load_svg_subpaths
+    from pipeline.stages.stage1 import load_svg_subpaths
     subpaths_px = load_svg_subpaths(svg_path)
     viewport    = parse_viewport(svg_path)
     transform   = make_transform(*viewport)
@@ -116,7 +116,7 @@ def load_svg_mm_layers(svg_path):
     Layer-aware stage 1+2: SVG file -> ordered {layer_name: list[subpath]} in mm.
     The multi-tool ingest — each layer can be planned with its own tool.
     """
-    from stage1 import load_svg_layers
+    from pipeline.stages.stage1 import load_svg_layers
     layers_px = load_svg_layers(svg_path)
     viewport  = parse_viewport(svg_path)
     transform = make_transform(*viewport)

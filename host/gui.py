@@ -21,7 +21,7 @@ import argparse, threading, queue, os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-from config import default as _config_default
+from pipeline.stages.config import default as _config_default
 from host.sim_config import sim_machine
 from host.protocol.link import Link
 from host.protocol.packets import make_jog

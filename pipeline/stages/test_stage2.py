@@ -1,10 +1,10 @@
 """Tests for stage 2: SVG pixel coords -> mm + Y-axis flip."""
 
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-DATA = os.path.join(os.path.dirname(__file__), "..", "data")
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
 
-from stage2 import load_svg_mm, parse_viewport
+from pipeline.stages.stage2 import load_svg_mm, parse_viewport
 
 def svg(name):
     return os.path.join(DATA, name)

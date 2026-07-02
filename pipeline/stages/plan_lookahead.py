@@ -32,9 +32,9 @@ ceiling in Constrain already bounds A velocity; A accel coupling is deferred.
 import math
 import argparse
 import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-from config import default as _config_default
-from sample import Sample, PATH_START, PATH_END
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from pipeline.stages.config import default as _config_default
+from pipeline.stages.sample import Sample, PATH_START, PATH_END
 
 
 def _subpath_ranges(samples):
@@ -125,11 +125,11 @@ def plan(samples, machine, a_max=None):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from stage2 import load_svg_mm_subpaths
-    from stage3 import enforce_c1
-    from flatten import flatten
-    from constrain import constrain
-    from config import PEN
+    from pipeline.stages.stage2 import load_svg_mm_subpaths
+    from pipeline.stages.stage3 import enforce_c1
+    from pipeline.stages.flatten import flatten
+    from pipeline.stages.constrain import constrain
+    from pipeline.stages.config import PEN
 
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Plan stage: look-ahead feedrate")

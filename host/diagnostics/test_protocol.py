@@ -17,7 +17,7 @@ from host.protocol import commands as cmd
 from host.protocol.state import MachineState, AlarmReason, RunningReason, axis_mask
 from host.preflight import preflight
 from host.protocol.packets import make_jog
-from config import default, KNIFE, PEN, BusNode
+from pipeline.stages.config import default, KNIFE, PEN, BusNode
 
 
 def test_ping_and_initial_state():

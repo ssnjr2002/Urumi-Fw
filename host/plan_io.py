@@ -21,7 +21,7 @@ Plans. One plan file runs on any machine (single or dual head).
 
 import struct
 from host.production.planner import Plan, ToolOperation
-from config import ToolType, TOOL_PROFILES_BY_TYPE
+from pipeline.stages.config import ToolType, TOOL_PROFILES_BY_TYPE
 from host.protocol.packets import PACKET_SIZES
 
 MAGIC   = b'\xAB\xCD\x50\x01'
