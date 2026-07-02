@@ -13,8 +13,8 @@ import math
 import argparse
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from pipeline.stages.stage1 import CubicBezier
-from pipeline.stages.stage2 import load_svg_mm
+from host.production.parse import CubicBezier
+from host.production.normalise import load_svg_mm
 from pipeline.stages.config import default as _config_default
 from collections import namedtuple
 

@@ -252,8 +252,8 @@ def discretize(samples, machine, profile=None, quality=None, a_max=None,
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from pipeline.stages.stage2 import load_svg_mm_subpaths
-    from pipeline.stages.stage3 import enforce_c1
+    from host.production.normalise import load_svg_mm_subpaths
+    from host.production.repair import enforce_c1
     from pipeline.stages.flatten import flatten
     from pipeline.stages.constrain import constrain
     from pipeline.stages.plan_lookahead import plan

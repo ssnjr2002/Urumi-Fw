@@ -132,8 +132,8 @@ def constrain(samples, feed_max, a_max, a_rate_deg_s=0.0, a_accel_deg_s2=0.0,
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from pipeline.stages.stage2 import load_svg_mm_subpaths
-    from pipeline.stages.stage3 import enforce_c1
+    from host.production.normalise import load_svg_mm_subpaths
+    from host.production.repair import enforce_c1
     from pipeline.stages.flatten import flatten
 
     cfg = _config_default()

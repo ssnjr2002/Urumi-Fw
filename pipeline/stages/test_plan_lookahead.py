@@ -14,7 +14,7 @@ from pipeline.stages.constrain import constrain
 from pipeline.stages.plan_lookahead import plan, _seg_accel, _subpath_ranges
 from pipeline.stages.sample import PATH_START, PATH_END
 from pipeline.stages.config import default
-from pipeline.stages.stage1 import CubicBezier
+from host.production.parse import CubicBezier
 from pipeline.data.mock_curves import CASES
 
 CFG = default()

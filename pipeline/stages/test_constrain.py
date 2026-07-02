@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), ".."
 from pipeline.stages.flatten import flatten
 from pipeline.stages.constrain import constrain, _junction_cap
 from pipeline.stages.sample import Sample, CURVE_BOUNDARY
-from pipeline.stages.stage1 import CubicBezier
+from host.production.parse import CubicBezier
 from pipeline.data.mock_curves import CASES
 
 FEED = 80.0

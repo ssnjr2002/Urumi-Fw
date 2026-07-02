@@ -12,8 +12,8 @@ DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
 from pipeline.stages.flatten import flatten
 from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 from pipeline.stages.bezier import arc_length
-from pipeline.stages.stage2 import load_svg_mm_subpaths
-from pipeline.stages.stage3 import enforce_c1
+from host.production.normalise import load_svg_mm_subpaths
+from host.production.repair import enforce_c1
 from pipeline.data.mock_curves import CASES
 
 def _analytic_len(curves):
@@ -119,7 +119,7 @@ def test_ds_max_respected():
 def test_corner_shows_as_tangent_jump():
     # A sharp 90-degree corner between two straight subcurves shows up as a
     # large theta jump across the CURVE_BOUNDARY, with ~zero ds.
-    from pipeline.stages.stage1 import CubicBezier
+    from host.production.parse import CubicBezier
     def line(p0, p1):
         d = ((p1[0]-p0[0])/3, (p1[1]-p0[1])/3)
         return CubicBezier(p0, (p0[0]+d[0], p0[1]+d[1]),

@@ -2,9 +2,9 @@
 
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
+DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "pipeline", "data"))
 
-from pipeline.stages.stage1 import load_svg, path_to_cubics
+from host.production.parse import load_svg, path_to_cubics
 
 def svg(name):
     return os.path.join(DATA, name)
@@ -77,7 +77,7 @@ def test_circle_element():
     # <circle cx=50 cy=50 r=40> -> 4 cubic Béziers approximating full circle
     import io, sys
     from xml.etree import ElementTree as ET
-    from pipeline.stages.stage1 import _circle_to_cubics, _KAPPA
+    from host.production.parse import _circle_to_cubics, _KAPPA
     curves = _circle_to_cubics(50, 50, 40, 40)
     assert len(curves) == 4
     # Each segment starts where the previous one ends

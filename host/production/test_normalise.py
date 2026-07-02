@@ -2,9 +2,9 @@
 
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data"))
+DATA = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "pipeline", "data"))
 
-from pipeline.stages.stage2 import load_svg_mm, parse_viewport
+from host.production.normalise import load_svg_mm, parse_viewport
 
 def svg(name):
     return os.path.join(DATA, name)

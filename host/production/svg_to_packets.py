@@ -16,8 +16,8 @@ This script always writes to sys.stdout.buffer (binary mode).
 
 import sys, argparse, struct
 
-from pipeline.stages.stage2 import load_svg_mm_subpaths
-from pipeline.stages.stage3 import enforce_c1
+from host.production.normalise import load_svg_mm_subpaths
+from host.production.repair import enforce_c1
 from pipeline.stages.flatten import flatten
 from pipeline.stages.constrain import constrain
 from pipeline.stages.plan_lookahead import plan

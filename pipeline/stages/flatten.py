@@ -25,9 +25,6 @@ import math
 import argparse
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from pipeline.stages.stage1 import CubicBezier
-from pipeline.stages.stage2 import load_svg_mm_subpaths
-from pipeline.stages.stage3 import enforce_c1
 from pipeline.stages.bezier import (bezier_point as _bezier_point,
                     bezier_deriv1 as _bezier_deriv1,
                     bezier_deriv2 as _bezier_deriv2, curvature)
@@ -133,6 +130,9 @@ def flatten(subpaths, quality=None):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    from host.production.normalise import load_svg_mm_subpaths
+    from host.production.repair import enforce_c1
+
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Flatten stage: SVG -> Sample stream")
     parser.add_argument("svg", help="Path to SVG file")

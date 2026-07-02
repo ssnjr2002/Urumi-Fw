@@ -6,7 +6,7 @@ as produced by stage 2.
 
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from pipeline.stages.stage1 import CubicBezier
+from host.production.parse import CubicBezier
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
