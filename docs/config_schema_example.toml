@@ -1,0 +1,116 @@
+# Example machine.toml — exercises every field host/config/loader.py accepts.
+# Not a real machine's calibration; a schema-coverage fixture. See config_schema.md.
+
+[machine]
+f_cpu    = 150000000   # RP2350 clock Hz — interval's domain
+jog_feed = 100.0       # mm/s — machine-default XY travel speed between subpaths
+z_feed   = 25.0        # mm/s — machine-default Z raise/lower speed
+
+[machine.x]
+node_id        = 1
+role           = "stepper"
+present        = true
+steps_per_unit = 160.0   # steps/mm
+max_rate       = 90.0    # mm/s — physical ceiling
+accel          = 1200.0  # mm/s^2 — physical ceiling
+max_travel     = 500.0   # mm — soft-limit envelope extent
+invert         = true
+rotary         = false
+
+[machine.y]
+node_id        = 2
+role           = "stepper"
+present        = true
+steps_per_unit = 160.0
+max_rate       = 90.0
+accel          = 1200.0
+max_travel     = 400.0
+invert         = false
+rotary         = false
+
+[machine.head]
+tool     = "knife"   # resolved against the (tools.*-patched) preset table
+x_offset = 0.0        # mm from machine X reference — not yet consumed (single head)
+
+[machine.head.z]
+node_id        = 3
+role           = "stepper"
+present        = true
+steps_per_unit = 1200.0  # steps/mm — lead screw
+max_rate       = 12.0    # mm/s
+accel          = 500.0   # mm/s^2
+max_travel     = 50.0    # mm
+invert         = true
+rotary         = false
+
+[machine.head.a]
+node_id        = 4
+role           = "stepper"
+present        = true
+steps_per_unit = 8.890    # steps/deg — tangential rotary
+max_rate       = 110.0    # deg/s
+accel          = 2200.0   # deg/s^2
+max_travel     = 0.0      # unbounded rotary axis
+invert         = true
+rotary         = true
+
+[[peripherals]]
+node_id = 5
+role    = "oscillator"   # driven-knife oscillator controller
+present = false           # declared in topology, not physically fitted yet
+
+[[peripherals]]
+node_id = 6
+role    = "suction"
+present = false
+
+# ── tool presets — patches PEN/KNIFE/CREASE before [machine.head].tool resolves ──
+
+[tools.pen]
+feed_max = 45.0
+accel    = 900.0
+jog_feed = 90.0
+z_feed   = 20.0
+lift_height      = 3.0
+corner_angle_deg = 25.0
+min_radius_mm    = 0.0
+offset_mm        = 0.0
+tangential       = false
+unwind           = false
+
+[tools.knife]
+feed_max = 60.0
+accel    = 1500.0
+jog_feed = 90.0
+z_feed   = 20.0
+lift_height      = 4.0
+corner_angle_deg = 20.0
+min_radius_mm    = 1.5
+offset_mm        = 0.0
+tangential       = true
+unwind           = true
+
+[tools.crease]
+feed_max = 50.0
+accel    = 1000.0
+jog_feed = 85.0
+z_feed   = 20.0
+lift_height      = 2.0
+corner_angle_deg = 30.0
+min_radius_mm    = 2.0
+offset_mm        = 0.0
+tangential       = true
+unwind           = false
+
+[quality]
+chord_tol          = 0.01    # mm — max chord deviation per segment
+dv_max             = 3.0     # mm/s — max velocity change per segment
+v_min              = 0.5     # mm/s — velocity floor
+dt_max             = 0.05    # max parameter step
+dt_min             = 1e-6    # loop guard
+angle_tol          = 5.0     # deg — C1 continuity tolerance
+gap_tol            = 0.01    # mm — join gap tolerance
+n_kappa            = 20      # curvature samples per curve
+junction_deviation = 0.05    # mm — corner-rounding budget
+ds_max             = 0.5     # mm — max spacing between flattened samples
+dtheta_max         = 2.0     # deg — max tangent change between flattened samples

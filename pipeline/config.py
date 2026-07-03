@@ -153,6 +153,10 @@ class ToolProfile:
     min_radius_mm:   float = 0.0     # curvature floor; tighter arcs need special handling (0 = unset)
     feed_max:        float = 80.0    # mm/s — programmed cut feed (TARGET, not a limit;
                                      # AxisConfig.max_rate still clamps it per axis)
+    accel:           float = 0.0     # units/s^2 — programmed accel TARGET, same
+                                     # target-vs-ceiling relationship as feed_max:
+                                     # AxisConfig.accel still clamps it per axis.
+                                     # 0 = unset -> falls back to the axis ceiling.
     lift_height:     float = 0.0     # Z lift between subpaths, mm (0 = draw-through)
     z_feed:          float = 0.0     # Z raise/lower speed, mm/s (0 = use MachineConfig.z_feed)
     jog_feed:        float = 0.0     # travel speed between subpaths, mm/s (0 = use MachineConfig.jog_feed)
