@@ -140,7 +140,7 @@ def load(path) -> PipelineConfig:
         machine = replace(machine, peripherals=_load_peripherals(data["peripherals"]))
     quality = _load_quality(base.quality, data.get("quality", {}))
 
-    cfg = replace(base, machine=machine, quality=quality)
+    cfg = replace(base, machine=machine, quality=quality, tool_profiles=tool_profiles)
     errors = validate(cfg)
     if errors:
         raise ValueError("config validation failed:\n  " + "\n  ".join(errors))

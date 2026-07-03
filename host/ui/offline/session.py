@@ -57,21 +57,33 @@ class OfflineSession:
     # ---------------------------------------------------------
     # 1. Configuration Management
     # ---------------------------------------------------------
-    def load_config(self):
-        """Loads and validates the production machine configuration."""
+    def load_config(self, path: Optional[str] = None):
+        """
+        Loads and validates the production machine configuration.
+
+        path=None keeps today's behaviour: pipeline.config.default() (the
+        hardcoded calibration), still run through host.config.validate() so
+        a bad edit to pipeline/config.py surfaces the same way a bad TOML
+        would. path is accepted now so the config UI can wire a TOML file
+        picker to this same method later without another signature change;
+        no picker exists yet (see docs/config_schema.md for the TOML shape
+        host.config.load() understands).
+        """
         try:
-            # Imported here (not at module level) to allow reloading if the
-            # user edits pipeline/stages/config.py while the app is open.
-            import pipeline.config as config
-            importlib.reload(config)
+            import host.config as host_config
 
-            loaded_config = config.default()
+            if path:
+                loaded_config = host_config.load(path)
+            else:
+                # Imported here (not at module level) to allow reloading if
+                # the user edits pipeline/config.py while the app is open.
+                import pipeline.config as config
+                importlib.reload(config)
+                loaded_config = config.default()
+                errors = host_config.validate(loaded_config)
+                if errors:
+                    raise ValueError("config validation failed:\n  " + "\n  ".join(errors))
 
-            # Simple validation: ensure it has a machine definition
-            if not getattr(loaded_config, 'machine', None):
-                raise ValueError("Config is missing a 'machine' definition.")
-
-            # If we reach here, it's valid
             self._app_state.is_sim = False
             self.config = loaded_config
             self.config_error = None
@@ -85,6 +97,7 @@ class OfflineSession:
     def load_sim_config(self):
         """Loads the simulator configuration."""
         try:
+            import host.config as host_config
             import pipeline.config as config
             importlib.reload(config)
 
@@ -98,6 +111,13 @@ class OfflineSession:
             # Wrap in PipelineConfig
             base_config = config.default()
             loaded_config = replace(base_config, machine=machine)
+
+            # Same validation gate as the production path, so a bad edit to
+            # sim_config.py (duplicate node_id, zero steps_per_unit, ...)
+            # surfaces here rather than failing confusingly downstream.
+            errors = host_config.validate(loaded_config)
+            if errors:
+                raise ValueError("sim config validation failed:\n  " + "\n  ".join(errors))
 
             self._app_state.is_sim = True
             self.config = loaded_config
@@ -219,7 +239,12 @@ class OfflineSession:
             # per block. A layer whose name resolves to no tool raises here (a
             # mislabelled layer should surface as an error, not be silently
             # skipped) — reported through the same except below as everything else.
-            new_plan = plan_job(self.svg_path, self.config.machine)
+            # overrides=tool_profiles so a TOML [tools.*]/job-override patch
+            # applies to every layer's tool, not just whichever is mounted
+            # on the head (see host/config/overrides.py).
+            new_plan = plan_job(self.svg_path, self.config.machine,
+                                 overrides=self.config.tool_profiles,
+                                 quality=self.config.quality)
 
             save_plan(new_plan, output_path)
 

@@ -452,6 +452,13 @@ def _default_machine() -> MachineConfig:
 class PipelineConfig:
     machine: MachineConfig = field(default_factory=_default_machine)
     quality: QualityConfig = field(default_factory=QualityConfig)
+    # Every tool preset available for this job, keyed by name — NOT just the
+    # one mounted on machine.head. A job can use more than one tool (e.g. a
+    # pen+knife SVG); orchestrate_layers/tool_for_layer resolves each LAYER's
+    # tool against this dict (falling back to TOOL_PROFILES if a name is
+    # missing), so a TOML/job-override patch to "pen" takes effect on a pen
+    # layer even when "knife" is the tool physically mounted on the head.
+    tool_profiles: dict = field(default_factory=lambda: dict(TOOL_PROFILES))
 
 
 def default() -> PipelineConfig:
@@ -460,7 +467,7 @@ def default() -> PipelineConfig:
 
 
 def load(path) -> PipelineConfig:
-    """Load config from a TOML file. Deferred — not implemented yet."""
+    """Load config from a TOML file. See host.config.load() (host/config/loader.py)."""
     raise NotImplementedError(
-        "TOML config loading is not implemented yet; use config.default()"
+        "use host.config.load(path), not pipeline.config.load()"
     )

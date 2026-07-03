@@ -45,20 +45,24 @@ def validate(cfg: PipelineConfig) -> list:
     if m.z_feed < 0:
         errors.append(f"machine.z_feed cannot be negative (got {m.z_feed})")
 
-    profile = m.head.profile
-    if profile.feed_max <= 0:
-        errors.append(f"tool '{profile.name}': feed_max must be positive (got {profile.feed_max})")
-    if profile.jog_feed < 0:
-        errors.append(f"tool '{profile.name}': jog_feed cannot be negative (got {profile.jog_feed})")
-    if profile.z_feed < 0:
-        errors.append(f"tool '{profile.name}': z_feed cannot be negative (got {profile.z_feed})")
-    if profile.accel < 0:
-        errors.append(f"tool '{profile.name}': accel cannot be negative (got {profile.accel})")
-    if profile.needs_offset_comp:
-        errors.append(
-            f"tool '{profile.name}': offset_mm={profile.offset_mm} exceeds the uncompensated "
-            f"tolerance and offset compensation is not implemented yet"
-        )
+    # Every tool in the job's registry, not just the one mounted on the head
+    # -- a multi-tool job (pen + knife layers in one SVG) resolves each
+    # layer against tool_profiles, so a bad preset for an unmounted tool
+    # would otherwise go unvalidated until it's actually used mid-job.
+    for profile in cfg.tool_profiles.values():
+        if profile.feed_max <= 0:
+            errors.append(f"tool '{profile.name}': feed_max must be positive (got {profile.feed_max})")
+        if profile.jog_feed < 0:
+            errors.append(f"tool '{profile.name}': jog_feed cannot be negative (got {profile.jog_feed})")
+        if profile.z_feed < 0:
+            errors.append(f"tool '{profile.name}': z_feed cannot be negative (got {profile.z_feed})")
+        if profile.accel < 0:
+            errors.append(f"tool '{profile.name}': accel cannot be negative (got {profile.accel})")
+        if profile.needs_offset_comp:
+            errors.append(
+                f"tool '{profile.name}': offset_mm={profile.offset_mm} exceeds the uncompensated "
+                f"tolerance and offset compensation is not implemented yet"
+            )
 
     q = cfg.quality
     if q.chord_tol <= 0:

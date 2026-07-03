@@ -25,13 +25,34 @@ pipeline.config.default()  →  host.config.load(path)  →  host.config.apply_t
 3. **`host.config.apply_tool_overrides(cfg, job_overrides)`** — a per-job
    patch applied once at `.plan`-build time, after `load()`/`default()` has
    already resolved everything else. `job_overrides` is a plain dict keyed by
-   tool name (`{"knife": {"feed_max": 60.0}}`); only the active head's tool
-   is patchable (single-head scope, matching `MachineConfig`'s current
-   single-head support). This is where a UI/CLI feed or accel field for the
-   job in progress lands. Re-validates after patching.
+   tool name (`{"knife": {"feed_max": 60.0}}`). This is where a UI/CLI feed
+   or accel field for the job in progress lands. Re-validates after patching.
 
 Pipeline stages only ever see the final `PipelineConfig` that comes out of
 step 3 — they have no idea TOML or job overrides exist.
+
+### `PipelineConfig.tool_profiles` — why a job can patch more than the mounted tool
+
+`PipelineConfig` carries a `tool_profiles: dict[str, ToolProfile]` field —
+every tool preset available for the job, not just the one physically mounted
+on `machine.head`. This matters because a single SVG can use more than one
+tool (a pen layer and a knife layer in the same file): `orchestrate_layers`
+resolves each *layer's* tool via `tool_for_layer(name, overrides)`, which
+checks `overrides` (conventionally `cfg.tool_profiles`, passed as
+`plan_job(..., overrides=cfg.tool_profiles)`) before falling back to the
+`pipeline.config.TOOL_PROFILES` code defaults. `machine.head.profile` is
+purely topology bookkeeping — which tool is "mounted", used by
+`can_run_tool`/`select_head` feasibility checks — not what determines a
+layer's actual feed/accel during plan generation.
+
+So both `load()` and `apply_tool_overrides()` patch `cfg.tool_profiles` for
+every tool named in `[tools.*]`/`job_overrides`, and only *additionally*
+patch `machine.head.profile` when the patched tool happens to be the one
+mounted on the head (keeping the two views consistent). Any call site
+building a plan (`bake.py`, `host/ui/offline/session.py`'s `generate_plan`)
+must pass `overrides=cfg.tool_profiles` to `plan_job` — passing only
+`cfg.machine` silently drops every tool-preset patch except the mounted
+one's.
 
 ## TOML section reference
 
