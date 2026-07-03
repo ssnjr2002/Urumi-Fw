@@ -16,7 +16,7 @@ from pipeline.stages.discretize import discretize
 from pipeline.stages.microsegment import MICRO_PATH_END, MICRO_JOG, MICRO_LIFT
 from host.production.normalise import load_svg_mm_subpaths
 from host.production.repair import enforce_c1
-from pipeline.stages.config import default, KNIFE, PEN
+from pipeline.config import default, KNIFE, PEN
 from host.production.parse import CubicBezier
 from pipeline.data.mock_curves import CASES
 

@@ -31,7 +31,7 @@ import math
 import argparse
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from pipeline.stages.config import default as _config_default, ToolProfile, PEN
+from pipeline.config import default as _config_default, ToolProfile, PEN
 from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 from pipeline.stages.plan_lookahead import _subpath_ranges
 from pipeline.stages.microsegment import (MicroSegment, interval as _interval,
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     from pipeline.stages.flatten import flatten
     from pipeline.stages.constrain import constrain
     from pipeline.stages.plan_lookahead import plan
-    from pipeline.stages.config import TOOL_PROFILES
+    from pipeline.config import TOOL_PROFILES
 
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Discretize: SVG -> MicroSegments (redesign)")

@@ -10,7 +10,7 @@ optimisation, interleaving, cut-before-crease constraints) without touching
 planner.py's compile step below it.
 """
 
-from pipeline.stages.config import tool_for_layer
+from pipeline.config import tool_for_layer
 
 
 def orchestrate_layers(layers_mm, tool_order=None, overrides=None, default_tool=None):

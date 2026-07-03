@@ -62,7 +62,7 @@ class OfflineSession:
         try:
             # Imported here (not at module level) to allow reloading if the
             # user edits pipeline/stages/config.py while the app is open.
-            import pipeline.stages.config as config
+            import pipeline.config as config
             importlib.reload(config)
 
             loaded_config = config.default()
@@ -85,7 +85,7 @@ class OfflineSession:
     def load_sim_config(self):
         """Loads the simulator configuration."""
         try:
-            import pipeline.stages.config as config
+            import pipeline.config as config
             importlib.reload(config)
 
             import host.diagnostics.sim_config
@@ -121,7 +121,7 @@ class OfflineSession:
 
         try:
             from host.production.normalise import load_svg_mm_layers
-            from pipeline.stages.config import TOOL_PROFILES_BY_TYPE
+            from pipeline.config import TOOL_PROFILES_BY_TYPE
 
             layers_mm, viewport = load_svg_mm_layers(path)
 

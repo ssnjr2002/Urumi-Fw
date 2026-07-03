@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), ".."
 from pipeline.stages.bezier import (bezier_point as _bezier_point,
                     bezier_deriv1 as _bezier_deriv1,
                     bezier_deriv2 as _bezier_deriv2, curvature)
-from pipeline.stages.config import default as _config_default
+from pipeline.config import default as _config_default
 from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 
 

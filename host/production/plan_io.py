@@ -28,7 +28,7 @@ Plans. One plan file runs on any machine (single or dual head).
 
 import struct
 from dataclasses import dataclass, field
-from pipeline.stages.config import ToolType, TOOL_PROFILES_BY_TYPE, can_run_tool
+from pipeline.config import ToolType, TOOL_PROFILES_BY_TYPE, can_run_tool
 from host.protocol.packets import PACKET_SIZES
 
 MAGIC   = b'\xAB\xCD\x50\x01'

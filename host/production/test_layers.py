@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), ".."
 
 from host.production.parse import load_svg_layers, load_svg_subpaths
 from host.production.normalise import load_svg_mm_layers
-from pipeline.stages.config import tool_for_layer, KNIFE, CREASE, PEN
+from pipeline.config import tool_for_layer, KNIFE, CREASE, PEN
 
 SVG = os.path.join(os.path.dirname(__file__), "..", "..", "pipeline", "data", "test_layers.svg")
 

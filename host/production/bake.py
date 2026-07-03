@@ -23,7 +23,7 @@ Usage:
 
 import argparse, os, sys
 
-from pipeline.stages.config import default as _config_default, TOOL_PROFILES
+from pipeline.config import default as _config_default, TOOL_PROFILES
 from host.production.planner import plan_job
 from host.production.plan_io import save_plan
 

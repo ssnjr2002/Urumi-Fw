@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from host.protocol import commands as cmd
 from host.protocol.state import MachineState
-from pipeline.stages.config import select_head
+from pipeline.config import select_head
 
 
 @dataclass

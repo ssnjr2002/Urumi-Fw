@@ -25,7 +25,7 @@ import math
 import argparse
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from pipeline.stages.config import default as _config_default, PEN
+from pipeline.config import default as _config_default, PEN
 from pipeline.stages.sample import Sample, PATH_START, PATH_END, CURVE_BOUNDARY
 
 # κ-discontinuity flags: a finite difference of curvature must not straddle a

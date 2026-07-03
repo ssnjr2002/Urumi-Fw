@@ -17,7 +17,7 @@ ping OK — enough to see the config-driven UI light up.
 
 from dataclasses import replace
 
-from pipeline.stages.config import default, BusNode, AxisConfig
+from pipeline.config import default, BusNode, AxisConfig
 
 
 def sim_machine():

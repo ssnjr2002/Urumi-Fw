@@ -24,7 +24,7 @@ from pipeline.stages.plan_lookahead import plan
 from pipeline.stages.discretize import discretize
 from pipeline.stages.microsegment import MICRO_JOG, MICRO_LIFT, MICRO_PATH_END
 from pipeline.stages.sample import PATH_START, PATH_END
-from pipeline.stages.config import default as config_default, MachineConfig, KNIFE, PEN
+from pipeline.config import default as config_default, MachineConfig, KNIFE, PEN
 
 JOG_FEED = config_default().machine.jog_feed
 

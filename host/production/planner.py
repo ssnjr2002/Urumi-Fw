@@ -16,7 +16,7 @@ plan_io.save_plan to write the result to disk.
 from host.production.normalise import load_svg_mm_layers
 from host.production.orchestrate import orchestrate_layers
 from host.production.plan_io import Plan, ToolOperation
-from pipeline.stages.config import default as config_default
+from pipeline.config import default as config_default
 from host.production.svg_to_packets import subpaths_to_packets
 
 

@@ -110,7 +110,7 @@ def test_two_subpaths_bracketed():
 
 def test_ds_max_respected():
     # No sample step exceeds ds_max (except the trailing 0). Use a long straight.
-    from pipeline.stages.config import default
+    from pipeline.config import default
     q = default().quality
     samples = flatten([CASES["straight_line"][0]], quality=q)
     for s in samples[:-1]:

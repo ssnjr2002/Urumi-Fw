@@ -13,7 +13,7 @@ from pipeline.stages.flatten import flatten
 from pipeline.stages.constrain import constrain
 from pipeline.stages.plan_lookahead import plan, _seg_accel, _subpath_ranges
 from pipeline.stages.sample import PATH_START, PATH_END
-from pipeline.stages.config import default
+from pipeline.config import default
 from host.production.parse import CubicBezier
 from pipeline.data.mock_curves import CASES
 

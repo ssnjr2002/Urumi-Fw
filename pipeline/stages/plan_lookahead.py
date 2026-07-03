@@ -33,7 +33,7 @@ import math
 import argparse
 import sys, os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from pipeline.stages.config import default as _config_default
+from pipeline.config import default as _config_default
 from pipeline.stages.sample import Sample, PATH_START, PATH_END
 
 
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     from host.production.repair import enforce_c1
     from pipeline.stages.flatten import flatten
     from pipeline.stages.constrain import constrain
-    from pipeline.stages.config import PEN
+    from pipeline.config import PEN
 
     cfg = _config_default()
     parser = argparse.ArgumentParser(description="Plan stage: look-ahead feedrate")

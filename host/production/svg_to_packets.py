@@ -23,7 +23,7 @@ from pipeline.stages.constrain import constrain
 from pipeline.stages.plan_lookahead import plan
 from pipeline.stages.discretize import discretize
 from host.protocol.packets import serialise_microsegments
-from pipeline.stages.config import default as config_default, MachineConfig, KNIFE, PEN
+from pipeline.config import default as config_default, MachineConfig, KNIFE, PEN
 
 
 def run(svg_path, machine, feed_max=None, a_max=None, angle_tol=None, gap_tol=None,

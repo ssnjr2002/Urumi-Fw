@@ -15,7 +15,7 @@ Pipeline bridge
 ───────────────
 pipeline/ is a real package (pipeline/stages/, pipeline/data/) living beside
 host/ at the repo root. Production code imports it directly, e.g.
-`from pipeline.stages.config import default`. No sys.path manipulation is
+`from pipeline.config import default`. No sys.path manipulation is
 needed here — the repo root just has to be importable, same as for `host`
 itself. Host-internal code uses absolute package imports throughout
 (`from host.protocol.packets import ...`).
