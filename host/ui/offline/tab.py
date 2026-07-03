@@ -77,35 +77,51 @@ class OfflineTab(ttk.Frame):
 
     def _bind_logic(self):
         # 1. Config View
-        self.config_view.load_btn.config(command=self.session.load_config)
-        if hasattr(self.config_view, 'load_sim_btn'):
-            self.config_view.load_sim_btn.config(command=self.session.load_sim_config)
-        
+        def _do_load_defaults():
+            is_sim = self.config_view.mode_var.get() == "sim"
+            self.session.load_config(is_sim=is_sim)
+
+        def _do_load_config_file():
+            import tkinter.filedialog as fd
+            path = fd.askopenfilename(filetypes=[("TOML Files", "*.toml")])
+            if path:
+                is_sim = self.config_view.mode_var.get() == "sim"
+                self.session.load_config(path=path, is_sim=is_sim)
+
+        self.config_view.load_defaults_btn.config(command=_do_load_defaults)
+        self.config_view.load_file_btn.config(command=_do_load_config_file)
+
         # 2. SVG View
         def _do_load_svg():
             import tkinter.filedialog as fd
             path = fd.askopenfilename(filetypes=[("SVG Files", "*.svg")])
             if path:
                 self.session.load_svg(path)
-                
+
         self.svg_view.load_btn.config(command=_do_load_svg)
-        
+
         def _do_load_plan():
             import tkinter.filedialog as fd
             path = fd.askopenfilename(filetypes=[("Plan Files", "*.plan")])
             if path:
                 self.session.load_plan(path)
-                
+
         def _do_generate_plan():
             import tkinter.filedialog as fd
+            try:
+                job_overrides = self.plan_view.get_overrides()
+            except ValueError as e:
+                self.plan_view.status_var.set(f"Status: Error - {e}")
+                self.plan_view.status_lbl.config(foreground="red")
+                return
             path = fd.asksaveasfilename(
                 defaultextension=".plan",
                 filetypes=[("Plan Files", "*.plan")],
                 initialfile="output.plan"
             )
             if path:
-                self.session.generate_plan(path)
-                
+                self.session.generate_plan(path, job_overrides=job_overrides)
+
         self.plan_view.load_btn.config(command=_do_load_plan)
         self.plan_view.generate_btn.config(command=_do_generate_plan)
         
@@ -114,6 +130,13 @@ class OfflineTab(ttk.Frame):
         self._update_ui() # Initial sync
 
     def _update_ui(self):
+        # Resolved-config summary + validation-errors panels: independent of
+        # the has_valid_config branch below, since errors are exactly what's
+        # shown when a load fails. Delete both lines (and the two methods
+        # they call) to remove these panels without touching branch logic.
+        self.config_view.set_summary(self.session.config_summary_text())
+        self.config_view.set_errors(getattr(self.session, "config_errors", []))
+
         # --- Update Config View ---
         if self.session.has_valid_config:
             # We can show a little info about the loaded machine
@@ -134,11 +157,20 @@ class OfflineTab(ttk.Frame):
                 self.svg_view.layers_tree.delete(*self.svg_view.layers_tree.get_children())
                 for layer in getattr(self.session, 'svg_layers', []):
                     self.svg_view.layers_tree.insert("", "end", values=(layer["name"], layer["match"]))
+
+                tool_names = getattr(self.session, 'svg_tools_used', [])
+                tool_profiles = self.session.config.tool_profiles
+                defaults = {
+                    name: {"feed_max": tool_profiles[name].feed_max, "accel": tool_profiles[name].accel}
+                    for name in tool_names if name in tool_profiles
+                }
+                self.plan_view.set_override_tools(tool_names, defaults=defaults)
             else:
                 self.svg_view.file_var.set("(no file loaded)")
                 self.svg_view.limits_var.set("Bounding Box: —")
                 self.svg_view.layers_tree.delete(*self.svg_view.layers_tree.get_children())
-                
+                self.plan_view.set_override_tools([])
+
                 if self.session.svg_error:
                     self.svg_view.status_var.set(f"Status: Error - {self.session.svg_error}")
                     self.svg_view.status_lbl.config(foreground="red")
@@ -210,6 +242,7 @@ class OfflineTab(ttk.Frame):
             self.plan_view.header_var.set("Version: — | Unique Tools: — | Total Ops: —")
             self.plan_view.tools_list.delete(0, "end")
             self.plan_view.ops_tree.delete(*self.plan_view.ops_tree.get_children())
+            self.plan_view.set_override_tools([])
 
 # A simple runner to preview the complete offline layout
 if __name__ == "__main__":

@@ -71,12 +71,78 @@ class PlanView(ttk.Frame):
         self.ops_scroll.pack(side="right", fill="y")
         self.ops_tree.configure(yscrollcommand=self.ops_scroll.set)
         
+        # Job Overrides (tier-3, optional): per-tool feed/accel patch applied
+        # right before Generate — only for tools present in the loaded SVG.
+        self.overrides_frame = ttk.LabelFrame(self, text="Job Overrides (optional)")
+        self.overrides_frame.grid(row=3, column=0, columnspan=3, padx=8, pady=(0, 8), sticky="ew")
+        self._override_vars = {}  # tool_name -> {"feed_max": StringVar, "accel": StringVar}
+        self._set_no_override_tools()
+
         # Configure weights
         self.details_frame.rowconfigure(2, weight=1)
         self.details_frame.columnconfigure(0, weight=1)
-        
+
         self.rowconfigure(2, weight=1)
         self.columnconfigure(2, weight=1)
+
+    def _set_no_override_tools(self):
+        ttk.Label(self.overrides_frame, text="(load an SVG to set per-tool feed/accel for this job)").grid(
+            row=0, column=0, padx=4, pady=4, sticky="w")
+
+    def set_override_tools(self, tool_names: list, defaults: dict = None):
+        """
+        Rebuilds the override rows for exactly the tools present in the
+        loaded SVG's layers, pre-filled with the resolved config's current
+        feed_max/accel for each tool (defaults: {tool_name: {"feed_max":
+        float, "accel": float}}, e.g. session.config.tool_profiles) so the
+        operator edits a real starting value rather than a blank field.
+        """
+        for w in self.overrides_frame.winfo_children():
+            w.destroy()
+        self._override_vars = {}
+
+        if not tool_names:
+            self._set_no_override_tools()
+            return
+
+        defaults = defaults or {}
+        ttk.Label(self.overrides_frame, text="Tool").grid(row=0, column=0, padx=4, pady=2, sticky="w")
+        ttk.Label(self.overrides_frame, text="Feed max (mm/s)").grid(row=0, column=1, padx=4, pady=2)
+        ttk.Label(self.overrides_frame, text="Accel").grid(row=0, column=2, padx=4, pady=2)
+        for i, name in enumerate(tool_names, start=1):
+            d = defaults.get(name, {})
+            ttk.Label(self.overrides_frame, text=name).grid(row=i, column=0, padx=4, pady=2, sticky="w")
+            feed_var = tk.StringVar(value=str(d.get("feed_max", "")))
+            accel_var = tk.StringVar(value=str(d.get("accel", "")))
+            ttk.Entry(self.overrides_frame, textvariable=feed_var, width=10).grid(row=i, column=1, padx=4, pady=2)
+            ttk.Entry(self.overrides_frame, textvariable=accel_var, width=10).grid(row=i, column=2, padx=4, pady=2)
+            self._override_vars[name] = {"feed_max": feed_var, "accel": accel_var}
+
+    def get_overrides(self) -> dict:
+        """
+        {tool_name: {field: float}} for every numeric entry present (fields
+        are pre-filled with the resolved config's current value, so in
+        practice every row is included — whatever's in the box is what
+        generate uses). Blank fields are still omitted, so clearing one is
+        equivalent to not overriding it. Only checks "is this a number" —
+        physical validity (positive feed_max, etc.) is host.config.validate's
+        job, run inside apply_tool_overrides() after this returns. Raises
+        ValueError (naming the offending tool/field) on a non-numeric entry.
+        """
+        result = {}
+        for name, fields in self._override_vars.items():
+            patch = {}
+            for field_name, var in fields.items():
+                text = var.get().strip()
+                if not text:
+                    continue
+                try:
+                    patch[field_name] = float(text)
+                except ValueError:
+                    raise ValueError(f"job override {name}.{field_name}: '{text}' is not a number")
+            if patch:
+                result[name] = patch
+        return result
 
 # A simple runner to preview the layout directly
 if __name__ == "__main__":

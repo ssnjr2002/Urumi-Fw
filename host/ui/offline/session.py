@@ -18,6 +18,7 @@ class OfflineSession:
 
         # --- Configuration State ---
         self.config_error: Optional[str] = None
+        self.config_errors: list = []  # structured validate() findings, for the UI error panel
 
         # --- SVG State ---
         self.svg_file: Optional[str] = None
@@ -35,6 +36,7 @@ class OfflineSession:
         self.plan_n_ops: Optional[int] = None
         self.plan_tools: list = []
         self.plan_ops: list = []
+        self.svg_tools_used: list = []  # tool names actually present in the loaded SVG's layers
 
     def subscribe(self, callback: Callable):
         """UI components register here to be notified of state changes."""
@@ -56,23 +58,32 @@ class OfflineSession:
     # ---------------------------------------------------------
     # 1. Configuration Management
     # ---------------------------------------------------------
-    def load_config(self, path: Optional[str] = None):
+    def load_config(self, path: Optional[str] = None, is_sim: bool = False):
         """
-        Loads and validates the production machine configuration.
+        Loads and validates the machine configuration for the given mode.
 
-        path=None keeps today's behaviour: pipeline.config.default() (the
-        hardcoded calibration), still run through host.config.validate() so
-        a bad edit to pipeline/config.py surfaces the same way a bad TOML
-        would. path is accepted now so the config UI can wire a TOML file
-        picker to this same method later without another signature change;
-        no picker exists yet (see docs/config_schema.md for the TOML shape
-        host.config.load() understands).
+        path=None resolves to the mode's default: pipeline.config.default()
+        for production, host/diagnostics/sim_machine.toml (the canonical sim
+        fixture) for simulator. A path always wins when given, in either
+        mode -- "Load from File" opens a picker for an arbitrary TOML
+        regardless of which radio is selected.
+
+        Always sets self.config_errors (list[str], empty on success) in
+        addition to self.config/self.config_error, so the UI's
+        validation-error panel has a structured list to render instead of
+        parsing config_error's text.
         """
         try:
             import host.config as host_config
 
             if path:
-                loaded_config = host_config.load(path)
+                loaded_config, errors = host_config.load_with_errors(path)
+            elif is_sim:
+                sim_toml = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                    "diagnostics", "sim_machine.toml",
+                )
+                loaded_config, errors = host_config.load_with_errors(sim_toml)
             else:
                 # Imported here (not at module level) to allow reloading if
                 # the user edits pipeline/config.py while the app is open.
@@ -81,42 +92,65 @@ class OfflineSession:
                 loaded_config = config.default()
                 errors = host_config.validate(loaded_config)
                 if errors:
-                    raise ValueError("config validation failed:\n  " + "\n  ".join(errors))
+                    loaded_config = None
 
-            self._app_state.is_sim = False
-            self.config = loaded_config
-            self.config_error = None
+            self.config_errors = errors
+            if loaded_config is not None:
+                self._app_state.is_sim = is_sim
+                self.config = loaded_config
+                self.config_error = None
+            else:
+                self.config = None
+                self.config_error = "; ".join(errors) if errors else "Unknown config error"
 
         except Exception as e:
             self.config = None
+            self.config_errors = [str(e)]
             self.config_error = str(e)
 
         self._notify()
 
-    def load_sim_config(self):
-        """
-        Loads the simulator configuration: host/diagnostics/sim_machine.toml,
-        layered onto pipeline.config.default() exactly like a production TOML
-        (see docs/config_schema.md). host.config.load() already validates.
-        """
-        try:
-            import host.config as host_config
-
-            sim_toml = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "diagnostics", "sim_machine.toml",
+    # config_summary_text() is self-contained: it only reads self.config and
+    # returns a string. Its one call site is offline/tab.py's _update_ui
+    # (self.config_view.set_summary(...)) -- delete both together to remove
+    # the resolved-config summary panel without touching anything else.
+    def config_summary_text(self) -> str:
+        """Formats self.config for the read-only summary panel."""
+        if self.config is None:
+            return ""
+        cfg = self.config
+        m = cfg.machine
+        lines = [
+            f"f_cpu: {m.f_cpu} Hz    jog_feed: {m.jog_feed} mm/s    z_feed: {m.z_feed} mm/s",
+            "",
+            "Axes:",
+        ]
+        for ltr, axis in m.present_axes():
+            lines.append(
+                f"  {ltr.upper()}: node={axis.node.node_id}  steps/unit={axis.steps_per_unit}  "
+                f"max_rate={axis.max_rate}  accel={axis.accel}  invert={axis.invert}"
             )
-            loaded_config = host_config.load(sim_toml)
 
-            self._app_state.is_sim = True
-            self.config = loaded_config
-            self.config_error = None
+        profile = m.head.profile
+        lines.append("")
+        lines.append(f"Mounted tool: {profile.name}  (feed_max={profile.feed_max}  accel={profile.accel})")
 
-        except Exception as e:
-            self.config = None
-            self.config_error = f"Failed to load sim config: {e}"
+        lines.append("")
+        lines.append("Tool presets:")
+        for name in sorted(cfg.tool_profiles):
+            p = cfg.tool_profiles[name]
+            lines.append(
+                f"  {name}: feed_max={p.feed_max}  accel={p.accel}  "
+                f"jog_feed={p.jog_feed}  z_feed={p.z_feed}"
+            )
 
-        self._notify()
+        if m.peripherals:
+            lines.append("")
+            lines.append("Peripherals:")
+            for p in m.peripherals:
+                lines.append(f"  node={p.node_id}  role={p.role}  present={p.present}")
+
+        return "\n".join(lines)
 
     # ---------------------------------------------------------
     # 2. SVG Management
@@ -145,6 +179,7 @@ class OfflineSession:
             valid_tool_names = [t.name.lower() for t in TOOL_PROFILES_BY_TYPE.values()]
 
             self.svg_layers = []
+            tools_used = set()
             for layer_name in layers_mm.keys():
                 match_status = "Unknown Tool"
                 display_name = layer_name
@@ -154,15 +189,18 @@ class OfflineSession:
                     match_status = "No Tool Specified"
                 elif layer_name.lower() in valid_tool_names:
                     match_status = "Valid Match"
+                    tools_used.add(layer_name.lower())
 
                 self.svg_layers.append({"name": display_name, "match": match_status})
 
+            self.svg_tools_used = sorted(tools_used)
             self.svg_error = None
 
         except Exception as e:
             self.svg_file = None
             self.svg_error = f"Failed to load SVG: {e}"
             self.svg_layers = []
+            self.svg_tools_used = []
 
         self._notify()
 
@@ -214,15 +252,26 @@ class OfflineSession:
 
         self._notify()
 
-    def generate_plan(self, output_path: str):
+    def generate_plan(self, output_path: str, job_overrides: Optional[dict] = None):
+        """
+        job_overrides: {tool_name: {"feed_max": ..., "accel": ...}, ...} --
+        tier-3 per-job patch (see host/config/overrides.py), applied on top
+        of self.config right before compiling. Only affects this one plan;
+        self.config itself is never mutated.
+        """
         if not self.has_valid_config or not self.has_valid_svg:
             self.plan_error = "Config and SVG must be valid to generate a plan."
             self._notify()
             return
 
         try:
+            import host.config as host_config
             from host.production.planner import plan_job
             from host.production.plan_io import save_plan
+
+            cfg = self.config
+            if job_overrides:
+                cfg = host_config.apply_tool_overrides(cfg, job_overrides)
 
             # Same compile path as bake.py: orchestrate_layers + subpaths_to_packets
             # per block. A layer whose name resolves to no tool raises here (a
@@ -231,9 +280,9 @@ class OfflineSession:
             # overrides=tool_profiles so a TOML [tools.*]/job-override patch
             # applies to every layer's tool, not just whichever is mounted
             # on the head (see host/config/overrides.py).
-            new_plan = plan_job(self.svg_path, self.config.machine,
-                                 overrides=self.config.tool_profiles,
-                                 quality=self.config.quality)
+            new_plan = plan_job(self.svg_path, cfg.machine,
+                                 overrides=cfg.tool_profiles,
+                                 quality=cfg.quality)
 
             save_plan(new_plan, output_path)
 

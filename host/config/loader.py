@@ -119,12 +119,8 @@ def _load_quality(base: QualityConfig, d: dict) -> QualityConfig:
     return replace(base, **kwargs) if kwargs else base
 
 
-def load(path) -> PipelineConfig:
-    """
-    Parse a TOML file and merge it onto pipeline.config.default(), then
-    validate the result. Raises ValueError (with every problem found, not
-    just the first) if the merged config is invalid.
-    """
+def _build(path) -> PipelineConfig:
+    """Parse + merge only -- no validation. Internal; see load()/load_with_errors()."""
     base = pcfg.default()
     with open(path, "rb") as f:
         data = tomllib.load(f)
@@ -140,8 +136,37 @@ def load(path) -> PipelineConfig:
         machine = replace(machine, peripherals=_load_peripherals(data["peripherals"]))
     quality = _load_quality(base.quality, data.get("quality", {}))
 
-    cfg = replace(base, machine=machine, quality=quality, tool_profiles=tool_profiles)
+    return replace(base, machine=machine, quality=quality, tool_profiles=tool_profiles)
+
+
+def load(path) -> PipelineConfig:
+    """
+    Parse a TOML file and merge it onto pipeline.config.default(), then
+    validate the result. Raises ValueError (with every problem found, not
+    just the first) if the merged config is invalid. CLI/library callers
+    that want a raise -- see load_with_errors() for UI callers that want a
+    structured error list instead of an exception to parse.
+    """
+    cfg = _build(path)
     errors = validate(cfg)
     if errors:
         raise ValueError("config validation failed:\n  " + "\n  ".join(errors))
     return cfg
+
+
+def load_with_errors(path):
+    """
+    Like load(), but never raises: returns (PipelineConfig, []) on success or
+    (None, errors) on failure, where errors is a list[str] -- either
+    validate()'s findings, or a single-element list wrapping a parse/TOML
+    error. For UI callers that render a structured error list rather than
+    parsing an exception message.
+    """
+    try:
+        cfg = _build(path)
+    except Exception as e:
+        return None, [str(e)]
+    errors = validate(cfg)
+    if errors:
+        return None, errors
+    return cfg, []
