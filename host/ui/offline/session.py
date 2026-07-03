@@ -1,6 +1,5 @@
 import os
 import importlib
-from dataclasses import replace
 from typing import Callable, List, Optional
 
 from host.ui.app_state import AppState
@@ -95,29 +94,19 @@ class OfflineSession:
         self._notify()
 
     def load_sim_config(self):
-        """Loads the simulator configuration."""
+        """
+        Loads the simulator configuration: host/diagnostics/sim_machine.toml,
+        layered onto pipeline.config.default() exactly like a production TOML
+        (see docs/config_schema.md). host.config.load() already validates.
+        """
         try:
             import host.config as host_config
-            import pipeline.config as config
-            importlib.reload(config)
 
-            import host.diagnostics.sim_config
-            importlib.reload(host.diagnostics.sim_config)
-            from host.diagnostics.sim_config import sim_machine
-
-            # Get the sim machine
-            machine = sim_machine()
-
-            # Wrap in PipelineConfig
-            base_config = config.default()
-            loaded_config = replace(base_config, machine=machine)
-
-            # Same validation gate as the production path, so a bad edit to
-            # sim_config.py (duplicate node_id, zero steps_per_unit, ...)
-            # surfaces here rather than failing confusingly downstream.
-            errors = host_config.validate(loaded_config)
-            if errors:
-                raise ValueError("sim config validation failed:\n  " + "\n  ".join(errors))
+            sim_toml = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "diagnostics", "sim_machine.toml",
+            )
+            loaded_config = host_config.load(sim_toml)
 
             self._app_state.is_sim = True
             self.config = loaded_config

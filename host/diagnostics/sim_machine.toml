@@ -1,0 +1,33 @@
+# sim_machine.toml — the machine the simulator pretends to be.
+#
+# Edit this freely to exercise the config-driven GUI; it is ONLY loaded by
+# OfflineSession.load_sim_config() (host/ui/offline/session.py). Real
+# hardware uses host.config.load(<production toml>) or, absent one,
+# pipeline.config.default().
+#
+# Layers onto pipeline.config.default() the same way any TOML does (see
+# docs/config_schema.md) — everything omitted here just falls through to
+# the code default. The two peripherals below are what makes the
+# Peripherals panel light up in the GUI (presence-pingable on the sim's
+# fake bus, which reports every declared node present unless present=false).
+#
+# Things you can do here and watch the GUI adapt to:
+#   - add peripherals  -> they appear in the Peripherals panel
+#   - drop an axis     -> [machine.head.a] present = false; its jog row +
+#                          status readout disappear (e.g. a pen machine
+#                          with no A axis)
+#   - add a second head -> NOT YET SUPPORTED. MachineConfig.heads only
+#                          exposes the active head via load()'s [machine.head]
+#                          section (see docs/config_schema.md); a genuine
+#                          second head needs [[machine.heads]] array-of-tables
+#                          support in host/config/loader.py first. Revisit
+#                          once the pipeline actually consumes a second head.
+
+[[peripherals]]
+node_id = 7
+role    = "oscillator"   # driven-knife blade controller
+
+[[peripherals]]
+node_id = 8
+role    = "suction"      # vacuum hold-down
+present = false            # declared but dropped, to exercise present=false

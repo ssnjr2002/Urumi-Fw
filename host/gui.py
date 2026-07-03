@@ -21,8 +21,13 @@ import argparse, threading, queue, os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+import os
 from pipeline.config import default as _config_default
-from host.diagnostics.sim_config import sim_machine
+
+def sim_machine():
+    import host.config as _host_config
+    sim_toml = os.path.join(os.path.dirname(__file__), "diagnostics", "sim_machine.toml")
+    return _host_config.load(sim_toml).machine
 from host.protocol.link import Link
 from host.protocol.packets import make_jog
 from host.protocol import commands as cmd
