@@ -21,7 +21,8 @@ from host.production.svg_to_packets import subpaths_to_packets
 
 
 def plan_job(svg_path, machine, overrides=None, default_tool=None, quality=None,
-             lift_height=0.0, tool_order=None):
+             lift_height=0.0, tool_order=None, feed_max=None, a_max=None,
+             jog_feed=None, z_feed=None):
     """
     SVG → Plan. Orchestrates layers into ordered blocks (orchestrate_layers,
     document order by default, or grouped/reordered by `tool_order` — a list of
@@ -29,6 +30,12 @@ def plan_job(svg_path, machine, overrides=None, default_tool=None, quality=None,
 
     An unlayered SVG yields a single '' layer — pass default_tool to run it as a
     one-tool job, or just use svg_to_packets.run for the single-tool path.
+
+    feed_max/a_max/jog_feed/z_feed are passed straight through to every
+    block's subpaths_to_packets() call — the same scalar overrides that
+    function already accepts (None = fall back to the tool's profile /
+    machine defaults there). Uniform across every tool in the job; there is
+    no per-tool variant of these.
     """
     if quality is None:
         quality = config_default().quality
@@ -38,6 +45,8 @@ def plan_job(svg_path, machine, overrides=None, default_tool=None, quality=None,
     ops = []
     for name, profile, subpaths in blocks:
         packets = subpaths_to_packets(subpaths, machine, profile,
+                                      feed_max=feed_max, a_max=a_max,
+                                      jog_feed=jog_feed, z_feed=z_feed,
                                       quality=quality, lift_height=lift_height)
         ops.append(ToolOperation(tool=profile.name, profile=profile, packets=packets))
     return Plan(operations=ops)

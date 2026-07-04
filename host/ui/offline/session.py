@@ -36,7 +36,6 @@ class OfflineSession:
         self.plan_n_ops: Optional[int] = None
         self.plan_tools: list = []
         self.plan_ops: list = []
-        self.svg_tools_used: list = []  # tool names actually present in the loaded SVG's layers
 
     def subscribe(self, callback: Callable):
         """UI components register here to be notified of state changes."""
@@ -179,7 +178,6 @@ class OfflineSession:
             valid_tool_names = [t.name.lower() for t in TOOL_PROFILES_BY_TYPE.values()]
 
             self.svg_layers = []
-            tools_used = set()
             for layer_name in layers_mm.keys():
                 match_status = "Unknown Tool"
                 display_name = layer_name
@@ -189,18 +187,15 @@ class OfflineSession:
                     match_status = "No Tool Specified"
                 elif layer_name.lower() in valid_tool_names:
                     match_status = "Valid Match"
-                    tools_used.add(layer_name.lower())
 
                 self.svg_layers.append({"name": display_name, "match": match_status})
 
-            self.svg_tools_used = sorted(tools_used)
             self.svg_error = None
 
         except Exception as e:
             self.svg_file = None
             self.svg_error = f"Failed to load SVG: {e}"
             self.svg_layers = []
-            self.svg_tools_used = []
 
         self._notify()
 
@@ -252,12 +247,13 @@ class OfflineSession:
 
         self._notify()
 
-    def generate_plan(self, output_path: str, job_overrides: Optional[dict] = None):
+    def generate_plan(self, output_path: str, feed_max=None, a_max=None,
+                       jog_feed=None, lift_height=0.0, z_feed=None):
         """
-        job_overrides: {tool_name: {"feed_max": ..., "accel": ...}, ...} --
-        tier-3 per-job patch (see host/config/overrides.py), applied on top
-        of self.config right before compiling. Only affects this one plan;
-        self.config itself is never mutated.
+        feed_max/a_max/jog_feed/z_feed/lift_height forward straight through to
+        plan_job()'s subpaths_to_packets() call for every block — the same
+        scalar params that function already accepts (None = fall back to the
+        tool's profile / machine defaults). Uniform across the whole job.
         """
         if not self.has_valid_config or not self.has_valid_svg:
             self.plan_error = "Config and SVG must be valid to generate a plan."
@@ -265,24 +261,23 @@ class OfflineSession:
             return
 
         try:
-            import host.config as host_config
             from host.production.planner import plan_job
             from host.production.plan_io import save_plan
 
             cfg = self.config
-            if job_overrides:
-                cfg = host_config.apply_tool_overrides(cfg, job_overrides)
 
             # Same compile path as bake.py: orchestrate_layers + subpaths_to_packets
             # per block. A layer whose name resolves to no tool raises here (a
             # mislabelled layer should surface as an error, not be silently
             # skipped) — reported through the same except below as everything else.
-            # overrides=tool_profiles so a TOML [tools.*]/job-override patch
-            # applies to every layer's tool, not just whichever is mounted
-            # on the head (see host/config/overrides.py).
+            # overrides=tool_profiles so a TOML [tools.*] patch applies to every
+            # layer's tool, not just whichever is mounted on the head.
             new_plan = plan_job(self.svg_path, cfg.machine,
                                  overrides=cfg.tool_profiles,
-                                 quality=cfg.quality)
+                                 quality=cfg.quality,
+                                 feed_max=feed_max, a_max=a_max,
+                                 jog_feed=jog_feed, z_feed=z_feed,
+                                 lift_height=lift_height)
 
             save_plan(new_plan, output_path)
 
