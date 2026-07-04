@@ -96,6 +96,13 @@ struct MicroSegment {
 #define MSEG_ACK         0xAA
 #define MSEG_NACK        0xBB
 
+// Binary status request/response (mirrors the text `getstate` command):
+//   STATUS_REQ:  [0xA5]                                   (1 byte, no CRC)
+//   STATUS_RSP:  [0xA6][state][enabled][homed][alarm][running][CRC8]  (7 bytes)
+#define STATUS_REQ       0xA5
+#define STATUS_RSP       0xA6
+#define STATUS_RSP_SIZE  7
+
 // ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
 // Normal command word : (CMD << 8) | node          — top 16 bits zero
 // Debug step word      : (FIFO_STEP_DEBUG << 24) | (node << 16) | (count & 0xFFFF)

@@ -37,6 +37,21 @@ static void sendNack(uint8_t reason) {
     Serial.write((uint8_t)0x00);
 }
 
+// Binary mirror of `getstate` (docs/wire_protocol.md STATUS_REQ/STATUS_RSP).
+// Accepted in every machine state; handled inline (no ring-buffer / Core 1
+// interaction) so it never delays step timing.
+static void sendStatusRsp() {
+    uint8_t buf[STATUS_RSP_SIZE];
+    buf[0] = STATUS_RSP;
+    buf[1] = machineState;
+    buf[2] = axes_enabled;
+    buf[3] = axes_homed;
+    buf[4] = alarmReason;
+    buf[5] = runningReason;
+    buf[6] = crc8(buf, STATUS_RSP_SIZE - 1);
+    Serial.write(buf, STATUS_RSP_SIZE);
+}
+
 // ─── Command Handlers ─────────────────────────────────────────────────────────
 
 // ─── State predicates ─────────────────────────────────────────────────────────
@@ -98,8 +113,18 @@ static bool handleCommand(const String& input) {
     if (input == "ping") { Serial.println("pong"); return true; }
 
     if (input == "getstate") {
-        Serial.printf("state=%d enabled=0x%02x homed=0x%02x alarm=%d running=%d\n",
+        Serial.printf("state=%d enabled=0x%02x homed=0x%02x alarm=%d running=%d",
                       machineState, axes_enabled, axes_homed, alarmReason, runningReason);
+#ifdef DEBUG_TIMING
+        // texp/tmeas = expected vs measured duration (us) of the last completed
+        // burst, from the intervals actually commanded vs wall-clock execution
+        // on Core 1; twall = end-to-end wall time including any pause/wait
+        // inside the burst. tmeas > texp means Core 1 fell behind schedule.
+        Serial.printf(" texp=%lu tmeas=%lu twall=%lu",
+                      (unsigned long)jobExpectedUs, (unsigned long)jobMeasuredUs,
+                      (unsigned long)jobWallUs);
+#endif
+        Serial.println();
         return true;
     }
     if (input == "getpos") {
@@ -293,14 +318,22 @@ static void processBinaryByte(uint8_t b) {
     // the stream type; we record it as the streamIsJog intent so Core 1 sets
     // runningReason together with the RUNNING transition it owns.
     //   MSEG job stream — IDLE/RUNNING; NACK_PAUSED while paused, else bad_state.
-    //   JOG burst       — IDLE/PAUSED  (manual jog or host return-to-pausePos).
+    //   JOG burst       — IDLE/PAUSED, or RUNNING if the in-progress burst is
+    //                     itself a jog (packet 2+ of the same multi-packet
+    //                     burst arrives after Core 1 has already flipped the
+    //                     state to RUNNING to execute packet 1 — rejecting
+    //                     those left every jog after the first packet
+    //                     NACK_BAD_STATE'd forever, scrambling the motion).
     uint8_t st = machineState;
     if (pktBuf[0] == MSEG_MAGIC) {
         if (st == STATE_PAUSED)                          { sendNack(MSEG_NACK_PAUSED);    return; }
         if (st != STATE_IDLE && st != STATE_RUNNING)     { sendNack(MSEG_NACK_BAD_STATE); return; }
         streamIsJog = false;
     } else { // JOG_MAGIC
-        if (st != STATE_IDLE && st != STATE_PAUSED)      { sendNack(MSEG_NACK_BAD_STATE); return; }
+        bool continuingJog = (st == STATE_RUNNING && runningReason == RUNNING_JOG);
+        if (st != STATE_IDLE && st != STATE_PAUSED && !continuingJog) {
+            sendNack(MSEG_NACK_BAD_STATE); return;
+        }
         streamIsJog = true;
     }
 
@@ -343,8 +376,8 @@ static void processBinaryByte(uint8_t b) {
 
 // ─── Serial Processing ────────────────────────────────────────────────────────
 // Text lines and binary packets share the same USB CDC stream.
-// Binary packets start with 0xAB — any byte >= 0x80 that isn't mid-packet
-// is treated as a potential packet start. Printable ASCII goes to the text parser.
+// Data-plane magics (MSEG/JOG 0xAB/0xAE, STATUS_REQ 0xA5) have bit 7 set and
+// are dispatched here; any other byte is treated as the start of a text line.
 
 void processSerial() {
     while (Serial.available()) {
@@ -359,6 +392,12 @@ void processSerial() {
         // A data-plane magic byte starts a binary packet
         if (b == MSEG_MAGIC || b == JOG_MAGIC) {
             processBinaryByte(b);
+            continue;
+        }
+
+        // STATUS_REQ is a single byte, no payload/CRC — answer immediately.
+        if (b == STATUS_REQ) {
+            sendStatusRsp();
             continue;
         }
 
