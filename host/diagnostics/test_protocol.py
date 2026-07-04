@@ -29,6 +29,19 @@ def test_ping_and_initial_state():
     assert st.alarm == AlarmReason.NONE
 
 
+def test_get_status_mirrors_get_state():
+    # STATUS_REQ/STATUS_RSP (binary) must agree with getstate (text) at every step.
+    link = Link.open_sim()
+    assert cmd.get_status(link) == cmd.get_state(link)
+    ok, _ = cmd.enable(link); assert ok
+    ok, _ = cmd.setorigin(link, "xy"); assert ok
+    assert cmd.get_status(link) == cmd.get_state(link)
+    bst = cmd.get_status(link)
+    assert bst.state == MachineState.IDLE
+    assert bst.all_homed(axis_mask("xy"))
+    assert not bst.homed("z")
+
+
 def test_pingnode():
     link = Link.open_sim()
     assert cmd.ping_node(link, 3)

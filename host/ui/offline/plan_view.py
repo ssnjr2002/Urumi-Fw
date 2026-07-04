@@ -11,9 +11,16 @@ class PlanView(ttk.Frame):
         self._build_ui()
 
     def _build_ui(self):
+        # ── Status — reflects both Inspect Plan (load result) and Generate
+        # Plan (readiness/errors) below, so it lives above both instead of
+        # nested under one of them. ──────────────────────────────────────
+        self.status_var = tk.StringVar(value="Status: Waiting for Plan")
+        self.status_lbl = ttk.Label(self, textvariable=self.status_var, wraplength=400)
+        self.status_lbl.grid(row=0, column=0, padx=8, pady=(8, 0), sticky="w")
+
         # ── Inspect Plan — load an existing .plan and see what's in it ──────
         self.inspect_frame = ttk.LabelFrame(self, text="Inspect Plan")
-        self.inspect_frame.grid(row=0, column=0, padx=8, pady=8, sticky="nsew")
+        self.inspect_frame.grid(row=1, column=0, padx=8, pady=8, sticky="nsew")
 
         self.load_btn = ttk.Button(self.inspect_frame, text="Load .plan...")
         self.load_btn.grid(row=0, column=0, padx=4, pady=4, sticky="w")
@@ -22,27 +29,19 @@ class PlanView(ttk.Frame):
         self.file_lbl = ttk.Label(self.inspect_frame, textvariable=self.file_var, font=("TkDefaultFont", 9, "italic"))
         self.file_lbl.grid(row=0, column=1, padx=8, pady=4, sticky="w")
 
-        self.status_var = tk.StringVar(value="Status: Waiting for Plan")
-        self.status_lbl = ttk.Label(self.inspect_frame, textvariable=self.status_var, wraplength=400)
-        self.status_lbl.grid(row=1, column=0, columnspan=2, padx=4, pady=(0, 4), sticky="w")
-
-        # Details Frame
-        self.details_frame = ttk.LabelFrame(self.inspect_frame, text="Plan Details")
-        self.details_frame.grid(row=2, column=0, columnspan=2, padx=4, pady=(0, 4), sticky="nsew")
-
         # Global header data directly from the binary spec
         self.header_var = tk.StringVar(value="Version: — | Unique Tools: — | Total Ops: —")
-        self.header_lbl = ttk.Label(self.details_frame, textvariable=self.header_var, font=("TkDefaultFont", 9, "bold"))
-        self.header_lbl.grid(row=0, column=0, padx=4, pady=4, sticky="w")
+        self.header_lbl = ttk.Label(self.inspect_frame, textvariable=self.header_var, font=("TkDefaultFont", 9, "bold"))
+        self.header_lbl.grid(row=1, column=0, columnspan=2, padx=4, pady=4, sticky="w")
 
         # Deferred Metadata
         self.meta_var = tk.StringVar(value="Est. Time: — | Est. Distance: —")
-        self.meta_lbl = ttk.Label(self.details_frame, textvariable=self.meta_var)
-        self.meta_lbl.grid(row=1, column=0, padx=4, pady=(0, 4), sticky="w")
+        self.meta_lbl = ttk.Label(self.inspect_frame, textvariable=self.meta_var)
+        self.meta_lbl.grid(row=2, column=0, columnspan=2, padx=4, pady=(0, 4), sticky="w")
 
         # Paned view to show the two internal structures: Manifest and Operations
-        self.pane = ttk.PanedWindow(self.details_frame, orient="horizontal")
-        self.pane.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
+        self.pane = ttk.PanedWindow(self.inspect_frame, orient="horizontal")
+        self.pane.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
 
         # Left side: Tool Manifest (for upfront feasibility check)
         self.tools_frame = ttk.LabelFrame(self.pane, text="Required Tools (Manifest)")
@@ -69,9 +68,7 @@ class PlanView(ttk.Frame):
         self.ops_scroll.pack(side="right", fill="y")
         self.ops_tree.configure(yscrollcommand=self.ops_scroll.set)
 
-        self.details_frame.rowconfigure(2, weight=1)
-        self.details_frame.columnconfigure(0, weight=1)
-        self.inspect_frame.rowconfigure(2, weight=1)
+        self.inspect_frame.rowconfigure(3, weight=1)
         self.inspect_frame.columnconfigure(1, weight=1)
 
         # ── Generate Plan — scalar job params forwarded straight through to
@@ -80,7 +77,7 @@ class PlanView(ttk.Frame):
         # tool's profile / machine defaults). No per-tool variants — one
         # value applies to the whole job. ──────────────────────────────────
         self.generate_frame = ttk.LabelFrame(self, text="Generate Plan")
-        self.generate_frame.grid(row=1, column=0, padx=8, pady=(0, 8), sticky="ew")
+        self.generate_frame.grid(row=2, column=0, padx=8, pady=(0, 8), sticky="ew")
 
         self._param_vars = {}
         params = [
@@ -109,7 +106,7 @@ class PlanView(ttk.Frame):
         self.generate_btn.grid(row=next_row, column=0, columnspan=4, padx=4, pady=(8, 4), sticky="w")
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
     def get_job_params(self) -> dict:
         """

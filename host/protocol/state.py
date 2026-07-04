@@ -88,6 +88,13 @@ def _enum_or(cls, fields, key, default):
         return default   # unknown enum value from a newer firmware — keep going
 
 
+def _enum_or_int(cls, value, default):
+    try:
+        return cls(value)
+    except ValueError:
+        return default   # unknown enum value from a newer firmware — keep going
+
+
 def parse_getstate(line: str) -> MachineStatus:
     """
     Parse a `getstate` reply line:
@@ -111,4 +118,22 @@ def parse_getstate(line: str) -> MachineStatus:
         axes_enabled=_to_int(fields.get("enabled", "0")),
         alarm=_enum_or(AlarmReason, fields, "alarm", AlarmReason.NONE),
         running=_enum_or(RunningReason, fields, "running", RunningReason.JOB),
+    )
+
+
+def parse_status_rsp(data: bytes) -> MachineStatus:
+    """
+    Parse a binary STATUS_RSP packet (docs/wire_protocol.md) — the same fields
+    as `parse_getstate`, packed into 7 bytes instead of a text line. Used for
+    the host UI's poll loop, including mid-stream, where the ASCII line would
+    be a heavier and more awkward insertion between MSEG/jog packets.
+    """
+    from host.protocol.packets import unpack_status_rsp   # avoid import cycle at module load
+    fields = unpack_status_rsp(bytes(data))
+    return MachineStatus(
+        state=_enum_or_int(MachineState, fields["state"], MachineState.IDLE),
+        axes_homed=fields["axes_homed"],
+        axes_enabled=fields["axes_enabled"],
+        alarm=_enum_or_int(AlarmReason, fields["alarm"], AlarmReason.NONE),
+        running=_enum_or_int(RunningReason, fields["running"], RunningReason.JOB),
     )

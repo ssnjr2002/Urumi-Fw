@@ -1,5 +1,6 @@
 import threading
 import queue
+import struct
 import time
 from typing import Callable, List, Optional
 
@@ -10,6 +11,7 @@ except ImportError:
 
 from host.protocol.link import Link
 from host.ui.app_state import AppState
+from host.ui.observable import Observable
 from host.execution.job_runner import Operator
 
 class GuiOperator(Operator):
@@ -33,15 +35,15 @@ class GuiOperator(Operator):
 
 SIM_PORT = "Simulator"
 
-class OnlineSession:
+class OnlineSession(Observable):
     """
     Business logic manager for the Online Execution phase.
     Handles the serial link, background polling, and job streaming.
     """
     def __init__(self, app_state: AppState):
+        super().__init__()
         self.app_state = app_state
-        self._callbacks: List[Callable] = []
-        
+
         # --- Connection State ---
         self.link = None
         self.connection_error: Optional[str] = None
@@ -57,6 +59,12 @@ class OnlineSession:
         self.node_ping_status = {}
         
         # --- Jogging State ---
+        # Debug capture: when on, jog packets are written to jog_output.bin
+        # (length-prefixed, same framing as verify_packets.py reads) instead of
+        # being sent to the sim/COM port — for A/B-comparing what the host
+        # actually generates without needing the real link.
+        self.jog_dump_to_file = False
+        self.jog_dump_path = "jog_output.bin"
         self.jog_q = queue.Queue()
         self._worker = threading.Thread(target=self._jog_worker, daemon=True)
         self._worker.start()
@@ -76,16 +84,7 @@ class OnlineSession:
         # worker pushes its own live updates via send_plan's on_progress hook.
         self._poll_thread = threading.Thread(target=self._poll_worker, daemon=True)
         self._poll_thread.start()
-        
-    def subscribe(self, callback: Callable):
-        """UI components register here to be notified of state changes."""
-        self._callbacks.append(callback)
-        
-    def _notify(self):
-        """Fire all callbacks when state changes."""
-        for cb in self._callbacks:
-            cb()
-            
+
     # ---------------------------------------------------------
     # 1. Connection Management
     # ---------------------------------------------------------
@@ -162,7 +161,7 @@ class OnlineSession:
 
             from host.protocol import commands as cmd
             try:
-                self.machine_state = cmd.get_state(self.link)
+                self.machine_state = cmd.get_status(self.link)
                 self.machine_pos_steps = cmd.get_pos(self.link)
                 self.polling_error = None
             except Exception as e:
@@ -235,28 +234,34 @@ class OnlineSession:
         self._notify()
 
     def ping_all(self):
+        # `pingnode all` is a firmware bring-up convenience that replies with one
+        # line per node, but Link.command() only ever reads a single line — the
+        # extra lines desync the next read. Ping each configured node individually
+        # instead, which matches the wire protocol's one-line-per-command contract.
         from host.protocol import commands as cmd
         if not self.is_connected or self.busy:
             return
-            
+
+        node_ids = set()
+        if self.app_state.config:
+            machine = self.app_state.config.machine
+            if hasattr(machine, 'present_axes'):
+                for ltr, ax in machine.present_axes():
+                    node_ids.add(ax.node.node_id)
+            for p in getattr(machine, 'peripherals', []):
+                if getattr(p, 'present', True):
+                    node_ids.add(p.node_id)
+
         try:
-            ok = cmd.ping_node(self.link, "all")
-            if ok:
-                self.last_command_status = "OK: pingnode all"
-                if self.app_state.config:
-                    machine = self.app_state.config.machine
-                    if hasattr(machine, 'present_axes'):
-                        for ltr, ax in machine.present_axes():
-                            self.node_ping_status[ax.node.node_id] = "OK"
-                    peripherals = getattr(machine, 'peripherals', [])
-                    for p in peripherals:
-                        if getattr(p, 'present', True):
-                            self.node_ping_status[p.node_id] = "OK"
-            else:
-                self.last_command_status = "Timeout/Error: pingnode all"
+            all_ok = True
+            for node_id in sorted(node_ids):
+                ok = cmd.ping_node(self.link, node_id)
+                self.node_ping_status[node_id] = "OK" if ok else "TIMEOUT"
+                all_ok = all_ok and ok
+            self.last_command_status = "OK: ping all nodes" if all_ok else "Timeout/Error: ping all nodes"
         except Exception as e:
             self.last_command_status = f"Error pinging all nodes: {e}"
-            
+
         self._notify()
 
     def _send_node_command(self, cmd_fn, node_id: int, label: str) -> bool:
@@ -289,52 +294,65 @@ class OnlineSession:
     # ---------------------------------------------------------
     # 4. Data Plane (Jogging)
     # ---------------------------------------------------------
-    def jog(self, ltr: str, sign: int, dist: float, rate: float, accel: float):
+    def jog(self, ltr: str, sign: int, dist: float, rate: float):
         """Queue a jog burst for a specific axis."""
         from host.protocol.packets import make_jog
 
-        if self.busy:
-            # A job or another jog already owns `link`. Queuing anyway would let
-            # _jog_worker stream onto the port while the job worker is mid-stream
-            # — two writers on one serial port, and the jog's seqreset resets the
-            # Pico's duplicate-guard counter mid-job, silently dropping job steps.
-            self.last_command_status = "Rejected: link busy (job or jog in progress)"
+        # Proportional to feed rate rather than a fixed value — a flat accel is
+        # either too gentle at low feed or (per prior UI) coarse/violent at high
+        # feed, since make_jog only has ~10ms to spend per velocity step.
+        accel = max(rate * 8.0, 50.0)
+
+        if self._gui_op is not None:
+            # A job owns `link`. Queuing anyway would let _jog_worker stream onto
+            # the port while the job worker is mid-stream — two writers on one
+            # serial port, and the jog's seqreset resets the Pico's duplicate-guard
+            # counter mid-job, silently dropping job steps. Queuing behind another
+            # in-flight jog is fine: they share the same single-writer worker.
+            self.last_command_status = "Rejected: job in progress"
             self._notify()
             return
 
         if not self.app_state.config or not self.app_state.config.machine:
             return
-            
+
         # Get axis config
         machine = self.app_state.config.machine
         axes = dict(machine.present_axes())
         if ltr not in axes:
             return
-            
+
         # Reject if the axis is not enabled
         if self.machine_state and not self.machine_state.enabled(ltr):
             self.last_command_status = f"Rejected: {ltr.upper()} axis is disabled"
             self._notify()
             return
-            
+
         ax = axes[ltr]
-        
+
         # Calculate in steps
         feed_sps = rate * ax.steps_per_unit
         accel_sps2 = accel * ax.steps_per_unit
         dist_steps = int(dist * sign * ax.steps_per_unit)
-        
+        if dist_steps == 0:
+            return
+
         # Build the vector
         vec = [0, 0, 0, 0]
         idx_map = {"x": 0, "y": 1, "z": 2, "a": 3}
         vec[idx_map[ltr]] = dist_steps
-        
-        # Generate packets
+
+        # Build the complete accel->cruise->decel burst up front and enqueue it
+        # as one atomic unit. Splitting a single jog across two stream() calls
+        # (as an earlier "blending" attempt did) leaves a real gap on hardware:
+        # stream() only blocks for ACK, not for physical motion, so the Pico's
+        # buffer drains and the machine visibly stops before the next call
+        # arrives. One call per jog is what the old jog_ui.py/jog.py proved
+        # smooth; rapid clicks simply queue up and run back-to-back.
         packets = make_jog(tuple(vec), feed_sps, accel_sps2, machine.f_cpu)
         if not packets:
             return
-            
-        # Enqueue the burst
+
         self.jog_q.put((f"JOGGING {ltr.upper()} {sign*dist:+.1f}", packets))
         self.last_command_status = f"Queued Jog {ltr.upper()}"
         self._notify()
@@ -344,16 +362,31 @@ class OnlineSession:
         while True:
             try:
                 label, packets = self.jog_q.get()
-                
+
                 # Signal busy so polling loop skips
                 self.busy = True
                 self.last_command_status = label
-                
+
+                if self.jog_dump_to_file:
+                    # Bypass the link entirely — append this burst's packets to
+                    # jog_output.bin instead of streaming them anywhere.
+                    try:
+                        with open(self.jog_dump_path, "ab") as f:
+                            for p in packets:
+                                f.write(struct.pack("<H", len(p)))
+                                f.write(p)
+                        self.last_command_status = f"Dumped {len(packets)} pkts -> {self.jog_dump_path}"
+                    except Exception as e:
+                        self.last_command_status = f"Jog dump error: {e}"
+                    self.jog_q.task_done()
+                    self.busy = False
+                    continue
+
                 if not self.is_connected or not self.link:
                     self.jog_q.task_done()
                     self.busy = False
                     continue
-                    
+
                 try:
                     # The wire protocol requires seqreset before each stream
                     self.link.command("seqreset")
@@ -365,10 +398,10 @@ class OnlineSession:
                         self.last_command_status = "Jog aborted/failed"
                 except Exception as e:
                     self.last_command_status = f"Jog error: {e}"
-                    
+
                 self.jog_q.task_done()
                 self.busy = False
-                
+
             except Exception as e:
                 self.busy = False
 
@@ -377,7 +410,10 @@ class OnlineSession:
     # ---------------------------------------------------------
     def run_job(self):
         """Starts a background thread to execute the loaded plan."""
-        if self.busy or not self.is_connected or not self.app_state.plan:
+        # jog_q.empty() closes the race where _jog_worker flips `busy` False
+        # in the gap between draining two queued jogs — a job must not start
+        # while jogs are still pending behind it (see jog()'s single-writer note).
+        if self.busy or not self.jog_q.empty() or not self.is_connected or not self.app_state.plan:
             return
             
         plan = self.app_state.plan

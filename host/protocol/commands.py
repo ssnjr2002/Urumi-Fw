@@ -29,6 +29,11 @@ def get_state(link) -> MachineStatus:
     return parse_getstate(link.command("getstate"))
 
 
+def get_status(link) -> MachineStatus:
+    """Binary mirror of get_state (STATUS_REQ/STATUS_RSP) — cheaper poll, usable mid-stream."""
+    return link.get_status()
+
+
 def get_pos(link) -> tuple:
     """Absolute machinePos in steps: (x, y, z, a)."""
     parts = link.command("getpos").split()

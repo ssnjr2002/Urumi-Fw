@@ -41,6 +41,8 @@ commands are lowercase ASCII, so the two never collide at a boundary.
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
 | `MSEG_NACK`  | `0xBB` | Pico → Host | NACK response |
+| `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request (mirrors `getstate`) |
+| `STATUS_RSP` | `0xA6` | Pico → Host | Binary status response |
 
 All single-byte magics have bit 7 set, keeping them disjoint from the lowercase
 ASCII that begins every control-plane line.
@@ -119,6 +121,30 @@ the burst drains.
 [1]      reason   uint8   — see NACK reason tables below
 [2]      0x00
 ```
+
+### STATUS_REQ — `0xA5` (1 byte)
+```
+[0]      magic = 0xA5
+```
+Single byte; no payload, no CRC. Accepted in all machine states, including
+RUNNING — the Pico handles it on Core 0 between MSEG packet boundaries so it
+never interrupts step timing. The host may send one between any two MSEG/jog
+packets by inserting the byte at a packet boundary.
+
+### STATUS_RSP — `0xA6` (7 bytes)
+```
+[0]      magic         = 0xA6
+[1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
+[2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
+[3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
+[4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL
+[5]      runningReason uint8   — 0=JOB 1=JOG (only meaningful while state=RUNNING)
+[6]      CRC8 over bytes [0..5]
+```
+Same semantic content as the text `getstate` reply, packed into 7 bytes. The
+host UI polls this at ~100 ms during job execution instead of sending the 9-byte
+ASCII `getstate\n` and parsing a variable-length text reply. ASCII `getstate`
+remains available for human/debug use.
 
 ### CMD_GET_CONFIG response (Pico → Host) *(Phase 2)*
 ```
@@ -201,7 +227,7 @@ prefixed `0x`.
 | Command | Args | Reply | Meaning |
 |---|---|---|---|
 | `ping` | — | `pong` | Is the Pico alive (USB link)? |
-| `pingnode` | `<id>` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
+| `pingnode` | `[all\|<id>]` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
 | `getstate` | — | `state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r>` | Operational status snapshot (see below) |
 | `getpos` | — | `pos <x> <y> <z> <a>` | Absolute machinePos in steps (signed) |
 | `enable` | `[all\|<id>]` | `ok` / `err <reason>` | Energise motors (per allowed-state matrix). Bare / `all` energises every present node; `enable <id>` relays CMD_ENABLE to that node only (mirrors `pingnode <id>`) |
@@ -260,6 +286,7 @@ Phase 2.
 
 | | IDLE | RUNNING | PAUSED | ALARM | HOMING |
 |---|---|---|---|---|---|
+| `STATUS_REQ` (binary) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `ping` / `getstate` / `getpos` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `pingnode` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `enable` / `disable` | ✓ | ✗ | ✓ | ✓ | ✗ |

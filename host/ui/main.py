@@ -18,8 +18,9 @@ class App(tk.Tk):
     """
     def __init__(self):
         super().__init__()
-        self.title("Fabrication Machine Controller")
-        self.geometry("900x800")
+        self.title("Host Interface")
+        # self.geometry("900x800")
+        self.state('zoomed')
         
         # 1. Initialize the global shared state
         self.app_state = AppState()

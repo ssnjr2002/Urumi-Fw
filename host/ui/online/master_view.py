@@ -81,7 +81,7 @@ class MasterView(ttk.Frame):
         # Row 4: Master Global Command
         # ---------------------------------------------------------
         ttk.Label(self, text="Last Command Status").grid(row=4, column=0, padx=8, pady=8, sticky="w")
-        
+
         self.cmd_status_var = tk.StringVar(value="—")
         ttk.Label(self, textvariable=self.cmd_status_var).grid(row=4, column=1, padx=8, pady=8, sticky="w")
 

@@ -114,6 +114,13 @@ class OnlineTab(ttk.Frame):
         self.job_execution_view.cancel_btn.config(command=self.session.cancel_job)
         self.job_execution_view.load_btn.config(command=self.on_load_plan)
 
+        # Debug: route jog packets to jog_output.bin instead of the link
+        self.session.jog_dump_to_file = self.axis_nodes_view.dump_jog_var.get()
+        self.axis_nodes_view.dump_jog_chk.config(command=self._on_dump_jog_toggled)
+
+    def _on_dump_jog_toggled(self):
+        self.session.jog_dump_to_file = self.axis_nodes_view.dump_jog_var.get()
+
     def _on_connect_clicked(self):
         port = self.master_view.port_var.get()
         if hasattr(self.session, 'toggle_connect'):
@@ -126,9 +133,8 @@ class OnlineTab(ttk.Frame):
         try:
             dist = self.axis_nodes_view.jog_dist_vars[ltr].get()
             rate = self.axis_nodes_view.jog_rate_vars[ltr].get()
-            accel = self.axis_nodes_view.jog_accel_vars[ltr].get()
-            
-            self.session.jog(ltr, sign, dist, rate, accel)
+
+            self.session.jog(ltr, sign, dist, rate)
         except Exception as e:
             if hasattr(self.session, 'last_command_status'):
                 self.session.last_command_status = f"Invalid jog input: {e}"

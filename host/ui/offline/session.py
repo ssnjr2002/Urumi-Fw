@@ -1,17 +1,18 @@
 import os
 import importlib
-from typing import Callable, List, Optional
+from typing import Optional
 
 from host.ui.app_state import AppState
+from host.ui.observable import Observable
 
-class OfflineSession:
+class OfflineSession(Observable):
     """
     Business logic manager for the Offline Preparation & Planning phase.
     Acts as the single source of truth for state. UI components bind to this.
     """
     def __init__(self, app_state: AppState):
+        super().__init__()
         self._app_state = app_state
-        self._callbacks: List[Callable] = []
 
         # We subscribe to app_state so our UI updates if the global state changes
         self._app_state.subscribe(self._notify)
@@ -36,15 +37,6 @@ class OfflineSession:
         self.plan_n_ops: Optional[int] = None
         self.plan_tools: list = []
         self.plan_ops: list = []
-
-    def subscribe(self, callback: Callable):
-        """UI components register here to be notified of state changes."""
-        self._callbacks.append(callback)
-
-    def _notify(self):
-        """Fire all callbacks when state changes."""
-        for cb in self._callbacks:
-            cb()
 
     @property
     def config(self):

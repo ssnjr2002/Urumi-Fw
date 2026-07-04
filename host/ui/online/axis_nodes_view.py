@@ -23,10 +23,19 @@ class AxisNodesView(ttk.Frame):
         # Jogging specific vars/widgets
         self.jog_dist_vars = {}
         self.jog_rate_vars = {}
-        self.jog_accel_vars = {}
         self.jog_dec_btns = {}
         self.jog_inc_btns = {}
         
+        # Debug: route jog packets to jog_output.bin instead of the sim/COM
+        # link — sits with the jog controls it affects rather than in the
+        # global machine-state panel.
+        debug_frm = ttk.Frame(self)
+        debug_frm.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
+        self.dump_jog_var = tk.BooleanVar(value=False)
+        self.dump_jog_chk = ttk.Checkbutton(debug_frm, text="Write jogs to jog_output.bin (instead of sim/COM)",
+                                             variable=self.dump_jog_var)
+        self.dump_jog_chk.pack(side="left")
+
         # Frame to hold the dynamic rows
         self.inner_frame = ttk.Frame(self)
         self.inner_frame.pack(fill="both", expand=True, padx=8, pady=8)
@@ -54,7 +63,6 @@ class AxisNodesView(ttk.Frame):
         self.set_origin_btns.clear()
         self.jog_dist_vars.clear()
         self.jog_rate_vars.clear()
-        self.jog_accel_vars.clear()
         self.jog_dec_btns.clear()
         self.jog_inc_btns.clear()
         
@@ -140,14 +148,7 @@ class AxisNodesView(ttk.Frame):
             self.jog_rate_vars[letter] = rate_var
             ttk.Entry(jog_frm, textvariable=rate_var, width=6).pack(side="left", padx=2)
             ttk.Label(jog_frm, text=f"{unit}/s").pack(side="left", padx=(0, 6))
-            
-            # Accel Value
-            ttk.Label(jog_frm, text="Accel:").pack(side="left", padx=(12, 2))
-            accel_var = tk.DoubleVar(value=500.0) # Sensible default, config doesn't enforce jogging accel currently
-            self.jog_accel_vars[letter] = accel_var
-            ttk.Entry(jog_frm, textvariable=accel_var, width=6).pack(side="left", padx=2)
-            ttk.Label(jog_frm, text=f"{unit}/s²").pack(side="left")
-            
+
             # =========================================================
             # ROW 3: VISUAL SEPARATOR
             # =========================================================

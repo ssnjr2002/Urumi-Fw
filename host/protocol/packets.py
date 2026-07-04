@@ -68,6 +68,10 @@ MAGIC_SPLINE     = 0xAD
 MAGIC_ACK        = 0xAA
 MAGIC_NACK       = 0xBB
 
+MAGIC_STATUS_REQ = 0xA5
+MAGIC_STATUS_RSP = 0xA6
+STATUS_RSP_SIZE  = 7
+
 NACK_CRC         = 0x01
 NACK_FULL        = 0x02
 NACK_BAD_MAGIC   = 0x03
@@ -93,6 +97,31 @@ TILE_PATH_END        = 0x04
 TOOL_JOG    = 0
 TOOL_CUT    = 1
 TOOL_CREASE = 2
+
+# ── binary status request/response (mirrors the text `getstate` command) ─────
+# STATUS_REQ: [0xA5]                                          (1 byte, no CRC)
+# STATUS_RSP: [0xA6][state][enabled][homed][alarm][running][CRC8]  (7 bytes)
+
+def pack_status_rsp(state: int, axes_enabled: int, axes_homed: int,
+                     alarm: int, running: int) -> bytes:
+    """Pack a status snapshot into the 7-byte STATUS_RSP wire format."""
+    body = struct.pack("<BBBBBB", MAGIC_STATUS_RSP, state, axes_enabled,
+                        axes_homed, alarm, running)
+    return body + bytes([_crc8(body)])
+
+
+def unpack_status_rsp(data: bytes) -> dict:
+    """Unpack a 7-byte STATUS_RSP. Raises ValueError on bad magic/size/CRC."""
+    if len(data) != STATUS_RSP_SIZE:
+        raise ValueError(f"Expected {STATUS_RSP_SIZE} bytes, got {len(data)}")
+    if data[0] != MAGIC_STATUS_RSP:
+        raise ValueError(f"Bad magic: 0x{data[0]:02X}")
+    if _crc8(data[:-1]) != data[-1]:
+        raise ValueError("CRC mismatch")
+    _, state, axes_enabled, axes_homed, alarm, running = struct.unpack("<BBBBBB", data[:-1])
+    return dict(state=state, axes_enabled=axes_enabled, axes_homed=axes_homed,
+                alarm=alarm, running=running)
+
 
 # ── ToolConfig namedtuple ─────────────────────────────────────────────────────
 

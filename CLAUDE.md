@@ -1,5 +1,7 @@
 # ATtiny3224 × RP2350 RS485 CNC Motion Controller
 
+**NOTE: This file is too stale now**
+
 **Last updated:** 2026-06-06
 
 ## Project Overview
