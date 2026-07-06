@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["config/**/*.test.ts", "toolpath/**/*.test.ts"],
+    setupFiles: ["./test-setup.ts"],
     cacheDir: "node_modules/.cache/vitest",
   },
 });
