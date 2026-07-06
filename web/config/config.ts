@@ -244,6 +244,25 @@ export function uniformMachine(
 }
 
 /**
+ * Resolved axes: the 4 AxisConfig (x, y, z, a) + fCpu as a flat slice.
+ * Z and A resolve to the default head. Used by wire/choreograph/discretize
+ * which need the 4 axes but don't want to re-resolve the head on every call.
+ */
+export interface ResolvedAxes {
+    readonly x: AxisConfig;
+    readonly y: AxisConfig;
+    readonly z: AxisConfig;
+    readonly a: AxisConfig;
+    readonly fCpu: number;
+}
+
+/** Resolve the 4 axes from a MachineConfig (Z/A from the default head). */
+export function resolvedAxes(machine: MachineConfig): ResolvedAxes {
+    const head = machine.heads[machine.defaultHead]!;
+    return { x: machine.x, y: machine.y, z: head.z, a: head.a, fCpu: machine.fCpu };
+}
+
+/**
  * The physical machine: DM542 @ 1/32 microstepping.
  *   X/Y : GT2 20T pulley, 40 mm/rev -> 160 steps/mm
  *   Z   : lead screw -> 1200 steps/mm
