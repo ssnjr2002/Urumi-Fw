@@ -25,7 +25,7 @@ import {
     quadToCubic,
     type CubicBezier,
     type Pt,
-} from "../toolpath/geometry.js";
+} from "../toolpath/src/geometry.js";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Stage 1 — SVG path -> list of cubic Beziers (SVG pixel coordinates)
