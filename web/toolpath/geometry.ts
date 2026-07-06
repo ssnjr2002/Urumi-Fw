@@ -1,10 +1,13 @@
 /**
- * Cubic Bezier primitives: point type, curve type, and degree-elevation
- * helpers. Ported from host/production/parse.py (stage 1) — the shared
- * types that all downstream stages consume.
+ * geometry.ts — cubic Bezier curve primitives and geometry math.
  *
- * The pipeline/stages/bezier.py geometry math (point evaluation, derivatives,
- * arc length, curvature) will be added here when stage 4 is ported.
+ * The curve types and construction helpers live here because they are
+ * fundamental geometric entities, not SVG concepts. The SVG ingestion layer
+ * (../svg/ingest.ts) produces CubicBezier curves that conform to this
+ * contract; the toolpath stages (3+) consume them.
+ *
+ * This is also the home for the future port of pipeline/stages/bezier.py
+ * (point evaluation, derivatives, arc length, curvature).
  */
 
 export interface Pt {

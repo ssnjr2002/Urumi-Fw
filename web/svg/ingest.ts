@@ -1,18 +1,37 @@
 /**
- * Stage 1: SVG path -> list of cubic Beziers.
- * Ported from host/production/parse.py.
+ * ingest.ts — SVG ingestion: stages 1 (parse) + 2 (normalise).
  *
- * Handles M, L, H, V, C, S, Q, Z (absolute and relative) in path `d` strings,
- * plus <circle>, <ellipse>, <rect>, <line>, <polygon>, <polyline> elements.
- * Output: CubicBezier curves in SVG pixels.
+ * Merged from host/production/parse.py + normalise.py. The two stages are
+ * kept as clearly-delineated sections because they are conceptually distinct
+ * (parse produces SVG-pixel cubics; normalise maps them to mm + Y-flip) but
+ * share the XML parse — loadSvgMm* walk the SVG root once for both curve
+ * extraction and viewport reading, avoiding the double-parse that separate
+ * files would force.
  *
- * The loadSvg* functions take SVG text (a string), not a file path — the
- * caller is responsible for reading the file (fetch, FileReader, etc.).
- * XML parsing uses the standard DOMParser API (native in browsers; polyfilled
- * in Node tests via @xmldom/xmldom).
+ * All loadSvg* functions take SVG text (not a file path) — the caller is
+ * responsible for reading the file (fetch, FileReader, etc.). XML parsing
+ * uses the standard DOMParser API (native in browsers; polyfilled in Node
+ * tests via @xmldom/xmldom setup in test-setup.ts).
+ *
+ * Curve primitives (Pt, CubicBezier, cubic, KAPPA, lineToCubic, quadToCubic)
+ * live in ../toolpath/geometry.ts — they are geometric entities, not SVG
+ * concepts, and the toolpath stages (3+) consume them too.
  */
 
-import { KAPPA, cubic, lineToCubic, quadToCubic, type CubicBezier, type Pt } from "./bezier.js";
+import {
+    KAPPA,
+    cubic,
+    lineToCubic,
+    quadToCubic,
+    type CubicBezier,
+    type Pt,
+} from "../toolpath/geometry.js";
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Stage 1 — SVG path -> list of cubic Beziers (SVG pixel coordinates)
+// Handles M, L, H, V, C, S, Q, Z (absolute and relative); <circle>, <ellipse>,
+// <rect>, <line>, <polygon>, <polyline> elements.
+// ──────────────────────────────────────────────────────────────────────────────
 
 // ── path tokenizer ────────────────────────────────────────────────────────────
 
@@ -310,7 +329,8 @@ function layerLabel(el: Element): string | null {
     return el.getAttributeNS(INKSCAPE_NS, "label") || el.getAttribute("id");
 }
 
-export function parseSvgRoot(svgText: string): Element {
+/** Parse SVG text into a root Element. Throws if not a valid SVG document. */
+function parseSvgRoot(svgText: string): Element {
     const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
     const root = doc.documentElement;
     if (!root || root.localName !== "svg") {
@@ -331,16 +351,7 @@ export function loadSvg(svgText: string): CubicBezier[] {
  */
 export function loadSvgSubpaths(svgText: string): CubicBezier[][] {
     const root = parseSvgRoot(svgText);
-    const allSubpaths: CubicBezier[][] = [];
-    function walk(el: Element): void {
-        const subs = elementSubpaths(el);
-        if (subs.length > 0) allSubpaths.push(...subs);
-        for (const child of Array.from(el.children)) {
-            walk(child);
-        }
-    }
-    walk(root);
-    return allSubpaths;
+    return subpathsFromRoot(root);
 }
 
 /**
@@ -378,4 +389,181 @@ export function loadSvgLayers(svgText: string): Map<string, CubicBezier[][]> {
         visit(child, "");
     }
     return layers;
+}
+
+/** Walk a root Element and collect all subpaths in document order. */
+function subpathsFromRoot(root: Element): CubicBezier[][] {
+    const allSubpaths: CubicBezier[][] = [];
+    function walk(el: Element): void {
+        const subs = elementSubpaths(el);
+        if (subs.length > 0) allSubpaths.push(...subs);
+        for (const child of Array.from(el.children)) {
+            walk(child);
+        }
+    }
+    walk(root);
+    return allSubpaths;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Stage 2 — SVG pixel coordinates -> millimetres + Y-axis flip
+// Reads viewBox + width/height from the SVG root, builds a transform, applies
+// it to every control point from stage 1. Output: mm, machine origin at
+// bottom-left (SVG +Y down -> machine +Y up).
+// ──────────────────────────────────────────────────────────────────────────────
+
+// ── unit conversion to mm ─────────────────────────────────────────────────────
+
+const UNIT_TO_MM: Readonly<Record<string, number>> = {
+    mm: 1.0,
+    cm: 10.0,
+    in: 25.4,
+    pt: 25.4 / 72,
+    pc: 25.4 / 6,
+    px: 25.4 / 96,
+    "": 25.4 / 96, // unitless treated as px
+};
+
+const DIM_RE = /^\s*([+-]?[\d.]+(?:[eE][+-]?\d+)?)\s*(mm|cm|in|pt|pc|px)?\s*$/;
+
+function toMm(valueStr: string): number {
+    const m = valueStr.match(DIM_RE);
+    if (!m) throw new Error(`Cannot parse dimension: '${valueStr}'`);
+    const val = parseFloat(m[1]!);
+    const unit = (m[2] ?? "").toLowerCase();
+    const factor = UNIT_TO_MM[unit];
+    if (factor === undefined) throw new Error(`Unknown unit: '${unit}'`);
+    return val * factor;
+}
+
+// ── viewport parsing ──────────────────────────────────────────────────────────
+
+export interface Viewport {
+    readonly vbMinX: number;
+    readonly vbMinY: number;
+    readonly vbW: number;
+    readonly vbH: number;
+    readonly widthMm: number;
+    readonly heightMm: number;
+}
+
+/** Read viewBox + width/height from an already-parsed SVG root Element.
+ * Falls back to viewBox px == mm when width/height are absent. */
+function viewportFromRoot(root: Element): Viewport {
+    const vbAttr = (root.getAttribute("viewBox") ?? "").trim();
+    let vbMinX: number, vbMinY: number, vbW: number, vbH: number;
+    if (vbAttr) {
+        const parts = vbAttr.split(/\s+/).map(parseFloat);
+        if (parts.length !== 4) throw new Error(`Invalid viewBox: '${vbAttr}'`);
+        vbMinX = parts[0]!;
+        vbMinY = parts[1]!;
+        vbW = parts[2]!;
+        vbH = parts[3]!;
+    } else {
+        vbMinX = 0;
+        vbMinY = 0;
+        vbW = parseFloat(root.getAttribute("width") ?? "100");
+        vbH = parseFloat(root.getAttribute("height") ?? "100");
+    }
+
+    const wAttr = root.getAttribute("width");
+    const hAttr = root.getAttribute("height");
+
+    let widthMm: number, heightMm: number;
+    if (wAttr && hAttr) {
+        widthMm = toMm(wAttr);
+        heightMm = toMm(hAttr);
+    } else {
+        // no physical size declared — treat viewBox units as mm 1:1
+        widthMm = vbW;
+        heightMm = vbH;
+    }
+
+    return { vbMinX, vbMinY, vbW, vbH, widthMm, heightMm };
+}
+
+/** Parse SVG text and return its viewport. */
+export function parseViewport(svgText: string): Viewport {
+    return viewportFromRoot(parseSvgRoot(svgText));
+}
+
+// ── coordinate transform ──────────────────────────────────────────────────────
+
+/**
+ * Build a transform function pt_svg -> pt_mm that applies:
+ *   1. viewBox offset (subtract minX, minY)
+ *   2. scale to mm
+ *   3. Y-axis flip (SVG +Y down -> machine +Y up)
+ */
+export function makeTransform(vp: Viewport): (pt: Pt) => Pt {
+    const sx = vp.widthMm / vp.vbW;
+    const sy = vp.heightMm / vp.vbH;
+    return (pt: Pt): Pt => ({
+        x: (pt.x - vp.vbMinX) * sx,
+        y: vp.heightMm - (pt.y - vp.vbMinY) * sy,
+    });
+}
+
+export function applyTransform(curves: readonly CubicBezier[], transform: (pt: Pt) => Pt): CubicBezier[] {
+    return curves.map((c) => cubic(transform(c.p0), transform(c.p1), transform(c.p2), transform(c.p3)));
+}
+
+// ── public entry points (stage 1+2 combined, single XML parse) ───────────────
+
+/** Full stage 1+2: SVG text -> cubic Beziers in mm (flat list). */
+export function loadSvgMm(svgText: string): { curves: CubicBezier[]; viewport: Viewport } {
+    const root = parseSvgRoot(svgText);
+    const viewport = viewportFromRoot(root);
+    const transform = makeTransform(viewport);
+    return { curves: applyTransform(subpathsFromRoot(root).flat(), transform), viewport };
+}
+
+/** Full stage 1+2: SVG text -> list[list[CubicBezier]] in mm. */
+export function loadSvgMmSubpaths(svgText: string): { subpaths: CubicBezier[][]; viewport: Viewport } {
+    const root = parseSvgRoot(svgText);
+    const viewport = viewportFromRoot(root);
+    const transform = makeTransform(viewport);
+    return {
+        subpaths: subpathsFromRoot(root).map((sp) => applyTransform(sp, transform)),
+        viewport,
+    };
+}
+
+/** Layer-aware stage 1+2: SVG text -> Map { layer -> list[subpath] } in mm. */
+export function loadSvgMmLayers(svgText: string): { layers: Map<string, CubicBezier[][]>; viewport: Viewport } {
+    const root = parseSvgRoot(svgText);
+    const viewport = viewportFromRoot(root);
+    const transform = makeTransform(viewport);
+    const layersPx = new Map<string, CubicBezier[][]>();
+
+    function visit(el: Element, layer: string): void {
+        const tag = el.localName;
+        if (tag === "g") {
+            const label = layerLabel(el);
+            const childLayer = label !== null ? label : layer;
+            for (const child of Array.from(el.children)) {
+                visit(child, childLayer);
+            }
+            return;
+        }
+        const subs = elementSubpaths(el);
+        if (subs.length > 0) {
+            const list = layersPx.get(layer);
+            if (list) {
+                list.push(...subs);
+            } else {
+                layersPx.set(layer, [...subs]);
+            }
+        }
+    }
+
+    for (const child of Array.from(root.children)) {
+        visit(child, "");
+    }
+
+    const layersMm = new Map<string, CubicBezier[][]>();
+    for (const [name, subs] of layersPx) {
+        layersMm.set(name, subs.map((sp) => applyTransform(sp, transform)));
+    }
+    return { layers: layersMm, viewport };
 }
