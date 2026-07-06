@@ -310,7 +310,7 @@ function layerLabel(el: Element): string | null {
     return el.getAttributeNS(INKSCAPE_NS, "label") || el.getAttribute("id");
 }
 
-function parseSvgRoot(svgText: string): Element {
+export function parseSvgRoot(svgText: string): Element {
     const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
     const root = doc.documentElement;
     if (!root || root.localName !== "svg") {
