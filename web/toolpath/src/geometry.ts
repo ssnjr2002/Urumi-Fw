@@ -1,13 +1,17 @@
 /**
- * geometry.ts — cubic Bezier curve primitives and geometry math.
+ * geometry.ts — cubic Bezier curve primitives, 2D vector algebra, and
+ * Bezier geometry math.
  *
- * The curve types and construction helpers live here because they are
- * fundamental geometric entities, not SVG concepts. The SVG ingestion layer
- * (../svg/ingest.ts) produces CubicBezier curves that conform to this
- * contract; the toolpath stages (3+) consume them.
- *
- * This is also the home for the future port of pipeline/stages/bezier.py
- * (point evaluation, derivatives, arc length, curvature).
+ * Three concerns, all geometric (not SVG concepts):
+ *   - Curve types + construction helpers (Pt, CubicBezier, cubic,
+ *     lineToCubic, quadToCubic, KAPPA). The SVG ingestion layer
+ *     (../../svg/ingest.ts) produces CubicBezier curves that conform to
+ *     this contract; the toolpath stages (3+) consume them.
+ *   - 2D vector algebra on Pt (sub, add, scale, length, normalize,
+ *     angleBetweenDeg). Shared by every downstream stage.
+ *   - Bezier endpoint tangents + Bezier math (point evaluation,
+ *     first/second derivatives, arc length via 5-point Gauss-Legendre
+ *     quadrature, curvature). Ported from pipeline/stages/bezier.py.
  */
 
 export interface Pt {
@@ -49,4 +53,110 @@ export function quadToCubic(p0: Pt, qp1: Pt, p2: Pt): CubicBezier {
         p2: { x: p2.x + (2 / 3) * (qp1.x - p2.x), y: p2.y + (2 / 3) * (qp1.y - p2.y) },
         p3: p2,
     };
+}
+
+// ── 2D vector algebra on Pt ───────────────────────────────────────────────────
+
+export function sub(a: Pt, b: Pt): Pt {
+    return { x: a.x - b.x, y: a.y - b.y };
+}
+
+export function add(a: Pt, b: Pt): Pt {
+    return { x: a.x + b.x, y: a.y + b.y };
+}
+
+export function scale(v: Pt, s: number): Pt {
+    return { x: v.x * s, y: v.y * s };
+}
+
+export function length(v: Pt): number {
+    return Math.sqrt(v.x * v.x + v.y * v.y);
+}
+
+/** Unit vector; returns {x:0, y:0} for near-zero input. */
+export function normalize(v: Pt): Pt {
+    const l = length(v);
+    if (l < 1e-12) return { x: 0, y: 0 };
+    return { x: v.x / l, y: v.y / l };
+}
+
+/** Signed angle from u to v in degrees, range [0, 180]. */
+export function angleBetweenDeg(u: Pt, v: Pt): number {
+    const dot = u.x * v.x + u.y * v.y;
+    const clamped = Math.max(-1, Math.min(1, dot));
+    return (Math.acos(clamped) * 180) / Math.PI;
+}
+
+// ── Bezier endpoint tangents ──────────────────────────────────────────────────
+
+/** Unit tangent leaving curve c (direction p2 -> p3). Normalized B'(1). */
+export function exitTangent(c: CubicBezier): Pt {
+    return normalize(sub(c.p3, c.p2));
+}
+
+/** Unit tangent entering curve c (direction p0 -> p1). Normalized B'(0). */
+export function entryTangent(c: CubicBezier): Pt {
+    return normalize(sub(c.p1, c.p0));
+}
+
+// ── Bezier point evaluation + derivatives ─────────────────────────────────────
+// Ported from pipeline/stages/bezier.py.
+
+/** B(t) — De Casteljau evaluation of the cubic at parameter t in [0,1]. */
+export function bezierPoint(c: CubicBezier, t: number): Pt {
+    const mt = 1 - t;
+    return {
+        x: mt * mt * mt * c.p0.x + 3 * mt * mt * t * c.p1.x + 3 * mt * t * t * c.p2.x + t * t * t * c.p3.x,
+        y: mt * mt * mt * c.p0.y + 3 * mt * mt * t * c.p1.y + 3 * mt * t * t * c.p2.y + t * t * t * c.p3.y,
+    };
+}
+
+/** B'(t) — first derivative. */
+export function bezierDeriv1(c: CubicBezier, t: number): Pt {
+    const mt = 1 - t;
+    return {
+        x: 3 * (mt * mt * (c.p1.x - c.p0.x) + 2 * mt * t * (c.p2.x - c.p1.x) + t * t * (c.p3.x - c.p2.x)),
+        y: 3 * (mt * mt * (c.p1.y - c.p0.y) + 2 * mt * t * (c.p2.y - c.p1.y) + t * t * (c.p3.y - c.p2.y)),
+    };
+}
+
+/** B''(t) — second derivative. */
+export function bezierDeriv2(c: CubicBezier, t: number): Pt {
+    const mt = 1 - t;
+    return {
+        x: 6 * (mt * (c.p2.x - 2 * c.p1.x + c.p0.x) + t * (c.p3.x - 2 * c.p2.x + c.p1.x)),
+        y: 6 * (mt * (c.p2.y - 2 * c.p1.y + c.p0.y) + t * (c.p3.y - 2 * c.p2.y + c.p1.y)),
+    };
+}
+
+// ── Arc length (5-point Gauss-Legendre quadrature of |B'(t)|) ─────────────────
+// Standard nodes/weights on [-1,1] mapped to [0,1]: t = (x+1)/2, w' = w/2.
+
+const GL5_NODES: readonly number[] = [-0.9061798459, -0.5384693101, 0.0, 0.5384693101, 0.9061798459].map(
+    (x) => 0.5 * (1 + x),
+);
+const GL5_WEIGHTS: readonly number[] = [0.2369268851, 0.4786286705, 0.5688888889, 0.4786286705, 0.2369268851].map(
+    (w) => 0.5 * w,
+);
+
+/** Arc length of a cubic Bezier via 5-point Gauss-Legendre quadrature of |B'(t)| over [0,1]. */
+export function arcLength(c: CubicBezier): number {
+    let total = 0;
+    for (let i = 0; i < GL5_NODES.length; i++) {
+        const t = GL5_NODES[i]!;
+        const w = GL5_WEIGHTS[i]!;
+        const d = bezierDeriv1(c, t);
+        total += w * Math.sqrt(d.x * d.x + d.y * d.y);
+    }
+    return total;
+}
+
+/** κ(t) = |B'×B''| / |B'|³  (2D cross product = scalar). Returns 0 for near-zero speed. */
+export function curvature(c: CubicBezier, t: number): number {
+    const d1 = bezierDeriv1(c, t);
+    const d2 = bezierDeriv2(c, t);
+    const cross = d1.x * d2.y - d1.y * d2.x;
+    const speed = Math.sqrt(d1.x * d1.x + d1.y * d1.y);
+    if (speed < 1e-10) return 0;
+    return Math.abs(cross) / (speed * speed * speed);
 }
