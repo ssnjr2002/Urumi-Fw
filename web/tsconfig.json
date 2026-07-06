@@ -21,6 +21,6 @@
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/tsc/.tsbuildinfo"
   },
-  "include": ["config", "svg", "toolpath/src", "toolpath/tests"],
+  "include": ["config", "svg", "wire/src", "wire/tests", "choreograph/src", "choreograph/tests", "toolpath/src", "toolpath/tests"],
   "exclude": ["node_modules", "dist"]
 }

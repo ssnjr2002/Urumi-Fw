@@ -99,6 +99,16 @@ export function entryTangent(c: CubicBezier): Pt {
     return normalize(sub(c.p1, c.p0));
 }
 
+// ── angle arithmetic ──────────────────────────────────────────────────────────
+
+/** Shortest signed rotation from angle a to angle b in degrees, range ±180. */
+export function angleDelta(a: number, b: number): number {
+    let d = b - a;
+    while (d > 180) d -= 360;
+    while (d < -180) d += 360;
+    return d;
+}
+
 // ── Bezier point evaluation + derivatives ─────────────────────────────────────
 // Ported from pipeline/stages/bezier.py.
 

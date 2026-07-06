@@ -154,6 +154,16 @@ export const TOOL_PROFILES_BY_TYPE: Readonly<Record<number, ToolProfile>> = {
     [ToolType.CREASE]: CREASE,
 };
 
+/**
+ * True if the tool's blade offset is large enough to require (unimplemented)
+ * offset compensation. The discretize stage refuses to run with a tool that
+ * needs offset comp — it would cut wrong silently. Raise OFFSET_TOLERANCE_MM
+ * only once compensation exists.
+ */
+export function needsOffsetComp(profile: ToolProfile): boolean {
+    return profile.offsetMm > OFFSET_TOLERANCE_MM;
+}
+
 // ── head tier ────────────────────────────────────────────────────────────────
 
 export interface ToolHead {

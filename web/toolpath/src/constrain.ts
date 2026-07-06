@@ -31,6 +31,7 @@ import {
     PATH_END,
     type Sample,
 } from "./sample.js";
+import { angleDelta } from "./geometry.js";
 
 // κ-discontinuity flags: a finite difference of curvature must not straddle a
 // curve/subpath boundary (κ is discontinuous there).
@@ -83,14 +84,6 @@ export interface ConstrainOptions {
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
-
-/** Shortest signed rotation a->b in degrees, range +/-180. */
-function angleDelta(a: number, b: number): number {
-    let d = b - a;
-    while (d > 180) d -= 360;
-    while (d < -180) d += 360;
-    return d;
-}
 
 /**
  * GRBL junction-deviation cornering speed for a tangent turn of turn_deg across
