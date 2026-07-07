@@ -10,18 +10,18 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { subpathsToPackets, bakeBin } from "./svgToPackets.js";
-import { defaultConfig, KNIFE, qualityConfig } from "../config/config.js";
-import { loadSvgMmSubpaths } from "../svg/ingest.js";
+import { subpathsToPackets, bakeBin } from "../svgToPackets.js";
+import { defaultConfig, KNIFE, qualityConfig } from "../../config/config.js";
+import { loadSvgMmSubpaths } from "../../svg/ingest.js";
 import {
     decodePacket,
     MAGIC_MICROSEG,
     FRAMED_PACKET_SIZE,
     FRAME_PREFIX_SIZE,
-} from "../wire/src/packet.js";
+} from "../../wire/src/packet.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA = join(__dirname, "..", "..", "pipeline", "data");
+const DATA = join(__dirname, "..", "..", "..", "pipeline", "data");
 
 function svg(name: string): string {
     return readFileSync(join(DATA, name), "utf-8");

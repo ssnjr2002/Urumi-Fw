@@ -28,16 +28,16 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { bakeBin } from "./svgToPackets.js";
-import { defaultConfig, KNIFE, qualityConfig } from "../config/config.js";
+import { bakeBin } from "../svgToPackets.js";
+import { defaultConfig, KNIFE, qualityConfig } from "../../config/config.js";
 import {
     decodePacket,
     FRAMED_PACKET_SIZE,
     FRAME_PREFIX_SIZE,
-} from "../wire/src/packet.js";
+} from "../../wire/src/packet.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA = join(__dirname, "tests", "data");
+const DATA = join(__dirname, "data");
 
 function readSvg(name: string): string {
     return readFileSync(join(DATA, name), "utf-8");

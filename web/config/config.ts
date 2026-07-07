@@ -79,9 +79,42 @@ export const ToolType = {
     PEN: 0x01,
     KNIFE: 0x02,
     CREASE: 0x03,
+    REVOLVER_PEN: 0x04,
 } as const;
 
 export type ToolType = (typeof ToolType)[keyof typeof ToolType];
+
+/**
+ * A 2D offset in mm from one reference point to another. Used for:
+ *   - head offsets (head center vs machine reference)
+ *   - laser pointer position (vs machine reference)
+ *   - tool tip offset (tool tip vs head center)
+ *
+ * Convention: whichever party has (0, 0) defines the machine reference.
+ * In a typical dual-head + laser setup, laser is at (0, 0), head 1 at
+ * (-50, 0), head 2 at (+50, 0). In a single-head setup, the head is at
+ * (0, 0), no laser.
+ */
+export interface ReferencePoint {
+    readonly xOffset: number;
+    readonly yOffset: number;
+}
+
+/**
+ * Fixed XY offset of the tool tip from the head center, in mm.
+ *
+ * Distinct from `offsetMm` (the knife blade caster offset, which is
+ * along the direction of travel and rotates with A). The toolOffset is
+ * a constant XY shift — e.g. the revolver pen's active pen tip is at a
+ * fixed offset from the head center regardless of which slot is active
+ * or what the A angle is.
+ *
+ * Applied as a bake-time geometry shift: all of a tool's path
+ * coordinates are shifted by `-toolOffset` before baking, so the baked
+ * paths are in "head center" coordinates. The orchestrator then only
+ * needs to account for `headOffset` when positioning the head.
+ */
+export type ToolOffset = ReferencePoint;
 
 export interface ToolProfile {
     readonly name: string;
@@ -97,6 +130,14 @@ export interface ToolProfile {
     readonly zFeed: number;
     readonly jogFeed: number;
     readonly requiredPeripheralRoles: readonly string[];
+    /** Fixed XY offset of tool tip from head center (mm). Default (0,0). */
+    readonly toolOffset: ToolOffset;
+    /**
+     * A-axis slot offset angles (degrees) for a revolver tool. Absent on
+     * PEN/KNIFE/CREASE. Present on REVOLVER_PEN — the orchestrator jogs A
+     * to slotOffsets[i] before cutting with slot i.
+     */
+    readonly slotOffsets?: readonly number[];
 }
 
 export function toolProfile(
@@ -117,6 +158,7 @@ export function toolProfile(
         zFeed: 0,
         jogFeed: 0,
         requiredPeripheralRoles: [],
+        toolOffset: { xOffset: 0, yOffset: 0 },
         ...overrides,
     };
 }
@@ -142,16 +184,47 @@ export const CREASE: ToolProfile = toolProfile("crease", {
     cornerAngleDeg: 30,
 });
 
+/**
+ * Revolver pen: a rotating module with 7 slots for pens. The A axis
+ * selects which slot is active (lowered). Each slot has a defined A
+ * offset angle (360/7 ≈ 51.43° intervals). The active pen tip is at a
+ * fixed XY offset from the head center regardless of which slot is
+ * active — set via toolOffset.
+ *
+ * Not tangential — the A axis is used for slot selection, not tangent
+ * tracking. The orchestrator jogs A to slotOffsets[i] before cutting
+ * with slot i.
+ *
+ * slotOffsets: 7 angles at 360/7 intervals, starting at 0°.
+ * toolOffset: placeholder (0, -R) — replace with the real pen tip
+ * offset from the head center once measured.
+ */
+const REVOLVER_SLOT_COUNT = 7;
+const REVOLVER_SLOT_INTERVAL = 360 / REVOLVER_SLOT_COUNT;
+export const REVOLVER_PEN: ToolProfile = toolProfile("revolver_pen", {
+    toolType: ToolType.REVOLVER_PEN,
+    tangential: false,
+    cornerAngleDeg: 30,
+    slotOffsets: Array.from(
+        { length: REVOLVER_SLOT_COUNT },
+        (_, i) => i * REVOLVER_SLOT_INTERVAL,
+    ),
+    // TODO: measure the real pen tip offset from head center
+    toolOffset: { xOffset: 0, yOffset: 0 },
+});
+
 export const TOOL_PROFILES: Readonly<Record<string, ToolProfile>> = {
     pen: PEN,
     knife: KNIFE,
     crease: CREASE,
+    revolver_pen: REVOLVER_PEN,
 };
 
 export const TOOL_PROFILES_BY_TYPE: Readonly<Record<number, ToolProfile>> = {
     [ToolType.PEN]: PEN,
     [ToolType.KNIFE]: KNIFE,
     [ToolType.CREASE]: CREASE,
+    [ToolType.REVOLVER_PEN]: REVOLVER_PEN,
 };
 
 /**
@@ -166,11 +239,25 @@ export function needsOffsetComp(profile: ToolProfile): boolean {
 
 // ── head tier ────────────────────────────────────────────────────────────────
 
-export interface ToolHead {
+/**
+ * One physical tool head: a co-mounted Z + A pair, the tool mounted on
+ * it, and its XY mounting offset from the machine reference.
+ *
+ * A machine has one or more heads. On the current machine there is a
+ * single centred head (offset 0, 0). A dual-head machine fixes two
+ * heads side by side; they are software-selected, NEVER run
+ * simultaneously, so only one head's Z/A are "live" at a time.
+ *
+ * `profile` is the tool currently mounted on this head. `xOffset`/
+ * `yOffset` is the head's position relative to the machine reference
+ * (see ReferencePoint). When a non-centred head is active, every XY
+ * move must be corrected by this offset — applied by the orchestrator
+ * as a head-switch jog, not yet consumed by the bake pipeline.
+ */
+export interface ToolHead extends ReferencePoint {
     readonly z: AxisConfig;
     readonly a: AxisConfig;
     readonly profile: ToolProfile;
-    readonly xOffset: number;
 }
 
 export function toolHead(
@@ -178,10 +265,22 @@ export function toolHead(
     a: AxisConfig,
     overrides?: Partial<Omit<ToolHead, "z" | "a">>,
 ): ToolHead {
-    return { z, a, profile: PEN, xOffset: 0, ...overrides };
+    return { z, a, profile: PEN, xOffset: 0, yOffset: 0, ...overrides };
 }
 
 // ── machine tier (config) ────────────────────────────────────────────────────
+
+/**
+ * Optional laser pointer module. When present, defines the machine
+ * reference point (the laser is at (0, 0) by convention). Heads are
+ * positioned relative to the laser. When absent, the head at (0, 0) is
+ * the reference.
+ *
+ * The laser is a passive alignment aid — it doesn't move, doesn't have
+ * axes, and isn't on the bus. It's purely a geometric reference for
+ * head offset calculations.
+ */
+export type LaserPointer = ReferencePoint;
 
 export interface MachineConfig {
     readonly x: AxisConfig;
@@ -192,6 +291,8 @@ export interface MachineConfig {
     readonly jogFeed: number;
     readonly zFeed: number;
     readonly peripherals: readonly BusNode[];
+    /** Optional laser pointer module (alignment reference). */
+    readonly laser?: LaserPointer;
 }
 
 export function machineConfig(

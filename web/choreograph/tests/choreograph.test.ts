@@ -11,6 +11,8 @@ import {
     pivot,
     travelJog,
     preOrient,
+    aMoveTo,
+    headOffsetJog,
 } from "../src/choreograph.js";
 import { MICRO_JOG, MICRO_LIFT } from "../../wire/src/microsegment.js";
 import {
@@ -19,6 +21,10 @@ import {
     KNIFE,
     PEN,
     CREASE,
+    toolHead,
+    axisConfig,
+    busNode,
+    machineConfig,
 } from "../../config/config.js";
 
 const axes = resolvedAxes(defaultConfig().machine);
@@ -171,5 +177,91 @@ describe("choreograph: preOrient", () => {
         const result = preOrient(45, 45, 500, axes, CREASE);
         expect(result.segments).toEqual([]);
         expect(result.newAPhys).toBe(500);
+    });
+});
+
+describe("choreograph: aMoveTo (absolute A move)", () => {
+    it("moves to 0° from a non-zero position (A-home)", () => {
+        // A at 4650 steps (90deg) → aMoveTo(0, ...) rotates back by -4650
+        const result = aMoveTo(0, 4650, axes);
+        expect(result.segments.length).toBeGreaterThan(0);
+        expect(result.newAPhys).toBe(0);
+        // every segment is a JOG with only da
+        for (const s of result.segments) {
+            expect(s.flags).toBe(MICRO_JOG);
+            expect(s.dx).toBe(0);
+            expect(s.dy).toBe(0);
+            expect(s.dz).toBe(0);
+            expect(s.da).not.toBe(0);
+        }
+        // net da should be -4650 (invert applied: A invert=true → emitted -(-4650) = +4650)
+        // but newAPhys is in TRUE (pre-invert) steps, so it's 0
+        const netDa = result.segments.reduce((sum, s) => sum + s.da, 0);
+        expect(netDa).toBe(4650); // invert flips the sign on emission
+    });
+
+    it("returns empty when already at the target", () => {
+        const result = aMoveTo(90, 4650, axes); // 90deg = 4650 steps
+        expect(result.segments).toEqual([]);
+        expect(result.newAPhys).toBe(4650);
+    });
+
+    it("moves to a revolver slot offset (51.43deg)", () => {
+        const slot1Deg = 360 / 7; // ≈ 51.4286
+        const targetSteps = Math.round(slot1Deg * axes.a.stepsPerUnit);
+        const result = aMoveTo(slot1Deg, 0, axes);
+        expect(result.segments.length).toBeGreaterThan(0);
+        expect(result.newAPhys).toBe(targetSteps);
+    });
+
+    it("handles negative targets (e.g. -90deg)", () => {
+        const targetSteps = Math.round(-90 * axes.a.stepsPerUnit);
+        const result = aMoveTo(-90, 0, axes);
+        expect(result.newAPhys).toBe(targetSteps);
+    });
+});
+
+describe("choreograph: headOffsetJog", () => {
+    // Build a dual-head machine for testing: head 0 at (-50, 0), head 1 at (+50, 0)
+    const z = axisConfig(busNode(3), 1200, { invert: true });
+    const a = axisConfig(busNode(4), 51.667, { rotary: true, invert: true });
+    const headL = toolHead(z, a, { xOffset: -50, yOffset: 0, profile: KNIFE });
+    const headR = toolHead(z, a, { xOffset: 50, yOffset: 0, profile: PEN });
+    const m = machineConfig(
+        axisConfig(busNode(1), 160, { invert: true }),
+        axisConfig(busNode(2), 160),
+        [headL, headR],
+    );
+    const axes2 = resolvedAxes(m);
+
+    it("returns null when offsets are identical", () => {
+        const jog = headOffsetJog(headL, headL, axes2, 0.5, 80);
+        expect(jog).toBeNull();
+    });
+
+    it("emits an XY jog with the delta between heads", () => {
+        // from headL (-50) to headR (+50) → dxMm = 100, dyMm = 0
+        const jog = headOffsetJog(headL, headR, axes2, 0.5, 80);
+        expect(jog).not.toBeNull();
+        // X invert=true → emitted -16000
+        expect(jog!.dx).toBe(-16000);
+        expect(jog!.dy).toBe(0);
+        expect(jog!.flags).toBe(MICRO_JOG);
+        expect(jog!.interval).toBeGreaterThan(0);
+    });
+
+    it("handles Y offset differences", () => {
+        const headY = toolHead(z, a, { xOffset: 0, yOffset: 30, profile: PEN });
+        const jog = headOffsetJog(headL, headY, axes2, 0.5, 80);
+        expect(jog).not.toBeNull();
+        // dxMm = 0 - (-50) = 50, dyMm = 30 - 0 = 30
+        expect(jog!.dx).toBe(-8000); // X invert
+        expect(jog!.dy).toBe(4800);  // Y no invert
+    });
+
+    it("returns null when both offsets match exactly", () => {
+        const headSame = toolHead(z, a, { xOffset: -50, yOffset: 0, profile: PEN });
+        const jog = headOffsetJog(headL, headSame, axes2, 0.5, 80);
+        expect(jog).toBeNull();
     });
 });

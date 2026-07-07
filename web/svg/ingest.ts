@@ -359,6 +359,11 @@ export function loadSvgSubpaths(svgText: string): CubicBezier[][] {
  * Map {layer_name -> list[subpath]}, keyed by the nearest ancestor <g>'s
  * inkscape:label (else id). Geometry with no named-group ancestor goes under
  * the key '' (the default layer). Insertion order follows first appearance.
+ *
+ * Nested groups build a '/'-separated path: a <g id="pen_revolver">
+ * containing <g id="slot1"> produces the layer key "pen_revolver/slot1".
+ * Single-level layers ("knife", "pen") are unchanged. Unnamed <g>s pass
+ * the parent's layer through (no path component added).
  */
 export function loadSvgLayers(svgText: string): Map<string, CubicBezier[][]> {
     const root = parseSvgRoot(svgText);
@@ -368,7 +373,9 @@ export function loadSvgLayers(svgText: string): Map<string, CubicBezier[][]> {
         const tag = el.localName;
         if (tag === "g") {
             const label = layerLabel(el);
-            const childLayer = label !== null ? label : layer;
+            const childLayer = label !== null
+                ? (layer ? `${layer}/${label}` : label)
+                : layer;
             for (const child of Array.from(el.children)) {
                 visit(child, childLayer);
             }
@@ -540,7 +547,9 @@ export function loadSvgMmLayers(svgText: string): { layers: Map<string, CubicBez
         const tag = el.localName;
         if (tag === "g") {
             const label = layerLabel(el);
-            const childLayer = label !== null ? label : layer;
+            const childLayer = label !== null
+                ? (layer ? `${layer}/${label}` : label)
+                : layer;
             for (const child of Array.from(el.children)) {
                 visit(child, childLayer);
             }

@@ -11,6 +11,8 @@ import { KAPPA, type Pt } from "../toolpath/src/geometry.js";
 import {
     loadSvg,
     loadSvgMm,
+    loadSvgLayers,
+    loadSvgMmLayers,
     pathToCubics,
     circleToCubics,
     parseViewport,
@@ -236,5 +238,97 @@ describe("stage 2: normalise", () => {
         expect(vp.vbH).toBe(100);
         expect(vp.widthMm).toBe(200);
         expect(vp.heightMm).toBe(200);
+    });
+});
+
+// ── layer-aware ingest ────────────────────────────────────────────────────────
+
+describe("stage 1+2: loadSvgLayers", () => {
+    it("test_layers.svg — two top-level layers: knife, crease", () => {
+        const layers = loadSvgLayers(svg("test_layers.svg"));
+        const keys = [...layers.keys()];
+        expect(keys).toContain("knife");
+        expect(keys).toContain("crease");
+        // the fill:none/stroke:none rect at root goes under "" (no named group)
+        // but isPaintable filters it out, so it doesn't appear
+    });
+
+    it("knife layer has 2 subpaths (path + rect)", () => {
+        const layers = loadSvgLayers(svg("test_layers.svg"));
+        const knife = layers.get("knife")!;
+        expect(knife.length).toBe(2);
+    });
+
+    it("crease layer has 1 subpath", () => {
+        const layers = loadSvgLayers(svg("test_layers.svg"));
+        const crease = layers.get("crease")!;
+        expect(crease.length).toBe(1);
+    });
+});
+
+describe("stage 1+2: loadSvgLayers — nested groups", () => {
+    // A nested-layer SVG for the revolver pen:
+    //   <g id="pen_revolver">
+    //     <g id="slot1"><path .../></g>
+    //     <g id="slot2"><path .../></g>
+    //   </g>
+    //   <g id="knife"><path .../></g>
+    const nestedSvg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <g inkscape:label="pen_revolver">
+    <g inkscape:label="slot1">
+      <path d="M10,10 L50,10"/>
+    </g>
+    <g inkscape:label="slot2">
+      <path d="M50,50 L90,50"/>
+    </g>
+  </g>
+  <g inkscape:label="knife">
+    <path d="M10,90 L90,90"/>
+  </g>
+</svg>`;
+
+    it("builds '/'-separated layer keys for nested groups", () => {
+        const layers = loadSvgLayers(nestedSvg);
+        const keys = [...layers.keys()];
+        expect(keys).toContain("pen_revolver/slot1");
+        expect(keys).toContain("pen_revolver/slot2");
+        expect(keys).toContain("knife");
+    });
+
+    it("each nested layer has its own subpaths", () => {
+        const layers = loadSvgLayers(nestedSvg);
+        expect(layers.get("pen_revolver/slot1")!.length).toBe(1);
+        expect(layers.get("pen_revolver/slot2")!.length).toBe(1);
+        expect(layers.get("knife")!.length).toBe(1);
+    });
+
+    it("single-level layers are NOT prefixed (no leading '/')", () => {
+        const layers = loadSvgLayers(nestedSvg);
+        const keys = [...layers.keys()];
+        // "knife" not "/knife"
+        expect(keys).toContain("knife");
+        expect(keys).not.toContain("/knife");
+    });
+
+    it("unnamed <g> passes the parent layer through", () => {
+        const svgWithAnonGroup = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <g inkscape:label="knife">
+    <g>
+      <path d="M10,10 L50,10"/>
+    </g>
+  </g>
+</svg>`;
+        const layers = loadSvgLayers(svgWithAnonGroup);
+        // the path goes under "knife" (the anon group doesn't add a component)
+        expect([...layers.keys()]).toEqual(["knife"]);
+        expect(layers.get("knife")!.length).toBe(1);
+    });
+
+    it("loadSvgMmLayers also supports nested groups", () => {
+        const { layers } = loadSvgMmLayers(nestedSvg);
+        const keys = [...layers.keys()];
+        expect(keys).toContain("pen_revolver/slot1");
+        expect(keys).toContain("pen_revolver/slot2");
+        expect(keys).toContain("knife");
     });
 });

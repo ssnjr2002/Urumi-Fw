@@ -17,7 +17,7 @@
  * not a toolpath stage.
  */
 
-import type { ResolvedAxes, ToolProfile } from "../../config/config.js";
+import type { ResolvedAxes, ToolProfile, ToolHead } from "../../config/config.js";
 import { angleDelta } from "../../toolpath/src/geometry.js";
 import {
     MICRO_JOG,
@@ -185,4 +185,74 @@ export function preOrient(
 
     const segments = aMove(daTrue, axes);
     return { segments, newAPhys: currentAPhys + daTrue };
+}
+
+// ── absolute A move (for A-home + revolver slot selection) ────────────────────
+
+/**
+ * Move the A axis to an absolute target angle (in degrees).
+ *
+ * Computes the signed delta from the current physical A position to the
+ * target, then delegates to `aMove` for the ramped trapezoidal motion.
+ * Returns { segments, newAPhys } — the caller updates its global A
+ * state with newAPhys.
+ *
+ * Uses for an orchestrator:
+ *   - A-home to 0° between blocks: aMoveTo(0, aPhys, axes)
+ *   - Revolver slot selection:     aMoveTo(slotOffsets[i], aPhys, axes)
+ *
+ * The target is an ABSOLUTE angle in degrees (not relative). The
+ * physical A position is tracked in integer steps by the caller; this
+ * function converts both to steps, takes the difference, and emits a
+ * ramped relative move.
+ */
+export function aMoveTo(
+    targetDeg: number,
+    currentAPhys: number,
+    axes: ResolvedAxes,
+): { segments: MicroSegment[]; newAPhys: number } {
+    const aSpd = axes.a.stepsPerUnit;
+    const targetSteps = Math.round(targetDeg * aSpd);
+    const daTrue = targetSteps - currentAPhys;
+    if (daTrue === 0) {
+        return { segments: [], newAPhys: currentAPhys };
+    }
+    const segments = aMove(daTrue, axes);
+    return { segments, newAPhys: currentAPhys + daTrue };
+}
+
+// ── head-offset compensation jog ──────────────────────────────────────────────
+
+/**
+ * Emit an XY jog to compensate for head offset when switching from one
+ * head to another. The machine must move by `(to - from)` so the new
+ * head's center is where the old head's center was.
+ *
+ * The offsets are in mm; the jog is emitted in steps (with invert
+ * applied). Returns null if the two heads have the same offset (no
+ * compensation needed).
+ *
+ * The caller (orchestrator) emits this AFTER a tool-change pause and
+ * BEFORE the travel jog to the next block's start. It does NOT depend
+ * on the machine's current XY position — it's a pure relative shift.
+ */
+export function headOffsetJog(
+    fromHead: ToolHead,
+    toHead: ToolHead,
+    axes: ResolvedAxes,
+    vMin: number,
+    jogFeed: number,
+): MicroSegment | null {
+    const dxMm = toHead.xOffset - fromHead.xOffset;
+    const dyMm = toHead.yOffset - fromHead.yOffset;
+    if (Math.abs(dxMm) < 1e-9 && Math.abs(dyMm) < 1e-9) return null;
+
+    const dxSteps = Math.round(dxMm * axes.x.stepsPerUnit);
+    const dySteps = Math.round(dyMm * axes.y.stepsPerUnit);
+    if (dxSteps === 0 && dySteps === 0) return null;
+
+    const emittedDx = axes.x.invert ? -dxSteps : dxSteps;
+    const emittedDy = axes.y.invert ? -dySteps : dySteps;
+    const iv = interval(jogFeed, axes, vMin, dxSteps, dySteps, 0, 0);
+    return microSegment(emittedDx, emittedDy, 0, 0, iv, MICRO_JOG);
 }

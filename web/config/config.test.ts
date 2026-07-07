@@ -10,6 +10,7 @@ import {
     PEN,
     KNIFE,
     CREASE,
+    REVOLVER_PEN,
     TOOL_PROFILES,
     TOOL_PROFILES_BY_TYPE,
     ToolType,
@@ -64,6 +65,7 @@ describe("config: ToolType", () => {
         expect(ToolType.PEN).toBe(0x01);
         expect(ToolType.KNIFE).toBe(0x02);
         expect(ToolType.CREASE).toBe(0x03);
+        expect(ToolType.REVOLVER_PEN).toBe(0x04);
     });
 });
 
@@ -96,26 +98,57 @@ describe("config: ToolProfile presets", () => {
         expect(PEN.requiredPeripheralRoles).toEqual([]);
         expect(KNIFE.requiredPeripheralRoles).toEqual([]);
         expect(CREASE.requiredPeripheralRoles).toEqual([]);
+        expect(REVOLVER_PEN.requiredPeripheralRoles).toEqual([]);
+    });
+
+    it("PEN/KNIFE/CREASE have default toolOffset (0,0) and no slotOffsets", () => {
+        expect(PEN.toolOffset).toEqual({ xOffset: 0, yOffset: 0 });
+        expect(KNIFE.toolOffset).toEqual({ xOffset: 0, yOffset: 0 });
+        expect(CREASE.toolOffset).toEqual({ xOffset: 0, yOffset: 0 });
+        expect(PEN.slotOffsets).toBeUndefined();
+        expect(KNIFE.slotOffsets).toBeUndefined();
+        expect(CREASE.slotOffsets).toBeUndefined();
+    });
+});
+
+describe("config: REVOLVER_PEN preset", () => {
+    it("is non-tangential, type REVOLVER_PEN", () => {
+        expect(REVOLVER_PEN.name).toBe("revolver_pen");
+        expect(REVOLVER_PEN.toolType).toBe(ToolType.REVOLVER_PEN);
+        expect(REVOLVER_PEN.tangential).toBe(false);
+    });
+
+    it("has 7 slot offsets at 360/7 degree intervals", () => {
+        expect(REVOLVER_PEN.slotOffsets).toHaveLength(7);
+        expect(REVOLVER_PEN.slotOffsets![0]).toBe(0);
+        expect(REVOLVER_PEN.slotOffsets![1]).toBeCloseTo(360 / 7, 5);
+        expect(REVOLVER_PEN.slotOffsets![6]).toBeCloseTo(6 * 360 / 7, 5);
+    });
+
+    it("has a toolOffset (placeholder 0,0 until measured)", () => {
+        expect(REVOLVER_PEN.toolOffset).toEqual({ xOffset: 0, yOffset: 0 });
     });
 });
 
 describe("config: TOOL_PROFILES registries", () => {
-    it("TOOL_PROFILES keyed by name with 3 entries", () => {
-        expect(Object.keys(TOOL_PROFILES)).toHaveLength(3);
+    it("TOOL_PROFILES keyed by name with 4 entries", () => {
+        expect(Object.keys(TOOL_PROFILES)).toHaveLength(4);
         expect(TOOL_PROFILES.pen).toBe(PEN);
         expect(TOOL_PROFILES.knife).toBe(KNIFE);
         expect(TOOL_PROFILES.crease).toBe(CREASE);
+        expect(TOOL_PROFILES.revolver_pen).toBe(REVOLVER_PEN);
     });
 
     it("TOOL_PROFILES_BY_TYPE keyed by toolType", () => {
         expect(TOOL_PROFILES_BY_TYPE[ToolType.PEN]).toBe(PEN);
         expect(TOOL_PROFILES_BY_TYPE[ToolType.KNIFE]).toBe(KNIFE);
         expect(TOOL_PROFILES_BY_TYPE[ToolType.CREASE]).toBe(CREASE);
+        expect(TOOL_PROFILES_BY_TYPE[ToolType.REVOLVER_PEN]).toBe(REVOLVER_PEN);
     });
 });
 
 describe("config: ToolHead", () => {
-    it("defaults profile=PEN, xOffset=0", () => {
+    it("defaults profile=PEN, xOffset=0, yOffset=0", () => {
         const z = axisConfig(busNode(3), 1200);
         const a = axisConfig(busNode(4), 51.667, { rotary: true });
         const h = toolHead(z, a);
@@ -123,16 +156,46 @@ describe("config: ToolHead", () => {
         expect(h.a).toBe(a);
         expect(h.profile).toBe(PEN);
         expect(h.xOffset).toBe(0);
+        expect(h.yOffset).toBe(0);
     });
 
-    it("accepts profile and xOffset overrides", () => {
+    it("accepts profile and XY offset overrides", () => {
         const h = toolHead(
             axisConfig(busNode(3), 1200),
             axisConfig(busNode(4), 51.667, { rotary: true }),
-            { profile: KNIFE, xOffset: 50 },
+            { profile: KNIFE, xOffset: 50, yOffset: -10 },
         );
         expect(h.profile).toBe(KNIFE);
         expect(h.xOffset).toBe(50);
+        expect(h.yOffset).toBe(-10);
+    });
+});
+
+describe("config: MachineConfig laser", () => {
+    it("defaults to no laser", () => {
+        const m = machineConfig(
+            axisConfig(busNode(1), 160),
+            axisConfig(busNode(2), 160),
+            [toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667, { rotary: true }))],
+        );
+        expect(m.laser).toBeUndefined();
+    });
+
+    it("accepts a laser pointer reference", () => {
+        const m = machineConfig(
+            axisConfig(busNode(1), 160),
+            axisConfig(busNode(2), 160),
+            [
+                toolHead(
+                    axisConfig(busNode(3), 1200),
+                    axisConfig(busNode(4), 51.667, { rotary: true }),
+                    { xOffset: -50 },
+                ),
+            ],
+            { laser: { xOffset: 0, yOffset: 0 } },
+        );
+        expect(m.laser).toEqual({ xOffset: 0, yOffset: 0 });
+        expect(m.heads[0]!.xOffset).toBe(-50);
     });
 });
 
@@ -215,23 +278,26 @@ describe("config: defaultConfig", () => {
         expect(a.accel).toBe(2000);
     });
 
-    it("single head with KNIFE profile, xOffset 0", () => {
+    it("single head with KNIFE profile, offset (0, 0)", () => {
         expect(cfg.machine.heads).toHaveLength(1);
         expect(cfg.machine.heads[0]!.profile).toBe(KNIFE);
         expect(cfg.machine.heads[0]!.xOffset).toBe(0);
+        expect(cfg.machine.heads[0]!.yOffset).toBe(0);
     });
 
-    it("machine defaults: defaultHead 0, fCpu 150e6, jogFeed 80, zFeed 20", () => {
+    it("machine defaults: defaultHead 0, fCpu 150e6, jogFeed 80, zFeed 20, no laser", () => {
         expect(cfg.machine.defaultHead).toBe(0);
         expect(cfg.machine.fCpu).toBe(150_000_000);
         expect(cfg.machine.jogFeed).toBe(80);
         expect(cfg.machine.zFeed).toBe(20);
+        expect(cfg.machine.laser).toBeUndefined();
     });
 
-    it("toolProfiles is a copy of TOOL_PROFILES", () => {
+    it("toolProfiles has 4 entries (pen, knife, crease, revolver_pen)", () => {
         expect(cfg.toolProfiles.pen).toBe(PEN);
         expect(cfg.toolProfiles.knife).toBe(KNIFE);
         expect(cfg.toolProfiles.crease).toBe(CREASE);
+        expect(cfg.toolProfiles.revolver_pen).toBe(REVOLVER_PEN);
     });
 });
 
