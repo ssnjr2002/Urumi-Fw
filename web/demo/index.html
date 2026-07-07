@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plan Bake</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      background: #111;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      padding: 14px 20px;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    header h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+    header span { font-size: 12px; color: #555; }
+
+    .panel {
+      padding: 20px;
+      border-right: 1px solid #2a2a2a;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      overflow-y: auto;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    label  { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .06em; }
+
+    input[type="file"],
+    input[type="text"] {
+      background: #1a1a1a;
+      border: 1px solid #2e2e2e;
+      border-radius: 4px;
+      color: #e0e0e0;
+      padding: 7px 10px;
+      font-size: 13px;
+      width: 100%;
+    }
+    input[type="file"] { cursor: pointer; }
+    input[type="file"]::file-selector-button {
+      background: #2a2a2a;
+      border: none;
+      border-radius: 3px;
+      color: #ccc;
+      padding: 3px 8px;
+      margin-right: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .hint { font-size: 11px; color: #555; }
+
+    button {
+      padding: 9px 16px;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    button:disabled { opacity: .35; cursor: default; }
+
+    #bake-btn     { background: #2563eb; color: #fff; }
+    #bake-btn:not(:disabled):hover { background: #1d4ed8; }
+    #download-btn { background: #1a1a1a; color: #aaa; border: 1px solid #333; }
+    #download-btn:not(:disabled):hover { background: #222; color: #e0e0e0; }
+
+    #status {
+      font-size: 12px;
+      padding: 7px 10px;
+      border-radius: 4px;
+      background: #1a1a1a;
+    }
+    #status[data-kind="working"] { color: #60a5fa; }
+    #status[data-kind="ok"]      { color: #4ade80; }
+    #status[data-kind="error"]   { color: #f87171; }
+    #status[data-kind="idle"]    { color: #555; }
+
+    #summary {
+      font-family: monospace;
+      font-size: 12px;
+      color: #aaa;
+      white-space: pre;
+      background: #161616;
+      border-radius: 4px;
+      padding: 10px;
+      min-height: 60px;
+    }
+
+    .preview {
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0d0d0d;
+    }
+
+    #svg-preview {
+      width: 100%;
+      max-width: 600px;
+      aspect-ratio: 1;
+      background: #1a1a1a;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      font-size: 13px;
+      overflow: hidden;
+    }
+    #svg-preview svg { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Plan Bake</h1>
+    <span>SVG + config.json → .plan</span>
+  </header>
+
+  <div class="panel">
+    <div class="field">
+      <label>Config JSON</label>
+      <input type="file" id="config-input" accept=".json">
+      <span class="hint">Machine calibration: stepsPerUnit, fCpu, heads, node IDs.</span>
+    </div>
+
+    <div class="field">
+      <label>SVG File</label>
+      <input type="file" id="svg-input" accept=".svg">
+      <span class="hint">Layer names (knife / pen / crease / revolver_pen/slotN) drive tool selection.</span>
+    </div>
+
+    <div class="field">
+      <label>Default tool <span style="font-size:10px;color:#444">(optional)</span></label>
+      <input type="text" id="default-tool" placeholder="knife / pen / crease">
+      <span class="hint">Fallback for unlayered SVGs or unrecognised layer names.</span>
+    </div>
+
+    <button id="bake-btn">Bake plan</button>
+
+    <div id="status" data-kind="idle">Ready.</div>
+
+    <div id="summary"></div>
+
+    <button id="download-btn" disabled>Download .plan</button>
+  </div>
+
+  <div class="preview">
+    <div id="svg-preview">SVG preview</div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
