@@ -4,6 +4,8 @@ Browser-side port of the host pipeline for the ATtiny3224 × RP2350 RS485 CNC mo
 
 Ports the Python host-side toolpath pipeline (SVG → step events) to TypeScript so it can run in a browser. The pipeline takes an SVG document and produces a flat list of `MicroSegment` wire events — per-axis integer step deltas + clock intervals — ready for serialisation to the RP2350 controller.
 
+**Parity-verified:** the TS pipeline produces byte-for-byte identical `.bin` output to the Python pipeline for both `test_circle.svg` (641 packets) and `fish.svg` (8437 packets), baked with identical default config. See [Parity testing](#parity-testing).
+
 ---
 
 ## Quick start
@@ -26,13 +28,18 @@ Requires Node 18+ and pnpm. Toolchain: TypeScript 5.9, Vitest 2.1, ESLint 9.
 web/
 ├── config/              — calibration data types + defaults
 │   ├── config.ts          MachineConfig, AxisConfig, ToolProfile, QualityConfig,
-│   │                      BusNode, ToolHead, PipelineConfig + factories + presets
+│   │                      BusNode, ToolHead, PipelineConfig + factories + presets.
+│   │                      ReferencePoint (xOffset/yOffset), LaserPointer,
+│   │                      ToolOffset (tool tip from head center), REVOLVER_PEN
+│   │                      preset (7-slot rotating pen module), slotOffsets.
 │   └── config.test.ts
 │
 ├── svg/                 — SVG ingestion (pipeline stages 1-2)
 │   ├── ingest.ts          Parse: SVG text → CubicBezier[] (path commands,
 │   │                      shapes, layers). Normalise: px → mm + Y-flip.
 │   │                      Single XML parse shared between both stages.
+│   │                      Layer-aware: nested <g> groups build '/'-separated
+│   │                      keys (e.g. "pen_revolver/slot1") for the revolver pen.
 │   └── ingest.test.ts
 │
 ├── toolpath/            — motion planning pipeline (stages 3-8)
@@ -69,18 +76,34 @@ web/
 │   ├── src/
 │   │   └── choreograph.ts   travelJog, aMove (trapezoidal ramp), zMove,
 │   │                        pivot (lift-pivot-lower), preOrient (A axis
-│   │                        orientation at PATH_START with unwind support)
+│   │                        orientation at PATH_START with unwind support),
+│   │                        aMoveTo (absolute A move — A-home, revolver slot
+│   │                        selection), headOffsetJog (XY compensation jog
+│   │                        for head switching)
 │   └── tests/
 │       └── choreograph.test.ts
 │
 ├── wire/                — wire output format
 │   ├── src/
-│   │   └── microsegment.ts  MicroSegment interface, flag constants
-│   │                        (MICRO_PATH_END, MICRO_LIFT, MICRO_JOG),
-│   │                        interval() — clock cycles per major-axis step
-│   │                        with XY hypotenuse correction + per-axis rate limits
+│   │   ├── microsegment.ts  MicroSegment interface, flag constants
+│   │   │                    (MICRO_PATH_END, MICRO_LIFT, MICRO_JOG),
+│   │   │                    interval() — clock cycles per major-axis step
+│   │   │                    with XY hypotenuse correction + per-axis rate limits
+│   │   └── packet.ts        26-byte MicroSegment wire packet packer:
+│   │                        crc8 (poly 0x8C), packMicrosegment, serialise,
+│   │                        writeStream (length-prefixed framing), decodePacket
 │   └── tests/
-│       └── microsegment.test.ts
+│       ├── microsegment.test.ts
+│       └── packet.test.ts
+│
+├── production/          — SVG → .bin bake (full pipeline glue)
+│   ├── svgToPackets.ts      subpathsToPackets (stage 3-8 chain) + bakeBin
+│   │                        (SVG text → framed .bin bytes). Bridges config
+│   │                        to each stage's focused options interface.
+│   └── tests/
+│       ├── svgToPackets.test.ts  smoke tests (chain runs, CRC valid, framing)
+│       ├── parity.test.ts        byte-for-byte parity vs Python reference .bin
+│       └── data/                 fixtures: SVGs, Python reference bins, config.txt
 │
 ├── test-setup.ts        — DOMParser polyfill for Node test environment
 ├── package.json
@@ -134,6 +157,84 @@ MicroSegment[] — wire events ready for serialisation
 ```
 
 Stage 7 (choreograph) is not a sequential step — it's called *during* stage 8 at transitions to insert non-cutting motion (jog, Z lift/lower, A pivot, unwind).
+
+---
+
+## Bake-time vs run-time motion
+
+A fundamental split: **intra-block** motion is baked offline; **inter-block** motion is generated at run-time by a future orchestrator. A *block* is one SVG tool layer (or a merged group of same-tool layers) — the unit the pipeline bakes independently.
+
+### Baked into the `.bin` (offline, per-block)
+
+The pipeline (`subpathsToPackets`) bakes all motion *within* a block:
+
+- **Cutting motion** — step deltas + intervals for the toolpath itself
+- **Intra-block travel** — jog between subpaths within the same block (the `discretize` walk emits `travelJog` at each subpath transition)
+- **A pre-orientation** — rotating A to the entry tangent before each subpath (`preOrient` at `PATH_START`)
+- **Corner pivots** — lift-pivot-lower at sharp corners within a block (`pivot` when the tangent jump exceeds `cornerAngleDeg`)
+- **Subpath Z lift/lower** — raise Z after each subpath, lower before the next (when `liftHeight > 0`)
+
+This motion is self-contained: the pipeline's state (position accumulators, A rotation, velocity) is initialised at block start, used during execution, and discarded at block end. The pipeline has no knowledge of what came before or what comes next.
+
+### Run-time (future orchestrator, not built yet)
+
+Inter-block motion depends on the machine's actual position — runtime state an orchestrator tracks. The choreograph module provides stateless helpers for this:
+
+- **Initial jog** from home to first block start — `travelJog(0, 0, firstX, firstY, ...)`
+- **A-home to 0°** between blocks — `aMoveTo(0, aPhys, axes)` (absolute return, not unwind)
+- **Z-lift/lower** at block boundaries — `zMove(+zSteps, ...)` / `zMove(-zSteps, ...)`
+- **Head offset compensation** when switching heads — `headOffsetJog(fromHead, toHead, ...)`
+- **Revolver slot selection** — `aMoveTo(slotOffsets[i], aPhys, axes)`
+- **Block-to-block travel** — `travelJog(posX, posY, nextBlockX, nextBlockY, ...)`
+
+The orchestrator holds global state (`posX`, `posY`, `aPhys`, `currentHead`) and calls these helpers at each block transition. The helpers are stateless — they take the current state as parameters and return new state. This matches the strategy doc (`docs/multi_tool_orchestration_strategy.md`): "Block-Scoped Pipeline, Global Orchestrator."
+
+### Why the split?
+
+The jog between blocks depends on where the machine actually is — which may diverge from the baked expectation if the operator paused, manually jogged, or resumed mid-job. Baking inter-block motion would be wrong the moment something interrupts execution. The run-time orchestrator generates it from actual machine state instead.
+
+---
+
+## Multi-tool and multi-head support
+
+### Config model
+
+The config model supports machines with 1-2 heads, an optional laser pointer reference, and tools with per-slot A-axis offsets (the revolver pen):
+
+**Reference points** — `ReferencePoint` (`{ xOffset, yOffset }` in mm) is the shared interface for:
+- `ToolHead.xOffset` / `ToolHead.yOffset` — head center vs machine reference
+- `MachineConfig.laser?` — laser pointer position (passive alignment aid, no axes)
+- `ToolProfile.toolOffset` — tool tip vs head center (fixed XY, applied as bake-time geometry shift)
+
+Convention: whichever party has `(0, 0)` defines the machine reference. In a dual-head + laser setup, the laser is at `(0, 0)`, heads at `(-50, 0)` and `(+50, 0)`. In a single-head setup, the head is at `(0, 0)`, no laser.
+
+**Tool types** — `ToolType` enum:
+| Type | Value | Description |
+|---|---|---|
+| `PEN` | `0x01` | Non-tangential pen |
+| `KNIFE` | `0x02` | Tangential knife (wired, unwind) |
+| `CREASE` | `0x03` | Tangential crease wheel (free-spinning) |
+| `REVOLVER_PEN` | `0x04` | 7-slot rotating pen module |
+
+**Revolver pen** — `REVOLVER_PEN` preset: 7 slots at 360/7 ≈ 51.43° intervals, non-tangential (A is for slot selection, not tangent tracking). The `slotOffsets` array carries the A-axis angle for each slot. The orchestrator jogs A to `slotOffsets[i]` before cutting with slot i.
+
+### SVG layer encoding
+
+Layer names drive tool selection. The current convention:
+- Single-level: layer name = tool name (`knife`, `pen`, `crease`)
+- Nested (revolver): `<g inkscape:label="pen_revolver"><g inkscape:label="slot1">` → layer key `"pen_revolver/slot1"`
+
+`loadSvgLayers` and `loadSvgMmLayers` build `'/'`-separated keys for nested groups. Single-level layers are unchanged (no leading `/`). Unnamed `<g>`s pass the parent layer through.
+
+### Three offset layers
+
+| Offset | Field | What it measures | Applied where |
+|---|---|---|---|
+| Head offset | `ToolHead.xOffset/yOffset` | Head center vs machine reference | Run-time (orchestrator head-switch jog) |
+| Tool offset | `ToolProfile.toolOffset` | Tool tip vs head center | Bake-time geometry shift (`-toolOffset` to all paths) |
+| Blade offset | `ToolProfile.offsetMm` | Knife caster (along travel direction, rotates with A) | Not yet implemented (raises in discretize if > tolerance) |
+
+The total offset from machine reference to tool tip = `headOffset + toolOffset`. The bake-time geometry shift handles `toolOffset`; the run-time orchestrator handles `headOffset`. They compose without interfering.
 
 ---
 
@@ -200,6 +301,12 @@ export interface ConstrainOptions { ... }
 | Choreograph | Closures inside `discretize.py` | Top-level `choreograph/` module, stateless functions | Reusable for tool-changing, path-stitching, manual jogging |
 | `parse` + `normalise` | Separate files, double XML parse | Merged into `svg/ingest.ts`, single parse | `parseSvgRoot` shared; `loadSvgMm*` walks root once |
 | Z axis accel | Single-segment constant-velocity Z moves | Match Python (no ramp) + TODO comment for future trapezoidal refinement | Needs `z.accel` characterized first (currently 0 placeholder) |
+| `**` operator | `speed ** 3` (calls C `pow()`, not correctly-rounded) | `speed * speed * speed` (IEEE 754 multiplication) | Python `**` differs from `*` in 25.77% of cases by 1-2 ULP; caused 3-packet divergence in fish.svg. Python fixed to match TS. |
+| Head offset | `xOffset` only (Y not modeled) | `xOffset` + `yOffset` via `ReferencePoint` | Dual-head machines may have Y offset; symmetric interface |
+| Laser pointer | Not modeled | Optional `MachineConfig.laser?: LaserPointer` | Needed as alignment reference for dual-head offset calculations |
+| Tool tip offset | Not modeled | `ToolProfile.toolOffset: ToolOffset` (fixed XY from head center) | Revolver pen's active tip is offset from head center |
+| Revolver pen | Not modeled | `ToolType.REVOLVER_PEN` + `slotOffsets` + `REVOLVER_PEN` preset | 7-slot rotating pen module; A axis selects slot |
+| Nested SVG layers | Flattens to nearest group label | `'/'`-separated path (`"pen_revolver/slot1"`) | Enables revolver slot-per-layer encoding |
 
 ---
 
@@ -210,9 +317,40 @@ Mock curve fixtures live in `toolpath/tests/data/` and are shared across stages:
 - **`repair.cases.ts`** — 8 named `CubicBezier[]` cases for stage 3 (perfect C1, sharp corner, G1-not-C1, gap, multi-bad joins, single curve, near-C1, cusp)
 - **`curves.cases.ts`** — 8 named `CubicBezier[]` cases for stages 4-8 (straight line, quarter circles r50/r5, S-curve, short curve, long gentle arc, near-cusp, full circle r30) with expected `arcLength`/`kappaMax` where analytically known
 
-Real SVG fixtures are in `pipeline/data/` (the Python source's test data) — tests read them directly, single source of truth, no duplication.
+Real SVG fixtures are in `pipeline/data/` (the Python source's test data) — tests read them directly, single source of truth, no duplication. Parity test fixtures (SVGs + Python reference `.bin` files) are in `production/tests/data/`.
 
-**176 tests across 10 files**, all passing.
+**226 tests across 13 files**, all passing.
+
+---
+
+## Parity testing
+
+`production/tests/parity.test.ts` compares TS-baked `.bin` output byte-for-byte against Python-baked reference `.bin` files. This is the headline correctness check — a passing test means the entire TS pipeline (stages 1-8 + wire packet packer) produces identical output to the Python pipeline.
+
+### Fixtures (`production/tests/data/`)
+
+| File | Description |
+|---|---|
+| `test_circle.svg` | Single circle, single subpath (641 packets) |
+| `fish.svg` | Multi-path, multi-subpath fish (8437 packets) |
+| `test_circle_knife_ref.bin` | Python-baked reference (checked in) |
+| `fish_knife_ref.bin` | Python-baked reference (checked in) |
+| `test_circle_knife_ts.bin` | TS-baked output (gitignored, written by test) |
+| `fish_knife_ts.bin` | TS-baked output (gitignored, written by test) |
+| `config.txt` | Documents the bake config (defaults) |
+
+### Reference generation
+
+```
+python -m host.production.svg_to_packets test_circle.svg --out test_circle_knife_ref.bin
+python -m host.production.svg_to_packets fish.svg --out fish_knife_ref.bin
+```
+
+Run from `web/production/tests/data/`. Uses default config (KNIFE profile, default machine, default quality — see `config.txt` for the full values).
+
+### On mismatch
+
+The test decodes the first divergent packet and prints a field-level diff (dx/dy/dz/da/interval/flags/seq/crc) so we can pinpoint which stage diverged. The fish.svg parity test caught a 3-packet divergence caused by Python's `**` operator (C `pow()`, not correctly-rounded) vs TS's `*` multiplication (IEEE 754) — fixed by changing Python to use multiplication.
 
 ---
 
