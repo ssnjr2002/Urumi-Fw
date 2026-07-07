@@ -1,0 +1,42 @@
+{
+  "machine": {
+    "fCpu": 150000000,
+    "jogFeed": 80,
+    "zFeed": 20,
+    "x": {
+      "node": { "nodeId": 1 },
+      "stepsPerUnit": 160,
+      "maxRate": 80,
+      "accel": 1000,
+      "invert": true
+    },
+    "y": {
+      "node": { "nodeId": 2 },
+      "stepsPerUnit": 160,
+      "maxRate": 80,
+      "accel": 1000
+    }
+  },
+  "heads": [
+    {
+      "tool": "knife",
+      "xOffset": 0,
+      "yOffset": 0,
+      "z": {
+        "node": { "nodeId": 3 },
+        "stepsPerUnit": 1200,
+        "maxRate": 10,
+        "invert": true
+      },
+      "a": {
+        "node": { "nodeId": 4 },
+        "stepsPerUnit": 51.667,
+        "maxRate": 100,
+        "accel": 2000,
+        "invert": true,
+        "rotary": true
+      }
+    }
+  ],
+  "defaultHead": 0
+}

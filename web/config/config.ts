@@ -29,6 +29,10 @@
 
 // ── bus tier ─────────────────────────────────────────────────────────────────
 
+// TODO: simplify `nodeId` to just `id` — the field is on `BusNode` already,
+// so `node.nodeId` is redundant; `node.id` reads cleaner. Deferred to avoid
+// a wide rename across the codebase; the configLoader maps JSON `nodeId`
+// straight through for now.
 export interface BusNode {
     readonly nodeId: number;
     readonly role: string;
@@ -257,6 +261,14 @@ export function needsOffsetComp(profile: ToolProfile): boolean {
 export interface ToolHead extends ReferencePoint {
     readonly z: AxisConfig;
     readonly a: AxisConfig;
+    // TODO: deliberation needed — should heads carry their mounted tool in
+    // config, or should tool assignment be a runtime/plan concern? Tracking
+    // it here couples the geometric head (Z+A+offset) to a specific tool,
+    // which is awkward when an operator swaps tools without editing config.
+    // The alternative: heads define only geometry; the orchestrator/plan
+    // resolves which head carries which tool via a separate tool mounting
+    // table. Left as-is for now (matches the Python); revisit when the
+    // orchestrator lands.
     readonly profile: ToolProfile;
 }
 
