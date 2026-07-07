@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { bakeBin } from "../svgToPackets.js";
+import { bakeBin } from "./svgToPackets.js";
 import { defaultConfig, KNIFE, qualityConfig } from "../../config/config.js";
 import {
     decodePacket,

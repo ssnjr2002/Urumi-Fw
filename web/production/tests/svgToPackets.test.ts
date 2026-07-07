@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { subpathsToPackets, bakeBin } from "../svgToPackets.js";
+import { subpathsToPackets, bakeBin } from "./svgToPackets.js";
 import { defaultConfig, KNIFE, qualityConfig } from "../../config/config.js";
 import { loadSvgMmSubpaths } from "../../svg/ingest.js";
 import {

@@ -69,7 +69,11 @@ export interface ConstrainOptions {
     // Required — always needed
     /** Programmed cruise ceiling (mm/s). Source: ToolProfile.feedMax. */
     readonly feedMax: number;
-    /** Lateral acceleration for the centripetal cap (mm/s²). Source: AxisConfig.accel (X/Y). */
+    /**
+     * Lateral acceleration for the centripetal cap (mm/s²). Source: AxisConfig.accel (X/Y).
+     * NOTE: this is a single scalar — a square-machine assumption. On a non-square machine
+     * (x.accel ≠ y.accel) the correct value is Math.min(x.accel, y.accel).
+     */
     readonly aMax: number;
     /** Corner-rounding budget (mm). Source: QualityConfig.junctionDeviation. */
     readonly junctionDeviation: number;

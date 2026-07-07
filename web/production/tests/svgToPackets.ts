@@ -1,29 +1,29 @@
 /**
- * svgToPackets.ts — SVG → binary MicroSegment wire packets.
- * Ported from host.production.svg_to_packets (run + subpaths_to_packets).
+ * svgToPackets.ts — FROZEN parity harness (test scaffolding, not production).
  *
- * The tool-aware pipeline core: mm subpaths + a ToolProfile → 26-byte wire
- * packets. Chains stages 3-8: enforceC1 → flatten → constrain → plan →
- * discretize → serialise. The caller supplies the subpaths in mm
- * (from svg/ingest.ts loadSvgMmSubpaths) and the tool profile; this
- * module bridges config to each stage's focused options interface.
+ * This is the original single-tool bake, kept verbatim as the byte-for-byte
+ * reference the parity tests pin against Python's
+ * `python -m host.production.svg_to_packets --out`. It carries its own copy of
+ * the stage 3-8 chain ON PURPOSE: it must NOT change, so that the living
+ * production compile (production/compileBlock.ts) can be refactored freely
+ * while a test asserts compileBlock still reproduces this harness's output
+ * (and therefore Python's).
  *
- * `bakeBin` is the full SVG-text-to-.bin entry point: parse + normalise +
- * the stage chain + length-prefixed framing. The output is byte-for-byte
- * comparable with Python `python -m host.production.svg_to_packets --out`.
+ * Do not import this from production code. Do not "clean it up" — its value is
+ * that it is frozen.
  */
 
-import type { CubicBezier } from "../toolpath/src/geometry.js";
-import type { MachineConfig, ToolProfile, QualityConfig } from "../config/config.js";
-import { resolvedAxes } from "../config/config.js";
-import { loadSvgMmSubpaths } from "../svg/ingest.js";
-import { enforceC1 } from "../toolpath/src/repair.js";
-import { flatten } from "../toolpath/src/flatten.js";
-import { constrain } from "../toolpath/src/constrain.js";
-import { plan } from "../toolpath/src/plan.js";
-import { discretize } from "../toolpath/src/discretize.js";
-import type { MicroSegment } from "../wire/src/microsegment.js";
-import { serialiseMicrosegments, writeStream } from "../wire/src/packet.js";
+import type { CubicBezier } from "../../toolpath/src/geometry.js";
+import type { MachineConfig, ToolProfile, QualityConfig } from "../../config/config.js";
+import { resolvedAxes } from "../../config/config.js";
+import { loadSvgMmSubpaths } from "../../svg/ingest.js";
+import { enforceC1 } from "../../toolpath/src/repair.js";
+import { flatten } from "../../toolpath/src/flatten.js";
+import { constrain } from "../../toolpath/src/constrain.js";
+import { plan } from "../../toolpath/src/plan.js";
+import { discretize } from "../../toolpath/src/discretize.js";
+import type { MicroSegment } from "../../wire/src/microsegment.js";
+import { serialiseMicrosegments, writeStream } from "../../wire/src/packet.js";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
