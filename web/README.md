@@ -32,7 +32,14 @@ web/
 │   │                      ReferencePoint (xOffset/yOffset), LaserPointer,
 │   │                      ToolOffset (tool tip from head center), REVOLVER_PEN
 │   │                      preset (7-slot rotating pen module), slotOffsets.
-│   └── config.test.ts
+│   ├── configLoader.ts    JSON → PipelineConfig parser. The production config
+│   │                      source: machine calibration from config.json (required:
+│   │                      fCpu, stepsPerUnit, nodeId, heads, tool), tool presets
+│   │                      + quality from code defaults with optional JSON overrides.
+│   │                      Returns { ok, config } | { ok: false, errors }.
+│   ├── test-machine.json  Test fixture matching defaultMachine() (160/1200/51.667).
+│   ├── config.test.ts
+│   └── configLoader.test.ts
 │
 ├── svg/                 — SVG ingestion (pipeline stages 1-2)
 │   ├── ingest.ts          Parse: SVG text → CubicBezier[] (path commands,
@@ -238,6 +245,33 @@ The total offset from machine reference to tool tip = `headOffset + toolOffset`.
 
 ---
 
+## Config: code defaults vs config.json
+
+The production config path is `configLoader.parse(jsonText) → PipelineConfig`. Machine-specific calibration (stepsPerUnit, fCpu, invert, node bindings, head layout, laser pointer) comes from a `config.json` file — **required**, no silent fallback to hardcoded machine values. The code provides universal defaults (tool presets, quality algorithm tuning) which the JSON can override but does not redefine from scratch.
+
+**Required in JSON** (missing → error): `machine.fCpu`, `machine.x`, `machine.y`, `heads[]` (non-empty), each axis's `node.nodeId` + `stepsPerUnit`, each head's `tool` (must be a known preset name).
+
+**Optional in JSON** (absent → documented code default): `jogFeed` (80), `zFeed` (20), `laser` (none), axis `maxRate`/`accel` (0 = unlimited), `invert` (false), `maxTravel` (0), `rotary` (false), head `xOffset`/`yOffset` (0), `defaultHead` (0), `peripherals` ([]), `tools` (no patches), `quality` (code defaults).
+
+`parseConfig` returns `{ ok: true, config }` or `{ ok: false, errors }` with every problem found (not just the first). No validation yet (range checks, duplicate node IDs) — just parsing + required-field checking.
+
+`defaultMachine()` in `config.ts` (the hardcoded 160/1200/51.667 machine) is a **test fixture only** — the parity tests use it. The production path uses `configLoader.parse(json)`.
+
+### What stays as code vs what comes from config.json
+
+| Stays as code (universal) | Comes from config.json (per-machine) |
+|---|---|
+| Tool presets (PEN/KNIFE/CREASE/REVOLVER_PEN) | `stepsPerUnit` per axis |
+| `ToolType` enum values | `fCpu` |
+| `OFFSET_TOLERANCE_MM` | `invert` per axis |
+| `MICRO_*` flag constants | `maxRate`, `accel` per axis |
+| `KAPPA` (Bezier constant) | `jogFeed`, `zFeed` |
+| Quality defaults (chordTol, dvMax, etc.) | Head layout (offsets, mounted tool) |
+| Wire format constants | Laser pointer position |
+| Revolver slot count (7) | Node bindings (which BusNode drives which axis) |
+
+---
+
 ## Type progression
 
 Each stage produces a richer type that extends its input. The compiler catches skipped stages — `plan` takes `ConstrainedSample[]` and refuses a bare `Sample[]`, so a bug that skips `constrain` can't silently produce infinite-speed planning.
@@ -319,7 +353,7 @@ Mock curve fixtures live in `toolpath/tests/data/` and are shared across stages:
 
 Real SVG fixtures are in `pipeline/data/` (the Python source's test data) — tests read them directly, single source of truth, no duplication. Parity test fixtures (SVGs + Python reference `.bin` files) are in `production/tests/data/`.
 
-**226 tests across 13 files**, all passing.
+**263 tests across 14 files**, all passing.
 
 ---
 
