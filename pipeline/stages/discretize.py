@@ -101,15 +101,15 @@ def discretize(samples, machine, profile=None, quality=None, a_max=None,
             return []
         sign = (1 if da > 0 else -1) * (-1 if machine.a.invert else 1)
         v0, vc, acc = a_v0_sps, a_cruise_sps, a_accel_sps2
-        d_acc = (vc**2 - v0**2) / (2.0 * acc)
+        d_acc = (vc*vc - v0*v0) / (2.0 * acc)
         if 2 * d_acc > N:
             d_acc = N / 2.0
         out, n = [], 0
         while n < N:
             if n < d_acc:
-                v = math.sqrt(v0**2 + 2.0 * acc * n)
+                v = math.sqrt(v0*v0 + 2.0 * acc * n)
             elif n >= N - d_acc:
-                v = math.sqrt(max(v0**2, v0**2 + 2.0 * acc * (N - n)))
+                v = math.sqrt(max(v0*v0, v0*v0 + 2.0 * acc * (N - n)))
             else:
                 v = vc
             v = max(v, v0)

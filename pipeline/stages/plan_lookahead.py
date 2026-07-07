@@ -105,14 +105,14 @@ def plan(samples, machine, a_max=None):
         # backward: ensure we can brake to each downstream speed
         for i in range(hi - 1, lo - 1, -1):
             ds = samples[i].ds
-            reachable = math.sqrt(samples[i + 1].v ** 2 + 2.0 * a_seg[i] * ds)
+            reachable = math.sqrt(samples[i + 1].v * samples[i + 1].v + 2.0 * a_seg[i] * ds)
             if reachable < samples[i].v:
                 samples[i].v = reachable
 
         # forward: ensure we can accelerate up to each speed
         for i in range(lo + 1, hi + 1):
             ds = samples[i - 1].ds
-            reachable = math.sqrt(samples[i - 1].v ** 2 + 2.0 * a_seg[i - 1] * ds)
+            reachable = math.sqrt(samples[i - 1].v * samples[i - 1].v + 2.0 * a_seg[i - 1] * ds)
             if reachable < samples[i].v:
                 samples[i].v = reachable
 

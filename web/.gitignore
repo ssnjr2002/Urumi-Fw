@@ -16,3 +16,6 @@ pnpm-debug.log*
 # Editor
 .vscode/*
 !.vscode/extensions.json
+
+# Parity test TS output bins (regenerated every test run; ref bins are tracked)
+production/tests/data/*_ts.bin
