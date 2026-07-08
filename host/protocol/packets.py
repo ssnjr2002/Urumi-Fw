@@ -70,7 +70,7 @@ MAGIC_NACK       = 0xBB
 
 MAGIC_STATUS_REQ = 0xA5
 MAGIC_STATUS_RSP = 0xA6
-STATUS_RSP_SIZE  = 7
+STATUS_RSP_SIZE  = 9
 
 NACK_CRC         = 0x01
 NACK_FULL        = 0x02
@@ -100,27 +100,30 @@ TOOL_CREASE = 2
 
 # ── binary status request/response (mirrors the text `getstate` command) ─────
 # STATUS_REQ: [0xA5]                                          (1 byte, no CRC)
-# STATUS_RSP: [0xA6][state][enabled][homed][alarm][running][CRC8]  (7 bytes)
+# STATUS_RSP: [0xA6][state][enabled][homed][alarm][running][bufCount:u16 LE][CRC8]  (9 bytes)
+# bufCount is the number of MicroSegments queued in the Pico's ring buffer
+# (including the one currently executing) — lets a poll loop see "buffer
+# about to run dry" instead of guessing from wall-clock timing.
 
 def pack_status_rsp(state: int, axes_enabled: int, axes_homed: int,
-                     alarm: int, running: int) -> bytes:
-    """Pack a status snapshot into the 7-byte STATUS_RSP wire format."""
-    body = struct.pack("<BBBBBB", MAGIC_STATUS_RSP, state, axes_enabled,
-                        axes_homed, alarm, running)
+                     alarm: int, running: int, buf_count: int = 0) -> bytes:
+    """Pack a status snapshot into the 9-byte STATUS_RSP wire format."""
+    body = struct.pack("<BBBBBBH", MAGIC_STATUS_RSP, state, axes_enabled,
+                        axes_homed, alarm, running, buf_count)
     return body + bytes([_crc8(body)])
 
 
 def unpack_status_rsp(data: bytes) -> dict:
-    """Unpack a 7-byte STATUS_RSP. Raises ValueError on bad magic/size/CRC."""
+    """Unpack a 9-byte STATUS_RSP. Raises ValueError on bad magic/size/CRC."""
     if len(data) != STATUS_RSP_SIZE:
         raise ValueError(f"Expected {STATUS_RSP_SIZE} bytes, got {len(data)}")
     if data[0] != MAGIC_STATUS_RSP:
         raise ValueError(f"Bad magic: 0x{data[0]:02X}")
     if _crc8(data[:-1]) != data[-1]:
         raise ValueError("CRC mismatch")
-    _, state, axes_enabled, axes_homed, alarm, running = struct.unpack("<BBBBBB", data[:-1])
+    _, state, axes_enabled, axes_homed, alarm, running, buf_count = struct.unpack("<BBBBBBH", data[:-1])
     return dict(state=state, axes_enabled=axes_enabled, axes_homed=axes_homed,
-                alarm=alarm, running=running)
+                alarm=alarm, running=running, buf_count=buf_count)
 
 
 # ── ToolConfig namedtuple ─────────────────────────────────────────────────────

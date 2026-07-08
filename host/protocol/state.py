@@ -52,6 +52,7 @@ class MachineStatus:
     axes_enabled: int
     alarm:        AlarmReason
     running:      RunningReason
+    buf_count:    int = 0   # only populated by STATUS_RSP; 0 (unknown) from text getstate
 
     def homed(self, axis: str) -> bool:
         return bool(self.axes_homed & AXIS_BITS[axis])
@@ -136,4 +137,5 @@ def parse_status_rsp(data: bytes) -> MachineStatus:
         axes_enabled=fields["axes_enabled"],
         alarm=_enum_or_int(AlarmReason, fields["alarm"], AlarmReason.NONE),
         running=_enum_or_int(RunningReason, fields["running"], RunningReason.JOB),
+        buf_count=fields["buf_count"],
     )

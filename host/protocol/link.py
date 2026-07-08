@@ -136,7 +136,7 @@ class SimBackend:
             with self._lock:
                 self._replies.append(pack_status_rsp(
                     int(self.state), self.axes_enabled, self.axes_homed,
-                    int(self.alarm), int(self.running)))
+                    int(self.alarm), int(self.running), len(self._motion)))
             return
         try:
             ms = unpack_microsegment(bytes(data))

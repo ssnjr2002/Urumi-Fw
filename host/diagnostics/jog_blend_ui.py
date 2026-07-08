@@ -131,23 +131,59 @@ class JogBlendUI:
             flags = MSEG_FLAG_PATH_END if last else MSEG_FLAG_NONE
             return pack_jog(_MS(dx=dx, dy=0, dz=0, da=0, interval=interval, flags=flags))
 
+        def seg_chunked(steps, interval, velocity, last):
+            """Split a long constant-velocity run into ~10ms chunks instead of
+            one opaque packet -- buf_count only changes at packet boundaries,
+            so a single big packet makes 'buffer nearly drained' indistinguishable
+            from 'buffer just filled'. Chunking gives the poll loop a fine-grained
+            signal of how much cruise time is actually left."""
+            chunk_steps = max(1, int(velocity * 0.01))   # ~10ms of steps at this speed
+            out = []
+            remaining = steps
+            while remaining > 0:
+                n = min(chunk_steps, remaining)
+                remaining -= n
+                out.append(seg(n, interval, last=(last and remaining == 0)))
+            return out
+
         # Build Lego blocks
         blocks = {'sign': sign}
         if d_acc > 0:
             blocks['accel'] = seg(d_acc, interval_acc, last=False)
             blocks['decel'] = seg(d_dec, interval_dec, last=True)
-            # Calculate physical execution time for timing the trickle feed
-            blocks['accel_time'] = d_acc / v_acc_avg
-            blocks['decel_time'] = d_dec / v_dec_avg
         if d_cruise > 0:
-            blocks['short_cruise'] = seg(d_cruise, interval_crz, last=False)
-            blocks['short_cruise_time'] = d_cruise / feed_sps
+            blocks['short_cruise'] = seg_chunked(d_cruise, interval_crz, feed_sps, last=False)
 
         # 10mm full cruise block
-        blocks['blend_cruise'] = seg(total_steps, interval_crz, last=False)
-        blocks['blend_cruise_time'] = total_steps / feed_sps
+        blocks['blend_cruise'] = seg_chunked(total_steps, interval_crz, feed_sps, last=False)
 
         self.jog_q.put(blocks)
+
+    # Poll get_status() at this interval while waiting for the buffer to run
+    # low. Cheap (1 byte out, 9 bytes back) so this can run tight without
+    # competing meaningfully with the stream for port bandwidth.
+    POLL_INTERVAL_S = 0.02
+    # Decide blend-vs-decel once at most this many queued segments remain
+    # (including the one currently executing). Cruise is now chunked into
+    # ~10ms packets (see seg_chunked), so a handful of chunks is a few tens
+    # of ms of remaining runway -- enough to cover one status poll round-trip
+    # plus the next packet's transmission, without waiting almost a full
+    # phase's duration like the un-chunked version did.
+    LOW_WATER_SEGMENTS = 3
+
+    def _wait_for_buffer_low(self):
+        """Block until the Pico reports <=LOW_WATER_SEGMENTS queued, polling
+        real buffer occupancy instead of guessing from wall-clock timing."""
+        while True:
+            try:
+                status = self.link.get_status()
+            except Exception as e:
+                print(f"(status poll failed: {e} -- falling back to short sleep)")
+                time.sleep(self.POLL_INTERVAL_S)
+                continue
+            if status.buf_count <= self.LOW_WATER_SEGMENTS:
+                return
+            time.sleep(self.POLL_INTERVAL_S)
 
     def _worker_loop(self):
         while True:
@@ -155,41 +191,36 @@ class JogBlendUI:
             blocks = self.jog_q.get()
             current_sign = blocks['sign']
             current_decel = blocks.get('decel')
-            current_decel_time = blocks.get('decel_time', 0.0)
 
             direction_str = "POSITIVE" if current_sign > 0 else "NEGATIVE"
             print(f"\n>>> Start of New Jog Sequence ({direction_str})")
 
             # Send Accel + Short Cruise
             to_send = []
-            exec_time = 0.0
 
             if 'accel' in blocks:
                 to_send.append(blocks['accel'])
-                exec_time += blocks['accel_time']
                 print("Yielding Accel...")
 
             if 'short_cruise' in blocks:
-                to_send.append(blocks['short_cruise'])
-                exec_time += blocks['short_cruise_time']
-                print("Yielding Short Cruise...")
+                to_send.extend(blocks['short_cruise'])
+                print(f"Yielding Short Cruise ({len(blocks['short_cruise'])} chunks)...")
 
             _send_burst(self.link, to_send)
             self.jog_q.task_done()
 
-            # We are now cruising. We must WAIT before sending Decel,
-            # to give the user a chance to click again and inject a blend!
-            sleep_time = max(0, exec_time - 0.050)
-            print(f"(Machine is accelerating/cruising... Sleeping host for {sleep_time:.3f}s)")
-            time.sleep(sleep_time)
+            # We are now cruising. Wait for the buffer to actually run low
+            # (not a guessed duration) before deciding blend vs. decel --
+            # this reacts to real firmware state instead of dead-reckoning.
+            print("(Machine is accelerating/cruising... polling buffer occupancy)")
+            self._wait_for_buffer_low()
 
             while True:
-                # The execution is almost finished. Did they click again?
+                # The buffer is nearly drained. Did they click again?
                 if self.jog_q.empty():
                     print("Queue is empty! Yielding Decel...")
                     if current_decel:
                         _send_burst(self.link, [current_decel])
-                        time.sleep(current_decel_time)
                     print("<<< Sequence Complete (Stopped)\n")
                     break
                 else:
@@ -198,19 +229,17 @@ class JogBlendUI:
                     if next_blocks['sign'] == current_sign:
                         # BLEND!
                         blocks = self.jog_q.get()
-                        print("BLENDING! Yielding Full 10mm Cruise...")
-                        _send_burst(self.link, [blocks['blend_cruise']])
+                        print(f"BLENDING! Yielding Full Cruise ({len(blocks['blend_cruise'])} chunks)...")
+                        _send_burst(self.link, blocks['blend_cruise'])
                         self.jog_q.task_done()
 
-                        sleep_time = max(0, blocks['blend_cruise_time'] - 0.050)
-                        print(f"(Machine is cruising... Sleeping host for {sleep_time:.3f}s)")
-                        time.sleep(sleep_time)
+                        print("(Machine is cruising... polling buffer occupancy)")
+                        self._wait_for_buffer_low()
                     else:
                         # DIRECTION CHANGE! (SMOOTH CANCEL)
                         print("Direction changed! Yielding Decel to bring machine to a stop...")
                         if current_decel:
                             _send_burst(self.link, [current_decel])
-                            time.sleep(current_decel_time)
 
                         # Discard the reversed block so it doesn't move in the new direction
                         self.jog_q.get()
