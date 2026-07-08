@@ -54,9 +54,11 @@ export function planToolTypes(plan: Plan): ToolType[] {
 }
 
 /**
- * (ok, problems) — can `machine`'s topology run every tool this plan uses?
- * The upfront, config-only gate (no hardware). problems lists one
- * (toolName, reason) per tool that doesn't fit, de-duplicated.
+ * (ok, problems) — can `machine`'s bus physically run every tool this plan
+ * uses? The upfront gate: for each tool, the nodes it needs are wired
+ * (`present`) on the bus — NOT whether the tool is mounted (that's runtime
+ * mount-table state). problems lists one (toolName, reason) per tool whose
+ * nodes are missing, de-duplicated.
  */
 export function feasibleOn(
     plan: Plan,

@@ -29,6 +29,12 @@
 
 // ── bus tier ─────────────────────────────────────────────────────────────────
 
+// TODO: Think about BusNode.present and required config. We dont say busnode
+// in a json config, we just have axis and peripherals but there is no way to
+// state if they are present or not? I dont have clarity on this. Btw present
+// means its wired up on the bus, not that its alive or something. Maybe rethink
+// the name?
+
 // TODO: simplify `nodeId` to just `id` — the field is on `BusNode` already,
 // so `node.nodeId` is redundant; `node.id` reads cleaner. Deferred to avoid
 // a wide rename across the codebase; the configLoader maps JSON `nodeId`
@@ -252,24 +258,24 @@ export function needsOffsetComp(profile: ToolProfile): boolean {
  * heads side by side; they are software-selected, NEVER run
  * simultaneously, so only one head's Z/A are "live" at a time.
  *
- * `profile` is the tool currently mounted on this head. `xOffset`/
- * `yOffset` is the head's position relative to the machine reference
- * (see ReferencePoint). When a non-centred head is active, every XY
- * move must be corrected by this offset — applied by the orchestrator
- * as a head-switch jog, not yet consumed by the bake pipeline.
+ * A head is a *socket*: fixed geometry (Z + A wiring, XY mounting offset).
+ * `xOffset`/`yOffset` is the head's position relative to the machine
+ * reference (see ReferencePoint). When a non-centred head is active, every
+ * XY move must be corrected by this offset — applied by the orchestrator as
+ * a head-switch jog, not consumed by the bake pipeline.
+ *
+ * `profile?` is a SEED mount only — which tool the socket boots with. It is
+ * NOT authoritative at runtime: an operator can swap tools without editing
+ * config, so the orchestrator tracks the live head→tool assignment in a
+ * mutable mount table (seeded from this field). Bake never reads it — bake
+ * feasibility is a node-presence check (see canRunTool), not a mount check.
+ * Absent = an empty socket at boot.
  */
 export interface ToolHead extends ReferencePoint {
     readonly z: AxisConfig;
     readonly a: AxisConfig;
-    // TODO: deliberation needed — should heads carry their mounted tool in
-    // config, or should tool assignment be a runtime/plan concern? Tracking
-    // it here couples the geometric head (Z+A+offset) to a specific tool,
-    // which is awkward when an operator swaps tools without editing config.
-    // The alternative: heads define only geometry; the orchestrator/plan
-    // resolves which head carries which tool via a separate tool mounting
-    // table. Left as-is for now (matches the Python); revisit when the
-    // orchestrator lands.
-    readonly profile: ToolProfile;
+    /** Seed mount (boot-time tool); absent = empty socket. See interface doc. */
+    readonly profile?: ToolProfile;
 }
 
 export function toolHead(
