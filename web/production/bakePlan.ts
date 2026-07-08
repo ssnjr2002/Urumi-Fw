@@ -130,9 +130,14 @@ export function bakePlan(
 
     const blocks: Block[] = layerBlocks.map((lb) => {
         const segments = compileBlock(lb.subpaths, config.machine, config.quality, lb.profile);
+        const p0 = lb.subpaths[0]?.[0]?.p0 ?? { x: 0, y: 0 };
+        const startSteps = {
+            x: Math.round(p0.x * config.machine.x.stepsPerUnit),
+            y: Math.round(p0.y * config.machine.y.stepsPerUnit),
+        };
         return lb.slot === undefined
-            ? { profile: lb.profile, segments }
-            : { profile: lb.profile, slot: lb.slot, segments };
+            ? { profile: lb.profile, segments, startSteps }
+            : { profile: lb.profile, slot: lb.slot, segments, startSteps };
     });
 
     const plan: Plan = { blocks };

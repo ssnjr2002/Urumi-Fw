@@ -33,6 +33,15 @@ export interface Block {
     readonly slot?: number;
     /** The compiled wire events for this block, in execution order. */
     readonly segments: readonly MicroSegment[];
+    /**
+     * XY start position in TRUE machine steps (pre-invert), at the first
+     * sample of the first subpath. Set by bakePlan; absent in test fixtures.
+     *
+     * The runtime walk uses this to generate the inter-block travel jog.
+     * Absent → walk assumes (0, 0) and emits no travel (safe for fixtures and
+     * single-block plans where position doesn't matter).
+     */
+    readonly startSteps?: { readonly x: number; readonly y: number };
 }
 
 /** A whole job: blocks in execution order. */
