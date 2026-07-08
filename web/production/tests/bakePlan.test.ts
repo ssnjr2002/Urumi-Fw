@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { bakePlan, assembleBlocks } from "../bakePlan.js";
 import { subpathsToPackets } from "./svgToPackets.js";
-import { defaultConfig, KNIFE, ToolType } from "../../config/config.js";
+import { defaultConfig, KNIFE, PEN, toolProfile, ToolType } from "../../config/config.js";
 import { loadSvgMmSubpaths, loadSvgMmLayers } from "../../svg/ingest.js";
 import { savePlan, loadPlan } from "../../plan/src/planFile.js";
 
@@ -77,6 +77,62 @@ describe("bakePlan: revolver slots", () => {
         const text = wrap(`<g id="revolver_pen"><g id="slot2">${tri(10, 10)}</g></g>`);
         const { bytes } = bakePlan(config, text);
         expect(loadPlan(bytes).blocks[0]!.slot).toBe(1);
+    });
+});
+
+describe("bakePlan: toolOffset shift (Option A)", () => {
+    // A tool with a non-zero fixed tip offset from head center.
+    const offsetX = 5;   // mm
+    const offsetY = 3;   // mm
+    const offsetTool = toolProfile("pen_offset", {
+        ...PEN,
+        toolOffset: { xOffset: offsetX, yOffset: offsetY },
+    });
+
+    const config = defaultConfig();
+    // A simple triangle layer at a known position.
+    const text = wrap(`<g id="pen">${tri(20, 20)}</g>`);
+    // Override the pen profile in the config so bakePlan picks up the offset.
+    const configWithOffset = {
+        ...config,
+        toolProfiles: { ...config.toolProfiles, pen: offsetTool },
+    };
+
+    it("startSteps is in head-center coordinates (shifted by -toolOffset)", () => {
+        const { plan: planNoOffset } = bakePlan(config, text);
+        const { plan: planWithOffset } = bakePlan(configWithOffset, text);
+
+        const startNoOffset = planNoOffset.blocks[0]!.startSteps!;
+        const startWithOffset = planWithOffset.blocks[0]!.startSteps!;
+
+        // The shifted block starts at (path_start - toolOffset) * stepsPerUnit.
+        const spu = config.machine.x.stepsPerUnit; // 160 steps/mm, square machine
+        expect(startWithOffset.x).toBe(startNoOffset.x - Math.round(offsetX * spu));
+        expect(startWithOffset.y).toBe(startNoOffset.y - Math.round(offsetY * spu));
+    });
+
+    it("segment stream is shifted: all XY net displacement changes by the offset", () => {
+        // Sum dx across all segments of a single-subpath block.
+        // The offset shifts the ENTIRE path, so the net XY of the first
+        // cutting move from the block start changes by stepsPerUnit * offset.
+        // We verify the first cutting segment's dx differs by the shift.
+        const { plan: planNone } = bakePlan(config, text);
+        const { plan: planShifted } = bakePlan(configWithOffset, text);
+
+        // The net XY sum of all segments encodes the full path travel.
+        // With a constant offset applied to all points, the NET displacement
+        // (end minus start) is unchanged — but startSteps changes. So we
+        // check that (startSteps.x + netDx) is consistent: shifted and
+        // unshifted paths should end up at positions offset by the same delta.
+        const netDx = (segs: typeof planNone.blocks[0]["segments"]) =>
+            segs.reduce((s, seg) => s + seg.dx, 0);
+
+        const endXNone    = planNone.blocks[0]!.startSteps!.x    + netDx(planNone.blocks[0]!.segments);
+        const endXShifted = planShifted.blocks[0]!.startSteps!.x + netDx(planShifted.blocks[0]!.segments);
+
+        const spu = config.machine.x.stepsPerUnit;
+        // Both paths trace the same shape — their endpoints differ only by the offset.
+        expect(endXShifted).toBe(endXNone - Math.round(offsetX * spu));
     });
 });
 

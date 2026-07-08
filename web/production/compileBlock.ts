@@ -31,13 +31,58 @@ import { plan } from "../toolpath/src/plan.js";
 import { discretize } from "../toolpath/src/discretize.js";
 import type { MicroSegment } from "../wire/src/microsegment.js";
 
+export interface CompileBlockResult {
+    /** Compiled wire events in execution order. */
+    readonly segments: MicroSegment[];
+    /**
+     * XY start position in TRUE machine steps (pre-invert), after the
+     * toolOffset shift. Ready for use as Block.startSteps.
+     */
+    readonly startSteps: { readonly x: number; readonly y: number };
+}
+
+/**
+ * Translate all bezier control points by (dx, dy) in mm.
+ * Used to shift paths from tool-tip space into head-center space by applying
+ * -toolOffset before the stage chain.
+ */
+function shiftSubpaths(
+    subpaths: readonly (readonly CubicBezier[])[],
+    dx: number,
+    dy: number,
+): CubicBezier[][] {
+    if (dx === 0 && dy === 0) return subpaths as CubicBezier[][];
+    return subpaths.map((sp) =>
+        sp.map((b) => ({
+            p0: { x: b.p0.x + dx, y: b.p0.y + dy },
+            p1: { x: b.p1.x + dx, y: b.p1.y + dy },
+            p2: { x: b.p2.x + dx, y: b.p2.y + dy },
+            p3: { x: b.p3.x + dx, y: b.p3.y + dy },
+        })),
+    );
+}
+
 export function compileBlock(
     subpathsMm: readonly (readonly CubicBezier[])[],
     machine: MachineConfig,
     quality: QualityConfig,
     profile: ToolProfile,
-): MicroSegment[] {
+): CompileBlockResult {
     const axes = resolvedAxes(machine);
+
+    // Shift paths by -toolOffset so all baked coordinates are in head-center
+    // space. Zero offset is a fast-path no-op (returns the original array).
+    const shifted = shiftSubpaths(
+        subpathsMm,
+        -profile.toolOffset.xOffset,
+        -profile.toolOffset.yOffset,
+    );
+
+    const p0 = shifted[0]?.[0]?.p0 ?? { x: 0, y: 0 };
+    const startSteps = {
+        x: Math.round(p0.x * machine.x.stepsPerUnit),
+        y: Math.round(p0.y * machine.y.stepsPerUnit),
+    };
 
     // The single XY linear-acceleration ceiling used by the cornering
     // constraint. NOTE: the stage option field is named `aMax` ("accel max"),
@@ -53,7 +98,7 @@ export function compileBlock(
     const aAccel = tangential ? axes.a.accel : 0;
 
     // Stage 3: repair — enforce C1 continuity, one enforceC1 per subpath
-    const repaired = subpathsMm.map(
+    const repaired = shifted.map(
         (sp) => enforceC1(sp, { angleTolDeg: quality.angleTol, gapTolMm: quality.gapTol }).repaired,
     );
 
@@ -86,5 +131,6 @@ export function compileBlock(
     });
 
     // Stage 8: discretize — Sample[] → MicroSegment[], choreograph at transitions
-    return discretize(planned, machine, profile, quality);
+    const segments = discretize(planned, machine, profile, quality);
+    return { segments, startSteps };
 }
