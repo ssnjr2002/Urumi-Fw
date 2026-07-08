@@ -20,8 +20,8 @@ function plan(...tools: (ToolProfile | [ToolProfile, number])[]): Plan {
         blocks: tools.map((t) => {
             const [profile, slot] = Array.isArray(t) ? t : [t, undefined];
             return slot === undefined
-                ? { profile, segments: [] }
-                : { profile, slot, segments: [] };
+                ? { profile, segments: [], startSteps: { x: 0, y: 0 } }
+                : { profile, slot, segments: [], startSteps: { x: 0, y: 0 } };
         }),
     };
 }

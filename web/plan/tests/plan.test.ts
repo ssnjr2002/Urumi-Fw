@@ -17,7 +17,7 @@ import {
 } from "../../config/config.js";
 
 function plan(...profiles: ToolProfile[]): Plan {
-    return { blocks: profiles.map((profile) => ({ profile, segments: [] })) };
+    return { blocks: profiles.map((profile) => ({ profile, segments: [], startSteps: { x: 0, y: 0 } })) };
 }
 
 function machine(opts?: { aPresent?: boolean }): MachineConfig {
