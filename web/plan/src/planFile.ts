@@ -7,8 +7,8 @@
  *
  * Format (all little-endian):
  *   HEADER
- *     magic:   4B   AB CD 50 02   (0x02 = slot-aware; Python's was ...50 01)
- *     version: 1B   0x02
+ *     magic:   4B   AB CD 50 03   (0x03 = startSteps added; 0x02 was slot-aware)
+ *     version: 1B   0x03
  *     n_tools: 1B   unique ToolType values in the manifest (feasibility gate)
  *     n_ops:   2B   block count
  *
@@ -17,6 +17,8 @@
  *   OPERATIONS      n_ops ×:
  *     tool_type: 1B   ToolType enum value
  *     slot:      1B   revolver slot index, or 0xFF when the block has no slot
+ *     start_x:   4B   int32 LE   block start X in TRUE machine steps (pre-invert)
+ *     start_y:   4B   int32 LE   block start Y in TRUE machine steps (pre-invert)
  *     pkt_count: 4B   number of MSEG packets that follow
  *     packets:   pkt_count × 26B   raw MicroSegment packets (magic 0xAB each)
  *
@@ -31,12 +33,12 @@ import { PACKET_SIZE, packMicrosegment, decodePacket } from "../../wire/src/pack
 import type { Block, Plan } from "./plan.js";
 import { planToolTypes } from "./plan.js";
 
-export const PLAN_MAGIC = Uint8Array.of(0xab, 0xcd, 0x50, 0x02);
-export const PLAN_VERSION = 0x02;
+export const PLAN_MAGIC = Uint8Array.of(0xab, 0xcd, 0x50, 0x03);
+export const PLAN_VERSION = 0x03;
 export const SLOT_NONE = 0xff;
 
 const HDR_SIZE = 8; // magic(4) + version(1) + n_tools(1) + n_ops(2)
-const OP_HDR_SIZE = 6; // tool_type(1) + slot(1) + pkt_count(4)
+const OP_HDR_SIZE = 14; // tool_type(1) + slot(1) + start_x(4) + start_y(4) + pkt_count(4)
 
 /** Serialise a Plan to .plan bytes. */
 export function savePlan(plan: Plan): Uint8Array {
@@ -79,6 +81,8 @@ export function savePlan(plan: Plan): Uint8Array {
         const pkts = packed[i]!;
         dv.setUint8(off, block.profile.toolType); off += 1;
         dv.setUint8(off, block.slot ?? SLOT_NONE); off += 1;
+        dv.setInt32(off, block.startSteps.x, true); off += 4;
+        dv.setInt32(off, block.startSteps.y, true); off += 4;
         dv.setUint32(off, pkts.length, true); off += 4;
         for (const pkt of pkts) {
             out.set(pkt, off); off += PACKET_SIZE;
@@ -110,7 +114,8 @@ export function loadPlan(
     off += PLAN_MAGIC.length;
     const version = dv.getUint8(off); off += 1;
     if (version !== PLAN_VERSION) {
-        throw new Error(`unsupported .plan version 0x${version.toString(16)}`);
+        const hint = version === 0x02 ? " (re-bake to get startSteps / travel jogs)" : "";
+        throw new Error(`unsupported .plan version 0x${version.toString(16)}${hint}`);
     }
     const nTools = dv.getUint8(off); off += 1;
     const nOps = dv.getUint16(off, true); off += 2;
@@ -132,6 +137,8 @@ export function loadPlan(
         }
         const toolType = dv.getUint8(off); off += 1;
         const slotByte = dv.getUint8(off); off += 1;
+        const startX = dv.getInt32(off, true); off += 4;
+        const startY = dv.getInt32(off, true); off += 4;
         const pktCount = dv.getUint32(off, true); off += 4;
 
         const profile = profilesByType[toolType];
@@ -150,10 +157,11 @@ export function loadPlan(
             off += PACKET_SIZE;
         }
 
+        const startSteps = { x: startX, y: startY };
         const block: Block =
             slotByte === SLOT_NONE
-                ? { profile, segments }
-                : { profile, slot: slotByte, segments };
+                ? { profile, segments, startSteps }
+                : { profile, slot: slotByte, segments, startSteps };
         blocks.push(block);
     }
 

@@ -22,9 +22,9 @@ const seg = (dx: number, dy: number, flags = 0) => microSegment(dx, dy, 0, 0, 10
 
 const samplePlan = (): Plan => ({
     blocks: [
-        { profile: KNIFE, segments: [seg(10, 0), seg(0, 10, 0x01)] },
-        { profile: REVOLVER_PEN, slot: 0, segments: [seg(5, 5)] },
-        { profile: REVOLVER_PEN, slot: 2, segments: [seg(-3, 4), seg(1, 1), seg(0, 0, 0x01)] },
+        { profile: KNIFE, segments: [seg(10, 0), seg(0, 10, 0x01)], startSteps: { x: 100, y: 200 } },
+        { profile: REVOLVER_PEN, slot: 0, segments: [seg(5, 5)], startSteps: { x: 0, y: 0 } },
+        { profile: REVOLVER_PEN, slot: 2, segments: [seg(-3, 4), seg(1, 1), seg(0, 0, 0x01)], startSteps: { x: -50, y: 300 } },
     ],
 });
 
@@ -38,6 +38,7 @@ describe("plan/planFile: round-trip", () => {
             expect(b.profile.toolType).toBe(orig.profile.toolType);
             expect(b.slot).toBe(orig.slot);
             expect(b.segments).toEqual(orig.segments);
+            expect(b.startSteps).toEqual(orig.startSteps);
         });
     });
 
@@ -72,7 +73,7 @@ describe("plan/planFile: header + manifest", () => {
 
     it("encodes SLOT_NONE (0xFF) for a non-slot block", () => {
         // first op header starts at 8 + nTools; slot byte is the 2nd byte
-        const bytes = savePlan({ blocks: [{ profile: PEN, segments: [seg(1, 1)] }] });
+        const bytes = savePlan({ blocks: [{ profile: PEN, segments: [seg(1, 1)], startSteps: { x: 0, y: 0 } }] });
         const nTools = bytes[5]!;
         const opStart = 8 + nTools;
         expect(bytes[opStart + 1]).toBe(SLOT_NONE);

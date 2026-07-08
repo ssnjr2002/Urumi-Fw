@@ -12,5 +12,32 @@
       "z": { "node": { "nodeId": 3 }, "stepsPerUnit": 1200, "maxRate": 10, "invert": true },
       "a": { "node": { "nodeId": 4 }, "stepsPerUnit": 51.667, "maxRate": 100, "accel": 2000, "invert": true, "rotary": true }
     }
-  ]
+  ],
+  "tools": {
+    "knife": {
+      "feedMax": 40,
+      "accel": 1000,
+      "zFeed": 20,
+      "jogFeed": 80,
+      "liftHeight": 2.0
+    },
+    "pen": {
+      "feedMax": 80,
+      "accel": 1000,
+      "zFeed": 20,
+      "jogFeed": 80
+    },
+    "crease": {
+      "feedMax": 80,
+      "accel": 1000,
+      "zFeed": 20,
+      "jogFeed": 80
+    },
+    "revolver_pen": {
+      "feedMax": 80,
+      "accel": 1000,
+      "zFeed": 20,
+      "jogFeed": 80
+    }
+  }
 }

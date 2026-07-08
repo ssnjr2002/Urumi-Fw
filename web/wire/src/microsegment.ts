@@ -46,6 +46,7 @@ export function microSegment(
 // JOG must NOT be 0x04 — that would alias every travel move onto MSEG_FLAG_PAUSE.
 
 export const MICRO_PATH_END = 0x01;
+export const MICRO_PAUSE    = 0x04; // sender-inserted at tool-change boundary; firmware → PAUSED after this packet
 export const MICRO_LIFT = 0x08;
 export const MICRO_JOG = 0x10;
 

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orchestrate</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      background: #111;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      padding: 14px 20px;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    header h1  { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+    header span { font-size: 12px; color: #555; }
+    header a   { margin-left: auto; font-size: 12px; color: #555; text-decoration: none; }
+    header a:hover { color: #aaa; }
+
+    /* ── left panel ──────────────────────────────────────────────────────── */
+
+    .panel {
+      padding: 20px;
+      border-right: 1px solid #2a2a2a;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .section-head {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #444;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #222;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    label  { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .06em; }
+
+    input[type="file"] {
+      background: #1a1a1a;
+      border: 1px solid #2e2e2e;
+      border-radius: 4px;
+      color: #e0e0e0;
+      padding: 7px 10px;
+      font-size: 13px;
+      width: 100%;
+    }
+    input[type="file"] { cursor: pointer; }
+    input[type="file"]::file-selector-button {
+      background: #2a2a2a;
+      border: none;
+      border-radius: 3px;
+      color: #ccc;
+      padding: 3px 8px;
+      margin-right: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .hint { font-size: 11px; color: #555; }
+
+    button {
+      padding: 9px 14px;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    button:disabled { opacity: .3; cursor: default; }
+
+    #load-btn     { background: #334155; color: #cbd5e1; }
+    #load-btn:not(:disabled):hover { background: #475569; }
+
+    #connect-btn  { background: #1a1a1a; border: 1px solid #333; color: #aaa; }
+    #connect-btn:not(:disabled):hover { background: #222; color: #e0e0e0; }
+
+    .preflight-row { display: flex; gap: 8px; }
+    .preflight-row button {
+      flex: 1;
+      background: #1a1a1a;
+      border: 1px solid #2e2e2e;
+      color: #888;
+      font-size: 12px;
+      padding: 7px 0;
+    }
+    .preflight-row button:not(:disabled):hover { background: #222; color: #e0e0e0; }
+
+    #run-btn  { background: #166534; color: #bbf7d0; }
+    #run-btn:not(:disabled):hover { background: #15803d; }
+
+    #dump-btn { background: #1a1a1a; border: 1px solid #333; color: #aaa; }
+    #dump-btn:not(:disabled):hover { background: #222; color: #e0e0e0; }
+
+    #stop-btn { background: #1a1a1a; border: 1px solid #7f1d1d; color: #fca5a5; }
+    #stop-btn:not(:disabled):hover { background: #450a0a; }
+
+    /* status chips */
+    .status {
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      background: #161616;
+      min-height: 30px;
+      white-space: pre-wrap;
+    }
+    .status[data-kind="working"] { color: #60a5fa; }
+    .status[data-kind="ok"]      { color: #4ade80; }
+    .status[data-kind="error"]   { color: #f87171; }
+    .status[data-kind="idle"]    { color: #555; }
+
+    #machine-state {
+      font-size: 12px;
+      font-family: monospace;
+      color: #666;
+    }
+    #machine-state[data-state="0"] { color: #4ade80; }  /* IDLE */
+    #machine-state[data-state="1"] { color: #60a5fa; }  /* RUNNING */
+    #machine-state[data-state="2"] { color: #f87171; }  /* ESTOP */
+    #machine-state[data-state="3"] { color: #f87171; }  /* ALARM */
+    #machine-state[data-state="4"] { color: #fbbf24; }  /* PAUSED */
+    #machine-state[data-state="5"] { color: #a78bfa; }  /* HOMING */
+
+    /* progress */
+    #progress-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    #progress-wrap[hidden] { display: none; }
+    #progress-bar {
+      height: 6px;
+      background: #1e1e1e;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #progress-fill {
+      height: 100%;
+      background: #166534;
+      border-radius: 3px;
+      width: 0%;
+      transition: width .1s;
+    }
+    #progress-text { font-size: 11px; color: #555; text-align: right; }
+
+    /* pause panel */
+    #pause-panel {
+      background: #1a1100;
+      border: 1px solid #713f12;
+      border-radius: 6px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #pause-panel[hidden] { display: none; }
+    #pause-panel .pause-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fbbf24;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    #swap-info { font-size: 13px; color: #fde68a; line-height: 1.7; }
+    #resume-btn {
+      background: #713f12;
+      color: #fde68a;
+      border: none;
+    }
+    #resume-btn:not(:disabled):hover { background: #92400e; }
+
+    /* ── right panel — schedule ──────────────────────────────────────────── */
+
+    .schedule-wrap {
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .schedule-title {
+      font-size: 12px;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    #schedule { display: flex; flex-direction: column; gap: 6px; }
+
+    .phase {
+      padding: 12px 14px;
+      border-radius: 5px;
+      border: 1px solid #2a2a2a;
+      background: #161616;
+      display: grid;
+      grid-template-columns: 60px 1fr auto;
+      grid-template-rows: auto auto;
+      gap: 2px 10px;
+      transition: border-color .2s, background .2s;
+    }
+    .phase.active {
+      border-color: #166534;
+      background: #0d2016;
+    }
+    .phase.done {
+      opacity: .45;
+    }
+    .phase-num {
+      font-size: 11px;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      grid-row: 1;
+    }
+    .phase-tools {
+      font-size: 13px;
+      font-weight: 600;
+      color: #e0e0e0;
+      grid-row: 1;
+    }
+    .phase-info {
+      font-size: 11px;
+      color: #555;
+      grid-row: 2;
+      grid-column: 2;
+    }
+    .phase-swap {
+      font-size: 11px;
+      color: #fbbf24;
+      grid-row: 1 / 3;
+      grid-column: 3;
+      align-self: center;
+      white-space: nowrap;
+    }
+
+    .no-plan { font-size: 13px; color: #333; padding: 20px 0; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Orchestrate</h1>
+  <span>.plan + config.json → schedule → WebSerial</span>
+  <a href="./index.html">← Bake</a>
+</header>
+
+<!-- left panel -->
+<div class="panel">
+
+  <div class="section-head">Job</div>
+
+  <div class="field">
+    <label>Config JSON</label>
+    <input type="file" id="config-input" accept=".json">
+  </div>
+
+  <div class="field">
+    <label>.plan file</label>
+    <input type="file" id="plan-input" accept=".plan">
+  </div>
+
+  <button id="load-btn">Load &amp; schedule</button>
+  <div id="load-status" class="status" data-kind="idle">No plan loaded.</div>
+
+  <div class="section-head">Machine</div>
+
+  <button id="connect-btn" disabled>Connect via WebSerial</button>
+  <div id="conn-status" class="status" data-kind="idle">Disconnected.</div>
+
+  <div class="section-head">Pre-flight</div>
+
+  <div class="preflight-row">
+    <button id="ping-btn"   disabled>Ping</button>
+    <button id="enable-btn" disabled>Enable all</button>
+    <button id="origin-btn" disabled>Set origin</button>
+  </div>
+  <div id="machine-state">—</div>
+
+  <div class="section-head">Run</div>
+
+  <button id="dump-btn" disabled>Download stream (.bin)</button>
+  <button id="run-btn" disabled>Run job</button>
+
+  <div id="pause-panel" hidden>
+    <div class="pause-title">Tool swap required</div>
+    <div id="swap-info"></div>
+    <button id="resume-btn">Done — tools swapped</button>
+  </div>
+
+  <div id="progress-wrap" hidden>
+    <div id="progress-bar"><div id="progress-fill"></div></div>
+    <div id="progress-text"></div>
+  </div>
+
+  <div id="run-status" class="status" data-kind="idle">Ready.</div>
+
+  <button id="stop-btn" disabled>Emergency stop</button>
+
+</div>
+
+<!-- right panel -->
+<div class="schedule-wrap">
+  <div class="schedule-title">Schedule</div>
+  <div id="schedule">
+    <div class="no-plan">Load a .plan to see the schedule.</div>
+  </div>
+</div>
+
+<script type="module" src="./orchestrate.js"></script>
+</body>
+</html>
