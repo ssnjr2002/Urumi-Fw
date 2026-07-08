@@ -42,13 +42,16 @@ static void sendNack(uint8_t reason) {
 // interaction) so it never delays step timing.
 static void sendStatusRsp() {
     uint8_t buf[STATUS_RSP_SIZE];
+    uint16_t bufCount = getBufCount();
     buf[0] = STATUS_RSP;
     buf[1] = machineState;
     buf[2] = axes_enabled;
     buf[3] = axes_homed;
     buf[4] = alarmReason;
     buf[5] = runningReason;
-    buf[6] = crc8(buf, STATUS_RSP_SIZE - 1);
+    buf[6] = (uint8_t)(bufCount & 0xFF);
+    buf[7] = (uint8_t)(bufCount >> 8);
+    buf[8] = crc8(buf, STATUS_RSP_SIZE - 1);
     Serial.write(buf, STATUS_RSP_SIZE);
 }
 

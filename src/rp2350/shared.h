@@ -98,10 +98,14 @@ struct MicroSegment {
 
 // Binary status request/response (mirrors the text `getstate` command):
 //   STATUS_REQ:  [0xA5]                                   (1 byte, no CRC)
-//   STATUS_RSP:  [0xA6][state][enabled][homed][alarm][running][CRC8]  (7 bytes)
+//   STATUS_RSP:  [0xA6][state][enabled][homed][alarm][running][bufCount_lo][bufCount_hi][CRC8]  (9 bytes)
+// bufCount is the number of MicroSegments currently queued in masterBuf
+// (mBufTail - mBufHead, wrapped) — including the one Core 1 is mid-executing.
+// Lets a host-side poll loop detect "buffer about to run dry" without
+// guessing from wall-clock timing (see jog_blend_ui.py's blend/decel decision).
 #define STATUS_REQ       0xA5
 #define STATUS_RSP       0xA6
-#define STATUS_RSP_SIZE  7
+#define STATUS_RSP_SIZE  9
 
 // ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
 // Normal command word : (CMD << 8) | node          — top 16 bits zero
