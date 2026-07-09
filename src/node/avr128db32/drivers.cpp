@@ -11,15 +11,10 @@ static TMC2660Stepper tmc(TMC_CS_PIN, TMC_R_SENSE);
 
 void drivers_init() {
 #if defined(TMC_2660)
-    // Configure everything once here while the bus is quiet, leaving toff NONZERO
-    // (software-enabled). Runtime on/off is the hardware EN pin only — toggling
-    // toff over SPI from loop() (with the RS485 RX ISR active) was tested and does
-    // NOT reliably energize the driver.
-    // TODO: Figure this out properly later
     SPI.begin();             // REQUIRED — TMC2660 is configured over hardware SPI
     tmc.begin();             // sets toff(8), tbl(1)
-    tmc.toff(4);             // keep software-enabled for the driver's lifetime
-    tmc.blank_time(24);
+    tmc.sdoff(0);            // Use STEP/DIR interface, this is the default behaviour 
+                             // but explicitly defined anyway
     tmc.rms_current(TMC_CURRENT);
     tmc.microsteps(TMC_MICROSTEPPING);
 
@@ -27,10 +22,22 @@ void drivers_init() {
     pinMode(DRV_M0_PIN, OUTPUT);
     pinMode(DRV_M1_PIN, OUTPUT);
     pinMode(DRV_M2_PIN, OUTPUT);
-    // 1/32 microstepping: M2=1 M1=0 M0=1
-    digitalWrite(DRV_M0_PIN, HIGH);
-    digitalWrite(DRV_M1_PIN, LOW);
-    digitalWrite(DRV_M2_PIN, HIGH);
+
+    // Map the microstep value (1-32) to its exponent/index (0-5)
+    uint8_t step_idx = 0;
+    switch (DRV_MICROSTEPPING) {
+        case 2:  step_idx = 1; break;
+        case 4:  step_idx = 2; break;
+        case 8:  step_idx = 3; break;
+        case 16: step_idx = 4; break;
+        case 32: step_idx = 5; break;
+        default: step_idx = 0; break; // Default to full-step if invalid
+    }
+
+    // Bit pos 1 goes to M0, Bit pos 2 goes to M1, Bit pos 3 goes to M2.
+    digitalWrite(DRV_M0_PIN, (step_idx & 0x01) ? HIGH : LOW);
+    digitalWrite(DRV_M1_PIN, (step_idx & 0x02) ? HIGH : LOW);
+    digitalWrite(DRV_M2_PIN, (step_idx & 0x04) ? HIGH : LOW);
 
 #elif defined(DM542)
     // No extra init required; EN pin handled by MOTOR_ENABLE/DISABLE macros
@@ -38,8 +45,12 @@ void drivers_init() {
 }
 
 #ifdef TMC_2660
-// Runtime on/off via the hardware EN pin (ENN active-low); toff stays nonzero.
-// Runtime toff-over-SPI was tested and does not energize the driver reliably.
-void drivers_enable()  { digitalWrite(EN_PIN, LOW);  }
-void drivers_disable() { digitalWrite(EN_PIN, HIGH); }
+void drivers_enable()  { 
+    tmc.toff(8);                     // Set toff
+    ENABLE_PORT.OUTCLR = ENABLE_BM;  // EN pin low
+}
+void drivers_disable() { 
+    tmc.toff(0);                     // toff zero
+    ENABLE_PORT.OUTSET = ENABLE_BM;  // EN pin high
+}
 #endif
