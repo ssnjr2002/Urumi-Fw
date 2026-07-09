@@ -63,11 +63,16 @@
 
 // TMC2660 SPI
 #ifdef TMC_2660
-#define TMC_CS_PIN        PIN_PA7
-#define TMC_CURRENT       400   // mA RMS — MATCH THE MOTOR. NEMA 11 ~0.5-0.67A;
-                                // NEMA 23 was 2000. Too high mismatches the chopper.
-#define TMC_MICROSTEPPING 16
-#define TMC_R_SENSE       0.1f
+#define TMC_CS_PIN            PIN_PA7
+#ifndef TMC_CURRENT
+    #define TMC_CURRENT       1000 // in mA
+#endif
+#ifndef TMC_MICROSTEPPING
+    #define TMC_MICROSTEPPING 32
+#endif
+#ifndef TMC_R_SENSE
+    #define TMC_R_SENSE       0.1f
+#endif
 #endif
 
 // DRV8825 microstepping pins
@@ -75,7 +80,9 @@
 #define DRV_M0_PIN        PIN_PA4
 #define DRV_M1_PIN        PIN_PA6
 #define DRV_M2_PIN        PIN_PA7
-#define DRV_MICROSTEPPING 32
+#ifndef DRV_MICROSTEPPING
+    #define DRV_MICROSTEPPING 32
+#endif
 #endif
 
 // Driver enable polarity
@@ -86,7 +93,6 @@
 #define MOTOR_ENABLE()   ENABLE_PORT.OUTSET = ENABLE_BM  // HIGH = enabled
 #define MOTOR_DISABLE()  ENABLE_PORT.OUTCLR = ENABLE_BM
 #elif defined(TMC_2660)
-// Enable/disable via SPI in drivers.cpp; EN pin not used for power state
 void drivers_enable();
 void drivers_disable();
 #define MOTOR_ENABLE()   drivers_enable()
