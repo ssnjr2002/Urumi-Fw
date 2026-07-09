@@ -107,7 +107,7 @@ static bool __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
         while ((rp2040.getCycleCount() - t0) < ms.interval) {
             if (machineState == STATE_ESTOP) return false;
         }
-        t0 += ms.interval;
+        t0 += ms.interval; // ms = microsegment, not to be confused with millisecond
 
         rs485.writeStream(streamByte);
     }

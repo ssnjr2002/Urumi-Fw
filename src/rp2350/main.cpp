@@ -1,43 +1,5 @@
-// Raspberry Pi Pico 2 — RS485 master matching ATTINY_Custom_Slave protocol
-//
-// Custom RS485 protocol — same framing style as tomrodinger/servomotor
-//
-// Frame structure (request):
-//   [SIZE] [ADDR] [CMD] [PAYLOAD...] [CRC16 LE 2 bytes]
-//   SIZE = ((remaining_bytes_after_size) << 1) | 1
-//   LSB of SIZE is always 1 — used for self-synchronizing frame detection
-//
-// Frame structure (response):
-//   [SIZE] [STATUS] [DATA...] [CRC16 LE 2 bytes]
-//   STATUS: 0x00=ok/no data, 0x01=ok/data follows, 0xFF=error
-//
-// Broadcast address 0xFF: all slaves execute, none respond.
-//
-// Commands (match slave exactly):
-//   0x01 CMD_PING    → reply: node_id (1 byte)
-//   0x02 CMD_QUEUE   → payload: dir(1)+steps(2 LE)+speed(2 LE)
-//                    → reply: buf_free (1 byte);
-//   0x03 CMD_GO      → broadcast: start all armed motors simultaneously
-//   0x04 CMD_STOP    → stop immediately, clear buffer; reply: STATUS_OK if not broadcast
-//   0x05 CMD_STATUS  → reply: running(1)+buf_used(1)+buf_free(1)+steps_remaining(2)
-//   0x06 CMD_ENABLE  → payload: enable(1); reply: STATUS_OK if not broadcast
-//
-// Wiring (SP3485EN):
-//   GP4 TX → DI,  GP5 RX ← RO,  GP6 → DE+/RE
-//
-// CoreXY node map:
-//   Node 1 = Motor A,  Node 2 = Motor B,  Node 3 = Z (pen)
-//   Motor A steps = dx + dy
-//   Motor B steps = dx - dy
-//
-// USB commands:
-//   ping <addr>
-//   enable <addr|all> <0|1>
-//   stop
-//   <addr> f/b <steps> [sps]            — single-axis jog
-//   xy <dx> <dy> [sps]                   — CoreXY in steps (signed)
-//   rect <W_mm> <H_mm> [speed_mm_s]     — draw rectangle
-//   circle <R_mm> [speed_mm_s] [segs]   — draw circle
+// Initialisation point, mainly used to initiailse the 
+// Cross-Core Global Variables before they go their separate ways
 
 #include <Arduino.h>
 #include "shared.h"
