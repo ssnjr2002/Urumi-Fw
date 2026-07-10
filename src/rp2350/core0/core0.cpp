@@ -1,7 +1,7 @@
 // Core 0: USB serial ingest — text commands + binary MicroSegment packets
 
 #include <Arduino.h>
-#include "shared.h"
+#include "../shared.h"
 #include "hardware/sync.h"
 
 // ─── Local State ──────────────────────────────────────────────────────────────

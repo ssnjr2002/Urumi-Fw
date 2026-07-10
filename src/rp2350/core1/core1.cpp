@@ -11,8 +11,8 @@
 //   Bits 7-6 : Node 4
 
 #include <Arduino.h>
-#include "shared.h"
-#include "RS485Bus.h"
+#include "../shared.h"
+#include "bus/RS485Bus.h"
 #include "hardware/gpio.h"
 
 RS485Bus rs485;
