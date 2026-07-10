@@ -59,8 +59,10 @@ void configStoreInit();
 uint8_t* configStageBuf();
 
 // Commit the first `len` bytes of the staging buffer to the inactive slot.
-// `crc` is the caller's CRC32 of those bytes (recomputed and checked here).
+// `crc` is the caller's CRC32 of those bytes — the caller MUST have verified it
+// against the staged bytes (the receiver does this incrementally); it is stored
+// in the header and used for the post-flash readback verify, not recomputed here.
 // Quiesces Core 1, erases+programs the inactive slot, readback-verifies, and on
 // success atomically swaps g_cfg. Returns false and sets *nack (CFG_NACK_*) on
-// bad state / size / CRC / flash-verify — leaving the previous config active.
+// bad state / size / flash-verify — leaving the previous config active.
 bool configStoreCommit(uint32_t len, uint32_t crc, uint8_t* nack);

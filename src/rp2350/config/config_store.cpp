@@ -94,11 +94,15 @@ static void core1FlashRelease() {
 
 bool configStoreCommit(uint32_t len, uint32_t crc, uint8_t* nack) {
     // Validate before touching flash — cheap rejects leave the active slot alone.
+    // The caller (data-plane receiver) has already verified `crc` against the
+    // staged bytes via its incremental CRC32, so we do NOT recompute it here — the
+    // post-flash readback below is the remaining integrity gate. A caller passing
+    // an inconsistent (buffer, crc) pair still cannot corrupt the active config:
+    // readback would fail and the cache swap is skipped.
     if (machineState != STATE_IDLE && machineState != STATE_ALARM) {
         *nack = CFG_NACK_BAD_STATE; return false;
     }
     if (len == 0 || len > CFG_MAX_BYTES) { *nack = CFG_NACK_TOO_BIG; return false; }
-    if (crc32(cfgStage, len) != crc)     { *nack = CFG_NACK_CRC;     return false; }
     if (!cfgRegionOk())                  { *nack = CFG_NACK_FLASH;   return false; }
 
     // Target the inactive slot; the active one stays intact until we commit.
