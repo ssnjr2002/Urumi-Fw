@@ -13,6 +13,7 @@
 #include "control_plane.h"
 #include "data_plane.h"
 #include "status.h"
+#include "../config/config_store.h"
 
 // ─── Text line assembly ───────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ void processSerial() {
 void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 10000) {}
+    configStoreInit();   // cold-boot scan: populate g_cfg from flash (pure reads)
 }
 
 void loop() {

@@ -43,6 +43,10 @@ volatile bool    soft_reset_requested = true;  // Starts true so Core 1 parks on
                                                 // Core 0 also sets this itself at loop() entry.
 volatile bool    core1_is_parked      = false; // Flag when core1 is parked
 
+// Flash-Quiesce Handshake Flags (config store) — see shared.h.
+volatile bool    flash_op_requested     = false;
+volatile bool    core1_parked_for_flash = false;
+
 // Job timing diagnostic (see shared.h) — gated behind DEBUG_TIMING
 #ifdef DEBUG_TIMING
 volatile uint32_t jobExpectedUs = 0;

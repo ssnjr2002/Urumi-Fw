@@ -78,6 +78,20 @@ struct MicroSegment {
 #define STATUS_RSP       0xA6
 #define STATUS_RSP_SIZE  9
 
+// ─── Config Blob Store (docs/config_storage.md) ───────────────────────────────
+// Host↔Pico USB opcodes for the opaque msgpack config blob. Bit 7 set, so they
+// stay disjoint from lowercase-ASCII control-plane text. The chunked SET
+// transfer framing is defined with the receiver (data plane); these are the
+// dispatch magics + the stored-blob size ceiling and NACK reasons.
+#define CFG_SET_MAGIC    0xB0   // Host→Pico: begin config write (chunked payload)
+#define CFG_GET_MAGIC    0xB1   // Host→Pico: stream back the active blob
+#define CFG_MAX_BYTES    32768u // hard ceiling on a stored blob (8 flash sectors)
+
+#define CFG_NACK_CRC       0x01 // CRC32 mismatch on the staged blob
+#define CFG_NACK_TOO_BIG   0x02 // length 0 or > CFG_MAX_BYTES
+#define CFG_NACK_BAD_STATE 0x03 // write rejected — machine not IDLE/ALARM
+#define CFG_NACK_FLASH     0x04 // flash readback verify failed (or region too small)
+
 // ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
 // Normal command word : (CMD << 8) | node          — top 16 bits zero
 // Debug step word      : (FIFO_STEP_DEBUG << 24) | (node << 16) | (count & 0xFFFF)
@@ -183,6 +197,17 @@ extern volatile bool    streamIsJog;
 // Soft-Reset Handshake Flags
 extern volatile bool    soft_reset_requested;
 extern volatile bool    core1_is_parked;
+
+// Flash-Quiesce Handshake Flags (config store).
+// A flash erase/program stalls XIP for both cores, so Core 0 must stop Core 1
+// executing from flash before touching it. This is SEPARATE from the soft-reset
+// handshake: a config write must NOT wipe machine state (position/homing), so it
+// cannot reuse soft_reset_requested. Core 0 sets flash_op_requested and waits for
+// core1_parked_for_flash; Core 1 acks by spinning in a RAM-resident park loop
+// (see core1.cpp) until the flag clears. Only asserted in IDLE/ALARM, where Core
+// 1 is idle between segments — never mid-motion.
+extern volatile bool    flash_op_requested;
+extern volatile bool    core1_parked_for_flash;
 
 // Job timing diagnostic (owned by Core 1, reset at each RUNNING transition).
 // Gated behind DEBUG_TIMING (define it in platformio.ini build_flags to enable).

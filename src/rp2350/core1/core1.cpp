@@ -14,8 +14,22 @@
 #include "../shared.h"
 #include "bus/RS485Bus.h"
 #include "hardware/gpio.h"
+#include "hardware/sync.h"
 
 RS485Bus rs485;
+
+// RAM-resident park for a Core 0 flash op. MUST NOT execute from flash: the
+// erase/program stalls XIP, so a flash-resident spin here would fault. Ack by
+// setting core1_parked_for_flash, spin until Core 0 clears flash_op_requested,
+// then release. Only entered in IDLE/ALARM (Core 0 gates config writes there),
+// so no motion is ever interrupted. See shared.h flash-quiesce handshake.
+static void __not_in_flash_func(core1FlashPark)() {
+    core1_parked_for_flash = true;
+    __dmb();
+    while (flash_op_requested) tight_loop_contents();
+    core1_parked_for_flash = false;
+    __dmb();
+}
 
 // ─── Local Helpers ────────────────────────────────────────────────────────────
 
@@ -360,6 +374,7 @@ void setup1() {
         // ══════════════════════════════════════════════════════════
         // Run tight timing code as long as Core 0 doesn't request a reset
         while (!soft_reset_requested) {
+            if (flash_op_requested) core1FlashPark();   // config write — quiesce XIP
             processBus();
         }
 
