@@ -152,7 +152,6 @@ static void __time_critical_func(processMicroSegments)() {
             return;
         }
 
-        // Abort without accumulating if estop cut the segment short
 #ifdef DEBUG_TIMING
         // Timing diagnostic: expected duration from intervals vs wall time by
         // the 1 MHz hardware timer (independent of the cycle-counter domain)
@@ -166,7 +165,7 @@ static void __time_critical_func(processMicroSegments)() {
         }
         uint32_t tStart = micros();
 #endif
-
+        // Abort without accumulating if estop cut the segment short
         if (!emitMicroSegment(ms)) return;
 
 #ifdef DEBUG_TIMING
@@ -247,13 +246,7 @@ static void emitDebugSteps(uint32_t req) {
     axes_homed = 0;
 }
 
-// ─── Core 1 Setup & Loop ──────────────────────────────────────────────────────
-
-void setup1() {
-    rs485.begin(RS485_BAUD, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
-}
-
-void loop1() {
+void processBus() {
     // 1. Estop — flush the queue, invalidate position, settle into ALARM.
     //    ALARM is sticky until Core 0 issues setorigin / unalarm.
     if (machineState == STATE_ESTOP) {
@@ -327,3 +320,63 @@ void loop1() {
         delayMicroseconds(10);
     }
 }
+
+// ─── Core 1 Setup & Loop ──────────────────────────────────────────────────────
+
+// setup1() never returns: after the framework's one-time hardware init it
+// runs the park -> init -> run -> disable -> park cycle directly, forever.
+// This is deliberately not loop1() — nothing here needs to yield back to the
+// framework each pass, so pretending it's a per-frame callback was misleading.
+// loop1() is left as an empty stub only because the framework requires it to
+// exist; it will never actually run.
+void setup1() {
+    rs485.begin(RS485_BAUD, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
+
+    for (;;) {
+        // ══════════════════════════════════════════════════════════
+        // ─── 1: THE PARKING LOT ─────────────────────────────
+        // ══════════════════════════════════════════════════════════
+        // soft_reset_requested starts true, so this is also the cold-boot
+        // gate: Core 1 touches nothing (not even the RS485 hardware beyond
+        // rs485.begin() above) until Core 0 has finished its first wipe and
+        // cleared the flag.
+        core1_is_parked = true;
+        while (soft_reset_requested) {
+            delay(1);
+        }
+        core1_is_parked = false;
+
+        // ══════════════════════════════════════════════════════════
+        // ─── 2: POST-RESET HARDWARE INIT ────────────────────
+        // ══════════════════════════════════════════════════════════
+        // Core 0 just gave us the green light.
+        // Flush RS485 UART, ensure motor pins are LOW/Disabled, etc.
+        while (!rs485.txEmpty());
+        rs485.flushRX();
+        rs485.writeStream(0); // NOP stream byte to reset slave parsers
+
+        // ══════════════════════════════════════════════════════════
+        // ─── 3: MAIN EXECUTION LOOP ─────────────────────────
+        // ══════════════════════════════════════════════════════════
+        // Run tight timing code as long as Core 0 doesn't request a reset
+        while (!soft_reset_requested) {
+            processBus();
+        }
+
+        // ══════════════════════════════════════════════════════════
+        // ─── 4: DISABLE NODES ───────────────────────────────
+        // ══════════════════════════════════════════════════════════
+        // We only reach this line if soft_reset_requested became true!
+        // TODO: deliberate if a proper reset handler should be put in
+        // the node side
+        for (uint8_t node = 1; node <= 4; node++) {
+            uint8_t pkt[4] = {node, CMD_DISABLE, 0, 0};
+            sendPacket(pkt, 4);
+            receivePacket(node, CMD_DISABLE, nullptr, RESPONSE_TIMEOUT_MS); // simply consume the return message
+        }
+
+        // Loop back to the parking lot.
+    }
+}
+
+void loop1() {}

@@ -1,5 +1,13 @@
-// Initialisation point, mainly used to initiailse the 
-// Cross-Core Global Variables before they go their separate ways
+// ──────────────────────────────────────────────────────────────────────────────
+// Global Memory Allocation
+// 
+// This file allocates the physical RAM for the Cross-Core Global Variables 
+// declared in shared.h. 
+// 
+// Note: While variables are given default zero-values here for safety, the 
+// actual initialization of the machine state happens in core0.cpp during the 
+// Soft Reset Sequence.
+// ──────────────────────────────────────────────────────────────────────────────
 
 #include <Arduino.h>
 #include "shared.h"
@@ -28,6 +36,12 @@ volatile int32_t resumePos[4]   = {0, 0, 0, 0};
 // Inter-core request flags
 volatile bool    pauseRequested = false;
 volatile bool    streamIsJog    = false;
+
+// Soft-Reset Handshake Flags
+volatile bool    soft_reset_requested = true;  // Starts true so Core 1 parks on cold boot
+                                                // and waits for Core 0's first wipe-and-release;
+                                                // Core 0 also sets this itself at loop() entry.
+volatile bool    core1_is_parked      = false; // Flag when core1 is parked
 
 // Job timing diagnostic (see shared.h) — gated behind DEBUG_TIMING
 #ifdef DEBUG_TIMING

@@ -180,6 +180,10 @@ extern volatile int32_t resumePos[4];
 extern volatile bool    pauseRequested;
 extern volatile bool    streamIsJog;
 
+// Soft-Reset Handshake Flags
+extern volatile bool    soft_reset_requested;
+extern volatile bool    core1_is_parked;
+
 // Job timing diagnostic (owned by Core 1, reset at each RUNNING transition).
 // Gated behind DEBUG_TIMING (define it in platformio.ini build_flags to enable).
 //   expected = sum of interval*maxSteps converted to us at F_CPU

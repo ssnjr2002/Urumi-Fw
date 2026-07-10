@@ -141,6 +141,15 @@ static bool handleCommand(const String& input) {
         Serial.println("ok");
         return true;
     }
+    if (input == "reset" || input == "rst") {
+        if (machineState != STATE_IDLE && machineState != STATE_ALARM) {
+            Serial.println("err bad_state");
+            return true;
+        }
+        soft_reset_requested = true;           // Exits loop(), triggers soft reset
+        Serial.println("ok");
+        return true;
+    }
     if (input == "seqreset") {                 // data-plane support (see wire doc)
         expectedSeq = 0;
         pktSeq      = 0;
@@ -383,7 +392,7 @@ static void processBinaryByte(uint8_t b) {
 // are dispatched here; any other byte is treated as the start of a text line.
 
 void processSerial() {
-    while (Serial.available()) {
+    while (Serial.available() && !soft_reset_requested) {
         uint8_t b = (uint8_t)Serial.read();
 
         // If we're mid-packet, feed every byte to the binary state machine
@@ -425,13 +434,67 @@ void processSerial() {
 void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 10000) {}
-    Serial.printf("RS485 MicroSegment Host Drive (%d baud)\n", RS485_BAUD);
 }
 
 void loop() {
-    processSerial();
-    // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
-    // responses synchronously inside handleCommand (relayNode), so there is no
-    // async response stream to drain here. Backpressure is handled by the
-    // windowed sender via NACK_FULL, not an out-of-band "ready" line.
+    // ══════════════════════════════════════════════════════════
+    // ─── A: THE SOFT RESET SEQUENCE ─────────────────────
+    // ══════════════════════════════════════════════════════════
+    
+    // 1. Tell Core 1 to stop working
+    soft_reset_requested = true;
+
+    // 2. Wait for Core 1 to safely finish its current operation and park
+    while (!core1_is_parked) {
+        delay(1);
+    }
+
+    // --- CORE 1 IS NOW LOCKED ---
+    // It is 100% safe to wipe cross-core variables without mutexes.
+
+    // 3. Flush USB Serial (discard any half-received junk)
+    while (Serial.available()) {
+        Serial.read();
+    }
+
+    // 4. Flush hardware FIFOs
+    multicore_fifo_drain();
+
+    // 5. WIPE ALL GLOBAL STATE (Clean Slate!)
+    mBufHead = 0;
+    mBufTail = 0;
+    machineState = STATE_IDLE;
+    alarmReason = ALARM_NONE;
+    runningReason = RUNNING_JOB;
+    machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
+    axes_homed = 0;
+    axes_enabled = 0;
+    jobActive = false;
+    resumePos[0] = resumePos[1] = resumePos[2] = resumePos[3] = 0;
+    pauseRequested = false;
+    streamIsJog = false;
+    __dmb();
+
+    // 5b. WIPE LOCAL INGEST STATE
+    serialRxLen = 0;
+    inPacket    = false;
+    pktIdx      = 0;
+    expectedSeq = 0;
+    pktSeq      = 0;
+    
+    // 6. Release Core 1 to start working again
+    soft_reset_requested = false;
+
+    // ══════════════════════════════════════════════════════════
+    // ─── B: MAIN EXECUTION ──────────────────────────────
+    // ══════════════════════════════════════════════════════════
+    Serial.printf("RS485 MicroSegment Host Drive (%d baud)\n", RS485_BAUD);
+    
+    while (!soft_reset_requested) {
+        processSerial();
+        // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
+        // responses synchronously inside handleCommand (relayNode), so there is no
+        // async response stream to drain here. Backpressure is handled by the
+        // windowed sender via NACK_FULL, not an out-of-band "ready" line.
+    }
 }
