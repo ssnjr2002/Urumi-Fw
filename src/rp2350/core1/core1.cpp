@@ -354,11 +354,11 @@ void setup1() {
         // gate: Core 1 touches nothing (not even the RS485 hardware beyond
         // rs485.begin() above) until Core 0 has finished its first wipe and
         // cleared the flag.
-        core1_is_parked = true;
+        core1_parked_for_reset = true;
         while (soft_reset_requested) {
             delay(1);
         }
-        core1_is_parked = false;
+        core1_parked_for_reset = false;
 
         // ══════════════════════════════════════════════════════════
         // ─── 2: POST-RESET HARDWARE INIT ────────────────────

@@ -72,7 +72,7 @@ void loop() {
     soft_reset_requested = true;
 
     // 2. Wait for Core 1 to safely finish its current operation and park
-    while (!core1_is_parked) {
+    while (!core1_parked_for_reset) {
         delay(1);
     }
 

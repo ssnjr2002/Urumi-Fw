@@ -196,7 +196,7 @@ extern volatile bool    streamIsJog;
 
 // Soft-Reset Handshake Flags
 extern volatile bool    soft_reset_requested;
-extern volatile bool    core1_is_parked;
+extern volatile bool    core1_parked_for_reset;
 
 // Flash-Quiesce Handshake Flags (config store).
 // A flash erase/program stalls XIP for both cores, so Core 0 must stop Core 1
