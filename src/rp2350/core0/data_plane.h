@@ -10,6 +10,11 @@
 // text-line byte), which the caller then handles.
 bool dataPlaneConsume(uint8_t b);
 
+// Time-based housekeeping — call once per Core 0 loop pass. Aborts a CFG_SET
+// transfer that has stalled past CFG_RX_TIMEOUT_MS (byte-driven receive cannot
+// self-timeout).
+void dataPlaneTick();
+
 // Soft-reset wipe: clear all ingest state (mid-packet buffer + duplicate-guard
 // seq / ACK echo counters).
 void dataPlaneReset();

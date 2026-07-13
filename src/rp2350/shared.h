@@ -79,18 +79,25 @@ struct MicroSegment {
 #define STATUS_RSP_SIZE  9
 
 // ─── Config Blob Store (docs/config_storage.md) ───────────────────────────────
-// Host↔Pico USB opcodes for the opaque msgpack config blob. Bit 7 set, so they
-// stay disjoint from lowercase-ASCII control-plane text. The chunked SET
-// transfer framing is defined with the receiver (data plane); these are the
-// dispatch magics + the stored-blob size ceiling and NACK reasons.
-#define CFG_SET_MAGIC    0xB0   // Host→Pico: begin config write (chunked payload)
-#define CFG_GET_MAGIC    0xB1   // Host→Pico: stream back the active blob
-#define CFG_MAX_BYTES    32768u // hard ceiling on a stored blob (8 flash sectors)
+// USB opcodes for the opaque msgpack config blob. Host→Pico magics have bit 7
+// set, disjoint from lowercase-ASCII control-plane text. CFG_SET is a two-phase
+// transfer: host sends the header, Pico replies CFG_RDY (or CFG_NACK), then host
+// streams the payload; see docs/config_storage.md §5 for the full framing.
+#define CFG_SET_MAGIC     0xB0  // Host→Pico: config write — header, then (on RDY) payload
+#define CFG_GET_MAGIC     0xB1  // Host→Pico: request the active blob
+#define CFG_RDY           0xB2  // Pico→Host: header accepted — send payload
+#define CFG_ACK           0xB3  // Pico→Host: blob committed
+#define CFG_NACK          0xB4  // Pico→Host: rejected — next byte is the reason
+#define CFG_DATA          0xB5  // Pico→Host: CFG_GET response header
+
+#define CFG_MAX_BYTES     32768u // hard ceiling on a stored blob (8 flash sectors)
+#define CFG_RX_TIMEOUT_MS 2000u  // inter-byte timeout during a CFG_SET transfer
 
 #define CFG_NACK_CRC       0x01 // CRC32 mismatch on the staged blob
 #define CFG_NACK_TOO_BIG   0x02 // length 0 or > CFG_MAX_BYTES
 #define CFG_NACK_BAD_STATE 0x03 // write rejected — machine not IDLE/ALARM
 #define CFG_NACK_FLASH     0x04 // flash readback verify failed (or region too small)
+#define CFG_NACK_TIMEOUT   0x05 // transfer stalled — no byte within CFG_RX_TIMEOUT_MS
 
 // ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
 // Normal command word : (CMD << 8) | node          — top 16 bits zero

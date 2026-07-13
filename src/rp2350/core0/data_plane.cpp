@@ -43,6 +43,7 @@ static uint32_t cfgLen     = 0;    // expected payload length
 static uint32_t cfgCrc     = 0;    // host-declared CRC32
 static uint32_t cfgRxCnt   = 0;    // payload bytes received so far
 static uint32_t cfgRunCrc  = 0;    // incremental CRC32 accumulator (pre-final-XOR)
+static uint32_t cfgLastMs  = 0;    // millis() of last CFG byte — inter-byte timeout
 
 static inline uint32_t crc32Byte(uint32_t crc, uint8_t b) {
     crc ^= b;
@@ -66,11 +67,9 @@ static void sendNack(uint8_t reason) {          // shared 3-byte NACK frame
     Serial.write((uint8_t)0x00);
 }
 
-static void sendCfgAck() {                      // config write ACK (no seq window)
-    Serial.write(MSEG_ACK);
-    Serial.write((uint8_t)0x00);
-    Serial.write((uint8_t)0x00);
-}
+static void sendCfgRdy()           { Serial.write(CFG_RDY); }   // header ok — send payload
+static void sendCfgAck()           { Serial.write(CFG_ACK); }   // committed
+static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
 // ─── Fixed-26 packet state machine ────────────────────────────────────────────
 // Receives bytes [1..25]; byte [0] (magic) was stored by the dispatcher.
@@ -148,50 +147,57 @@ static void feedFixed26(uint8_t b) {
     sendAck();
 }
 
-// ─── CFG_SET receiver ─────────────────────────────────────────────────────────
-// Header (8 B) then `length` payload bytes staged into configStageBuf() with the
-// CRC32 folded as they arrive. On completion, verify against the host CRC and
-// commit. A single incremental pass is the transfer-integrity gate — no separate
-// buffer walk before the flash write.
+// ─── CFG_SET receiver (two-phase) ─────────────────────────────────────────────
+// Phase 1: 8-byte header (length + crc32). Validate size and machine state, then
+//          reply CFG_RDY (or CFG_NACK). A well-behaved host waits for CFG_RDY
+//          before sending payload, so an early NACK cannot desync the stream.
+// Phase 2: `length` payload bytes staged into configStageBuf(), CRC32 folded as
+//          they land (one pass — the transfer-integrity gate), then commit.
+// A stalled transfer is aborted by dataPlaneTick() via the inter-byte timeout.
 
 static void feedCfg(uint8_t b) {
-    if (cfgHdrIdx < sizeof(cfgHdr)) {
+    cfgLastMs = millis();
+
+    if (cfgHdrIdx < sizeof(cfgHdr)) {           // ── phase 1: header ──
         cfgHdr[cfgHdrIdx++] = b;
         if (cfgHdrIdx < sizeof(cfgHdr)) return;
         memcpy(&cfgLen, &cfgHdr[0], 4);
         memcpy(&cfgCrc, &cfgHdr[4], 4);
-        // Reject an impossible length up front — we cannot safely consume a
-        // multi-GB count. (USB CDC is reliable, so this only fires on a host bug.)
         if (cfgLen == 0 || cfgLen > CFG_MAX_BYTES) {
-            sendNack(CFG_NACK_TOO_BIG);
-            rxKind = RX_NONE;
+            sendCfgNack(CFG_NACK_TOO_BIG); rxKind = RX_NONE; return;
         }
+        if (machineState != STATE_IDLE && machineState != STATE_ALARM) {
+            sendCfgNack(CFG_NACK_BAD_STATE); rxKind = RX_NONE; return;
+        }
+        cfgRxCnt  = 0;
+        cfgRunCrc = 0xFFFFFFFFu;
+        sendCfgRdy();                           // go — host may now stream payload
         return;
     }
 
-    configStageBuf()[cfgRxCnt] = b;
+    configStageBuf()[cfgRxCnt] = b;             // ── phase 2: payload ──
     cfgRunCrc = crc32Byte(cfgRunCrc, b);
     if (++cfgRxCnt < cfgLen) return;
 
     rxKind = RX_NONE;                           // transfer complete
     if ((~cfgRunCrc) != cfgCrc) {               // final XOR, compare to host CRC
-        sendNack(CFG_NACK_CRC);
+        sendCfgNack(CFG_NACK_CRC);
         return;
     }
 
     uint8_t nack;
     if (configStoreCommit(cfgLen, cfgCrc, &nack)) sendCfgAck();
-    else                                          sendNack(nack);
+    else                                          sendCfgNack(nack);
 }
 
 // ─── CFG_GET responder ────────────────────────────────────────────────────────
-// [0xB1][length u32 LE][crc32 u32 LE][payload]. length 0 = no config stored.
+// [CFG_DATA][length u32 LE][crc32 u32 LE][payload]. length 0 = no config stored.
 // Payload streams straight from XIP; crc is recomputed (GET is a one-shot fetch).
 
 static void handleCfgGet() {
     uint32_t len = g_cfg.length;
     uint32_t crc = (len && g_cfg.addr) ? crc32(g_cfg.addr, len) : 0u;
-    Serial.write(CFG_GET_MAGIC);
+    Serial.write(CFG_DATA);
     Serial.write((const uint8_t*)&len, 4);
     Serial.write((const uint8_t*)&crc, 4);
     if (len && g_cfg.addr) Serial.write(g_cfg.addr, len);
@@ -214,9 +220,8 @@ bool dataPlaneConsume(uint8_t b) {
         return true;
     }
     if (b == CFG_SET_MAGIC) {
-        cfgHdrIdx = 0;
-        cfgRxCnt  = 0;
-        cfgRunCrc = 0xFFFFFFFFu;
+        cfgHdrIdx = 0;                          // payload counters init after header (phase 1)
+        cfgLastMs = millis();
         rxKind    = RX_CFG;
         return true;
     }
@@ -225,6 +230,16 @@ bool dataPlaneConsume(uint8_t b) {
         return true;
     }
     return false;                               // control-plane (text) byte
+}
+
+// Abort a stalled CFG_SET transfer. Called every Core 0 loop pass so the timeout
+// fires even when no bytes arrive (feedCfg is byte-driven and would otherwise
+// wait forever). A stall would else wedge the whole data plane in RX_CFG.
+void dataPlaneTick() {
+    if (rxKind == RX_CFG && (millis() - cfgLastMs) > CFG_RX_TIMEOUT_MS) {
+        rxKind = RX_NONE;
+        sendCfgNack(CFG_NACK_TIMEOUT);
+    }
 }
 
 void dataPlaneReset() {

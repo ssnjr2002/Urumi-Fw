@@ -118,6 +118,7 @@ void loop() {
 
     while (!soft_reset_requested) {
         processSerial();
+        dataPlaneTick();   // abort a stalled CFG_SET transfer (inter-byte timeout)
         // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
         // responses synchronously inside handleCommand (relayNode), so there is no
         // async response stream to drain here. Backpressure is handled by the
