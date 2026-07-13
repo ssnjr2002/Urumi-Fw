@@ -1,5 +1,4 @@
-import { parseConfig } from "../config/configLoader.js";
-import { bakePlan } from "../production/bakePlan.js";
+import { parseConfig, bakePlan } from "../index.js";
 
 // ── elements ──────────────────────────────────────────────────────────────────
 

@@ -1,16 +1,32 @@
 {
-  "name": "web",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@fablab/cnc-toolpath",
+  "version": "0.1.0",
+  "description": "SVG + machine config → .plan → schedule → wire packets, for the ATtiny3224 x RP2350 RS485 CNC motion controller. TypeScript, ESM, zero runtime dependencies.",
   "type": "module",
-  "description": "Browser-side port of the host pipeline (config + toolpath) for the ATtiny3224 x RP2350 RS485 CNC motion controller.",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "demo": "vite demo --open"
+    "demo": "vite demo --open",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",

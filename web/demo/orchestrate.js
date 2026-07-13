@@ -11,14 +11,19 @@
  *        motion → sendStream (MSEG Go-Back-N), then poll until IDLE
  */
 
-import { parseConfig }    from '../config/configLoader.js';
-import { loadPlan }       from '../plan/src/planFile.js';
-import { scheduleMounts } from '../orchestrate/src/schedule.js';
-import { walkSchedule }   from '../orchestrate/src/walk.js';
+import {
+    parseConfig,
+    loadPlan,
+    scheduleMounts,
+    walkSchedule,
+    packMicrosegment,
+    writeStream,
+    MICRO_JOG,
+    MICRO_LIFT,
+    MICRO_PAUSE,
+    TOOL_PROFILES_BY_TYPE,
+} from '../index.js';
 import { SerialTransport, STATE_IDLE, STATE_PAUSED, STATE_ESTOP, STATE_ALARM } from './transport.js';
-import { packMicrosegment, writeStream } from '../wire/src/packet.js';
-import { MICRO_JOG, MICRO_LIFT, MICRO_PAUSE } from '../wire/src/microsegment.js';
-import { TOOL_PROFILES_BY_TYPE } from '../config/config.js';
 
 // ── elements ──────────────────────────────────────────────────────────────────
 

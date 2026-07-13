@@ -10,8 +10,11 @@
  *
  * All loadSvg* functions take SVG text (not a file path) — the caller is
  * responsible for reading the file (fetch, FileReader, etc.). XML parsing
- * uses the standard DOMParser API (native in browsers; polyfilled in Node
- * tests via @xmldom/xmldom setup in test-setup.ts).
+ * defaults to the global DOMParser API (native in browsers). In environments
+ * without a global DOMParser (Node), a consumer injects one once at startup via
+ * setDOMParser() — e.g. `setDOMParser(() => new (require("@xmldom/xmldom").DOMParser)())`.
+ * The Node test suite installs the polyfill on globalThis in test-setup.ts, so
+ * the default path already resolves there.
  *
  * Curve primitives (Pt, CubicBezier, cubic, KAPPA, lineToCubic, quadToCubic)
  * live in ../toolpath/geometry.ts — they are geometric entities, not SVG
@@ -329,9 +332,30 @@ function layerLabel(el: Element): string | null {
     return el.getAttributeNS(INKSCAPE_NS, "label") || el.getAttribute("id");
 }
 
+/**
+ * Minimal structural type for a DOMParser — anything with parseFromString that
+ * yields a document with a documentElement. Both the native browser DOMParser
+ * and @xmldom/xmldom satisfy this.
+ */
+export interface DOMParserLike {
+    parseFromString(source: string, mimeType: string): { documentElement: Element | null };
+}
+
+/** Default: use the global DOMParser (browsers, or a globalThis polyfill). */
+let domParserFactory: () => DOMParserLike = () => new DOMParser();
+
+/**
+ * Override the parser used by all loadSvg* functions. Call once at startup.
+ * Node consumers without a global DOMParser inject one here (e.g. @xmldom/xmldom).
+ * Passing null/undefined restores the global-DOMParser default.
+ */
+export function setDOMParser(factory: (() => DOMParserLike) | null | undefined): void {
+    domParserFactory = factory ?? (() => new DOMParser());
+}
+
 /** Parse SVG text into a root Element. Throws if not a valid SVG document. */
 function parseSvgRoot(svgText: string): Element {
-    const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+    const doc = domParserFactory().parseFromString(svgText, "image/svg+xml");
     const root = doc.documentElement;
     if (!root || root.localName !== "svg") {
         throw new Error("not a valid SVG document");

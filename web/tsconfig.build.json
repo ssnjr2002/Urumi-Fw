@@ -1,0 +1,36 @@
+{
+  // Emit-only config for publishing. The base tsconfig.json is noEmit and is
+  // used for editor/typecheck/tests across the whole tree (including *.test.ts).
+  // This one compiles just the library source to dist/ with declarations.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "incremental": false,
+    "tsBuildInfoFile": null
+  },
+  "include": [
+    "index.ts",
+    "config",
+    "svg",
+    "wire/src",
+    "choreograph/src",
+    "toolpath/src",
+    "plan/src",
+    "orchestrate/src",
+    "production"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "demo",
+    "test-setup.ts",
+    "**/*.test.ts",
+    "**/tests/**",
+    "config/test-machine.json"
+  ]
+}
