@@ -6,6 +6,8 @@ Ports the Python host-side toolpath pipeline (SVG → step events) to TypeScript
 
 **Parity-verified:** the TS pipeline produces byte-for-byte identical output to the Python pipeline for `test_circle.svg` (641 packets) and `fish.svg` (8437 packets). See [Parity testing](#parity-testing).
 
+> **Using this as a library?** See [USAGE.md](USAGE.md) — a consumer-facing guide to the public API (`index.ts`). This README documents the internals.
+
 ---
 
 ## Quick start
