@@ -245,7 +245,28 @@ payload after `CFG_RDY`, and `dataPlaneTick()` enforces the inter-byte timeout.
 
 ---
 
-## 8. Open questions for review
+## 8. Control-plane inspection
+
+`status cfg` (text command, always available) prints the active slot metadata from
+`g_cfg` without touching flash:
+
+```
+cfg slot=0 seq=1 len=32768 addr=0x103df000
+```
+
+| Field | Meaning |
+|---|---|
+| `slot` | Active flash slot (0 or 1), or `none` if no config stored |
+| `seq` | Monotonic write counter — increments on every successful `CFG_SET` |
+| `len` | Payload byte count of the active blob |
+| `addr` | XIP address of the payload — useful for verifying slot geometry |
+
+This is a human-readable diagnostic, not a host-facing binary response. The binary
+path for reading the blob is `CFG_GET` (§5).
+
+---
+
+## 9. Open questions for review
 
 - **Future config parsing.** When a firmware msgpack reader lands, the boot scan
   and commit should additionally *apply* the blob (parse into working structs),

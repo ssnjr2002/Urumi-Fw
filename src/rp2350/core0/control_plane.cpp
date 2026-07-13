@@ -6,6 +6,7 @@
 #include "control_plane.h"
 #include "data_plane.h"   // dataPlaneResetSeq (seqreset)
 #include "status.h"       // getBufCount (status alias)
+#include "../config/config_store.h"  // g_cfg (status cfg)
 
 // ─── State predicates ─────────────────────────────────────────────────────────
 
@@ -103,6 +104,18 @@ bool handleCommand(const String& input) {
     if (input == "seqreset") {                 // data-plane support (see wire doc)
         dataPlaneResetSeq();
         Serial.println("seq reset");
+        return true;
+    }
+    if (input == "status cfg") {
+        if (g_cfg.slot < 0) {
+            Serial.println("cfg slot=none");
+        } else {
+            Serial.printf("cfg slot=%d seq=%lu len=%lu addr=0x%08lx\n",
+                          g_cfg.slot,
+                          (unsigned long)g_cfg.seq,
+                          (unsigned long)g_cfg.length,
+                          (unsigned long)(uintptr_t)g_cfg.addr);
+        }
         return true;
     }
     if (input == "status" || input == "?") {   // human-readable alias (not host-facing)
