@@ -13,6 +13,7 @@ Ports the Python host-side toolpath pipeline (SVG → step events) to TypeScript
 ```sh
 pnpm install
 pnpm typecheck   # tsc --noEmit
+pnpm build       # tsc -p tsconfig.build.json → dist/ (.js + .d.ts)
 pnpm lint        # eslint .
 pnpm test        # vitest run
 pnpm test:watch  # vitest (watch mode)
@@ -25,118 +26,70 @@ Requires Node 18+ and pnpm. Toolchain: TypeScript 5.9, Vitest 2.1, ESLint 9, Vit
 
 ## Folder structure
 
+Two roots: **`src/`** is library source (published to `dist/` on build), **`test/`**
+mirrors it with the specs plus vendored fixtures. `src/index.ts` is the public API
+barrel — the entire supported surface. Each module is flat (`src/toolpath/geometry.ts`,
+not `src/toolpath/src/…`). `demo/` and the config files stay at the `web/` root.
+
 ```
 web/
-├── config/              — calibration data types + defaults
-│   ├── config.ts          MachineConfig, AxisConfig, ToolProfile, QualityConfig,
-│   │                      BusNode (nodeId + present flag), ToolHead (Z+A socket,
-│   │                      optional seed mount), PipelineConfig + factories + presets.
-│   │                      ReferencePoint, LaserPointer, ToolOffset,
-│   │                      REVOLVER_PEN preset (7-slot rotating pen module).
-│   ├── helpers.ts         Policy helpers: toolForLayer (layer name → ToolProfile),
-│   │                      requiredAxes (which axes a tool needs), canRunTool
-│   │                      (bus node-presence feasibility gate, not a mount check).
-│   ├── configLoader.ts    JSON → PipelineConfig parser. Production config source:
-│   │                      machine calibration from config.json (required: fCpu,
-│   │                      stepsPerUnit, nodeId, heads). Returns { ok, config } |
-│   │                      { ok: false, errors }.
-│   ├── config.test.ts
-│   ├── helpers.test.ts
-│   └── configLoader.test.ts
+├── src/                     — library source (compiled to dist/)
+│   ├── index.ts               PUBLIC API barrel — the entire supported surface
+│   ├── config/                — calibration data types + defaults
+│   │   ├── config.ts            MachineConfig, AxisConfig, ToolProfile, QualityConfig,
+│   │   │                        BusNode, ToolHead (Z+A socket, optional seed mount),
+│   │   │                        PipelineConfig + factories + presets; ReferencePoint,
+│   │   │                        LaserPointer, ToolOffset, REVOLVER_PEN (7-slot pen).
+│   │   ├── helpers.ts           toolForLayer, requiredAxes, canRunTool (bus
+│   │   │                        node-presence feasibility gate, not a mount check).
+│   │   └── configLoader.ts      JSON → PipelineConfig parser (parseConfig). Returns
+│   │                            { ok, config } | { ok: false, errors }.
+│   ├── svg/
+│   │   └── ingest.ts            SVG text → CubicBezier[] in mm, Y-flipped, layer-aware.
+│   │                            setDOMParser() injects a parser in Node.
+│   ├── toolpath/              — motion planning pipeline (stages 3-8)
+│   │   ├── geometry.ts          Pt, CubicBezier, 2D vector algebra, Bezier math
+│   │   ├── repair.ts            Stage 3: C1 continuity at curve joins
+│   │   ├── sample.ts            Sample interface + PATH_START/PATH_END flags
+│   │   ├── flatten.ts           Stage 4: Bezier subpaths → Sample[]
+│   │   ├── constrain.ts         Stage 5: per-sample velocity ceiling
+│   │   ├── plan.ts              Stage 6: look-ahead feedrate planner
+│   │   └── discretize.ts        Stage 8: Sample[] → MicroSegment[] (calls choreograph)
+│   ├── choreograph/
+│   │   └── choreograph.ts       zMove, aMove, pivot, travelJog, preOrient, aMoveTo,
+│   │                            headOffsetJog — stateless non-cutting motion helpers
+│   ├── wire/
+│   │   ├── microsegment.ts      MicroSegment, MICRO_* flag constants, interval()
+│   │   └── packet.ts            26-byte MicroSegment wire packer (crc8 0x8C)
+│   ├── plan/
+│   │   ├── plan.ts              Block, Plan, planToolTypes, feasibleOn
+│   │   └── planFile.ts          .plan binary codec (magic AB CD 50 03); savePlan/loadPlan
+│   ├── production/            — full pipeline glue: SVG + config → .plan
+│   │   ├── compileBlock.ts      Stage 3-8 chain for one SVG layer (applies -toolOffset)
+│   │   └── bakePlan.ts          config + SVG text → { plan, bytes }
+│   └── orchestrate/
+│       ├── schedule.ts          scheduleMounts → Schedule (fill/execute/pause/swap)
+│       └── walk.ts              walkSchedule → WalkEvent[] (motion + pause events)
 │
-├── svg/                 — SVG ingestion (pipeline stages 1-2)
-│   ├── ingest.ts          SVG text → CubicBezier[] in mm, Y-flipped.
-│   │                      Layer-aware: nested <g> groups build '/'-separated
-│   │                      keys (e.g. "revolver_pen/slot1") for the revolver pen.
-│   └── ingest.test.ts
+├── test/                    — specs mirror src/; vitest include: test/**/*.test.ts
+│   ├── helpers.ts             readFixture / readFixtureBytes (resolve ./fixtures)
+│   ├── setup.ts               DOMParser polyfill for the Node test environment
+│   ├── fixtures/              vendored SVGs (from pipeline/data) + test-machine.json
+│   ├── config/  svg/  toolpath/  choreograph/  wire/  plan/  orchestrate/   *.test.ts
+│   │   └── toolpath/{curves,repair}.cases.ts   shared curve/repair case tables
+│   └── production/
+│       ├── bakePlan.test.ts · svgToPackets.test.ts · parity.test.ts
+│       ├── svgToPackets.ts    FROZEN parity harness — do not import from src/
+│       └── data/             parity golden set: fish.svg, test_circle.svg,
+│                             *_knife_ref.bin, config.txt (loaded via join(__dirname))
 │
-├── toolpath/            — motion planning pipeline (stages 3-8)
-│   ├── src/
-│   │   ├── geometry.ts      Pt, CubicBezier, 2D vector algebra, Bezier math
-│   │   ├── repair.ts        Stage 3: C1 continuity at curve joins
-│   │   ├── sample.ts        Sample interface + PATH_START/PATH_END flags
-│   │   ├── flatten.ts       Stage 4: Bezier subpaths → Sample[]
-│   │   ├── constrain.ts     Stage 5: per-sample velocity ceiling
-│   │   ├── plan.ts          Stage 6: look-ahead feedrate planner
-│   │   └── discretize.ts    Stage 8: Sample[] → MicroSegment[], calls
-│   │                        choreograph at transitions (PATH_START, corners,
-│   │                        PATH_END)
-│   └── tests/
+├── demo/                    — browser demo (Vite); imports the src/index.ts barrel
+│   ├── index.html · main.js · orchestrate.html · orchestrate.js
+│   ├── transport.js           WebSerial transport (not part of the package)
+│   ├── config.json            real machine calibration
+│   └── demo.svg               layered knife + crease SVG
 │
-├── choreograph/         — non-cutting motion (stateless helpers)
-│   ├── src/
-│   │   └── choreograph.ts   zMove, zStepCount, aMove (trapezoidal ramp),
-│   │                        pivot (lift-pivot-lower), travelJog, preOrient
-│   │                        (A pre-orientation at PATH_START with unwind),
-│   │                        aMoveTo (absolute A move — A-home + revolver slot),
-│   │                        headOffsetJog (XY compensation on head switch)
-│   └── tests/
-│       └── choreograph.test.ts
-│
-├── wire/                — wire output format
-│   ├── src/
-│   │   ├── microsegment.ts  MicroSegment, flag constants (MICRO_PATH_END,
-│   │   │                    MICRO_LIFT, MICRO_JOG), interval() helper
-│   │   └── packet.ts        26-byte MicroSegment wire packer (crc8 0x8C)
-│   └── tests/
-│
-├── plan/                — the Block / Plan job model + .plan codec
-│   ├── src/
-│   │   ├── plan.ts          Block { profile, slot?, segments, startSteps },
-│   │   │                    Plan { blocks }, planToolTypes, feasibleOn
-│   │   │                    (node-presence gate, not a mount check)
-│   │   └── planFile.ts      .plan binary codec: magic AB CD 50 02, tool manifest,
-│   │                        slot-aware op headers (tool_type | slot | pkt_count).
-│   │                        savePlan / loadPlan round-trip.
-│   └── tests/
-│       ├── plan.test.ts
-│       └── planFile.test.ts
-│
-├── production/          — full pipeline glue: SVG + config → .plan
-│   ├── compileBlock.ts    Stage 3-8 chain for one SVG layer. Applies -toolOffset
-│   │                      to all path coordinates (bake-time geometry shift into
-│   │                      head-center space) before running the stage chain.
-│   │                      Returns { segments, startSteps }.
-│   ├── bakePlan.ts        config + SVG text → { plan, bytes }. Walks SVG layers
-│   │                      in document order; resolves layer names to tools; handles
-│   │                      revolver slot sub-layers; calls compileBlock per block.
-│   └── tests/
-│       ├── bakePlan.test.ts      multi-layer, revolver slots, toolOffset shift,
-│       │                         round-trip, error paths
-│       ├── parity.test.ts        byte-for-byte parity vs Python reference .bin
-│       ├── svgToPackets.ts       FROZEN parity harness — do not import from
-│       │                         production code, do not clean up
-│       └── svgToPackets.test.ts
-│
-├── orchestrate/         — mount scheduling + runtime walk
-│   ├── src/
-│   │   ├── schedule.ts    scheduleMounts(plan, headCount, seedMounted?) →
-│   │   │                  Schedule. Greedy fill/execute/pause/swap loop:
-│   │   │                  batches blocks into phases, each phase carrying
-│   │   │                  { mount, blockIndices, swapIn, swapOut }. Document
-│   │   │                  order preserved; revolver slots stay intra-phase.
-│   │   └── walk.ts        walkSchedule(schedule, plan, machine, opts) →
-│   │                      WalkEvent[]. Drives a Schedule: emits motion events
-│   │                      (MicroSegment[]) and pause events (swapIn/swapOut)
-│   │                      in execution order. Handles A-home, revolver slot
-│   │                      rotation, inter-block travelJog, headOffsetJog.
-│   └── tests/
-│       ├── schedule.test.ts
-│       └── walk.test.ts
-│
-├── demo/                — browser demo (Vite)
-│   ├── index.html         Dark two-panel UI: config.json + SVG pickers → Bake
-│   │                      button → summary + Download .plan
-│   ├── main.js            parseConfig → bakePlan → blob download (JS, not TS)
-│   ├── config.json        Real machine calibration (160 steps/mm, 51.667 steps/°,
-│   │                      fCpu 150 MHz, X/Y/Z/A nodes 1-4)
-│   └── demo.svg           Sample layered SVG (knife + crease layers)
-│
-├── test-setup.ts        — DOMParser polyfill for Node test environment
-├── package.json
-├── tsconfig.json
-├── vitest.config.ts
-└── eslint.config.js
+├── package.json  tsconfig.json  tsconfig.build.json  vitest.config.js  eslint.config.js
 ```
 
 ---
@@ -300,7 +253,7 @@ Distinct types prevent skipped stages from compiling silently — `plan()` takes
 
 The frozen parity harness (`production/tests/svgToPackets.ts`) preserves the original `subpathsToPackets` verbatim. `bakePlan.test.ts` asserts that `compileBlock` (with zero toolOffset) reproduces the harness exactly — creating a transitive parity chain: Python → harness → compileBlock.
 
-### Reference fixtures (`production/tests/data/`)
+### Reference fixtures (`test/production/data/`)
 
 | File | Description |
 |---|---|
@@ -316,7 +269,7 @@ python -m host.production.svg_to_packets test_circle.svg --out test_circle_knife
 python -m host.production.svg_to_packets fish.svg --out fish_knife_ref.bin
 ```
 
-Run from `web/production/tests/data/`. Uses default config (KNIFE, default machine — see `config.txt`).
+Run from `web/test/production/data/`. Uses default config (KNIFE, default machine — see `config.txt`).
 
 ---
 

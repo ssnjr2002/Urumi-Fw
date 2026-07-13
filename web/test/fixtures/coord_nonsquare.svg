@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="100mm" height="50mm">
+  <!-- viewBox 200x100px mapped to 100x50mm — scale 0.5 on both axes (uniform) -->
+  <!-- p0=(0,0) → (0, 50)mm after Y-flip -->
+  <!-- p3=(200,100) → (100, 0)mm after Y-flip -->
+  <!-- midpoint (100,50) → (50, 25)mm after Y-flip -->
+  <path d="M 0 0 L 200 0 L 200 100 L 0 100 Z" fill="none" stroke="purple"/>
+  <path d="M 0 50 C 50 10, 150 90, 200 50" fill="none" stroke="orange"/>
+</svg>

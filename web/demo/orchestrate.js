@@ -22,7 +22,7 @@ import {
     MICRO_LIFT,
     MICRO_PAUSE,
     TOOL_PROFILES_BY_TYPE,
-} from '../index.js';
+} from '../src/index.js';
 import { SerialTransport, STATE_IDLE, STATE_PAUSED, STATE_ESTOP, STATE_ALARM } from './transport.js';
 
 // ── elements ──────────────────────────────────────────────────────────────────

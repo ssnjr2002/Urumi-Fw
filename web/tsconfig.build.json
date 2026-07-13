@@ -9,28 +9,17 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": ".",
+    "rootDir": "src",
     "incremental": false,
     "tsBuildInfoFile": null
   },
   "include": [
-    "index.ts",
-    "config",
-    "svg",
-    "wire/src",
-    "choreograph/src",
-    "toolpath/src",
-    "plan/src",
-    "orchestrate/src",
-    "production"
+    "src"
   ],
   "exclude": [
     "node_modules",
     "dist",
     "demo",
-    "test-setup.ts",
-    "**/*.test.ts",
-    "**/tests/**",
-    "config/test-machine.json"
+    "test"
   ]
 }

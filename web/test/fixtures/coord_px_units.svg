@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="377px" height="377px">
+  <!-- 377px at 96dpi ≈ 100mm (3.7795px/mm). scale=100/100*1/3.7795 ≈ 0.2646 px→mm -->
+  <!-- p0=(0,0) → (0, 100)mm after Y-flip; p3=(100,100) → (100, 0)mm -->
+  <path d="M 0 0 L 100 100" fill="none" stroke="green"/>
+</svg>

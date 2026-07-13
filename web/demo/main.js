@@ -1,4 +1,4 @@
-import { parseConfig, bakePlan } from "../index.js";
+import { parseConfig, bakePlan } from "../src/index.js";
 
 // ── elements ──────────────────────────────────────────────────────────────────
 

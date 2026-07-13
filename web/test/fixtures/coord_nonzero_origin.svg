@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="50 30 100 80" width="100mm" height="80mm">
+  <!-- viewBox origin is (50,30) not (0,0) — points must be offset-corrected before scaling -->
+  <!-- p0=(50,30)px in SVG = (0,0) in viewBox space → (0, 80)mm after Y-flip -->
+  <!-- p1=(150,110)px in SVG = (100,80) in viewBox space → (100, 0)mm after Y-flip -->
+  <path d="M 50 30 L 150 110" fill="none" stroke="red"/>
+  <!-- midpoint (100,70)px → (50,40) in viewBox → (50, 40)mm after Y-flip -->
+  <path d="M 100 70 C 110 50, 130 50, 140 70" fill="none" stroke="blue"/>
+</svg>
