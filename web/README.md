@@ -628,5 +628,3 @@ Everything below is imported from `urumi-toolpath`. Anything not listed here is 
 - **`demo/main.js`** — bake demo: load config + SVG, click Bake, download `.plan`
 - **`demo/orchestrate.js`** — run demo: load `.plan`, schedule, walk, stream over WebSerial
 - **`demo/transport.js`** — WebSerial transport (Go-Back-N, window=16) — copy this for your own transport layer
-- **`USAGE.md`** — additional notes on the `compileBlock` compile-at-execution path
-- **`README.md`** — internal architecture, pipeline stages, parity testing
