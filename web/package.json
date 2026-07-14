@@ -1,7 +1,7 @@
 {
-  "name": "@fablab/cnc-toolpath",
+  "name": "urumi-toolpath",
   "version": "0.1.0",
-  "description": "SVG + machine config → .plan → schedule → wire packets, for the ATtiny3224 x RP2350 RS485 CNC motion controller. TypeScript, ESM, zero runtime dependencies.",
+  "description": "SVG + machine config → .plan → schedule → wire packets, for the AVR128DB32 x RP2350 RS485 CNC motion controller. TypeScript, ESM, zero runtime dependencies.",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -14,8 +14,7 @@
   "module": "./dist/index.js",
   "files": [
     "dist",
-    "README.md",
-    "USAGE.md"
+    "README.md"
   ],
   "engines": {
     "node": ">=18"
