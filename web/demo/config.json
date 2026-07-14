@@ -9,8 +9,8 @@
   "heads": [
     {
       "tool": "knife",
-      "z": { "node": { "nodeId": 3 }, "stepsPerUnit": 1200, "maxRate": 10, "invert": true },
-      "a": { "node": { "nodeId": 4 }, "stepsPerUnit": 51.667, "maxRate": 100, "accel": 2000, "invert": true, "rotary": true }
+      "z": { "node": { "nodeId": 3 }, "stepsPerUnit": 300, "maxRate": 10, "invert": true },
+      "a": { "node": { "nodeId": 4 }, "stepsPerUnit": 45.46, "maxRate": 100, "accel": 500, "invert": true, "rotary": true }
     }
   ],
   "tools": {
