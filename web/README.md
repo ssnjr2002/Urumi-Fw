@@ -2,7 +2,7 @@
 
 A geometry and motion planning engine that transforms **SVG drawings + a machine config** into **binary wire packets** for real-time CNC/plotter control over RS485.
 
-Built for the [ATtiny3224 × RP2350 RS485 CNC motion controller](https://github.com/ssnjr2002/ATtiny3224xRP2350_RS485_Custom_for_ai). Multi-tool, multi-layer, tangential knife and revolver pen aware. Works in any modern browser and in Node 18+. TypeScript, ESM, zero runtime dependencies.
+Built for the [Urumi Digital Cutter](https://github.com/ssnjr2002/Urumi-Fw/tree/phase1-impl/web). Multi-tool, multi-layer, tangential knife and revolver pen aware. Works in any modern browser and in Node 18+. TypeScript, ESM, zero runtime dependencies.
 
 ---
 
