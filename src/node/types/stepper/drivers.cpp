@@ -1,7 +1,11 @@
-// AVR128DB32-only stepper driver initialisation.
-// Compiled only for avr128db32 envs via build_src_filter.
+// drivers.cpp — stepper driver-chip initialisation (board-agnostic, driver-chip-selected).
+//
+// Compiled for every stepper build via type_stepper. The active board's
+// stepper.h is pulled in by -I; the driver chip is selected by build flags
+// (TMC_2660 / DRV8825 / DM542). ATtiny/DM542 builds hit the #else no-op branch
+// and never see the SPI/TMCStepper includes.
 #include <Arduino.h>
-#include "config.h"
+#include "stepper/stepper.h"
 
 #ifdef TMC_2660
 #include <SPI.h>
@@ -13,7 +17,7 @@ void drivers_init() {
 #if defined(TMC_2660)
     SPI.begin();             // REQUIRED — TMC2660 is configured over hardware SPI
     tmc.begin();             // sets toff(8), tbl(1)
-    tmc.sdoff(0);            // Use STEP/DIR interface, this is the default behaviour 
+    tmc.sdoff(0);            // Use STEP/DIR interface, this is the default behaviour
                              // but explicitly defined anyway
     tmc.rms_current(TMC_CURRENT);
     tmc.microsteps(TMC_MICROSTEPPING);
@@ -40,17 +44,17 @@ void drivers_init() {
     digitalWrite(DRV_M2_PIN, (step_idx & 0x04) ? HIGH : LOW);
 
 #elif defined(DM542)
-    // No extra init required; EN pin handled by MOTOR_ENABLE/DISABLE macros
+    // No extra init required; EN pin handled by HAL_MOTOR_ENABLE/DISABLE macros
 #endif
 }
 
 #ifdef TMC_2660
-void drivers_enable()  { 
-    tmc.toff(8);                     // Set toff
-    ENABLE_PORT.OUTCLR = ENABLE_BM;  // EN pin low
+void drivers_enable()  {
+    tmc.toff(8);                          // Set toff
+    HAL_ENABLE_PORT.OUTCLR = HAL_ENABLE_BM;  // EN pin low
 }
-void drivers_disable() { 
-    tmc.toff(0);                     // toff zero
-    ENABLE_PORT.OUTSET = ENABLE_BM;  // EN pin high
+void drivers_disable() {
+    tmc.toff(0);                          // toff zero
+    HAL_ENABLE_PORT.OUTSET = HAL_ENABLE_BM;  // EN pin high
 }
 #endif
