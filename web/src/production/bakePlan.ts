@@ -18,7 +18,7 @@ import type { CubicBezier } from "../toolpath/geometry.js";
 import type { PipelineConfig, ToolProfile } from "../config/config.js";
 import { ToolType } from "../config/config.js";
 import { toolForLayer } from "../config/helpers.js";
-import { loadSvgMmLayers } from "../svg/ingest.js";
+import { loadSvgMmLayers, loadSvgLayers } from "../svg/ingest.js";
 import { compileBlock } from "./compileBlock.js";
 import type { Block, Plan } from "../plan/plan.js";
 import { savePlan } from "../plan/planFile.js";
@@ -26,6 +26,7 @@ import { savePlan } from "../plan/planFile.js";
 export interface BakePlanOptions {
     /** Fallback tool name for an unlayered SVG (the '' layer). */
     readonly defaultTool?: string;
+    readonly skipNormalisation?: boolean;
 }
 
 /** One layer resolved to its tool + slot, still as geometry (pre-compile). */
@@ -125,7 +126,9 @@ export function bakePlan(
     svgText: string,
     opts: BakePlanOptions = {},
 ): { plan: Plan; bytes: Uint8Array } {
-    const { layers } = loadSvgMmLayers(svgText);
+    const layers = opts.skipNormalisation
+        ? loadSvgLayers(svgText)
+        : loadSvgMmLayers(svgText).layers;
     const layerBlocks = assembleBlocks(layers, config, opts);
 
     const blocks: Block[] = layerBlocks.map((lb) => {

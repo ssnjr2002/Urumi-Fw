@@ -67,6 +67,9 @@ ASCII that begins every control-plane line.
 
 ### Job Stream Preamble — `0x4D434647` (Phase 1: 6 bytes, Phase 2: 10 bytes)
 
+UPDATE: Phase 1 does not implement Job Stream Preamble. Well at least not as of 
+08/07/2026
+
 Must precede any MSEG packets in a job stream.
 
 **Phase 1 layout** (Pico uses `required_axes` only; `config_crc32` reserved/ignored):

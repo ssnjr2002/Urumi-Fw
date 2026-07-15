@@ -429,10 +429,10 @@ def _default_machine() -> MachineConfig:
     #   a.max_rate — how fast the tangential knife can actually slew (deg/s)
     #   z.max_rate — Z raise/lower ceiling (mm/s); 1200 steps/mm is slow, keep low
     head = ToolHead(
-        z=AxisConfig(node=BusNode(3), steps_per_unit=1200.0, max_rate=10.0, invert=True),  # PLACEHOLDER mm/s
-        a=AxisConfig(node=BusNode(4), steps_per_unit=51.667, rotary=True, max_rate=100.0,
+        z=AxisConfig(node=BusNode(3), steps_per_unit=300.0, max_rate=10.0, invert=True),  # PLACEHOLDER mm/s
+        a=AxisConfig(node=BusNode(4), steps_per_unit=45.46, rotary=True, max_rate=100.0,
         # a=AxisConfig(node=BusNode(4), steps_per_unit=8.890, rotary=True, max_rate=100.0,
-                     accel=2000.0, invert=True),  # PLACEHOLDER deg/s & deg/s^2;
+                     accel=500.0, invert=True),  # PLACEHOLDER deg/s & deg/s^2;
         # invert confirmed by corner cut (vert edges flipped). a.accel bounds the
         # tangential A axis directly: it caps in-cut tracking acceleration (so the
         # TMC isn't commanded past its torque limit and drop steps) AND sets the
