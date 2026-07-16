@@ -25,15 +25,15 @@ import { MICRO_JOG } from "../../src/wire/microsegment.js";
 
 function singleHeadMachine(): MachineConfig {
     return machineConfig(
-        axisConfig(busNode(1), 160, { invert: true, maxRate: 80, accel: 1000 }),
-        axisConfig(busNode(2), 160, { maxRate: 80, accel: 1000 }),
+        axisConfig(busNode(1), 160, { invert: true, maxFeed: 80, maxAccel: 1000 }),
+        axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
         [
             toolHead(
                 axisConfig(busNode(3), 1200, { invert: true }),
-                axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxRate: 100, accel: 2000 }),
+                axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxFeed: 100, maxAccel: 2000 }),
             ),
         ],
-        { fCpu: 150_000_000, jogFeed: 80 },
+        { fCpu: 150_000_000, rapid: { feed: 80 } },
     );
 }
 
@@ -41,13 +41,13 @@ function dualHeadMachine(): MachineConfig {
     const z = axisConfig(busNode(3), 1200, { invert: true });
     const a = axisConfig(busNode(4), 51.667, { rotary: true, invert: true });
     return machineConfig(
-        axisConfig(busNode(1), 160, { invert: true, maxRate: 80 }),
-        axisConfig(busNode(2), 160, { maxRate: 80 }),
+        axisConfig(busNode(1), 160, { invert: true, maxFeed: 80 }),
+        axisConfig(busNode(2), 160, { maxFeed: 80 }),
         [
             toolHead(z, a, { xOffset: -50, yOffset: 0 }),
             toolHead(z, a, { xOffset:  50, yOffset: 0 }),
         ],
-        { fCpu: 150_000_000, jogFeed: 80 },
+        { fCpu: 150_000_000, rapid: { feed: 80 } },
     );
 }
 

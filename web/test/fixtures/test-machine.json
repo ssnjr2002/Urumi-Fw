@@ -1,20 +1,21 @@
 {
   "machine": {
     "fCpu": 150000000,
-    "jogFeed": 80,
-    "zFeed": 20,
+    "path": { "feed": 80 },
+    "rapid": { "feed": 80 },
+    "z": { "feed": 20 },
     "x": {
-      "node": { "nodeId": 1 },
+      "node": { "id": 1 },
       "stepsPerUnit": 160,
-      "maxRate": 80,
-      "accel": 1000,
+      "maxFeed": 80,
+      "maxAccel": 1000,
       "invert": true
     },
     "y": {
-      "node": { "nodeId": 2 },
+      "node": { "id": 2 },
       "stepsPerUnit": 160,
-      "maxRate": 80,
-      "accel": 1000
+      "maxFeed": 80,
+      "maxAccel": 1000
     }
   },
   "heads": [
@@ -23,16 +24,16 @@
       "xOffset": 0,
       "yOffset": 0,
       "z": {
-        "node": { "nodeId": 3 },
+        "node": { "id": 3 },
         "stepsPerUnit": 1200,
-        "maxRate": 10,
+        "maxFeed": 10,
         "invert": true
       },
       "a": {
-        "node": { "nodeId": 4 },
+        "node": { "id": 4 },
         "stepsPerUnit": 51.667,
-        "maxRate": 100,
-        "accel": 2000,
+        "maxFeed": 100,
+        "maxAccel": 2000,
         "invert": true,
         "rotary": true
       }

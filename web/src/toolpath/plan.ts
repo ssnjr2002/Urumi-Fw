@@ -69,14 +69,20 @@ export interface PlannedSample extends ConstrainedSample {
  * constrains (typically = x.accel for square machines).
  */
 export interface PlanOptions {
-    /** X axis accel (mm/s²); 0 = unlimited. Source: AxisConfig.accel (X). */
+    /** X axis accel ceiling (mm/s²); 0 = unlimited. Source: AxisConfig.maxAccel (X). */
     readonly xAccel: number;
-    /** Y axis accel (mm/s²); 0 = unlimited. Source: AxisConfig.accel (Y). */
+    /** Y axis accel ceiling (mm/s²); 0 = unlimited. Source: AxisConfig.maxAccel (Y). */
     readonly yAccel: number;
-    /** A axis angular accel (deg/s²); 0 = skip A term. Source: AxisConfig.accel (A). */
+    /** A axis angular accel ceiling (deg/s²); 0 = skip A term. Source: AxisConfig.maxAccel (A). */
     readonly aAccelDegS2: number;
-    /** Scalar fallback accel (mm/s²). Source: MachineConfig.x.accel (typically). */
+    /** Scalar fallback accel (mm/s²). Source: min(X,Y maxAccel). */
     readonly aMax: number;
+    /**
+     * Commanded path-accel target (mm/s²). 0/undefined = no cap (use the
+     * per-axis-derived limit). When set, caps the segment accel below what the
+     * per-axis ceilings alone would allow. Source: tool.path.accel ?? machine.path.accel.
+     */
+    readonly pathAccel?: number;
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -118,7 +124,7 @@ export function segAccel(
     s1: Sample,
     options: PlanOptions,
 ): number {
-    const { xAccel, yAccel, aAccelDegS2, aMax } = options;
+    const { xAccel, yAccel, aAccelDegS2, aMax, pathAccel } = options;
     const dx = s1.x - s0.x;
     const dy = s1.y - s0.y;
     const d = Math.hypot(dx, dy);
@@ -132,6 +138,9 @@ export function segAccel(
         const kap = Math.max(s0.kappa, s1.kappa);
         if (kap > 1e-9) cands.push((aAccelDegS2 * Math.PI) / 180 / kap);
     }
+    // A tool that commands a lower path-accel caps the per-axis-derived limit.
+    // Unset (0/undefined) leaves the derivation untouched (byte-neutral).
+    if (pathAccel !== undefined && pathAccel > 0) cands.push(pathAccel);
     return cands.length > 0 ? Math.min(...cands) : aMax;
 }
 

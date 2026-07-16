@@ -9,10 +9,14 @@
  *
  * Required vs optional:
  *   Required: machine.fCpu, machine.x, machine.y, heads[], each axis's
- *   node.nodeId + stepsPerUnit, each head's tool. Missing → error.
+ *   node.id + stepsPerUnit, each head's tool. Missing → error.
  *
- *   Optional: jogFeed, zFeed, maxRate, accel, invert, maxTravel, laser,
- *   peripherals, tools.*, quality. Absent → documented code default.
+ *   Optional: machine targets (path/rapid/z/slew), axis ceilings
+ *   (maxFeed/maxAccel), invert, maxTravel, laser, peripherals, tools.*,
+ *   quality. Absent → documented code default. See feed_accel_value_model.md.
+ *
+ * Lenient migration: unknown keys (old maxRate/accel/feedMax/jogFeed/zFeed/
+ * nodeId names) are silently ignored, not rejected.
  *
  * No silent fallback to hardcoded machine calibration (the old
  * defaultMachine() with 160/1200/51.667 is a TEST FIXTURE only, not
@@ -35,6 +39,7 @@ import {
     TOOL_PROFILES,
     type BusNode,
     type AxisConfig,
+    type OpTarget,
     type ToolHead,
     type ToolProfile,
     type QualityConfig,
@@ -44,16 +49,21 @@ import {
 // ── JSON schema types (what the JSON looks like) ─────────────────────────────
 
 interface JsonNode {
-    readonly nodeId: number;
+    readonly id: number;
     readonly type?: number;
     readonly present?: boolean;
+}
+
+interface JsonOpTarget {
+    readonly feed?: number;
+    readonly accel?: number;
 }
 
 interface JsonAxis {
     readonly node: JsonNode;
     readonly stepsPerUnit: number;
-    readonly maxRate?: number;
-    readonly accel?: number;
+    readonly maxFeed?: number;
+    readonly maxAccel?: number;
     readonly maxTravel?: number;
     readonly invert?: boolean;
     readonly rotary?: boolean;
@@ -74,15 +84,17 @@ interface JsonLaser {
 
 interface JsonMachine {
     readonly fCpu: number;
-    readonly jogFeed?: number;
-    readonly zFeed?: number;
+    readonly path?: JsonOpTarget;
+    readonly rapid?: JsonOpTarget;
+    readonly z?: JsonOpTarget;
+    readonly slew?: JsonOpTarget;
     readonly x: JsonAxis;
     readonly y: JsonAxis;
     readonly laser?: JsonLaser;
 }
 
 interface JsonPeripheral {
-    readonly nodeId: number;
+    readonly id: number;
     readonly type?: number;
     readonly present?: boolean;
 }
@@ -93,11 +105,9 @@ interface JsonToolOverride {
     readonly unwind?: boolean;
     readonly cornerAngleDeg?: number;
     readonly minRadiusMm?: number;
-    readonly feedMax?: number;
-    readonly accel?: number;
+    readonly path?: JsonOpTarget;
+    readonly z?: JsonOpTarget;
     readonly liftHeight?: number;
-    readonly zFeed?: number;
-    readonly jogFeed?: number;
     readonly toolOffset?: { xOffset: number; yOffset: number };
     readonly slotOffsets?: readonly number[];
 }
@@ -225,11 +235,12 @@ export function parseConfig(jsonText: string): ConfigResult {
 
     // ── build machine ─────────────────────────────────────────────────────
     const peripherals = (json.peripherals ?? []).map((p, i) => {
-        if (typeof p.nodeId !== "number") {
-            errors.push(`peripherals[${i}].nodeId: required (number)`);
+        if (typeof p.id !== "number") {
+            errors.push(`peripherals[${i}].id: required (number)`);
             return busNode(0, { present: false });
         }
-        return busNode(p.nodeId, {
+        //  TODO: Deliberate if these defaults are good. Currently I am not convinced they are.
+        return busNode(p.id, {
             type: (p.type ?? NodeType.STEPPER) as NodeType,
             present: p.present ?? true,
         });
@@ -241,8 +252,10 @@ export function parseConfig(jsonText: string): ConfigResult {
 
     const builtMachine = machineConfig(x, y, heads, {
         fCpu: machine.fCpu,
-        jogFeed: machine.jogFeed ?? 80,
-        zFeed: machine.zFeed ?? 20,
+        path: opTarget(machine.path, { feed: 80 }),
+        rapid: opTarget(machine.rapid, { feed: 80 }),
+        z: opTarget(machine.z, { feed: 20 }),
+        slew: opTarget(machine.slew, {}),
         peripherals,
         defaultHead: json.defaultHead ?? 0,
         laser: machine.laser ?? undefined,
@@ -275,9 +288,22 @@ export function parseConfig(jsonText: string): ConfigResult {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Build an OpTarget from JSON, keeping only numeric feed/accel and applying a
+ * default for absent fields. Non-number JSON values are treated as absent.
+ */
+function opTarget(j: JsonOpTarget | undefined, fallback: JsonOpTarget): OpTarget {
+    const out: { feed?: number; accel?: number } = {};
+    const feed = typeof j?.feed === "number" ? j.feed : fallback.feed;
+    const accel = typeof j?.accel === "number" ? j.accel : fallback.accel;
+    if (feed !== undefined) out.feed = feed;
+    if (accel !== undefined) out.accel = accel;
+    return out;
+}
+
 function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
-    if (typeof ja.node !== "object" || ja.node === null || typeof ja.node.nodeId !== "number") {
-        errors.push(`${path}.node.nodeId: required (number)`);
+    if (typeof ja.node !== "object" || ja.node === null || typeof ja.node.id !== "number") {
+        errors.push(`${path}.node.id: required (number)`);
     }
     if (typeof ja.stepsPerUnit !== "number" || ja.stepsPerUnit <= 0) {
         errors.push(`${path}.stepsPerUnit: required (positive number)`);
@@ -286,13 +312,13 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         // can't build — return a placeholder that won't be used
         return axisConfig(busNode(0, { present: false }), 1);
     }
-    const node: BusNode = busNode(ja.node.nodeId, {
+    const node: BusNode = busNode(ja.node.id, {
         type: (ja.node.type ?? NodeType.STEPPER) as NodeType,
         present: ja.node.present ?? true,
     });
     return axisConfig(node, ja.stepsPerUnit, {
-        maxRate: ja.maxRate ?? 0,
-        accel: ja.accel ?? 0,
+        maxFeed: ja.maxFeed ?? 0,
+        maxAccel: ja.maxAccel ?? 0,
         maxTravel: ja.maxTravel ?? 0,
         invert: ja.invert ?? false,
         rotary: ja.rotary ?? false,
@@ -315,14 +341,12 @@ function patchToolProfile(
         unwind: base.unwind,
         cornerAngleDeg: base.cornerAngleDeg,
         minRadiusMm: base.minRadiusMm,
-        feedMax: base.feedMax,
-        accel: base.accel,
         liftHeight: base.liftHeight,
-        zFeed: base.zFeed,
-        jogFeed: base.jogFeed,
         requiredPeripheralTypes: base.requiredPeripheralTypes,
         toolOffset: base.toolOffset,
     };
+    if (base.path !== undefined) merged.path = base.path;
+    if (base.z !== undefined) merged.z = base.z;
     if (base.slotOffsets !== undefined) merged.slotOffsets = base.slotOffsets;
 
     if (o.tangential !== undefined) merged.tangential = o.tangential;
@@ -330,11 +354,10 @@ function patchToolProfile(
     if (o.unwind !== undefined) merged.unwind = o.unwind;
     if (o.cornerAngleDeg !== undefined) merged.cornerAngleDeg = o.cornerAngleDeg;
     if (o.minRadiusMm !== undefined) merged.minRadiusMm = o.minRadiusMm;
-    if (o.feedMax !== undefined) merged.feedMax = o.feedMax;
-    if (o.accel !== undefined) merged.accel = o.accel;
+    // Engage targets: merge feed/accel over any preset value.
+    if (o.path !== undefined) merged.path = opTarget(o.path, base.path ?? {});
+    if (o.z !== undefined) merged.z = opTarget(o.z, base.z ?? {});
     if (o.liftHeight !== undefined) merged.liftHeight = o.liftHeight;
-    if (o.zFeed !== undefined) merged.zFeed = o.zFeed;
-    if (o.jogFeed !== undefined) merged.jogFeed = o.jogFeed;
     if (o.toolOffset !== undefined) merged.toolOffset = o.toolOffset;
     if (o.slotOffsets !== undefined) merged.slotOffsets = o.slotOffsets;
 

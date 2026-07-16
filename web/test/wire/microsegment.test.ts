@@ -77,9 +77,9 @@ describe("wire: interval()", () => {
 
     it("per-axis rate limit — A axis rate floor bites on tight rotation", () => {
         // With a large da and no XY, the A rate floor governs.
-        // A higher maxRate should produce a shorter interval (faster allowed).
-        const fastA = { ...axes, a: { ...axes.a, maxRate: 1000 } };
-        const slowA = { ...axes, a: { ...axes.a, maxRate: 50 } };
+        // A higher maxFeed should produce a shorter interval (faster allowed).
+        const fastA = { ...axes, a: { ...axes.a, maxFeed: 1000 } };
+        const slowA = { ...axes, a: { ...axes.a, maxFeed: 50 } };
         const ivFast = interval(80, fastA, q.vMin, 0, 0, 0, 200);
         const ivSlow = interval(80, slowA, q.vMin, 0, 0, 0, 200);
         expect(ivFast).toBeLessThan(ivSlow);

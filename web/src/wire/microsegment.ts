@@ -96,7 +96,7 @@ export function interval(
     const major = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz), Math.abs(da));
     if (major === 0) return fCpu;
 
-    // per-axis rate floor: no axis may exceed maxRate * stepsPerUnit
+    // per-axis rate floor: no axis may exceed maxFeed * stepsPerUnit
     let tRate = 0;
     const axisEntries: readonly [number, AxisConfig][] = [
         [dx, axes.x],
@@ -105,7 +105,7 @@ export function interval(
         [da, axes.a],
     ];
     for (const [d, ax] of axisEntries) {
-        const R = ax.maxRate * ax.stepsPerUnit;
+        const R = ax.maxFeed * ax.stepsPerUnit;
         if (R > 0 && d !== 0) {
             tRate = Math.max(tRate, Math.abs(d) / R);
         }

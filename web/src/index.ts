@@ -20,6 +20,11 @@ export {
 } from "./config/configLoader.js";
 
 export {
+    validateConfig,
+    type ValidationResult,
+} from "./config/validateConfig.js";
+
+export {
     // top-level config
     type PipelineConfig,
     pipelineConfig,
@@ -30,6 +35,7 @@ export {
     // axes / bus
     type AxisConfig,
     axisConfig,
+    type OpTarget,
     type BusNode,
     busNode,
     NodeType,

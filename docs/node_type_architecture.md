@@ -2,11 +2,14 @@
 
 **Branch:** `node-types`
 **Date:** 2026-07-15
-**Status:** DESIGN — not yet implemented. Captures the plan for generalizing the
-node firmware from "stepper-only" to a typed multi-node bus.
+**Status:** IMPLEMENTED. The core↔type split, HAL contract, and build-system
+composition described here are live. Sections 5 and 7 note where the
+implementation refined the original design. Captures the plan for
+generalizing the node firmware from "stepper-only" to a typed multi-node bus.
 
-Single source of truth for how the RS485 bus grows beyond stepper axes (spindle,
-vacuum, tool-changer, …) without forking the firmware per node type. Cross-links:
+Single source of truth for how the RS485 bus grows beyond stepper axes
+(oscillating knife, vacuum, tool-changer, …) without forking the firmware per
+node type. Cross-links:
 [wire_protocol.md](wire_protocol.md) (host↔Pico framing),
 [../web/src/config/config.ts](../web/src/config/config.ts) (host-side node/machine model).
 
@@ -42,16 +45,16 @@ file both planes already share), mirrored on the host in `config.ts` next to
 
 ```c
 // include/common.h — canonical, mirrored by host
-#define NODE_TYPE_STEPPER  0x01
-#define NODE_TYPE_VACUUM   0x02
-#define NODE_TYPE_SPINDLE  0x03
+#define NODE_TYPE_STEPPER   0x01
+#define NODE_TYPE_VACUUM    0x02
+#define NODE_TYPE_KNIFE_OSC 0x03  // oscillating knife controller
 ```
 
 `CMD_GET_TYPE` returns this byte. The orchestrator enumerates the bus and
 validates each node's reported type against config — cheap insurance against a
 miswired or misflashed node before a job runs.
 
-### Host side (`config.ts`)
+### Host side (`config.ts`) — IMPLEMENTED
 
 `BusNode` today carries `role: string` (`"stepper"`, peripheral roles).
 **Decision: `type: NodeType` (a numeric mirror of the firmware enum) becomes the
@@ -60,6 +63,12 @@ contract, and `role` is retired.** `role` was a stringly-typed shadow of what
 two. `ToolProfile.requiredPeripheralRoles` becomes `requiredPeripheralTypes` and
 matches on `NodeType`. The config loader validates each node's `CMD_GET_TYPE`
 reply against its declared `type` at connect time.
+
+**Companion cleanup — `nodeId` → `id`.** `BusNode.nodeId` stammers (the field is
+already *on* `BusNode`, so `node.nodeId` restates the noun); rename to `id`, so
+axis/peripheral references read `node.id`. **Decided**, but deferred to land with
+the config feed/accel migration rather than as a second standalone wide rename.
+(A standing TODO to this effect already sits in `config.ts`.)
 
 ---
 
@@ -70,7 +79,7 @@ Split the `0x00–0xFF` command space:
 | Range | Class | Handled by | Notes |
 |---|---|---|---|
 | `0x01–0x1F` | **Generic** | core | Every node type must honor. `CMD_PING`/`PONG`, `CMD_GET_TYPE`, `CMD_ENABLE`, `CMD_DISABLE`. |
-| `0x20+` | **Type-specific** | node type | Values **may overlap between types** — only one type is ever compiled into a binary. A spindle's `CMD_SET_RPM` and a stepper's `CMD_SET_POS` can share a byte value. |
+| `0x20+` | **Type-specific** | node type | Values **may overlap between types** — only one type is ever compiled into a binary. A knife's `CMD_SET_OSC_FREQ` and a stepper's `CMD_SET_POS` can share a byte value. |
 
 `CMD_GET_POS` and the stepper `ENGAGE` command are **type-specific** (motion
 only) — they move out of core into the stepper type.
@@ -84,15 +93,15 @@ environments from exploding combinatorially.
 
 | Axis | Selects | Mechanism |
 |---|---|---|
-| **MCU** | pins / peripherals (`attiny3224`, `avr128db32`) | `-I` include path + `drivers.cpp` in `build_src_filter` (already how it works) |
+| **Board** | pins / peripherals (`attiny3224`, `avr128db32`) | `-I` include path to `board/<board>/` (`board.h` + per-type binding) + `-I src/node/board` for the HAL contract |
 | **Driver chip** | `DM542` / `TMC2660` (stepper only) | build flags (already how it works) |
 | **Node type** | behavior (stepper, vacuum, …) | `build_src_filter` picks `types/<x>/` + `-DNODE_TYPE=` identity flag |
 | **NODE_ID** | bus address | build flag (per upload) |
 
 The node-core / command-plane files stay flat at the `src/node/` root — no
 `core/` wrapper directory. The RS485 transport is now three files, so it earns its
-own `rs485/` folder; the type and MCU dirs are their own folders as before. Only
-one type and one MCU compile per build.
+own `rs485/` folder; the type and board dirs are their own folders as before. Only
+one type and one board compile per build.
 
 ```
 src/node/
@@ -104,18 +113,52 @@ src/node/
     rs485.cpp            ← TX, cmdQueue plumbing, sendCommandPacket   (always compiled)
     frame.h              ← static inline frame_command_byte() (RX command framing)
     isr_generic.cpp      ← generic RX ISR for non-motion types (excluded from stepper build)
-  types/               ← exactly ONE compiled per build
+  board/               ← board-level config + HAL contract; ONE include path per build
+    hal/                 ← the board↔consumer contract (mirrors node_hooks.h)
+      hal.h              ← umbrella: #include usart.h + led.h (board-level self-check)
+      hal_stepper.h      ← umbrella: #include step.h + motor.h + extras.h (cell self-check)
+      usart.h            ← RS485/USART contract + #error guards
+      led.h              ← LED contract (monochrome + optional RGB)
+      step.h             ← step/dir/timer contract + #error guards
+      motor.h            ← enable/disable driver contract + drivers_init() decl
+      extras.h           ← limit switch, thermistor (feature-flagged)
+      motor.cpp          ← weak default for drivers_init() (always compiled)
+    attiny3224/
+      board.h            ← type-agnostic: RS485/USART/LED; #include hal/hal.h at end
+      stepper/stepper.h  ← the (attiny3224 × stepper) hardware binding; #include hal/hal_stepper.h
+    avr128db32/
+      board.h
+      stepper/
+        stepper.h        ← (avr128db32 × stepper) binding + driver-chip select
+        drivers.cpp      ← TMC SPI impl (pulled into the stepper composition)
+  types/               ← portable (board-agnostic) type logic; ONE compiled per build
     stepper/stepper.cpp  ← own RX ISR (stream), ENGAGE, position, GET_POS, ENABLE=energize motor
     vacuum/vacuum.cpp
-  mcu/                 ← exactly ONE include path + driver set per build
-    attiny3224/config.h
-    avr128db32/config.h + drivers.cpp
 ```
 
 The stepper's RX ISR lives in `types/stepper/` (not `rs485/`) because it's the one
 ISR that is type-specific — it inlines the stream path and includes
 `rs485/frame.h` for the shared command-framing half. Every non-motion type uses
 `rs485/isr_generic.cpp` instead.
+
+**The HAL contract (`board/hal/`) is the board-side mirror of `node_hooks.h`.**
+Just as `node_hooks.h` pins the core↔type interface, the HAL headers pin the
+board↔consumer interface: every symbol the portable code reaches for is
+contracted with `#error` self-check guards. A new board provider is a
+checklist, not a grep hunt. The HAL is **macro-based, not function-based** —
+after preprocessing, `HAL_USART_INST.RXDATAH` *is* `USART1.RXDATAH`, identical
+machine code, zero indirection, safe inside ISRs without register-spill.
+
+**Config is split along the same concern boundary.** The rule is *"does this
+change when you swap the board?"* — step-pulse logic doesn't (→ `types/stepper/`),
+but the STEP pin, port/bitmask, `STEP_PULSE_CCMP`, timer peripheral, and driver
+chip do (→ `board/<board>/stepper/`). So the `(board × type)` hardware binding
+is a **grid cell**: `board/<board>/stepper/` mirrors `types/<type>/`, one filed
+by the board the build selects (via `-I`), the other board-agnostic. `board.h`
+at the board root holds what every type on that board shares (RS485/USART/LED);
+a future vacuum node adds `board/<board>/vacuum/` beside it and reuses
+`board.h`. The type's portable code names no board — it `#include "board.h"` +
+`#include "stepper/stepper.h"`, both resolved by `-I src/node/board/<board>`.
 
 The critical payoff: **the stream byte becomes a type hook, not core logic.** A
 vacuum node's stream handler is empty — it is simply not a motion participant.
@@ -138,7 +181,10 @@ void    node_setup(void);                // type-specific init, called from setu
 void    node_set_enabled(bool on);       // ENABLE/DISABLE *effect* (motor vs pump …)
 bool    node_handle_command(const uint8_t* pkt, uint8_t len,
                             uint8_t* reply, uint8_t* replyLen);
-void    node_on_stream_byte(uint8_t b);  // stepper acts; others no-op
+// NOTE: node_on_stream_byte() was originally listed here but is NOT in the
+// implementation — the stream byte is handled inside the type's own RX ISR
+// (see §6, "The stream byte is handled in the ISR"). The ISR is per-type, so
+// no stream hook is needed.
 ```
 
 Design notes:
@@ -150,7 +196,8 @@ Design notes:
   and implementation.
 - These hooks are **non-weak / mandatory.** A node with no type is a build
   mistake and must fail at link (contrast `drivers_init()`, which is
-  `__attribute__((weak))` because a DM542 build legitimately has no driver init).
+  `__attribute__((weak))` — a no-op default lives in `board/hal/motor.cpp`,
+  always compiled; a board with real driver init provides a strong override).
 
 ---
 
@@ -163,12 +210,10 @@ to hand it to the type hook.** Because only one type's `.cpp` is compiled in, th
 ```c
 // src/node/dispatch.cpp — type-agnostic command routing
 #include <Arduino.h>
-#include "config.h"
 #include "../include/common.h"
 #include "protocol.h"
 #include "node_hooks.h"
-
-void sendCommandPacket(uint8_t* packet, uint8_t len);   // rs485.cpp
+#include "rs485/rs485.h"        // sendCommandPacket
 
 // Reply convention: reply[] holds [id][cmd][payloadLen][payload…]; replyLen
 // counts through the trailing CRC slot, which sendCommandPacket fills in.
@@ -404,26 +449,52 @@ Mechanics:
 
 `build_src_filter` and `-DNODE_TYPE` do different jobs, and you want both:
 
-- **`build_src_filter` selects behavior** — *which* `types/<x>/` and `mcu/<y>/`
-  files compile. Primary mechanism; already how `avr128db32/drivers.cpp` is
-  pulled in. Physically excludes the stepper stream ISR from a vacuum binary.
+- **`build_src_filter` selects behavior** — *which* `types/<x>/` and
+  `board/<board>/<x>/` files compile (e.g. `board/avr128db32/stepper/drivers.cpp`).
+  Physically excludes the stepper stream ISR from a vacuum binary.
 - **`-DNODE_TYPE=NODE_TYPE_*` is identity only** — so `node_type()` reports the
   right byte and a `static_assert` can check the compiled type matches the flag.
   **Never `#ifdef`-branch behavior on it** — that's the src filter's job.
 
-Compose with `extends` so the axes stay independent (type base layered on MCU
-base):
+Compose with **`${section.option}` interpolation**, not `extends`. PlatformIO's
+`extends` *overrides* a repeated key (e.g. `build_src_filter`) rather than
+concatenating, so a type and an board base can't both contribute filter fragments
+via `extends` alone. Instead, name the reusable pieces in plain sections and
+interpolate them. The always-compiled core/transport (including the HAL's weak
+`drivers_init` default) is one section; each type is another carrying its source
+fragment and `NODE_TYPE` flag; the board base stitches them together:
 
 ```ini
-[type_vacuum]
-; non-motion type: uses the generic RX ISR, never lists types/stepper/
-build_src_filter = -<*> +<node/*.cpp> +<node/rs485/*.cpp> +<node/types/vacuum/*.cpp>
-build_flags      = -DNODE_TYPE=NODE_TYPE_VACUUM
+[node_core]
+build_src_filter = +<node/main.cpp> +<node/dispatch.cpp> +<node/rs485/rs485.cpp> +<node/board/hal/motor.cpp>
 
-[env:vac_db32_n5]
-extends     = env:avr128db_base, type_vacuum
-build_flags = ${env:avr128db_base.build_flags} ${type_vacuum.build_flags} -DNODE_ID=5
+[type_stepper]
+build_src_filter = +<node/types/stepper/stepper.cpp>
+build_flags      = -DNODE_TYPE=NODE_TYPE_STEPPER
+
+[attiny_base]
+build_src_filter =
+    -<*>
+    ${node_core.build_src_filter}
+    ${type_stepper.build_src_filter}
+build_flags = -I src/node -I src/node/board -I src/node/board/attiny3224 ${type_stepper.build_flags}
+
+[env:node1]
+extends     = attiny_base
+build_flags = ${attiny_base.build_flags} -DNODE_ID=1
 ```
+
+The `-I src/node/board` path is what lets each provider's `board.h` and
+`stepper.h` resolve `#include "hal/hal.h"` and `#include "hal/hal_stepper.h"` —
+the contract headers that self-check completeness at the end of every provider.
+
+Every node on the bus is currently a stepper, so the board bases interpolate
+`type_stepper` directly. A future non-motion type defines its own
+`[type_vacuum]` (source `+<node/types/vacuum/*.cpp>` **plus**
+`+<node/rs485/isr_generic.cpp>` for the generic RX ISR, and
+`-DNODE_TYPE=NODE_TYPE_VACUUM`) and a board base that interpolates it instead —
+never listing `types/stepper/`, so the stepper's RX ISR is excluded and the
+`USART_RXC` vector stays singly defined.
 
 `NODE_ID` stays a per-upload flag (flash-storing it to make it runtime would
 collapse many envs — a separate discussion).
@@ -447,17 +518,20 @@ is real.
   `requiredPeripheralRoles` can require it; pre-flight checks it is present and of
   the right type before a job that needs hold-down.
 
-A spindle/router node is the same shape (`ENABLE`=power, `CMD_SET_RPM`,
-`CMD_GET_RPM`) — if vacuum fits, spindle/laser/tool-changer fall out of the same
-mold.
+An oscillating-knife node is the same shape (`ENABLE`=power, `CMD_SET_OSC_FREQ`,
+`CMD_GET_OSC_STATE`) — if vacuum fits, knife/laser/tool-changer fall out of the
+same mold.
 
 ---
 
 ## 10. Open decisions
 
-1. ~~**`role` vs `type` in `config.ts`**~~ — **DECIDED** (Section 2): `type`
-   absorbs `role`; `role` retired, `requiredPeripheralRoles` →
-   `requiredPeripheralTypes`.
+1. ~~**`role` vs `type` in `config.ts`**~~ — **DECIDED + IMPLEMENTED (host)**
+   (Section 2): `type` absorbs `role`; `role` retired,
+   `requiredPeripheralRoles` → `requiredPeripheralTypes`.
+1a. ~~**`nodeId` → `id` in `BusNode`**~~ — **DECIDED** (Section 2): redundant
+   `nodeId` renamed to `id`; deferred to land with the config feed/accel
+   migration.
 2. **Unknown-command policy** (Section 6) — silent drop (current) vs generic
    `CMD_NACK`.
 3. **Runtime `NODE_ID`** (Section 8) — flash-stored address to collapse

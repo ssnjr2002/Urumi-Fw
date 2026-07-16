@@ -16,9 +16,9 @@
  *   1. A-axis: constrain gets aRate/aAccel ONLY when the tool is tangential
  *      (else 0); plan reads the A accel directly, always. This asymmetry is
  *      deliberate.
- *   2. XY acceleration is a single scalar (machine.x.accel) in the cornering
- *      constraint — a square-machine assumption (x.accel == y.accel). plan(),
- *      by contrast, takes xAccel and yAccel per-axis. See `xyAccel` below.
+ *   2. XY acceleration is a single scalar (min of X/Y maxAccel) in the cornering
+ *      constraint — a square-machine assumption (x.maxAccel == y.maxAccel).
+ *      plan(), by contrast, takes xAccel and yAccel per-axis. See `xyAccel`.
  */
 
 import type { CubicBezier } from "../toolpath/geometry.js";
@@ -84,26 +84,28 @@ export function compileBlock(
         y: Math.round(p0.y * machine.y.stepsPerUnit),
     };
 
+    // Feed/accel resolution (docs/feed_accel_value_model.md):
+    //   pathFeed  — cut target: tool override, else machine baseline.
+    //   pathAccel — optional cut-accel cap: tool/machine, else unset (0).
+    const pathFeed = profile.path?.feed ?? machine.path.feed ?? 80;
+    const pathAccel = profile.path?.accel ?? machine.path.accel ?? 0;
+
     // The single XY linear-acceleration ceiling used by the cornering
-    // constraint. NOTE: the stage option field is named `aMax` ("accel max"),
-    // which reads confusingly next to the A-*axis* params — it is NOT the A
-    // axis.
-    //
-    // The cornering constraint (constrain) collapses XY accel to ONE scalar,
-    // unlike plan() which takes x/y accel per-axis. On a non-square machine
-    // (x.accel != y.accel) the safe ceiling is the SMALLER of the two — using
-    // the larger would let the weaker axis overshoot on corners it dominates.
-    // min() is exact for a square machine (x.accel == y.accel), so this holds
-    // byte-parity on the current config while behaving honestly if X and Y
-    // accel are set independently.
-    const xyAccel = Math.min(machine.x.accel, machine.y.accel);
+    // constraint's centripetal cap (`aMax`). The constraint collapses XY accel
+    // to ONE scalar, unlike plan() which takes x/y accel per-axis. On a
+    // non-square machine (x.maxAccel != y.maxAccel) the safe ceiling is the
+    // SMALLER of the two — using the larger would let the weaker axis overshoot
+    // on corners it dominates. min() is exact for a square machine, so this
+    // stays byte-neutral on the current config.
+    const xyAccel = Math.min(machine.x.maxAccel, machine.y.maxAccel);
 
     // A-axis constraints apply only for a tangential tool; a non-tangential
     // tool (pen, revolver) has A doing slot/orientation, not tangent tracking.
+    // A is bounded by its axis ceilings (maxFeed / maxAccel).
     const tangential = profile.tangential;
     const cornerStop = tangential ? profile.cornerAngleDeg : undefined;
-    const aRate = tangential ? axes.a.maxRate : 0;
-    const aAccel = tangential ? axes.a.accel : 0;
+    const aRate = tangential ? axes.a.maxFeed : 0;
+    const aAccel = tangential ? axes.a.maxAccel : 0;
 
     // Stage 3: repair — enforce C1 continuity, one enforceC1 per subpath
     const repaired = shifted.map(
@@ -121,7 +123,7 @@ export function compileBlock(
 
     // Stage 5: constrain — per-sample velocity ceiling
     const constrained = constrain(samples, {
-        feedMax: profile.feedMax,
+        feedMax: pathFeed,
         aMax: xyAccel,
         junctionDeviation: quality.junctionDeviation,
         aRateDegS: aRate,
@@ -132,10 +134,11 @@ export function compileBlock(
     // Stage 6: plan — look-ahead feedrate, per-axis accel (A accel always read
     // directly here, unlike the tangential-gated form constrain gets above)
     const planned = plan(constrained, {
-        xAccel: machine.x.accel,
-        yAccel: machine.y.accel,
-        aAccelDegS2: axes.a.accel,
+        xAccel: machine.x.maxAccel,
+        yAccel: machine.y.maxAccel,
+        aAccelDegS2: axes.a.maxAccel,
         aMax: xyAccel,
+        pathAccel,
     });
 
     // Stage 8: discretize — Sample[] → MicroSegment[], choreograph at transitions

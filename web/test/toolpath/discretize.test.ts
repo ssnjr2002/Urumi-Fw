@@ -49,14 +49,14 @@ function prep(
         aMax: A_MAX,
         junctionDeviation: q.junctionDeviation,
         ...(profile.tangential
-            ? { aRateDegS: AXES.a.maxRate, cornerStopAngleDeg: profile.cornerAngleDeg }
+            ? { aRateDegS: AXES.a.maxFeed, cornerStopAngleDeg: profile.cornerAngleDeg }
             : {}),
     };
     const c = constrain(s, constrainOpts);
     const p = plan(c, {
-        xAccel: MACH.x.accel,
-        yAccel: MACH.y.accel,
-        aAccelDegS2: HEAD.a.accel,
+        xAccel: MACH.x.maxAccel,
+        yAccel: MACH.y.maxAccel,
+        aAccelDegS2: HEAD.a.maxAccel,
         aMax: A_MAX,
     });
     return discretize(p, MACH, profile, q);

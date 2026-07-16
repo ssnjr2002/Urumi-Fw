@@ -64,7 +64,7 @@ export interface WalkOptions {
      * Default 0.5 (matches default QualityConfig.vMin).
      */
     readonly vMin?: number;
-    /** Override jog feed (mm/s). Defaults to machine.jogFeed. */
+    /** Override jog feed (mm/s). Defaults to machine.rapid.feed. */
     readonly jogFeed?: number;
     /** Initial machine state. Defaults to origin, A=0, head 0. */
     readonly initialState?: Partial<WalkState>;
@@ -124,6 +124,7 @@ export function walkSchedule(
     };
 
     const events: WalkEvent[] = [];
+    const slew = machine.slew;
 
     function push(segs: MicroSegment[]) {
         if (segs.length > 0) events.push({ kind: "motion", segments: segs });
@@ -131,7 +132,7 @@ export function walkSchedule(
 
     function aHome(axes: ResolvedAxes): void {
         if (state.aPhys === 0) return;
-        const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes);
+        const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes, slew);
         push(segments);
         state.aPhys = newAPhys;
     }
@@ -150,7 +151,7 @@ export function walkSchedule(
             const targetHead = headAssignment.get(block.profile.toolType) ?? 0;
             const prevAxes = axesForHead(machine, state.headIndex);
             const axes = axesForHead(machine, targetHead);
-            const jogFeed = opts.jogFeed ?? machine.jogFeed;
+            const jogFeed = opts.jogFeed ?? machine.rapid.feed ?? 80;
 
             const interBlock: MicroSegment[] = [];
 
@@ -158,7 +159,7 @@ export function walkSchedule(
             if (targetHead !== state.headIndex) {
                 // home A on the old head before switching
                 if (state.aPhys !== 0) {
-                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, prevAxes);
+                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, prevAxes, slew);
                     interBlock.push(...segments);
                     state.aPhys = newAPhys;
                 }
@@ -177,20 +178,20 @@ export function walkSchedule(
             if (block.profile.tangential) {
                 // Compiled preOrient assumes aPhys=0 at block entry — home A.
                 if (state.aPhys !== 0) {
-                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes);
+                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes, slew);
                     interBlock.push(...segments);
                     state.aPhys = newAPhys;
                 }
             } else if (block.slot !== undefined) {
                 // Revolver: home A first, then rotate to the target slot.
                 if (state.aPhys !== 0) {
-                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes);
+                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes, slew);
                     interBlock.push(...segments);
                     state.aPhys = newAPhys;
                 }
                 const slotDeg = block.profile.slotOffsets?.[block.slot] ?? 0;
                 if (slotDeg !== 0) {
-                    const { segments, newAPhys } = aMoveTo(slotDeg, state.aPhys, axes);
+                    const { segments, newAPhys } = aMoveTo(slotDeg, state.aPhys, axes, slew);
                     interBlock.push(...segments);
                     state.aPhys = newAPhys;
                 }

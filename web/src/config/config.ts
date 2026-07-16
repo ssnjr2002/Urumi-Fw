@@ -7,13 +7,13 @@
  * Five tiers:
  *
  *   bus     — BusNode: the RS485 topology primitive. A node can be anything
- *             (stepper axis, knife controller, suction valve). node_id is the
- *             RS485 address; role names what the board drives; present=false
+ *             (stepper axis, knife controller, suction valve). id is the RS485
+ *             address; type names the node's firmware identity; present=false
  *             marks a node declared but not fitted.
  *   machine — AxisConfig: a BusNode WITH step-math (steps/mm or steps/deg,
- *             max_rate, accel, invert, rotary). MachineConfig: the per-machine
- *             definition — X/Y shared gantry, one or more ToolHeads, bus
- *             peripherals, travel defaults (jog_feed, z_feed), and f_cpu.
+ *             maxFeed/maxAccel ceilings, invert, rotary). MachineConfig: the
+ *             per-machine definition — X/Y shared gantry, one or more ToolHeads,
+ *             bus peripherals, operation targets (path/rapid/z/slew), and fCpu.
  *   head    — ToolHead: a co-mounted Z + A pair plus the tool mounted on it
  *             and its X mounting offset. A machine has one or more heads;
  *             only one is live at a time. The default head is declared
@@ -35,10 +35,6 @@
 // means its wired up on the bus, not that its alive or something. Maybe rethink
 // the name?
 
-// TODO: simplify `nodeId` to just `id` — the field is on `BusNode` already,
-// so `node.nodeId` is redundant; `node.id` reads cleaner. Deferred to avoid
-// a wide rename across the codebase; the configLoader maps JSON `nodeId`
-// straight through for now.
 /**
  * Node type — the RS485 node's firmware identity, a numeric mirror of the
  * include/common.h NODE_TYPE_* enum. CMD_GET_TYPE returns this byte; the
@@ -55,16 +51,29 @@ export const NodeType = {
 export type NodeType = (typeof NodeType)[keyof typeof NodeType];
 
 export interface BusNode {
-    readonly nodeId: number;
+    readonly id: number;
     readonly type: NodeType;
     readonly present: boolean;
 }
 
 export function busNode(
-    nodeId: number,
-    overrides?: Partial<Omit<BusNode, "nodeId">>,
+    id: number,
+    overrides?: Partial<Omit<BusNode, "id">>,
 ): BusNode {
-    return { nodeId, type: NodeType.STEPPER, present: true, ...overrides };
+    return { id, type: NodeType.STEPPER, present: true, ...overrides };
+}
+
+// ── operation target (feed/accel) ─────────────────────────────────────────────
+
+/**
+ * An operation's desired feed / accel — a scalar in the operation's own motion
+ * space, NOT a per-axis ceiling. Both optional: an omitted value falls through
+ * to the machine baseline (feed) or the participating-axis ceiling (accel).
+ * See docs/feed_accel_value_model.md.
+ */
+export interface OpTarget {
+    readonly feed?: number;
+    readonly accel?: number;
 }
 
 // ── machine tier (axes) ──────────────────────────────────────────────────────
@@ -72,8 +81,10 @@ export function busNode(
 export interface AxisConfig {
     readonly node: BusNode;
     readonly stepsPerUnit: number;
-    readonly maxRate: number;
-    readonly accel: number;
+    /** Physical velocity ceiling (mm/s or deg/s). 0 = uncapped. */
+    readonly maxFeed: number;
+    /** Physical acceleration ceiling (mm/s² or deg/s²). 0 = uncapped. */
+    readonly maxAccel: number;
     readonly maxTravel: number;
     readonly invert: boolean;
     readonly rotary: boolean;
@@ -87,8 +98,8 @@ export function axisConfig(
     return {
         node,
         stepsPerUnit,
-        maxRate: 0,
-        accel: 0,
+        maxFeed: 0,
+        maxAccel: 0,
         maxTravel: 0,
         invert: false,
         rotary: false,
@@ -149,11 +160,11 @@ export interface ToolProfile {
     readonly unwind: boolean;
     readonly cornerAngleDeg: number;
     readonly minRadiusMm: number;
-    readonly feedMax: number;
-    readonly accel: number;
+    /** Cut (pen-down) target; overrides machine.path. feed omitted → machine default. */
+    readonly path?: OpTarget;
+    /** Engage (touch-down / retract) target; overrides machine.z. */
+    readonly z?: OpTarget;
     readonly liftHeight: number;
-    readonly zFeed: number;
-    readonly jogFeed: number;
     readonly requiredPeripheralTypes: readonly NodeType[];
     /** Fixed XY offset of tool tip from head center (mm). Default (0,0). */
     readonly toolOffset: ToolOffset;
@@ -177,11 +188,7 @@ export function toolProfile(
         unwind: false,
         cornerAngleDeg: 20,
         minRadiusMm: 0,
-        feedMax: 80,
-        accel: 0,
         liftHeight: 0,
-        zFeed: 0,
-        jogFeed: 0,
         requiredPeripheralTypes: [],
         toolOffset: { xOffset: 0, yOffset: 0 },
         ...overrides,
@@ -321,8 +328,14 @@ export interface MachineConfig {
     readonly heads: readonly ToolHead[];
     readonly defaultHead: number;
     readonly fCpu: number;
-    readonly jogFeed: number;
-    readonly zFeed: number;
+    /** Cut target baseline (engage; tools override). Default feed 80. */
+    readonly path: OpTarget;
+    /** Pen-up XY travel target (reposition; machine-owned). Default feed 80. */
+    readonly rapid: OpTarget;
+    /** Z engage target baseline (tools override). Default feed 20. */
+    readonly z: OpTarget;
+    /** Standalone-A slew target (reposition; machine-owned). Defaults to A ceiling. */
+    readonly slew: OpTarget;
     readonly peripherals: readonly BusNode[];
     /** Optional laser pointer module (alignment reference). */
     readonly laser?: LaserPointer;
@@ -340,8 +353,10 @@ export function machineConfig(
         heads,
         defaultHead: 0,
         fCpu: 150_000_000,
-        jogFeed: 80,
-        zFeed: 20,
+        path: { feed: 80 },
+        rapid: { feed: 80 },
+        z: { feed: 20 },
+        slew: {},
         peripherals: [],
         ...overrides,
     };
@@ -358,20 +373,20 @@ export function uniformMachine(
     stepsPerDeg: number,
     options?: {
         fCpu?: number;
-        maxRate?: number;
-        accel?: number;
+        maxFeed?: number;
+        maxAccel?: number;
         profile?: ToolProfile;
     },
 ): MachineConfig {
-    const { fCpu = 150_000_000, maxRate = 80, accel = 1000, profile = KNIFE } = options ?? {};
+    const { fCpu = 150_000_000, maxFeed = 80, maxAccel = 1000, profile = KNIFE } = options ?? {};
     const head = toolHead(
-        axisConfig(busNode(3), stepsPerMm, { maxRate, accel }),
-        axisConfig(busNode(4), stepsPerDeg, { maxRate, accel, rotary: true }),
+        axisConfig(busNode(3), stepsPerMm, { maxFeed, maxAccel }),
+        axisConfig(busNode(4), stepsPerDeg, { maxFeed, maxAccel, rotary: true }),
         { profile },
     );
     return machineConfig(
-        axisConfig(busNode(1), stepsPerMm, { maxRate, accel }),
-        axisConfig(busNode(2), stepsPerMm, { maxRate, accel }),
+        axisConfig(busNode(1), stepsPerMm, { maxFeed, maxAccel }),
+        axisConfig(busNode(2), stepsPerMm, { maxFeed, maxAccel }),
         [head],
         { fCpu },
     );
@@ -406,18 +421,18 @@ export function resolvedAxes(machine: MachineConfig): ResolvedAxes {
  */
 function defaultMachine(): MachineConfig {
     const head = toolHead(
-        axisConfig(busNode(3), 1200.0, { maxRate: 10.0, invert: true }),
+        axisConfig(busNode(3), 1200.0, { maxFeed: 10.0, invert: true }),
         axisConfig(busNode(4), 51.667, {
-            maxRate: 100.0,
-            accel: 2000.0,
+            maxFeed: 100.0,
+            maxAccel: 2000.0,
             invert: true,
             rotary: true,
         }),
         { profile: KNIFE },
     );
     return machineConfig(
-        axisConfig(busNode(1), 160.0, { maxRate: 80.0, accel: 1000.0, invert: true }),
-        axisConfig(busNode(2), 160.0, { maxRate: 80.0, accel: 1000.0 }),
+        axisConfig(busNode(1), 160.0, { maxFeed: 80.0, maxAccel: 1000.0, invert: true }),
+        axisConfig(busNode(2), 160.0, { maxFeed: 80.0, maxAccel: 1000.0 }),
         [head],
     );
 }

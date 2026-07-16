@@ -26,9 +26,9 @@ const A_MAX = 1000.0;
 
 // Per-axis accel options sourced from MachineConfig at the test boundary.
 const planOpts = {
-    xAccel: MACH.x.accel,
-    yAccel: MACH.y.accel,
-    aAccelDegS2: HEAD.a.accel,
+    xAccel: MACH.x.maxAccel,
+    yAccel: MACH.y.maxAccel,
+    aAccelDegS2: HEAD.a.maxAccel,
     aMax: A_MAX,
 };
 
@@ -162,16 +162,16 @@ describe("stage 6: segAccel A-axis term", () => {
         const a = segAccel(s[i]!, s[i + 1]!, planOpts);
         const kap = Math.max(s[i]!.kappa, s[i + 1]!.kappa);
         expect(a).toBeLessThan(A_MAX);
-        // rad(a.accel) / kappa
-        const expected = ((HEAD.a.accel * Math.PI) / 180) / kap;
+        // rad(a.maxAccel) / kappa
+        const expected = ((HEAD.a.maxAccel * Math.PI) / 180) / kap;
         expect(Math.abs(a - expected) / a).toBeLessThan(0.1);
     });
 
-    it("straight pure-X move — A term inactive, returns x.accel", () => {
+    it("straight pure-X move — A term inactive, returns x.maxAccel", () => {
         const s = flatten([CASES.straight_line!.curves], q);
         const i = Math.floor(s.length / 2);
         const a = segAccel(s[i]!, s[i + 1]!, planOpts);
-        expect(Math.abs(a - MACH.x.accel)).toBeLessThan(1e-6);
+        expect(Math.abs(a - MACH.x.maxAccel)).toBeLessThan(1e-6);
     });
 });
 

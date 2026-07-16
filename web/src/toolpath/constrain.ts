@@ -56,8 +56,10 @@ export interface ConstrainedSample extends Sample {
  * Six parameters spanning three config tiers — useful to know when
  * constructing overrides at the call site:
  *
- *   ToolProfile    -> feedMax, cornerStopAngleDeg
- *   MachineConfig  -> aMax (X/Y accel), aRateDegS (A maxRate), aAccelDegS2 (A accel)
+ *   feed/accel     -> feedMax (resolved pathFeed), aRateDegS (A maxFeed),
+ *                     aAccelDegS2 (A maxAccel)
+ *   MachineConfig  -> aMax (min X/Y maxAccel)
+ *   ToolProfile    -> cornerStopAngleDeg
  *   QualityConfig  -> junctionDeviation
  *
  * The three "always needed" values are required. The three "disable switches"
@@ -67,21 +69,21 @@ export interface ConstrainedSample extends Sample {
  */
 export interface ConstrainOptions {
     // Required — always needed
-    /** Programmed cruise ceiling (mm/s). Source: ToolProfile.feedMax. */
+    /** Programmed cruise ceiling (mm/s). Source: resolved pathFeed (tool.path ?? machine.path). */
     readonly feedMax: number;
     /**
-     * Lateral acceleration for the centripetal cap (mm/s²). Source: AxisConfig.accel (X/Y).
+     * Lateral acceleration for the centripetal cap (mm/s²). Source: min(x.maxAccel, y.maxAccel).
      * NOTE: this is a single scalar — a square-machine assumption. On a non-square machine
-     * (x.accel ≠ y.accel) the correct value is Math.min(x.accel, y.accel).
+     * (x.maxAccel ≠ y.maxAccel) the correct value is Math.min(x.maxAccel, y.maxAccel).
      */
     readonly aMax: number;
     /** Corner-rounding budget (mm). Source: QualityConfig.junctionDeviation. */
     readonly junctionDeviation: number;
 
     // Optional — absence = disabled
-    /** Tangential tool A-slew (velocity) ceiling (deg/s); 0/undefined disables. Source: AxisConfig.maxRate (A). */
+    /** Tangential tool A-slew (velocity) ceiling (deg/s); 0/undefined disables. Source: AxisConfig.maxFeed (A). */
     readonly aRateDegS?: number;
-    /** Tangential tool A angular-acceleration ceiling (deg/s²); 0/undefined disables. Source: AxisConfig.accel (A). */
+    /** Tangential tool A angular-acceleration ceiling (deg/s²); 0/undefined disables. Source: AxisConfig.maxAccel (A). */
     readonly aAccelDegS2?: number;
     /** Boundary tangent jump (deg) at/above which vCeiling is forced to 0 (lift-pivot). Source: ToolProfile.cornerAngleDeg. */
     readonly cornerStopAngleDeg?: number;

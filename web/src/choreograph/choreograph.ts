@@ -17,7 +17,7 @@
  * not a toolpath stage.
  */
 
-import type { ResolvedAxes, ToolProfile, ToolHead } from "../config/config.js";
+import type { ResolvedAxes, ToolProfile, ToolHead, OpTarget } from "../config/config.js";
 import { angleDelta } from "../toolpath/geometry.js";
 import {
     MICRO_JOG,
@@ -64,13 +64,17 @@ export function zStepCount(liftHeight: number, axes: ResolvedAxes): number {
  * exactly: v0 = min(cruise, 50), d_acc = (vc²-v0²)/(2·acc), triangular
  * clamp when 2·d_acc > N.
  */
-export function aMove(da: number, axes: ResolvedAxes): MicroSegment[] {
+export function aMove(da: number, axes: ResolvedAxes, slew?: OpTarget): MicroSegment[] {
     const N = Math.abs(Math.trunc(da));
     if (N === 0) return [];
 
+    // Standalone-A slew target (machine-owned). Feed/accel unset → the A axis
+    // ceiling (which is itself 0 → the legacy 180/2000 emergency floor).
     const aSpd = axes.a.stepsPerUnit;
-    const cruise = Math.max((axes.a.maxRate > 0 ? axes.a.maxRate : 180) * aSpd, 1);
-    const accel = Math.max((axes.a.accel > 0 ? axes.a.accel : 2000) * aSpd, 1);
+    const feed = slew?.feed ?? axes.a.maxFeed;
+    const rate = slew?.accel ?? axes.a.maxAccel;
+    const cruise = Math.max((feed > 0 ? feed : 180) * aSpd, 1);
+    const accel = Math.max((rate > 0 ? rate : 2000) * aSpd, 1);
     const v0 = Math.min(cruise, 50);
 
     const sign = (da > 0 ? 1 : -1) * (axes.a.invert ? -1 : 1);
@@ -111,10 +115,11 @@ export function pivot(
     zSteps: number,
     axes: ResolvedAxes,
     zFeed: number,
+    slew?: OpTarget,
 ): MicroSegment[] {
     const out: MicroSegment[] = [];
     if (lift) out.push(zMove(+zSteps, axes, zFeed));
-    out.push(...aMove(daTrue, axes));
+    out.push(...aMove(daTrue, axes, slew));
     if (lift) out.push(zMove(-zSteps, axes, zFeed));
     return out;
 }
@@ -165,6 +170,7 @@ export function preOrient(
     currentAPhys: number,
     axes: ResolvedAxes,
     profile: ToolProfile,
+    slew?: OpTarget,
 ): { segments: MicroSegment[]; newAPhys: number } {
     if (!profile.tangential) {
         return { segments: [], newAPhys: currentAPhys };
@@ -183,7 +189,7 @@ export function preOrient(
         return { segments: [], newAPhys: currentAPhys };
     }
 
-    const segments = aMove(daTrue, axes);
+    const segments = aMove(daTrue, axes, slew);
     return { segments, newAPhys: currentAPhys + daTrue };
 }
 
@@ -210,6 +216,7 @@ export function aMoveTo(
     targetDeg: number,
     currentAPhys: number,
     axes: ResolvedAxes,
+    slew?: OpTarget,
 ): { segments: MicroSegment[]; newAPhys: number } {
     const aSpd = axes.a.stepsPerUnit;
     const targetSteps = Math.round(targetDeg * aSpd);
@@ -217,7 +224,7 @@ export function aMoveTo(
     if (daTrue === 0) {
         return { segments: [], newAPhys: currentAPhys };
     }
-    const segments = aMove(daTrue, axes);
+    const segments = aMove(daTrue, axes, slew);
     return { segments, newAPhys: currentAPhys + daTrue };
 }
 

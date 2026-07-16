@@ -29,35 +29,35 @@ import {
 describe("config: BusNode", () => {
     it("defaults type=STEPPER, present=true", () => {
         const n = busNode(1);
-        expect(n.nodeId).toBe(1);
+        expect(n.id).toBe(1);
         expect(n.type).toBe(NodeType.STEPPER);
         expect(n.present).toBe(true);
     });
 
     it("accepts overrides", () => {
         const n = busNode(5, { type: NodeType.VACUUM, present: false });
-        expect(n.nodeId).toBe(5);
+        expect(n.id).toBe(5);
         expect(n.type).toBe(NodeType.VACUUM);
         expect(n.present).toBe(false);
     });
 });
 
 describe("config: AxisConfig", () => {
-    it("defaults maxRate=0, accel=0, invert=false, rotary=false", () => {
+    it("defaults maxFeed=0, maxAccel=0, invert=false, rotary=false", () => {
         const a = axisConfig(busNode(1), 160.0);
         expect(a.stepsPerUnit).toBe(160.0);
-        expect(a.maxRate).toBe(0);
-        expect(a.accel).toBe(0);
+        expect(a.maxFeed).toBe(0);
+        expect(a.maxAccel).toBe(0);
         expect(a.invert).toBe(false);
         expect(a.rotary).toBe(false);
     });
 
     it("accepts overrides", () => {
-        const a = axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxRate: 100, accel: 2000 });
+        const a = axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxFeed: 100, maxAccel: 2000 });
         expect(a.rotary).toBe(true);
         expect(a.invert).toBe(true);
-        expect(a.maxRate).toBe(100);
-        expect(a.accel).toBe(2000);
+        expect(a.maxFeed).toBe(100);
+        expect(a.maxAccel).toBe(2000);
     });
 });
 
@@ -75,7 +75,8 @@ describe("config: ToolProfile presets", () => {
         expect(PEN.name).toBe("pen");
         expect(PEN.toolType).toBe(ToolType.PEN);
         expect(PEN.tangential).toBe(false);
-        expect(PEN.feedMax).toBe(80);
+        // Presets carry no path target; the machine baseline (feed 80) supplies it.
+        expect(PEN.path).toBeUndefined();
     });
 
     it("KNIFE: tangential, wired (unwind), type KNIFE", () => {
@@ -201,7 +202,7 @@ describe("config: MachineConfig laser", () => {
 });
 
 describe("config: MachineConfig", () => {
-    it("defaults defaultHead=0, fCpu=150e6, jogFeed=80, zFeed=20, peripherals=[]", () => {
+    it("defaults defaultHead=0, fCpu=150e6, path/rapid feed 80, z feed 20, slew {}, peripherals=[]", () => {
         const m = machineConfig(
             axisConfig(busNode(1), 160),
             axisConfig(busNode(2), 160),
@@ -209,8 +210,10 @@ describe("config: MachineConfig", () => {
         );
         expect(m.defaultHead).toBe(0);
         expect(m.fCpu).toBe(150_000_000);
-        expect(m.jogFeed).toBe(80);
-        expect(m.zFeed).toBe(20);
+        expect(m.path).toEqual({ feed: 80 });
+        expect(m.rapid).toEqual({ feed: 80 });
+        expect(m.z).toEqual({ feed: 20 });
+        expect(m.slew).toEqual({});
         expect(m.peripherals).toEqual([]);
     });
 });
@@ -220,23 +223,23 @@ describe("config: uniformMachine", () => {
         const m = uniformMachine(160, 51.667);
         expect(m.x.stepsPerUnit).toBe(160);
         expect(m.y.stepsPerUnit).toBe(160);
-        expect(m.x.node.nodeId).toBe(1);
-        expect(m.y.node.nodeId).toBe(2);
+        expect(m.x.node.id).toBe(1);
+        expect(m.y.node.id).toBe(2);
     });
 
     it("head Z=node3, A=node4 rotary, default profile KNIFE", () => {
         const m = uniformMachine(160, 51.667);
         const head = m.heads[0]!;
-        expect(head.z.node.nodeId).toBe(3);
-        expect(head.a.node.nodeId).toBe(4);
+        expect(head.z.node.id).toBe(3);
+        expect(head.a.node.id).toBe(4);
         expect(head.a.rotary).toBe(true);
         expect(head.profile).toBe(KNIFE);
     });
 
-    it("accepts maxRate/accel/profile options", () => {
-        const m = uniformMachine(160, 51.667, { maxRate: 100, accel: 2000, profile: PEN });
-        expect(m.x.maxRate).toBe(100);
-        expect(m.x.accel).toBe(2000);
+    it("accepts maxFeed/maxAccel/profile options", () => {
+        const m = uniformMachine(160, 51.667, { maxFeed: 100, maxAccel: 2000, profile: PEN });
+        expect(m.x.maxFeed).toBe(100);
+        expect(m.x.maxAccel).toBe(2000);
         expect(m.heads[0]!.profile).toBe(PEN);
     });
 });
@@ -244,39 +247,39 @@ describe("config: uniformMachine", () => {
 describe("config: defaultConfig", () => {
     const cfg = defaultConfig();
 
-    it("X: 160 steps/mm, node 1, invert, maxRate 80, accel 1000", () => {
+    it("X: 160 steps/mm, node 1, invert, maxFeed 80, maxAccel 1000", () => {
         expect(cfg.machine.x.stepsPerUnit).toBe(160);
-        expect(cfg.machine.x.node.nodeId).toBe(1);
+        expect(cfg.machine.x.node.id).toBe(1);
         expect(cfg.machine.x.invert).toBe(true);
-        expect(cfg.machine.x.maxRate).toBe(80);
-        expect(cfg.machine.x.accel).toBe(1000);
+        expect(cfg.machine.x.maxFeed).toBe(80);
+        expect(cfg.machine.x.maxAccel).toBe(1000);
     });
 
-    it("Y: 160 steps/mm, node 2, no invert, maxRate 80, accel 1000", () => {
+    it("Y: 160 steps/mm, node 2, no invert, maxFeed 80, maxAccel 1000", () => {
         expect(cfg.machine.y.stepsPerUnit).toBe(160);
-        expect(cfg.machine.y.node.nodeId).toBe(2);
+        expect(cfg.machine.y.node.id).toBe(2);
         expect(cfg.machine.y.invert).toBe(false);
-        expect(cfg.machine.y.maxRate).toBe(80);
-        expect(cfg.machine.y.accel).toBe(1000);
+        expect(cfg.machine.y.maxFeed).toBe(80);
+        expect(cfg.machine.y.maxAccel).toBe(1000);
     });
 
-    it("Z: 1200 steps/mm, node 3, invert, maxRate 10", () => {
+    it("Z: 1200 steps/mm, node 3, invert, maxFeed 10", () => {
         const z = cfg.machine.heads[0]!.z;
         expect(z.stepsPerUnit).toBe(1200);
-        expect(z.node.nodeId).toBe(3);
+        expect(z.node.id).toBe(3);
         expect(z.invert).toBe(true);
-        expect(z.maxRate).toBe(10);
+        expect(z.maxFeed).toBe(10);
         expect(z.rotary).toBe(false);
     });
 
-    it("A: 51.667 steps/deg, node 4, rotary, invert, maxRate 100, accel 2000", () => {
+    it("A: 51.667 steps/deg, node 4, rotary, invert, maxFeed 100, maxAccel 2000", () => {
         const a = cfg.machine.heads[0]!.a;
         expect(a.stepsPerUnit).toBeCloseTo(51.667, 3);
-        expect(a.node.nodeId).toBe(4);
+        expect(a.node.id).toBe(4);
         expect(a.rotary).toBe(true);
         expect(a.invert).toBe(true);
-        expect(a.maxRate).toBe(100);
-        expect(a.accel).toBe(2000);
+        expect(a.maxFeed).toBe(100);
+        expect(a.maxAccel).toBe(2000);
     });
 
     it("single head with KNIFE profile, offset (0, 0)", () => {
@@ -286,11 +289,12 @@ describe("config: defaultConfig", () => {
         expect(cfg.machine.heads[0]!.yOffset).toBe(0);
     });
 
-    it("machine defaults: defaultHead 0, fCpu 150e6, jogFeed 80, zFeed 20, no laser", () => {
+    it("machine defaults: defaultHead 0, fCpu 150e6, path/rapid feed 80, z feed 20, no laser", () => {
         expect(cfg.machine.defaultHead).toBe(0);
         expect(cfg.machine.fCpu).toBe(150_000_000);
-        expect(cfg.machine.jogFeed).toBe(80);
-        expect(cfg.machine.zFeed).toBe(20);
+        expect(cfg.machine.path).toEqual({ feed: 80 });
+        expect(cfg.machine.rapid).toEqual({ feed: 80 });
+        expect(cfg.machine.z).toEqual({ feed: 20 });
         expect(cfg.machine.laser).toBeUndefined();
     });
 
@@ -340,9 +344,9 @@ describe("config: pipelineConfig overrides", () => {
     });
 
     it("patches toolProfiles", () => {
-        const fastPen = toolProfile("pen", { feedMax: 120 });
+        const fastPen = toolProfile("pen", { path: { feed: 120 } });
         const cfg = pipelineConfig({ toolProfiles: { pen: fastPen } });
-        expect(cfg.toolProfiles.pen?.feedMax).toBe(120);
+        expect(cfg.toolProfiles.pen?.path?.feed).toBe(120);
     });
 });
 

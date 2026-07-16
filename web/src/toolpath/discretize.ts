@@ -79,10 +79,14 @@ export function discretize(
     const tangential = profile.tangential;
     const cornerAngle = profile.cornerAngleDeg;
 
-    // Resolve travel defaults: overrides > profile > machine
-    const jogFeed = overrides?.jogFeed ?? (profile.jogFeed > 0 ? profile.jogFeed : machine.jogFeed);
+    // Resolve travel targets (feed/accel value model):
+    //   rapid — machine-owned XY reposition (no tool override).
+    //   z     — engage target, tool overrides machine.
+    //   slew  — machine-owned standalone-A, threaded into pivot/preOrient.
+    const jogFeed = overrides?.jogFeed ?? machine.rapid.feed ?? 80;
     const liftHeight = overrides?.liftHeight ?? profile.liftHeight;
-    const zFeed = overrides?.zFeed ?? (profile.zFeed > 0 ? profile.zFeed : machine.zFeed);
+    const zFeed = overrides?.zFeed ?? profile.z?.feed ?? machine.z.feed ?? 20;
+    const slew = machine.slew;
 
     const xSpu = axes.x.stepsPerUnit;
     const ySpu = axes.y.stepsPerUnit;
@@ -112,7 +116,7 @@ export function discretize(
 
         // A pre-orientation to the entry tangent (pen-up), incl. unwind
         const entryTheta = first.theta;
-        const orient = preOrient(entryTheta, theta, aPhys, axes, profile);
+        const orient = preOrient(entryTheta, theta, aPhys, axes, profile, slew);
         out.push(...orient.segments);
         aPhys = orient.newAPhys;
 
@@ -198,7 +202,7 @@ export function discretize(
             if (isCorner) {
                 const daTrue = Math.round(dtheta * aSpd);
                 if (daTrue !== 0) {
-                    out.push(...pivot(daTrue, lift, zSteps, axes, zFeed));
+                    out.push(...pivot(daTrue, lift, zSteps, axes, zFeed, slew));
                     aPhys += daTrue;
                 }
                 aAccum = aPhys;
