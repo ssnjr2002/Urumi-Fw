@@ -54,7 +54,7 @@ export function requiredAxes(profile: ToolProfile): { readonly z: boolean; reado
  *   - X and Y axis nodes (always),
  *   - a Z node on some head (if the tool lifts),
  *   - an A node on some head (if the tool steers A),
- *   - a present peripheral for each requiredPeripheralRoles entry.
+ *   - a present peripheral for each requiredPeripheralTypes entry.
  *
  * `present` means attached/wired, not alive — no ping is issued. reason lists
  * the missing nodes when ok is false.
@@ -72,9 +72,9 @@ export function canRunTool(
     if (req.z && !machine.heads.some((h) => h.z.node.present)) missing.push("Z axis node");
     if (req.a && !machine.heads.some((h) => h.a.node.present)) missing.push("A axis node");
 
-    for (const role of profile.requiredPeripheralRoles) {
-        if (!machine.peripherals.some((p) => p.present && p.role === role)) {
-            missing.push(`peripheral '${role}'`);
+    for (const type of profile.requiredPeripheralTypes) {
+        if (!machine.peripherals.some((p) => p.present && p.type === type)) {
+            missing.push(`peripheral type 0x${type.toString(16).padStart(2, "0")}`);
         }
     }
 

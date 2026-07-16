@@ -31,6 +31,7 @@ import {
     toolProfile,
     qualityConfig,
     pipelineConfig,
+    NodeType,
     TOOL_PROFILES,
     type BusNode,
     type AxisConfig,
@@ -44,7 +45,7 @@ import {
 
 interface JsonNode {
     readonly nodeId: number;
-    readonly role?: string;
+    readonly type?: number;
     readonly present?: boolean;
 }
 
@@ -82,7 +83,7 @@ interface JsonMachine {
 
 interface JsonPeripheral {
     readonly nodeId: number;
-    readonly role?: string;
+    readonly type?: number;
     readonly present?: boolean;
 }
 
@@ -229,7 +230,7 @@ export function parseConfig(jsonText: string): ConfigResult {
             return busNode(0, { present: false });
         }
         return busNode(p.nodeId, {
-            role: p.role ?? "stepper",
+            type: (p.type ?? NodeType.STEPPER) as NodeType,
             present: p.present ?? true,
         });
     });
@@ -286,7 +287,7 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         return axisConfig(busNode(0, { present: false }), 1);
     }
     const node: BusNode = busNode(ja.node.nodeId, {
-        role: ja.node.role ?? "stepper",
+        type: (ja.node.type ?? NodeType.STEPPER) as NodeType,
         present: ja.node.present ?? true,
     });
     return axisConfig(node, ja.stepsPerUnit, {
@@ -319,7 +320,7 @@ function patchToolProfile(
         liftHeight: base.liftHeight,
         zFeed: base.zFeed,
         jogFeed: base.jogFeed,
-        requiredPeripheralRoles: base.requiredPeripheralRoles,
+        requiredPeripheralTypes: base.requiredPeripheralTypes,
         toolOffset: base.toolOffset,
     };
     if (base.slotOffsets !== undefined) merged.slotOffsets = base.slotOffsets;

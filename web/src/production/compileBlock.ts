@@ -6,11 +6,11 @@
  * lift / feed resolve from the tool profile then the machine inside discretize,
  * so this layer takes no per-call feed/lift overrides.
  *
- * Output is guarded for byte-for-byte parity: production/tests/bakePlan.test.ts
- * asserts this reproduces the frozen parity harness (tests/svgToPackets.ts),
- * which production/tests/parity.test.ts pins to the Python reference bins. That
- * frees this file to be refactored for clarity as long as the bytes hold — the
- * harness is the thing that must not move, not this.
+ * Output is guarded by a golden snapshot: test/production/snapshot.test.ts bakes
+ * fixtures through this stage chain and asserts byte-for-byte equality against a
+ * committed golden .bin. The golden is self-referential (generated from this
+ * pipeline), so an intentional byte change is accepted by regenerating it
+ * (UPDATE_GOLDEN=1) and reviewing the diff — no external reference pins it.
  *
  * Two config-bridging subtleties, both parity-critical:
  *   1. A-axis: constrain gets aRate/aAccel ONLY when the tool is tangential
@@ -87,8 +87,16 @@ export function compileBlock(
     // The single XY linear-acceleration ceiling used by the cornering
     // constraint. NOTE: the stage option field is named `aMax` ("accel max"),
     // which reads confusingly next to the A-*axis* params — it is NOT the A
-    // axis. Sourced from X on a square-machine assumption (x.accel == y.accel).
-    const xyAccel = machine.x.accel;
+    // axis.
+    //
+    // The cornering constraint (constrain) collapses XY accel to ONE scalar,
+    // unlike plan() which takes x/y accel per-axis. On a non-square machine
+    // (x.accel != y.accel) the safe ceiling is the SMALLER of the two — using
+    // the larger would let the weaker axis overshoot on corners it dominates.
+    // min() is exact for a square machine (x.accel == y.accel), so this holds
+    // byte-parity on the current config while behaving honestly if X and Y
+    // accel are set independently.
+    const xyAccel = Math.min(machine.x.accel, machine.y.accel);
 
     // A-axis constraints apply only for a tangential tool; a non-tangential
     // tool (pen, revolver) has A doing slot/orientation, not tangent tracking.

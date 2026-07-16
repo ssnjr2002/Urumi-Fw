@@ -39,9 +39,24 @@
 // so `node.nodeId` is redundant; `node.id` reads cleaner. Deferred to avoid
 // a wide rename across the codebase; the configLoader maps JSON `nodeId`
 // straight through for now.
+/**
+ * Node type — the RS485 node's firmware identity, a numeric mirror of the
+ * include/common.h NODE_TYPE_* enum. CMD_GET_TYPE returns this byte; the
+ * orchestrator validates each node's reported type against config at connect
+ * time (see docs/node_type_architecture.md §2). Same stable-byte-value pattern
+ * as ToolType.
+ */
+export const NodeType = {
+    STEPPER: 0x01,
+    VACUUM: 0x02,
+    KNIFE_OSC: 0x03,
+} as const;
+
+export type NodeType = (typeof NodeType)[keyof typeof NodeType];
+
 export interface BusNode {
     readonly nodeId: number;
-    readonly role: string;
+    readonly type: NodeType;
     readonly present: boolean;
 }
 
@@ -49,7 +64,7 @@ export function busNode(
     nodeId: number,
     overrides?: Partial<Omit<BusNode, "nodeId">>,
 ): BusNode {
-    return { nodeId, role: "stepper", present: true, ...overrides };
+    return { nodeId, type: NodeType.STEPPER, present: true, ...overrides };
 }
 
 // ── machine tier (axes) ──────────────────────────────────────────────────────
@@ -139,7 +154,7 @@ export interface ToolProfile {
     readonly liftHeight: number;
     readonly zFeed: number;
     readonly jogFeed: number;
-    readonly requiredPeripheralRoles: readonly string[];
+    readonly requiredPeripheralTypes: readonly NodeType[];
     /** Fixed XY offset of tool tip from head center (mm). Default (0,0). */
     readonly toolOffset: ToolOffset;
     /**
@@ -167,7 +182,7 @@ export function toolProfile(
         liftHeight: 0,
         zFeed: 0,
         jogFeed: 0,
-        requiredPeripheralRoles: [],
+        requiredPeripheralTypes: [],
         toolOffset: { xOffset: 0, yOffset: 0 },
         ...overrides,
     };

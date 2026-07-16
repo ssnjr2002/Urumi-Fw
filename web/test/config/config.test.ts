@@ -14,6 +14,7 @@ import {
     TOOL_PROFILES,
     TOOL_PROFILES_BY_TYPE,
     ToolType,
+    NodeType,
     busNode,
     axisConfig,
     toolProfile,
@@ -26,17 +27,17 @@ import {
 } from "../../src/config/config.js";
 
 describe("config: BusNode", () => {
-    it("defaults role=stepper, present=true", () => {
+    it("defaults type=STEPPER, present=true", () => {
         const n = busNode(1);
         expect(n.nodeId).toBe(1);
-        expect(n.role).toBe("stepper");
+        expect(n.type).toBe(NodeType.STEPPER);
         expect(n.present).toBe(true);
     });
 
     it("accepts overrides", () => {
-        const n = busNode(5, { role: "oscillator", present: false });
+        const n = busNode(5, { type: NodeType.VACUUM, present: false });
         expect(n.nodeId).toBe(5);
-        expect(n.role).toBe("oscillator");
+        expect(n.type).toBe(NodeType.VACUUM);
         expect(n.present).toBe(false);
     });
 });
@@ -94,11 +95,11 @@ describe("config: ToolProfile presets", () => {
         expect(CREASE.cornerAngleDeg).toBe(30);
     });
 
-    it("all presets have empty requiredPeripheralRoles", () => {
-        expect(PEN.requiredPeripheralRoles).toEqual([]);
-        expect(KNIFE.requiredPeripheralRoles).toEqual([]);
-        expect(CREASE.requiredPeripheralRoles).toEqual([]);
-        expect(REVOLVER_PEN.requiredPeripheralRoles).toEqual([]);
+    it("all presets have empty requiredPeripheralTypes", () => {
+        expect(PEN.requiredPeripheralTypes).toEqual([]);
+        expect(KNIFE.requiredPeripheralTypes).toEqual([]);
+        expect(CREASE.requiredPeripheralTypes).toEqual([]);
+        expect(REVOLVER_PEN.requiredPeripheralTypes).toEqual([]);
     });
 
     it("PEN/KNIFE/CREASE have default toolOffset (0,0) and no slotOffsets", () => {

@@ -290,17 +290,17 @@ describe("configLoader: dual-head + laser", () => {
 // ── peripherals ───────────────────────────────────────────────────────────────
 
 describe("configLoader: peripherals", () => {
-    it("parses peripherals with role and present defaults", () => {
+    it("parses peripherals with type and present defaults", () => {
         const json = JSON.parse(TEST_MACHINE);
         json.peripherals = [
-            { "nodeId": 5, "role": "oscillator" },
-            { "nodeId": 6, "role": "suction", "present": false }
+            { "nodeId": 5, "type": 0x03 },
+            { "nodeId": 6, "type": 0x02, "present": false }
         ];
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
         expect(r.config.machine.peripherals).toHaveLength(2);
         expect(r.config.machine.peripherals[0]!.nodeId).toBe(5);
-        expect(r.config.machine.peripherals[0]!.role).toBe("oscillator");
+        expect(r.config.machine.peripherals[0]!.type).toBe(0x03);
         expect(r.config.machine.peripherals[0]!.present).toBe(true); // default
         expect(r.config.machine.peripherals[1]!.present).toBe(false);
     });

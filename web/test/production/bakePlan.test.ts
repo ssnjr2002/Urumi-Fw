@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { readFixture } from "../helpers.js";
 
 import { bakePlan, assembleBlocks } from "../../src/production/bakePlan.js";
-import { subpathsToPackets } from "./svgToPackets.js";
+import { compileBlock } from "../../src/production/compileBlock.js";
 import { defaultConfig, KNIFE, PEN, toolProfile, ToolType } from "../../src/config/config.js";
 import { loadSvgMmSubpaths, loadSvgMmLayers } from "../../src/svg/ingest.js";
 import { savePlan, loadPlan } from "../../src/plan/planFile.js";
@@ -23,11 +23,11 @@ const wrap = (inner: string) =>
     `width="100mm" height="100mm" viewBox="0 0 100 100">${inner}</svg>`;
 
 describe("bakePlan: single-tool equivalence", () => {
-    it("an unlayered SVG baked with defaultTool matches the parity path segments", () => {
+    it("an unlayered SVG baked with defaultTool matches a direct compileBlock", () => {
         const config = defaultConfig();
         const text = svg("test_circle.svg");
         const { subpaths } = loadSvgMmSubpaths(text);
-        const ref = subpathsToPackets(subpaths, config.machine, KNIFE, config.quality);
+        const { segments: ref } = compileBlock(subpaths, config.machine, config.quality, KNIFE);
 
         const { plan } = bakePlan(config, text, { defaultTool: "knife" });
         expect(plan.blocks.length).toBe(1);

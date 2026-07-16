@@ -16,6 +16,7 @@ import {
     toolProfile,
     machineConfig,
     ToolType,
+    NodeType,
     type MachineConfig,
 } from "../../src/config/config.js";
 
@@ -25,7 +26,7 @@ function machine(opts?: {
     yPresent?: boolean;
     zPresent?: boolean;
     aPresent?: boolean;
-    peripherals?: { role: string; present: boolean }[];
+    peripherals?: { type: NodeType; present: boolean }[];
 }): MachineConfig {
     const {
         xPresent = true,
@@ -44,7 +45,7 @@ function machine(opts?: {
         [head],
         {
             peripherals: peripherals.map((p, i) =>
-                busNode(10 + i, { role: p.role, present: p.present }),
+                busNode(10 + i, { type: p.type, present: p.present }),
             ),
         },
     );
@@ -116,17 +117,17 @@ describe("canRunTool (node presence, not mount)", () => {
         expect(reason).toContain("Z axis node");
     });
 
-    it("requires a present peripheral for each required role", () => {
+    it("requires a present peripheral for each required type", () => {
         const suction = toolProfile("suction", {
             toolType: ToolType.PEN,
-            requiredPeripheralRoles: ["vacuum"],
+            requiredPeripheralTypes: [NodeType.VACUUM],
         });
         expect(canRunTool(machine({ peripherals: [] }), suction)[0]).toBe(false);
         expect(
-            canRunTool(machine({ peripherals: [{ role: "vacuum", present: false }] }), suction)[0],
+            canRunTool(machine({ peripherals: [{ type: NodeType.VACUUM, present: false }] }), suction)[0],
         ).toBe(false);
         expect(
-            canRunTool(machine({ peripherals: [{ role: "vacuum", present: true }] }), suction)[0],
+            canRunTool(machine({ peripherals: [{ type: NodeType.VACUUM, present: true }] }), suction)[0],
         ).toBe(true);
     });
 

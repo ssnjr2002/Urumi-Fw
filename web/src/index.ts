@@ -32,6 +32,7 @@ export {
     axisConfig,
     type BusNode,
     busNode,
+    NodeType,
     type ResolvedAxes,
     resolvedAxes,
     // heads + geometry references
