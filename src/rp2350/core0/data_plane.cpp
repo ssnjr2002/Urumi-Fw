@@ -32,8 +32,8 @@ static RxKind rxKind = RX_NONE;
 
 static uint8_t  pktBuf[MSEG_PACKET_SIZE];
 static uint8_t  pktIdx      = 0;
-static uint16_t pktSeq      = 0;   // rolling counter for ACK echo
-static uint8_t  expectedSeq = 0;   // next wire seq (pktBuf[22]) we will execute
+static uint8_t  expectedSeq = 0;   // next wire seq (pktBuf[22]) we will execute;
+                                   // also the cumulative ACK value (see sendAck)
 
 // ─── CFG_SET receive state ────────────────────────────────────────────────────
 
@@ -54,11 +54,16 @@ static inline uint32_t crc32Byte(uint32_t crc, uint8_t b) {
 
 // ─── ACK / NACK ───────────────────────────────────────────────────────────────
 
-static void sendAck() {                         // fixed-26 stream ACK (seq echo)
+static void sendAck() {                         // cumulative stream ACK
+    // Byte 1 is expectedSeq — the next wire seq we want, i.e. "I have accepted
+    // every packet with a lower seq" (TCP-style cumulative ACK). On an accepted
+    // packet the caller bumps expectedSeq first, so this advances; on a stale or
+    // gap seq (skipped, expectedSeq unchanged) this repeats the last value as a
+    // duplicate ACK. The host advances its window to this point, so a lost ACK
+    // self-heals via the next one. Byte 2 is reserved (0).
     Serial.write(MSEG_ACK);
-    Serial.write((uint8_t)(pktSeq & 0xFF));
-    Serial.write((uint8_t)(pktSeq >> 8));
-    pktSeq++;
+    Serial.write(expectedSeq);
+    Serial.write((uint8_t)0x00);
 }
 
 static void sendNack(uint8_t reason) {          // shared 3-byte NACK frame
@@ -246,12 +251,10 @@ void dataPlaneReset() {
     rxKind      = RX_NONE;
     pktIdx      = 0;
     expectedSeq = 0;
-    pktSeq      = 0;
     cfgHdrIdx   = 0;
     cfgRxCnt    = 0;
 }
 
 void dataPlaneResetSeq() {
     expectedSeq = 0;
-    pktSeq      = 0;
 }

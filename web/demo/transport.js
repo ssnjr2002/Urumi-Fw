@@ -7,8 +7,9 @@
  *   Control plane — text lines (\n-terminated): ping, enable, disable, seqreset,
  *                   getstate, getpos, setorigin, pause, resume, cancel, stop
  *
- * Streaming: Go-Back-N with window=16.
+ * Streaming: Go-Back-N with window=16, cumulative ACKs.
  *   \nseqreset\n + MCFG preamble before each MSEG stream.
+ *   ACK carries expectedSeq (cumulative accept point) → advance window to it.
  *   NACK_FULL → back off 50 ms, drain stale responses, rewind.
  *   NACK_CRC  → settle 5 ms, drain, rewind.
  *   NACK_BAD_MAGIC → fatal throw.
@@ -120,7 +121,7 @@ class ByteReader {
      *   [0xA6][state][enabled][homed][alarm][running][buf_count lo][buf_count hi][CRC8]
      *
      * Returns a typed object:
-     *   { type: 'ack',    seqLo, seqHi }
+     *   { type: 'ack',    ackSeq }   ackSeq = expectedSeq, cumulative accept point
      *   { type: 'nack',   reason }
      *   { type: 'status', machineState, axesEnabled, axesHomed, alarmReason,
      *                     runningReason, bufCount }
@@ -130,8 +131,9 @@ class ByteReader {
         const first = await this.readByte();
 
         if (first === ACK_MAGIC) {
+            // rest[0] = expectedSeq (cumulative ACK point); rest[1] reserved.
             const rest = await this.readBytes(2);
-            return { type: 'ack', seqLo: rest[0], seqHi: rest[1] };
+            return { type: 'ack', ackSeq: rest[0], seqLo: rest[0], seqHi: rest[1] };
         }
 
         if (first === NACK_MAGIC) {
@@ -171,9 +173,22 @@ export class SerialTransport {
         this._port   = null;
         this._writer = null;
         this._reader = null;
+        // Serializes every request (sendText/getPosition/pollStatus/sendStream/
+        // sendJogBurst) onto one chain. The ByteReader has a single waiter slot,
+        // so two concurrent readResponse() calls would clobber each other's
+        // resolver and deadlock — e.g. a background status poll colliding with a
+        // getpos on re-run. All public entry points funnel through _serialize().
+        this._lock = Promise.resolve();
     }
 
     get connected() { return this._port !== null; }
+
+    /** Run `fn` after all previously-queued requests settle (FIFO, exclusive). */
+    _serialize(fn) {
+        const run = this._lock.then(fn, fn);
+        this._lock = run.then(() => {}, () => {}); // keep the chain alive on error
+        return run;
+    }
 
     /** Open a WebSerial port (shows browser port-picker). */
     async connect() {
@@ -198,7 +213,9 @@ export class SerialTransport {
     /**
      * Send a text command (with automatic \n) and return the reply line.
      */
-    async sendText(cmd) {
+    sendText(cmd) { return this._serialize(() => this._sendText(cmd)); }
+
+    async _sendText(cmd) {
         const line = cmd.endsWith('\n') ? cmd : cmd + '\n';
         const stale = [...this._reader._queue];
         if (stale.length > 0) {
@@ -213,10 +230,31 @@ export class SerialTransport {
     }
 
     /**
+     * Query the machine's tracked step position via the `getpos` control
+     * command. The Pico replies with a text line "pos X Y Z A".
+     *
+     * The values are per-axis EMITTED (post-invert) steps — exactly the
+     * machinePos[] the firmware accumulates from the wire deltas. Callers that
+     * need TRUE (pre-invert) step space must un-invert per axis themselves.
+     *
+     * Returns { x, y, z, a }.
+     */
+    getPosition() { return this._serialize(() => this._getPosition()); }
+
+    async _getPosition() {
+        const line = await this._sendText('getpos');
+        const nums = line.match(/-?\d+/g);
+        if (!nums || nums.length < 4) throw new Error(`bad getpos reply: "${line}"`);
+        return { x: +nums[0], y: +nums[1], z: +nums[2], a: +nums[3] };
+    }
+
+    /**
      * Send STATUS_REQ (0xA5) and return the STATUS_RSP fields.
      * Skips any text lines or unexpected responses until STATUS_RSP arrives.
      */
-    async pollStatus() {
+    pollStatus() { return this._serialize(() => this._pollStatus()); }
+
+    async _pollStatus() {
         await this._writer.write(new Uint8Array([STATUS_REQ]));
         for (;;) {
             const resp = await this._reader.readResponse();
@@ -242,7 +280,11 @@ export class SerialTransport {
      * @param {number}         requiredAxes  bit0=X bit1=Y bit2=Z bit3=A
      * @param {function}       onProgress    (sent, total) callback
      */
-    async sendStream(segments, requiredAxes, onProgress) {
+    sendStream(segments, requiredAxes, onProgress) {
+        return this._serialize(() => this._sendStream(segments, requiredAxes, onProgress));
+    }
+
+    async _sendStream(segments, requiredAxes, onProgress) {
         // Leading \n flushes any partial line on the Pico before seqreset (mirrors
         // Python stream.py: ser.write(b"\nseqreset\n")).
         const n = segments.length;
@@ -270,22 +312,30 @@ export class SerialTransport {
             const resp = await this._reader.readResponse();
 
             if (resp.type === 'ack') {
-                base++;
-                onProgress?.(base, n);
+                // Cumulative ACK: resp.ackSeq is the Pico's expectedSeq — the next
+                // wire seq it wants, meaning every packet with a lower seq has been
+                // accepted. Advance base to that point in 8-bit rolling seq space,
+                // clamped to the in-flight window (< 128 « the wrap point) so a
+                // duplicate ACK (delta 0) or a stale/wrapped value can neither stall
+                // nor over-advance. A lost ACK self-heals via the next cumulative one.
+                const delta = (resp.ackSeq - (base & 0xFF)) & 0xFF;
+                if (delta > 0 && delta <= nextIdx - base) {
+                    base += delta;
+                    onProgress?.(base, n);
+                }
             } else if (resp.type === 'nack') {
                 const reasonNames = { 1: 'CRC', 2: 'FULL', 3: 'BAD_MAGIC', 4: 'PAUSED', 6: 'BAD_STATE' };
                 console.warn(`[serial rx] NACK reason=${reasonNames[resp.reason] ?? resp.reason} at base=${base}`);
                 if (resp.reason === NACK_BAD_MAGIC) {
                     throw new Error('Fatal: Pico reported bad magic — aborting stream.');
                 }
-                // Settle: absorb in-transit stale responses that the Pico ACKed
-                // for packets accepted before the NACK (mirrors Python stream.py
-                // SETTLE_S + double _flush_responses). Those responses are now
-                // stale — we will resend from base and get fresh ACKs.
+                // Back off (longer for buffer-full) and rewind. Stale cumulative
+                // ACKs still in flight need no draining — each advances base by 0
+                // (or by a real accepted amount, which is correct), so they can
+                // neither stall nor corrupt the window; they are matched and
+                // ignored on later reads.
                 const backoff = resp.reason === NACK_FULL ? 50 : 5;
                 await new Promise(r => setTimeout(r, backoff));
-                // Drain anything that arrived during the backoff.
-                while (this._reader._queue.length > 0) this._reader._queue.shift();
                 nextIdx = base;
             }
         }
@@ -296,7 +346,9 @@ export class SerialTransport {
      * Only valid in STATE_IDLE or STATE_PAUSED.
      * The last segment in the burst must have MSEG_FLAG_PATH_END set.
      */
-    async sendJogBurst(segments) {
+    sendJogBurst(segments) { return this._serialize(() => this._sendJogBurst(segments)); }
+
+    async _sendJogBurst(segments) {
         for (let i = 0; i < segments.length; i++) {
             const pkt = packJog(segments[i], i & 0xFF);
             await this._writer.write(pkt);

@@ -10,6 +10,9 @@ Tests (run in order):
   2. loopback    — send N MicroSegments with zero steps, verify all ACKed
   3. line        — single-axis straight line move on one node
   4. backpressure— flood the buffer, verify NACK_FULL + ready signal
+  7. integrity   — stream known steps through forced Go-Back-N, verify getpos
+                   equals the sent step count (validates seq dedup +
+                   cumulative-ACK window advance — no double-count on resend)
 
 Usage:
   python test_comms.py --port COM3 --node 1
@@ -17,7 +20,7 @@ Usage:
   python test_comms.py --port COM3 --node 1 --test line --steps 200 --feed 20
 """
 
-import sys, os, argparse, time, struct, threading, queue
+import sys, os, argparse, time, struct, threading, queue, re
 
 from host.protocol.packets import (
     pack_microsegment, validate_packet,
@@ -135,6 +138,23 @@ def wait_for_ready(ser, timeout=10.0):
     return False
 
 
+def read_getpos(ser):
+    """Return [x, y, z, a] from the `getpos` control reply, or None on parse fail."""
+    resp = send_text(ser, 'getpos')
+    nums = [int(x) for x in re.findall(r'-?\d+', resp)]
+    return nums[:4] if len(nums) >= 4 else None
+
+
+def wait_idle(ser, timeout=30.0):
+    """Poll `getstate` until the machine reports IDLE (state=0) or timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if 'state=0' in send_text(ser, 'getstate'):
+            return True
+        time.sleep(0.05)
+    return False
+
+
 # Axis → node mapping (matches Pico stream-byte packing: X=1 Y=2 Z=3 A=4)
 AXIS_NODE = {'x': 1, 'y': 2, 'z': 3, 'a': 4}
 
@@ -241,9 +261,45 @@ def test_backpressure(ser, window=16, verbose=False):
     return ok and ack_ok
 
 
+def test_integrity(ser, n=600, feed_sps=500, axis='x', window=16, verbose=False):
+    """
+    Position integrity under Go-Back-N — the decisive test for the cumulative-ACK
+    + seq-dedup change. Streams `n` single-step packets slowly enough that the
+    Pico's ring buffer fills and NACK_FULLs, forcing the sender to rewind and
+    RESEND packets the Pico may already have accepted. Byte-[22] seq dedup must
+    skip those resends (not re-execute), and the cumulative ACK must advance the
+    window to exactly the accepted point — so the final position equals `n`
+    exactly. A double-counted resend (dedup broken) or a miscounted ACK advance
+    (cumulative decode broken) shows up as pos != n.
+    """
+    node = AXIS_NODE[axis]
+    ai   = {'x': 0, 'y': 1, 'z': 2, 'a': 3}[axis]
+    print(f"\n[7] INTEGRITY — {n} steps on {axis.upper()} (node {node}) @ {feed_sps} sps, window={window}")
+    send_text(ser, 'setorigin')                 # zero position, mark homed
+    send_text(ser, f'enable {node}')
+    pkts = [_ms(dx=(1 if axis == 'x' else 0), dy=(1 if axis == 'y' else 0),
+                feed_sps=feed_sps,
+                flags=(MSEG_FLAG_PATH_END if i == n - 1 else MSEG_FLAG_NONE))
+            for i in range(n)]
+    sender = Sender(ser, window=window, verbose=verbose)
+    ok = sender.send_stream(pkts)
+    sender.stop()
+    sender.report()
+    wait_idle(ser)                              # let Core 1 drain the ring buffer
+    pos = read_getpos(ser)
+    got = pos[ai] if pos else None
+    good = ok and sender.acked == n and got == n
+    print(f"    NACKs (go-backs exercised): {sender.nacks}"
+          f"{'' if sender.nacks else '  — WARNING: no backpressure, dedup path not hit'}")
+    print(f"    {'PASS' if good else 'FAIL'} — ACKed {sender.acked}/{n}, "
+          f"pos[{axis}]={got} (expect {n})")
+    return good
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
-TESTS = ['ping', 'loopback', 'backpressure', 'line', 'multistep', 'diagonal', 'all']
+TESTS = ['ping', 'loopback', 'backpressure', 'line', 'multistep', 'diagonal',
+         'integrity', 'all']
 
 def main():
     parser = argparse.ArgumentParser(
@@ -297,6 +353,11 @@ def main():
         if args.test in ('diagonal', 'all'):
             results['diagonal'] = test_diagonal(
                 ser, args.steps, args.steps * 3 // 4, args.feed,
+                window=args.window, verbose=args.verbose)
+
+        if args.test in ('integrity', 'all'):
+            results['integrity'] = test_integrity(
+                ser, n=600, feed_sps=500, axis=args.axis,
                 window=args.window, verbose=args.verbose)
 
     print(f"\n{'='*50}")

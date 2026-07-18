@@ -12,7 +12,7 @@ Usage:
 Protocol:
   Host sends 26-byte MicroSegment packets.
   Pico replies 3 bytes per packet:
-    ACK:  [0xAA] [seq_lo] [seq_hi]
+    ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
     NACK: [0xBB] [reason] [0x00]
       0x01 = CRC error   → resend packet
       0x02 = buffer full → wait and resend
@@ -33,7 +33,6 @@ DEFAULT_WINDOW   = 16       # max in-flight unACKed packets
 ACK_TIMEOUT_S    = 0.2      # per-response wait before assuming loss
 STALL_TIMEOUT_S  = 3.0      # total silence before fatal abort
 BACKPRESSURE_S   = 0.05     # wait for buffer to drain on NACK_FULL
-SETTLE_S         = 0.005    # absorb in-transit stale responses after go-back
 MAX_CRC_ERRORS   = 20       # fatal only after this many CRC failures
 
 
@@ -81,7 +80,8 @@ def _ack_reader(ser, ack_queue, stop_event):
             if len(rest) < 2:
                 continue
             if b0 == MAGIC_ACK:
-                ack_queue.put(('ACK', rest[0] | (rest[1] << 8)))
+                # rest[0] = expectedSeq (cumulative ACK point); rest[1] reserved.
+                ack_queue.put(('ACK', rest[0]))
             else:
                 ack_queue.put(('NACK', rest[0]))
         # else: ASCII text byte — discard; framing stays aligned
@@ -115,8 +115,10 @@ class Sender:
         self.ser.flush()
 
     def _flush_responses(self):
-        """Discard all queued responses. Used on go-back: every outstanding
-        response is for a packet we are about to resend, so it is stale."""
+        """Discard all queued responses. Used once at stream init to clear the
+        `seqreset` text reply and any leftover responses from a prior stream, so
+        the fresh stream starts from a clean queue. (No longer needed on go-back:
+        cumulative ACKs are idempotent — a stale one advances `base` by 0.)"""
         try:
             while True:
                 self.ack_queue.get_nowait()
@@ -153,12 +155,14 @@ class Sender:
         crc_errors = 0
         last_progress = time.monotonic()
 
-        def go_back(reason, settle):
-            """Discard stale responses, back off, rewind to base."""
+        def go_back(reason, backoff):
+            """Back off, then rewind to base for resend. Stale cumulative ACKs
+            still in flight need no draining — each advances `base` by 0 (or by a
+            real accepted amount, which is correct), so they can neither stall nor
+            corrupt the window; they are simply matched and ignored on later reads."""
             nonlocal next_send
-            self._flush_responses()
-            time.sleep(settle)
-            self._flush_responses()   # absorb in-transit stale responses
+            if backoff:
+                time.sleep(backoff)
             next_send = base
             self.retries += 1
             if self.verbose:
@@ -181,13 +185,22 @@ class Sender:
                     print(f"FATAL: stalled — no response for {STALL_TIMEOUT_S}s "
                           f"(ACKed {self.acked}/{n}).", file=sys.stderr)
                     return False
-                go_back(0x00, SETTLE_S)   # assume loss, resend from base
+                go_back(0x00, 0)          # assume loss, resend from base
                 continue
 
             if rtype == 'ACK':
-                base += 1
-                self.acked += 1
-                last_progress = time.monotonic()
+                # Cumulative ACK: `val` is the Pico's expectedSeq — the next wire
+                # seq it wants, meaning it has accepted every packet with a lower
+                # seq. Advance `base` to that point. The delta is computed in the
+                # 8-bit rolling seq space and clamped to the in-flight window
+                # (< 128 « the wrap point), so a duplicate ACK (delta 0) or a
+                # stale/wrapped value can neither stall nor over-advance the
+                # window; a lost ACK self-heals via the next cumulative one.
+                delta = (val - (base & 0xFF)) & 0xFF
+                if 0 < delta <= next_send - base:
+                    base += delta
+                    self.acked += delta
+                    last_progress = time.monotonic()
                 continue
 
             # NACK
@@ -200,7 +213,7 @@ class Sender:
                 if crc_errors > MAX_CRC_ERRORS:
                     print(f"FATAL: {crc_errors} CRC errors — aborting.", file=sys.stderr)
                     return False
-                go_back(val, SETTLE_S)
+                go_back(val, 0)
             else:  # NACK_FULL — backpressure, not an error
                 go_back(val, BACKPRESSURE_S)
             last_progress = time.monotonic()

@@ -114,9 +114,15 @@ the burst drains.
 ### ACK — `0xAA` (3 bytes)
 ```
 [0]      0xAA
-[1]      seq_lo   uint8   — rolling ACK echo (lo byte)
-[2]      seq_hi   uint8   — rolling ACK echo (hi byte)
+[1]      expectedSeq uint8   — cumulative accept point (next wire seq wanted)
+[2]      0x00        uint8   — reserved
 ```
+**Cumulative ACK.** `expectedSeq` is the next byte-[22] seq the Pico wants, i.e.
+it has accepted every packet with a lower seq. The sender advances its Go-Back-N
+window to this point rather than counting one-ACK-per-packet, so a lost or stale
+ACK self-heals on the next one and a stale duplicate (same value) is idempotent.
+The sender decodes the advance in 8-bit rolling space, clamped to the in-flight
+window (≤16 « 128, so no wrap ambiguity). See "Duplicate guard" below.
 
 ### NACK — `0xBB` (3 bytes)
 ```
@@ -241,7 +247,7 @@ prefixed `0x`.
 | `cancel` | — | `ok` | Abandon the paused job → IDLE |
 | `stop` | — | `ok` | Emergency stop — flush, ALARM(ESTOP); always available |
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved) |
-| `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`) and ACK echo (`pktSeq`). Host sends this before each MSEG/jog stream so packet index 0 lines up. See "Duplicate guard" below. |
+| `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value. Host sends this before each MSEG/jog stream so packet index 0 lines up. See "Duplicate guard" below. |
 
 ### `getstate` reply fields
 
@@ -267,10 +273,16 @@ the host parser tolerates later additions.
 Each MSEG/jog packet carries a rolling 8-bit seq in byte [22]. The Go-Back-N
 sender, on a NACK, rewinds to `base` and resends packets that were in flight
 behind the rejected one — packets the Pico may have already accepted. The Pico
-tracks `expectedSeq`; a packet whose seq it has already consumed is ACKed (so the
-host window advances) but **not executed again** (re-executing = a permanent
-position offset). `seqreset` zeroes both `expectedSeq` and the `pktSeq` ACK echo
-at the start of each stream so both sides agree where seq 0 is. The host issues it
+tracks `expectedSeq` (the next seq it will execute); a packet whose seq it has
+already consumed is skipped — **not executed again** (re-executing = a permanent
+position offset) — while a matching one is executed and bumps `expectedSeq`.
+
+`expectedSeq` doubles as the **cumulative ACK value**: every ACK carries the
+current `expectedSeq` (see ACK format above), so an executed packet reports an
+advanced point and a skipped duplicate/gap reports the unchanged point (a
+duplicate ACK). The host advances its window to the reported point, so lost or
+stale ACKs self-heal without a timeout. `seqreset` zeroes `expectedSeq` at the
+start of each stream so both sides agree where seq 0 is; the host issues it
 before every `send_stream` (one per operation in a multi-tool plan).
 
 ## Command Allowed-State Matrix

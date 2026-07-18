@@ -58,7 +58,7 @@ struct MicroSegment {
 #define MSEG_PACKET_SIZE 26     // magic(1) + MicroSegment(24) + CRC8(1)
 
 // ACK/NACK responses (Pico → Host, 3 bytes each):
-//   ACK:  [0xAA] [seq_lo] [seq_hi]
+//   ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
 //   NACK: [0xBB] [reason] [0x00]
 //     reason 0x01 = CRC error
 //     reason 0x02 = buffer full (backpressure)

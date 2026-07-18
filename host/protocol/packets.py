@@ -47,7 +47,10 @@ SplineTile     (37 bytes)  magic = 0xAD
   [4..35]  control_points[4][2] float32 LE pairs (P0x P0y … P3x P3y)
   [36]     CRC8 over bytes [0..35]
 
-ACK  (3 bytes): [0xAA] [seq_lo] [seq_hi]
+ACK  (3 bytes): [0xAA] [expectedSeq] [0x00]
+  Cumulative: expectedSeq is the Pico's next-wanted wire seq, i.e. every packet
+  with a lower seq has been accepted. The sender advances its window to this
+  point, so a lost/stale ACK self-heals via the next one.
 NACK (3 bytes): [0xBB] [reason] [0x00]
   reason 0x01 = CRC error
   reason 0x02 = buffer full (backpressure)
