@@ -16,7 +16,6 @@ import {
 } from "../../src/choreograph/choreograph.js";
 import { MICRO_JOG, MICRO_LIFT } from "../../src/wire/microsegment.js";
 import {
-    defaultConfig,
     resolvedAxes,
     KNIFE,
     PEN,
@@ -26,6 +25,9 @@ import {
     busNode,
     machineConfig,
 } from "../../src/config/config.js";
+import {
+    defaultConfig,
+} from "../../src/config/fixtures.js";
 
 const axes = resolvedAxes(defaultConfig().machine);
 

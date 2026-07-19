@@ -27,7 +27,13 @@ import {
     FRAMED_PACKET_SIZE,
     FRAME_PREFIX_SIZE,
 } from "../../src/wire/packet.js";
-import { defaultConfig, KNIFE, qualityConfig } from "../../src/config/config.js";
+import {
+    KNIFE,
+    qualityConfig,
+} from "../../src/config/config.js";
+import {
+    defaultConfig,
+} from "../../src/config/fixtures.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA = join(__dirname, "data");

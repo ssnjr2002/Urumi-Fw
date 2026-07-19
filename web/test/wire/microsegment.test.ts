@@ -11,7 +11,13 @@ import {
     microSegment,
     interval,
 } from "../../src/wire/microsegment.js";
-import { defaultConfig, resolvedAxes, qualityConfig } from "../../src/config/config.js";
+import {
+    resolvedAxes,
+    qualityConfig,
+} from "../../src/config/config.js";
+import {
+    defaultConfig,
+} from "../../src/config/fixtures.js";
 
 const axes = resolvedAxes(defaultConfig().machine);
 const q = qualityConfig();

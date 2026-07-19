@@ -20,11 +20,13 @@ import {
     toolProfile,
     toolHead,
     machineConfig,
-    uniformMachine,
     qualityConfig,
-    pipelineConfig,
-    defaultConfig,
 } from "../../src/config/config.js";
+import {
+    uniformMachine,
+    defaultConfig,
+    pipelineConfig,
+} from "../../src/config/fixtures.js";
 
 describe("config: BusNode", () => {
     it("defaults type=STEPPER, present=true", () => {
@@ -150,13 +152,17 @@ describe("config: TOOL_PROFILES registries", () => {
 });
 
 describe("config: ToolHead", () => {
-    it("defaults profile=PEN, xOffset=0, yOffset=0", () => {
+    // profile is a SEED mount, and the interface documents "absent = an empty
+    // socket at boot". It used to default to PEN, which contradicted that and
+    // meant an unconfigured head silently claimed to carry a tool. No src code
+    // reads head.profile, so the honest default is undefined.
+    it("defaults to an EMPTY socket (no profile), xOffset=0, yOffset=0", () => {
         const z = axisConfig(busNode(3), 1200);
         const a = axisConfig(busNode(4), 51.667, { rotary: true });
         const h = toolHead(z, a);
         expect(h.z).toBe(z);
         expect(h.a).toBe(a);
-        expect(h.profile).toBe(PEN);
+        expect(h.profile).toBeUndefined();
         expect(h.xOffset).toBe(0);
         expect(h.yOffset).toBe(0);
     });

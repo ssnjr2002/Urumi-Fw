@@ -15,19 +15,22 @@
 // are internal test fixtures — not exported; tests import them directly from
 // ./config/config.js.
 export {
+    // loadConfig = parse ⨟ validate. Production callers want this one;
+    // parseConfig proves shape only and is exposed for tests/tooling.
+    loadConfig,
+    type LoadResult,
     parseConfig,
     type ConfigResult,
-} from "./config/configLoader.js";
+} from "./config/load.js";
 
 export {
     validateConfig,
     type ValidationResult,
-} from "./config/validateConfig.js";
+} from "./config/validate.js";
 
 export {
     // top-level config
     type PipelineConfig,
-    pipelineConfig,
     type MachineConfig,
     machineConfig,
     type QualityConfig,
@@ -36,6 +39,7 @@ export {
     type AxisConfig,
     axisConfig,
     type OpTarget,
+    type MachineTarget,
     type BusNode,
     busNode,
     NodeType,
@@ -66,7 +70,11 @@ export {
     toolForLayer,
     requiredAxes,
     canRunTool,
-} from "./config/helpers.js";
+    resolveTargets,
+    type ResolvedTargets,
+} from "./config/resolve.js";
+
+export { DEFAULTS } from "./config/defaults.js";
 
 // ── svg ingestion (SVG text → curves in mm) ─────────────────────────────────
 // bakePlan handles ingestion internally; these are exposed for callers who want

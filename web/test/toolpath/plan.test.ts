@@ -15,7 +15,12 @@ import { constrain } from "../../src/toolpath/constrain.js";
 import { plan, segAccel, subpathRanges, type PlannedSample } from "../../src/toolpath/plan.js";
 import { CURVE_BOUNDARY } from "../../src/toolpath/sample.js";
 import { CASES } from "./curves.cases.js";
-import { defaultConfig, qualityConfig } from "../../src/config/config.js";
+import {
+    qualityConfig,
+} from "../../src/config/config.js";
+import {
+    defaultConfig,
+} from "../../src/config/fixtures.js";
 
 const CFG = defaultConfig();
 const MACH = CFG.machine;

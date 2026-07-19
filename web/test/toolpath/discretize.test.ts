@@ -19,12 +19,14 @@ import { MICRO_PATH_END, MICRO_JOG, MICRO_LIFT, type MicroSegment } from "../../
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { CASES } from "./curves.cases.js";
 import {
-    defaultConfig,
     resolvedAxes,
     qualityConfig,
     KNIFE,
     PEN,
 } from "../../src/config/config.js";
+import {
+    defaultConfig,
+} from "../../src/config/fixtures.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
 
 const CFG = defaultConfig();

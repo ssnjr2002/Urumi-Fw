@@ -18,7 +18,7 @@
  */
 
 import type { MachineConfig, ToolProfile, ToolType } from "../config/config.js";
-import { canRunTool } from "../config/helpers.js";
+import { canRunTool } from "../config/resolve.js";
 import type { MicroSegment } from "../wire/microsegment.js";
 
 /** One SVG layer's worth of compiled motion, tagged with its tool + slot. */

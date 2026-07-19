@@ -9,7 +9,15 @@ import { readFixture } from "../helpers.js";
 
 import { bakePlan, assembleBlocks } from "../../src/production/bakePlan.js";
 import { compileBlock } from "../../src/production/compileBlock.js";
-import { defaultConfig, KNIFE, PEN, toolProfile, ToolType } from "../../src/config/config.js";
+import {
+    KNIFE,
+    PEN,
+    toolProfile,
+    ToolType,
+} from "../../src/config/config.js";
+import {
+    defaultConfig,
+} from "../../src/config/fixtures.js";
 import { loadSvgMmSubpaths, loadSvgMmLayers } from "../../src/svg/ingest.js";
 import { savePlan, loadPlan } from "../../src/plan/planFile.js";
 

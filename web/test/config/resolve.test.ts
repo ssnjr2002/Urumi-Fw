@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { toolForLayer, canRunTool, requiredAxes } from "../../src/config/helpers.js";
+import { toolForLayer, canRunTool, requiredAxes } from "../../src/config/resolve.js";
 import {
     PEN,
     KNIFE,

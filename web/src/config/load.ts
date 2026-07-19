@@ -1,5 +1,5 @@
 /**
- * configLoader.ts — JSON → PipelineConfig parser.
+ * load.ts — JSON → PipelineConfig. STRUCTURE ONLY.
  *
  * The production config source: a config.json file carries all
  * machine-specific calibration (stepsPerUnit, fCpu, invert, node bindings,
@@ -8,10 +8,15 @@
  * tuning — which the JSON can override but does not redefine from scratch.
  *
  * Required vs optional:
- *   Required: machine.fCpu, machine.x, machine.y, heads[], each axis's
- *   node.id + stepsPerUnit, each head's tool. Missing → error.
+ *   Required: machine.x, machine.y, heads[], each axis's node.id +
+ *   stepsPerUnit, each head's tool. Missing → error. Note the rule: a field is
+ *   required IFF it has no entry in DEFAULTS. Requiring a field that also has a
+ *   default is a contradiction — the default could never be reached.
  *
- *   Optional: machine targets (path/rapid/z/slew), axis ceilings
+ *   Optional: machine.fCpu (a property of the master board, not per-machine
+ *   calibration — constant at 150 MHz across RP2350 boards, so defaulting it
+ *   beats making every config.json restate it), machine targets
+ *   (path/rapid/z/slew), axis ceilings
  *   (maxFeed/maxAccel), invert, maxTravel, laser, peripherals, tools.*,
  *   quality. Absent → documented code default. See feed_accel_value_model.md.
  *
@@ -20,11 +25,18 @@
  *
  * No silent fallback to hardcoded machine calibration (the old
  * defaultMachine() with 160/1200/51.667 is a TEST FIXTURE only, not
- * the production path). The production path is configLoader.parse(json).
+ * the production path). The production path is loadConfig(json).
  *
- * Validation (range checks, duplicate node IDs) is deferred — this module
- * checks required fields and structural shape only. A separate validate()
- * pass can be added later.
+ * Parse, then validate — two passes, never interleaved:
+ *
+ *   parseConfig(json)      shape + required fields  → PipelineConfig | errors
+ *   validateConfig(cfg)    semantics (ranges, ids)  → errors + warnings
+ *   loadConfig(json)       parse ⨟ validate — the entry point callers want
+ *
+ * This module answers only "is this a well-formed config?" — it must not judge
+ * whether the VALUES make sense. A feed of 10^9 parses fine here and is
+ * validate.ts's problem. Keeping the split honest is what lets each pass be
+ * read, tested, and extended on its own.
  */
 
 import {
@@ -34,17 +46,19 @@ import {
     machineConfig,
     toolProfile,
     qualityConfig,
-    pipelineConfig,
     NodeType,
-    TOOL_PROFILES,
     type BusNode,
     type AxisConfig,
     type OpTarget,
+    type MachineTarget,
     type ToolHead,
     type ToolProfile,
     type QualityConfig,
     type PipelineConfig,
-} from "./config.js";
+} from "./schema.js";
+import { TOOL_PROFILES } from "./tools.js";
+import { validateConfig } from "./validate.js";
+import { DEFAULTS } from "./defaults.js";
 
 // ── JSON schema types (what the JSON looks like) ─────────────────────────────
 
@@ -83,7 +97,7 @@ interface JsonLaser {
 }
 
 interface JsonMachine {
-    readonly fCpu: number;
+    readonly fCpu?: number;
     readonly path?: JsonOpTarget;
     readonly rapid?: JsonOpTarget;
     readonly z?: JsonOpTarget;
@@ -169,8 +183,8 @@ export function parseConfig(jsonText: string): ConfigResult {
         errors.push("machine: required (object)");
     } else {
         const m = json.machine;
-        if (typeof m.fCpu !== "number" || m.fCpu <= 0) {
-            errors.push("machine.fCpu: required (positive number)");
+        if (m.fCpu !== undefined && (typeof m.fCpu !== "number" || m.fCpu <= 0)) {
+            errors.push("machine.fCpu: must be a positive number");
         }
         if (typeof m.x !== "object" || m.x === null) {
             errors.push("machine.x: required (axis object)");
@@ -251,11 +265,14 @@ export function parseConfig(jsonText: string): ConfigResult {
     }
 
     const builtMachine = machineConfig(x, y, heads, {
-        fCpu: machine.fCpu,
-        path: opTarget(machine.path, { feed: 80 }),
-        rapid: opTarget(machine.rapid, { feed: 80 }),
-        z: opTarget(machine.z, { feed: 20 }),
-        slew: opTarget(machine.slew, {}),
+        fCpu: machine.fCpu ?? DEFAULTS.machine.fCpu,
+        // Fill-at-load: machine targets are always populated from DEFAULTS, so
+        // consumers never write a `??` fallback. Tool overrides are NOT filled
+        // (see patchToolProfile) — absent there means "inherit".
+        path: machineTarget(machine.path, DEFAULTS.machine.path),
+        rapid: machineTarget(machine.rapid, DEFAULTS.machine.rapid),
+        z: machineTarget(machine.z, DEFAULTS.machine.z),
+        slew: opTarget(machine.slew, DEFAULTS.machine.slew),
         peripherals,
         defaultHead: json.defaultHead ?? 0,
         laser: machine.laser ?? undefined,
@@ -283,7 +300,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         json.quality as Partial<QualityConfig> | undefined,
     );
 
-    return { ok: true, config: pipelineConfig({ machine: builtMachine, quality, toolProfiles }) };
+    return { ok: true, config: { machine: builtMachine, quality, toolProfiles } };
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -299,6 +316,19 @@ function opTarget(j: JsonOpTarget | undefined, fallback: JsonOpTarget): OpTarget
     if (feed !== undefined) out.feed = feed;
     if (accel !== undefined) out.accel = accel;
     return out;
+}
+
+/**
+ * As opTarget, but for the machine tier where a feed is guaranteed. The
+ * fallback's feed is required, so the result satisfies MachineTarget.
+ */
+function machineTarget(
+    j: JsonOpTarget | undefined,
+    fallback: { readonly feed: number; readonly accel?: number },
+): MachineTarget {
+    const feed = typeof j?.feed === "number" ? j.feed : fallback.feed;
+    const accel = typeof j?.accel === "number" ? j.accel : fallback.accel;
+    return accel !== undefined ? { feed, accel } : { feed };
 }
 
 function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
@@ -333,37 +363,57 @@ function patchToolProfile(
     if (!tools || !(name in tools)) return base;
     const o = tools[name]!;
 
-    // Start from the base preset's values (mutable copy), apply JSON overrides.
-    const merged: Record<string, unknown> = {
-        toolType: base.toolType,
-        tangential: base.tangential,
-        offsetMm: base.offsetMm,
-        unwind: base.unwind,
-        cornerAngleDeg: base.cornerAngleDeg,
-        minRadiusMm: base.minRadiusMm,
-        liftHeight: base.liftHeight,
-        requiredPeripheralTypes: base.requiredPeripheralTypes,
-        toolOffset: base.toolOffset,
-    };
-    if (base.path !== undefined) merged.path = base.path;
-    if (base.z !== undefined) merged.z = base.z;
-    if (base.slotOffsets !== undefined) merged.slotOffsets = base.slotOffsets;
+    // Spread, don't hand-list. The previous version enumerated every field of
+    // ToolProfile by name, which silently dropped any field added later —
+    // an override of one key would reset the new key to its generic default,
+    // with no error. Spreading `base` makes the merge field-count-agnostic;
+    // load.test.ts's key-driven no-op test locks that property in.
+    const merged: Record<string, unknown> = { ...base };
+    delete merged.name; // supplied by toolProfile()
 
-    if (o.tangential !== undefined) merged.tangential = o.tangential;
-    if (o.offsetMm !== undefined) merged.offsetMm = o.offsetMm;
-    if (o.unwind !== undefined) merged.unwind = o.unwind;
-    if (o.cornerAngleDeg !== undefined) merged.cornerAngleDeg = o.cornerAngleDeg;
-    if (o.minRadiusMm !== undefined) merged.minRadiusMm = o.minRadiusMm;
-    // Engage targets: merge feed/accel over any preset value.
+    for (const key of ["tangential", "offsetMm", "unwind", "cornerAngleDeg",
+                       "minRadiusMm", "liftHeight", "toolOffset", "slotOffsets"] as const) {
+        if (o[key] !== undefined) merged[key] = o[key];
+    }
+    // Engage targets merge FIELD-WISE over the preset: `{accel}` alone must not
+    // wipe the preset's feed. Tool tier is never filled from DEFAULTS — an
+    // absent target stays undefined, meaning "inherit" (see resolveTargets).
     if (o.path !== undefined) merged.path = opTarget(o.path, base.path ?? {});
     if (o.z !== undefined) merged.z = opTarget(o.z, base.z ?? {});
-    if (o.liftHeight !== undefined) merged.liftHeight = o.liftHeight;
-    if (o.toolOffset !== undefined) merged.toolOffset = o.toolOffset;
-    if (o.slotOffsets !== undefined) merged.slotOffsets = o.slotOffsets;
 
     return toolProfile(name, merged as Partial<Omit<ToolProfile, "name">>);
 }
 
 function err(msg: string): ConfigResult {
     return { ok: false, errors: [msg] };
+}
+
+// ── entry point ───────────────────────────────────────────────────────────────
+
+export type LoadResult =
+    | {
+          readonly ok: true;
+          readonly config: PipelineConfig;
+          /** Non-fatal advisories (e.g. a target above its axis ceiling). */
+          readonly warnings: readonly string[];
+      }
+    | { readonly ok: false; readonly errors: readonly string[] };
+
+/**
+ * Parse AND validate a config.json. This is the entry point production callers
+ * want: `ok: true` means the config is well-formed *and* semantically sane.
+ *
+ * parseConfig alone proves only the former, which is why it should not be
+ * called directly outside tests — a config with a negative feed or duplicate
+ * node ids parses perfectly and then misbehaves on the machine.
+ *
+ * Warnings never block: they are surfaced to the operator, not enforced.
+ */
+export function loadConfig(jsonText: string): LoadResult {
+    const parsed = parseConfig(jsonText);
+    if (!parsed.ok) return parsed;
+
+    const { errors, warnings } = validateConfig(parsed.config);
+    if (errors.length > 0) return { ok: false, errors };
+    return { ok: true, config: parsed.config, warnings };
 }

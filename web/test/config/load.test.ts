@@ -1,5 +1,5 @@
 /**
- * Tests for configLoader.ts — JSON → PipelineConfig parser.
+ * Tests for load.ts — JSON → PipelineConfig (structural pass).
  * Verifies required-field checking, optional defaults, tool preset
  * patching, quality overrides, and error reporting.
  */
@@ -7,14 +7,17 @@
 import { describe, it, expect } from "vitest";
 import { readFixture } from "../helpers.js";
 
-import { parseConfig } from "../../src/config/configLoader.js";
+import { parseConfig } from "../../src/config/load.js";
 import {
     KNIFE,
     PEN,
     REVOLVER_PEN,
-    defaultConfig,
     qualityConfig,
 } from "../../src/config/config.js";
+import {
+    defaultConfig,
+} from "../../src/config/fixtures.js";
+import { DEFAULTS } from "../../src/config/defaults.js";
 
 
 function readJson(name: string): string {
@@ -25,7 +28,7 @@ const TEST_MACHINE = readJson("test-machine.json");
 
 // ── valid config ──────────────────────────────────────────────────────────────
 
-describe("configLoader: valid config", () => {
+describe("load: valid config", () => {
     it("parses test-machine.json successfully", () => {
         const result = parseConfig(TEST_MACHINE);
         expect(result.ok).toBe(true);
@@ -121,7 +124,7 @@ describe("configLoader: valid config", () => {
 
 // ── optional fields default correctly ─────────────────────────────────────────
 
-describe("configLoader: optional defaults", () => {
+describe("load: optional defaults", () => {
     it("rapid.feed defaults to 80 when absent", () => {
         const json = JSON.parse(TEST_MACHINE);
         delete json.machine.rapid;
@@ -197,7 +200,7 @@ describe("configLoader: optional defaults", () => {
 
 // ── tool preset patching ──────────────────────────────────────────────────────
 
-describe("configLoader: tool preset patching", () => {
+describe("load: tool preset patching", () => {
     it("patches knife path.feed without changing other fields", () => {
         const json = JSON.parse(TEST_MACHINE);
         json.tools = { knife: { path: { feed: 60 } } };
@@ -234,7 +237,7 @@ describe("configLoader: tool preset patching", () => {
 
 // ── quality overrides ─────────────────────────────────────────────────────────
 
-describe("configLoader: quality overrides", () => {
+describe("load: quality overrides", () => {
     it("patches only the specified quality fields", () => {
         const json = JSON.parse(TEST_MACHINE);
         json.quality = { chordTol: 0.005, junctionDeviation: 0.1 };
@@ -250,7 +253,7 @@ describe("configLoader: quality overrides", () => {
 
 // ── dual-head + laser ─────────────────────────────────────────────────────────
 
-describe("configLoader: dual-head + laser", () => {
+describe("load: dual-head + laser", () => {
     const dualHeadJson = `{
         "machine": {
             "fCpu": 150000000,
@@ -297,7 +300,7 @@ describe("configLoader: dual-head + laser", () => {
 
 // ── peripherals ───────────────────────────────────────────────────────────────
 
-describe("configLoader: peripherals", () => {
+describe("load: peripherals", () => {
     it("parses peripherals with type and present defaults", () => {
         const json = JSON.parse(TEST_MACHINE);
         json.peripherals = [
@@ -316,7 +319,7 @@ describe("configLoader: peripherals", () => {
 
 // ── error cases ───────────────────────────────────────────────────────────────
 
-describe("configLoader: error cases", () => {
+describe("load: error cases", () => {
     it("rejects invalid JSON", () => {
         const r = parseConfig("{ not valid json");
         expect(r.ok).toBe(false);
@@ -349,9 +352,20 @@ describe("configLoader: error cases", () => {
         if (!r.ok) expect(r.errors.some((e) => e.includes("non-empty"))).toBe(true);
     });
 
-    it("rejects missing fCpu", () => {
+    // fCpu is OPTIONAL: it has a DEFAULTS entry, and a field cannot be both
+    // defaulted and required (the default would be unreachable). It is a
+    // property of the master board, not per-machine calibration.
+    it("defaults a missing fCpu", () => {
         const json = JSON.parse(TEST_MACHINE);
         delete json.machine.fCpu;
+        const r = parseConfig(JSON.stringify(json));
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(r.config.machine.fCpu).toBe(DEFAULTS.machine.fCpu);
+    });
+
+    it("still rejects a present-but-invalid fCpu", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.machine.fCpu = -1;
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.some((e) => e.includes("fCpu"))).toBe(true);
@@ -401,5 +415,81 @@ describe("configLoader: error cases", () => {
         const r = parseConfig('{"machine": {}}');
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.length).toBeGreaterThan(1);
+    });
+});
+
+// ── patchToolProfile: preset ⊕ JSON override ─────────────────────────────────
+
+/**
+ * patchToolProfile rebuilds a ToolProfile by listing its fields BY NAME. That
+ * makes it silently lossy: add a field to ToolProfile, forget to add it to the
+ * merge, and every JSON-overridden tool quietly reverts that field to the
+ * toolProfile() default. The bug is invisible — no error, just wrong motion.
+ *
+ * So the load-bearing test here is the LAST one, which is written against
+ * Object.keys rather than a hand-listed set of fields: it fails when someone
+ * adds a field to ToolProfile without teaching the merge about it, which is
+ * precisely the case a field-by-field test would miss.
+ */
+describe("patchToolProfile", () => {
+    /** Parse TEST_MACHINE with `tools` replaced, returning the named profile. */
+    function patched(name: string, override: unknown) {
+        const json = JSON.parse(TEST_MACHINE);
+        json.tools = { [name]: override };
+        const r = parseConfig(JSON.stringify(json));
+        expect(r.ok).toBe(true);
+        if (!r.ok) throw new Error(r.errors.join("; "));
+        return r.config.toolProfiles[name]!;
+    }
+
+    it("applies the overridden field", () => {
+        expect(patched("knife", { liftHeight: 7.5 }).liftHeight).toBe(7.5);
+    });
+
+    it("preserves preset fields that differ from the toolProfile() default", () => {
+        // KNIFE is tangential/unwind; the generic default is neither. An
+        // override of an UNRELATED field must not reset these.
+        const p = patched("knife", { liftHeight: 7.5 });
+        expect(p.tangential).toBe(KNIFE.tangential);
+        expect(p.unwind).toBe(KNIFE.unwind);
+        expect(p.toolType).toBe(KNIFE.toolType);
+    });
+
+    it("preserves an optional preset field (revolver slotOffsets)", () => {
+        const p = patched("revolver_pen", { liftHeight: 1 });
+        expect(p.slotOffsets).toEqual(REVOLVER_PEN.slotOffsets);
+        expect(p.slotOffsets).toHaveLength(7);
+    });
+
+    it("merges an OpTarget field-wise, not wholesale", () => {
+        // accel given, feed absent → feed must not be clobbered to undefined.
+        const p = patched("knife", { path: { feed: 40, accel: 150 } });
+        expect(p.path).toEqual({ feed: 40, accel: 150 });
+        const q = patched("knife", { path: { feed: 40 } });
+        expect(q.path?.feed).toBe(40);
+    });
+
+    it("leaves an absent tool override as undefined (inherit, not fill)", () => {
+        // Tool tier must NOT be filled from DEFAULTS — undefined means
+        // "inherit from machine", which resolveTargets applies later.
+        const p = patched("pen", { liftHeight: 1 });
+        expect(p.path).toBeUndefined();
+    });
+
+    it("an empty override is a no-op on EVERY field of the preset", () => {
+        // Key-driven, so a newly added ToolProfile field is covered automatically.
+        for (const [name, base] of Object.entries({
+            knife: KNIFE,
+            pen: PEN,
+            revolver_pen: REVOLVER_PEN,
+        })) {
+            const p = patched(name, {});
+            for (const key of Object.keys(base) as (keyof typeof base)[]) {
+                expect({ field: key, value: p[key] }).toEqual({
+                    field: key,
+                    value: base[key],
+                });
+            }
+        }
     });
 });

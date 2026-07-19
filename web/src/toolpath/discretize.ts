@@ -27,6 +27,7 @@
 
 import type { MachineConfig, QualityConfig, ToolProfile } from "../config/config.js";
 import { needsOffsetComp, resolvedAxes, type ResolvedAxes } from "../config/config.js";
+import { resolveTargets } from "../config/resolve.js";
 import { angleDelta } from "./geometry.js";
 import { subpathRanges, type PlannedSample } from "./plan.js";
 import {
@@ -83,10 +84,11 @@ export function discretize(
     //   rapid — machine-owned XY reposition (no tool override).
     //   z     — engage target, tool overrides machine.
     //   slew  — machine-owned standalone-A, threaded into pivot/preOrient.
-    const jogFeed = overrides?.jogFeed ?? machine.rapid.feed ?? 80;
+    const targets = resolveTargets(machine, profile);
+    const jogFeed = overrides?.jogFeed ?? targets.rapid.feed;
     const liftHeight = overrides?.liftHeight ?? profile.liftHeight;
-    const zFeed = overrides?.zFeed ?? profile.z?.feed ?? machine.z.feed ?? 20;
-    const slew = machine.slew;
+    const zFeed = overrides?.zFeed ?? targets.z.feed;
+    const slew = targets.slew;
 
     const xSpu = axes.x.stepsPerUnit;
     const ySpu = axes.y.stepsPerUnit;

@@ -10,14 +10,14 @@
  *   loadSvgMmLayers → assembleBlocks → compileBlock per block → Plan → savePlan
  *
  * All machine/tool/quality options come from the parsed PipelineConfig (the
- * config.json path via configLoader). The only genuinely job-level choice is a
+ * config.json path via loadConfig). The only genuinely job-level choice is a
  * fallback tool for an unlayered SVG.
  */
 
 import type { CubicBezier } from "../toolpath/geometry.js";
 import type { PipelineConfig, ToolProfile } from "../config/config.js";
 import { ToolType } from "../config/config.js";
-import { toolForLayer } from "../config/helpers.js";
+import { toolForLayer } from "../config/resolve.js";
 import { loadSvgMmLayers, loadSvgLayers } from "../svg/ingest.js";
 import { compileBlock } from "./compileBlock.js";
 import type { Block, Plan } from "../plan/plan.js";

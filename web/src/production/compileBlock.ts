@@ -24,6 +24,7 @@
 import type { CubicBezier } from "../toolpath/geometry.js";
 import type { MachineConfig, ToolProfile, QualityConfig } from "../config/config.js";
 import { resolvedAxes } from "../config/config.js";
+import { resolveTargets } from "../config/resolve.js";
 import { enforceC1 } from "../toolpath/repair.js";
 import { flatten } from "../toolpath/flatten.js";
 import { constrain } from "../toolpath/constrain.js";
@@ -87,8 +88,9 @@ export function compileBlock(
     // Feed/accel resolution (docs/feed_accel_value_model.md):
     //   pathFeed  — cut target: tool override, else machine baseline.
     //   pathAccel — optional cut-accel cap: tool/machine, else unset (0).
-    const pathFeed = profile.path?.feed ?? machine.path.feed ?? 80;
-    const pathAccel = profile.path?.accel ?? machine.path.accel ?? 0;
+    const targets = resolveTargets(machine, profile);
+    const pathFeed = targets.path.feed;
+    const pathAccel = targets.path.accel ?? 0;
 
     // The single XY linear-acceleration ceiling used by the cornering
     // constraint's centripetal cap (`aMax`). The constraint collapses XY accel

@@ -151,7 +151,7 @@ export function walkSchedule(
             const targetHead = headAssignment.get(block.profile.toolType) ?? 0;
             const prevAxes = axesForHead(machine, state.headIndex);
             const axes = axesForHead(machine, targetHead);
-            const jogFeed = opts.jogFeed ?? machine.rapid.feed ?? 80;
+            const jogFeed = opts.jogFeed ?? machine.rapid.feed;
 
             const interBlock: MicroSegment[] = [];
 
