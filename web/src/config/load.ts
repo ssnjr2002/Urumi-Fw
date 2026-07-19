@@ -17,7 +17,8 @@
  *   calibration — constant at 150 MHz across RP2350 boards, so defaulting it
  *   beats making every config.json restate it), machine targets
  *   (path/rapid/z/slew), axis ceilings
- *   (maxFeed/maxAccel), invert, maxTravel, laser, peripherals, tools.*,
+ *   (maxFeed/maxAccel), invert, maxTravel, laser, peripherals (the ARRAY is
+ *   optional, but each entry needs id + type), tools.*,
  *   quality. Absent → documented code default. See feed_accel_value_model.md.
  *
  * Lenient migration: unknown keys (old maxRate/accel/feedMax/jogFeed/zFeed/
@@ -109,7 +110,8 @@ interface JsonMachine {
 
 interface JsonPeripheral {
     readonly id: number;
-    readonly type?: number;
+    /** Required — see the peripherals build step for why it cannot default. */
+    readonly type: number;
     readonly present?: boolean;
 }
 
@@ -248,14 +250,25 @@ export function parseConfig(jsonText: string): ConfigResult {
     }
 
     // ── build machine ─────────────────────────────────────────────────────
+    // A peripheral's `type` is REQUIRED and has no default. Defaulting it to
+    // STEPPER was actively wrong: a peripheral is by definition the non-axis
+    // case, so the one value it can never sensibly be is the one it defaulted
+    // to. Type is also the whole reason the entry exists — canRunTool matches a
+    // tool's requiredPeripheralTypes against it, so a wrong type silently makes
+    // an unrunnable tool look runnable. `present` still defaults to true: a
+    // declared peripheral is fitted unless stated otherwise.
     const peripherals = (json.peripherals ?? []).map((p, i) => {
         if (typeof p.id !== "number") {
             errors.push(`peripherals[${i}].id: required (number)`);
+        }
+        if (typeof p.type !== "number") {
+            errors.push(`peripherals[${i}].type: required (number, a NODE_TYPE_* value)`);
+        }
+        if (typeof p.id !== "number" || typeof p.type !== "number") {
             return busNode(0, { present: false });
         }
-        //  TODO: Deliberate if these defaults are good. Currently I am not convinced they are.
         return busNode(p.id, {
-            type: (p.type ?? NodeType.STEPPER) as NodeType,
+            type: p.type as NodeType,
             present: p.present ?? true,
         });
     });

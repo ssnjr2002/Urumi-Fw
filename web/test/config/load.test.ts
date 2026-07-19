@@ -315,6 +315,36 @@ describe("load: peripherals", () => {
         expect(r.config.machine.peripherals[0]!.present).toBe(true); // default
         expect(r.config.machine.peripherals[1]!.present).toBe(false);
     });
+
+    // type has NO default. Defaulting it to STEPPER was wrong twice over: a
+    // peripheral is the non-axis case, so STEPPER is the one value it can never
+    // be; and canRunTool matches requiredPeripheralTypes against it, so a
+    // silently-wrong type makes an unrunnable tool look runnable.
+    it("rejects a peripheral with no type", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.peripherals = [{ id: 5 }];
+        const r = parseConfig(JSON.stringify(json));
+        expect(r.ok).toBe(false);
+        if (!r.ok) {
+            expect(r.errors.some((e) => e.includes("peripherals[0].type"))).toBe(true);
+        }
+    });
+
+    it("rejects a peripheral with no id", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.peripherals = [{ type: 0x02 }];
+        const r = parseConfig(JSON.stringify(json));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors.some((e) => e.includes("peripherals[0].id"))).toBe(true);
+    });
+
+    it("reports the offending index across several peripherals", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.peripherals = [{ id: 5, type: 0x02 }, { id: 6 }];
+        const r = parseConfig(JSON.stringify(json));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors.some((e) => e.includes("peripherals[1].type"))).toBe(true);
+    });
 });
 
 // ── error cases ───────────────────────────────────────────────────────────────

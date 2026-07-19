@@ -35,12 +35,6 @@ import { DEFAULTS } from "./defaults.js";
 
 // ── bus tier ─────────────────────────────────────────────────────────────────
 
-// TODO: Think about BusNode.present and required config. We dont say busnode
-// in a json config, we just have axis and peripherals but there is no way to
-// state if they are present or not? I dont have clarity on this. Btw present
-// means its wired up on the bus, not that its alive or something. Maybe rethink
-// the name?
-
 /**
  * Node type — the RS485 node's firmware identity, a numeric mirror of the
  * include/common.h NODE_TYPE_* enum. CMD_GET_TYPE returns this byte; the
@@ -56,6 +50,23 @@ export const NodeType = {
 
 export type NodeType = (typeof NodeType)[keyof typeof NodeType];
 
+/**
+ * One node on the RS485 bus.
+ *
+ * A BusNode is never declared on its own — it is always declared BY the thing
+ * that uses it: an axis (`machine.x.node`, `heads[i].z.node`, …) or a
+ * `peripherals[]` entry. There is deliberately no top-level node list, because
+ * a node with no consumer is not something the pipeline can act on: nothing
+ * would address it. So the config states what the machine HAS, and the bus
+ * topology falls out of that.
+ *
+ * `present` is about WIRING, not liveness: false means "this node is accounted
+ * for in the design but not physically fitted". Nothing here is ever inferred
+ * from a ping — connect-time reachability and node-type agreement are the
+ * orchestrator's business (docs/node_type_architecture.md §2). A config with
+ * present: true and an unplugged node is a valid config describing a broken
+ * machine, and it is the orchestrator that must say so.
+ */
 export interface BusNode {
     readonly id: number;
     readonly type: NodeType;
