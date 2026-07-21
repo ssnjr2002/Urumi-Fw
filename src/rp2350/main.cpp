@@ -19,6 +19,10 @@ MicroSegment masterBuf[MASTER_BUF_SIZE];
 volatile uint16_t mBufHead = 0;
 volatile uint16_t mBufTail = 0;
 
+// Queued motion time (§4.6) — single-writer pair, see shared.h
+volatile uint32_t queuedUsIn  = 0;   // Core 0 adds on enqueue
+volatile uint32_t queuedUsOut = 0;   // Core 1 adds on retire
+
 // Machine state + reason codes (see shared.h for the transition map)
 volatile uint8_t machineState   = STATE_IDLE;
 volatile uint8_t alarmReason    = ALARM_NONE;

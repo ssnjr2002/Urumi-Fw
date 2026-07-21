@@ -219,6 +219,7 @@ bool handleCommand(const String& input) {
     if (input == "cancel") {
         if (machineState != STATE_PAUSED) { Serial.println("err bad_state"); return true; }
         mBufHead = mBufTail;                   // buffer already drained at pause; defensive
+        queuedUsOut = queuedUsIn;              // …and its queued time with it (§4.6)
         jobActive    = false;
         machineState = STATE_IDLE;
         Serial.println("ok");

@@ -42,7 +42,8 @@ commands are lowercase ASCII, so the two never collide at a boundary.
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
 | `MSEG_NACK`  | `0xBB` | Pico → Host | NACK response |
 | `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request (mirrors `getstate`) |
-| `STATUS_RSP` | `0xA6` | Pico → Host | Binary status response |
+| `STATUS_RSP` | `0xA7` | Pico → Host | Binary status response (30 B) |
+| ~~`STATUS_RSP_V1`~~ | `0xA6` | — | Retired 9-byte frame; reserved, never emitted |
 
 All single-byte magics have bit 7 set, keeping them disjoint from the lowercase
 ASCII that begins every control-plane line.
@@ -140,20 +141,43 @@ RUNNING — the Pico handles it on Core 0 between MSEG packet boundaries so it
 never interrupts step timing. The host may send one between any two MSEG/jog
 packets by inserting the byte at a packet boundary.
 
-### STATUS_RSP — `0xA6` (7 bytes)
+### STATUS_RSP — `0xA7` (30 bytes)
 ```
-[0]      magic         = 0xA6
+[0]      magic         = 0xA7
 [1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
 [2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL
 [5]      runningReason uint8   — 0=JOB 1=JOG (only meaningful while state=RUNNING)
-[6]      CRC8 over bytes [0..5]
+[6..7]   bufCount      uint16 LE — MicroSegments queued in masterBuf
+[8..23]  pos[4]        int32 LE  — machinePos: x, y, z, a (steps)
+[24]     expectedSeq   uint8   — next wire seq the data plane will execute
+[25..28] queuedUs      uint32 LE — queued motion time, microseconds
+[29]     CRC8 over bytes [0..28]
 ```
-Same semantic content as the text `getstate` reply, packed into 7 bytes. The
-host UI polls this at ~100 ms during job execution instead of sending the 9-byte
-ASCII `getstate\n` and parsing a variable-length text reply. ASCII `getstate`
-remains available for human/debug use.
+Supersedes `getstate` **and** `getpos` in one coherent sample — previously the
+two were separate round trips on the text plane and could disagree by tens of
+ms. Per the transport's per-transaction cost model the extra bytes are free: one
+30-byte frame fits a single 64-byte USB packet.
+
+`bufCount` counts segments, including the one Core 1 is mid-executing.
+`queuedUs` is the sum of their durations (major-axis steps × interval), which is
+what a jog source paces against — segment *count* says nothing about time when
+segment durations vary by orders of magnitude. Whole-segment granularity: the
+executing segment counts in full, with no subtraction of elapsed time, so the
+figure over-reports by at most one segment.
+
+`expectedSeq` is **informational**, for resynchronising after a timeout, abort or
+reconnect. It is not flow control — ACKs remain the only window-advance
+mechanism.
+
+**The magic changed from `0xA6`.** A reader consumes fixed-length frames blind,
+so a host expecting the old 9-byte v1 frame must fail on an unknown magic rather
+than mis-parse 30 bytes as 9 and desync the stream. `0xA6` is retired and
+reserved; it is never emitted. Host and firmware for this frame must be flashed
+together.
+
+ASCII `getstate` and `getpos` remain available for human/debug use.
 
 ### CMD_GET_CONFIG response (Pico → Host) *(Phase 2)*
 ```

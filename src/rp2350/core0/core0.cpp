@@ -90,6 +90,8 @@ void loop() {
     // 5. WIPE ALL GLOBAL STATE (Clean Slate!)
     mBufHead = 0;
     mBufTail = 0;
+    queuedUsIn = 0;
+    queuedUsOut = 0;
     machineState = STATE_IDLE;
     alarmReason = ALARM_NONE;
     runningReason = RUNNING_JOB;

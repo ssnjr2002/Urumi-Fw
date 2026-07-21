@@ -750,12 +750,27 @@ specification; this is the ledger.
       packets @ 120 sps, 229 go-backs, **3638 resends all deduped**, final
       position exact. Coalescing confirmed live at 8.00 packets per ACK frame.
 
+- [x] **§4.2 + §4.6 — extended `STATUS_RSP`, firmware half.** Magic `0xA6` →
+      `0xA7`, 9 → 30 bytes, adding `pos[4]`, `expectedSeq` and `queuedUs`.
+      Queued time is tracked as a single-writer counter pair (`queuedUsIn` on
+      Core 0 enqueue, `queuedUsOut` on Core 1 retire) rather than one shared
+      total, which would be a genuine cross-core RMW race; both are resynced
+      wherever the ring is flushed. Verified on hardware by raw-wire decode:
+      frame shape and CRC, `pos` agreeing with text `getpos`, `queuedUs` rising
+      under load and draining to exactly 0 at IDLE, `expectedSeq` tracking
+      accepted packets. `bufCount × per-segment duration` matched `queuedUs` to
+      the microsecond — two independently computed fields agreeing.
+
 ### Next
 
-- [ ] **§4.2 + §4.6 — extended `STATUS_RSP`** (position, `expectedSeq`,
-      `queued_us`). One wire change, one host parse change — do them together or
-      pay two flag days. Should *delete* `LEAD_S` / `_queued_s` / `_t0` from
-      `_ClickJogSource`.
+- [ ] **§4.2 + §4.6 — host half. ⚠ The tree is mid-flag-day.** Firmware emits
+      `0xA7`/30 B; `host/protocol/packets.py` and `web/demo/transport.js` still
+      expect `0xA6`/9 B, so **status polling against real hardware fails until
+      this lands** (cleanly, as an unknown magic — which is what the magic bump
+      bought). The Python suites still pass because `SimBackend` also still
+      speaks v1; update both sides together. Should *delete* `LEAD_S` /
+      `_queued_s` / `_t0` from `_ClickJogSource`, and let `busy` mean "machine
+      moving" as a reported fact rather than a host-side estimate (§2.3).
 - [ ] **§4.3 — binary `seqreset`.** Unblocked (the demux it needed now exists).
       Small; gets stream start off the text plane.
 - [ ] **§4.5 — soft abort.** Last, and the only item that is not nearly free:

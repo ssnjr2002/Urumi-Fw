@@ -21,3 +21,7 @@ void dataPlaneReset();
 
 // `seqreset` control command: zero the duplicate-guard seq and ACK echo only.
 void dataPlaneResetSeq();
+
+// The next wire seq the data plane will execute. Reported in STATUS_RSP (§4.2)
+// as an informational reconciliation field — NOT flow control (D9).
+uint8_t dataPlaneExpectedSeq();

@@ -161,6 +161,10 @@ static void feedFixed26(uint8_t b) {
     ms.pad[0] = ms.pad[1] = ms.pad[2] = 0;
 
     masterBuf[mBufTail] = ms;
+    // Queued-time accounting (§4.6) — must land BEFORE the tail publishes the
+    // segment, or a status poll between the two reports a segment that is
+    // visible in bufCount but contributes no time.
+    queuedUsIn += microSegmentUs(ms.dx, ms.dy, ms.dz, ms.da, ms.interval);
     __dmb();
     mBufTail = next;
 
@@ -290,4 +294,8 @@ void dataPlaneReset() {
 void dataPlaneResetSeq() {
     expectedSeq = 0;
     pendingAcks = 0;    // any deferred ACK names the pre-reset numbering
+}
+
+uint8_t dataPlaneExpectedSeq() {
+    return expectedSeq;
 }

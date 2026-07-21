@@ -79,16 +79,58 @@ struct MicroSegment {
 // and always before a NACK or a duplicate ACK. See docs/comms_architecture.md §4.1.
 #define ACK_COALESCE_MAX 8      // ≈ half a typical host window
 
-// Binary status request/response (mirrors the text `getstate` command):
-//   STATUS_REQ:  [0xA5]                                   (1 byte, no CRC)
-//   STATUS_RSP:  [0xA6][state][enabled][homed][alarm][running][bufCount_lo][bufCount_hi][CRC8]  (9 bytes)
-// bufCount is the number of MicroSegments currently queued in masterBuf
-// (mBufTail - mBufHead, wrapped) — including the one Core 1 is mid-executing.
-// Lets a host-side poll loop detect "buffer about to run dry" without
-// guessing from wall-clock timing (see jog_blend_ui.py's blend/decel decision).
+// Binary status request/response (mirrors the text `getstate` command).
+// docs/comms_architecture.md §4.2 + §4.6.
+//
+//   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
+//   STATUS_RSP:  [0xA7]                                    (30 bytes)
+//     [0]      magic 0xA7
+//     [1]      machineState
+//     [2]      axes_enabled
+//     [3]      axes_homed
+//     [4]      alarmReason
+//     [5]      runningReason
+//     [6..7]   bufCount   u16 LE   — segments queued in masterBuf
+//     [8..23]  pos[4]     i32 LE   — machinePos, x/y/z/a
+//     [24]     expectedSeq         — next wire seq the data plane will execute
+//     [25..28] queuedUs   u32 LE   — motion time queued, microseconds
+//     [29]     CRC8 over [0..28]
+//
+// One frame, one coherent sample. Position used to need a separate `getpos` on
+// the text plane, so state and position could disagree by tens of ms; per §1
+// the extra bytes are free because cost is per-transaction, not per-byte.
+//
+// bufCount counts segments — including the one Core 1 is mid-executing — but
+// segments have wildly different durations, so queuedUs is what a jog source
+// actually paces against. Whole-segment granularity: the executing segment is
+// counted in full, without subtracting elapsed time. Error ≤ one segment.
+//
+// expectedSeq is INFORMATIONAL — for resynchronising after a timeout, abort or
+// reconnect. It is not flow control; ACKs remain the only advance mechanism (D9).
+//
+// The magic changed 0xA6 → 0xA7 deliberately. The reader consumes fixed-length
+// frames blind (D2), so a host expecting the 9-byte v1 frame must fail on an
+// unknown byte (D5) rather than silently mis-parse 30 bytes as 9 and desync.
 #define STATUS_REQ       0xA5
-#define STATUS_RSP       0xA6
-#define STATUS_RSP_SIZE  9
+#define STATUS_RSP_V1    0xA6   // retired 9-byte frame — never emit; reserved so
+                                // the value is not reused for something else
+#define STATUS_RSP       0xA7
+#define STATUS_RSP_SIZE  30
+
+// Duration of a MicroSegment in microseconds: the major axis takes one step per
+// `interval` cycles, so the segment lasts maxSteps × interval cycles. 64-bit
+// intermediate — interval × maxSteps overflows u32 readily (a 1 s segment is
+// 150e6 cycles).
+static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
+                                      int32_t da, uint32_t interval) {
+    int32_t  d[4] = { dx, dy, dz, da };
+    uint32_t maxSteps = 0;
+    for (int i = 0; i < 4; i++) {
+        uint32_t a = (d[i] < 0) ? (uint32_t)(-d[i]) : (uint32_t)d[i];
+        if (a > maxSteps) maxSteps = a;
+    }
+    return (uint32_t)(((uint64_t)interval * maxSteps) / (F_CPU / 1000000u));
+}
 
 // ─── Config Blob Store (docs/config_storage.md) ───────────────────────────────
 // USB opcodes for the opaque msgpack config blob. Host→Pico magics have bit 7
@@ -170,6 +212,20 @@ enum RunningReason : uint8_t {
 extern MicroSegment masterBuf[MASTER_BUF_SIZE];
 extern volatile uint16_t mBufHead;
 extern volatile uint16_t mBufTail;
+
+// Queued motion time (§4.6), as two MONOTONIC counters rather than one shared
+// total. Each has exactly one writer — Core 0 adds on enqueue, Core 1 adds on
+// retire — so neither core ever read-modify-writes the other's value, the same
+// single-writer discipline that makes mBufHead/mBufTail safe without a lock.
+// A shared `queuedUs -= …` would be a genuine cross-core race.
+//
+// Read it as `queuedUsIn - queuedUsOut`, which is correct across u32 wrap
+// (~71 minutes of queued motion) because unsigned subtraction wraps with it.
+// On a ring flush both are resynced, since flushed segments are never retired.
+extern volatile uint32_t queuedUsIn;      // Core 0 writes
+extern volatile uint32_t queuedUsOut;     // Core 1 writes
+
+static inline uint32_t queuedUs() { return queuedUsIn - queuedUsOut; }
 
 extern volatile uint8_t machineState;     // one of MachineState
 extern volatile uint8_t alarmReason;      // one of AlarmReason   (set before STATE_ALARM)

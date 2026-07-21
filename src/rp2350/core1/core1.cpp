@@ -193,6 +193,10 @@ static void __time_critical_func(processMicroSegments)() {
         machinePos[2] += ms.dz;
         machinePos[3] += ms.da;
 
+        // Retire this segment's contribution to queued time (§4.6). Paired with
+        // the enqueue-side add in data_plane.cpp; each counter has one writer.
+        queuedUsOut += microSegmentUs(ms.dx, ms.dy, ms.dz, ms.da, ms.interval);
+
         __dmb();
         mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
 
@@ -265,6 +269,7 @@ void processBus() {
     //    ALARM is sticky until Core 0 issues setorigin / unalarm.
     if (machineState == STATE_ESTOP) {
         mBufHead = mBufTail;            // flush the queue
+        queuedUsOut  = queuedUsIn;     // flushed segments are never retired (§4.6)
         axes_homed   = 0;              // datum lost
         axes_enabled = 0;              // de-energised
         jobActive    = false;          // any suspended job is unrecoverable
