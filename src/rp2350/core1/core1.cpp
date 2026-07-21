@@ -79,7 +79,24 @@ static uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
 
 // Returns true if the segment was emitted in full; false if estop aborted it
 // mid-way (in which case the caller must NOT accumulate its position delta).
-static bool __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
+// True while some request wants motion brought to rest gracefully. Both flags
+// use the same ramp — the difference is only where Core 1 lands afterwards.
+static inline bool rampRequested() { return pauseRequested || abortRequested; }
+
+// Soft-limit gate for steps emitted DURING a ramp. Phase 2 of the ramp emits
+// beyond the segment's planned delta, so it can cross a bound that the
+// per-segment check already cleared.
+//
+// HARNESS ONLY — always returns true for now. Wiring the real bounds check in
+// means deciding where Core 1 reads soft limits from, which is the same
+// unresolved config-access question as DECEL_SPS2 below. When it lands, the
+// caller's response is already written: setAlarm(ALARM_SOFT_LIMIT).
+static inline bool rampStepInBounds(const int32_t /*pos*/[4]) {
+    return true;
+}
+
+static EmitResult __time_critical_func(emitMicroSegment)(const MicroSegment& ms,
+                                                         int32_t out[4]) {
     // A MicroSegment describes a block of steps: the major axis takes
     // max(|dx|,|dy|,|dz|,|da|) steps, minor axes are Bresenham-distributed
     // against it. `interval` is the time (CPU cycles) per major-axis step.
@@ -89,23 +106,44 @@ static bool __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
 
     int32_t  delta[4] = { ms.dx, ms.dy, ms.dz, ms.da };
     uint32_t absSteps[4];
+    int32_t  sign[4];
     uint8_t  dirBits = 0;
     uint32_t maxSteps = 0;
 
+    out[0] = out[1] = out[2] = out[3] = 0;
+
     for (int i = 0; i < 4; i++) {
         absSteps[i] = (delta[i] < 0) ? (uint32_t)(-delta[i]) : (uint32_t)delta[i];
+        sign[i]     = (delta[i] < 0) ? -1 : 1;
         if (absSteps[i] > maxSteps) maxSteps = absSteps[i];
         if (delta[i] > 0) dirBits |= (1 << (i * 2 + 1)); // positive = CW
     }
 
-    if (maxSteps == 0) return true; // no motion this segment
+    if (maxSteps == 0) return EMIT_DONE; // no motion this segment
 
     // Bresenham error accumulators — symmetric init for centred distribution
     uint32_t err[4] = { maxSteps / 2, maxSteps / 2, maxSteps / 2, maxSteps / 2 };
 
+    uint32_t interval = ms.interval;   // mutable: the ramp stretches it per step
+    bool     ramping  = false;
+    float    v        = 0.0f;          // steps/s — only meaningful while ramping
+
     uint32_t t0 = rp2040.getCycleCount();
-    for (uint32_t s = 0; s < maxSteps; s++) {
-        if (machineState == STATE_ESTOP) return false;
+    for (uint32_t s = 0; ; s++) {
+        if (machineState == STATE_ESTOP) return EMIT_ESTOP;
+
+        // Enter the ramp once, at whatever velocity we happen to be doing. The
+        // interval IS the velocity, so nothing needs to be handed in.
+        if (!ramping && rampRequested()) {
+            ramping = true;
+            v = (float)F_CPU / (float)interval;
+        }
+
+        // Termination. Planned run: the segment's own step count. Ramping: rest
+        // — which can fall BEFORE or AFTER that count, so once the ramp is live
+        // the loop is no longer bounded by maxSteps.
+        if (ramping) { if (v <= V_REST_SPS) return EMIT_RAMPED; }
+        else         { if (s >= maxSteps)   return EMIT_DONE;   }
 
         uint8_t streamByte = dirBits;
         for (int i = 0; i < 4; i++) {
@@ -114,18 +152,31 @@ static bool __time_critical_func(emitMicroSegment)(const MicroSegment& ms) {
             if (err[i] >= maxSteps) {
                 err[i] -= maxSteps;
                 streamByte |= (1 << (i * 2));   // step bit
-            }
+                out[i]     += sign[i];          // count what is actually EMITTED,
+            }                                   // not what was planned
         }
 
         // Wait the prescribed per-step interval, then emit
-        while ((rp2040.getCycleCount() - t0) < ms.interval) {
-            if (machineState == STATE_ESTOP) return false;
+        while ((rp2040.getCycleCount() - t0) < interval) {
+            if (machineState == STATE_ESTOP) return EMIT_ESTOP;
         }
-        t0 += ms.interval; // ms = microsegment, not to be confused with millisecond
+        t0 += interval; // ms = microsegment, not to be confused with millisecond
 
         rs485.writeStream(streamByte);
+
+        if (ramping) {
+            if (!rampStepInBounds(out)) return EMIT_SOFT_LIMIT;
+
+            // v² ← v² − 2·a·d with d = one major-axis step: constant decel per
+            // unit DISTANCE, so the stopping distance is exact regardless of
+            // where in the segment the ramp began. All literals need the `f`
+            // suffix — a bare 1.0 is a double and would promote the expression
+            // onto the (much slower) double path.
+            float v2 = v * v - 2.0f * DECEL_SPS2;
+            v = (v2 <= V_REST_SPS * V_REST_SPS) ? V_REST_SPS : sqrtf(v2);
+            interval = (uint32_t)((float)F_CPU / v);
+        }
     }
-    return true;
 }
 
 static void __time_critical_func(processMicroSegments)() {
@@ -179,19 +230,64 @@ static void __time_critical_func(processMicroSegments)() {
         }
         uint32_t tStart = micros();
 #endif
-        // Abort without accumulating if estop cut the segment short
-        if (!emitMicroSegment(ms)) return;
+        // A ramp may start mid-segment, so advertise the sub-mode before emitting
+        // rather than after. Reading it back is also how the ramp is observable
+        // at all — it is over in tens of milliseconds.
+        if (rampRequested() && runningReason != RUNNING_ABORT_DECEL)
+            runningReason = RUNNING_ABORT_DECEL;
+
+        int32_t got[4];
+        EmitResult r = emitMicroSegment(ms, got);
+
+        // Estop forfeits position BY CHOICE — got[] is accurate here too, the
+        // caller just discards it. If estop should ever stop costing a re-home,
+        // this is a one-line change, not a rework.
+        if (r == EMIT_ESTOP) return;
 
 #ifdef DEBUG_TIMING
         jobMeasuredUs += micros() - tStart;
         jobExpectedUs += (uint32_t)(((uint64_t)ms.interval * maxSteps) / (F_CPU / 1000000));
 #endif
 
-        // Exact machine position: the deltas are integer step counts
-        machinePos[0] += ms.dx;
-        machinePos[1] += ms.dy;
-        machinePos[2] += ms.dz;
-        machinePos[3] += ms.da;
+        // Exact machine position: count what was EMITTED, not what was planned.
+        // A ramp stops mid-segment and may overshoot it, so neither ms.dx… nor
+        // zero is right on that path.
+        machinePos[0] += got[0];
+        machinePos[1] += got[1];
+        machinePos[2] += got[2];
+        machinePos[3] += got[3];
+
+        if (r == EMIT_RAMPED || r == EMIT_SOFT_LIMIT) {
+            // Motion has ended somewhere inside this segment. The rest of the
+            // plan is void — it was computed from a velocity the machine no
+            // longer has — so discard the whole ring rather than resuming into it.
+            bool toPause = pauseRequested;
+            mBufHead = mBufTail;
+            queuedUsOut = queuedUsIn;              // flushed segments never retire
+            pauseRequested = abortRequested = false;
+            __dmb();
+
+            if (r == EMIT_SOFT_LIMIT) {            // harness — not raised yet
+                alarmReason  = ALARM_SOFT_LIMIT;
+                axes_homed   = 0;
+                jobActive    = false;
+                __dmb();
+                machineState = STATE_ALARM;
+            } else if (toPause) {
+                resumePos[0] = machinePos[0]; resumePos[1] = machinePos[1];
+                resumePos[2] = machinePos[2]; resumePos[3] = machinePos[3];
+                jobActive    = true;
+                runningReason = RUNNING_JOB;
+                __dmb();
+                machineState = STATE_PAUSED;
+            } else {                               // abort — not resumable
+                jobActive    = false;
+                runningReason = RUNNING_JOB;
+                __dmb();
+                machineState = STATE_IDLE;
+            }
+            return;
+        }
 
         // Retire this segment's contribution to queued time (§4.6). Paired with
         // the enqueue-side add in data_plane.cpp; each counter has one writer.
@@ -200,13 +296,11 @@ static void __time_critical_func(processMicroSegments)() {
         __dmb();
         mBufHead = (mBufHead + 1) % MASTER_BUF_SIZE;
 
-        // Pause boundary: a host-placed tool-change marker (MSEG_FLAG_PAUSE) or
-        // an operator `pause` request (pauseRequested). Either way the segment
-        // just executed is the last before the stop — snapshot resumePos, mark
-        // the job suspended, and enter PAUSED. Core 0 already drains the rest
-        // (NACKs further MSEG packets), so the buffer is empty from here.
-        if ((flags & MSEG_FLAG_PAUSE) || pauseRequested) {
-            pauseRequested = false;
+        // Host-placed tool-change marker. An operator `pause` no longer lands
+        // here — it ramps inside the emitter and returns EMIT_RAMPED above —
+        // but MSEG_FLAG_PAUSE is a PLANNED boundary the host has already
+        // decelerated into, so it still stops cleanly at the segment edge.
+        if (flags & MSEG_FLAG_PAUSE) {
             resumePos[0] = machinePos[0]; resumePos[1] = machinePos[1];
             resumePos[2] = machinePos[2]; resumePos[3] = machinePos[3];
             jobActive = true;
@@ -270,6 +364,8 @@ void processBus() {
     if (machineState == STATE_ESTOP) {
         mBufHead = mBufTail;            // flush the queue
         queuedUsOut  = queuedUsIn;     // flushed segments are never retired (§4.6)
+        pauseRequested = abortRequested = false;  // estop outranks a pending ramp
+        runningReason  = RUNNING_JOB;
         axes_homed   = 0;              // datum lost
         axes_enabled = 0;              // de-energised
         jobActive    = false;          // any suspended job is unrecoverable
@@ -281,6 +377,21 @@ void processBus() {
 
     // 2. Emit any queued MicroSegments
     if (mBufHead != mBufTail) processMicroSegments();
+
+    // An abort with nothing to stop still has to be consumed. The ramp lives
+    // inside the emitter, so a request arriving while the ring is empty would
+    // otherwise never be cleared — and the ingest barrier keyed off it would
+    // NACK every packet forever. Nothing to decelerate: just discard the flag.
+    if (abortRequested && mBufHead == mBufTail) {
+        mBufHead = mBufTail;
+        queuedUsOut    = queuedUsIn;
+        abortRequested = false;
+        jobActive      = false;
+        runningReason  = RUNNING_JOB;
+        __dmb();
+        if (machineState == STATE_RUNNING || machineState == STATE_PAUSED)
+            machineState = STATE_IDLE;
+    }
 
     // 3. Handle text commands from Core 0 (ping / enable / disable / getpos)
     if (multicore_fifo_rvalid()) {

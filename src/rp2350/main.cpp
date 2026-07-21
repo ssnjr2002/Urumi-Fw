@@ -39,6 +39,7 @@ volatile int32_t resumePos[4]   = {0, 0, 0, 0};
 
 // Inter-core request flags
 volatile bool    pauseRequested = false;
+volatile bool    abortRequested = false;
 volatile bool    streamIsJog    = false;
 
 // Soft-Reset Handshake Flags

@@ -498,7 +498,20 @@ blocked write — not the estop path, which truncates at a frame boundary (D13).
 
 Landed as `FIXED26_RX_TIMEOUT_MS = 50` in `shared.h`, checked in `dataPlaneTick()`.
 
-### 4.5 Soft abort — decelerate, flush, keep position
+### 4.5 Soft abort — decelerate, flush, keep position — **firmware implemented**
+
+> Landed: `EmitResult` + counted `out[4]`, the in-emitter ramp, `abortRequested`,
+> `RUNNING_ABORT_DECEL`, `ABORT_MAGIC = 0xA9`, `NACK_ABORTING = 0x07`. Pause now
+> routes through the same ramp; `MSEG_FLAG_PAUSE` still stops at the segment edge,
+> being a *planned* boundary the host already decelerated into.
+>
+> Two deliberate stubs, both blocked on the same missing piece — **Core 1 has no
+> config-read path**: `DECEL_SPS2` is a `#define` rather than a per-axis config
+> value, and `rampStepInBounds()` is a harness that always passes. The
+> `EMIT_SOFT_LIMIT` path around it is fully wired, so enabling the check is a
+> one-function change. Fix both together.
+>
+> Host `abort()` and the deletion of `_decel_distance()` are still to do.
 
 Today there is no graceful stop. `cancel` requires `PAUSED`; `stop` goes
 `ESTOP → ALARM`, invalidating position and demanding `unalarm` + `setorigin`. So
@@ -582,8 +595,10 @@ surfacing a failure, and with §4.10 that IDLE arrives the instant it is true.
 > **Everything sent before the abort is discarded; everything after waits for
 > IDLE.**
 
-Flushing the ring makes `expectedSeq` meaningless, so a post-abort session must
-`seqreset`. Every session already does — but it is now load-bearing.
+A post-abort session must `seqreset` — but so must every other session, for the
+unremarkable reason that sessions stamp from 0. Flushing the ring does *not*
+invalidate `expectedSeq`; it keeps counting and remains a valid duplicate guard.
+Abort adds no special requirement here.
 
 #### Three interactions, resolved
 
@@ -781,8 +796,25 @@ specification; this is the ledger.
       pure data plane. `Link.reset_seq()` drains its own ACK so a session never
       opens on a stale one. 0.3 ms on hardware; text alias kept for bring-up.
 
+- [x] **§4.5 — soft abort, firmware.** Emitter returns `EmitResult` with counted
+      `out[4]`; ramp lives inside the step loop; `abortRequested` /
+      `RUNNING_ABORT_DECEL` / `ABORT` (`0xA9`) / `NACK_ABORTING`. Pause shares
+      the ramp. Hardware: aborted mid-stream from RUNNING, landed IDLE with
+      position intact and consistent with text `getpos`, ring flushed,
+      `queuedUs` resynced to 0; a fresh stream afterwards ran normally, and an
+      abort while idle did not wedge the ingest barrier.
+
 ### Next
 
+- [ ] **Un-stub the two ramp gaps** — both need Core 1 to read config:
+      `DECEL_SPS2` should be per-axis config, not a `#define`, and
+      `rampStepInBounds()` should do the real check (the `EMIT_SOFT_LIMIT`
+      path around it is already wired end to end).
+- [ ] **Host `abort()`** — write `0xA9`, handle `NACK_ABORTING` as
+      wait-and-reopen rather than an error, delete `_decel_distance()` and the
+      ramp-down branch of `_ClickJogSource.pull()`, and route jog reversal
+      through abort. `test_ui_jog.py` must pass unchanged while that code
+      shrinks.
 - [ ] **Consume the new fields.** The parse landed but the payoff did not:
       position still comes from the text `getpos` path, and jog pacing still
       dead-reckons. Should *delete* `LEAD_S` / `_queued_s` / `_t0` from

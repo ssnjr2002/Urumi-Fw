@@ -101,6 +101,7 @@ void loop() {
     jobActive = false;
     resumePos[0] = resumePos[1] = resumePos[2] = resumePos[3] = 0;
     pauseRequested = false;
+    abortRequested = false;
     streamIsJog = false;
     __dmb();
 

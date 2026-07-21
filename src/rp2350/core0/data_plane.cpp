@@ -118,6 +118,15 @@ static void feedFixed26(uint8_t b) {
     //                     arrives after Core 1 has already flipped the state to
     //                     RUNNING to execute packet 1 — rejecting those left every
     //                     jog after the first NACK_BAD_STATE'd forever).
+    // Abort is a barrier — reject everything until the machine reaches IDLE,
+    // with a reason distinct from BAD_STATE so the host waits and reopens rather
+    // than surfacing an error. Checked before the per-magic gates because it
+    // applies equally to jobs and jogs.
+    if (abortRequested || runningReason == RUNNING_ABORT_DECEL) {
+        sendNack(MSEG_NACK_ABORTING);
+        return;
+    }
+
     uint8_t st = machineState;
     if (pktBuf[0] == MSEG_MAGIC) {
         if (st == STATE_PAUSED)                      { sendNack(MSEG_NACK_PAUSED);    return; }
@@ -253,6 +262,14 @@ bool dataPlaneConsume(uint8_t b) {
     }
     if (b == CFG_GET_MAGIC) {                    // synchronous — no receive state
         handleCfgGet();
+        return true;
+    }
+    if (b == ABORT_MAGIC) {                      // synchronous — no receive state
+        // Record intent only; Core 1 owns the ramp and the transition (Layer 5).
+        // No reply: like `stop` this correlates nothing, and confirmation
+        // arrives on the status plane as the state settles to IDLE.
+        abortRequested = true;
+        __dmb();
         return true;
     }
     if (b == SEQRESET_MAGIC) {                   // synchronous — no receive state

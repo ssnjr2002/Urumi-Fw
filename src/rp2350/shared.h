@@ -125,6 +125,11 @@ struct MicroSegment {
 // stays for bring-up.
 #define SEQRESET_MAGIC   0xA8
 
+// Soft abort (§4.5): one byte, no reply. Core 1 ramps to rest, flushes the ring
+// and lands IDLE with position intact. Confirmation arrives on the status sink
+// as the state settles — like `stop`, it correlates nothing, so it needs no ACK.
+#define ABORT_MAGIC      0xA9
+
 // Duration of a MicroSegment in microseconds: the major axis takes one step per
 // `interval` cycles, so the segment lasts maxSteps × interval cycles. 64-bit
 // intermediate — interval × maxSteps overflows u32 readily (a 1 s segment is
@@ -172,6 +177,12 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 #define MSEG_NACK_MAGIC  0x03
 #define MSEG_NACK_PAUSED 0x04   // job stream rejected — machine is PAUSED
 #define MSEG_NACK_BAD_STATE 0x06 // stream/jog rejected — wrong machine state
+// Abort is a BARRIER: everything sent before it is discarded, everything after
+// waits for IDLE. Distinct from BAD_STATE so the host can treat it as "retry
+// shortly" rather than surfacing an error — accepting these would mean blending
+// into a deceleration and ramping back up from an arbitrary velocity, at which
+// point abort stops meaning anything definite.
+#define MSEG_NACK_ABORTING  0x07
 
 // ─── Machine State ──────────────────────────────────────────────────────────
 // Single authoritative state for the controller, owned across both cores.
@@ -213,7 +224,38 @@ enum AlarmReason : uint8_t {
 enum RunningReason : uint8_t {
     RUNNING_JOB = 0,        // streaming a job
     RUNNING_JOG = 1,        // emitting a host-driven jog burst
+    // Decelerating to rest after a pause/abort request. A RunningReason and not
+    // a MachineState deliberately (docs/comms_architecture.md §4.5): the machine
+    // IS running, so every existing IDLE/RUNNING/PAUSED gate stays correct
+    // untouched, and an un-updated host reads it as plain RUNNING — which is true.
+    RUNNING_ABORT_DECEL = 2,
 };
+
+// ─── Soft abort (§4.5) ────────────────────────────────────────────────────────
+// How a segment ended. The emitter reports what it actually emitted in out[4]
+// on EVERY path, including estop — the caller decides whether to keep it.
+enum EmitResult : uint8_t {
+    EMIT_DONE,        // ran to completion as planned; out[] == the ms deltas
+    EMIT_RAMPED,      // decelerated to rest mid-flight — motion has ended
+    EMIT_ESTOP,       // hard cut; position forfeited by choice, not necessity
+    EMIT_SOFT_LIMIT,  // ramp overshoot crossed a bound (harness — not yet raised)
+};
+
+// Velocity at or below which a stop needs no ramp — start/stop speed.
+#define V_REST_SPS   50.0f
+
+// TEMPORARY. Decel rate for the soft-abort ramp, steps/s².
+//
+// This belongs in the config blob alongside the per-axis accel limits, not in a
+// header: it is machine-dependent, and a value that is gentle on one axis will
+// stall another. It is a #define only because Core 1 has no config-read path
+// yet — the same gap that keeps rampStepInBounds() a stub. Both should be fixed
+// together, and this constant deleted at that point.
+//
+// A zero or negative value would make the ramp loop non-terminating; keep the
+// static_assert below when this moves to config, as a runtime guard.
+#define DECEL_SPS2   20000.0f
+static_assert(DECEL_SPS2 > 0.0f, "decel must be positive or the ramp never ends");
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
@@ -274,7 +316,12 @@ extern volatile int32_t resumePos[4];
 //     not a job. The discriminator is only visible at ingest, but the RUNNING
 //     transition is Core 1's; Core 1 reads this to set runningReason together
 //     with machineState (the cross-core stand-in for setRunning(reason)).
+//   abortRequested — host `ABORT`; Core 1 ramps the CURRENT segment to rest
+//     (not "finishes" it), flushes the rest of the ring, and lands IDLE with
+//     position intact. Unlike pause it is not resumable. Pause now uses the same
+//     ramp, so the two differ only in where Core 1 lands afterwards.
 extern volatile bool    pauseRequested;
+extern volatile bool    abortRequested;
 extern volatile bool    streamIsJog;
 
 // Soft-Reset Handshake Flags
