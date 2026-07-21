@@ -136,7 +136,9 @@ class SimBackend:
             with self._lock:
                 self._reply(pack_status_rsp(
                     int(self.state), self.axes_enabled, self.axes_homed,
-                    int(self.alarm), int(self.running), len(self._motion)))
+                    int(self.alarm), int(self.running), len(self._motion),
+                    pos=self.pos, expected_seq=self._expected_seq,
+                    queued_us=self._queued_us()))
             return
         for i in range(0, len(data) - 25, 26):
             self._write_packet(bytes(data[i:i + 26]))
@@ -197,6 +199,20 @@ class SimBackend:
             self._motion.append((ms["dx"], ms["dy"], ms["dz"], ms["da"], ms["interval"], ms["flags"]))
             self._expected_seq = (self._expected_seq + 1) & 0xFF
             self._mark_ack()
+
+    def _queued_us(self):
+        """Queued motion time — the sim's mirror of the firmware's queuedUs (§4.6).
+
+        The firmware maintains this incrementally as a single-writer counter
+        pair because two cores touch it; here one lock covers the deque, so
+        summing on demand is both simpler and exactly equivalent. Same
+        whole-segment granularity: the executing segment counts in full.
+        """
+        total = 0.0
+        for dx, dy, dz, da, interval, _flags in self._motion:
+            steps = max(abs(dx), abs(dy), abs(dz), abs(da), 1)
+            total += (interval * steps) / self.F_CPU
+        return int(total * 1_000_000)
 
     def close(self):
         pass

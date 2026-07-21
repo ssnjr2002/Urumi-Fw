@@ -52,7 +52,15 @@ class MachineStatus:
     axes_enabled: int
     alarm:        AlarmReason
     running:      RunningReason
-    buf_count:    int = 0   # only populated by STATUS_RSP; 0 (unknown) from text getstate
+    # Everything below is only populated by the binary STATUS_RSP; a text
+    # `getstate` reply cannot carry it and leaves the defaults in place.
+    buf_count:    int = 0   # 0 = unknown (also a legitimate "ring is empty")
+    # STATUS_RSP v2 (§4.2/§4.6). PARSED BUT NOT YET CONSUMED — position still
+    # comes from the text `getpos` path and jog pacing still dead-reckons.
+    # `None` distinguishes "this sample came from text" from a real zero.
+    pos:          list | None = None   # [x, y, z, a] in steps
+    expected_seq: int | None = None    # informational reconciliation only, not flow control
+    queued_us:    int | None = None    # queued motion time, microseconds
 
     def homed(self, axis: str) -> bool:
         return bool(self.axes_homed & AXIS_BITS[axis])
@@ -124,10 +132,14 @@ def parse_getstate(line: str) -> MachineStatus:
 
 def parse_status_rsp(data: bytes) -> MachineStatus:
     """
-    Parse a binary STATUS_RSP packet (docs/wire_protocol.md) — the same fields
-    as `parse_getstate`, packed into 7 bytes instead of a text line. Used for
-    the host UI's poll loop, including mid-stream, where the ASCII line would
-    be a heavier and more awkward insertion between MSEG/jog packets.
+    Parse a binary STATUS_RSP packet (docs/wire_protocol.md) — a superset of
+    `parse_getstate`, packed into 30 bytes instead of a text line. Used for the
+    host UI's poll loop, including mid-stream, where the ASCII line would be a
+    heavier and more awkward insertion between MSEG/jog packets.
+
+    The frame also carries position, expectedSeq and queued motion time. Those
+    are surfaced on the returned MachineStatus but nothing reads them yet — see
+    docs/comms_architecture.md §5.
     """
     from host.protocol.packets import unpack_status_rsp   # avoid import cycle at module load
     fields = unpack_status_rsp(bytes(data))
@@ -138,4 +150,7 @@ def parse_status_rsp(data: bytes) -> MachineStatus:
         alarm=_enum_or_int(AlarmReason, fields["alarm"], AlarmReason.NONE),
         running=_enum_or_int(RunningReason, fields["running"], RunningReason.JOB),
         buf_count=fields["buf_count"],
+        pos=fields["pos"],
+        expected_seq=fields["expected_seq"],
+        queued_us=fields["queued_us"],
     )

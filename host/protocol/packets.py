@@ -72,8 +72,12 @@ MAGIC_ACK        = 0xAA
 MAGIC_NACK       = 0xBB
 
 MAGIC_STATUS_REQ = 0xA5
-MAGIC_STATUS_RSP = 0xA6
-STATUS_RSP_SIZE  = 9
+MAGIC_STATUS_RSP = 0xA7
+STATUS_RSP_SIZE  = 30
+# 0xA6 was the 9-byte v1 frame. Retired, never emitted, and reserved rather than
+# reused: the demux consumes fixed-length frames blind, so a version mismatch
+# must fail as an unknown magic instead of mis-parsing 30 bytes as 9.
+MAGIC_STATUS_RSP_V1 = 0xA6
 
 NACK_CRC         = 0x01
 NACK_FULL        = 0x02
@@ -120,32 +124,63 @@ TOOL_JOG    = 0
 TOOL_CUT    = 1
 TOOL_CREASE = 2
 
-# ── binary status request/response (mirrors the text `getstate` command) ─────
+# ── binary status request/response (mirrors `getstate` AND `getpos`) ─────────
+# docs/wire_protocol.md; firmware src/rp2350/core0/status.cpp.
+#
 # STATUS_REQ: [0xA5]                                          (1 byte, no CRC)
-# STATUS_RSP: [0xA6][state][enabled][homed][alarm][running][bufCount:u16 LE][CRC8]  (9 bytes)
-# bufCount is the number of MicroSegments queued in the Pico's ring buffer
-# (including the one currently executing) — lets a poll loop see "buffer
-# about to run dry" instead of guessing from wall-clock timing.
+# STATUS_RSP: 30 bytes —
+#   [0]      magic 0xA7
+#   [1..5]   state, enabled, homed, alarm, running
+#   [6..7]   bufCount   u16 LE
+#   [8..23]  pos[4]     i32 LE   (x, y, z, a — steps)
+#   [24]     expectedSeq
+#   [25..28] queuedUs   u32 LE
+#   [29]     CRC8 over [0..28]
+#
+# bufCount counts segments queued in the Pico's ring (including the one
+# executing); queuedUs is the sum of their durations, which is what pacing
+# actually wants — segment count says nothing about time when segment durations
+# vary by orders of magnitude.
+#
+# pos and expectedSeq and queuedUs are PARSED BUT NOT YET CONSUMED. Position
+# still comes from the text `getpos` path and jog pacing still dead-reckons; see
+# docs/comms_architecture.md §5 for what should replace them.
+
+# 29 bytes; the trailing CRC is appended/checked separately. "<" means packed —
+# no alignment padding, so the i32 array at [8] needs no special handling.
+_STATUS_FMT = "<BBBBBBH4iBI"
+
 
 def pack_status_rsp(state: int, axes_enabled: int, axes_homed: int,
-                     alarm: int, running: int, buf_count: int = 0) -> bytes:
-    """Pack a status snapshot into the 9-byte STATUS_RSP wire format."""
-    body = struct.pack("<BBBBBBH", MAGIC_STATUS_RSP, state, axes_enabled,
-                        axes_homed, alarm, running, buf_count)
+                    alarm: int, running: int, buf_count: int = 0,
+                    pos=(0, 0, 0, 0), expected_seq: int = 0,
+                    queued_us: int = 0) -> bytes:
+    """Pack a status snapshot into the 30-byte STATUS_RSP wire format."""
+    body = struct.pack(_STATUS_FMT, MAGIC_STATUS_RSP, state, axes_enabled,
+                       axes_homed, alarm, running, buf_count,
+                       pos[0], pos[1], pos[2], pos[3],
+                       expected_seq & 0xFF, queued_us & 0xFFFFFFFF)
     return body + bytes([_crc8(body)])
 
 
 def unpack_status_rsp(data: bytes) -> dict:
-    """Unpack a 9-byte STATUS_RSP. Raises ValueError on bad magic/size/CRC."""
+    """Unpack a 30-byte STATUS_RSP. Raises ValueError on bad magic/size/CRC."""
     if len(data) != STATUS_RSP_SIZE:
         raise ValueError(f"Expected {STATUS_RSP_SIZE} bytes, got {len(data)}")
+    if data[0] == MAGIC_STATUS_RSP_V1:
+        raise ValueError(
+            "Pico is sending the retired 9-byte STATUS_RSP (0xA6) — firmware "
+            "predates docs/comms_architecture.md §4.2. Reflash it.")
     if data[0] != MAGIC_STATUS_RSP:
         raise ValueError(f"Bad magic: 0x{data[0]:02X}")
     if _crc8(data[:-1]) != data[-1]:
         raise ValueError("CRC mismatch")
-    _, state, axes_enabled, axes_homed, alarm, running, buf_count = struct.unpack("<BBBBBBH", data[:-1])
+    (_, state, axes_enabled, axes_homed, alarm, running, buf_count,
+     px, py, pz, pa, expected_seq, queued_us) = struct.unpack(_STATUS_FMT, data[:-1])
     return dict(state=state, axes_enabled=axes_enabled, axes_homed=axes_homed,
-                alarm=alarm, running=running, buf_count=buf_count)
+                alarm=alarm, running=running, buf_count=buf_count,
+                pos=[px, py, pz, pa], expected_seq=expected_seq,
+                queued_us=queued_us)
 
 
 # ── ToolConfig namedtuple ─────────────────────────────────────────────────────

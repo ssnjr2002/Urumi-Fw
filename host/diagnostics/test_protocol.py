@@ -29,13 +29,24 @@ def test_ping_and_initial_state():
     assert st.alarm == AlarmReason.NONE
 
 
+def _text_expressible(st):
+    """The fields a text `getstate` reply can carry.
+
+    STATUS_RSP is a strict superset since §4.2/§4.6 — it also reports position,
+    expectedSeq and queued time, which have no text equivalent — so the two are
+    no longer equal as whole objects. What must still hold is that they never
+    disagree about the state they both describe.
+    """
+    return (st.state, st.axes_homed, st.axes_enabled, st.alarm, st.running)
+
+
 def test_get_status_mirrors_get_state():
     # STATUS_REQ/STATUS_RSP (binary) must agree with getstate (text) at every step.
     link = Link.open_sim()
-    assert cmd.get_status(link) == cmd.get_state(link)
+    assert _text_expressible(cmd.get_status(link)) == _text_expressible(cmd.get_state(link))
     ok, _ = cmd.enable(link); assert ok
     ok, _ = cmd.setorigin(link, "xy"); assert ok
-    assert cmd.get_status(link) == cmd.get_state(link)
+    assert _text_expressible(cmd.get_status(link)) == _text_expressible(cmd.get_state(link))
     bst = cmd.get_status(link)
     assert bst.state == MachineState.IDLE
     assert bst.all_homed(axis_mask("xy"))

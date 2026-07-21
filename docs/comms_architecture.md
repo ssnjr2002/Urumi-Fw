@@ -761,16 +761,27 @@ specification; this is the ledger.
       accepted packets. `bufCount × per-segment duration` matched `queuedUs` to
       the microsecond — two independently computed fields agreeing.
 
+- [x] **§4.2 + §4.6 — Python host parses the new frame.** `packets.py`,
+      `state.py` and `SimBackend` all speak v2; the new fields are surfaced on
+      `MachineStatus` as `pos` / `expected_seq` / `queued_us` and **nothing
+      reads them yet** — they default to `None`, which distinguishes "this
+      sample came from the text plane" from a real zero. Verified against the
+      Pico. `test_get_status_mirrors_get_state` was comparing whole
+      `MachineStatus` objects and now compares only the text-expressible
+      fields, because STATUS_RSP is a strict superset and the two are no longer
+      equal by construction.
+
 ### Next
 
-- [ ] **§4.2 + §4.6 — host half. ⚠ The tree is mid-flag-day.** Firmware emits
-      `0xA7`/30 B; `host/protocol/packets.py` and `web/demo/transport.js` still
-      expect `0xA6`/9 B, so **status polling against real hardware fails until
-      this lands** (cleanly, as an unknown magic — which is what the magic bump
-      bought). The Python suites still pass because `SimBackend` also still
-      speaks v1; update both sides together. Should *delete* `LEAD_S` /
-      `_queued_s` / `_t0` from `_ClickJogSource`, and let `busy` mean "machine
-      moving" as a reported fact rather than a host-side estimate (§2.3).
+- [ ] **Consume the new fields.** The parse landed but the payoff did not:
+      position still comes from the text `getpos` path, and jog pacing still
+      dead-reckons. Should *delete* `LEAD_S` / `_queued_s` / `_t0` from
+      `_ClickJogSource`, drop the `getpos` round trip from the UI poller, and
+      let `busy` mean "machine moving" as a reported fact rather than a
+      host-side estimate (§2.3).
+- [ ] **`web/demo/transport.js` still expects `0xA6`/9 B.** The web demo is
+      broken against current firmware until it is updated — cleanly, as an
+      unknown magic, which is what the magic bump bought.
 - [ ] **§4.3 — binary `seqreset`.** Unblocked (the demux it needed now exists).
       Small; gets stream start off the text plane.
 - [ ] **§4.5 — soft abort.** Last, and the only item that is not nearly free:
