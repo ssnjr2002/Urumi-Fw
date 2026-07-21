@@ -85,6 +85,19 @@ class MasterView(ttk.Frame):
         self.cmd_status_var = tk.StringVar(value="—")
         ttk.Label(self, textvariable=self.cmd_status_var).grid(row=4, column=1, padx=8, pady=8, sticky="w")
 
+        # ---------------------------------------------------------
+        # Row 5: Session clock
+        # ---------------------------------------------------------
+        # Free-running from the moment the link opens, so any on-screen event
+        # can be read off directly and compared against a log. Monospace and
+        # fixed-width so the digits do not jitter as they tick.
+        ttk.Label(self, text="Timer").grid(row=5, column=0, padx=8, pady=(0, 8), sticky="w")
+
+        self.timer_var = tk.StringVar(value="—")
+        ttk.Label(self, textvariable=self.timer_var,
+                  font=("Consolas", 11)).grid(row=5, column=1, padx=8, pady=(0, 8),
+                                              sticky="w")
+
 # Simple runner for preview
 if __name__ == "__main__":
     root = tk.Tk()

@@ -39,6 +39,13 @@ class GuiOperator(Operator):
 
 SIM_PORT = "Simulator"
 
+# Temporary jog timing instrumentation. Set JOG_DEBUG=1 to print a per-jog
+# breakdown (click -> reset_seq -> session -> machine drain) to stdout.
+import os
+from host.protocol.state import MachineState
+JOG_DEBUG = os.environ.get("JOG_DEBUG") == "1"
+_T_BOOT = time.monotonic()      # common clock for the poll / UI traces
+
 
 _JMS = namedtuple("MS", ["dx", "dy", "dz", "da", "interval", "flags"])
 
@@ -116,6 +123,8 @@ class _ClickJogSource(PacketSource):
         # So each fresh sample resets the anchor, and between samples we add
         # what we have emitted and subtract what has elapsed. Error is bounded
         # by one poll interval instead of accumulating.
+        self._trace = []            # JOG_DEBUG only: (t, steps, v_avg, ms)
+        self._t_open = time.monotonic()
         self._anchor_us = 0.0       # queued_us as of the last sample we used
         self._anchor_t  = None      # monotonic() when that sample landed
         self._anchor_stamp = -1     # which sample it was
@@ -282,6 +291,10 @@ class _ClickJogSource(PacketSource):
                 remaining = self._remaining
             self._since_anchor_s += steps / v_avg
             self.emitted += 1
+            if JOG_DEBUG:
+                self._trace.append((round(time.monotonic() - self._t_open, 3),
+                                    steps, round(v_avg, 1),
+                                    round(steps / v_avg * 1000, 1)))
             self.steps_total += steps
             batch.append(self._packet(steps, v_avg))
 
@@ -303,6 +316,7 @@ class OnlineSession(Observable):
         # --- Polling State ---
         self.machine_state = None
         self.machine_pos_steps = None
+        self.connected_at = None   # monotonic() at link open; drives the UI timer
         self.polling_error: Optional[str] = None
         self.busy = False  # Set to True when job/jog is streaming
         
@@ -373,10 +387,15 @@ class OnlineSession(Observable):
         try:
             self.link = Link.open_sim() if port == SIM_PORT else Link.open_serial(port)
             self.connection_error = None
+            # Free-running session clock — the UI reads this to display elapsed
+            # time. Set only on a successful open, so the display cannot imply a
+            # connection that is not there.
+            self.connected_at = time.monotonic()
         except Exception as e:
             self.link = None
             self.connection_error = str(e)
-            
+            self.connected_at = None
+
         self._notify()
         
     def disconnect(self):
@@ -397,6 +416,7 @@ class OnlineSession(Observable):
             self.connection_error = None
             self.machine_state = None
             self.machine_pos_steps = None
+            self.connected_at = None
             self.node_ping_status.clear()
             self._notify()
 
@@ -426,13 +446,23 @@ class OnlineSession(Observable):
             if not self.is_connected:
                 continue
             try:
+                t0 = time.monotonic()
                 st = self.link.get_status(timeout=0.5)
+                dt = time.monotonic() - t0
                 self.machine_state = st
                 if st.pos is not None:
                     self.machine_pos_steps = st.pos
                 self.polling_error = None
+                if JOG_DEBUG:
+                    # DATA-side timeline: when the poller learned each fact.
+                    print(f"[poll {time.monotonic()-_T_BOOT:7.3f}] "
+                          f"rtt {dt*1000:5.1f}ms  {st.state.name:7s} "
+                          f"buf {st.buf_count:3d} queued {st.queued_us:7d} "
+                          f"pos {st.pos[0]}", flush=True)
             except Exception as e:
                 self.polling_error = str(e)
+                if JOG_DEBUG:
+                    print(f"[poll {time.monotonic()-_T_BOOT:7.3f}] ERROR {e}", flush=True)
 
             self._notify()
 
@@ -644,18 +674,80 @@ class OnlineSession(Observable):
     def _jog_run(self, source):
         """Runs one open jog session until its distance is spent."""
         self.busy = True
-        self.last_command_status = f"JOG {source.ltr.upper()}{'+' if source.sign > 0 else '-'}"
+        t_click = time.monotonic()
+        _t = (lambda: f"{t_click - self.connected_at:.3f}s"
+              if self.connected_at else "?")
+        self.last_command_status = (
+            f"JOG {source.ltr.upper()}{'+' if source.sign > 0 else '-'} "
+            f"started at {_t()}")
         self._notify()
+
+        dbg = JOG_DEBUG
+        pos0 = list(self.machine_pos_steps or [0, 0, 0, 0])
+        if dbg:
+            print(f"\n=== JOG {source.ltr.upper()}{'+' if source.sign>0 else '-'} "
+                  f"{source.rate} u/s ===")
+            print(f"  steps_per_unit {source.axis.steps_per_unit}  "
+                  f"feed {source.feed_sps:.1f} sps  accel {source.accel_sps2:.0f} sps^2")
+            print(f"  requested {source._remaining:.0f} steps "
+                  f"-> expected {source._remaining / max(source.feed_sps,1):.2f} s of motion")
+            print(f"  start pos {pos0}")
+
         try:
             self.link.reset_seq()
+            t_seq = time.monotonic()
             sess = self.link.session(source, window=16)
             self._jog_session = sess
             ok = sess.run()
+            t_sess = time.monotonic()
+            # Stamp the same clock the on-screen timer shows, so "what the UI
+            # said" and "what actually happened" can be compared without a
+            # stopwatch — which is the whole reason the timer exists.
+            span = t_sess - t_click
+            end_at = (f"{t_sess - self.connected_at:.3f}s"
+                      if self.connected_at else "?")
             self.last_command_status = (
-                f"Jog done ({source.steps_total} steps, {source.clicks} click(s), "
-                f"{source.emitted} pkts)" if ok else "Jog failed")
+                f"Jog done in {span:.3f}s (ended {end_at}) — "
+                f"{source.steps_total} steps, {source.clicks} click(s), "
+                f"{source.emitted} pkts" if ok else "Jog failed")
+
+            if dbg:
+                # Wait for the machine itself to report IDLE with an empty ring —
+                # the session ending only means the last packet was ACKed.
+                t_drain = None
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    st = self.machine_state
+                    if st and st.state == MachineState.IDLE and not st.buf_count:
+                        t_drain = time.monotonic()
+                        break
+                    time.sleep(0.01)
+                pos1 = list(self.machine_pos_steps or [0, 0, 0, 0])
+                moved = [b - a for a, b in zip(pos0, pos1)]
+                print(f"  reset_seq        {(t_seq  - t_click)*1000:8.0f} ms")
+                print(f"  session.run()    {(t_sess - t_seq  )*1000:8.0f} ms")
+                if t_drain:
+                    print(f"  machine drain    {(t_drain - t_sess)*1000:8.0f} ms")
+                    print(f"  TOTAL click->idle{(t_drain - t_click)*1000:8.0f} ms")
+                print(f"  moved {moved}  ({source.steps_total} steps commanded, "
+                      f"{source.emitted} pkts, {source.clicks} click(s))")
+                tr = source._trace
+                if tr:
+                    span = tr[-1][0] - tr[0][0]
+                    motion_ms = sum(r[3] for r in tr)
+                    print(f"  emitted {len(tr)} pkts over {span*1000:.0f} ms wall, "
+                          f"carrying {motion_ms:.0f} ms of motion")
+                    print("   t(s)  steps  v_avg(sps)  motion(ms)")
+                    for r in tr[:6]:
+                        print(f"   {r[0]:5.3f} {r[1]:6d} {r[2]:11.1f} {r[3]:11.1f}")
+                    if len(tr) > 12:
+                        print(f"   ... {len(tr)-12} more ...")
+                    for r in tr[-6:]:
+                        print(f"   {r[0]:5.3f} {r[1]:6d} {r[2]:11.1f} {r[3]:11.1f}")
         except Exception as e:
             self.last_command_status = f"Jog error: {e}"
+            if dbg:
+                import traceback; traceback.print_exc()
         finally:
             with self._jog_lock:
                 self._jog_source = None
