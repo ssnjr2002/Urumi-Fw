@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk
 import sys
 import os
+import threading
+import time
 
 # Allow running this file directly for preview by adding the project root to sys.path
 if __name__ == "__main__":
@@ -13,17 +15,77 @@ from host.ui.online.axis_nodes_view import AxisNodesView
 from host.ui.online.job_execution_view import JobExecutionView
 from host.ui.draggable_container import ReorderableContainer
 from host.protocol.state import MachineState
+from host.ui.online.session import JOG_DEBUG as _JOG_DEBUG, _T_BOOT
 
 class OnlineTab(ttk.Frame):
     """
     The main Online (Execution) UI tab.
     Acts as the Controller, bridging the dumb UI views to the OnlineSession logic.
     """
+    # How often the Tk thread checks for pending state changes. Faster than the
+    # session's ~100 ms status poll so a fresh sample is never held for long,
+    # and slow enough that an idle UI costs nothing.
+    UI_REFRESH_MS = 40
+    # 50 ms ticks the third decimal visibly without spending real time on it.
+    TIMER_REFRESH_MS = 50
+
     def __init__(self, parent, session, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.session = session
+        # Set by background threads, drained on the Tk thread. See _bind_logic.
+        self._ui_dirty = threading.Event()
         self._build_ui()
         self._bind_logic()
+
+    def _tick_timer(self):
+        """Session clock — its own loop, not the state pump.
+
+        The pump only runs when something changed; a clock has to advance
+        whether or not anything did. Reads monotonic time directly rather than
+        counting ticks, so a missed or delayed callback shows up as a jump
+        rather than silently losing time — which matters, because the point of
+        this readout is to time things that may themselves be stalling the UI.
+        """
+        at = getattr(self.session, "connected_at", None)
+        try:
+            if at is None:
+                self.master_view.timer_var.set("—")
+            else:
+                el = time.monotonic() - at
+                m, s = divmod(el, 60.0)
+                self.master_view.timer_var.set(f"{int(m):02d}:{s:06.3f}")
+            self.after(self.TIMER_REFRESH_MS, self._tick_timer)
+        except tk.TclError:
+            pass        # window closing
+
+    def _drain_ui_updates(self):
+        """Tk-thread pump: apply pending session state, then reschedule."""
+        if self._ui_dirty.is_set():
+            self._ui_dirty.clear()
+            try:
+                import time as _t
+                t0 = _t.monotonic()
+                self._update_ui()
+                if _JOG_DEBUG:
+                    # DISPLAY-side timeline: what the operator can actually see,
+                    # and how long the Tk thread spent producing it.
+                    shown = self.master_view.state_var.get()
+                    if shown != getattr(self, "_dbg_last_shown", None):
+                        self._dbg_last_shown = shown
+                        print(f"[ui   {_t.monotonic()-_T_BOOT:7.3f}] "
+                              f"label -> {shown!r}  "
+                              f"(_update_ui took {(_t.monotonic()-t0)*1000:.1f} ms)",
+                              flush=True)
+                    elif (_t.monotonic() - t0) > 0.05:
+                        print(f"[ui   {_t.monotonic()-_T_BOOT:7.3f}] "
+                              f"SLOW _update_ui {(_t.monotonic()-t0)*1000:.1f} ms",
+                              flush=True)
+            except tk.TclError:
+                return          # window is going away — stop pumping
+        try:
+            self.after(self.UI_REFRESH_MS, self._drain_ui_updates)
+        except tk.TclError:
+            pass
 
     def _build_ui(self):
         # Create a scrollable canvas
@@ -88,10 +150,26 @@ class OnlineTab(ttk.Frame):
             self.session.app_state.subscribe(self._on_app_state_changed)
             self._on_app_state_changed()
 
-        # Subscribe to OnlineSession for execution state changes
+        # Subscribe to OnlineSession for execution state changes.
+        #
+        # NOT self._update_ui directly. Observable._notify() runs subscribers
+        # synchronously on the CALLER's thread, and the session notifies from
+        # its status poller (~100 ms) and its jog/job worker threads. Touching
+        # Tk widgets off the main thread is undefined — it raises "main thread
+        # is not in main loop" in some builds and, worse, silently defers or
+        # drops updates in others. That is what made a 2 s jog look like it took
+        # 4 s: the machine had finished while the readout was still catching up.
+        #
+        # So a background thread only sets a flag; the Tk thread does the work.
+        # Coalescing is deliberate — the display wants the LATEST state, not
+        # every intermediate one, so a backlog is worthless by definition.
         if hasattr(self.session, 'subscribe'):
-            self.session.subscribe(self._update_ui)
-            
+            self.session.subscribe(self._ui_dirty.set)
+            self.after(self.UI_REFRESH_MS, self._drain_ui_updates)
+
+        self.after(self.TIMER_REFRESH_MS, self._tick_timer)
+
+
         # Populate available ports
         if hasattr(self.session, 'available_ports'):
             self.master_view.port_combo['values'] = self.session.available_ports
