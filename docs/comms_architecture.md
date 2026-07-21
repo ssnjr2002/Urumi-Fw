@@ -506,10 +506,17 @@ Landed as `FIXED26_RX_TIMEOUT_MS = 50` in `shared.h`, checked in `dataPlaneTick(
 > being a *planned* boundary the host already decelerated into.
 >
 > Two deliberate stubs, both blocked on the same missing piece — **Core 1 has no
-> config-read path**: `DECEL_SPS2` is a `#define` rather than a per-axis config
-> value, and `rampStepInBounds()` is a harness that always passes. The
+> config-read path**: the decel rates are four `#define`s (`DECEL_SPS2_X…A`,
+> seeded from `web/demo/config.json` as `maxAccel × stepsPerUnit`) rather than
+> config values, and `rampStepInBounds()` is a harness that always passes. The
 > `EMIT_SOFT_LIMIT` path around it is fully wired, so enabling the check is a
-> one-function change. Fix both together.
+> one-function change. Fix both together. **Z's rate is a placeholder** — that
+> axis has no `maxAccel` in the config at all.
+>
+> Rate is selected by **major-axis index**, since that is the axis `interval`
+> describes and the one Bresenham measures against. The seeded values span
+> 22730 (A) to 160000 (X/Y) — stopping distance is v²/2a, so a 20 kHz move stops
+> in ~1250 steps on X but ~8800 on A. No single global could have served both.
 >
 > Host `abort()` and the deletion of `_decel_distance()` are still to do.
 
@@ -807,9 +814,11 @@ specification; this is the ledger.
 ### Next
 
 - [ ] **Un-stub the two ramp gaps** — both need Core 1 to read config:
-      `DECEL_SPS2` should be per-axis config, not a `#define`, and
-      `rampStepInBounds()` should do the real check (the `EMIT_SOFT_LIMIT`
-      path around it is already wired end to end).
+      `DECEL_SPS2_X…A` should come from config rather than being four
+      `#define`s seeded off `web/demo/config.json`, and `rampStepInBounds()`
+      should do the real check (the `EMIT_SOFT_LIMIT` path around it is already
+      wired end to end). **Z's decel is an unverified placeholder** — no
+      `maxAccel` exists for it in the config.
 - [ ] **Host `abort()`** — write `0xA9`, handle `NACK_ABORTING` as
       wait-and-reopen rather than an error, delete `_decel_distance()` and the
       ramp-down branch of `_ClickJogSource.pull()`, and route jog reversal

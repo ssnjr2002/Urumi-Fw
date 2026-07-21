@@ -109,13 +109,14 @@ static EmitResult __time_critical_func(emitMicroSegment)(const MicroSegment& ms,
     int32_t  sign[4];
     uint8_t  dirBits = 0;
     uint32_t maxSteps = 0;
+    int      majorAxis = 0;
 
     out[0] = out[1] = out[2] = out[3] = 0;
 
     for (int i = 0; i < 4; i++) {
         absSteps[i] = (delta[i] < 0) ? (uint32_t)(-delta[i]) : (uint32_t)delta[i];
         sign[i]     = (delta[i] < 0) ? -1 : 1;
-        if (absSteps[i] > maxSteps) maxSteps = absSteps[i];
+        if (absSteps[i] > maxSteps) { maxSteps = absSteps[i]; majorAxis = i; }
         if (delta[i] > 0) dirBits |= (1 << (i * 2 + 1)); // positive = CW
     }
 
@@ -127,6 +128,9 @@ static EmitResult __time_critical_func(emitMicroSegment)(const MicroSegment& ms,
     uint32_t interval = ms.interval;   // mutable: the ramp stretches it per step
     bool     ramping  = false;
     float    v        = 0.0f;          // steps/s — only meaningful while ramping
+    // Hoisted out of the step loop: the major axis cannot change mid-segment,
+    // and this is a branch we do not want inside a ~5000-cycle step budget.
+    const float decel2 = 2.0f * decelForAxis(majorAxis);
 
     uint32_t t0 = rp2040.getCycleCount();
     for (uint32_t s = 0; ; s++) {
@@ -172,7 +176,7 @@ static EmitResult __time_critical_func(emitMicroSegment)(const MicroSegment& ms,
             // where in the segment the ramp began. All literals need the `f`
             // suffix — a bare 1.0 is a double and would promote the expression
             // onto the (much slower) double path.
-            float v2 = v * v - 2.0f * DECEL_SPS2;
+            float v2 = v * v - decel2;
             v = (v2 <= V_REST_SPS * V_REST_SPS) ? V_REST_SPS : sqrtf(v2);
             interval = (uint32_t)((float)F_CPU / v);
         }
