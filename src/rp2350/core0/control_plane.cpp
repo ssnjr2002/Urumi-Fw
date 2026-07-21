@@ -136,8 +136,15 @@ bool handleCommand(const String& input) {
         }
         const char* a = argAfter(input, 8);
         if (*a == '\0' || strcmp(a, "all") == 0) {
+            // ONE line, not one per node. The text plane is strictly
+            // request/response (D11) and the host reads exactly one line per
+            // command, so a four-line reply left three orphans in its text sink
+            // — which then answered the next three commands. A single CLI
+            // `pingnode` desynced the control plane for the rest of the session.
+            Serial.print("nodes");
             for (uint8_t n = 1; n <= 4; n++)
-                Serial.printf("node %d %s\n", n, relayNode(CMD_PING, n) ? "ok" : "timeout");
+                Serial.printf(" %d=%s", n, relayNode(CMD_PING, n) ? "ok" : "timeout");
+            Serial.println();
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
             if (node < 1 || node > 4) { Serial.println("err bad_node"); return true; }

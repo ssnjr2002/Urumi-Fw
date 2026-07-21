@@ -297,7 +297,11 @@ class SimBackend:
             self._pending_acks = 0      # a deferred ACK names the old numbering
             return "seq reset"
         if cmd == "pingnode":
-            return f"node {args[0] if args else '?'} ok"
+            # Mirrors the firmware: `all` (or no arg) answers on ONE line, not
+            # one per node. The text plane is one line per command.
+            if not args or args[0] == "all":
+                return "nodes " + " ".join(f"{n}=ok" for n in range(1, 5))
+            return f"node {args[0]} ok"
         if cmd == "getstate":
             return (f"state={int(S.state)} enabled=0x{S.axes_enabled:02x} "
                     f"homed=0x{S.axes_homed:02x} "
@@ -393,10 +397,23 @@ class Link:
         # sink at once — with concurrent pollers and UI commands, whoever gets
         # scheduled first takes the other's reply. This makes the rule real.
         self._text_lock = threading.Lock()
+        # Orphaned text lines discarded by command(). Should stay 0 — anything
+        # else means some command replied with more lines than it is allowed to,
+        # which is a firmware contract bug and worth surfacing rather than
+        # silently absorbing.
+        self.text_desyncs = 0
 
     @classmethod
     def open_serial(cls, port, baud=115200, timeout=0.2) -> "Link":
-        return cls(SerialBackend(port, baud, timeout))
+        link = cls(SerialBackend(port, baud, timeout))
+        # The Pico prints a banner on (re)entering its main loop, and bytes from
+        # a previous process may still be in the OS buffer. Both are unsolicited
+        # text, legitimately so. Drop them at connect, before text_desyncs starts
+        # counting, so a non-zero count means a genuine contract breach rather
+        # than "we just connected".
+        time.sleep(0.2)
+        link.sinks["text"].clear()
+        return link
 
     @classmethod
     def open_sim(cls) -> "Link":
@@ -411,11 +428,22 @@ class Link:
     def command(self, text: str, timeout=1.0) -> str:
         """Send one control-plane line and return the reply line (stripped).
 
-        No flush beforehand: routing on magic means a stale status reply or a
-        stream ACK cannot land in the text sink (D10). Text stays strictly
-        one-outstanding, so the next line in the sink is unambiguously ours.
+        No flush of the PORT beforehand: routing on magic means a stale status
+        reply or a stream ACK cannot land in the text sink (D10). Text stays
+        strictly one-outstanding, so the next line in the sink is ours.
+
+        The text sink itself is drained first, which is a different thing and
+        not a violation of D10. Under this lock, one-outstanding means any line
+        already sitting there is orphaned — its awaiter timed out, or the Pico
+        emitted more lines than the command contract allows. Leaving orphans
+        would make every later command read the previous one's tail, so a single
+        contract breach desyncs the plane permanently rather than transiently.
+        (`pingnode all` used to be exactly that: four lines for one command.)
         """
         with self._text_lock:
+            stale = self.sinks["text"].clear()
+            if stale:
+                self.text_desyncs += stale
             self.writer.write_text(text)
             return self.sinks["text"].get(timeout=timeout) or ""
 

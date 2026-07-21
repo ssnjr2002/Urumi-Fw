@@ -61,14 +61,22 @@ class Sink:
             return None
 
     def clear(self):
-        """Drop anything queued. NOT part of the normal path — D10 removes the
-        need to flush. This exists for connection setup, where bytes from a
-        previous process's session may still be in the OS buffer."""
+        """Drop anything queued; returns how many items were dropped.
+
+        NOT part of the normal path — D10 removes the need to flush the port.
+        Used for connection setup (bytes from a previous process may still be in
+        the OS buffer), and by the text plane to discard orphaned replies before
+        issuing a command. A non-zero return is diagnostic: on a one-outstanding
+        plane it means something replied more than the contract allows.
+        """
+        n = 0
         try:
             while True:
                 self._q.get_nowait()
+                n += 1
         except queue.Empty:
             pass
+        return n
 
     def __len__(self):
         return self._q.qsize()

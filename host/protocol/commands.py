@@ -20,8 +20,17 @@ def ping(link) -> bool:
 from typing import Union
 
 def ping_node(link, node_id: Union[int, str]) -> bool:
-    """Relay an RS485 ping to a bus node (or 'all'); True if it answered."""
-    return link.command(f"pingnode {node_id}").endswith("ok")
+    """Relay an RS485 ping to a bus node (or 'all'); True if it answered.
+
+    Single node replies `node <n> ok|timeout`; `all` replies with one line,
+    `nodes 1=ok 2=timeout …` — one line per command either way, which is the
+    text plane's contract. For 'all' this is True only if EVERY node answered.
+    """
+    reply = link.command(f"pingnode {node_id}")
+    if reply.startswith("nodes"):
+        results = [t.split("=", 1)[1] for t in reply.split()[1:] if "=" in t]
+        return bool(results) and all(r == "ok" for r in results)
+    return reply.endswith("ok")
 
 
 def get_state(link) -> MachineStatus:

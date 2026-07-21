@@ -318,7 +318,7 @@ same move applied to `getpos`.
 | **D8** | The writer does not read; callers await a sink. |
 | **D9** | Ordered channels correlate by position (seq). Status carries no ID — latest-wins. No frame carries two mechanisms. |
 | **D10** | No flushing. Sink routing removes cross-concern confusion; latest-wins removes intra-sink staleness. At most one poll outstanding. |
-| **D11** | Text stays one-outstanding and untagged; port to binary rather than tagging text. `stop` is fire-and-forget — writer lock, no reply slot. |
+| **D11** | Text stays one-outstanding and untagged; port to binary rather than tagging text. `stop` is fire-and-forget — writer lock, no reply slot. **One command replies with exactly one line** — a multi-line reply orphans lines in the text sink, and every later command then reads the previous one's tail. `command()` drains orphans and counts them (`Link.text_desyncs`) so a breach is loud rather than a mystery. |
 | **D12** | Sink API is designed for the browser's single-threaded async model. Python's reader thread is an implementation detail behind the same interface. |
 | **D13** | A batch is abortable at any frame boundary. Urgent writes wait one frame, never a whole batch. Never abandon mid-frame on the normal path. |
 | **D14** | Sessions are closed (given an iterator, end by exhaustion) or open (fed intents, end by truncation). Manual jogging is open. The session API must support both — an open session takes a non-blocking intent source separate from its packet source. |
