@@ -456,10 +456,18 @@ class OnlineSession(Observable):
         self._notify()
 
     def ping_all(self):
-        # `pingnode all` is a firmware bring-up convenience that replies with one
-        # line per node, but Link.command() only ever reads a single line — the
-        # extra lines desync the next read. Ping each configured node individually
-        # instead, which matches the wire protocol's one-line-per-command contract.
+        """One `pingnode all`, not one command per node.
+
+        This used to walk the configured nodes individually because the firmware
+        answered `all` with one line per node and `Link.command()` reads exactly
+        one — the extra lines desynced every later command. Both sides now hold
+        the one-line-per-command contract, so the single command is usable.
+
+        The firmware always walks nodes 1–4. Results for all of them are recorded
+        (a node answering that the config does not know about is worth seeing),
+        but the pass/fail verdict counts only CONFIGURED nodes — an absent node
+        timing out is the expected answer, not a fault.
+        """
         from host.protocol import commands as cmd
         if not self.is_connected or self.busy:
             return
@@ -475,12 +483,25 @@ class OnlineSession(Observable):
                     node_ids.add(p.node_id)
 
         try:
-            all_ok = True
-            for node_id in sorted(node_ids):
-                ok = cmd.ping_node(self.link, node_id)
-                self.node_ping_status[node_id] = "OK" if ok else "TIMEOUT"
-                all_ok = all_ok and ok
-            self.last_command_status = "OK: ping all nodes" if all_ok else "Timeout/Error: ping all nodes"
+            results = cmd.ping_all(self.link)
+            for nid, ok in results.items():
+                self.node_ping_status[nid] = "OK" if ok else "TIMEOUT"
+
+            expected = sorted(node_ids) or sorted(results)
+            missing = [n for n in expected if not results.get(n, False)]
+            unknown = [n for n, ok in sorted(results.items())
+                       if ok and node_ids and n not in node_ids]
+
+            if missing:
+                self.last_command_status = (
+                    "Timeout: node" + ("s " if len(missing) > 1 else " ")
+                    + ", ".join(str(n) for n in missing))
+            elif unknown:
+                self.last_command_status = (
+                    f"OK: all nodes ({len(expected)}) — also answering, "
+                    f"not in config: {', '.join(str(n) for n in unknown)}")
+            else:
+                self.last_command_status = f"OK: all nodes ({len(expected)})"
         except Exception as e:
             self.last_command_status = f"Error pinging all nodes: {e}"
 

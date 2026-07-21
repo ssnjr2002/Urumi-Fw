@@ -28,9 +28,36 @@ def ping_node(link, node_id: Union[int, str]) -> bool:
     """
     reply = link.command(f"pingnode {node_id}")
     if reply.startswith("nodes"):
-        results = [t.split("=", 1)[1] for t in reply.split()[1:] if "=" in t]
-        return bool(results) and all(r == "ok" for r in results)
+        results = _parse_ping_all(reply)
+        return bool(results) and all(results.values())
     return reply.endswith("ok")
+
+
+def _parse_ping_all(reply: str) -> dict:
+    """`nodes 1=ok 2=timeout 3=ok 4=timeout` → {1: True, 2: False, …}."""
+    out = {}
+    for tok in reply.split()[1:]:
+        n, _, verdict = tok.partition("=")
+        if verdict:
+            try:
+                out[int(n)] = (verdict == "ok")
+            except ValueError:
+                pass
+    return out
+
+
+def ping_all(link) -> dict:
+    """Ping every node on the bus in ONE command; returns {node_id: answered}.
+
+    The firmware walks nodes 1–4 regardless of what the host has configured, so
+    the caller decides which of those it actually cares about — a node that is
+    not in the config timing out is expected, not a failure.
+
+    One round trip instead of N. It also reflects one instant on the bus rather
+    than a sequence of them, which matters when a flaky node is what you are
+    trying to catch.
+    """
+    return _parse_ping_all(link.command("pingnode all"))
 
 
 def get_state(link) -> MachineStatus:
