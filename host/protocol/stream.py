@@ -1,39 +1,26 @@
 """
-sender.py — windowed ACK/NACK serial sender for MicroSegment streams
+stream.py — Sender: a windowed stream over a RAW serial port.
 
-Reads a length-prefixed binary stream (written by svg_to_packets.py), validates
-every packet before sending, then streams to the Pico over USB CDC with a
-sliding-window ACK/NACK protocol.
+Go-Back-N, seq stamping and the ACK loop now live in session.py; this is a thin
+shim that stands up a private reader/writer/session stack on a bare pyserial
+object. It exists for callers that hold a port directly rather than a Link —
+principally host/diagnostics/test_comms.py, the on-hardware conformance suite.
 
-Usage:
-  python sender.py --port COM3 --in job.bin
-  python sender.py --port /dev/ttyUSB0 --in job.bin --window 32 --verbose
+If you have a Link, use link.stream(packets) instead. Do NOT point a Sender at
+link.serial: the Link already runs a reader on that port, and two readers racing
+for the same bytes will each see a random half of every reply.
 
-Protocol:
+Protocol (docs/wire_protocol.md):
   Host sends 26-byte MicroSegment packets.
-  Pico replies 3 bytes per packet:
-    ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
-    NACK: [0xBB] [reason] [0x00]
-      0x01 = CRC error   → resend packet
-      0x02 = buffer full → wait and resend
-      0x03 = bad magic   → abort (bug in sender)
+  ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
+  NACK: [0xBB] [reason] [0x00]        0x01 CRC, 0x02 buffer full, 0x03 bad magic
 """
 
-import sys, os, argparse, struct, time, threading, queue
+import struct
 
-from host.protocol.packets import (
-    validate_packet, unpack_microsegment, stamp_seq,
-    MAGIC_ACK, MAGIC_NACK,
-    NACK_CRC, NACK_FULL, NACK_BAD_MAGIC,
-)
-
-# ── constants ─────────────────────────────────────────────────────────────────
-
-DEFAULT_WINDOW   = 16       # max in-flight unACKed packets
-ACK_TIMEOUT_S    = 0.2      # per-response wait before assuming loss
-STALL_TIMEOUT_S  = 3.0      # total silence before fatal abort
-BACKPRESSURE_S   = 0.05     # wait for buffer to drain on NACK_FULL
-MAX_CRC_ERRORS   = 20       # fatal only after this many CRC failures
+from host.protocol.reader import Demux, Reader, make_sinks
+from host.protocol.writer import Writer
+from host.protocol.session import Session, ListSource, DEFAULT_WINDOW
 
 
 # ── framing reader (mirrors verify_packets) ───────────────────────────────────
@@ -41,9 +28,7 @@ MAX_CRC_ERRORS   = 20       # fatal only after this many CRC failures
 def read_packets(src):
     while True:
         header = src.read(2)
-        if not header:
-            break
-        if len(header) < 2:
+        if not header or len(header) < 2:
             break
         (length,) = struct.unpack("<H", header)
         data = src.read(length)
@@ -52,244 +37,43 @@ def read_packets(src):
         yield data
 
 
-# ── ACK/NACK reader thread ────────────────────────────────────────────────────
-
-def _ack_reader(ser, ack_queue, stop_event):
-    """
-    Runs in a background thread. Reads ACK/NACK responses and pushes them onto
-    ack_queue as (type, seq_or_reason) tuples.
-
-    Framing is anchored on the magic byte: a response begins only when 0xAA/0xBB
-    is seen, then exactly two more bytes are read. The Pico interleaves ASCII
-    text on the same stream (command echoes like "Node 2: Enabled", status
-    replies); since 0xAA/0xBB never occur in that text, every other byte is
-    discarded individually and the 3-byte framing can never drift out of sync.
-    (The old fixed 3-byte grouping desynced permanently on any odd-length text,
-    stalling the transfer.)
-    """
-    while not stop_event.is_set():
-        try:
-            b = ser.read(1)
-        except Exception:
-            break
-        if not b:
-            continue
-        b0 = b[0]
-        if b0 == MAGIC_ACK or b0 == MAGIC_NACK:
-            rest = ser.read(2)
-            if len(rest) < 2:
-                continue
-            if b0 == MAGIC_ACK:
-                # rest[0] = expectedSeq (cumulative ACK point); rest[1] reserved.
-                ack_queue.put(('ACK', rest[0]))
-            else:
-                ack_queue.put(('NACK', rest[0]))
-        # else: ASCII text byte — discard; framing stays aligned
-
-
 # ── sender ────────────────────────────────────────────────────────────────────
 
 class Sender:
+    """Compatibility surface over Session for raw-port callers."""
+
     def __init__(self, ser, window=DEFAULT_WINDOW, verbose=False):
-        self.ser      = ser
-        self.window   = window
-        self.verbose  = verbose
+        self.ser = ser
+        self.window = window
+        self.verbose = verbose
 
-        self.ack_queue  = queue.Queue()
-        self.stop_event = threading.Event()
-        self._thread    = threading.Thread(
-            target=_ack_reader,
-            args=(ser, self.ack_queue, self.stop_event),
-            daemon=True,
-        )
-        self._thread.start()
+        self.sinks = make_sinks()
+        self.demux = Demux(self.sinks["ack"], self.sinks["status"],
+                           self.sinks["text"], self.sinks["cfg"])
+        self.reader = Reader(ser, self.demux).start()
+        self.writer = Writer(ser)
 
-        # Stats
-        self.sent       = 0
-        self.acked      = 0
-        self.retries    = 0
-        self.nacks      = 0
-
-    def _send_packet(self, packet):
-        self.ser.write(packet)
-        self.ser.flush()
-
-    def _flush_responses(self):
-        """Discard all queued responses. Used once at stream init to clear the
-        `seqreset` text reply and any leftover responses from a prior stream, so
-        the fresh stream starts from a clean queue. (No longer needed on go-back:
-        cumulative ACKs are idempotent — a stale one advances `base` by 0.)"""
-        try:
-            while True:
-                self.ack_queue.get_nowait()
-        except queue.Empty:
-            pass
+        self._session = None
+        self.sent = self.acked = self.retries = self.nacks = 0
 
     def send_stream(self, packets):
-        """
-        Send a list of pre-validated packets using Go-Back-N.
+        """Send a list of pre-validated packets. Returns True on success."""
+        self.writer.write_text("seqreset")     # align the Pico's expectedSeq
+        self.sinks["text"].get(timeout=1.0)
 
-        The Pico processes packets strictly in order and replies one ACK/NACK
-        per packet. When its ring buffer fills it NACKs (NACK_FULL) — this is
-        flow control, NOT an error. On any NACK we discard stale responses,
-        back off, and resend from `base`.
-
-        Duplicate protection: each packet carries an 8-bit rolling seq (pad
-        byte [22]). After a NACK the Pico may already have accepted packets
-        that were in flight BEHIND the rejected one; when we rewind to `base`
-        and resend them, the Pico sees a seq it has already consumed, ACKs it,
-        and skips execution. Without the seq, every go-back could duplicate
-        motion (permanent position offset between subpaths).
-
-        Returns True on success, False on fatal error.
-        """
-        # Stamp the rolling seq (and reset the Pico's expectation first)
-        pending = [stamp_seq(p, i) for i, p in enumerate(packets)]
-        self.ser.write(b"\nseqreset\n")
-        self.ser.flush()
-        time.sleep(0.005)
-        self._flush_responses()
-        n          = len(pending)
-        base       = 0          # oldest unconfirmed packet
-        next_send  = 0          # next packet to transmit
-        crc_errors = 0
-        last_progress = time.monotonic()
-
-        def go_back(reason, backoff):
-            """Back off, then rewind to base for resend. Stale cumulative ACKs
-            still in flight need no draining — each advances `base` by 0 (or by a
-            real accepted amount, which is correct), so they can neither stall nor
-            corrupt the window; they are simply matched and ignored on later reads."""
-            nonlocal next_send
-            if backoff:
-                time.sleep(backoff)
-            next_send = base
-            self.retries += 1
-            if self.verbose:
-                print(f"  GO-BACK to {base} (reason 0x{reason:02X})", file=sys.stderr)
-
-        while base < n:
-            # Fill the window
-            while next_send < n and (next_send - base) < self.window:
-                self._send_packet(pending[next_send])
-                self.sent += 1
-                if self.verbose:
-                    print(f"  SEND [{next_send+1}/{n}]", file=sys.stderr)
-                next_send += 1
-
-            # Wait for the next in-order response (corresponds to packet `base`)
-            try:
-                rtype, val = self.ack_queue.get(timeout=ACK_TIMEOUT_S)
-            except queue.Empty:
-                if time.monotonic() - last_progress > STALL_TIMEOUT_S:
-                    print(f"FATAL: stalled — no response for {STALL_TIMEOUT_S}s "
-                          f"(ACKed {self.acked}/{n}).", file=sys.stderr)
-                    return False
-                go_back(0x00, 0)          # assume loss, resend from base
-                continue
-
-            if rtype == 'ACK':
-                # Cumulative ACK: `val` is the Pico's expectedSeq — the next wire
-                # seq it wants, meaning it has accepted every packet with a lower
-                # seq. Advance `base` to that point. The delta is computed in the
-                # 8-bit rolling seq space and clamped to the in-flight window
-                # (< 128 « the wrap point), so a duplicate ACK (delta 0) or a
-                # stale/wrapped value can neither stall nor over-advance the
-                # window; a lost ACK self-heals via the next cumulative one.
-                delta = (val - (base & 0xFF)) & 0xFF
-                if 0 < delta <= next_send - base:
-                    base += delta
-                    self.acked += delta
-                    last_progress = time.monotonic()
-                continue
-
-            # NACK
-            self.nacks += 1
-            if val == NACK_BAD_MAGIC:
-                print("FATAL: Pico reported bad magic — aborting.", file=sys.stderr)
-                return False
-            if val == NACK_CRC:
-                crc_errors += 1
-                if crc_errors > MAX_CRC_ERRORS:
-                    print(f"FATAL: {crc_errors} CRC errors — aborting.", file=sys.stderr)
-                    return False
-                go_back(val, 0)
-            else:  # NACK_FULL — backpressure, not an error
-                go_back(val, BACKPRESSURE_S)
-            last_progress = time.monotonic()
-
-        return True
+        self._session = Session(self.writer, self.sinks["ack"],
+                                ListSource(packets), status_sink=self.sinks["status"],
+                                window=self.window, verbose=self.verbose)
+        try:
+            return self._session.run()
+        finally:
+            s = self._session
+            self.sent, self.acked = s.sent, s.acked
+            self.retries, self.nacks = s.retries, s.nacks
 
     def stop(self):
-        self.stop_event.set()
-        self._thread.join(timeout=1.0)
+        self.reader.stop()
 
     def report(self):
-        print(f"\n{'-'*50}", file=sys.stderr)
-        print(f"Sent    : {self.sent}", file=sys.stderr)
-        print(f"ACKed   : {self.acked}", file=sys.stderr)
-        print(f"NACKs   : {self.nacks}", file=sys.stderr)
-        print(f"Retries : {self.retries}", file=sys.stderr)
-
-
-# ── main ──────────────────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Send a MicroSegment binary stream to the Pico over USB CDC"
-    )
-    parser.add_argument("--port",    required=True,
-                        help="Serial port (e.g. COM3 or /dev/ttyUSB0)")
-    parser.add_argument("--in",      dest="infile", required=True,
-                        help="Binary stream file produced by svg_to_packets.py")
-    parser.add_argument("--baud",    type=int, default=115200)
-    parser.add_argument("--window",  type=int, default=DEFAULT_WINDOW,
-                        help=f"Sliding window size (default {DEFAULT_WINDOW})")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    args = parser.parse_args()
-
-    try:
-        import serial
-    except ImportError:
-        print("pyserial not installed — pip install pyserial", file=sys.stderr)
-        sys.exit(1)
-
-    # Load and validate all packets before opening serial
-    print(f"Loading {args.infile}…", file=sys.stderr)
-    with open(args.infile, "rb") as f:
-        raw_packets = list(read_packets(f))
-
-    print(f"Validating {len(raw_packets)} packets…", file=sys.stderr)
-    valid = []
-    failed = 0
-    for i, pkt in enumerate(raw_packets):
-        ok, reason = validate_packet(pkt)
-        if ok:
-            valid.append(pkt)
-        else:
-            print(f"  [{i}] INVALID — {reason}", file=sys.stderr)
-            failed += 1
-
-    if failed:
-        print(f"ABORT: {failed} invalid packets — fix the stream before sending.",
-              file=sys.stderr)
-        sys.exit(1)
-
-    print(f"All {len(valid)} packets valid. Opening {args.port}…", file=sys.stderr)
-
-    with serial.Serial(args.port, args.baud, timeout=0.05) as ser:
-        sender = Sender(ser, window=args.window, verbose=args.verbose)
-        try:
-            ok = sender.send_stream(valid)
-        except KeyboardInterrupt:
-            print("\nInterrupted.", file=sys.stderr)
-            ok = False
-        finally:
-            sender.stop()
-            sender.report()
-
-    sys.exit(0 if ok else 1)
-
-
-if __name__ == "__main__":
-    main()
+        if self._session:
+            self._session.report()

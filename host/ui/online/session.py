@@ -9,7 +9,11 @@ try:
 except ImportError:
     list_ports = None
 
+from collections import namedtuple
+
 from host.protocol.link import Link
+from host.protocol.session import PacketSource
+from host.protocol.packets import pack_jog, MSEG_FLAG_NONE
 from host.ui.app_state import AppState
 from host.ui.observable import Observable
 from host.execution.job_runner import Operator
@@ -34,6 +38,154 @@ class GuiOperator(Operator):
         self.session._notify()
 
 SIM_PORT = "Simulator"
+
+
+_JMS = namedtuple("MS", ["dx", "dy", "dz", "da", "interval", "flags"])
+
+
+class _ClickJogSource(PacketSource):
+    """Feeds an open session driven by jog-button CLICKS.
+
+    One click = one fixed distance (the button's mm value). Clicking again while
+    the machine is still moving ADDS that distance to what is left to travel, so
+    the motion extends instead of stopping and restarting — that is the blend.
+
+    This is an open session even though each click has a definite distance: the
+    total is not known when the first byte goes out, because it depends on clicks
+    that have not happened yet. The session ends when the remaining distance is
+    spent and speed is back to rest.
+
+    Pacing: the Pico's ring is topped up to LOW_WATER and no further. Every
+    packet queued is a packet that must still execute, so running far ahead makes
+    the machine unresponsive to the next click. `ctx.buf_count` is the live
+    status sample, which keeps updating during transmission.
+    """
+
+    LOW_WATER = 4        # segments to keep queued on the Pico
+    CHUNK_MS  = 20       # motion per emitted packet
+    V_START   = 50.0     # steps/s — rest velocity, matches make_jog
+    LEAD_S    = 0.08     # keep at most this much motion-time queued ahead
+
+    def __init__(self, machine, axis, ltr, sign, rate):
+        self.machine, self.axis = machine, axis
+        self.ltr, self.sign, self.rate = ltr, sign, rate
+        self.emitted = 0
+        self.steps_total = 0        # steps actually committed to the wire
+        self.clicks = 1
+
+        self._remaining = 0.0       # steps still to travel
+        self._v = self.V_START      # current velocity, ramped across chunks
+        self._finished = False
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+
+        # Wall-clock pacing. buf_count alone is not enough: it only refreshes at
+        # the UI poll rate (~100ms), and pull() is called as fast as the ack loop
+        # allows, so between two polls the source would dump the entire move onto
+        # the wire. Tracking how much motion-TIME has been queued bounds the lead
+        # regardless of poll rate; buf_count stays as a second opinion.
+        self._queued_s = 0.0        # motion-seconds handed to the machine
+        self._t0 = None             # when the first packet went out
+
+        self.feed_sps = max(1.0, rate * axis.steps_per_unit)
+        self.accel_sps2 = max(rate * 8.0, 50.0) * axis.steps_per_unit
+        self._idx = {"x": 0, "y": 1, "z": 2, "a": 3}[ltr]
+
+    # -- intent (called from the Tk thread) -----------------------------------
+
+    def add(self, steps):
+        """Another click in the same direction — extend the move. Returns False
+        if this source has already finished, so the caller starts a new one."""
+        with self._lock:
+            if self._finished:
+                return False
+            self._remaining += steps
+            self.clicks += 1
+            self._wake.set()
+            return True
+
+    def cancel(self):
+        """Reversal: drop what is left and coast to a stop from here."""
+        with self._lock:
+            self._remaining = 0.0
+            self._wake.set()
+
+    # -- packet construction --------------------------------------------------
+
+    def _decel_distance(self, v):
+        """Steps needed to get from v back down to rest."""
+        return max(0.0, (v * v - self.V_START ** 2) / (2.0 * self.accel_sps2))
+
+    def _packet(self, steps, v_avg):
+        vec = [0, 0, 0, 0]
+        # No axis.invert here: the existing jog path (OnlineSession.jog -> make_jog)
+        # does not apply it either, and applying it in only one of them would make
+        # the two disagree on direction for the same button.
+        vec[self._idx] = int(self.sign * steps)
+        interval = max(1, min(int(self.machine.f_cpu / max(v_avg, 1.0)),
+                              self.machine.f_cpu))
+        return pack_jog(_JMS(dx=vec[0], dy=vec[1], dz=vec[2], da=vec[3],
+                             interval=interval, flags=MSEG_FLAG_NONE))
+
+    # -- the source contract --------------------------------------------------
+
+    def _lead(self):
+        """Motion-seconds queued ahead of where the machine has got to."""
+        if self._t0 is None:
+            return 0.0
+        return self._queued_s - (time.monotonic() - self._t0)
+
+    def pull(self, ctx):
+        with self._lock:
+            if self._finished:
+                return None
+            remaining = self._remaining
+
+        if remaining <= 0.0:
+            # Distance spent — but do NOT finish while the machine is still
+            # executing what we already sent. Staying open is what lets a click
+            # arriving mid-move blend into it instead of starting a fresh
+            # session, and it keeps `busy` honest: it now means "machine moving",
+            # not "packets delivered".
+            buf = ctx.buf_count
+            draining = self._lead() > 0.0 or (buf is not None and buf > 0)
+            if not draining:
+                with self._lock:
+                    self._finished = True
+                return None
+            self._wake.wait(0.01)       # a click wakes this immediately
+            self._wake.clear()
+            return []
+
+        # Pace: stay at most LEAD_S of motion ahead, and no deeper than
+        # LOW_WATER segments in the Pico's ring.
+        buf = ctx.buf_count
+        if self._lead() >= self.LEAD_S or (buf is not None and buf >= self.LOW_WATER):
+            self._wake.wait(0.005)
+            self._wake.clear()
+            return []                   # nothing right now, still open
+
+        # Decelerate once the distance left is only enough to stop in.
+        target_v = (self.V_START if remaining <= self._decel_distance(self._v)
+                    else self.feed_sps)
+
+        dt = self.CHUNK_MS / 1000.0
+        v0 = self._v
+        v1 = (min(target_v, v0 + self.accel_sps2 * dt) if target_v > v0
+              else max(target_v, v0 - self.accel_sps2 * dt))
+        v_avg = max((v0 + v1) / 2.0, 1.0)
+
+        steps = max(1, min(int(round(v_avg * dt)), int(round(remaining))))
+
+        self._v = v1
+        with self._lock:
+            self._remaining = max(0.0, self._remaining - steps)
+        if self._t0 is None:
+            self._t0 = time.monotonic()
+        self._queued_s += steps / v_avg
+        self.emitted += 1
+        self.steps_total += steps
+        return [self._packet(steps, v_avg)]
 
 class OnlineSession(Observable):
     """
@@ -68,6 +220,11 @@ class OnlineSession(Observable):
         self.jog_q = queue.Queue()
         self._worker = threading.Thread(target=self._jog_worker, daemon=True)
         self._worker.start()
+
+        # --- Manual (hold-to-jog) State ---
+        self._jog_source = None      # the open session's PacketSource, if running
+        self._jog_session = None     # the Session, for truncate() on reversal
+        self._jog_lock = threading.Lock()
 
         # --- Job State ---
         self.job_notes = []
@@ -148,21 +305,32 @@ class OnlineSession(Observable):
     # ---------------------------------------------------------
     def _poll_worker(self):
         """
-        Background thread: polls machine state/position at ~400ms while idle.
-        Runs off the Tk thread so a wedged Pico (blocking serial reads, up to
-        Link.command's 1s timeout per call) degrades to a stale UI instead of
-        freezing the whole GUI. Skips itself while busy — the jog worker and
-        job worker each own `link` exclusively for their duration.
-        """
-        while True:
-            time.sleep(0.4)
-            if not self.is_connected or self.busy:
-                continue
+        Background thread: polls machine state at ~100ms, CONTINUOUSLY.
 
-            from host.protocol import commands as cmd
+        It no longer skips while busy. Under the new link model the reader owns
+        the port for the connection's lifetime and this poll only needs the
+        writer for a single byte between frames, so it slots into an active
+        stream instead of waiting for one to finish (docs/comms_architecture.md
+        §3). This is the end-to-end proof of the whole architecture: a moving
+        position readout during a job or a jog was impossible under seizure.
+
+        Position still costs a text round trip (`getpos`), which is the
+        one-outstanding plane, so it is polled at a slower cadence than state.
+        Folding position into STATUS_RSP (§4.2) removes that split entirely.
+        """
+        from host.protocol import commands as cmd
+        n = 0
+        while True:
+            time.sleep(0.1)
+            if not self.is_connected:
+                continue
+            n += 1
             try:
-                self.machine_state = cmd.get_status(self.link)
-                self.machine_pos_steps = cmd.get_pos(self.link)
+                self.machine_state = self.link.get_status(timeout=0.5)
+                # getpos is text; poll it 4x slower so a stream's ACK traffic
+                # and the UI's own commands aren't queued behind it.
+                if n % 4 == 0:
+                    self.machine_pos_steps = cmd.get_pos(self.link)
                 self.polling_error = None
             except Exception as e:
                 self.polling_error = str(e)
@@ -290,6 +458,89 @@ class OnlineSession(Observable):
     def disable_node(self, node_id: int):
         from host.protocol import commands as cmd
         self._send_node_command(cmd.disable, node_id, "disable")
+
+    # ---------------------------------------------------------
+    # 4b. Manual jogging — an OPEN session
+    # ---------------------------------------------------------
+    # The operator drives the machine in real time by holding a button. There is
+    # no predetermined destination, so the packet sequence cannot be known up
+    # front: it is produced in response to input that has not happened yet, and
+    # the session ends by truncation rather than exhaustion
+    # (docs/comms_architecture.md §2.3).
+
+    def jog_click(self, ltr: str, sign: int, dist: float, rate: float):
+        """One click of a jog button = move `dist` units on `ltr`.
+
+        Clicking again while the machine is still moving extends the move
+        instead of stopping and restarting it — the blend. Clicking the opposite
+        direction cancels what is left and coasts to a stop (it does not then
+        move the other way; a second click does that).
+        """
+        if self._gui_op is not None:
+            self.last_command_status = "Rejected: job in progress"
+            self._notify()
+            return
+        if not self.is_connected or not self.app_state.config:
+            return
+
+        machine = self.app_state.config.machine
+        axes = dict(machine.present_axes())
+        if ltr not in axes:
+            return
+        if self.machine_state and not self.machine_state.enabled(ltr):
+            self.last_command_status = f"Rejected: {ltr.upper()} axis is disabled"
+            self._notify()
+            return
+
+        ax = axes[ltr]
+        steps = int(round(abs(dist) * ax.steps_per_unit))
+        if steps <= 0:
+            return
+
+        with self._jog_lock:
+            src = self._jog_source
+            if src is not None:
+                if (src.ltr, src.sign) == (ltr, sign):
+                    if src.add(steps):                  # blend into the live move
+                        self.last_command_status = (
+                            f"Jog {ltr.upper()} blend x{src.clicks}")
+                        self._notify()
+                        return
+                else:
+                    src.cancel()                        # reversal — coast to a stop
+                    self.last_command_status = f"Jog {ltr.upper()} cancelled"
+                    self._notify()
+                    return
+                # add() refused: the source finished as we clicked. Fall through
+                # and start a fresh session below.
+
+            src = _ClickJogSource(machine, ax, ltr, sign, rate)
+            src.add(steps)
+            src.clicks = 1
+            self._jog_source = src
+            threading.Thread(target=self._jog_run, args=(src,), daemon=True).start()
+
+    def _jog_run(self, source):
+        """Runs one open jog session until its distance is spent."""
+        self.busy = True
+        self.last_command_status = f"JOG {source.ltr.upper()}{'+' if source.sign > 0 else '-'}"
+        self._notify()
+        try:
+            self.link.reset_seq()
+            sess = self.link.session(source, window=16)
+            self._jog_session = sess
+            ok = sess.run()
+            self.last_command_status = (
+                f"Jog done ({source.steps_total} steps, {source.clicks} click(s), "
+                f"{source.emitted} pkts)" if ok else "Jog failed")
+        except Exception as e:
+            self.last_command_status = f"Jog error: {e}"
+        finally:
+            with self._jog_lock:
+                self._jog_source = None
+                self._jog_session = None
+            self.busy = False
+            self._notify()
 
     # ---------------------------------------------------------
     # 4. Data Plane (Jogging)

@@ -149,12 +149,12 @@ def run(link, is_firmware: bool):
         ok = link.stream(pkts)
         check("sim stream accepted", ok)
     else:
-        from host.protocol.stream import Sender
-        sender = Sender(link.serial, window=8, verbose=False)
-        ok = sender.send_stream(pkts)
-        sender.stop()
-        check("loopback: all ACKed", ok and sender.acked == N,
-              f"ACKed {sender.acked}/{N}, NACKs {sender.nacks}")
+        from host.protocol.session import ListSource
+        link.reset_seq()
+        sess = link.session(ListSource(pkts), window=8)
+        ok = sess.run()
+        check("loopback: all ACKed", ok and sess.acked == N,
+              f"ACKed {sess.acked}/{N}, NACKs {sess.nacks}")
 
     # machine should return to IDLE after the burst drains
     time.sleep(0.3)

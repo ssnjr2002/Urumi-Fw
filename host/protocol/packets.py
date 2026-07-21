@@ -78,6 +78,25 @@ STATUS_RSP_SIZE  = 9
 NACK_CRC         = 0x01
 NACK_FULL        = 0x02
 NACK_BAD_MAGIC   = 0x03
+NACK_PAUSED      = 0x04
+NACK_BAD_STATE   = 0x06
+
+# Config transfer (src/rp2350/shared.h). CFG_DATA is the only inbound frame with
+# an opaque variable-length payload — see the demux note in reader.py.
+MAGIC_CFG_SET    = 0xB0   # host→Pico: header, then (on RDY) payload
+MAGIC_CFG_GET    = 0xB1   # host→Pico: request the active blob
+MAGIC_CFG_RDY    = 0xB2   # Pico→host: header accepted — send payload
+MAGIC_CFG_ACK    = 0xB3   # Pico→host: blob committed
+MAGIC_CFG_NACK   = 0xB4   # Pico→host: rejected — next byte is the reason
+MAGIC_CFG_DATA   = 0xB5   # Pico→host: CFG_GET response header (9 + length)
+
+CFG_DATA_HDR_SIZE = 9     # magic + length(4) + crc32(4)
+
+CFG_NACK_CRC       = 0x01
+CFG_NACK_TOO_BIG   = 0x02
+CFG_NACK_BAD_STATE = 0x03
+CFG_NACK_FLASH     = 0x04
+CFG_NACK_TIMEOUT   = 0x05
 
 # ── MicroSegment flags ────────────────────────────────────────────────────────
 # One byte, one namespace (see docs/wire_protocol.md). Low bits are wire/firmware

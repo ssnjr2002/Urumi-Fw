@@ -28,8 +28,12 @@ from host.protocol.state import (
 )
 from host.protocol.packets import (
     unpack_microsegment, pack_status_rsp, MAGIC_STATUS_REQ, STATUS_RSP_SIZE,
+    MAGIC_ACK, MAGIC_NACK, NACK_FULL, NACK_BAD_STATE,
 )
 from host.protocol.state import parse_status_rsp
+from host.protocol.reader import Demux, Reader, make_sinks
+from host.protocol.writer import Writer
+from host.protocol.session import Session, ListSource
 
 try:
     import serial as _pyserial
@@ -40,20 +44,14 @@ except ImportError:
 # ── backends ──────────────────────────────────────────────────────────────────
 
 class SerialBackend:
-    """Real pyserial connection. write() bytes, readline() one text line."""
+    """Real pyserial connection. Writes only — inbound bytes belong to the Reader
+    thread, which owns the port for the connection's lifetime (D1)."""
 
-    # Fixed, short base timeout for the underlying pyserial object. Sender's
-    # ack_reader thread (host/protocol/stream.py) reads this SAME object
-    # directly during a stream, one byte at a time, relying on whatever
-    # .timeout is currently set — readline()/read() below used to mutate
-    # .timeout to the caller's requested wait (e.g. 1.0s for a control-plane
-    # reply) and never restore it, so a control-plane call issued right
-    # before a stream (e.g. "seqreset") left the port latched at 1s. That
-    # throttled every ack_reader read(1) to up to a full second, causing
-    # repeated Go-Back-N timeouts/stalls (seconds instead of milliseconds)
-    # and the Pico's ring buffer draining mid-burst. Longer waits are done
-    # here via a manual poll-until-deadline loop instead, so .timeout never
-    # needs to change after construction.
+    # Short, FIXED port timeout. Nothing may mutate it after construction: the
+    # reader loop blocks on read(1) at this timeout, so raising it (as the old
+    # readline() did, to serve a 1s control-plane wait) throttled the whole
+    # inbound path and caused Go-Back-N stalls. With one reader there is no
+    # per-call timeout to honour here at all — callers wait on their sink.
     BASE_TIMEOUT = 0.05
 
     def __init__(self, port, baud=115200, timeout=0.2):
@@ -61,31 +59,19 @@ class SerialBackend:
             raise RuntimeError("pyserial not installed — pip install pyserial")
         self.serial = _pyserial.Serial(port, baud, timeout=self.BASE_TIMEOUT)
 
+    def attach(self, demux):
+        self.reader = Reader(self.serial, demux).start()
+
     def write(self, data: bytes):
         self.serial.write(data)
+
+    def flush(self):
         self.serial.flush()
 
-    def readline(self, timeout=1.0) -> bytes:
-        deadline = time.monotonic() + timeout
-        buf = bytearray()
-        while time.monotonic() < deadline:
-            chunk = self.serial.read(1)
-            if not chunk:
-                continue
-            buf += chunk
-            if chunk == b"\n":
-                break
-        return bytes(buf)
-
-    def read(self, n: int, timeout=1.0) -> bytes:
-        """Read exactly up to n raw bytes (used for fixed-length binary replies)."""
-        deadline = time.monotonic() + timeout
-        buf = bytearray()
-        while len(buf) < n and time.monotonic() < deadline:
-            buf += self.serial.read(n - len(buf))
-        return bytes(buf)
-
     def close(self):
+        reader = getattr(self, "reader", None)
+        if reader:
+            reader.stop()
         self.serial.close()
 
 
@@ -101,8 +87,9 @@ class SimBackend:
     cancel flush the remaining motion. A test double — not real-time accurate.
     """
 
-    serial = None   # no raw port to lend a Sender
+    serial = None   # no raw port — replies are fed straight into the demux
 
+    RING_SIZE = 64          # bounded like masterBuf, so backpressure is real
     FRAME_S = 0.04          # executor wall-clock tick
     F_CPU   = 150_000_000   # matches host/config/loader.py's machine default; used to
                             # convert a packet's `interval` (CPU cycles/step) to seconds
@@ -114,7 +101,8 @@ class SimBackend:
         self.axes_homed   = 0
         self.axes_enabled = 0          # energised-axis bitmask (enable -> all present)
         self.pos          = [0, 0, 0, 0]
-        self._replies   = []                 # queued reply lines (bytes)
+        self._demux     = None               # set by attach(); replies go here
+        self._expected_seq = 0               # mirrors the firmware's expectedSeq
         self._lock      = threading.RLock()  # guards state/pos/motion vs executor
         self._motion    = deque()            # pending (dx,dy,dz,da,interval,flags)
         self._executing = False              # a burst is in progress
@@ -123,28 +111,54 @@ class SimBackend:
         self._exec = threading.Thread(target=self._executor, daemon=True)
         self._exec.start()
 
+    def attach(self, demux):
+        self._demux = demux
+
+    def flush(self):
+        pass
+
+    def _reply(self, data: bytes):
+        if self._demux is not None:
+            self._demux.feed(data)
+
     def write(self, data: bytes):
-        # Text line (control) vs binary packet (data plane): control commands are
-        # lowercase ASCII ending in newline; everything else is a motion packet.
+        # The Writer may hand us a BATCH of frames now, not one packet, so split
+        # before dispatching. Text lines and STATUS_REQ are always written alone.
         if data[:1].isalpha() and data.rstrip().isascii():
             line = data.decode("ascii", "replace").strip()
             if line:
                 with self._lock:
-                    self._replies.append((self._handle(line) + "\n").encode())
+                    self._reply((self._handle(line) + "\n").encode())
             return
         if data == bytes([MAGIC_STATUS_REQ]):
             with self._lock:
-                self._replies.append(pack_status_rsp(
+                self._reply(pack_status_rsp(
                     int(self.state), self.axes_enabled, self.axes_homed,
                     int(self.alarm), int(self.running), len(self._motion)))
             return
+        for i in range(0, len(data) - 25, 26):
+            self._write_packet(bytes(data[i:i + 26]))
+
+    def _write_packet(self, data: bytes):
         try:
-            ms = unpack_microsegment(bytes(data))
+            ms = unpack_microsegment(data)
         except Exception:
             return                            # not a recognised packet — drop
+
+        # Mirror the firmware's seq duplicate guard (data_plane.cpp): a stale
+        # retransmit after a go-back is ACKed but NOT executed. Without this the
+        # sim would duplicate motion on every retry and silently disagree with
+        # hardware about final position.
         with self._lock:
+            if data[22] != self._expected_seq:
+                self._reply(bytes([MAGIC_ACK, self._expected_seq, 0x00]))
+                return
             if self.state in (MachineState.ALARM, MachineState.HOMING):
+                self._reply(bytes([MAGIC_NACK, NACK_BAD_STATE, 0x00]))
                 return                        # stream not accepted in these states
+            if len(self._motion) >= self.RING_SIZE:
+                self._reply(bytes([MAGIC_NACK, NACK_FULL, 0x00]))
+                return                        # backpressure — sender retries
             if not self._executing:
                 # start a burst. From IDLE → returns to IDLE (a job). From PAUSED
                 # → a jog during pause, returns to PAUSED. From RUNNING → the
@@ -157,15 +171,8 @@ class SimBackend:
                 self.state = MachineState.RUNNING
                 self._executing = True
             self._motion.append((ms["dx"], ms["dy"], ms["dz"], ms["da"], ms["interval"], ms["flags"]))
-
-    def readline(self, timeout=1.0) -> bytes:
-        with self._lock:
-            return self._replies.pop(0) if self._replies else b""
-
-    def read(self, n: int, timeout=1.0) -> bytes:
-        """Sim always queues one complete reply per write — same pop as readline."""
-        with self._lock:
-            return self._replies.pop(0) if self._replies else b""
+            self._expected_seq = (self._expected_seq + 1) & 0xFF
+            self._reply(bytes([MAGIC_ACK, self._expected_seq, 0x00]))
 
     def close(self):
         pass
@@ -222,7 +229,8 @@ class SimBackend:
         if cmd == "ping":
             return "pong"
         if cmd == "seqreset":
-            return "seq reset"    # sim doesn't track seq; just acknowledge
+            self._expected_seq = 0
+            return "seq reset"
         if cmd == "pingnode":
             return f"node {args[0] if args else '?'} ok"
         if cmd == "getstate":
@@ -301,10 +309,25 @@ class SimBackend:
 # ── link ──────────────────────────────────────────────────────────────────────
 
 class Link:
-    """Owns a backend; offers control-plane request/response + raw packet send."""
+    """Owns a backend, one reader, one writer, and the sink set.
+
+    Concerns SUBSCRIBE rather than seize (docs/comms_architecture.md D1/D3):
+    command(), get_status() and stream() can all be in flight at once, because
+    each awaits its own sink while the single reader keeps draining the port.
+    """
 
     def __init__(self, backend):
         self.backend = backend
+        self.sinks = make_sinks()
+        self.demux = Demux(self.sinks["ack"], self.sinks["status"],
+                           self.sinks["text"], self.sinks["cfg"])
+        backend.attach(self.demux)
+        self.writer = Writer(backend)
+        # Text is strictly one-outstanding (D11). The writer guarantees frame
+        # atomicity but not that two callers won't each be awaiting the text
+        # sink at once — with concurrent pollers and UI commands, whoever gets
+        # scheduled first takes the other's reply. This makes the rule real.
+        self._text_lock = threading.Lock()
 
     @classmethod
     def open_serial(cls, port, baud=115200, timeout=0.2) -> "Link":
@@ -316,50 +339,69 @@ class Link:
 
     @property
     def serial(self):
-        """Raw pyserial port for a Sender during streaming (None for the sim)."""
+        """Raw pyserial port (None for the sim). NOT for reading — the Reader
+        owns inbound bytes. Kept only for port-level operations."""
         return self.backend.serial
 
     def command(self, text: str, timeout=1.0) -> str:
-        """Send one control-plane line and return the reply line (stripped)."""
-        self.backend.write((text + "\n").encode("ascii"))
-        return self.backend.readline(timeout).decode("ascii", "replace").strip()
+        """Send one control-plane line and return the reply line (stripped).
+
+        No flush beforehand: routing on magic means a stale status reply or a
+        stream ACK cannot land in the text sink (D10). Text stays strictly
+        one-outstanding, so the next line in the sink is unambiguously ours.
+        """
+        with self._text_lock:
+            self.writer.write_text(text)
+            return self.sinks["text"].get(timeout=timeout) or ""
+
+    def send(self, text: str):
+        """Fire-and-forget control command — needs the writer, not a reply slot.
+        `stop` is the case that matters: estop must never queue behind a pending
+        text command, and it correlates nothing (confirmation arrives on the
+        status sink as the state goes ESTOP→ALARM)."""
+        self.writer.write_text(text)
 
     def write_packet(self, data: bytes):
         """Send a raw data-plane packet (used by higher-level streaming)."""
-        self.backend.write(data)
+        self.writer.write_frame(data)
 
     def get_status(self, timeout=1.0):
-        """
-        Binary mirror of `command("getstate")` (docs/wire_protocol.md
-        STATUS_REQ/STATUS_RSP). Same MachineStatus as parse_getstate, but a
-        single magic byte out / 7 bytes back — cheap enough to poll during a
-        stream, since it slots into a boundary between MSEG/jog packets
-        instead of needing a whole ASCII line.
-        """
-        self.backend.write(bytes([MAGIC_STATUS_REQ]))
-        data = self.backend.read(STATUS_RSP_SIZE, timeout)
+        """Binary mirror of `command("getstate")` — one byte out, one frame back.
+        Cheap enough to poll during a stream, since it slots into a boundary
+        between MSEG packets instead of needing a whole ASCII line."""
+        before = self.sinks["status"]._stamp
+        self.writer.write_frame(bytes([MAGIC_STATUS_REQ]))
+        data, _ = self.sinks["status"].wait_update(timeout=timeout, since=before)
+        if data is None:
+            raise TimeoutError("no STATUS_RSP within timeout")
         return parse_status_rsp(data)
 
-    def stream(self, packets, window=16, verbose=False) -> bool:
-        """
-        Stream a data-plane burst (a job, or a jog burst like return-to-pausePos)
-        with Go-Back-N ACK/NACK. Borrows the raw port for the duration; the caller
-        must pause control-plane polling while streaming (the port is single-owner
-        during a stream — same discipline the old jog_ui used).
+    @property
+    def status(self):
+        """Latest status sample without a round trip, or None. This is what an
+        open (jog) session reads to decide when to blend or wind down."""
+        raw = self.sinks["status"].value
+        return parse_status_rsp(raw) if raw else None
 
-        On the simulator (no raw port) the packets are accepted without an ACK
-        loop and True is returned, so the host side is exercisable offline.
-        """
-        if self.serial is None:
-            for p in packets:
-                self.write_packet(p)
-            return True
-        from host.protocol.stream import Sender
-        sender = Sender(self.serial, window=window, verbose=verbose)
-        try:
-            return sender.send_stream(packets)
-        finally:
-            sender.stop()
+    def reset_seq(self):
+        """Align the Pico's expectedSeq with a session's fresh seq counter. Every
+        session stamps from 0, so this must precede one."""
+        return self.command("seqreset")
+
+    def stream(self, packets, window=16, verbose=False) -> bool:
+        """Stream a closed sequence (a job, or a jog burst) with Go-Back-N."""
+        self.reset_seq()
+        return self.session(ListSource(list(packets)), window, verbose).run()
+
+    def session(self, source, window=16, verbose=False) -> Session:
+        """Build a Session over any PacketSource — use this directly for an OPEN
+        session (manual jogging), where packets are produced in response to
+        operator input and the session ends by truncation rather than exhaustion.
+
+        Caller must reset_seq() first; stream() does it for you."""
+        return Session(self.writer, self.sinks["ack"], source,
+                       status_sink=self.sinks["status"],
+                       window=window, verbose=verbose)
 
     def close(self):
         self.backend.close()

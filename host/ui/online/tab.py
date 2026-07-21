@@ -127,14 +127,16 @@ class OnlineTab(ttk.Frame):
             self.session.toggle_connect(port)
 
     def _on_jog_clicked(self, ltr: str, sign: int):
-        if not hasattr(self.session, 'jog'):
+        """One click = one jog move. Clicking again while it is still running
+        blends into the live move instead of queueing a separate burst."""
+        if not hasattr(self.session, 'jog_click'):
             return
-            
+
         try:
             dist = self.axis_nodes_view.jog_dist_vars[ltr].get()
             rate = self.axis_nodes_view.jog_rate_vars[ltr].get()
 
-            self.session.jog(ltr, sign, dist, rate)
+            self.session.jog_click(ltr, sign, dist, rate)
         except Exception as e:
             if hasattr(self.session, 'last_command_status'):
                 self.session.last_command_status = f"Invalid jog input: {e}"
@@ -246,12 +248,12 @@ class OnlineTab(ttk.Frame):
             
             # Axis Nodes View: Enable Controls (only if the axis is enabled, and
             # never while a job/jog already owns the link — see OnlineSession.jog)
-            for ltr, btn in self.axis_nodes_view.jog_dec_btns.items():
-                is_enabled = (st and st.enabled(ltr) if st else False) and not busy
-                btn.config(state="normal" if is_enabled else "disabled")
-            for ltr, btn in self.axis_nodes_view.jog_inc_btns.items():
-                is_enabled = (st and st.enabled(ltr) if st else False) and not busy
-                btn.config(state="normal" if is_enabled else "disabled")
+            job_running = getattr(self.session, '_gui_op', None) is not None
+            for btns in (self.axis_nodes_view.jog_dec_btns,
+                         self.axis_nodes_view.jog_inc_btns):
+                for ltr, btn in btns.items():
+                    is_enabled = (st and st.enabled(ltr) if st else False) and not job_running
+                    btn.config(state="normal" if is_enabled else "disabled")
                 
             # Axis Nodes View: Labels and Tooltips
             for ltr, lbl in self.axis_nodes_view.axis_name_labels.items():

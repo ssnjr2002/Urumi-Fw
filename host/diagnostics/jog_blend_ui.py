@@ -17,20 +17,25 @@ import queue
 from collections import namedtuple
 
 from host.protocol.link import Link
-from host.protocol.stream import Sender
+from host.protocol.session import ListSource
 from host.protocol.packets import pack_jog, MSEG_FLAG_NONE, MSEG_FLAG_PATH_END
 from pipeline.config import default as _config_default
 
 _MS = namedtuple("MS", ["dx", "dy", "dz", "da", "interval", "flags"])
 
 def _send_burst(link, packets, window=16):
+    """Mechanical port to the new stack: one Session per burst, sharing the
+    Link's reader instead of spawning its own.
+
+    NOTE this is still burst-shaped — accel, cruise and decel are separate
+    sessions, so a "blend" is really "did the next burst land before the buffer
+    drained". Manual jogging is an OPEN session (docs/comms_architecture.md
+    §2.3); the real port is one long-lived session fed from the intent queue,
+    with reversal handled by Session.truncate(). Left as follow-on work."""
     if not packets:
         return
-    sender = Sender(link.serial, window=window, verbose=False)
-    try:
-        sender.send_stream(packets)
-    finally:
-        sender.stop()
+    link.reset_seq()
+    link.session(ListSource(packets), window=window).run()
 
 class JogBlendUI:
     def __init__(self, root, port, baud=115200):

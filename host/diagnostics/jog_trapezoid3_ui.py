@@ -13,22 +13,20 @@ from tkinter import ttk
 from collections import namedtuple
 
 from host.protocol.link import Link
-from host.protocol.stream import Sender
+from host.protocol.session import ListSource
 from host.protocol.packets import pack_jog, MSEG_FLAG_NONE, MSEG_FLAG_PATH_END
 from pipeline.config import default as _config_default
 
 _MS = namedtuple("MS", ["dx", "dy", "dz", "da", "interval", "flags"])
 
 def _send_burst(link, packets, label, window=16, verbose=True):
-    sender = Sender(link.serial, window=window, verbose=verbose)
-    try:
-        t0 = time.monotonic()
-        ok = sender.send_stream(packets)
-        t1 = time.monotonic()
-    finally:
-        sender.stop()
-    print(f"[{label}] ok={ok} time={t1 - t0:.3f}s sent={sender.sent} "
-          f"acked={sender.acked} nacks={sender.nacks} retries={sender.retries}")
+    link.reset_seq()
+    sess = link.session(ListSource(packets), window=window, verbose=verbose)
+    t0 = time.monotonic()
+    ok = sess.run()
+    t1 = time.monotonic()
+    print(f"[{label}] ok={ok} time={t1 - t0:.3f}s sent={sess.sent} "
+          f"acked={sess.acked} nacks={sess.nacks} retries={sess.retries}")
     return ok
 
 class JogDiagnosticUI:
