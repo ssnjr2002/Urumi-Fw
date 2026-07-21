@@ -68,11 +68,22 @@ class _ClickJogSource(PacketSource):
     already sitting in the ring.
     """
 
-    LOW_WATER = 4        # segments to keep queued on the Pico
+    # The queue must outlast the control loop. Status arrives every ~100 ms, so
+    # that is how long the source can be flying blind; a buffer shallower than
+    # that MUST underflow no matter how good the estimate is. The old
+    # LOW_WATER=4 x CHUNK_MS=20 capped the queue at 80 ms — below the poll
+    # period — so the ring drained to empty on every jog and the machine
+    # visibly stopped and restarted. That was the root cause; the estimator
+    # tuning that preceded it was treating a symptom.
+    #
+    # Depth is affordable now because cancel is a soft abort (§4.5): the Pico
+    # flushes the ring on one byte, so a deeper queue no longer costs
+    # responsiveness. Under the old coast-to-a-stop it would have.
+    LOW_WATER = 16       # segments — ~320 ms at CHUNK_MS, ~3 poll intervals
     CHUNK_MS  = 20       # motion per emitted packet
     V_START   = 50.0     # steps/s — rest velocity, matches make_jog
-    LEAD_US   = 80_000   # keep at most this much motion-time queued ahead (µs)
-    MAX_BURST = 8        # packets per pull() — bounds one call, LEAD_US bounds
+    LEAD_US   = 250_000  # keep at most this much motion-time queued ahead (µs)
+    MAX_BURST = 16       # packets per pull() — bounds one call, LEAD_US bounds
                          # the queue. Without a burst the source cannot outpace
                          # its own pull cadence (see pull()).
 
@@ -91,15 +102,24 @@ class _ClickJogSource(PacketSource):
         self._lock = threading.Lock()
         self._wake = threading.Event()
 
-        # Sub-poll-interval pacing estimate. `ctx.queued_us` is the AUTHORITY on
-        # how much motion is queued, but it is only as fresh as the last status
-        # sample (~100 ms), and pull() is called as fast as the ack loop allows.
-        # Reading a stale value between polls would dump the whole move onto the
-        # wire in one go. So: wall clock for resolution, the report for truth.
-        # (§4.6 claimed the report deletes this. It does not — it fixes WHICH
-        # quantity is reported, not how often. Keep both.)
-        self._queued_s = 0.0        # motion-seconds handed to the machine
-        self._t0 = None             # when the first packet went out
+        # Pacing: the report ANCHORS, the clock INTERPOLATES.
+        #
+        # `queued_us` is authoritative but only as fresh as the last status
+        # sample (~100 ms), while pull() runs as fast as the ack loop allows —
+        # so it cannot be used alone without dumping the move between polls.
+        # A pure wall-clock estimate cannot be used either: it subtracts elapsed
+        # time whether or not the machine was executing, so every dry spell
+        # biases it low PERMANENTLY. Measured: it drifted until the ring held
+        # 260 ms against an 80 ms target, and the over-fill caused more dry
+        # spells, which drifted it further.
+        #
+        # So each fresh sample resets the anchor, and between samples we add
+        # what we have emitted and subtract what has elapsed. Error is bounded
+        # by one poll interval instead of accumulating.
+        self._anchor_us = 0.0       # queued_us as of the last sample we used
+        self._anchor_t  = None      # monotonic() when that sample landed
+        self._anchor_stamp = -1     # which sample it was
+        self._since_anchor_s = 0.0  # motion-seconds emitted since then
 
         self.feed_sps = max(1.0, rate * axis.steps_per_unit)
         self.accel_sps2 = max(rate * 8.0, 50.0) * axis.steps_per_unit
@@ -157,16 +177,30 @@ class _ClickJogSource(PacketSource):
 
     # -- the source contract --------------------------------------------------
 
-    def _lead_us(self):
-        """Local estimate of motion time queued ahead of the machine, in µs.
+    def _lead_us(self, ctx):
+        """Motion time queued ahead of the machine, in µs.
 
-        Fast but blind — it assumes every packet was accepted and that execution
-        started when the first one went out. Good for resolution between polls,
-        not for truth.
+        Anchored on the newest status sample, extrapolated to now:
+
+            lead = reported_at_sample + emitted_since - elapsed_since
+
+        Re-anchoring on every fresh sample is what stops the estimate drifting.
+        Before any sample arrives there is nothing to anchor to, so it falls
+        back to pure extrapolation from zero — correct at the start of a move,
+        which is the only time it is used that way.
         """
-        if self._t0 is None:
-            return 0.0
-        return max(0.0, (self._queued_s - (time.monotonic() - self._t0)) * 1e6)
+        queued, stamp, at = ctx.queued_sample
+        if queued is not None and stamp != self._anchor_stamp:
+            self._anchor_stamp   = stamp
+            self._anchor_us      = float(queued)
+            self._anchor_t       = at
+            self._since_anchor_s = 0.0
+
+        if self._anchor_t is None:
+            return max(0.0, self._since_anchor_s * 1e6)
+
+        elapsed_us = (time.monotonic() - self._anchor_t) * 1e6
+        return max(0.0, self._anchor_us + self._since_anchor_s * 1e6 - elapsed_us)
 
     def _draining(self, ctx):
         """Is the machine still executing what we already sent?
@@ -180,8 +214,8 @@ class _ClickJogSource(PacketSource):
         queued = ctx.queued_us
         if queued is None:                       # version skew — no queued_us
             buf = ctx.buf_count
-            return (buf is not None and buf > 0) or self._lead_us() > 0
-        return queued > 0 or self._lead_us() > 0
+            return (buf is not None and buf > 0) or self._lead_us(ctx) > 0
+        return queued > 0 or self._lead_us(ctx) > 0
 
     def pull(self, ctx):
         with self._lock:
@@ -209,19 +243,11 @@ class _ClickJogSource(PacketSource):
             self._wake.clear()
             return []
 
-        # Pace on the LOCAL estimate. It decays continuously, so it is never
-        # stale; the report is a sample up to a poll interval old and can be
-        # stale in EITHER direction. Measured on hardware, taking max(local,
-        # reported) let a stale-high report hold the source off until the next
-        # poll: it emitted a burst, stalled ~100 ms, and the ring drained to
-        # empty twice at the start of a jog — the machine stopping and
-        # restarting mid-move. buf_count stays as the hard ceiling, since the
-        # ring is finite regardless of what either measure claims.
-        #
-        # The report's job is _draining(), where "is anything queued at all"
-        # is the question and a poll interval of lag is harmless.
+        # Pace on the anchored estimate (see _lead_us). buf_count stays as the
+        # hard ceiling — the ring is finite regardless of what any time-based
+        # measure claims.
         buf = ctx.buf_count
-        if self._lead_us() >= self.LEAD_US or (buf is not None and buf >= self.LOW_WATER):
+        if self._lead_us(ctx) >= self.LEAD_US or (buf is not None and buf >= self.LOW_WATER):
             self._wake.wait(0.005)
             self._wake.clear()
             return []                   # nothing right now, still open
@@ -237,7 +263,7 @@ class _ClickJogSource(PacketSource):
         dt = self.CHUNK_MS / 1000.0
         while (len(batch) < self.MAX_BURST
                and remaining > 0.0
-               and self._lead_us() < self.LEAD_US):
+               and self._lead_us(ctx) < self.LEAD_US):
 
             # Decelerate once the distance left is only enough to stop in.
             target_v = (self.V_START if remaining <= self._decel_distance(self._v)
@@ -254,9 +280,7 @@ class _ClickJogSource(PacketSource):
             with self._lock:
                 self._remaining = max(0.0, self._remaining - steps)
                 remaining = self._remaining
-            if self._t0 is None:
-                self._t0 = time.monotonic()
-            self._queued_s += steps / v_avg
+            self._since_anchor_s += steps / v_avg
             self.emitted += 1
             self.steps_total += steps
             batch.append(self._packet(steps, v_avg))

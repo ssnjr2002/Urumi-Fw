@@ -90,6 +90,26 @@ class StreamContext:
         return None if st is None else st.get("buf_count")
 
     @property
+    def queued_sample(self):
+        """(queued_us, stamp, arrival_time) — or (None, 0, 0.0).
+
+        For a source that wants to EXTRAPOLATE between polls rather than just
+        read the latest figure: `stamp` says whether this is a sample it has
+        already accounted for, `arrival_time` says how old it is. Reading
+        `queued_us` repeatedly cannot distinguish a fresh sample from a stale
+        one, which is how an open-loop local estimate ends up drifting.
+        """
+        if self._status_sink is None:
+            return None, 0, 0.0
+        raw, stamp, at = self._status_sink.sample
+        if raw is None:
+            return None, stamp, at
+        try:
+            return unpack_status_rsp(raw).get("queued_us"), stamp, at
+        except ValueError:
+            return None, stamp, at
+
+    @property
     def queued_us(self):
         """Queued MOTION TIME on the Pico in microseconds, or None (§4.6).
 

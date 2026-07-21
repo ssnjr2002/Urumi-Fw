@@ -28,6 +28,7 @@ consumed opaquely by count, and nothing is ever scanned for structure.
 
 import queue
 import threading
+import time
 
 from host.protocol.packets import (
     MAGIC_ACK, MAGIC_NACK, MAGIC_STATUS_RSP, STATUS_RSP_SIZE,
@@ -96,12 +97,26 @@ class LatestSink:
         self._cv = threading.Condition()
         self._value = None
         self._stamp = 0          # monotonically increasing update counter
+        self._at = 0.0           # monotonic() when the current sample landed
 
     def put(self, item):
         with self._cv:
             self._value = item
             self._stamp += 1
+            self._at = time.monotonic()
             self._cv.notify_all()
+
+    @property
+    def sample(self):
+        """(value, stamp, arrival_time) as one consistent triple.
+
+        A consumer extrapolating from a sample needs to know WHEN it was taken
+        and whether it has already seen it — reading `.value` twice cannot tell
+        a repeated value from a fresh one, and a sample without an arrival time
+        cannot be aged.
+        """
+        with self._cv:
+            return self._value, self._stamp, self._at
 
     @property
     def value(self):
