@@ -29,6 +29,7 @@ from host.protocol.state import (
 from host.protocol.packets import (
     unpack_microsegment, pack_status_rsp, MAGIC_STATUS_REQ, STATUS_RSP_SIZE,
     MAGIC_ACK, MAGIC_NACK, NACK_FULL, NACK_BAD_STATE, MAGIC_SEQRESET,
+    MAGIC_ABORT, NACK_ABORTING,
 )
 from host.protocol.state import parse_status_rsp
 from host.protocol.reader import Demux, Reader, make_sinks
@@ -105,6 +106,7 @@ class SimBackend:
         self._demux     = None               # set by attach(); replies go here
         self._expected_seq = 0               # mirrors the firmware's expectedSeq
         self._pending_acks = 0               # accepted but not yet confirmed
+        self._aborting  = False              # abort barrier (see MAGIC_ABORT)
         self._lock      = threading.RLock()  # guards state/pos/motion vs executor
         self._motion    = deque()            # pending (dx,dy,dz,da,interval,flags)
         self._executing = False              # a burst is in progress
@@ -131,6 +133,22 @@ class SimBackend:
             if line:
                 with self._lock:
                     self._reply((self._handle(line) + "\n").encode())
+            return
+        if data == bytes([MAGIC_ABORT]):
+            with self._lock:
+                # The sim has no step loop to ramp, so it models the OUTCOME:
+                # motion ends, the ring is discarded, position is kept. The ramp
+                # distance the real machine would still travel is not simulated —
+                # a test asserting exact post-abort position would be asserting
+                # something hardware will not reproduce.
+                self._motion.clear()
+                self._executing = False
+                self._time_credit = 0.0
+                self._aborting = True
+                if self.state in (MachineState.RUNNING, MachineState.PAUSED):
+                    self.state = MachineState.IDLE
+                self.running = RunningReason.JOB
+                self._aborting = False
             return
         if data == bytes([MAGIC_SEQRESET]):
             with self._lock:
@@ -429,6 +447,19 @@ class Link:
         open (jog) session reads to decide when to blend or wind down."""
         raw = self.sinks["status"].value
         return parse_status_rsp(raw) if raw else None
+
+    def abort(self):
+        """Soft abort (§4.5): ramp to rest, flush the ring, land IDLE with
+        position intact.
+
+        Fire-and-forget, like `stop` — it correlates nothing, so it takes the
+        writer lock but no reply slot and can never queue behind a pending text
+        command. Confirmation arrives on the status sink as the state settles.
+
+        Packets sent after this get NACK_ABORTING until the machine reaches
+        IDLE. That is a barrier, not an error: wait and reopen.
+        """
+        self.writer.write_frame(bytes([MAGIC_ABORT]))
 
     def reset_seq(self, timeout=1.0):
         """Align the Pico's expectedSeq with a session's fresh seq counter. Every

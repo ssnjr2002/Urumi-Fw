@@ -648,13 +648,21 @@ keeps it reserved for later interrupts.
 Guard the ramp against a zero decel rate from config, or the loop never
 terminates. Phase 2 must re-check the estop condition every step.
 
-#### What it deletes on the host
+#### What it replaces on the host — narrower than first claimed
 
-`_decel_distance()` and the ramp-down branch of `_ClickJogSource.pull()`. Jog
-cancel becomes one byte instead of a decel profile computed from an accel model
-the host only half knows, and reversal can turn around directly rather than
-cancel-and-coast — which is `state_redesign.md`'s "decel then start the new move",
-finally reachable.
+Jog **cancel** becomes one byte instead of a coast: the Pico ramps from its
+actual instantaneous velocity, which is the only place that value exists, and
+can call back motion already sitting in the ring — which the host never could.
+
+But `_decel_distance()` and the ramp-down branch **stay**. The firmware ramp
+fires on abort/pause only; natural completion has no trigger, so deleting the
+host ramp would leave the last packet running at feed speed and the machine
+stopping dead. Aborting early instead would break the exact-distance promise
+that makes a click-jog mean "10 mm".
+
+So deceleration is split by cause: **runs to distance → host ramps** (the
+distance must come out exact); **cancelled → Pico ramps** (exactness is
+irrelevant, responsiveness is not).
 
 This is the only proposal here that is not nearly free: Core 1 must ramp
 intervals rather than merely consume them.
@@ -678,10 +686,20 @@ Whole-segment granularity is fine: report the ring's total including the
 executing segment without subtracting its elapsed time. Error ≤ one segment
 (~20 ms at the host's current chunk size), well inside what pacing needs.
 
-**Deletes on the host:** `LEAD_S`, `_queued_s`, `_t0` — the wall-clock
-dead-reckoning that exists only because segment count cannot answer "am I far
-enough ahead". Combined with §4.10, `_ClickJogSource.pull()` collapses to
-"if `queued_us` < lead: emit a chunk".
+**What it actually replaced on the host — this claim was wrong.** The original
+text said `queued_us` deletes `LEAD_S` / `_queued_s` / `_t0`. It does not. Those
+exist because the report is only as fresh as the last status poll (~100 ms)
+while `pull()` runs as fast as the ack loop allows; reading a stale value
+between polls dumps the whole move onto the wire in one go. `queued_us` fixes
+*which quantity* is reported, not *how often*. Deleting the wall clock on that
+promise broke blending immediately, caught by `test_ui_jog`.
+
+What it does fix is the question the estimate was worst at: **"is the machine
+still moving?"** — where being wrong let `busy` go false mid-motion. So the
+report is authoritative for drain detection, and pacing takes the **max** of
+report and local estimate: a stale-low report cannot cause a dump, a stale-high
+one cannot cause a stall. §4.10 (unsolicited push) would shrink the staleness
+window but not close it.
 
 ### 4.7 Dead wire surface
 
@@ -819,12 +837,25 @@ specification; this is the ledger.
       should do the real check (the `EMIT_SOFT_LIMIT` path around it is already
       wired end to end). **Z's decel is an unverified placeholder** — no
       `maxAccel` exists for it in the config.
-- [ ] **Host `abort()`** — write `0xA9`, handle `NACK_ABORTING` as
-      wait-and-reopen rather than an error, delete `_decel_distance()` and the
-      ramp-down branch of `_ClickJogSource.pull()`, and route jog reversal
-      through abort. `test_ui_jog.py` must pass unchanged while that code
-      shrinks.
-- [ ] **Consume the new fields.** The parse landed but the payoff did not:
+- [x] **Host `abort()` + jog reversal through it.** `Link.abort()` writes
+      `0xA9` fire-and-forget; `_ClickJogSource.cancel()` hands the ramp to the
+      Pico instead of coasting. `_draining()` now uses reported `queued_us`, so
+      `busy` means "machine moving" as a reported fact. `test_ui_jog.py` passes
+      **unchanged**. Verified on hardware through the host stack: RUNNING →
+      abort → IDLE, ring empty, ~937 ms of queued motion discarded, position
+      kept.
+      Two doc claims corrected in the process (§4.5, §4.6): the host ramp and
+      the wall-clock estimate both had to stay, for reasons recorded there.
+- [x] **§4.7 — `MSEG_FLAG_PATH_END` retired.** Commented out in `shared.h` and
+      dropped from `MSEG_FLAG_WIRE_MASK` (0x07 → 0x06), so a host still setting
+      it is ignored rather than misinterpreted. The host constant is kept at
+      `0x00` so existing call sites are no-ops rather than import errors.
+      Unrelated to `pipeline.stages`' live planner-internal `PATH_END`.
+
+### Next
+
+- [ ] **Consume the remaining new field.** `pos` from `STATUS_RSP` still is not
+      used — the UI poller does a separate text `getpos` every 4th pass. The parse landed but the payoff did not:
       position still comes from the text `getpos` path, and jog pacing still
       dead-reckons. Should *delete* `LEAD_S` / `_queued_s` / `_t0` from
       `_ClickJogSource`, drop the `getpos` round trip from the UI poller, and

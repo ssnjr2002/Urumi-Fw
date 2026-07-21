@@ -27,11 +27,24 @@
 // wire/firmware semantics; high bits (0x08 LIFT, 0x10 JOG) are host planning
 // hints the firmware ignores — mask to the low 3 bits before interpreting.
 #define MSEG_FLAG_NONE      0x00
-#define MSEG_FLAG_PATH_END  0x01  // Last segment in a path — Core 1 can signal idle
+// RETIRED (docs/comms_architecture.md §4.7) — commented out rather than deleted
+// so the bit stays visibly reserved and the removal stays easy to reverse.
+//
+// #define MSEG_FLAG_PATH_END  0x01  // Last segment in a path — Core 1 can signal idle
+//
+// It was set by five host call sites and read by NOTHING: not core1.cpp, not
+// either host. The jog work settled the question — an open session has no final
+// packet to mark, since it ends by truncation and the operator decides when, so
+// the one workload that might have wanted an end-of-motion marker structurally
+// cannot set it. Meanwhile §4.5 gives the firmware a real end-of-motion signal
+// (ABORT → ramp → IDLE) and the extended STATUS_RSP reports arrival at IDLE.
+//
+// Bit 0 is left OUT of WIRE_MASK below, so a host that still sets it is ignored
+// rather than misinterpreted.
 #define MSEG_FLAG_ESTOP     0x02  // Poison pill — flush and halt immediately
 #define MSEG_FLAG_PAUSE     0x04  // Drain to this segment, then enter PAUSED
                                   // (host-inserted single-head tool-change marker)
-#define MSEG_FLAG_WIRE_MASK 0x07  // firmware honours only these bits
+#define MSEG_FLAG_WIRE_MASK 0x06  // firmware honours only these bits (was 0x07)
 
 struct MicroSegment {
     int32_t  dx;        // X axis steps (signed)

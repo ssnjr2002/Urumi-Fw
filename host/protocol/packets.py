@@ -85,6 +85,11 @@ MAGIC_STATUS_RSP_V1 = 0xA6
 # (which would correctly ignore the zero delta anyway).
 MAGIC_SEQRESET   = 0xA8
 
+# Soft abort (§4.5): one byte, no reply. The Pico ramps to rest, flushes the
+# ring and lands IDLE with position INTACT — unlike `stop`, which forfeits it.
+MAGIC_ABORT      = 0xA9
+NACK_ABORTING    = 0x07   # barrier, not an error: wait for IDLE and reopen
+
 NACK_CRC         = 0x01
 NACK_FULL        = 0x02
 NACK_BAD_MAGIC   = 0x03
@@ -114,7 +119,15 @@ CFG_NACK_TIMEOUT   = 0x05
 # are host planning hints the firmware masks off.
 
 MSEG_FLAG_NONE     = 0x00
-MSEG_FLAG_PATH_END = 0x01
+# RETIRED on the wire (§4.7) — the firmware no longer honours bit 0 and has it
+# commented out of MSEG_FLAG_WIRE_MASK. The name is kept, and kept equal to 0,
+# so the several call sites that OR it in become no-ops instead of import
+# errors; it is deliberately NOT 0x01 any more, so nothing can set the bit by
+# accident. Delete the name once those call sites are cleaned up.
+#
+# (Unrelated to pipeline.stages' PATH_END / MICRO_PATH_END, which are live
+# planner-internal velocity boundary markers and are not affected.)
+MSEG_FLAG_PATH_END = 0x00   # was 0x01
 MSEG_FLAG_ESTOP    = 0x02
 MSEG_FLAG_PAUSE    = 0x04   # sender-inserted at a tool-change boundary (single head)
 

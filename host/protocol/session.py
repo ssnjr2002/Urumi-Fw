@@ -89,6 +89,18 @@ class StreamContext:
         st = self.status
         return None if st is None else st.get("buf_count")
 
+    @property
+    def queued_us(self):
+        """Queued MOTION TIME on the Pico in microseconds, or None (§4.6).
+
+        What a jog source should actually pace against. `buf_count` counts
+        segments, and segments differ in duration by orders of magnitude, so a
+        count says nothing about how far ahead of the machine we are. Reported
+        by the Pico, so it needs no wall-clock dead reckoning on this side.
+        """
+        st = self.status
+        return None if st is None else st.get("queued_us")
+
     def wait(self, timeout=IDLE_WAIT_S):
         """Bounded wait for an open source with nothing to emit.
 

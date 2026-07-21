@@ -55,20 +55,28 @@ class _ClickJogSource(PacketSource):
     that have not happened yet. The session ends when the remaining distance is
     spent and speed is back to rest.
 
-    Pacing: the Pico's ring is topped up to LOW_WATER and no further. Every
-    packet queued is a packet that must still execute, so running far ahead makes
-    the machine unresponsive to the next click. `ctx.buf_count` is the live
-    status sample, which keeps updating during transmission.
+    Pacing: keep at most LEAD_US of motion time queued, and no deeper than
+    LOW_WATER segments. Every packet queued is a packet that must still execute,
+    so running far ahead makes the machine unresponsive to the next click. Both
+    figures come from the live status sample, which keeps updating DURING
+    transmission — the host no longer dead-reckons how far ahead it is.
+
+    Deceleration is split by cause: a move that runs to its requested distance
+    ramps down here, because the distance must come out exact; a cancelled move
+    hands the ramp to the Pico (§4.5), which is the only place the actual
+    instantaneous velocity exists and the only one that can call back motion
+    already sitting in the ring.
     """
 
     LOW_WATER = 4        # segments to keep queued on the Pico
     CHUNK_MS  = 20       # motion per emitted packet
     V_START   = 50.0     # steps/s — rest velocity, matches make_jog
-    LEAD_S    = 0.08     # keep at most this much motion-time queued ahead
+    LEAD_US   = 80_000   # keep at most this much motion-time queued ahead (µs)
 
-    def __init__(self, machine, axis, ltr, sign, rate):
+    def __init__(self, machine, axis, ltr, sign, rate, link=None):
         self.machine, self.axis = machine, axis
         self.ltr, self.sign, self.rate = ltr, sign, rate
+        self.link = link
         self.emitted = 0
         self.steps_total = 0        # steps actually committed to the wire
         self.clicks = 1
@@ -76,14 +84,17 @@ class _ClickJogSource(PacketSource):
         self._remaining = 0.0       # steps still to travel
         self._v = self.V_START      # current velocity, ramped across chunks
         self._finished = False
+        self._cancelled = False     # reversal/stop — the Pico is ramping
         self._lock = threading.Lock()
         self._wake = threading.Event()
 
-        # Wall-clock pacing. buf_count alone is not enough: it only refreshes at
-        # the UI poll rate (~100ms), and pull() is called as fast as the ack loop
-        # allows, so between two polls the source would dump the entire move onto
-        # the wire. Tracking how much motion-TIME has been queued bounds the lead
-        # regardless of poll rate; buf_count stays as a second opinion.
+        # Sub-poll-interval pacing estimate. `ctx.queued_us` is the AUTHORITY on
+        # how much motion is queued, but it is only as fresh as the last status
+        # sample (~100 ms), and pull() is called as fast as the ack loop allows.
+        # Reading a stale value between polls would dump the whole move onto the
+        # wire in one go. So: wall clock for resolution, the report for truth.
+        # (§4.6 claimed the report deletes this. It does not — it fixes WHICH
+        # quantity is reported, not how often. Keep both.)
         self._queued_s = 0.0        # motion-seconds handed to the machine
         self._t0 = None             # when the first packet went out
 
@@ -105,10 +116,24 @@ class _ClickJogSource(PacketSource):
             return True
 
     def cancel(self):
-        """Reversal: drop what is left and coast to a stop from here."""
+        """Reversal or stop — hand the deceleration to the Pico (§4.5).
+
+        Was: drop the remaining distance and coast, letting the host-planned
+        ramp-down branch wind the velocity out over the packets still queued.
+        That only worked because the host guessed an accel it half knew, and it
+        could not stop motion already sitting in the ring.
+
+        Now one byte. The Pico ramps from its ACTUAL instantaneous velocity —
+        the only place that value exists — flushes the ring and lands IDLE with
+        position intact. Everything still in flight is discarded, so this source
+        stops emitting immediately rather than winding down.
+        """
         with self._lock:
             self._remaining = 0.0
+            self._cancelled = True
             self._wake.set()
+        if self.link is not None:
+            self.link.abort()
 
     # -- packet construction --------------------------------------------------
 
@@ -129,15 +154,41 @@ class _ClickJogSource(PacketSource):
 
     # -- the source contract --------------------------------------------------
 
-    def _lead(self):
-        """Motion-seconds queued ahead of where the machine has got to."""
+    def _lead_us(self):
+        """Local estimate of motion time queued ahead of the machine, in µs.
+
+        Fast but blind — it assumes every packet was accepted and that execution
+        started when the first one went out. Good for resolution between polls,
+        not for truth.
+        """
         if self._t0 is None:
             return 0.0
-        return self._queued_s - (time.monotonic() - self._t0)
+        return max(0.0, (self._queued_s - (time.monotonic() - self._t0)) * 1e6)
+
+    def _draining(self, ctx):
+        """Is the machine still executing what we already sent?
+
+        The reported figure decides it — this is the question the local estimate
+        was worst at, and getting it wrong is what let `busy` go false while the
+        machine was still moving, which broke blending. The local estimate is
+        only consulted to cover the window before the first status sample lands,
+        where a reported 0 means "no news yet", not "stopped".
+        """
+        queued = ctx.queued_us
+        if queued is None:                       # version skew — no queued_us
+            buf = ctx.buf_count
+            return (buf is not None and buf > 0) or self._lead_us() > 0
+        return queued > 0 or self._lead_us() > 0
 
     def pull(self, ctx):
         with self._lock:
             if self._finished:
+                return None
+            if self._cancelled:
+                # The Pico is ramping and has thrown away the ring. Nothing we
+                # emit now would be accepted (NACK_ABORTING), and nothing we
+                # already sent survives, so the session is simply over.
+                self._finished = True
                 return None
             remaining = self._remaining
 
@@ -145,11 +196,9 @@ class _ClickJogSource(PacketSource):
             # Distance spent — but do NOT finish while the machine is still
             # executing what we already sent. Staying open is what lets a click
             # arriving mid-move blend into it instead of starting a fresh
-            # session, and it keeps `busy` honest: it now means "machine moving",
+            # session, and it keeps `busy` honest: it means "machine moving",
             # not "packets delivered".
-            buf = ctx.buf_count
-            draining = self._lead() > 0.0 or (buf is not None and buf > 0)
-            if not draining:
+            if not self._draining(ctx):
                 with self._lock:
                     self._finished = True
                 return None
@@ -157,10 +206,16 @@ class _ClickJogSource(PacketSource):
             self._wake.clear()
             return []
 
-        # Pace: stay at most LEAD_S of motion ahead, and no deeper than
-        # LOW_WATER segments in the Pico's ring.
+        # Pace on whichever measure says we are FURTHEST ahead. The reported
+        # figure (§4.6) is authoritative but up to a poll interval stale; the
+        # local estimate is instantaneous but blind. Taking the max means a
+        # stale-low report cannot cause a dump, and a stale-high one cannot
+        # cause a stall. buf_count is the third guard: segments differ in
+        # duration by orders of magnitude, but the ring is finite either way.
+        queued = ctx.queued_us
+        lead = max(self._lead_us(), queued if queued is not None else 0.0)
         buf = ctx.buf_count
-        if self._lead() >= self.LEAD_S or (buf is not None and buf >= self.LOW_WATER):
+        if lead >= self.LEAD_US or (buf is not None and buf >= self.LOW_WATER):
             self._wake.wait(0.005)
             self._wake.clear()
             return []                   # nothing right now, still open
@@ -473,8 +528,9 @@ class OnlineSession(Observable):
 
         Clicking again while the machine is still moving extends the move
         instead of stopping and restarting it — the blend. Clicking the opposite
-        direction cancels what is left and coasts to a stop (it does not then
-        move the other way; a second click does that).
+        direction aborts: the Pico ramps to rest from its actual velocity and
+        keeps position. It does not then move the other way; a second click
+        does that, once the machine is IDLE again.
         """
         if self._gui_op is not None:
             self.last_command_status = "Rejected: job in progress"
@@ -514,7 +570,7 @@ class OnlineSession(Observable):
                 # add() refused: the source finished as we clicked. Fall through
                 # and start a fresh session below.
 
-            src = _ClickJogSource(machine, ax, ltr, sign, rate)
+            src = _ClickJogSource(machine, ax, ltr, sign, rate, link=self.link)
             src.add(steps)
             src.clicks = 1
             self._jog_source = src
