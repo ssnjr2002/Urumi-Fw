@@ -203,7 +203,11 @@ bool handleCommand(const String& input) {
     // ── pause / resume / cancel (job lifecycle) ───────────────────────────────
     if (input == "pause") {
         if (machineState != STATE_RUNNING) { Serial.println("err bad_state"); return true; }
-        pauseRequested = true;                 // Core 1 drains, then → PAUSED
+        // Core 1 ramps the current segment to rest, flushes the ring, snapshots
+        // resumePos and enters PAUSED (§4.5). It no longer finishes the segment
+        // and drains — resume re-plans from position, so stopping early is safe.
+        // Gated on RUNNING, so unlike abort this flag can never strand.
+        pauseRequested = true;
         Serial.println("ok");
         return true;
     }
