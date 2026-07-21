@@ -90,6 +90,7 @@ class SimBackend:
     serial = None   # no raw port — replies are fed straight into the demux
 
     RING_SIZE = 64          # bounded like masterBuf, so backpressure is real
+    ACK_COALESCE_MAX = 8    # mirrors ACK_COALESCE_MAX in shared.h
     FRAME_S = 0.04          # executor wall-clock tick
     F_CPU   = 150_000_000   # matches host/config/loader.py's machine default; used to
                             # convert a packet's `interval` (CPU cycles/step) to seconds
@@ -103,6 +104,7 @@ class SimBackend:
         self.pos          = [0, 0, 0, 0]
         self._demux     = None               # set by attach(); replies go here
         self._expected_seq = 0               # mirrors the firmware's expectedSeq
+        self._pending_acks = 0               # accepted but not yet confirmed
         self._lock      = threading.RLock()  # guards state/pos/motion vs executor
         self._motion    = deque()            # pending (dx,dy,dz,da,interval,flags)
         self._executing = False              # a burst is in progress
@@ -138,6 +140,25 @@ class SimBackend:
             return
         for i in range(0, len(data) - 25, 26):
             self._write_packet(bytes(data[i:i + 26]))
+        self._flush_ack()      # end of batch == the firmware's drain-empty flush
+
+    # ── coalesced ACKs (mirrors data_plane.cpp §4.1) ──────────────────────────
+    # The ACK is cumulative, so one frame confirms every packet accepted since
+    # the last flush. Deferring them is what the firmware does; the sim does it
+    # too so the host suites actually exercise the multi-packet advance rather
+    # than only ever seeing +1 deltas.
+
+    def _flush_ack(self):
+        with self._lock:
+            if self._pending_acks:
+                self._pending_acks = 0
+                self._reply(bytes([MAGIC_ACK, self._expected_seq, 0x00]))
+
+    def _mark_ack(self):
+        self._pending_acks += 1
+        if self._pending_acks >= self.ACK_COALESCE_MAX:
+            self._pending_acks = 0
+            self._reply(bytes([MAGIC_ACK, self._expected_seq, 0x00]))
 
     def _write_packet(self, data: bytes):
         try:
@@ -151,12 +172,15 @@ class SimBackend:
         # hardware about final position.
         with self._lock:
             if data[22] != self._expected_seq:
+                self._pending_acks = 0        # immediate: the host's resync signal
                 self._reply(bytes([MAGIC_ACK, self._expected_seq, 0x00]))
                 return
             if self.state in (MachineState.ALARM, MachineState.HOMING):
+                self._flush_ack()             # ACKs earned before a rewind land first
                 self._reply(bytes([MAGIC_NACK, NACK_BAD_STATE, 0x00]))
                 return                        # stream not accepted in these states
             if len(self._motion) >= self.RING_SIZE:
+                self._flush_ack()
                 self._reply(bytes([MAGIC_NACK, NACK_FULL, 0x00]))
                 return                        # backpressure — sender retries
             if not self._executing:
@@ -172,7 +196,7 @@ class SimBackend:
                 self._executing = True
             self._motion.append((ms["dx"], ms["dy"], ms["dz"], ms["da"], ms["interval"], ms["flags"]))
             self._expected_seq = (self._expected_seq + 1) & 0xFF
-            self._reply(bytes([MAGIC_ACK, self._expected_seq, 0x00]))
+            self._mark_ack()
 
     def close(self):
         pass
@@ -230,6 +254,7 @@ class SimBackend:
             return "pong"
         if cmd == "seqreset":
             self._expected_seq = 0
+            self._pending_acks = 0      # a deferred ACK names the old numbering
             return "seq reset"
         if cmd == "pingnode":
             return f"node {args[0] if args else '?'} ok"

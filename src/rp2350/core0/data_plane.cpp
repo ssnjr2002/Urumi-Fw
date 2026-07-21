@@ -32,8 +32,10 @@ static RxKind rxKind = RX_NONE;
 
 static uint8_t  pktBuf[MSEG_PACKET_SIZE];
 static uint8_t  pktIdx      = 0;
+static uint32_t pktLastMs   = 0;   // millis() of last fixed-26 byte — inter-byte timeout
 static uint8_t  expectedSeq = 0;   // next wire seq (pktBuf[22]) we will execute;
                                    // also the cumulative ACK value (see sendAck)
+static uint8_t  pendingAcks = 0;   // accepted packets not yet confirmed on the wire
 
 // ─── CFG_SET receive state ────────────────────────────────────────────────────
 
@@ -54,22 +56,35 @@ static inline uint32_t crc32Byte(uint32_t crc, uint8_t b) {
 
 // ─── ACK / NACK ───────────────────────────────────────────────────────────────
 
-static void sendAck() {                         // cumulative stream ACK
+static void flushAck() {                        // cumulative stream ACK
     // Byte 1 is expectedSeq — the next wire seq we want, i.e. "I have accepted
-    // every packet with a lower seq" (TCP-style cumulative ACK). On an accepted
-    // packet the caller bumps expectedSeq first, so this advances; on a stale or
-    // gap seq (skipped, expectedSeq unchanged) this repeats the last value as a
-    // duplicate ACK. The host advances its window to this point, so a lost ACK
-    // self-heals via the next one. Byte 2 is reserved (0).
-    Serial.write(MSEG_ACK);
-    Serial.write(expectedSeq);
-    Serial.write((uint8_t)0x00);
+    // every packet with a lower seq" (TCP-style cumulative ACK). Because it is
+    // cumulative, ONE frame confirms every packet accepted since the last flush;
+    // that is what makes coalescing free rather than a tradeoff. The host
+    // advances its window to this point, so a lost ACK self-heals via the next
+    // one. Byte 2 is reserved (0).
+    //
+    // One Serial.write of the whole frame, not three: USB CDC costs per
+    // transaction, and a partial frame must never be able to interleave.
+    pendingAcks = 0;
+    const uint8_t frame[3] = { MSEG_ACK, expectedSeq, 0x00 };
+    Serial.write(frame, sizeof(frame));
+}
+
+// Accept-path ACK. Deferred — flushed when the input drains (dataPlaneTick),
+// when ACK_COALESCE_MAX pile up, or immediately by anything that must not be
+// reordered behind them.
+static inline void markAck() {
+    if (++pendingAcks >= ACK_COALESCE_MAX) flushAck();
 }
 
 static void sendNack(uint8_t reason) {          // shared 3-byte NACK frame
-    Serial.write(MSEG_NACK);
-    Serial.write(reason);
-    Serial.write((uint8_t)0x00);
+    // Ordering matters more than latency here: a NACK rewinds the host's window,
+    // so any ACK earned before it must land first. Otherwise the host applies a
+    // rewind and then an advance past it, and re-skips packets it just resent.
+    if (pendingAcks) flushAck();
+    const uint8_t frame[3] = { MSEG_NACK, reason, 0x00 };
+    Serial.write(frame, sizeof(frame));
 }
 
 static void sendCfgRdy()           { Serial.write(CFG_RDY); }   // header ok — send payload
@@ -81,6 +96,7 @@ static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
 static void feedFixed26(uint8_t b) {
     pktBuf[pktIdx++] = b;
+    pktLastMs = millis();
 
     if (pktIdx < MSEG_PACKET_SIZE) return;      // still accumulating
 
@@ -122,7 +138,7 @@ static void feedFixed26(uint8_t b) {
     // (so the host's window advances) but do not execute. The host resets this
     // counter with the "seqreset" text command before each stream.
     if (pktBuf[22] != expectedSeq) {
-        sendAck();
+        flushAck();     // immediate: this duplicate ACK is the host's resync signal
         return;
     }
 
@@ -149,7 +165,7 @@ static void feedFixed26(uint8_t b) {
     mBufTail = next;
 
     expectedSeq++;
-    sendAck();
+    markAck();
 }
 
 // ─── CFG_SET receiver (two-phase) ─────────────────────────────────────────────
@@ -221,6 +237,7 @@ bool dataPlaneConsume(uint8_t b) {
     if (b == MSEG_MAGIC || b == JOG_MAGIC) {
         pktBuf[0] = b;                          // remember stream type for the state gate
         pktIdx    = 1;
+        pktLastMs = millis();
         rxKind    = RX_FIXED26;
         return true;
     }
@@ -237,13 +254,27 @@ bool dataPlaneConsume(uint8_t b) {
     return false;                               // control-plane (text) byte
 }
 
-// Abort a stalled CFG_SET transfer. Called every Core 0 loop pass so the timeout
-// fires even when no bytes arrive (feedCfg is byte-driven and would otherwise
-// wait forever). A stall would else wedge the whole data plane in RX_CFG.
+// Called every Core 0 loop pass, i.e. once the inbound stream has drained — which
+// makes it both the flush point for deferred ACKs and the only place the
+// byte-driven receivers can notice that nothing more is coming.
 void dataPlaneTick() {
+    // Never go idle dirty. The host may be waiting on exactly these ACKs to open
+    // its window, so holding them while there is nothing left to read deadlocks
+    // the stream. Deferral is only ever an optimisation over a busy wire.
+    if (pendingAcks) flushAck();
+
     if (rxKind == RX_CFG && (millis() - cfgLastMs) > CFG_RX_TIMEOUT_MS) {
         rxKind = RX_NONE;
         sendCfgNack(CFG_NACK_TIMEOUT);
+    }
+
+    // A half-received packet is unrecoverable: its remaining bytes are gone, and
+    // whatever arrives next would be consumed as packet body and then fail CRC.
+    // Drop it silently — the host is not waiting on a reply for a frame it never
+    // finished sending, and its own ACK timeout will retransmit.
+    if (rxKind == RX_FIXED26 && (millis() - pktLastMs) > FIXED26_RX_TIMEOUT_MS) {
+        rxKind = RX_NONE;
+        pktIdx = 0;
     }
 }
 
@@ -251,10 +282,12 @@ void dataPlaneReset() {
     rxKind      = RX_NONE;
     pktIdx      = 0;
     expectedSeq = 0;
+    pendingAcks = 0;
     cfgHdrIdx   = 0;
     cfgRxCnt    = 0;
 }
 
 void dataPlaneResetSeq() {
     expectedSeq = 0;
+    pendingAcks = 0;    // any deferred ACK names the pre-reset numbering
 }

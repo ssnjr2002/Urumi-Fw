@@ -398,7 +398,7 @@ values and new request flags are exactly what its layered model prescribes for
 new sub-modes and inter-core requests. Where a proposal *does* touch a decision
 that doc already resolved, §4.5 says so explicitly.
 
-### 4.1 Coalesced ACKs
+### 4.1 Coalesced ACKs — **implemented**
 
 Cumulative ACKs (`138f7fb`) removed the one-reply-per-packet obligation. Collect
 the receipts instead of emitting one per packet: `feedFixed26` sets a pending
@@ -420,6 +420,12 @@ Rules, all load-bearing:
 
 Both hosts already decode an arbitrary delta, so this is unilateral and
 backward-compatible — a coalescing Pico works against an un-updated host.
+
+Landed in `data_plane.cpp` as `markAck()` / `flushAck()`, `ACK_COALESCE_MAX = 8`
+in `shared.h`. The drain-empty flush is `dataPlaneTick()`, which runs after
+`processSerial()` has emptied `Serial.available()`. The stale-seq duplicate ACK
+flushes immediately — it is the host's resync signal, not a receipt. `SimBackend`
+mirrors all of it so the host suites exercise multi-packet advances.
 
 **An ACK means *accepted into the ring*, never *executed*.** Coalescing makes
 this obvious but does not cause it: with a 512-deep `masterBuf`, an ACK has
@@ -461,7 +467,7 @@ a config CRC); seq reset is a data-plane control op. Coupling them would mean yo
 cannot reset the seq without declaring axes, or declare axes without resetting.
 The text command stays as a bring-up alias (D11).
 
-### 4.4 `RX_FIXED26` inter-byte timeout
+### 4.4 `RX_FIXED26` inter-byte timeout — **implemented**
 
 `RX_CFG` has an inter-byte timeout; `RX_FIXED26` has none. A truncated packet
 wedges the data plane until 26 bytes arrive, eating text and status bytes as
@@ -475,6 +481,8 @@ host that abandoned mid-frame is not waiting for anything.
 
 This is a **backstop for the pathological case** — host crash, disconnect, or a
 blocked write — not the estop path, which truncates at a frame boundary (D13).
+
+Landed as `FIXED26_RX_TIMEOUT_MS = 50` in `shared.h`, checked in `dataPlaneTick()`.
 
 ### 4.5 Soft abort — decelerate, flush, keep position
 

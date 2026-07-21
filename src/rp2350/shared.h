@@ -57,6 +57,12 @@ struct MicroSegment {
 #define TOOL_MAGIC       0xAC   // local production — ToolConfig packets
 #define MSEG_PACKET_SIZE 26     // magic(1) + MicroSegment(24) + CRC8(1)
 
+// Inter-byte timeout for a half-received fixed-26 packet. A whole packet
+// arrives in microseconds over USB CDC, so a gap this long means the host
+// died or desynced mid-frame — orders of magnitude below CFG_RX_TIMEOUT_MS,
+// which covers a multi-kilobyte transfer.
+#define FIXED26_RX_TIMEOUT_MS 50u
+
 // ACK/NACK responses (Pico → Host, 3 bytes each):
 //   ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
 //   NACK: [0xBB] [reason] [0x00]
@@ -66,6 +72,12 @@ struct MicroSegment {
 
 #define MSEG_ACK         0xAA
 #define MSEG_NACK        0xBB
+
+// ACKs are coalesced: because the ACK is cumulative, one frame can confirm a
+// run of packets, and USB CDC charges per transaction rather than per byte.
+// Pending ACKs are flushed when the input drains, when this many accumulate,
+// and always before a NACK or a duplicate ACK. See docs/comms_architecture.md §4.1.
+#define ACK_COALESCE_MAX 8      // ≈ half a typical host window
 
 // Binary status request/response (mirrors the text `getstate` command):
 //   STATUS_REQ:  [0xA5]                                   (1 byte, no CRC)
