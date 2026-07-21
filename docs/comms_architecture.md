@@ -852,10 +852,17 @@ specification; this is the ledger.
       `0x00` so existing call sites are no-ops rather than import errors.
       Unrelated to `pipeline.stages`' live planner-internal `PATH_END`.
 
-### Next
+- [x] **`pos` consumed; `getpos` polling dropped.** The UI poller and
+      `job_runner._wait_state` both read position from `STATUS_RSP`. That
+      removes a text round trip from a 20 ms job-progress loop, and makes the
+      sample coherent — the old split polled `getpos` every 4th pass, so state
+      and position could describe moments ~400 ms apart, which is invisible
+      while idle and exactly wrong while moving. Text `getpos` remains for
+      bring-up. Hardware, through the reference UI: position tracked live
+      during a jog, 5 mm = 800 steps exact, three clicks blended to 15 mm
+      exact, reversal aborted mid-move and landed IDLE.
 
-- [ ] **Consume the remaining new field.** `pos` from `STATUS_RSP` still is not
-      used — the UI poller does a separate text `getpos` every 4th pass. The parse landed but the payoff did not:
+### Next The parse landed but the payoff did not:
       position still comes from the text `getpos` path, and jog pacing still
       dead-reckons. Should *delete* `LEAD_S` / `_queued_s` / `_t0` from
       `_ClickJogSource`, drop the `getpos` round trip from the UI poller, and

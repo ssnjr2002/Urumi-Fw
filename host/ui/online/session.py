@@ -369,23 +369,22 @@ class OnlineSession(Observable):
         §3). This is the end-to-end proof of the whole architecture: a moving
         position readout during a job or a jog was impossible under seizure.
 
-        Position still costs a text round trip (`getpos`), which is the
-        one-outstanding plane, so it is polled at a slower cadence than state.
-        Folding position into STATUS_RSP (§4.2) removes that split entirely.
+        Position rides in the same frame (§4.2), so there is no second round
+        trip and no second cadence. That also makes the sample COHERENT: state
+        and position are read from one instant on the Pico. The old split polled
+        `getpos` on the text plane every 4th pass, so the two could describe
+        moments up to ~400 ms apart — invisible while idle, and exactly wrong
+        while jogging, which is when a position readout is worth having.
         """
-        from host.protocol import commands as cmd
-        n = 0
         while True:
             time.sleep(0.1)
             if not self.is_connected:
                 continue
-            n += 1
             try:
-                self.machine_state = self.link.get_status(timeout=0.5)
-                # getpos is text; poll it 4x slower so a stream's ACK traffic
-                # and the UI's own commands aren't queued behind it.
-                if n % 4 == 0:
-                    self.machine_pos_steps = cmd.get_pos(self.link)
+                st = self.link.get_status(timeout=0.5)
+                self.machine_state = st
+                if st.pos is not None:
+                    self.machine_pos_steps = st.pos
                 self.polling_error = None
             except Exception as e:
                 self.polling_error = str(e)
@@ -742,9 +741,10 @@ class OnlineSession(Observable):
 
         def _on_progress(status, pos):
             # Called from this same worker thread by send_plan's _wait_state
-            # poll — no second reader of `link` needed. Publishes the live
-            # state/position _poll_worker would otherwise have shown, since
-            # _poll_worker skips itself entirely while self.busy is True.
+            # poll — no second reader of `link` needed. Both fields come from
+            # one STATUS_RSP, so they describe the same instant. (_poll_worker
+            # also runs throughout now; this just reports at the job's cadence
+            # rather than the poller's.)
             self.machine_state = status
             if pos is not None:
                 self.machine_pos_steps = pos

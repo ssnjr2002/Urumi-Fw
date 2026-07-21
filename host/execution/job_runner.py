@@ -83,15 +83,18 @@ def send_plan(plan, machine, link, operator=None, on_progress=None):
 
 
 def _wait_state(link, target, timeout=15.0, interval=0.02, on_progress=None):
+    """Poll until the machine reaches `target`.
+
+    One binary STATUS_RSP per pass, carrying state and position together
+    (§4.2). This used to be `get_state` + `get_pos` — two text round trips on
+    the one-outstanding plane, every 20 ms, while a job was streaming. Besides
+    the traffic, the pair could describe two different instants; now they cannot.
+    """
     t0 = time.time()
     while time.time() - t0 < timeout:
-        status = cmd.get_state(link)
+        status = link.get_status(timeout=0.5)
         if on_progress:
-            try:
-                pos = cmd.get_pos(link)
-            except Exception:
-                pos = None
-            on_progress(status, pos)
+            on_progress(status, status.pos)
         if status.state == target:
             return True
         time.sleep(interval)
