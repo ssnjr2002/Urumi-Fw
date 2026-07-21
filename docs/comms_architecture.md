@@ -428,6 +428,13 @@ in `shared.h`. The drain-empty flush is `dataPlaneTick()`, which runs after
 flushes immediately — it is the host's resync signal, not a receipt. `SimBackend`
 mirrors all of it so the host suites exercise multi-packet advances.
 
+**Measured on hardware** (600 packets @ 4000 sps, no backpressure): 75 ACK
+frames for 600 accepted packets — exactly 8.00 per frame, an 8× cut in
+return-path transactions. Note *which* trigger fired: the K counter, essentially
+every time. A saturating host keeps `Serial.available()` non-empty, so
+drain-empty almost never fires mid-stream — the predicted starvation is real,
+and K is what prevents it, not a safety net.
+
 **An ACK means *accepted into the ring*, never *executed*.** Coalescing makes
 this obvious but does not cause it: with a 512-deep `masterBuf`, an ACK has
 always been able to lead execution by the whole buffer. Any contract of the form
@@ -737,13 +744,14 @@ specification; this is the ledger.
 - [x] **§4.1 — coalesced ACKs.** `data_plane.cpp` + `SimBackend`.
 - [x] **§4.4 — `RX_FIXED26` inter-byte timeout.** `FIXED26_RX_TIMEOUT_MS = 50`.
 - [x] Suites: `test_reader`, `test_session`, `test_ui_jog`, `test_protocol` 19/19.
+- [x] **§4.9 step 2 — validated on hardware** (RP2350 on COM8, no nodes
+      attached — `getpos` reads `machinePos`, which Core 1 accumulates whether
+      or not anything listens on RS485). `integrity` PASS. Stress run: 2000
+      packets @ 120 sps, 229 go-backs, **3638 resends all deduped**, final
+      position exact. Coalescing confirmed live at 8.00 packets per ACK frame.
 
 ### Next
 
-- [ ] **§4.9 step 2 — run `test_comms.py integrity` on hardware.** The only
-      unvalidated part of 4.1/4.4: the simulator cannot catch a botched batch
-      flush the way a real `getpos` after forced `NACK_FULL` can. Everything
-      below is easier to debug once this is green.
 - [ ] **§4.2 + §4.6 — extended `STATUS_RSP`** (position, `expectedSeq`,
       `queued_us`). One wire change, one host parse change — do them together or
       pay two flag days. Should *delete* `LEAD_S` / `_queued_s` / `_t0` from
