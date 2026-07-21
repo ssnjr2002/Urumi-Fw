@@ -458,7 +458,7 @@ host resynchronise after a timeout, abort, or reconnect without guessing. It is
 magic so a version mismatch fails cleanly as an unknown byte (D5) instead of
 desyncing the reader, which consumes fixed-length frames blind (D2).
 
-### 4.3 Binary `seqreset`
+### 4.3 Binary `seqreset` — **implemented**
 
 `seqreset` is text, and sits on the critical path of every stream start — the one
 text round-trip a session cannot avoid. That drags an otherwise pure data-plane
@@ -474,6 +474,12 @@ zero delta.
 a config CRC); seq reset is a data-plane control op. Coupling them would mean you
 cannot reset the seq without declaring axes, or declare axes without resetting.
 The text command stays as a bring-up alias (D11).
+
+Landed as `SEQRESET_MAGIC = 0xA8`, dispatched synchronously in
+`dataPlaneConsume` with no receive state. `Link.reset_seq()` writes the byte and
+**drains the ACK itself** rather than leaving it for the session — a session
+opening on a stale ACK in its sink would advance its window against a packet it
+never sent. Measured at 0.3 ms round trip on hardware.
 
 ### 4.4 `RX_FIXED26` inter-byte timeout — **implemented**
 
@@ -771,6 +777,10 @@ specification; this is the ledger.
       fields, because STATUS_RSP is a strict superset and the two are no longer
       equal by construction.
 
+- [x] **§4.3 — binary `seqreset`** (`0xA8`, ACK(0) back). Stream start is now
+      pure data plane. `Link.reset_seq()` drains its own ACK so a session never
+      opens on a stale one. 0.3 ms on hardware; text alias kept for bring-up.
+
 ### Next
 
 - [ ] **Consume the new fields.** The parse landed but the payoff did not:
@@ -782,8 +792,6 @@ specification; this is the ledger.
 - [ ] **`web/demo/transport.js` still expects `0xA6`/9 B.** The web demo is
       broken against current firmware until it is updated — cleanly, as an
       unknown magic, which is what the magic bump bought.
-- [ ] **§4.3 — binary `seqreset`.** Unblocked (the demux it needed now exists).
-      Small; gets stream start off the text plane.
 - [ ] **§4.5 — soft abort.** Last, and the only item that is not nearly free:
       `emitMicroSegment` returning `EmitResult` + counted `out[4]`,
       `abortRequested`, `RUNNING_ABORT_DECEL`, `NACK_ABORTING`. Should delete

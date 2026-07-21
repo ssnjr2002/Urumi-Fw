@@ -255,6 +255,11 @@ bool dataPlaneConsume(uint8_t b) {
         handleCfgGet();
         return true;
     }
+    if (b == SEQRESET_MAGIC) {                   // synchronous — no receive state
+        dataPlaneResetSeq();                     // also drops any deferred ACK
+        flushAck();                              // ACK(0) — immediate: it is the
+        return true;                             // host's go-ahead, not a receipt
+    }
     return false;                               // control-plane (text) byte
 }
 

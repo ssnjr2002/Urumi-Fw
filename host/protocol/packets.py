@@ -79,6 +79,12 @@ STATUS_RSP_SIZE  = 30
 # must fail as an unknown magic instead of mis-parsing 30 bytes as 9.
 MAGIC_STATUS_RSP_V1 = 0xA6
 
+# Binary `seqreset` (§4.3): one byte out, ACK(0) back. Keeps stream start on the
+# data plane instead of the one-outstanding text plane. The ACK is a readiness
+# signal, not a window advance — a session must not feed it to its advance logic
+# (which would correctly ignore the zero delta anyway).
+MAGIC_SEQRESET   = 0xA8
+
 NACK_CRC         = 0x01
 NACK_FULL        = 0x02
 NACK_BAD_MAGIC   = 0x03

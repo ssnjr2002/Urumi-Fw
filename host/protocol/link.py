@@ -28,7 +28,7 @@ from host.protocol.state import (
 )
 from host.protocol.packets import (
     unpack_microsegment, pack_status_rsp, MAGIC_STATUS_REQ, STATUS_RSP_SIZE,
-    MAGIC_ACK, MAGIC_NACK, NACK_FULL, NACK_BAD_STATE,
+    MAGIC_ACK, MAGIC_NACK, NACK_FULL, NACK_BAD_STATE, MAGIC_SEQRESET,
 )
 from host.protocol.state import parse_status_rsp
 from host.protocol.reader import Demux, Reader, make_sinks
@@ -131,6 +131,12 @@ class SimBackend:
             if line:
                 with self._lock:
                     self._reply((self._handle(line) + "\n").encode())
+            return
+        if data == bytes([MAGIC_SEQRESET]):
+            with self._lock:
+                self._expected_seq = 0
+                self._pending_acks = 0
+                self._reply(bytes([MAGIC_ACK, 0x00, 0x00]))
             return
         if data == bytes([MAGIC_STATUS_REQ]):
             with self._lock:
@@ -424,10 +430,18 @@ class Link:
         raw = self.sinks["status"].value
         return parse_status_rsp(raw) if raw else None
 
-    def reset_seq(self):
+    def reset_seq(self, timeout=1.0):
         """Align the Pico's expectedSeq with a session's fresh seq counter. Every
-        session stamps from 0, so this must precede one."""
-        return self.command("seqreset")
+        session stamps from 0, so this must precede one.
+
+        Binary (§4.3): one byte out, ACK(0) back on the ack sink — so stream
+        start no longer drags a pure data-plane session through the
+        one-outstanding text plane. The reply is drained HERE rather than left
+        for the session, which would otherwise open on a stale ACK.
+        """
+        self.sinks["ack"].clear()
+        self.writer.write_frame(bytes([MAGIC_SEQRESET]))
+        return self.sinks["ack"].get(timeout=timeout) is not None
 
     def stream(self, packets, window=16, verbose=False) -> bool:
         """Stream a closed sequence (a job, or a jog burst) with Go-Back-N."""

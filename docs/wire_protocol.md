@@ -42,6 +42,7 @@ commands are lowercase ASCII, so the two never collide at a boundary.
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
 | `MSEG_NACK`  | `0xBB` | Pico → Host | NACK response |
 | `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request (mirrors `getstate`) |
+| `SEQRESET`   | `0xA8` | Host → Pico | Zero `expectedSeq`; replies `ACK(0)` |
 | `STATUS_RSP` | `0xA7` | Pico → Host | Binary status response (30 B) |
 | ~~`STATUS_RSP_V1`~~ | `0xA6` | — | Retired 9-byte frame; reserved, never emitted |
 
@@ -131,6 +132,23 @@ window (≤16 « 128, so no wrap ambiguity). See "Duplicate guard" below.
 [1]      reason   uint8   — see NACK reason tables below
 [2]      0x00
 ```
+
+### SEQRESET — `0xA8` (1 byte)
+```
+[0]      magic = 0xA8
+```
+Zeroes the Pico's `expectedSeq` and replies with a normal `ACK` carrying 0 —
+exact, since "I expect seq 0 next" is precisely what an ACK means. Handled
+synchronously at a packet boundary with no receive state.
+
+Every stream must reset the seq before its first packet, because each session
+stamps from 0. The text `seqreset` remains as a bring-up alias, but the binary
+form keeps stream start on the data plane instead of dragging it through the
+one-outstanding text plane.
+
+The reply lands on the same sink as stream ACKs, so the caller issuing SEQRESET
+must consume it. A session that opens with that ACK still queued would advance
+its window against a packet it never sent.
 
 ### STATUS_REQ — `0xA5` (1 byte)
 ```

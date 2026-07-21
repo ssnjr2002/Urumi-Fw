@@ -117,6 +117,14 @@ struct MicroSegment {
 #define STATUS_RSP       0xA7
 #define STATUS_RSP_SIZE  30
 
+// Binary `seqreset` (§4.3): one byte, zeroes expectedSeq, replies ACK(0).
+// The text command sits on the critical path of every stream start — the one
+// text round-trip a session cannot avoid — dragging a pure data-plane session
+// through the one-outstanding text plane. Replying with an ACK is exact ("I
+// expect seq 0 next") and keeps the session on a single sink. The text alias
+// stays for bring-up.
+#define SEQRESET_MAGIC   0xA8
+
 // Duration of a MicroSegment in microseconds: the major axis takes one step per
 // `interval` cycles, so the segment lasts maxSteps × interval cycles. 64-bit
 // intermediate — interval × maxSteps overflows u32 readily (a 1 s segment is
