@@ -3,8 +3,9 @@
 **Branch:** `node-types`
 **Date:** 2026-07-19
 **Status:** Link model implemented in Python (`host/protocol/`: `reader.py`,
-`writer.py`, `session.py`) and driving the Tk UI's jog panel. Firmware changes
-(§4) are specified and unblocked. TS port not started.
+`writer.py`, `session.py`) and driving the Tk UI's jog panel. Firmware §4.1 and
+§4.4 landed; the rest specified and unblocked. TS port not started.
+**§5 is the running ledger — read it first.**
 
 Supersedes `state_redesign.md` on one point: resume is position-based, not
 seqnum-based (§4.1, §4.5).
@@ -713,3 +714,69 @@ The demux does not care whether a frame was solicited, so the Pico could emit
 status on state change, or at a rate while RUNNING — dropping the request half
 entirely and reporting transitions faster than any poll interval. Needs rate
 control, and shares the return path with ACKs. Consider only after 4.1 lands.
+
+---
+
+## 5. Status
+
+Ordered by §4.9's sequencing, not by section number. Sections above are the
+specification; this is the ledger.
+
+### Done
+
+- [x] **§2.1–2.2 — demux reader + frame-atomic writer.** `host/protocol/reader.py`,
+      `writer.py`. Covers D1–D8. Phantom-ACK hazard pinned by
+      `test_cfg_data_payload_full_of_magics`.
+- [x] **§2.3 — `Session` over a `PacketSource`**, closed and open.
+      `host/protocol/session.py`. `pull()` once per packet ever, verified under
+      forced backpressure (50 packets → 266 sends, 16 go-backs).
+- [x] **`Link` rebuilt on the above.** `host/protocol/link.py`. `stream.py`'s
+      `Sender` survives as a shim for raw-port callers (`test_comms.py`).
+- [x] **Manual jog in the Tk UI as an open session.** `host/ui/online/`. One click
+      = one distance, repeat clicks blend, reversal cancels.
+- [x] **§4.1 — coalesced ACKs.** `data_plane.cpp` + `SimBackend`.
+- [x] **§4.4 — `RX_FIXED26` inter-byte timeout.** `FIXED26_RX_TIMEOUT_MS = 50`.
+- [x] Suites: `test_reader`, `test_session`, `test_ui_jog`, `test_protocol` 19/19.
+
+### Next
+
+- [ ] **§4.9 step 2 — run `test_comms.py integrity` on hardware.** The only
+      unvalidated part of 4.1/4.4: the simulator cannot catch a botched batch
+      flush the way a real `getpos` after forced `NACK_FULL` can. Everything
+      below is easier to debug once this is green.
+- [ ] **§4.2 + §4.6 — extended `STATUS_RSP`** (position, `expectedSeq`,
+      `queued_us`). One wire change, one host parse change — do them together or
+      pay two flag days. Should *delete* `LEAD_S` / `_queued_s` / `_t0` from
+      `_ClickJogSource`.
+- [ ] **§4.3 — binary `seqreset`.** Unblocked (the demux it needed now exists).
+      Small; gets stream start off the text plane.
+- [ ] **§4.5 — soft abort.** Last, and the only item that is not nearly free:
+      `emitMicroSegment` returning `EmitResult` + counted `out[4]`,
+      `abortRequested`, `RUNNING_ABORT_DECEL`, `NACK_ABORTING`. Should delete
+      `_decel_distance()` and the host's ramp-down branch.
+- [ ] **§4.7 — delete `MSEG_FLAG_PATH_END`** and the declared-but-unimplemented
+      MCFG / TILE / TOOL magics from the frozen contract.
+
+For 4.2/4.5/4.6 the acceptance test is stated in §4.9: `test_ui_jog.py` keeps
+passing **unchanged** while host code named in each section disappears. If host
+code grows instead, the firmware did not take the responsibility.
+
+### Deferred
+
+- [ ] **TS port to `web/src/link/`.** Held until Python settles — the API was
+      designed for the async model (D12), so this is a transcription, not a
+      redesign. `ctx.wait()` is the one genuine divergence (§2.3).
+- [ ] **§4.10 — unsolicited status push.** Consider now that 4.1 has landed.
+- [ ] **§2.7 open questions** — sink backpressure, poll fairness under a
+      saturating stream, `stop` latency. All want measurement, not design.
+
+### Loose ends
+
+- [ ] `host/diagnostics/jog_blend_ui.py` got a mechanical port only (one session
+      per burst). The open-session rewrite the UI panel received is the fix.
+- [ ] Dead code: the old queue-based `jog()` / `_jog_worker` / `jog_q` path in
+      `host/ui/online/session.py` is no longer reachable.
+- [ ] Stale docs, all pre-dating this work: `transport.js` and `wire_protocol.md`
+      still describe MCFG as sent; `host/protocol/__init__.py:4` claims an MCFG
+      packer that does not exist; `shared.h`'s "major axis = 1" comment is
+      contradicted by `core1.cpp`.
