@@ -72,6 +72,9 @@ class _ClickJogSource(PacketSource):
     CHUNK_MS  = 20       # motion per emitted packet
     V_START   = 50.0     # steps/s — rest velocity, matches make_jog
     LEAD_US   = 80_000   # keep at most this much motion-time queued ahead (µs)
+    MAX_BURST = 8        # packets per pull() — bounds one call, LEAD_US bounds
+                         # the queue. Without a burst the source cannot outpace
+                         # its own pull cadence (see pull()).
 
     def __init__(self, machine, axis, ltr, sign, rate, link=None):
         self.machine, self.axis = machine, axis
@@ -206,41 +209,59 @@ class _ClickJogSource(PacketSource):
             self._wake.clear()
             return []
 
-        # Pace on whichever measure says we are FURTHEST ahead. The reported
-        # figure (§4.6) is authoritative but up to a poll interval stale; the
-        # local estimate is instantaneous but blind. Taking the max means a
-        # stale-low report cannot cause a dump, and a stale-high one cannot
-        # cause a stall. buf_count is the third guard: segments differ in
-        # duration by orders of magnitude, but the ring is finite either way.
-        queued = ctx.queued_us
-        lead = max(self._lead_us(), queued if queued is not None else 0.0)
+        # Pace on the LOCAL estimate. It decays continuously, so it is never
+        # stale; the report is a sample up to a poll interval old and can be
+        # stale in EITHER direction. Measured on hardware, taking max(local,
+        # reported) let a stale-high report hold the source off until the next
+        # poll: it emitted a burst, stalled ~100 ms, and the ring drained to
+        # empty twice at the start of a jog — the machine stopping and
+        # restarting mid-move. buf_count stays as the hard ceiling, since the
+        # ring is finite regardless of what either measure claims.
+        #
+        # The report's job is _draining(), where "is anything queued at all"
+        # is the question and a poll interval of lag is harmless.
         buf = ctx.buf_count
-        if lead >= self.LEAD_US or (buf is not None and buf >= self.LOW_WATER):
+        if self._lead_us() >= self.LEAD_US or (buf is not None and buf >= self.LOW_WATER):
             self._wake.wait(0.005)
             self._wake.clear()
             return []                   # nothing right now, still open
 
-        # Decelerate once the distance left is only enough to stop in.
-        target_v = (self.V_START if remaining <= self._decel_distance(self._v)
-                    else self.feed_sps)
-
+        # Fill UP TO the lead target in one call, rather than one chunk per
+        # pull(). Emitting a single CHUNK_MS packet per pull ties throughput to
+        # pull cadence, and a pull that returns [] costs ~25 ms (our 5 ms wait
+        # plus the session's ctx.wait) while one packet only buys CHUNK_MS = 20
+        # ms of motion. The source falls behind, the ring bleeds down, and the
+        # machine stops and restarts mid-jog — measured on hardware as buf_count
+        # reaching 0 seven times during a 30 mm move.
+        batch = []
         dt = self.CHUNK_MS / 1000.0
-        v0 = self._v
-        v1 = (min(target_v, v0 + self.accel_sps2 * dt) if target_v > v0
-              else max(target_v, v0 - self.accel_sps2 * dt))
-        v_avg = max((v0 + v1) / 2.0, 1.0)
+        while (len(batch) < self.MAX_BURST
+               and remaining > 0.0
+               and self._lead_us() < self.LEAD_US):
 
-        steps = max(1, min(int(round(v_avg * dt)), int(round(remaining))))
+            # Decelerate once the distance left is only enough to stop in.
+            target_v = (self.V_START if remaining <= self._decel_distance(self._v)
+                        else self.feed_sps)
 
-        self._v = v1
-        with self._lock:
-            self._remaining = max(0.0, self._remaining - steps)
-        if self._t0 is None:
-            self._t0 = time.monotonic()
-        self._queued_s += steps / v_avg
-        self.emitted += 1
-        self.steps_total += steps
-        return [self._packet(steps, v_avg)]
+            v0 = self._v
+            v1 = (min(target_v, v0 + self.accel_sps2 * dt) if target_v > v0
+                  else max(target_v, v0 - self.accel_sps2 * dt))
+            v_avg = max((v0 + v1) / 2.0, 1.0)
+
+            steps = max(1, min(int(round(v_avg * dt)), int(round(remaining))))
+
+            self._v = v1
+            with self._lock:
+                self._remaining = max(0.0, self._remaining - steps)
+                remaining = self._remaining
+            if self._t0 is None:
+                self._t0 = time.monotonic()
+            self._queued_s += steps / v_avg
+            self.emitted += 1
+            self.steps_total += steps
+            batch.append(self._packet(steps, v_avg))
+
+        return batch
 
 class OnlineSession(Observable):
     """

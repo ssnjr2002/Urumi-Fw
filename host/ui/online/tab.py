@@ -12,6 +12,7 @@ from host.ui.online.bus_nodes_view import BusNodesView
 from host.ui.online.axis_nodes_view import AxisNodesView
 from host.ui.online.job_execution_view import JobExecutionView
 from host.ui.draggable_container import ReorderableContainer
+from host.protocol.state import MachineState
 
 class OnlineTab(ttk.Frame):
     """
@@ -300,11 +301,25 @@ class OnlineTab(ttk.Frame):
                 self.master_view.state_var.set(f"Error: {err}")
                 self.master_view.state_lbl.config(foreground="red")
             elif st:
-                # Update State & Reason
+                # Update State & Reason. Each state has its own reason field,
+                # and each is only meaningful in that state:
+                #   ALARM   → alarmReason   (why we stopped)
+                #   RUNNING → runningReason (what we are running)
+                # runningReason is shown unconditionally while RUNNING, not
+                # `if value` — JOB is 0, so a truthiness test would hide the
+                # most common case and only ever show JOG/ABORT_DECEL.
                 state_name = st.state.name
-                if st.alarm.value:
+                if st.state == MachineState.ALARM and st.alarm.value:
                     state_name = f"{state_name} ({st.alarm.name})"
-                    
+                elif st.state == MachineState.RUNNING:
+                    state_name = f"{state_name} ({st.running.name})"
+                elif st.alarm.value and st.alarm.name != st.state.name:
+                    # ESTOP carries the reason it is about to alarm with — but
+                    # that reason is usually ESTOP, and "ESTOP (ESTOP)" says
+                    # nothing the state did not already say.
+                    state_name = f"{state_name} ({st.alarm.name})"
+
+
                 _STATE_COLOR = {
                     "IDLE": "green", "RUNNING": "blue", "PAUSED": "orange",
                     "ESTOP": "red", "ALARM": "red", "HOMING": "purple",

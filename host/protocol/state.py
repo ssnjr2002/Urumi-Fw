@@ -30,6 +30,10 @@ class AlarmReason(IntEnum):
 class RunningReason(IntEnum):
     JOB = 0
     JOG = 1
+    # Decelerating to rest after a pause/abort request (§4.5). A RunningReason
+    # and not a MachineState: the machine IS running, so every IDLE/RUNNING/
+    # PAUSED gate stays correct, and an older host reads it as plain RUNNING.
+    ABORT_DECEL = 2
 
 
 # axes_homed bitmask — bit0=X bit1=Y bit2=Z bit3=A
