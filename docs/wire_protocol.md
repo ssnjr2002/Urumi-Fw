@@ -99,7 +99,7 @@ NACK `NACK_STREAM_CONFIG_MISMATCH`.
 [9..12]  dz        int32 LE   — Z axis steps
 [13..16] da        int32 LE   — A axis steps
 [17..20] interval  uint32 LE  — step interval in CPU cycles
-[21]     flags     uint8      — MSEG_FLAG_* bitmask (PATH_END terminates a jog burst)
+[21]     flags     uint8      — MSEG_FLAG_* bitmask
 [22]     jogSeq    uint8      — 1-byte rolling duplicate guard (independent of MSEG seq)
 [23..24] pad       uint8[2]
 [25]     CRC8 over bytes [0..24]
@@ -108,10 +108,11 @@ Same 26-byte layout as MSEG (so one parser serves both), differing only in the
 magic and in byte [22] carrying `jogSeq` instead of the stream `seq`. Accepted
 in `STATE_IDLE` and `STATE_PAUSED`. No seqnum window — window-1 fire-and-wait;
 jogSeq provides duplicate rejection only. A jog burst (host-computed move, e.g.
-the return to `pausePos`) is one or more jog packets ending with
-`MSEG_FLAG_PATH_END`; the Pico runs `runningReason = JOG` while emitting and
-returns to its prior state (IDLE, or PAUSED when `PausedJobContext.active`) when
-the burst drains.
+the return to `pausePos`) is one or more jog packets; the Pico runs
+`runningReason = JOG` while emitting and returns to its prior state (IDLE, or
+PAUSED when `PausedJobContext.active`) when the burst drains. The burst ends
+when the ring drains, **not** on a flag — a sender may mark its last packet
+`MSEG_FLAG_PATH_END`, but the firmware does not read it (see the flags table).
 
 ### ACK — `0xAA` (3 bytes)
 ```
@@ -229,7 +230,7 @@ host-side analysis — the firmware masks them off (`flags & 0x07`).
 | Constant | Value | Owner | Description |
 |---|---|---|---|
 | `MSEG_FLAG_NONE` | `0x00` | — | No flags |
-| `MSEG_FLAG_PATH_END` | `0x01` | wire | Last segment in path — Core 1 signals idle |
+| `MSEG_FLAG_PATH_END` | `0x01` | advisory | Last segment in a path. **Declarative only — excluded from `MSEG_FLAG_WIRE_MASK`, so Core 1 does not act on it.** Senders may set it, offline tools may read it; same bit and meaning as the planner's `MICRO_PATH_END`. |
 | `MSEG_FLAG_ESTOP` | `0x02` | wire | Poison pill — flush and halt immediately |
 | `MSEG_FLAG_PAUSE` | `0x04` | wire | Pause point — Core 1 drains and enters PAUSED. **Sender-inserted** at a single-head tool-change boundary; the planner never sets it. |
 | `MICRO_LIFT` | `0x08` | host | Z raise/lower segment (planning hint; firmware ignores) |

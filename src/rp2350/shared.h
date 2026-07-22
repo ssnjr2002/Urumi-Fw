@@ -27,24 +27,33 @@
 // wire/firmware semantics; high bits (0x08 LIFT, 0x10 JOG) are host planning
 // hints the firmware ignores — mask to the low 3 bits before interpreting.
 #define MSEG_FLAG_NONE      0x00
-// RETIRED (docs/comms_architecture.md §4.7) — commented out rather than deleted
-// so the bit stays visibly reserved and the removal stays easy to reverse.
+
+// DECLARATIVE ONLY — the firmware does not act on this bit.
 //
-// #define MSEG_FLAG_PATH_END  0x01  // Last segment in a path — Core 1 can signal idle
+// Meaning is exactly what the name says: this is the last segment in a path.
+// Hosts may set it and offline tools may read it (the planner's MICRO_PATH_END
+// is the same bit with the same meaning, so a marked packet reads correctly at
+// both layers). Core 1 ignores it: bit 0 is deliberately OUT of WIRE_MASK
+// below, so setting it can never change machine behaviour.
 //
-// It was set by five host call sites and read by NOTHING: not core1.cpp, not
-// either host. The jog work settled the question — an open session has no final
-// packet to mark, since it ends by truncation and the operator decides when, so
-// the one workload that might have wanted an end-of-motion marker structurally
-// cannot set it. Meanwhile §4.5 gives the firmware a real end-of-motion signal
-// (ABORT → ramp → IDLE) and the extended STATUS_RSP reports arrival at IDLE.
+// It is kept because the name describes something real that the wire has no
+// other way to say. The firmware cannot currently distinguish "the ring went
+// dry because the host is late" from "the ring went dry because the motion is
+// over" — both look like an empty ring, and the first one stops an open-loop
+// machine dead at speed. This bit is the natural marker for that distinction
+// if it is ever wanted. (A starvation timeout is the stronger fix, since it
+// also covers a host that dies mid-stream and never sends the marker — see
+// docs/comms_architecture.md §4.7. Nothing here presumes which wins.)
 //
-// Bit 0 is left OUT of WIRE_MASK below, so a host that still sets it is ignored
-// rather than misinterpreted.
+// To make it live: add it to WIRE_MASK and handle it in core1.cpp. Until then
+// it is a name, not a behaviour — do not read it as one.
+#define MSEG_FLAG_PATH_END  0x01  // Last segment in a path (advisory; not honoured)
+
 #define MSEG_FLAG_ESTOP     0x02  // Poison pill — flush and halt immediately
 #define MSEG_FLAG_PAUSE     0x04  // Drain to this segment, then enter PAUSED
                                   // (host-inserted single-head tool-change marker)
-#define MSEG_FLAG_WIRE_MASK 0x06  // firmware honours only these bits (was 0x07)
+#define MSEG_FLAG_WIRE_MASK 0x06  // firmware honours only these bits — PATH_END
+                                  // (0x01) is excluded on purpose, see above
 
 struct MicroSegment {
     int32_t  dx;        // X axis steps (signed)

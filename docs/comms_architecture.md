@@ -703,9 +703,37 @@ window but not close it.
 
 ### 4.7 Dead wire surface
 
-**`MSEG_FLAG_PATH_END` — delete it.** It is set by five host call sites and read
-by nothing: not `core1.cpp`, not either host. It has survived this long by
-looking meaningful.
+**`MSEG_FLAG_PATH_END` — kept, as a declaration only.** *(Revised — this section
+originally argued for deletion, and the retirement was carried out and then
+reversed. What follows records both the original argument and why the outcome
+changed.)*
+
+The bit now means exactly what its name says — "last segment in a path" — and
+nothing more. It is excluded from `MSEG_FLAG_WIRE_MASK`, so the firmware cannot
+act on it; "unused" is enforced there rather than by the constant's value. It is
+the same bit and meaning as the planner's `MICRO_PATH_END`, so one marked packet
+reads correctly at both layers.
+
+**Why not deletion.** The retirement first set the host constant to `0x00` so
+existing call sites would become no-ops. That silently broke every *reader*:
+`flags & MSEG_FLAG_PATH_END` became permanently false, and
+`host/production/verify_packets.py` began reconstructing trajectories with no
+path breaks at all — drawing connecting lines across pen-up gaps, with no error.
+A constant that contradicts its own name is a worse failure mode than an unused
+one, because it fails quietly and looks plausible.
+
+**The gap that keeps it interesting.** The argument below is sound for jog, but
+it overstates the case for the closed job path. The firmware still cannot
+distinguish "the ring went dry because the host is late" from "the ring went dry
+because the motion is over" — both present as an empty ring, and the first stops
+an open-loop machine dead at speed, losing position, which is precisely what
+§4.5 exists to prevent. `ABORT → ramp → IDLE` does not cover it: abort is
+operator-initiated and nothing fires it on underrun. A starvation timeout
+("dry for N ms while RUNNING → ramp to rest") is the stronger fix, since it also
+covers a host that dies mid-stream and never sends a marker; this flag is the
+natural companion if the distinction is ever wanted. Neither is implemented.
+
+The original argument, which still holds for jog:
 
 The jog work is the evidence that closes the question. An open session has no
 final packet to mark — it ends by truncation, and the operator decides when. A
@@ -846,11 +874,12 @@ specification; this is the ledger.
       kept.
       Two doc claims corrected in the process (§4.5, §4.6): the host ramp and
       the wall-clock estimate both had to stay, for reasons recorded there.
-- [x] **§4.7 — `MSEG_FLAG_PATH_END` retired.** Commented out in `shared.h` and
-      dropped from `MSEG_FLAG_WIRE_MASK` (0x07 → 0x06), so a host still setting
-      it is ignored rather than misinterpreted. The host constant is kept at
-      `0x00` so existing call sites are no-ops rather than import errors.
-      Unrelated to `pipeline.stages`' live planner-internal `PATH_END`.
+- [x] **§4.7 — `MSEG_FLAG_PATH_END` is declarative.** Dropped from
+      `MSEG_FLAG_WIRE_MASK` (0x07 → 0x06), so the firmware cannot act on it, but
+      the constant is `0x01` on both sides and the `#define` is live rather than
+      commented out. The bit means "last segment in a path" and nothing more.
+      Equal to `pipeline.stages`' `MICRO_PATH_END` on purpose — keep them in
+      sync. Briefly held at `0x00`, which broke every reader silently; see §4.7.
 
 - [x] **`pos` consumed; `getpos` polling dropped.** The UI poller and
       `job_runner._wait_state` both read position from `STATUS_RSP`. That
@@ -875,8 +904,13 @@ specification; this is the ledger.
       `emitMicroSegment` returning `EmitResult` + counted `out[4]`,
       `abortRequested`, `RUNNING_ABORT_DECEL`, `NACK_ABORTING`. Should delete
       `_decel_distance()` and the host's ramp-down branch.
-- [ ] **§4.7 — delete `MSEG_FLAG_PATH_END`** and the declared-but-unimplemented
-      MCFG / TILE / TOOL magics from the frozen contract.
+- [ ] **§4.7 — the declared-but-unimplemented TILE / TOOL magics.** Defined in
+      `shared.h` (0xAD/0xAC) and fully packed/unpacked in `host/protocol/packets.py`,
+      but handled by no `.cpp` and called by no host code — an unimplemented
+      feature on both sides, not residue. Decide: implement or drop together.
+      (`MSEG_FLAG_PATH_END` is no longer on this list — see §4.7. CFG_SET/CFG_GET
+      are handled in `data_plane.cpp` and parsed by the host reader, but the host
+      never sends the request: a missing sender, not dead surface.)
 
 For 4.2/4.5/4.6 the acceptance test is stated in §4.9: `test_ui_jog.py` keeps
 passing **unchanged** while host code named in each section disappears. If host

@@ -119,15 +119,20 @@ CFG_NACK_TIMEOUT   = 0x05
 # are host planning hints the firmware masks off.
 
 MSEG_FLAG_NONE     = 0x00
-# RETIRED on the wire (§4.7) — the firmware no longer honours bit 0 and has it
-# commented out of MSEG_FLAG_WIRE_MASK. The name is kept, and kept equal to 0,
-# so the several call sites that OR it in become no-ops instead of import
-# errors; it is deliberately NOT 0x01 any more, so nothing can set the bit by
-# accident. Delete the name once those call sites are cleaned up.
+# DECLARATIVE ONLY — means "last segment in a path", and nothing more.
 #
-# (Unrelated to pipeline.stages' PATH_END / MICRO_PATH_END, which are live
-# planner-internal velocity boundary markers and are not affected.)
-MSEG_FLAG_PATH_END = 0x00   # was 0x01
+# The firmware does not act on it: bit 0 is excluded from MSEG_FLAG_WIRE_MASK in
+# shared.h, so setting it cannot change machine behaviour. Senders may set it and
+# offline tools may read it. It is the SAME BIT and the same meaning as the
+# planner's MICRO_PATH_END (pipeline/stages/microsegment.py), so a marked packet
+# reads correctly whether inspected as planner output or as wire bytes — that
+# agreement is deliberate, keep the two values equal.
+#
+# It briefly sat at 0x00 to neuter it on the wire. That silently broke every
+# `flags & MSEG_FLAG_PATH_END` reader (always false), so the value is back and
+# the "unused" part is enforced by WIRE_MASK, where it belongs, rather than by a
+# constant that lies about its own name.
+MSEG_FLAG_PATH_END = 0x01
 MSEG_FLAG_ESTOP    = 0x02
 MSEG_FLAG_PAUSE    = 0x04   # sender-inserted at a tool-change boundary (single head)
 
