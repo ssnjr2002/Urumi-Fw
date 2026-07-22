@@ -32,7 +32,7 @@ class AxisNodesView(ttk.Frame):
         debug_frm = ttk.Frame(self)
         debug_frm.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
         self.dump_jog_var = tk.BooleanVar(value=False)
-        self.dump_jog_chk = ttk.Checkbutton(debug_frm, text="Write jogs to jog_output.bin (instead of sim/COM)",
+        self.dump_jog_chk = ttk.Checkbutton(debug_frm, text="Also copy jog packets to jog_output.bin",
                                              variable=self.dump_jog_var)
         self.dump_jog_chk.pack(side="left")
 

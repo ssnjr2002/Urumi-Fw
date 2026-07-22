@@ -1,5 +1,4 @@
 import threading
-import queue
 import struct
 import time
 from typing import Callable, List, Optional
@@ -94,10 +93,16 @@ class _ClickJogSource(PacketSource):
                          # the queue. Without a burst the source cannot outpace
                          # its own pull cadence (see pull()).
 
-    def __init__(self, machine, axis, ltr, sign, rate, link=None):
+    def __init__(self, machine, axis, ltr, sign, rate, link=None, dump_path=None):
         self.machine, self.axis = machine, axis
         self.ltr, self.sign, self.rate = ltr, sign, rate
         self.link = link
+        # Debug tee: when set, every packet handed to the wire is ALSO appended
+        # here. It cannot be an "instead of the wire" mode — pacing below is
+        # closed-loop on machine telemetry, so with no link there are no status
+        # samples and the emitted stream would not resemble a real jog. A
+        # capture of what was genuinely sent is the only honest artifact.
+        self.dump_path = dump_path
         self.emitted = 0
         self.steps_total = 0        # steps actually committed to the wire
         self.clicks = 1
@@ -181,8 +186,18 @@ class _ClickJogSource(PacketSource):
         vec[self._idx] = int(self.sign * steps)
         interval = max(1, min(int(self.machine.f_cpu / max(v_avg, 1.0)),
                               self.machine.f_cpu))
-        return pack_jog(_JMS(dx=vec[0], dy=vec[1], dz=vec[2], da=vec[3],
-                             interval=interval, flags=MSEG_FLAG_NONE))
+        pkt = pack_jog(_JMS(dx=vec[0], dy=vec[1], dz=vec[2], da=vec[3],
+                            interval=interval, flags=MSEG_FLAG_NONE))
+        if self.dump_path:
+            # Length-prefixed, same framing verify_packets.py reads. Best-effort:
+            # a debug capture must never take down a move in progress.
+            try:
+                with open(self.dump_path, "ab") as f:
+                    f.write(struct.pack("<H", len(pkt)))
+                    f.write(pkt)
+            except Exception:
+                pass
+        return pkt
 
     # -- the source contract --------------------------------------------------
 
@@ -325,15 +340,12 @@ class OnlineSession(Observable):
         self.node_ping_status = {}
         
         # --- Jogging State ---
-        # Debug capture: when on, jog packets are written to jog_output.bin
-        # (length-prefixed, same framing as verify_packets.py reads) instead of
-        # being sent to the sim/COM port — for A/B-comparing what the host
-        # actually generates without needing the real link.
+        # Debug capture: when on, jog packets are ALSO appended to jog_output.bin
+        # (length-prefixed, same framing verify_packets.py reads) as they go to
+        # the wire. Read at the start of each jog, so toggling it mid-move does
+        # not take effect until the next click.
         self.jog_dump_to_file = False
         self.jog_dump_path = "jog_output.bin"
-        self.jog_q = queue.Queue()
-        self._worker = threading.Thread(target=self._jog_worker, daemon=True)
-        self._worker.start()
 
         # --- Manual (hold-to-jog) State ---
         self._jog_source = None      # the open session's PacketSource, if running
@@ -665,15 +677,26 @@ class OnlineSession(Observable):
                 # add() refused: the source finished as we clicked. Fall through
                 # and start a fresh session below.
 
-            src = _ClickJogSource(machine, ax, ltr, sign, rate, link=self.link)
+            src = _ClickJogSource(
+                machine, ax, ltr, sign, rate, link=self.link,
+                dump_path=self.jog_dump_path if self.jog_dump_to_file else None)
             src.add(steps)
             src.clicks = 1
             self._jog_source = src
+            # Claim the port here, under the lock, NOT in _jog_run. Setting it
+            # in the thread leaves a window where this jog is committed but
+            # `busy` is still False, and run_job()'s guard would wave a job
+            # through onto the same port — two writers, plus a seqreset landing
+            # mid-job. Publish the claim before the thread that acts on it.
+            self.busy = True
             threading.Thread(target=self._jog_run, args=(src,), daemon=True).start()
 
     def _jog_run(self, source):
-        """Runs one open jog session until its distance is spent."""
-        self.busy = True
+        """Runs one open jog session until its distance is spent.
+
+        `busy` is already True — jog_click set it under the lock before
+        spawning us. The `finally` below is what clears it.
+        """
         t_click = time.monotonic()
         _t = (lambda: f"{t_click - self.connected_at:.3f}s"
               if self.connected_at else "?")
@@ -758,126 +781,17 @@ class OnlineSession(Observable):
     # ---------------------------------------------------------
     # 4. Data Plane (Jogging)
     # ---------------------------------------------------------
-    def jog(self, ltr: str, sign: int, dist: float, rate: float):
-        """Queue a jog burst for a specific axis."""
-        from host.protocol.packets import make_jog
-
-        # Proportional to feed rate rather than a fixed value — a flat accel is
-        # either too gentle at low feed or (per prior UI) coarse/violent at high
-        # feed, since make_jog only has ~10ms to spend per velocity step.
-        accel = max(rate * 8.0, 50.0)
-
-        if self._gui_op is not None:
-            # A job owns `link`. Queuing anyway would let _jog_worker stream onto
-            # the port while the job worker is mid-stream — two writers on one
-            # serial port, and the jog's seqreset resets the Pico's duplicate-guard
-            # counter mid-job, silently dropping job steps. Queuing behind another
-            # in-flight jog is fine: they share the same single-writer worker.
-            self.last_command_status = "Rejected: job in progress"
-            self._notify()
-            return
-
-        if not self.app_state.config or not self.app_state.config.machine:
-            return
-
-        # Get axis config
-        machine = self.app_state.config.machine
-        axes = dict(machine.present_axes())
-        if ltr not in axes:
-            return
-
-        # Reject if the axis is not enabled
-        if self.machine_state and not self.machine_state.enabled(ltr):
-            self.last_command_status = f"Rejected: {ltr.upper()} axis is disabled"
-            self._notify()
-            return
-
-        ax = axes[ltr]
-
-        # Calculate in steps
-        feed_sps = rate * ax.steps_per_unit
-        accel_sps2 = accel * ax.steps_per_unit
-        dist_steps = int(dist * sign * ax.steps_per_unit)
-        if dist_steps == 0:
-            return
-
-        # Build the vector
-        vec = [0, 0, 0, 0]
-        idx_map = {"x": 0, "y": 1, "z": 2, "a": 3}
-        vec[idx_map[ltr]] = dist_steps
-
-        # Build the complete accel->cruise->decel burst up front and enqueue it
-        # as one atomic unit. Splitting a single jog across two stream() calls
-        # (as an earlier "blending" attempt did) leaves a real gap on hardware:
-        # stream() only blocks for ACK, not for physical motion, so the Pico's
-        # buffer drains and the machine visibly stops before the next call
-        # arrives. One call per jog is what the old jog_ui.py/jog.py proved
-        # smooth; rapid clicks simply queue up and run back-to-back.
-        packets = make_jog(tuple(vec), feed_sps, accel_sps2, machine.f_cpu)
-        if not packets:
-            return
-
-        self.jog_q.put((f"JOGGING {ltr.upper()} {sign*dist:+.1f}", packets))
-        self.last_command_status = f"Queued Jog {ltr.upper()}"
-        self._notify()
-
-    def _jog_worker(self):
-        """Background thread that sends jog bursts while pausing the polling loop."""
-        while True:
-            try:
-                label, packets = self.jog_q.get()
-
-                # Signal busy so polling loop skips
-                self.busy = True
-                self.last_command_status = label
-
-                if self.jog_dump_to_file:
-                    # Bypass the link entirely — append this burst's packets to
-                    # jog_output.bin instead of streaming them anywhere.
-                    try:
-                        with open(self.jog_dump_path, "ab") as f:
-                            for p in packets:
-                                f.write(struct.pack("<H", len(p)))
-                                f.write(p)
-                        self.last_command_status = f"Dumped {len(packets)} pkts -> {self.jog_dump_path}"
-                    except Exception as e:
-                        self.last_command_status = f"Jog dump error: {e}"
-                    self.jog_q.task_done()
-                    self.busy = False
-                    continue
-
-                if not self.is_connected or not self.link:
-                    self.jog_q.task_done()
-                    self.busy = False
-                    continue
-
-                try:
-                    # The wire protocol requires seqreset before each stream
-                    self.link.command("seqreset")
-                    # Send the packets using the built-in Go-Back-N sender
-                    success = self.link.stream(packets)
-                    if success:
-                        self.last_command_status = f"Jog complete ({len(packets)} pkts)"
-                    else:
-                        self.last_command_status = "Jog aborted/failed"
-                except Exception as e:
-                    self.last_command_status = f"Jog error: {e}"
-
-                self.jog_q.task_done()
-                self.busy = False
-
-            except Exception as e:
-                self.busy = False
-
     # ---------------------------------------------------------
     # 5. Job Execution
     # ---------------------------------------------------------
     def run_job(self):
         """Starts a background thread to execute the loaded plan."""
-        # jog_q.empty() closes the race where _jog_worker flips `busy` False
-        # in the gap between draining two queued jogs — a job must not start
-        # while jogs are still pending behind it (see jog()'s single-writer note).
-        if self.busy or not self.jog_q.empty() or not self.is_connected or not self.app_state.plan:
+        # `busy` alone is the interlock now that jogs no longer queue: jog_click
+        # sets it under _jog_lock before spawning the runner, and _jog_run's
+        # `finally` clears it, so there is no gap where a committed jog looks
+        # idle. A job and a jog must never both hold the port — two writers, and
+        # the jog's seqreset would reset the Pico's duplicate guard mid-job.
+        if self.busy or not self.is_connected or not self.app_state.plan:
             return
             
         plan = self.app_state.plan
