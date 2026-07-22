@@ -87,6 +87,29 @@ bool handleCommand(const String& input) {
                       (long)machinePos[2], (long)machinePos[3]);
         return true;
     }
+    // A node's OWN step counter, read over RS485 — the independent check on
+    // `getpos`, which reports machinePos: what Core 1 believes it EMITTED. Only
+    // this can tell those apart. If the node never received the stream bytes
+    // (wrong baud, DE timing, streamEnabled unset) machinePos still advances by
+    // the full amount and reads perfectly correct, so `getpos` alone cannot
+    // detect lost steps. A divergence localises the loss to the bus or the node.
+    //
+    // Core 1 already implements the exchange; this only surfaces it. Note the
+    // GET_POS reply is TWO FIFO words (status, then position) where every other
+    // relayed command pushes one — hence not going through relayNode().
+    if (input.startsWith("nodepos")) {
+        const char* a = argAfter(input, 7);
+        uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
+        if (node < 1 || node > 4) { Serial.println("err usage"); return true; }
+        multicore_fifo_push_blocking(((uint32_t)CMD_GET_POS << 8) | node);
+        if ((multicore_fifo_pop_blocking() & 0xFFFF) == 0) {
+            Serial.printf("node %d timeout\n", node);
+            return true;
+        }
+        Serial.printf("node %d pos %ld\n", node,
+                      (long)(int32_t)multicore_fifo_pop_blocking());
+        return true;
+    }
     if (input == "stop") {
         machineState = STATE_ESTOP;            // Core 1 flushes, clears axes, → ALARM
         Serial.println("ok");
