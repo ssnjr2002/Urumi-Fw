@@ -98,6 +98,15 @@ bool handleCommand(const String& input) {
     // GET_POS reply is TWO FIFO words (status, then position) where every other
     // relayed command pushes one — hence not going through relayNode().
     if (input.startsWith("nodepos")) {
+        // Same gate as pingnode/enable/disable, and for the same reason: Core 1
+        // only services the FIFO after draining the ring (processBus step 2
+        // before step 3), so a relayed command issued mid-stream waits out the
+        // whole queue. Core 0 blocks in pop_blocking meanwhile and stops reading
+        // serial entirely — which would put `stop` behind it. Measured at 4 s of
+        // queued motion before this gate existed.
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
         const char* a = argAfter(input, 7);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > 4) { Serial.println("err usage"); return true; }
