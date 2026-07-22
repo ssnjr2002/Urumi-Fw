@@ -180,10 +180,18 @@ class _ClickJogSource(PacketSource):
 
     def _packet(self, steps, v_avg):
         vec = [0, 0, 0, 0]
-        # No axis.invert here: the existing jog path (OnlineSession.jog -> make_jog)
-        # does not apply it either, and applying it in only one of them would make
-        # the two disagree on direction for the same button.
-        vec[self._idx] = int(self.sign * steps)
+        # axis.invert is a WIRING correction, so it has to apply to every source
+        # of motion or the machine has two disagreeing coordinate frames. The
+        # planner applies it, so it defines the frame and jog conforms.
+        #
+        # This was missing until now, here and in the OnlineSession.jog path
+        # before it: X, Z and A are invert=True in the default config, so jog
+        # drove those axes opposite to a job commanding the same direction. It
+        # survived because every hardware run has been Pico-only — position
+        # counters advance identically either way, so nothing short of a motor
+        # could show it.
+        inv = -1 if getattr(self.axis, "invert", False) else 1
+        vec[self._idx] = int(inv * self.sign * steps)
         interval = max(1, min(int(self.machine.f_cpu / max(v_avg, 1.0)),
                               self.machine.f_cpu))
         pkt = pack_jog(_JMS(dx=vec[0], dy=vec[1], dz=vec[2], da=vec[3],
@@ -347,9 +355,8 @@ class OnlineSession(Observable):
         self.jog_dump_to_file = False
         self.jog_dump_path = "jog_output.bin"
 
-        # --- Manual (hold-to-jog) State ---
+        # --- Manual jog state ---
         self._jog_source = None      # the open session's PacketSource, if running
-        self._jog_session = None     # the Session, for truncate() on reversal
         self._jog_lock = threading.Lock()
 
         # --- Job State ---
@@ -362,9 +369,8 @@ class OnlineSession(Observable):
         # --- Background Status Poller ---
         # Runs on its own thread so a wedged/disconnected Pico (blocking serial
         # reads, up to Link.command's 1s timeout per call) can never freeze the
-        # Tk event loop. Skips itself whenever busy — the jog worker and job
-        # worker are each the sole owner of `link` while they run; the job
-        # worker pushes its own live updates via send_plan's on_progress hook.
+        # Tk event loop. It runs CONTINUOUSLY, including while a job or jog is
+        # streaming — see _poll_worker's docstring for why that is safe now.
         self._poll_thread = threading.Thread(target=self._poll_worker, daemon=True)
         self._poll_thread.start()
 
@@ -622,13 +628,14 @@ class OnlineSession(Observable):
         self._send_node_command(cmd.disable, node_id, "disable")
 
     # ---------------------------------------------------------
-    # 4b. Manual jogging — an OPEN session
+    # 4. Manual jogging — an OPEN session
     # ---------------------------------------------------------
-    # The operator drives the machine in real time by holding a button. There is
-    # no predetermined destination, so the packet sequence cannot be known up
-    # front: it is produced in response to input that has not happened yet, and
-    # the session ends by truncation rather than exhaustion
-    # (docs/comms_architecture.md §2.3).
+    # One click = one fixed distance, so each click's distance IS known up front.
+    # The session is still open (docs/comms_architecture.md §2.3) because the
+    # TOTAL is not: a click arriving mid-move extends the move rather than
+    # starting a new one, so the packet sequence depends on input that has not
+    # happened yet. It ends when the distance is spent and the machine has
+    # drained, or early by truncation on a reversal.
 
     def jog_click(self, ltr: str, sign: int, dist: float, rate: float):
         """One click of a jog button = move `dist` units on `ltr`.
@@ -720,7 +727,6 @@ class OnlineSession(Observable):
             self.link.reset_seq()
             t_seq = time.monotonic()
             sess = self.link.session(source, window=16)
-            self._jog_session = sess
             ok = sess.run()
             t_sess = time.monotonic()
             # Stamp the same clock the on-screen timer shows, so "what the UI
@@ -774,13 +780,9 @@ class OnlineSession(Observable):
         finally:
             with self._jog_lock:
                 self._jog_source = None
-                self._jog_session = None
             self.busy = False
             self._notify()
 
-    # ---------------------------------------------------------
-    # 4. Data Plane (Jogging)
-    # ---------------------------------------------------------
     # ---------------------------------------------------------
     # 5. Job Execution
     # ---------------------------------------------------------

@@ -47,7 +47,20 @@ def make_session():
 
 
 def axis_pos(sess, idx=0):
+    """Raw MOTOR steps, as the Pico counts them — not machine direction."""
     return sess.link.backend.pos[idx]
+
+
+def axis_dir(sess, ltr="x"):
+    """Motor-step sign for one unit of positive machine travel.
+
+    axis.invert is a wiring correction, so on an inverted axis a +X jog counts
+    DOWN in motor steps. Deriving the expected sign here (rather than assuming
+    +1, or comparing magnitudes) keeps these direction assertions able to fail:
+    they caught nothing while jog was skipping invert entirely.
+    """
+    ax = dict(sess.app_state.config.machine.present_axes())[ltr]
+    return -1 if getattr(ax, "invert", False) else 1
 
 
 def steps_per_mm(sess):
@@ -97,7 +110,7 @@ def test_one_click_moves_exactly():
     sess = make_session()
     spm = steps_per_mm(sess)
     start = axis_pos(sess)
-    want = int(round(10.0 * spm))
+    want = int(round(10.0 * spm)) * axis_dir(sess)
 
     sess.jog_click("x", 1, dist=10.0, rate=20.0)
     check(wait_idle(sess), "jog finished")
@@ -118,7 +131,7 @@ def test_clicks_blend():
     sess = make_session()
     spm = steps_per_mm(sess)
     start = axis_pos(sess)
-    want = int(round(30.0 * spm))
+    want = int(round(30.0 * spm)) * axis_dir(sess)
 
     sess.jog_click("x", 1, dist=10.0, rate=20.0)
     time.sleep(0.05)
@@ -147,7 +160,7 @@ def test_reversal_cancels():
     sess.jog_click("x", -1, dist=50.0, rate=20.0)
     check(wait_idle(sess), "cancelled jog finished")
 
-    moved = axis_pos(sess) - start
+    moved = (axis_pos(sess) - start) * axis_dir(sess)   # machine frame
     check(moved > 0, "did not reverse direction on the cancelling click")
     check(moved < int(round(50.0 * spm)),
           f"stopped short of the full 50mm ({moved} steps)")

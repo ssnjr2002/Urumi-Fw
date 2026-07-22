@@ -454,10 +454,6 @@ class Link:
         status sink as the state goes ESTOP→ALARM)."""
         self.writer.write_text(text)
 
-    def write_packet(self, data: bytes):
-        """Send a raw data-plane packet (used by higher-level streaming)."""
-        self.writer.write_frame(data)
-
     def get_status(self, timeout=1.0):
         """Binary mirror of `command("getstate")` — one byte out, one frame back.
         Cheap enough to poll during a stream, since it slots into a boundary
