@@ -407,8 +407,9 @@ void processBus() {
             return;
         }
 
-        uint8_t  cmd  = (req >> 8) & 0xFF;
-        uint8_t  node =  req & 0xFF;
+        uint8_t  cmd     = (req >> 8)  & 0xFF;
+        uint8_t  node    =  req        & 0xFF;
+        uint8_t  payload = (req >> 16) & 0xFF;  // bits[23:16], 0 for payloadless cmds
 
         while (!rs485.txEmpty());
         rs485.flushRX();
@@ -447,6 +448,26 @@ void processBus() {
                 sendPacket(pkt, 4);
                 uint8_t rxLen = receivePacket(node, CMD_DISABLE, nullptr, RESPONSE_TIMEOUT_MS);
                 multicore_fifo_push_blocking((CMD_DISABLE << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
+                break;
+            }
+            // Vacuum-node commands. payload carries the args (packed by Core 0):
+            //   servo — high nibble = channel idx (1..6), low bit = state
+            //   ssr   — low bit = state
+            case CMD_SERVO_SET: {
+                uint8_t idx   = (payload >> 4) & 0x0F;
+                uint8_t state =  payload       & 0x01;
+                uint8_t pkt[6] = {node, CMD_SERVO_SET, 2, idx, state, 0};
+                sendPacket(pkt, 6);
+                uint8_t rxLen = receivePacket(node, CMD_SERVO_SET, nullptr, RESPONSE_TIMEOUT_MS);
+                multicore_fifo_push_blocking((CMD_SERVO_SET << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
+                break;
+            }
+            case CMD_SSR_SET: {
+                uint8_t state = payload & 0x01;
+                uint8_t pkt[5] = {node, CMD_SSR_SET, 1, state, 0};
+                sendPacket(pkt, 5);
+                uint8_t rxLen = receivePacket(node, CMD_SSR_SET, nullptr, RESPONSE_TIMEOUT_MS);
+                multicore_fifo_push_blocking((CMD_SSR_SET << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
                 break;
             }
         }

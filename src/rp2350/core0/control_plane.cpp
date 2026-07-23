@@ -59,6 +59,18 @@ static const char* argAfter(const String& input, int wordLen) {
     return p;
 }
 
+// Parse an on/off token: "1" or "on" → true; anything else ("0"/"off") → false.
+static bool parseState(const char* s) {
+    if (*s == '1') return true;
+    if ((s[0] == 'o' || s[0] == 'O') && (s[1] == 'n' || s[1] == 'N')) return true;
+    return false;
+}
+
+// Provisional bus-address ceiling for the peripheral relay verbs (servo/pump).
+// A real node registry replaces this range check when the axis-map/ENGAGE work
+// lands; until then a wrong id simply relays and times out.
+#define BUS_ADDR_MAX 8
+
 // Handle one control-plane text line. Replies with exactly one line per the wire
 // contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
 bool handleCommand(const String& input) {
@@ -220,6 +232,49 @@ bool handleCommand(const String& input) {
             axes_homed   &= ~(1 << (node - 1));
         }
         Serial.println("ok");
+        return true;
+    }
+
+    // ── vac_servo <node> <idx> <on|off> — vacuum-node servo channel ───────────
+    // Relays CMD_SERVO_SET to a peripheral node. The arg is packed into the FIFO
+    // word's payload byte (high nibble = idx, low bit = state) for Core 1.
+    if (input.startsWith("vac_servo")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* p = argAfter(input, 9);
+        char* endPtr;
+        uint8_t node = (uint8_t)strtoul(p,      &endPtr, 10);
+        uint8_t idx  = (uint8_t)strtoul(endPtr, &endPtr, 10);
+        while (*endPtr == ' ') endPtr++;
+        if (node < 1 || node > BUS_ADDR_MAX || idx < 1 || idx > 6 || *endPtr == '\0') {
+            Serial.println("err usage"); return true;
+        }
+        uint8_t payload = (uint8_t)((idx << 4) | (parseState(endPtr) ? 1u : 0u));
+        multicore_fifo_push_blocking(((uint32_t)payload << 16) |
+                                     ((uint32_t)CMD_SERVO_SET << 8) | node);
+        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
+        return true;
+    }
+
+    // ── vac_pump <node> <on|off> — vacuum-node SSR pump (soft-started) ─────────
+    if (input.startsWith("vac_pump")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* p = argAfter(input, 8);
+        char* endPtr;
+        uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
+        while (*endPtr == ' ') endPtr++;
+        if (node < 1 || node > BUS_ADDR_MAX || *endPtr == '\0') {
+            Serial.println("err usage"); return true;
+        }
+        uint8_t state = parseState(endPtr) ? 1u : 0u;
+        multicore_fifo_push_blocking(((uint32_t)state << 16) |
+                                     ((uint32_t)CMD_SSR_SET << 8) | node);
+        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
         return true;
     }
 
