@@ -373,6 +373,10 @@ elsewhere; it's just no longer load-bearing for stream latency.)
 
 ## 7. Stream slots and dual heads (`ENGAGE`) — stepper-only
 
+> **Now specced in [engage_and_axis_map.md](engage_and_axis_map.md).** That doc
+> is the source of truth for the ENGAGE / `axis_map` work; the sketch below is
+> the original framing it grew out of.
+
 The hard limit on >4 steppers is the **stream byte** (4 motors × 2 bits), not the
 command layer. Each node's slot is hardwired from `NODE_ID` today. `CMD_ENGAGE`
 makes the slot **runtime-assigned state**, decoupling stream slot from bus
