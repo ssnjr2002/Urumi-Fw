@@ -5,11 +5,25 @@
 // ─── Bus ───────────────────────────────────────────────────────────────────────
 #define RS485_BAUD          921600
 #define RESPONSE_TIMEOUT_MS    20
-#define CMD_PING 0x01
-#define CMD_PONG 0x02
-#define CMD_GET_POS 0x03
-#define CMD_ENABLE 0x04
-#define CMD_DISABLE 0x05
+// ─── Node Commands ────────────────────────────────────────────────────────────────
+// Generic (0x01–0x1F): every node type honours these; handled by the node core.
+#define CMD_PING     0x01
+#define CMD_PONG     0x02
+#define CMD_ENABLE   0x04   // effect delegated per type (motor energize / pump on …)
+#define CMD_DISABLE  0x05
+#define CMD_GET_TYPE 0x06   // reply payload: [NODE_TYPE_*]
+// Type-specific (0x20+): only one type is compiled per node, so values may
+// overlap between types. Stepper:
+#define CMD_GET_POS  0x03   // stepper: reply payload: int32 absolute position (BE)
+// Vacuum:
+#define CMD_SERVO_SET 0x10  // payload: [idx(1..N)][state(0/1)]; ACK echoes cmd
+#define CMD_SSR_SET   0x11  // payload: [state(0=off, 1=on w/ soft-start)]; ACK echoes cmd
+
+// ─── Node types (CMD_GET_TYPE) ───────────────────────────────────────────────
+// Canonical registry, mirrored on the host (web/src/config NodeType).
+#define NODE_TYPE_STEPPER  0x01
+#define NODE_TYPE_VACUUM   0x02
+#define NODE_TYPE_KNIFE_OSC 0x03  // oscillating (drag/tangential) knife controller
 
 // CRC-8, reflected, poly 0x8C (industrial variant). Precomputed 256-entry
 // lookup table — one byte-indexed step per input byte instead of 8 bit-shifts.

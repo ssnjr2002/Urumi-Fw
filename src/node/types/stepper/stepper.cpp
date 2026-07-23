@@ -62,6 +62,9 @@ void node_set_enabled(bool on) {
     else    HAL_MOTOR_DISABLE();
 }
 
+// Stepper does all its work in the RX ISR — nothing to tick each loop.
+void node_loop(void) {}
+
 static int32_t readPositionAtomic() {
     cli();
     int32_t pos = absolutePosition;

@@ -30,6 +30,8 @@ void setup() {
 }
 
 void loop() {
+    node_loop();               // type-specific per-iteration work (non-blocking)
+
     if (cmdHead == cmdTail) return;
 
     CommandPacket* pkt = &cmdQueue[cmdTail];

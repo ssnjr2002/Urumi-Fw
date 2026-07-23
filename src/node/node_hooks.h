@@ -14,6 +14,12 @@ uint8_t node_type(void);
 // Type-specific init, called from setup() after the bus is up but before sei().
 void    node_setup(void);
 
+// Type-specific per-iteration work, called from loop() on every pass (after the
+// command ring is drained). Must be non-blocking — it shares the loop with
+// command dispatch. Stepper does everything in its RX ISR and leaves this empty;
+// vacuum uses it to advance the SSR burst-fire / soft-start state machine.
+void    node_loop(void);
+
 // The effect of the generic CMD_ENABLE / CMD_DISABLE. The core frames the ACK;
 // the type decides what "enabled" means (stepper: energize motor + accept
 // stream; vacuum: run pump; …).
