@@ -326,19 +326,21 @@ static void __time_critical_func(processMicroSegments)() {
 }
 
 // ─── Debug Step Emitter ───────────────────────────────────────────────────────
-// Emits `count` raw stream bytes for one node at a fixed slow rate. Bypasses the
-// MicroSegment path entirely — used to verify the Pico→ATtiny stream path in
-// isolation. The target node must already be enabled (CMD_ENABLE).
+// Emits `count` raw stream bytes into one stream SLOT at a fixed slow rate.
+// Bypasses the MicroSegment path entirely — used to verify the Pico→node stream
+// path in isolation. Only the node ENGAGE-bound to this slot moves, and it must
+// also be enabled (CMD_ENABLE). Core 0 resolves the target bus node → slot (via
+// the axis map) before pushing the FIFO word, so here the arg is already a slot.
 
 static void emitDebugSteps(uint32_t req) {
-    uint8_t  node = (req >> 16) & 0xFF;
+    uint8_t  slot = (req >> 16) & 0xFF;
     uint16_t low  =  req & 0xFFFF;
     bool     neg  = (low & 0x8000) != 0;
     uint16_t count = low & 0x7FFF;
 
-    if (node < 1 || node > 6) return;
+    if (slot >= 4) return;                            // 4 stream slots (X/Y/Z/A)
 
-    uint8_t bit = (node - 1) * 2;
+    uint8_t bit = slot * 2;
     uint8_t streamByte = (1 << bit);                  // step bit
     if (!neg) streamByte |= (1 << (bit + 1));         // dir bit (positive = CW)
 

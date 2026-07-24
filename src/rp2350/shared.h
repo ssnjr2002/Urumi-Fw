@@ -190,7 +190,8 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 
 // ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
 // Normal command word : (CMD << 8) | node          — top 16 bits zero
-// Debug step word      : (FIFO_STEP_DEBUG << 24) | (node << 16) | (count & 0xFFFF)
+// Debug step word      : (FIFO_STEP_DEBUG << 24) | (slot << 16) | (count & 0xFFFF)
+//   slot 0..3 (Core 0 resolves the target bus node → slot via the axis map)
 //   count is signed-magnitude: bit15 of the low word = direction (1 = negative)
 #define FIFO_STEP_DEBUG  0xF0
 #define STEP_DEBUG_SPS   1000   // fixed emit rate for debug stepping (steps/sec)

@@ -519,23 +519,25 @@ bool handleCommand(const String& input) {
     }
 
     // ── step <node> <count> — debug stepping (bring-up only) ───────────────────
+    // <node> is a BUS id; we resolve it to its ENGAGE-bound stream slot via the
+    // axis map, so the node must be in a committed axis_map first (err not_engaged
+    // otherwise). count sign = direction. Emits into that slot on Core 1.
     if (input.startsWith("step")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
         const char* p = argAfter(input, 4);
         char* endPtr;
         uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
         long count = strtol(endPtr, &endPtr, 10);
-        // node here addresses a stream SLOT ((node-1)*2), not a bus id, so it is
-        // bounded by the axis/slot count, not BUS_ADDR_MAX.
-        // if (node_isAxis(node) && count != 0) {
-        if ((node >= 1 || node <= 6) && count != 0) {
-            uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
-            if (count < 0) mag |= 0x8000;
-            uint32_t word = ((uint32_t)FIFO_STEP_DEBUG << 24) | ((uint32_t)node << 16) | mag;
-            multicore_fifo_push_blocking(word);
-            Serial.println("ok");
-        } else {
-            Serial.println("err usage");
-        }
+        if (count == 0) { Serial.println("err usage"); return true; }
+        uint8_t slot = nodeSlot(node);
+        if (slot == SLOT_NONE) { Serial.println("err not_engaged"); return true; }
+        uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
+        if (count < 0) mag |= 0x8000;
+        uint32_t word = ((uint32_t)FIFO_STEP_DEBUG << 24) | ((uint32_t)slot << 16) | mag;
+        multicore_fifo_push_blocking(word);
+        Serial.println("ok");
         return true;
     }
 
