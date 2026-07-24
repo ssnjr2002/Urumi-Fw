@@ -28,8 +28,9 @@ Partial: the §9 relay-bound cleanup has started; nothing else is built.
 - [x] **Stage 2** — Pico **Core-0** `slotNode[4]` diff (emits granular
   `CMD_ENGAGE` via the existing single-word FIFO — no `FIFO_AXIS_MAP`) +
   `axis_map` set/read verbs + `ALARM_CONFIG` boot gate + exit guards (§5–6).
-- [ ] **Stage 3** — §9 type-blind `enable`/`disable`/`pingnode` (`node_isAxis`
-  → `slotNode[]` membership; `axes_*` bits slot-indexed, not `node-1`).
+- [x] **Stage 3** — §9 type-blind `enable`/`disable`/`pingnode`: `node_isAxis`
+  → `slotNode[]` membership (`nodeSlot()`); `axes_*` bits slot-indexed, not
+  `node-1`; `AXIS_NODE_MAX` retired → `MOTION_SLOTS`; `all` iterates the map.
 - [ ] **Stage 4** — dual-head PAUSED switch bring-up (§7).
 - [ ] `AXIS_NODE_MAX` is **repurposed**, not retired — it becomes the motion-slot
   count (4), the width of the `axes_*` masks (rename to `MOTION_SLOTS` when §9

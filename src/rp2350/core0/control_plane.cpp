@@ -92,13 +92,16 @@ static bool parseState(const char* s) {
 // times out.
 #define BUS_ADDR_MAX 8
 
-// Axis nodes are the ones that occupy a stream slot and carry the
-// axes_enabled/homed bookkeeping. Until axis_map/ENGAGE makes the axis→node
-// binding runtime, the axis nodes are statically ids 1..AXIS_NODE_MAX, matching
-// the Core 1 stream packer (axis i → node i+1). node_isAxis() is the current
-// stand-in for "is this id in the axis map"; it becomes a real map lookup then.
-#define AXIS_NODE_MAX 4
-static inline bool node_isAxis(uint8_t n) { return n >= 1 && n <= AXIS_NODE_MAX; }
+// The stream byte has this many motion slots (X/Y/Z/A); axes_enabled/homed are
+// one bit PER SLOT. Which bus id occupies each slot is the runtime axis map
+// (slotNode[], §5), so "is this id an axis, and which slot" is a map lookup —
+// no longer the id==slot+1 assumption. An axis node can now be any bus id.
+#define MOTION_SLOTS 4
+static uint8_t nodeSlot(uint8_t n) {
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++) if (slotNode[i] == n) return i;
+    return SLOT_NONE;
+}
+static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
 
 // Handle one control-plane text line. Replies with exactly one line per the wire
 // contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
@@ -238,13 +241,19 @@ bool handleCommand(const String& input) {
         }
         const char* a = argAfter(input, 6);
         if (*a == '\0' || strcmp(a, "all") == 0) {
-            for (uint8_t n = 1; n <= AXIS_NODE_MAX; n++) relayNode(CMD_ENABLE, n);
-            axes_enabled = (1 << AXIS_NODE_MAX) - 1;
+            // "all" targets the axis map — energize every bound axis node, and set
+            // its per-slot enabled bit. Unbound slots stay clear.
+            for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
+                if (slotNode[i] == SLOT_NONE) continue;
+                relayNode(CMD_ENABLE, slotNode[i]);
+                axes_enabled |= (1 << i);
+            }
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
             if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
             relayNode(CMD_ENABLE, node);
-            if (node_isAxis(node)) axes_enabled |= (1 << (node - 1));
+            uint8_t s = nodeSlot(node);      // axis bookkeeping keyed on the slot
+            if (s != SLOT_NONE) axes_enabled |= (1 << s);
         }
         Serial.println("ok");
         return true;
@@ -255,16 +264,18 @@ bool handleCommand(const String& input) {
         }
         const char* a = argAfter(input, 7);
         if (*a == '\0' || strcmp(a, "all") == 0) {
-            for (uint8_t n = 1; n <= AXIS_NODE_MAX; n++) relayNode(CMD_DISABLE, n);
+            for (uint8_t i = 0; i < MOTION_SLOTS; i++)
+                if (slotNode[i] != SLOT_NONE) relayNode(CMD_DISABLE, slotNode[i]);
             axes_enabled = 0;
             axes_homed   = 0;          // de-energised → datum lost on every axis
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
             if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
             relayNode(CMD_DISABLE, node);
-            if (node_isAxis(node)) {
-                axes_enabled &= ~(1 << (node - 1));
-                axes_homed   &= ~(1 << (node - 1));   // de-energised → datum lost
+            uint8_t s = nodeSlot(node);
+            if (s != SLOT_NONE) {
+                axes_enabled &= ~(1 << s);
+                axes_homed   &= ~(1 << s);   // de-energised → datum lost
             }
         }
         Serial.println("ok");
