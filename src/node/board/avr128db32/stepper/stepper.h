@@ -70,9 +70,18 @@ void drivers_disable();
 
 // ─── Optional peripherals ───────────────────────────────────────────────────
 #define HAL_LIMIT_SWITCH_PIN PIN_PD1
-#define HAL_THERMISTOR_PIN   PIN_PD2
 #define HAL_HAS_LIMIT_SWITCH
+
+// PD2 is the thermistor ADC input by default, OR — on the single stepper node
+// that carries a laser (-DNODE_HAS_LASER) — a digital on/off gate for the laser.
+// Mutually exclusive; the laser build reclaims the pin. See CMD_LASER in the
+// stepper type.
+#ifdef NODE_HAS_LASER
+#define HAL_LASER_PIN        PIN_PD2
+#else
+#define HAL_THERMISTOR_PIN   PIN_PD2
 #define HAL_HAS_THERMISTOR
+#endif
 
 // ─── Driver init ────────────────────────────────────────────────────────────
 // Defined in types/stepper/drivers.cpp (compiled for every stepper build).

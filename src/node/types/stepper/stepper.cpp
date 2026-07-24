@@ -68,6 +68,11 @@ void node_setup(void) {
 
     // No NODE_ID-derived slot — the node boots disengaged and ignores the stream
     // until CMD_ENGAGE binds it (slot/masks stay at their SLOT_NONE/0 defaults).
+
+#ifdef NODE_HAS_LASER
+    // Laser gate (only the one stepper node wired to a laser): boot OFF.
+    pinMode(HAL_LASER_PIN, OUTPUT); digitalWrite(HAL_LASER_PIN, LOW);
+#endif
 }
 
 // CMD_ENABLE / CMD_DISABLE effect: ENERGIZE ONLY — no stream role.
@@ -112,6 +117,19 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             *replyLen = 4;
             return true;
         }
+#ifdef NODE_HAS_LASER
+        case CMD_LASER: {
+            // payload [state]: 1 = laser on, 0 = off. Compiled only on the laser
+            // node; every other stepper NAKs this (falls through to return false).
+            if (len < 5) return false;             // [id][cmd][1][state][crc]
+            digitalWrite(HAL_LASER_PIN, pkt[3] ? HIGH : LOW);
+            reply[0] = NODE_ID;
+            reply[1] = CMD_LASER;
+            reply[2] = 0;
+            *replyLen = 4;
+            return true;
+        }
+#endif
         case CMD_GET_POS: {
             int32_t pos = readPositionAtomic();
             reply[0] = NODE_ID;

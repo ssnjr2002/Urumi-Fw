@@ -41,6 +41,7 @@ CMD = {
     "disable": 0x05,
     "getpos":  0x03,   # stepper only
     "engage":  0x20,   # stepper: slot(0..3), 255=disengage
+    "laser":   0x21,   # stepper (laser node only): state(0/1)
     "servo":   0x10,   # vacuum: idx(0=all,1..N) angle(0..180)
     "ssr":     0x11,   # vacuum: state(0/1)
     "switch":  0x14,   # vacuum: read NC switch level
