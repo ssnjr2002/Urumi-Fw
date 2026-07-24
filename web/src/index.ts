@@ -3,11 +3,15 @@
  *
  * SVG + machine config → .plan → schedule → wire packets.
  *
+ * Plus the comms layer (wire/link) — the real-time RS485 transport
+ * abstraction, and operatorJog for manual tap/click jogging with blend.
+ *
  * This barrel is the *entire* supported surface. Anything not re-exported here
  * (individual pipeline stages like flatten/constrain/plan, geometry helpers,
- * bezier math) is internal and may change without notice. The browser
- * `SerialTransport` lives in a separate entry point and is intentionally not
- * exported here so Node consumers don't pull in WebSerial.
+ * bezier math) is internal and may change without notice. The real-port
+ * Transport backends (WebSerial, Node serialport) are NOT exported from this
+ * barrel — import them directly from wire/link/backends/ so a Node consumer
+ * never pulls browser globals.
  */
 
 // ── config: machine calibration + tool model ────────────────────────────────
@@ -169,3 +173,130 @@ export {
     FRAME_PREFIX_SIZE,
     FRAMED_PACKET_SIZE,
 } from "./wire/format/packet.js";
+
+export { packJog, stampSeq, unpackMicrosegment } from "./wire/format/packet.js";
+
+// ── wire format: STATUS_RSP + machine enums ──────────────────────────────────
+export {
+    MachineState,
+    AlarmReason,
+    RunningReason,
+    MachineStatus,
+    parseGetstate,
+    parseStatusRsp,
+    packStatusRsp,
+    axisMask,
+    AXIS_BITS,
+    type AxisLetter,
+} from "./wire/format/status.js";
+
+// ── wire format: remaining framing constants ──────────────────────────────────
+export {
+    MAGIC_JOG,
+    MAGIC_ACK,
+    MAGIC_NACK,
+    MAGIC_ABORT,
+    MAGIC_SEQRESET,
+    MAGIC_STATUS_REQ,
+    MAGIC_STATUS_RSP,
+    MAGIC_STATUS_RSP_V1,
+    MAGIC_CFG_SET,
+    MAGIC_CFG_GET,
+    MAGIC_CFG_RDY,
+    MAGIC_CFG_ACK,
+    MAGIC_CFG_NACK,
+    MAGIC_CFG_DATA,
+    STATUS_RSP_SIZE,
+    NACK_CRC,
+    NACK_FULL,
+    NACK_BAD_MAGIC,
+    NACK_PAUSED,
+    NACK_BAD_STATE,
+    NACK_ABORTING,
+} from "./wire/format/constants.js";
+
+export {
+    CFG_DATA_HDR_SIZE,
+    MAX_CFG_PAYLOAD,
+    CFG_NACK_CRC,
+    CFG_NACK_TOO_BIG,
+    CFG_NACK_BAD_STATE,
+    CFG_NACK_FLASH,
+    CFG_NACK_TIMEOUT,
+    packCfgDataHeader,
+    unpackCfgDataHeader,
+    type CfgDataHeader,
+} from "./wire/format/cfg.js";
+
+// ── wire/link: transport abstraction ──────────────────────────────────────────
+export {
+    type Transport,
+    type Writable,
+    type Readable,
+    type AbortToken,
+    AbortFlag,
+} from "./wire/link/transport.js";
+
+export { Sink, LatestSink } from "./wire/link/sink.js";
+export { Writer, type WriterStats } from "./wire/link/writer.js";
+
+export {
+    Demux,
+    Ack,
+    Nack,
+    CfgReply,
+    makeSinks,
+    type DemuxSinks,
+    type DemuxStats,
+} from "./wire/link/demux.js";
+
+export {
+    Session,
+    ListSource,
+    StreamContext,
+    type PacketSource,
+    type SessionStats,
+    DEFAULT_WINDOW,
+} from "./wire/link/session.js";
+
+export {
+    Link,
+    type Attachable,
+} from "./wire/link/link.js";
+
+// ── wire/link: control-plane command helpers ──────────────────────────────────
+export {
+    ping,
+    pingNode,
+    pingAll,
+    getState,
+    getStatus,
+    getPos,
+    nodePos,
+    vacServo,
+    vacPump,
+    enable,
+    disable,
+    setOrigin,
+    pause,
+    resume,
+    cancel,
+    stop,
+    unalarm,
+    axisMap,
+} from "./wire/link/commands.js";
+
+// ── wire/link backends: Sim (env-agnostic; real ports import from the subpath) ─
+export { SimTransport } from "./wire/link/backends/sim.js";
+
+// ── operatorJog ──────────────────────────────────────────────────────────────
+export {
+    makeJog,
+    ClickJogSource,
+    jogClick,
+    jogTo,
+    type JogHandle,
+    type ClickJogSourceOptions,
+    type JogToOptions,
+    type AxisCalibration,
+} from "./operatorJog/index.js";
