@@ -170,7 +170,17 @@ export class LatestSink<T> {
                 waiter.timer = setTimeout(() => {
                     const i = this._waiters.indexOf(waiter);
                     if (i >= 0) this._waiters.splice(i, 1);
-                    resolve([null, this._stamp] as const);
+                    // Latest-wins: a stale sample is still a valid
+                    // state read, so return the current value on
+                    // timeout (D9). Python's wait_update returns
+                    // (self._value, self._stamp) on timeout — value
+                    // is None only if nothing ever arrived.
+                    const v = this._value;
+                    if (v !== null) {
+                        resolve([v, this._stamp] as const);
+                    } else {
+                        resolve([null, this._stamp] as const);
+                    }
                 }, timeoutMs);
             }
         });

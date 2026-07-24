@@ -134,4 +134,24 @@ describe("operatorJog: jogTo (closed absolute go-to)", () => {
             expect(await handle.done).toBe(true);
         });
     });
+
+    // Locks the wire-frame delta formula: invert=true → wire delta is
+    // coordinate delta × -1. target +10mm → wireTarget = -1600 steps.
+    // machinePos tracks wire steps, so after idle pos[0] ≈ -1600.
+    it("invert=true: wire-frame delta is negative for a positive coordinate target", { timeout: 15000 }, async () => {
+        const invAxis: AxisCalibration = { stepsPerUnit: 160, invert: true };
+        await withLink(async (link) => {
+            const handle = jogTo(link, invAxis, 0, 10, 10);
+            const ok = await handle.done;
+            expect(ok).toBe(true);
+
+            await waitIdle(link, 5000);
+            const st = await link.getStatus();
+            expect(st.state).toBe(MachineState.IDLE);
+            // Wire delta = targetCoordSteps * (invert ? -1 : 1) - wireCurrent
+            //   = +1600 * (-1) - 0 = -1600 wire steps.
+            // machinePos tracks wire steps directly.
+            expect(st.pos![0]).toBeLessThan(-1000);
+        }, { frameMs: 5 });
+    });
 });
