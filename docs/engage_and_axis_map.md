@@ -2,8 +2,8 @@
 
 **Branch:** `node-types`
 **Date:** 2026-07-23
-**Status:** PROPOSED. Design agreed; not yet implemented. This is the single
-source of truth for the ENGAGE / axis-map work ("Workstream A").
+**Status:** DECIDED (§12 resolved 2026-07-24); Stage 1 in progress. This is the
+single source of truth for the ENGAGE / axis-map work ("Workstream A").
 
 Continues [node_type_architecture.md](node_type_architecture.md) §7, which
 sketched `CMD_ENGAGE` and left it as an open decision. Cross-links:
@@ -12,6 +12,30 @@ sketched `CMD_ENGAGE` and left it as an open decision. Cross-links:
 [../src/rp2350/core1/core1.cpp](../src/rp2350/core1/core1.cpp) (stream packer),
 [../src/node/types/stepper/stepper.cpp](../src/node/types/stepper/stepper.cpp)
 (stepper RX ISR + hooks).
+
+---
+
+## 0. Current state & migration tasklist
+
+Partial: the §9 relay-bound cleanup has started; nothing else is built.
+
+- [x] §9 relay bounds — `BUS_ADDR_MAX`(8)/`AXIS_NODE_MAX`(4)/`node_isAxis()`;
+  `enable`/`disable`/`pingnode`/`nodepos` widened, axis bookkeeping gated
+  behind `node_isAxis()` (`control_plane.cpp`). *Uncommitted, intermingled
+  with knife WIP.*
+- [ ] **Stage 1** — node runtime slot + `CMD_ENGAGE` + `ENABLE` decouple (§4).
+- [ ] **Stage 2** — Pico **Core-0** `slotNode[4]` diff (emits granular
+  `CMD_ENGAGE` via the existing single-word FIFO — no `FIFO_AXIS_MAP`) +
+  `axis_map` set/read verbs + `ALARM_CONFIG` boot gate + exit guards (§5–6).
+- [ ] **Stage 4** — dual-head PAUSED switch bring-up (§7).
+- [ ] `AXIS_NODE_MAX` is **repurposed**, not retired — it becomes the motion-slot
+  count (4), the width of the `axes_*` masks (rename to `MOTION_SLOTS` when §9
+  lands). `node_isAxis()` becomes a `slotNode[]` membership test.
+
+**§12 decisions (2026-07-24):** Q1 IDLE/PAUSED/ALARM (reject RUNNING+ESTOP);
+Q2 keep `BUS_ADDR_MAX`=8 as a CLI typo-reject, Pico otherwise relays+times out;
+Q3 include the no-arg `axis_map` read-back; Q4 handshake stays deferred. The
+diff moves to **Core 0** (see §5) — `FIFO_AXIS_MAP` is dropped entirely.
 
 ---
 
@@ -102,9 +126,22 @@ static uint8_t slot        = SLOT_NONE;   // set by CMD_ENGAGE
 static uint8_t stepBitMask = 0;           // derived from slot; 0 while disengaged
 static uint8_t dirBitMask  = 0;
 ```
-
 `node_setup()` no longer seeds the mask from `NODE_ID`. A node boots
 **disengaged and ignores the stream** until told otherwise.
+
+**Decided:** the slot is a named enum — self-documenting in the packer/ISR at
+zero cost:
+
+```c
+enum Slot : uint8_t {
+  SLOT_X = 0,
+  SLOT_Y,
+  SLOT_Z,
+  SLOT_A,
+  SLOT_NONE = 255
+};
+```
+
 
 ### 4.2 `CMD_ENGAGE` — a stepper type-specific command
 
@@ -170,45 +207,58 @@ Core 1's stream packer stays positional: axis `i` → slot `i`, `{dx,dy,dz,da}` 
 slots 0..3. `ENGAGE` only rebinds *which physical node* occupies each slot; the
 logical axis→slot map and the MSEG format (`dx/dy/dz/da`) are untouched.
 
-### 5.2 The Pico owns the current map and diffs it
+### 5.2 Core 0 owns the current map and diffs it
 
-The Pico holds `slotNode[4]` — the node id currently engaged to each slot (or
-`SLOT_NONE`). `axis_map <x> <y> <z> <a>` is a *desired* map; applying it is a
-diff:
+**The map abstraction is a host↔Pico (USB) concern, so it lives on Core 0** —
+the core that owns the USB side. The bus side (Core 1) has no idea the map
+exists; it only speaks the granular `CMD_ENGAGE` verb. This is the clean split:
+
+| Core | Role |
+|---|---|
+| **Core 0** (USB) | owns `slotNode[4]`, parses `axis_map`, diffs, gates on the result |
+| **Core 1** (bus) | dumb relay — sends one `CMD_ENGAGE` packet, ACKs back |
+
+`slotNode[4]` — the node id currently engaged to each slot (or `SLOT_NONE`) — is
+**local to Core 0**; nothing is shared across cores. `axis_map <x> <y> <z> <a>`
+is a *desired* map; applying it is a diff Core 0 runs directly:
 
 ```
 for slot i in 0..3:
     if desired[i] == slotNode[i]:      continue          # unchanged, no packet
     if slotNode[i] != NONE:            ENGAGE(slotNode[i], SLOT_NONE)   # drop old
     if desired[i] != NONE:             ENGAGE(desired[i], i)           # bind new
-    collect ACKs
-commit slotNode = desired  iff every packet ACKed
+    collect ACK
+commit slotNode = desired  iff every ENGAGE ACKed
 ```
 
 So a head switch (`axis_map` changing only slots 2,3) emits exactly the two
-disengage + two engage packets; X,Y are untouched. This diff is bus work, so it
-executes on **Core 1** (which owns RS485); Core 0 parses the CLI verb and hands
-the four ids to Core 1.
+disengage + two engage packets; X,Y are untouched.
 
-**Core0→Core1 transfer.** Four node ids do not fit the existing single-word
-`(cmd<<8)|node` FIFO form. Use a dedicated two-word message (rare path —
-connect / head-switch, never hot):
+**Each `ENGAGE` is an ordinary single-node command over the existing FIFO** —
+Core 0 pushes it, Core 1 relays it and pushes back the ACK, identical to how
+`CMD_SERVO_SET` already works. The slot rides the payload byte exactly like
+`vac_servo` packs its idx (there is **no** `FIFO_AXIS_MAP` two-word message):
 
 ```
-word0 = (FIFO_AXIS_MAP << 24) | (desired[0] << 16) | (desired[1] << 8) | desired[2]
-word1 =  desired[3]
+push:  ((uint32_t)slot << 16) | (CMD_ENGAGE << 8) | node   # slot 0..3, or 0xFF = disengage
+core1: slot = (word >> 16) & 0xFF → send [node][CMD_ENGAGE][1][slot][crc], await ACK, push result
 ```
 
-`FIFO_AXIS_MAP` is a new top-byte marker beside `FIFO_STEP_DEBUG` (0xF0). Core 1
-pops both words, runs the diff, and pushes back a readiness result (all-ACKed, or
-which node timed out) the same way `GET_POS` pushes a second word.
+A diff is up to 8 sequential blocking round-trips (≤4 disengage + ≤4 engage) —
+fine, it is a cold path (connect / head-switch, never hot).
 
-### 5.3 `disengage` (bare) — global safe state
+### 5.3 Partial failure is safe by idempotency — no rollback
 
-A no-arg `disengage` clears the whole map: address every currently-engaged node
-with `ENGAGE(SLOT_NONE)`, ACKed, and set `slotNode[*] = NONE`. Used at job end /
-estop recovery / a clean start — **not** for head switches (it would drop X,Y and
-force a re-engage). This is distinct from the map diff, which is surgical.
+If an `ENGAGE` mid-diff times out, Core 0 **does not commit**: `slotNode` keeps
+its old value, the machine stays `ALARM_CONFIG`, and the offending node is
+reported. The engages already sent stay applied on their nodes, but since the
+committed map is unchanged, a **retry re-diffs against the old map and re-sends
+the same packets** — and re-engaging a node to the slot it already holds is
+idempotent. So retry-after-partial-failure needs no rollback logic.
+
+Because `slotNode[]` is Core-0-local, both the no-arg `axis_map` read-back (§8)
+and the §9 `node_isAxis()` membership test are plain local reads — no query path,
+no cross-core hazard.
 
 ---
 
@@ -221,8 +271,8 @@ are advisory and enforce nothing). Reuse the reserved `ALARM_CONFIG` reason
 
 ```
 boot                     → STATE_ALARM, ALARM_CONFIG      (all motion ingest refused)
-axis_map x y z a         → Core 1 diffs, engages nodes, collects ACKs
-   all slots ACKed       → mapReady; if reason==ALARM_CONFIG → STATE_IDLE
+axis_map x y z a         → Core 0 diffs, engages nodes (via Core 1 relay), collects ACKs
+   all slots ACKed       → commit slotNode; if reason==ALARM_CONFIG → STATE_IDLE
    any ACK failed        → stay ALARM_CONFIG, report the offending node
 ```
 
@@ -271,7 +321,7 @@ switch to head B (at the PAUSED tool-change boundary):
    all four ACK → resume
 ```
 
-The parked head's nodes stay **ENABLEd** (holding torque) but disengaged. The
+The parked head's nodes can stay **ENABLED** (holding torque) or disabled, upto the host, but disengaged. The
 switch happens only at the PAUSED boundary the protocol already defines
 (re-engaging mid-stream is forbidden, §6.2).
 
@@ -335,7 +385,7 @@ a type, the move the node side deliberately avoided).
 | `common.h` | `CMD_ENGAGE` | `0x20` | stepper type-specific; payload `[slot]`, `0xFF` = disengage |
 | `stepper.cpp` | `SLOT_NONE` | `0xFF` | disengaged sentinel |
 | `shared.h` | `ALARM_CONFIG` | `2` (exists, reserved) | boot / map-not-ready gate |
-| `shared.h` | `FIFO_AXIS_MAP` | new top-byte marker | Core0→Core1 two-word map message |
+| `control_plane.cpp` | `slotNode[4]` | Core-0-local | committed node↔slot map; diffed per `axis_map` |
 | CLI (`control_plane.cpp`) | `axis_map <x> <y> <z> <a>` | — | setter; IDLE/PAUSED/ALARM |
 | CLI | `axis_map` (no-arg) | — | optional read-back (§8) |
 | CLI | `disengage` | — | global safe-state clear (§5.3) |
@@ -358,13 +408,17 @@ single-head 4-axis setups no longer stream until the host issues `axis_map`* (ev
 configuration — but it is a behavior change for anything that assumed
 `NODE_ID`-seeded slots. There is no `NODE_ID` fallback by design.
 
-## 12. Open questions
+## 12. Open questions — RESOLVED (2026-07-24)
 
-1. **`axis_map` allowed states** — proposed IDLE/PAUSED/ALARM, reject RUNNING
-   (§6.2). Confirm.
-2. **`BUS_ADDR_MAX`** — what the type-blind verbs (§9) settle the bus-address
-   ceiling to; ties into whether the Pico ever bounds ids at all or just relays
-   and times out.
-3. **Pull-only `axis_map` read-back** (§8) — include now or defer.
-4. **Handshake** — the connect-time re-assert + config pull (§8) are deferred;
-   they land when the connect handshake itself is built.
+1. **`axis_map` allowed states** → **IDLE / PAUSED / ALARM; reject RUNNING and
+   ESTOP** (§6.2). Reuses the existing `stateIs(...)` guard.
+2. **`BUS_ADDR_MAX`** → **keep at 8** as a cheap CLI typo-reject; the Pico does
+   not otherwise bound engage targets — it addresses, relays, and times out (an
+   unreachable id fails the ACK gate). `AXIS_NODE_MAX` is repurposed as the
+   motion-slot count, not retired (§0).
+3. **Pull-only `axis_map` read-back** → **include now.** Trivial Core-0-local
+   read of `slotNode[]`, printed in setter syntax so it round-trips (§8).
+4. **Handshake** → **deferred**, unchanged — lands with the connect handshake.
+
+Also decided: the stream slot is a named `enum Slot` (§4.1); the diff runs on
+**Core 0**, not Core 1, and `FIFO_AXIS_MAP` is dropped (§5.2).
