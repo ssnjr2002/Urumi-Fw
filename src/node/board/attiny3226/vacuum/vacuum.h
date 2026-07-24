@@ -2,10 +2,9 @@
 // The pin bindings the portable vacuum logic (types/vacuum/) needs. Board-level
 // bus/LED config is in ../board.h.
 //
-// Ported from the standalone servo_ssr_node.ino sketch. The one deliberate
-// deviation: the sketch put RS485 DE on PA4; we keep the fleet-wide DE=PA3 (see
-// ../board.h) so this node wires onto the same bus as every other node, which
-// frees PA4 for the (currently dormant) zero-cross detect input below.
+// Ported from the standalone servo_ssr_node.ino sketch. DE is on PA4 (see
+// ../board.h), matching the physical board — which leaves PA3 free for the NC
+// switch input below.
 #pragma once
 #include <Arduino.h>
 
@@ -31,9 +30,7 @@ static const uint8_t HAL_VACUUM_SERVO_PINS[HAL_VACUUM_SERVO_COUNT + 1] = {
 #define HAL_VACUUM_LED_RED   PIN_PA6
 #define HAL_VACUUM_LED_GREEN PIN_PA7
 
-// ─── Zero-cross detect (RESERVED, dormant) ──────────────────────────────────
-// Reserved for a future mains zero-cross detector feeding true integral-cycle
-// timing into ssrUpdate() (see the TODO(zcd) seam in types/vacuum/vacuum.cpp).
-// Nothing drives or reads this yet — it is claimed here so the pin is not reused.
-// PA4 has analog-comparator / event-input capability, which a real ZCD wants.
-#define HAL_VACUUM_ZCD_PIN   PIN_PA4
+// ─── NC switch input ────────────────────────────────────────────────────────
+// Normally-closed switch on PA3 (free because DE is on PA4). Wired switch→GND
+// with the internal pull-up, so: closed/rest = LOW, opened/actuated = HIGH.
+#define HAL_VACUUM_SWITCH_PIN   PIN_PA3

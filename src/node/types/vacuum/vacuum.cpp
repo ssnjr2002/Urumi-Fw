@@ -109,6 +109,7 @@ void node_setup(void) {
     pinMode(HAL_VACUUM_SSR_PIN, OUTPUT);   digitalWrite(HAL_VACUUM_SSR_PIN, LOW);
     pinMode(HAL_VACUUM_LED_RED, OUTPUT);   digitalWrite(HAL_VACUUM_LED_RED, LOW);
     pinMode(HAL_VACUUM_LED_GREEN, OUTPUT); digitalWrite(HAL_VACUUM_LED_GREEN, HIGH);
+    pinMode(HAL_VACUUM_SWITCH_PIN, INPUT_PULLUP);   // NC switch → GND
 }
 
 // ─── Hooks: CMD_ENABLE / CMD_DISABLE effect ─────────────────────────────────
@@ -153,6 +154,14 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             else        ssrStop();
             reply[0] = NODE_ID; reply[1] = CMD_SSR_SET; reply[2] = 0;
             *replyLen = 4;
+            return true;
+        }
+        case CMD_SWITCH_GET: {
+            // [dest][cmd][len=0][crc] → reply [id][cmd][1][level][crc]
+            uint8_t level = digitalRead(HAL_VACUUM_SWITCH_PIN) ? 1 : 0;
+            reply[0] = NODE_ID; reply[1] = CMD_SWITCH_GET; reply[2] = 1;
+            reply[3] = level;
+            *replyLen = 5;
             return true;
         }
         default:

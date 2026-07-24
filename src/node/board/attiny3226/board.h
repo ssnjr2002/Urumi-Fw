@@ -4,14 +4,16 @@
 //
 // The 3226 is the SOIC-20 sibling of the 3224 (same tinyAVR-2 peripherals, more
 // I/O). We use it for pin-hungry types like the 6-servo + SSR vacuum node that
-// do not fit the 3224's SOIC-14. The bus/LED bindings are kept identical to the
-// 3224 board so every node on the fleet shares the same RS485 wiring:
-//   TX PA1, RX PA2, DE PA3, LED PA5.
+// do not fit the 3224's SOIC-14. Wiring per the vacuum board (servo_ssr_node):
+//   TX PA1, RX PA2, DE PA4, LED PA5/6/7.
+// NOTE: DE is PA4 here, not PA3 as on the ATtiny3224 stepper boards — the
+// vacuum board is physically wired that way, which leaves PA3 free (used by the
+// vacuum type's NC switch input; see vacuum/vacuum.h).
 #pragma once
 #include <Arduino.h>
 
 // ─── RS485 / USART ──────────────────────────────────────────────────────────
-#define HAL_RS485_DE_PIN    PIN_PA3
+#define HAL_RS485_DE_PIN    PIN_PA4
 #define HAL_USART_INST      USART1
 #define HAL_USART_RXC_vect  USART1_RXC_vect
 
@@ -33,6 +35,12 @@
 // RS485 direction control — ATtiny has no hardware XDIR, so toggle DE manually.
 #define HAL_RS485_TX_BEGIN() do { digitalWrite(HAL_RS485_DE_PIN, HIGH); delayMicroseconds(10); } while(0)
 #define HAL_RS485_TX_END()   do { delayMicroseconds(1); digitalWrite(HAL_RS485_DE_PIN, LOW); } while(0)
+
+// ─── Debug console USART (opt-in, -DNODE_DEBUG_CONSOLE only) ─────────────────
+// RS485 is USART1, so the free USART for a bench console is USART0 (PB2 TX /
+// PB3 RX) — megaTinyCore's `Serial`. Used by debug_console.cpp. NOTE: unverified
+// on the physical vacuum board — confirm the adapter is wired to PB2/PB3.
+#define HAL_DEBUG_SERIAL   Serial
 
 // ─── LED ────────────────────────────────────────────────────────────────────
 // The vacuum node board carries an RGB status LED (PA5/PA6/PA7). The core's

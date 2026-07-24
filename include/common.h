@@ -18,6 +18,10 @@
 // Vacuum:
 #define CMD_SERVO_SET 0x10  // payload: [idx(1..N)][state(0/1)]; ACK echoes cmd
 #define CMD_SSR_SET   0x11  // payload: [state(0=off, 1=on w/ soft-start)]; ACK echoes cmd
+#define CMD_SWITCH_GET 0x14 // no payload; reply payload: [level] (raw PA3 digitalRead)
+// Knife (oscillating drag knife):
+#define CMD_KNIFE_OSC    0x12  // payload: [state(0=off, 1=on)]; ACK echoes cmd
+#define CMD_KNIFE_BLOWER 0x13  // payload: [duty(0..100 %)]; ACK echoes cmd
 
 // ─── Node types (CMD_GET_TYPE) ───────────────────────────────────────────────
 // Canonical registry, mirrored on the host (web/src/config NodeType).
