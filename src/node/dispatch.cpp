@@ -46,16 +46,25 @@ static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
     }
 }
 
-// Called by loop() once node-id + CRC have passed.
-void dispatchCommand(const uint8_t* pkt, uint8_t len) {
-    uint8_t reply[MAX_PACKET_LEN];
+// Route a validated command to its handler, staging the reply into `reply`.
+// Returns replyLen (0 = command unhandled / no reply). Shared by the RS485 path
+// (dispatchCommand) and the optional USART0 debug console (debug_console.cpp) so
+// both drive the exact same handlers — the console can never diverge from wire
+// behaviour. `reply` must be at least MAX_PACKET_LEN.
+uint8_t routeCommand(const uint8_t* pkt, uint8_t len, uint8_t* reply) {
     uint8_t replyLen = 0;
-
     bool handled = handleGenericCommand(pkt, reply, &replyLen);
     if (!handled)
         handled = node_handle_command(pkt, len, reply, &replyLen);
+    return handled ? replyLen : 0;
+}
 
-    if (handled && replyLen)
+// Called by loop() once node-id + CRC have passed.
+void dispatchCommand(const uint8_t* pkt, uint8_t len) {
+    uint8_t reply[MAX_PACKET_LEN];
+    uint8_t replyLen = routeCommand(pkt, len, reply);
+
+    if (replyLen)
         sendCommandPacket(reply, replyLen);
     // Unknown command → silently dropped (same as a bad-CRC packet).
 }

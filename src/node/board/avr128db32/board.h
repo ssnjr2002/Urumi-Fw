@@ -47,6 +47,11 @@
     HAL_USART_INST.CTRLB = USART_RXEN_bm | USART_TXEN_bm; \
 } while(0)
 
+// ─── Debug console USART (opt-in, -DNODE_DEBUG_CONSOLE only) ─────────────────
+// RS485 is USART2, so the free USART wired to this board's USB-serial adapter is
+// USART1 (PC0 TX / PC1 RX) — DxCore's `Serial1`. Used by debug_console.cpp.
+#define HAL_DEBUG_SERIAL   Serial1
+
 // ─── RGB LED ────────────────────────────────────────────────────────────────
 // HAL_LED_PIN maps to red for protocol-compatible single-LED behaviour.
 #define HAL_LED_PIN       PIN_PF2
