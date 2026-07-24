@@ -23,7 +23,7 @@
  */
 
 import type { MicroSegment } from "./microsegment.js";
-import { MAGIC_MICROSEG, PACKET_SIZE } from "./constants.js";
+import { MAGIC_JOG, MAGIC_MICROSEG, PACKET_SIZE } from "./constants.js";
 import { crc8 } from "./crc.js";
 
 // ── .bin framing (length-prefixed) ──────────────────────────────────────────────
@@ -56,6 +56,26 @@ export function packMicrosegment(ms: MicroSegment, seq = 0): Uint8Array {
     dv.setUint8(25, crc8(u8, 0, PACKET_SIZE - 1));
 
     return u8;
+}
+
+/**
+ * Stamp a rolling 8-bit sequence number into pad byte [22] of a MicroSegment /
+ * Jog packet and recompute the CRC. The Pico only executes a packet whose seq
+ * matches the one it expects next; a stale Go-Back-N retransmit (one it already
+ * accepted) is ACKed but NOT executed. Without that, any go-back after the
+ * Pico accepted in-flight packets would duplicate motion — a permanent position
+ * offset. Ported from host/protocol/packets.py stamp_seq.
+ */
+export function stampSeq(packet: Uint8Array, seq: number): Uint8Array {
+    const magic = packet[0];
+    if (packet.length !== PACKET_SIZE || (magic !== MAGIC_MICROSEG && magic !== MAGIC_JOG)) {
+        throw new Error("stampSeq: not a 26-byte MicroSegment or Jog packet");
+    }
+    const out = new Uint8Array(PACKET_SIZE);
+    out.set(packet.subarray(0, PACKET_SIZE - 1));
+    out[22] = seq & 0xff;
+    out[PACKET_SIZE - 1] = crc8(out, 0, PACKET_SIZE - 1);
+    return out;
 }
 
 // ── stream serialisers ────────────────────────────────────────────────────────
