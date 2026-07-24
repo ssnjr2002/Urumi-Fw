@@ -58,6 +58,25 @@ export function packMicrosegment(ms: MicroSegment, seq = 0): Uint8Array {
     return u8;
 }
 
+/** Pack a MicroSegment as a JOG packet (magic 0xAE, same 26-byte layout as MSEG). */
+export function packJog(ms: MicroSegment, seq = 0): Uint8Array {
+    const buf = new ArrayBuffer(PACKET_SIZE);
+    const dv = new DataView(buf);
+    const u8 = new Uint8Array(buf);
+
+    dv.setUint8(0, MAGIC_JOG);
+    dv.setInt32(1, ms.dx, true);
+    dv.setInt32(5, ms.dy, true);
+    dv.setInt32(9, ms.dz, true);
+    dv.setInt32(13, ms.da, true);
+    dv.setUint32(17, ms.interval, true);
+    dv.setUint8(21, ms.flags & 0xff);
+    dv.setUint8(22, seq & 0xff);
+    dv.setUint8(25, crc8(u8, 0, PACKET_SIZE - 1));
+
+    return u8;
+}
+
 /**
  * Stamp a rolling 8-bit sequence number into pad byte [22] of a MicroSegment /
  * Jog packet and recompute the CRC. The Pico only executes a packet whose seq
