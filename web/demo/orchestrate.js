@@ -2,17 +2,22 @@
  * orchestrate.js — demo: .plan + config.json → schedule → stream via WebSerial
  *
  * Flow:
- *   1. Load config.json + .plan → parseConfig + loadPlan
+ *   1. Load config.json + .plan → loadConfig + loadPlan
  *   2. scheduleMounts + walkSchedule → WalkEvent[]
- *   3. Connect WebSerial → SerialTransport
+ *   3. Connect WebSerial → WebSerialTransport → Link
  *   4. Pre-flight: ping → enable all → setorigin
  *   5. Walk events in order:
  *        pause  → show swap UI, wait for operator confirm
- *        motion → sendStream (MSEG Go-Back-N), then poll until IDLE
+ *        motion → pack segments, Link.stream(), then poll until IDLE
+ *
+ * Migrated from demo/transport.js to wire/link — the status poller can now
+ * run DURING a stream (the demux routes by magic, so STATUS_RSP never lands
+ * in the text sink), but the demo poll skips during a job for safety parity
+ * with the old code.
  */
 
 import {
-    parseConfig,
+    loadConfig,
     loadPlan,
     scheduleMounts,
     walkSchedule,
@@ -22,8 +27,10 @@ import {
     MICRO_LIFT,
     MICRO_PAUSE,
     TOOL_PROFILES_BY_TYPE,
+    Link,
+    MachineState,
 } from '../src/index.js';
-import { SerialTransport, STATE_IDLE, STATE_PAUSED, STATE_ESTOP, STATE_ALARM } from './transport.js';
+import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
 // ── elements ──────────────────────────────────────────────────────────────────
 
@@ -60,10 +67,12 @@ let plan      = null;
 let events    = null;   // WalkEvent[]
 let schedule  = null;
 
-const transport = new SerialTransport();
+let link = null;               // Link over the open WebSerialTransport
 let statusPollTimer = null;
 let pauseResolve = null;
 let jobRunning   = false;
+
+function isConnected() { return link !== null && !link.closed; }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -170,11 +179,13 @@ loadBtn.addEventListener('click', async () => {
             readBinaryFile(planFile),
         ]);
 
-        const parsed = parseConfig(cfgText);
+        // loadConfig = parse + validate (see bench.js buildConfig).
+        const parsed = loadConfig(cfgText);
         if (!parsed.ok) {
             setLoadStatus('Config errors:\n' + parsed.errors.join('\n'), 'error');
             return;
         }
+        for (const w of parsed.warnings) console.warn('[config]', w);
         config = parsed.config;
         plan   = loadPlan(planBytes);
 
@@ -195,7 +206,7 @@ loadBtn.addEventListener('click', async () => {
         );
 
         dumpBtn.disabled = false;
-        if (transport.connected) runBtn.disabled = false;
+        if (isConnected()) runBtn.disabled = false;
 
     } catch (e) {
         setLoadStatus(`Error: ${e.message}`, 'error');
@@ -251,9 +262,10 @@ if (!('serial' in navigator)) {
 }
 
 connectBtn.addEventListener('click', async () => {
-    if (transport.connected) {
+    if (isConnected()) {
         stopStatusPoll();
-        await transport.disconnect();
+        await link.close();
+        link = null;
         setConnStatus('Disconnected.', 'idle');
         connectBtn.textContent = 'Connect via WebSerial';
         [pingBtn, enableBtn, originBtn, stopBtn].forEach(b => b.disabled = true);
@@ -263,7 +275,8 @@ connectBtn.addEventListener('click', async () => {
 
     try {
         setConnStatus('Connecting…', 'working');
-        await transport.connect();
+        const transport = await WebSerialTransport.requestAndOpen();
+        link = new Link(transport);
         setConnStatus('Connected at 115200 baud.', 'ok');
         connectBtn.textContent = 'Disconnect';
         [pingBtn, enableBtn, originBtn, stopBtn].forEach(b => b.disabled = false);
@@ -278,11 +291,11 @@ connectBtn.addEventListener('click', async () => {
 
 function startStatusPoll() {
     statusPollTimer = setInterval(async () => {
-        if (!transport.connected || jobRunning) return;
+        if (!isConnected() || jobRunning) return;
         try {
-            const s = await transport.pollStatus();
-            machineState.textContent = stateName(s.machineState);
-            machineState.dataset.state = s.machineState;
+            const s = await link.getStatus();
+            machineState.textContent = stateName(s.state);
+            machineState.dataset.state = s.state;
         } catch { /* ignore */ }
     }, 500);
 }
@@ -296,7 +309,7 @@ function stopStatusPoll() {
 
 pingBtn.addEventListener('click', async () => {
     try {
-        const reply = await transport.sendText('ping');
+        const reply = await link.command('ping');
         machineState.textContent = reply === 'pong' ? 'Pico alive ✓' : `unexpected: ${reply}`;
     } catch (e) {
         machineState.textContent = `ping failed: ${e.message}`;
@@ -305,7 +318,7 @@ pingBtn.addEventListener('click', async () => {
 
 enableBtn.addEventListener('click', async () => {
     try {
-        const reply = await transport.sendText('enable');
+        const reply = await link.command('enable');
         machineState.textContent = `enable → ${reply}`;
     } catch (e) {
         machineState.textContent = `enable failed: ${e.message}`;
@@ -314,7 +327,7 @@ enableBtn.addEventListener('click', async () => {
 
 originBtn.addEventListener('click', async () => {
     try {
-        const reply = await transport.sendText('setorigin');
+        const reply = await link.command('setorigin');
         machineState.textContent = `setorigin → ${reply}`;
     } catch (e) {
         machineState.textContent = `setorigin failed: ${e.message}`;
@@ -324,7 +337,9 @@ originBtn.addEventListener('click', async () => {
 stopBtn.addEventListener('click', async () => {
     try {
         jobRunning = false;
-        await transport.sendText('stop');
+        // fire-and-forget — estop correlates nothing, never queues behind
+        // a pending text command (confirmation arrives on the status sink)
+        await link.send('stop');
         machineState.textContent = 'ESTOP sent.';
         setRunStatus('Stopped.', 'error');
         pausePanel.hidden = true;
@@ -338,7 +353,7 @@ stopBtn.addEventListener('click', async () => {
 
 runBtn.addEventListener('click', () => {
     if (jobRunning) return;
-    if (!events || !transport.connected) return;
+    if (!events || !isConnected()) return;
     runJob();
 });
 
@@ -348,12 +363,12 @@ resumeBtn.addEventListener('click', () => {
 
 async function waitForIdle() {
     for (;;) {
-        const s = await transport.pollStatus();
-        machineState.textContent = stateName(s.machineState);
-        machineState.dataset.state = s.machineState;
-        if (s.machineState === STATE_IDLE) return;
-        if (s.machineState === STATE_ESTOP || s.machineState === STATE_ALARM) {
-            throw new Error(`Machine in ${stateName(s.machineState)}`);
+        const s = await link.getStatus();
+        machineState.textContent = stateName(s.state);
+        machineState.dataset.state = s.state;
+        if (s.state === MachineState.IDLE) return;
+        if (s.state === MachineState.ESTOP || s.state === MachineState.ALARM) {
+            throw new Error(`Machine in ${stateName(s.state)}`);
         }
         await new Promise(r => setTimeout(r, 150));
     }
@@ -361,12 +376,12 @@ async function waitForIdle() {
 
 async function waitForPaused() {
     for (;;) {
-        const s = await transport.pollStatus();
-        machineState.textContent = stateName(s.machineState);
-        machineState.dataset.state = s.machineState;
-        if (s.machineState === STATE_PAUSED) return;
-        if (s.machineState === STATE_ESTOP || s.machineState === STATE_ALARM) {
-            throw new Error(`Machine in ${stateName(s.machineState)}`);
+        const s = await link.getStatus();
+        machineState.textContent = stateName(s.state);
+        machineState.dataset.state = s.state;
+        if (s.state === MachineState.PAUSED) return;
+        if (s.state === MachineState.ESTOP || s.state === MachineState.ALARM) {
+            throw new Error(`Machine in ${stateName(s.state)}`);
         }
         await new Promise(r => setTimeout(r, 150));
     }
@@ -389,17 +404,13 @@ async function runJob() {
     pausePanel.hidden = true;
     progressWrap.hidden = false;
 
-    const axesMask = requiredAxesMask(plan);
-
     // Walk events: alternating pause / motion(s) groups.
     // Collect consecutive motion events into one stream batch so we only issue
-    // seqreset + MCFG once per phase.
+    // one Go-Back-N stream per phase.
     let i = 0;
     let phaseIdx = 0;
     let totalSent = 0;
     let machinePaused = false; // true only after a batch that ended with MICRO_PAUSE
-
-    const motionEventCount = events.filter(e => e.kind === 'motion').length;
 
     try {
         while (i < events.length) {
@@ -410,13 +421,9 @@ async function runJob() {
                 const result = await showSwapAndWait(ev.swapIn, ev.swapOut);
                 pausePanel.hidden = true;
                 if (result === 'stop') throw new Error('Job cancelled by stop.');
-                // Only send resume if the machine is actually in PAUSED state.
-                // The first swap happens before any streaming, so the machine is
-                // still IDLE — no resume needed. Subsequent swaps follow a batch
-                // that ended with MICRO_PAUSE, so the machine is PAUSED.
                 if (machinePaused) {
                     console.log('[orchestrate] sending resume…');
-                    const resumeReply = await transport.sendText('resume');
+                    const resumeReply = await link.command('resume');
                     console.log('[orchestrate] resume reply:', resumeReply);
                     machinePaused = false;
                 } else {
@@ -448,20 +455,20 @@ async function runJob() {
                 machinePaused = true;
             }
 
-            const batchStart = totalSent;
             setRunStatus(`Streaming ${batch.length.toLocaleString()} segments…`, 'working');
 
-            await transport.sendStream(batch, axesMask, (sent, total) => {
-                const overall = batchStart + sent;
-                progressFill.style.width = `${(sent / total * 100).toFixed(1)}%`;
-                progressText.textContent = `${sent.toLocaleString()} / ${total.toLocaleString()}`;
-            });
+            // Pre-pack with rolling seq; Link.stream() calls resetSeq() once per
+            // phase.  No MCFG preamble — the firmware does not handle it yet.
+            const packets = batch.map((seg, idx) => packMicrosegment(seg, idx & 0xff));
+            await link.stream(packets, 16);
 
             totalSent += batch.length;
+            progressFill.style.width = '100%';
+            progressText.textContent = `${totalSent.toLocaleString()} total`;
 
             if (nextIsPause) {
                 setRunStatus('Waiting for machine to pause…', 'working');
-                console.log('[orchestrate] waiting for STATE_PAUSED…');
+                console.log('[orchestrate] waiting for PAUSED…');
                 await waitForPaused();
                 console.log('[orchestrate] machine is PAUSED — showing swap UI');
             } else {
