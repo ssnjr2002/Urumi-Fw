@@ -20,6 +20,16 @@ import type { Sink, LatestSink } from "./sink.js";
 import { Ack, Nack } from "./demux.js";
 import { ListSource, DEFAULT_WINDOW, Session } from "./session.js";
 import type { PacketSource, StreamContext } from "./session.js";
+
+/**
+ * Optional backend hook: a Transport may expose `attach(demux)` so the Sim
+ * (which feeds replies straight into the demux via `write`) can reference it.
+ * Real-port backends (WebSerial, Node) ignore this — they pump bytes through
+ * `read()`, which the Link's own read loop drains into the demux.
+ */
+export interface Attachable {
+    attach(demux: Demux): void;
+}
 import {
     MAGIC_ABORT,
     MAGIC_SEQRESET,
@@ -48,6 +58,14 @@ export class Link {
         this.sinks = makeSinks();
         this.demux = new Demux(this.sinks);
         this.writer = new Writer(transport as Writable);
+        // A Sim-style backend feeds replies straight into the demux via its
+        // own `write`; real-port backends pump bytes through `read()` which
+        // the _pump loop drains into the same demux. Either way, hand the
+        // demux to the backend if it wants it.
+        const attachable = transport as Transport & Partial<Attachable>;
+        if (typeof attachable.attach === "function") {
+            attachable.attach(this.demux);
+        }
         this._readLoop = this._pump();
     }
 

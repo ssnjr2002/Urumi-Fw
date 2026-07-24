@@ -78,6 +78,34 @@ export function stampSeq(packet: Uint8Array, seq: number): Uint8Array {
     return out;
 }
 
+/**
+ * Unpack a 26-byte MSEG/JOG packet into a MicroSegment. Throws on bad magic or
+ * CRC. The inverse of packMicrosegment; used by the in-process SimTransport to
+ * extract the deltas it integrates into position. Ported from Python
+ * unpack_microsegment.
+ */
+export function unpackMicrosegment(data: Uint8Array): MicroSegment {
+    if (data.length !== PACKET_SIZE) {
+        throw new Error(`Expected ${PACKET_SIZE} bytes, got ${data.length}`);
+    }
+    const magic = data[0];
+    if (magic !== MAGIC_MICROSEG && magic !== MAGIC_JOG) {
+        throw new Error(`Bad magic: 0x${magic!.toString(16).padStart(2, "0")} (expected MSEG or JOG)`);
+    }
+    if (crc8(data, 0, PACKET_SIZE - 1) !== data[PACKET_SIZE - 1]) {
+        throw new Error("CRC mismatch");
+    }
+    const dv = new DataView(data.buffer, data.byteOffset, PACKET_SIZE);
+    return {
+        dx: dv.getInt32(1, true),
+        dy: dv.getInt32(5, true),
+        dz: dv.getInt32(9, true),
+        da: dv.getInt32(13, true),
+        interval: dv.getUint32(17, true),
+        flags: dv.getUint8(21),
+    };
+}
+
 // ── stream serialisers ────────────────────────────────────────────────────────
 
 /**
