@@ -348,6 +348,28 @@ bool handleCommand(const String& input) {
         return true;
     }
 
+    // ── laser <node> <on|off> — stepper-node laser gate ──────────────────────
+    // Relays CMD_LASER to a stepper node (only the one built -DNODE_HAS_LASER
+    // handles it; others NAK → "timeout"). State in the FIFO payload byte.
+    if (input.startsWith("laser")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* p = argAfter(input, 5);
+        char* endPtr;
+        uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
+        while (*endPtr == ' ') endPtr++;
+        if (node < 1 || node > BUS_ADDR_MAX || *endPtr == '\0') {
+            Serial.println("err usage"); return true;
+        }
+        uint8_t state = parseState(endPtr) ? 1u : 0u;
+        multicore_fifo_push_blocking(((uint32_t)state << 16) |
+                                     ((uint32_t)CMD_LASER << 8) | node);
+        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
+        return true;
+    }
+
     // ── knife_blower <node> <0..100> — oscillating-knife blower PWM duty ───────
     // Relays CMD_KNIFE_BLOWER to a knife node. Duty (0..100 %) packed into the
     // FIFO word's payload byte for Core 1.

@@ -515,6 +515,16 @@ void processBus() {
                 multicore_fifo_push_blocking((CMD_KNIFE_BLOWER << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
                 break;
             }
+            // Stepper laser gate — only the -DNODE_HAS_LASER node ACKs; others NAK
+            // (rxLen 0xFF → Core 0 prints "timeout").
+            case CMD_LASER: {
+                uint8_t state = payload & 0x01;
+                uint8_t pkt[5] = {node, CMD_LASER, 1, state, 0};
+                sendPacket(pkt, 5);
+                uint8_t rxLen = receivePacket(node, CMD_LASER, nullptr, RESPONSE_TIMEOUT_MS);
+                multicore_fifo_push_blocking((CMD_LASER << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
+                break;
+            }
         }
     } else {
         delayMicroseconds(10);
