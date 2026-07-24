@@ -15,6 +15,7 @@
 // Type-specific (0x20+): only one type is compiled per node, so values may
 // overlap between types. Stepper:
 #define CMD_GET_POS  0x03   // stepper: reply payload: int32 absolute position (BE)
+#define CMD_ENGAGE   0x20   // stepper: payload [slot]; 0..3 = stream slot, 0xFF = disengage
 // Vacuum:
 #define CMD_SERVO_SET 0x10  // payload: [idx(0=all,1..N)][angle(0..180)]; ACK echoes cmd
 // Host-side on/off shorthand: the Pico expands "on" to this angle before it hits

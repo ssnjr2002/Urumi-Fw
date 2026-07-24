@@ -19,12 +19,28 @@
 // driver init (AVR128DB32 TMC/DRV) provides a strong override in its
 // drivers.cpp. Call unconditionally — no null check needed.
 
+// ─── Stream slot (runtime-assigned via CMD_ENGAGE) ──────────────────────────
+// The stream byte is four 2-bit slots (bit(2n)=step, bit(2n+1)=dir). Which slot
+// this node reads is NO LONGER derived from NODE_ID — it is assigned at runtime
+// by the Pico's axis map (docs/engage_and_axis_map.md §4). The node boots
+// DISENGAGED (slot == SLOT_NONE): masks are 0, so it ignores every stream byte
+// and its position freezes until an ENGAGE binds it to a slot.
+enum Slot : uint8_t {
+    SLOT_X = 0,
+    SLOT_Y,
+    SLOT_Z,
+    SLOT_A,
+    SLOT_NONE = 0xFF,
+};
+
 // ─── Stepper state ──────────────────────────────────────────────────────────
+// slot/masks change at runtime (ENGAGE handler, main-loop context) and are read
+// in the RX ISR → volatile.
 static volatile int32_t absolutePosition = 0;
-static volatile bool    streamEnabled    = false;
+static volatile uint8_t slot             = SLOT_NONE;
+static volatile uint8_t stepBitMask      = 0;
+static volatile uint8_t dirBitMask       = 0;
 static bool             currentDir       = false;
-static uint8_t          stepBitMask      = 0;
-static uint8_t          dirBitMask       = 0;
 
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 // Guard against an env that compiles this type dir with the wrong identity flag.
@@ -50,14 +66,15 @@ void node_setup(void) {
     HAL_STEP_TIMER_INST.CTRLB   = HAL_STEP_TIMER_CNTMODE;
     HAL_STEP_TIMER_INST.INTCTRL = HAL_STEP_TIMER_CAPT_bm;
 
-    // Stream slot from NODE_ID (until CMD_ENGAGE makes this runtime-assigned).
-    stepBitMask = 1 << ((NODE_ID - 1) * 2);
-    dirBitMask  = 1 << (((NODE_ID - 1) * 2) + 1);
+    // No NODE_ID-derived slot — the node boots disengaged and ignores the stream
+    // until CMD_ENGAGE binds it (slot/masks stay at their SLOT_NONE/0 defaults).
 }
 
-// CMD_ENABLE / CMD_DISABLE effect: gate stream processing + energize motor.
+// CMD_ENABLE / CMD_DISABLE effect: ENERGIZE ONLY — no stream role.
+// The stream gate is the slot (ENGAGE), decoupled from holding torque (ENABLE):
+// a parked dual-head axis is ENABLED (holds Z height) but DISENGAGED (ignores
+// the stream). See docs/engage_and_axis_map.md §4.3.
 void node_set_enabled(bool on) {
-    streamEnabled = on;
     if (on) HAL_MOTOR_ENABLE();
     else    HAL_MOTOR_DISABLE();
 }
@@ -76,6 +93,25 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
                          uint8_t* reply, uint8_t* replyLen) {
     (void)len;
     switch (pkt[1]) {
+        case CMD_ENGAGE: {
+            // payload [slot]: 0..3 bind to that stream slot, 0xFF = disengage.
+            uint8_t s = pkt[3];
+            if (s == SLOT_NONE) {
+                stepBitMask = 0;
+                dirBitMask  = 0;
+            } else if (s <= SLOT_A) {
+                stepBitMask = 1 << (s * 2);
+                dirBitMask  = 1 << (s * 2 + 1);
+            } else {
+                return false;              // out-of-range slot → NAK, keep state
+            }
+            slot = s;
+            reply[0] = NODE_ID;
+            reply[1] = CMD_ENGAGE;
+            reply[2] = 0;
+            *replyLen = 4;
+            return true;
+        }
         case CMD_GET_POS: {
             int32_t pos = readPositionAtomic();
             reply[0] = NODE_ID;
@@ -104,7 +140,7 @@ ISR(HAL_USART_RXC_vect) {
     }
 
     frame_stream_reset();           // 9th bit = 0 → stream byte
-    if (!streamEnabled) return;
+    if (slot == SLOT_NONE) return;  // disengaged → ignore stream, freeze position
 
     bool stepReq = (b & stepBitMask) != 0;
     bool newDir  = (b & dirBitMask)  != 0;
