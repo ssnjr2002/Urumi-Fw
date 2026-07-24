@@ -16,7 +16,10 @@
 // overlap between types. Stepper:
 #define CMD_GET_POS  0x03   // stepper: reply payload: int32 absolute position (BE)
 // Vacuum:
-#define CMD_SERVO_SET 0x10  // payload: [idx(1..N)][state(0/1)]; ACK echoes cmd
+#define CMD_SERVO_SET 0x10  // payload: [idx(0=all,1..N)][angle(0..180)]; ACK echoes cmd
+// Host-side on/off shorthand: the Pico expands "on" to this angle before it hits
+// the RS485 wire (see core1.cpp); "off" is 0. The node itself takes a raw angle.
+#define SERVO_ON_ANGLE  180
 #define CMD_SSR_SET   0x11  // payload: [state(0=off, 1=on w/ soft-start)]; ACK echoes cmd
 #define CMD_SWITCH_GET 0x14 // no payload; reply payload: [level] (raw PA3 digitalRead)
 // Knife (oscillating drag knife):

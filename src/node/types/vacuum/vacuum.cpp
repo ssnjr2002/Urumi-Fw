@@ -10,6 +10,7 @@
 // node_handle_command; the SSR burst-fire / soft-start machine is ticked from
 // node_loop.
 #include <Arduino.h>
+#include <Servo.h>
 #include "board.h"
 #include "vacuum/vacuum.h"
 #include "common.h"
@@ -23,6 +24,27 @@ static_assert(NODE_TYPE == NODE_TYPE_VACUUM,
 
 // ─── Hooks: identity ────────────────────────────────────────────────────────
 uint8_t node_type(void) { return NODE_TYPE_VACUUM; }
+
+// ─── Servos (angle-controlled, 1-based to match the wire) ───────────────────
+// Each channel is a real RC servo driven via the Servo lib (50 Hz 1–2 ms pulse),
+// NOT a plain on/off GPIO. Index 0 is unused so servo commands stay 1-based;
+// servoAngle[] tracks the last commanded angle for the green idle LED.
+static Servo   servos[HAL_VACUUM_SERVO_COUNT + 1];
+static uint8_t servoAngle[HAL_VACUUM_SERVO_COUNT + 1];
+
+static void servoWriteAngle(uint8_t idx, uint8_t angle) {
+    if (angle > 180) angle = 180;
+    servos[idx].write(angle);
+    servoAngle[idx] = angle;
+}
+
+// Green = idle: lit only while every servo is parked at 0°.
+static void servoUpdateLed(void) {
+    bool anyOn = false;
+    for (uint8_t i = 1; i <= HAL_VACUUM_SERVO_COUNT; i++)
+        if (servoAngle[i]) { anyOn = true; break; }
+    digitalWrite(HAL_VACUUM_LED_GREEN, anyOn ? LOW : HIGH);
+}
 
 // ─── SSR soft-start (non-blocking integral-cycle control) ───────────────────
 // An AC solid-state relay only switches at a mains zero-crossing, so the finest
@@ -103,8 +125,8 @@ static void ssrStop() {
 // ─── Hooks: setup ───────────────────────────────────────────────────────────
 void node_setup(void) {
     for (uint8_t i = 1; i <= HAL_VACUUM_SERVO_COUNT; i++) {
-        pinMode(HAL_VACUUM_SERVO_PINS[i], OUTPUT);
-        digitalWrite(HAL_VACUUM_SERVO_PINS[i], LOW);
+        servos[i].attach(HAL_VACUUM_SERVO_PINS[i]);
+        servoWriteAngle(i, 0);              // park at 0°
     }
     pinMode(HAL_VACUUM_SSR_PIN, OUTPUT);   digitalWrite(HAL_VACUUM_SSR_PIN, LOW);
     pinMode(HAL_VACUUM_LED_RED, OUTPUT);   digitalWrite(HAL_VACUUM_LED_RED, LOW);
@@ -132,17 +154,17 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
                          uint8_t* reply, uint8_t* replyLen) {
     switch (pkt[1]) {
         case CMD_SERVO_SET: {
-            // [dest][cmd][len=2][idx][state][crc]
+            // [dest][cmd][len=2][idx(0=all,1..N)][angle(0..180)][crc]
             if (len < 6) return false;
             uint8_t idx   = pkt[3];
-            uint8_t state = pkt[4];
-            if (idx >= 1 && idx <= HAL_VACUUM_SERVO_COUNT) {
-                digitalWrite(HAL_VACUUM_SERVO_PINS[idx], state ? HIGH : LOW);
-                bool anyOn = false;
+            uint8_t angle = pkt[4];
+            if (idx == 0) {
                 for (uint8_t i = 1; i <= HAL_VACUUM_SERVO_COUNT; i++)
-                    if (digitalRead(HAL_VACUUM_SERVO_PINS[i])) { anyOn = true; break; }
-                digitalWrite(HAL_VACUUM_LED_GREEN, anyOn ? LOW : HIGH);
+                    servoWriteAngle(i, angle);
+            } else if (idx <= HAL_VACUUM_SERVO_COUNT) {
+                servoWriteAngle(idx, angle);
             }
+            servoUpdateLed();
             reply[0] = NODE_ID; reply[1] = CMD_SERVO_SET; reply[2] = 0;
             *replyLen = 4;
             return true;

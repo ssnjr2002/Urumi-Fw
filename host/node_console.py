@@ -12,14 +12,15 @@ node appends it. The node replies "OK <hex...>" / "NAK ..." / "ERR ...".
 Usage:
     # one-shot:
     python node_console.py --port COM7 switch
-    python node_console.py --port COM7 servo 1 1
+    python node_console.py --port COM7 servo 1 90     # servo 1 -> 90 deg
+    python node_console.py --port COM7 servo 0 180     # all servos -> 180 deg
     python node_console.py --port COM7 ssr 1
     python node_console.py --port COM7 raw 05 14 00      # arbitrary frame (no CRC)
 
     # interactive REPL (no command given):
     python node_console.py --port COM7
     node5> ping
-    node5> servo 3 1
+    node5> servo 3 45
     node5> switch
 
 Requires: pyserial  (pip install pyserial)
@@ -39,7 +40,7 @@ CMD = {
     "enable":  0x04,
     "disable": 0x05,
     "getpos":  0x03,   # stepper only
-    "servo":   0x10,   # vacuum: idx(1..N) state(0/1)
+    "servo":   0x10,   # vacuum: idx(0=all,1..N) angle(0..180)
     "ssr":     0x11,   # vacuum: state(0/1)
     "switch":  0x14,   # vacuum: read NC switch level
     "knife":   0x12,   # knife: state(0/1)

@@ -66,10 +66,19 @@ static bool parseState(const char* s) {
     return false;
 }
 
-// Provisional bus-address ceiling for the peripheral relay verbs (servo/pump).
-// A real node registry replaces this range check when the axis-map/ENGAGE work
-// lands; until then a wrong id simply relays and times out.
+// Provisional bus-address ceiling for command relays. A real node registry
+// replaces this range check when the axis-map/ENGAGE work lands
+// (docs/engage_and_axis_map.md §9); until then a wrong id simply relays and
+// times out.
 #define BUS_ADDR_MAX 8
+
+// Axis nodes are the ones that occupy a stream slot and carry the
+// axes_enabled/homed bookkeeping. Until axis_map/ENGAGE makes the axis→node
+// binding runtime, the axis nodes are statically ids 1..AXIS_NODE_MAX, matching
+// the Core 1 stream packer (axis i → node i+1). node_isAxis() is the current
+// stand-in for "is this id in the axis map"; it becomes a real map lookup then.
+#define AXIS_NODE_MAX 4
+static inline bool node_isAxis(uint8_t n) { return n >= 1 && n <= AXIS_NODE_MAX; }
 
 // Handle one control-plane text line. Replies with exactly one line per the wire
 // contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
@@ -121,7 +130,7 @@ bool handleCommand(const String& input) {
         }
         const char* a = argAfter(input, 7);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
-        if (node < 1 || node > 4) { Serial.println("err usage"); return true; }
+        if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
         multicore_fifo_push_blocking(((uint32_t)CMD_GET_POS << 8) | node);
         if ((multicore_fifo_pop_blocking() & 0xFFFF) == 0) {
             Serial.printf("node %d timeout\n", node);
@@ -172,8 +181,9 @@ bool handleCommand(const String& input) {
     }
 
     // ── pingnode [all|<id>] — relay an RS485 ping (IDLE/PAUSED/ALARM) ──────────
-    // Bare / `all` pings nodes 1-4 (one reply line each, bring-up convenience);
-    // `pingnode <id>` is the single-line form the host pre-flight uses.
+    // Bare / `all` scans the whole bus 1..BUS_ADDR_MAX (one reply line, bring-up
+    // convenience — surfaces peripherals, not just axes); `pingnode <id>` is the
+    // single-line form the host pre-flight uses.
     if (input.startsWith("pingnode")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
@@ -186,31 +196,35 @@ bool handleCommand(const String& input) {
             // — which then answered the next three commands. A single CLI
             // `pingnode` desynced the control plane for the rest of the session.
             Serial.print("nodes");
-            for (uint8_t n = 1; n <= 4; n++)
+            for (uint8_t n = 1; n <= BUS_ADDR_MAX; n++)
                 Serial.printf(" %d=%s", n, relayNode(CMD_PING, n) ? "ok" : "timeout");
             Serial.println();
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
-            if (node < 1 || node > 4) { Serial.println("err bad_node"); return true; }
+            if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
             Serial.printf("node %d %s\n", node, relayNode(CMD_PING, node) ? "ok" : "timeout");
         }
         return true;
     }
 
     // ── enable / disable [all|<id>] (IDLE/PAUSED/ALARM) ───────────────────────
+    // `all` targets the axes only (energizing a peripheral pump via "all" is not
+    // wanted). An explicit <id> relays to any bus node — the generic CMD_ENABLE
+    // effect is delegated per type (motor energize / pump on …); the axis
+    // bookkeeping applies only when the id is an axis node (docs/engage_and_axis_map.md §9).
     if (input.startsWith("enable")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
         }
         const char* a = argAfter(input, 6);
         if (*a == '\0' || strcmp(a, "all") == 0) {
-            for (uint8_t n = 1; n <= 4; n++) relayNode(CMD_ENABLE, n);
-            axes_enabled = 0x0F;
+            for (uint8_t n = 1; n <= AXIS_NODE_MAX; n++) relayNode(CMD_ENABLE, n);
+            axes_enabled = (1 << AXIS_NODE_MAX) - 1;
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
-            if (node < 1 || node > 4) { Serial.println("err bad_node"); return true; }
+            if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
             relayNode(CMD_ENABLE, node);
-            axes_enabled |= (1 << (node - 1));
+            if (node_isAxis(node)) axes_enabled |= (1 << (node - 1));
         }
         Serial.println("ok");
         return true;
@@ -221,23 +235,26 @@ bool handleCommand(const String& input) {
         }
         const char* a = argAfter(input, 7);
         if (*a == '\0' || strcmp(a, "all") == 0) {
-            for (uint8_t n = 1; n <= 4; n++) relayNode(CMD_DISABLE, n);
+            for (uint8_t n = 1; n <= AXIS_NODE_MAX; n++) relayNode(CMD_DISABLE, n);
             axes_enabled = 0;
             axes_homed   = 0;          // de-energised → datum lost on every axis
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
-            if (node < 1 || node > 4) { Serial.println("err bad_node"); return true; }
+            if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
             relayNode(CMD_DISABLE, node);
-            axes_enabled &= ~(1 << (node - 1));
-            axes_homed   &= ~(1 << (node - 1));
+            if (node_isAxis(node)) {
+                axes_enabled &= ~(1 << (node - 1));
+                axes_homed   &= ~(1 << (node - 1));   // de-energised → datum lost
+            }
         }
         Serial.println("ok");
         return true;
     }
 
     // ── vac_servo <node> <idx> <on|off> — vacuum-node servo channel ───────────
-    // Relays CMD_SERVO_SET to a peripheral node. The arg is packed into the FIFO
-    // word's payload byte (high nibble = idx, low bit = state) for Core 1.
+    // Relays CMD_SERVO_SET to a peripheral node. idx 0 = all servos, 1..6 = one.
+    // The arg is packed into the FIFO word's payload byte (high nibble = idx, low
+    // bit = on/off) for Core 1, which expands on→SERVO_ON_ANGLE before the wire.
     if (input.startsWith("vac_servo")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
@@ -247,7 +264,7 @@ bool handleCommand(const String& input) {
         uint8_t node = (uint8_t)strtoul(p,      &endPtr, 10);
         uint8_t idx  = (uint8_t)strtoul(endPtr, &endPtr, 10);
         while (*endPtr == ' ') endPtr++;
-        if (node < 1 || node > BUS_ADDR_MAX || idx < 1 || idx > 6 || *endPtr == '\0') {
+        if (node < 1 || node > BUS_ADDR_MAX || idx > 6 || *endPtr == '\0') {
             Serial.println("err usage"); return true;
         }
         uint8_t payload = (uint8_t)((idx << 4) | (parseState(endPtr) ? 1u : 0u));
@@ -275,6 +292,71 @@ bool handleCommand(const String& input) {
                                      ((uint32_t)CMD_SSR_SET << 8) | node);
         bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
         Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
+        return true;
+    }
+
+    // ── knife_osc <node> <on|off> — oscillating-knife oscillator toggle ───────
+    // Relays CMD_KNIFE_OSC to a knife node. State packed into the FIFO word's
+    // payload byte (low bit) for Core 1.
+    if (input.startsWith("knife_osc")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* p = argAfter(input, 9);
+        char* endPtr;
+        uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
+        while (*endPtr == ' ') endPtr++;
+        if (node < 1 || node > BUS_ADDR_MAX || *endPtr == '\0') {
+            Serial.println("err usage"); return true;
+        }
+        uint8_t state = parseState(endPtr) ? 1u : 0u;
+        multicore_fifo_push_blocking(((uint32_t)state << 16) |
+                                     ((uint32_t)CMD_KNIFE_OSC << 8) | node);
+        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
+        return true;
+    }
+
+    // ── knife_blower <node> <0..100> — oscillating-knife blower PWM duty ───────
+    // Relays CMD_KNIFE_BLOWER to a knife node. Duty (0..100 %) packed into the
+    // FIFO word's payload byte for Core 1.
+    if (input.startsWith("knife_blower")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* p = argAfter(input, 12);
+        char* endPtr;
+        uint8_t node = (uint8_t)strtoul(p,      &endPtr, 10);
+        long    duty = strtol(endPtr, &endPtr, 10);
+        if (node < 1 || node > BUS_ADDR_MAX || duty < 0 || duty > 100) {
+            Serial.println("err usage"); return true;
+        }
+        multicore_fifo_push_blocking(((uint32_t)(uint8_t)duty << 16) |
+                                     ((uint32_t)CMD_KNIFE_BLOWER << 8) | node);
+        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
+        return true;
+    }
+
+    // ── vac_switch <node> — read the vacuum node's NC switch (PA3) ────────────
+    // Query: pushes CMD_SWITCH_GET; Core 1 returns two words (status, level) like
+    // nodepos. NC switch wired to GND w/ pull-up: level 0 = closed (rest),
+    // level 1 = open (actuated).
+    if (input.startsWith("vac_switch")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* a = argAfter(input, 10);
+        uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
+        if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
+        multicore_fifo_push_blocking(((uint32_t)CMD_SWITCH_GET << 8) | node);
+        if ((multicore_fifo_pop_blocking() & 0xFFFF) == 0) {
+            Serial.printf("node %d timeout\n", node);
+            return true;
+        }
+        uint8_t level = (uint8_t)multicore_fifo_pop_blocking();
+        Serial.printf("node %d switch %s (level=%d)\n",
+                      node, level ? "open" : "closed", level);
         return true;
     }
 
@@ -337,7 +419,10 @@ bool handleCommand(const String& input) {
         char* endPtr;
         uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
         long count = strtol(endPtr, &endPtr, 10);
-        if (node >= 1 && node <= 4 && count != 0) {
+        // node here addresses a stream SLOT ((node-1)*2), not a bus id, so it is
+        // bounded by the axis/slot count, not BUS_ADDR_MAX.
+        // if (node_isAxis(node) && count != 0) {
+        if ((node >= 1 || node <= 6) && count != 0) {
             uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
             if (count < 0) mag |= 0x8000;
             uint32_t word = ((uint32_t)FIFO_STEP_DEBUG << 24) | ((uint32_t)node << 16) | mag;

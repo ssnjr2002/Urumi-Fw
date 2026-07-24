@@ -336,7 +336,7 @@ static void emitDebugSteps(uint32_t req) {
     bool     neg  = (low & 0x8000) != 0;
     uint16_t count = low & 0x7FFF;
 
-    if (node < 1 || node > 4) return;
+    if (node < 1 || node > 6) return;
 
     uint8_t bit = (node - 1) * 2;
     uint8_t streamByte = (1 << bit);                  // step bit
@@ -451,12 +451,14 @@ void processBus() {
                 break;
             }
             // Vacuum-node commands. payload carries the args (packed by Core 0):
-            //   servo — high nibble = channel idx (1..6), low bit = state
+            //   servo — high nibble = channel idx (0=all, 1..6), low bit = on/off
             //   ssr   — low bit = state
+            // Host talks on/off; here on expands to SERVO_ON_ANGLE (off = 0°) so
+            // the node sees a raw angle on the wire.
             case CMD_SERVO_SET: {
                 uint8_t idx   = (payload >> 4) & 0x0F;
-                uint8_t state =  payload       & 0x01;
-                uint8_t pkt[6] = {node, CMD_SERVO_SET, 2, idx, state, 0};
+                uint8_t angle = (payload & 0x01) ? SERVO_ON_ANGLE : 0;
+                uint8_t pkt[6] = {node, CMD_SERVO_SET, 2, idx, angle, 0};
                 sendPacket(pkt, 6);
                 uint8_t rxLen = receivePacket(node, CMD_SERVO_SET, nullptr, RESPONSE_TIMEOUT_MS);
                 multicore_fifo_push_blocking((CMD_SERVO_SET << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
@@ -468,6 +470,36 @@ void processBus() {
                 sendPacket(pkt, 5);
                 uint8_t rxLen = receivePacket(node, CMD_SSR_SET, nullptr, RESPONSE_TIMEOUT_MS);
                 multicore_fifo_push_blocking((CMD_SSR_SET << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
+                break;
+            }
+            case CMD_SWITCH_GET: {
+                // Query — replies with a 1-byte level. Two FIFO words back
+                // (status, then level) like GET_POS.
+                uint8_t pkt[4] = {node, CMD_SWITCH_GET, 0, 0};
+                sendPacket(pkt, 4);
+                uint8_t lvl[1];
+                uint8_t rxLen = receivePacket(node, CMD_SWITCH_GET, lvl, RESPONSE_TIMEOUT_MS);
+                multicore_fifo_push_blocking((CMD_SWITCH_GET << 24) | (node << 16) | (rxLen == 1 ? 1u : 0u));
+                if (rxLen == 1) multicore_fifo_push_blocking((uint32_t)lvl[0]);
+                break;
+            }
+            // Knife-node commands. payload carries the arg (packed by Core 0):
+            //   osc    — low bit = oscillator state
+            //   blower — duty 0..100 %
+            case CMD_KNIFE_OSC: {
+                uint8_t state = payload & 0x01;
+                uint8_t pkt[5] = {node, CMD_KNIFE_OSC, 1, state, 0};
+                sendPacket(pkt, 5);
+                uint8_t rxLen = receivePacket(node, CMD_KNIFE_OSC, nullptr, RESPONSE_TIMEOUT_MS);
+                multicore_fifo_push_blocking((CMD_KNIFE_OSC << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
+                break;
+            }
+            case CMD_KNIFE_BLOWER: {
+                uint8_t duty = payload;  // 0..100, validated by Core 0
+                uint8_t pkt[5] = {node, CMD_KNIFE_BLOWER, 1, duty, 0};
+                sendPacket(pkt, 5);
+                uint8_t rxLen = receivePacket(node, CMD_KNIFE_BLOWER, nullptr, RESPONSE_TIMEOUT_MS);
+                multicore_fifo_push_blocking((CMD_KNIFE_BLOWER << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
                 break;
             }
         }

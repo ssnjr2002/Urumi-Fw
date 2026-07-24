@@ -33,8 +33,8 @@
 } while(0)
 
 // RS485 direction control — ATtiny has no hardware XDIR, so toggle DE manually.
-#define HAL_RS485_TX_BEGIN() do { digitalWrite(HAL_RS485_DE_PIN, HIGH); delayMicroseconds(10); } while(0)
-#define HAL_RS485_TX_END()   do { delayMicroseconds(1); digitalWrite(HAL_RS485_DE_PIN, LOW); } while(0)
+#define HAL_RS485_TX_BEGIN() do { digitalWrite(HAL_RS485_DE_PIN, HIGH); delayMicroseconds(5); } while(0)
+#define HAL_RS485_TX_END()   do { delayMicroseconds(5); digitalWrite(HAL_RS485_DE_PIN, LOW); } while(0)
 
 // ─── Debug console USART (opt-in, -DNODE_DEBUG_CONSOLE only) ─────────────────
 // RS485 is USART1, so the free USART for a bench console is USART0 (PB2 TX /
