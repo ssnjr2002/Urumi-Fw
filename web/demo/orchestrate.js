@@ -29,6 +29,7 @@ import {
     TOOL_PROFILES_BY_TYPE,
     Link,
     MachineState,
+    fatalReasonName,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -277,6 +278,7 @@ connectBtn.addEventListener('click', async () => {
         setConnStatus('Connecting…', 'working');
         const transport = await WebSerialTransport.requestAndOpen();
         link = new Link(transport);
+        link.verbose = true; // per-event ACK/NACK/fatal trail on console.debug
         setConnStatus('Connected at 115200 baud.', 'ok');
         connectBtn.textContent = 'Disconnect';
         [pingBtn, enableBtn, originBtn, stopBtn].forEach(b => b.disabled = false);
@@ -404,6 +406,22 @@ async function runJob() {
     pausePanel.hidden = true;
     progressWrap.hidden = false;
 
+    // Pre-flight: the machine must be IDLE (and not ALARM/PAUSED) before we
+    // resetSeq + stream — a non-IDLE machine NACKs every packet with
+    // NACK_BAD_STATE, which before D17 looked like a silent success. Surface
+    // it explicitly so the operator knows to unalarm / set origin first.
+    try {
+        const pre = await link.getStatus();
+        if (pre.state !== MachineState.IDLE && pre.state !== MachineState.PAUSED) {
+            throw new Error(`Machine is ${stateName(pre.state)} — unalarm or set origin before running.`);
+        }
+    } catch (e) {
+        setRunStatus(`Pre-flight failed: ${e.message}`, 'error');
+        jobRunning = false;
+        runBtn.disabled = false;
+        return;
+    }
+
     // Walk events: alternating pause / motion(s) groups.
     // Collect consecutive motion events into one stream batch so we only issue
     // one Go-Back-N stream per phase.
@@ -460,7 +478,17 @@ async function runJob() {
             // Pre-pack with rolling seq; Link.stream() calls resetSeq() once per
             // phase.  No MCFG preamble — the firmware does not handle it yet.
             const packets = batch.map((seg, idx) => packMicrosegment(seg, idx & 0xff));
-            await link.stream(packets, 16);
+            const result = await link.stream(packets, 16);
+
+            if (!result.ok) {
+                const reason = result.fatalReason !== undefined
+                    ? fatalReasonName(result.fatalReason)
+                    : 'unknown';
+                const dm = link.demux.stats();
+                const msg = `Stream failed: ${reason} — emitted ${result.emitted}, acked ${result.acked}, nacks ${result.nacks}, demux.unknownBytes=${dm.unknownBytes}`;
+                console.error('[orchestrate] ' + msg, { result, demux: dm, writer: link.writer.stats() });
+                throw new Error(msg);
+            }
 
             totalSent += batch.length;
             progressFill.style.width = '100%';

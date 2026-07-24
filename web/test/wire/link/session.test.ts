@@ -25,7 +25,7 @@ import {
 import { Writer } from "../../../src/wire/link/writer.js";
 import { Sink } from "../../../src/wire/link/sink.js";
 import { Ack, Nack } from "../../../src/wire/link/demux.js";
-import { NACK_FULL, NACK_BAD_MAGIC, PACKET_SIZE } from "../../../src/wire/format/constants.js";
+import { NACK_FULL, NACK_BAD_MAGIC, NACK_BAD_STATE, PACKET_SIZE } from "../../../src/wire/format/constants.js";
 import { packMicrosegment } from "../../../src/wire/format/packet.js";
 import { microSegment } from "../../../src/wire/format/microsegment.js";
 
@@ -173,7 +173,7 @@ describe("wire/link/session: backpressure (NACK_FULL)", () => {
 });
 
 describe("wire/link/session: fatal NACKs", () => {
-    it("NACK_BAD_MAGIC is fatal — run() returns false", async () => {
+    it("NACK_BAD_MAGIC is fatal — run() returns false, fatalReason set", async () => {
         const ackSink = new Sink<AckOrNack>("ack");
         const pico = new FakePico(ackSink);
         // override: NACK_BAD_MAGIC on the first packet
@@ -191,6 +191,36 @@ describe("wire/link/session: fatal NACKs", () => {
         const sess = new Session(writer, ackSink, new ListSource(pkts(4)), undefined, 4);
         expect(await sess.run()).toBe(false);
         expect(sess.stats().nacks).toBeGreaterThan(0);
+        expect(sess.fatalReason).toBe(NACK_BAD_MAGIC);
+        expect(sess.result()).toMatchObject({ ok: false, fatalReason: NACK_BAD_MAGIC });
+    });
+
+    it("NACK_BAD_STATE is fatal — fatalReason set to the NACK reason", async () => {
+        const ackSink = new Sink<AckOrNack>("ack");
+        const pico = new FakePico(ackSink);
+        const origWrite = pico.write.bind(pico);
+        void origWrite;
+        pico.write = (bytes: Uint8Array) => {
+            pico.writes.push(bytes);
+            for (let off = 0; off + PACKET_SIZE <= bytes.length; off += PACKET_SIZE) {
+                pico.sentPackets.push(bytes.subarray(off, off + PACKET_SIZE));
+                ackSink.put(new Nack(NACK_BAD_STATE));
+            }
+            return Promise.resolve();
+        };
+        const writer = new Writer(pico);
+        const sess = new Session(writer, ackSink, new ListSource(pkts(4)), undefined, 4);
+        expect(await sess.run()).toBe(false);
+        expect(sess.fatalReason).toBe(NACK_BAD_STATE);
+    });
+});
+
+describe("wire/link/session: fatal reason surfaces on result()", () => {
+    it("a successful run leaves fatalReason undefined and ok=true", async () => {
+        const { sess } = sessionOf(new RecordingSource(pkts(4)));
+        await sess.run();
+        expect(sess.fatalReason).toBeUndefined();
+        expect(sess.result()).toMatchObject({ ok: true, acked: 4 });
     });
 });
 

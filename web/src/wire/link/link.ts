@@ -18,7 +18,7 @@ import { Writer } from "./writer.js";
 import { Demux, makeSinks, type DemuxSinks } from "./demux.js";
 import type { Sink, LatestSink } from "./sink.js";
 import { Ack, Nack } from "./demux.js";
-import { ListSource, DEFAULT_WINDOW, Session } from "./session.js";
+import { ListSource, DEFAULT_WINDOW, Session, fatalReasonName, type StreamResult } from "./session.js";
 import type { PacketSource, StreamContext } from "./session.js";
 
 /**
@@ -52,6 +52,13 @@ export class Link {
      */
     textDesyncs = 0;
     private _closed = false;
+    /**
+     * When true, sessions created via stream()/session() log each ACK, NACK,
+     * go-back and fatal at console.debug level (D17). Default off — flip on at
+     * connect time to trace a silent stream failure (the bare-`false` return
+     * problem the orchestrate demo hit before this fix).
+     */
+    verbose = false;
 
     constructor(transport: Transport) {
         this._transport = transport;
@@ -183,20 +190,31 @@ export class Link {
         return r !== null;
     }
 
-    /** Stream a closed sequence (a job) with Go-Back-N. Resets the seq first. */
-    async stream(packets: Iterable<Uint8Array>, window: number = DEFAULT_WINDOW): Promise<boolean> {
+    /**
+     * Stream a closed sequence (a job) with Go-Back-N. Resets the seq first.
+     * Returns the Stream outcome (D17): `ok` is the boolean legacy callers
+     * tested (`if (await link.stream(pkts)) …` still works — `ok` is truthy),
+     * and on failure `fatalReason` names the cause. Stats are the tally at exit
+     * so a failed stream shows how far it got.
+     */
+    async stream(packets: Iterable<Uint8Array>, window: number = DEFAULT_WINDOW): Promise<StreamResult> {
         await this.resetSeq();
-        return this.session(new ListSource([...packets]), window).run();
+        const sess = this.session(new ListSource([...packets]), window);
+        await sess.run();
+        return sess.result();
     }
 
     /**
      * Build a Session over any PacketSource — use this directly for an OPEN
      * session (manual jogging), where packets are produced in response to
      * operator input and the session ends by truncation rather than exhaustion.
-     * Caller must resetSeq() first; stream() does it for you.
+     * Caller must resetSeq() first; stream() does it for you. The session
+     * inherits `verbose` from this Link (D17).
      */
     session(source: PacketSource, window: number = DEFAULT_WINDOW): Session {
-        return new Session(this.writer, this.sinks.ack, source, this.sinks.status, window);
+        const sess = new Session(this.writer, this.sinks.ack, source, this.sinks.status, window);
+        sess.verbose = this.verbose;
+        return sess;
     }
 
     async close(): Promise<void> {
@@ -205,4 +223,6 @@ export class Link {
 }
 
 // Re-export the sink/frame types a caller of Link commonly needs.
-export type { Sink, LatestSink, Ack, Nack, PacketSource, Session, StreamContext };
+// `fatalReasonName` is a value (not a type) so it leaves the type-only list.
+export type { Sink, LatestSink, Ack, Nack, PacketSource, Session, StreamContext, StreamResult };
+export { fatalReasonName };

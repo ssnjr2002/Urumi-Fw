@@ -29,7 +29,7 @@
 
 import type { Sink, LatestSink } from "./sink.js";
 import type { Writer } from "./writer.js";
-import { NACK_BAD_MAGIC, NACK_PAUSED, NACK_BAD_STATE, NACK_CRC } from "../format/constants.js";
+import { NACK_BAD_MAGIC, NACK_PAUSED, NACK_BAD_STATE, NACK_CRC, NACK_FULL, NACK_ABORTING } from "../format/constants.js";
 import { stampSeq } from "../format/packet.js";
 import { Ack, Nack } from "./demux.js";
 import { parseStatusRsp, type MachineStatus } from "../format/status.js";
@@ -40,6 +40,18 @@ const STALL_TIMEOUT_MS = 3000; // total silence before a fatal abort
 const BACKPRESSURE_MS = 50; // wait for the ring to drain on NACK_FULL
 const MAX_CRC_ERRORS = 20;
 const IDLE_WAIT_MS = 20; // bound on an open source's idle wait
+
+// ── fatal reason codes (D17) ────────────────────────────────────────────────────
+// run() returns false on any fatal NACK OR on a self-inflicted failure (total
+// silence past STALL_TIMEOUT_MS, too many CRC retries). Before D17 those paths
+// returned a bare `false` and the caller had no way to tell them apart — a
+// machine that NACKed BAD_STATE vs one that simply went silent looked the same.
+// `fatalReason` is set at each fatal exit and `fatalReasonName()` renders it.
+//
+// NACK reasons (0x01..0x07) are passed through unchanged; self-inflicted ones
+// use the 0xE0.. range so they never collide with a future wire NACK.
+export const FATAL_STALL = 0xe0; // no ACK/NACK past STALL_TIMEOUT_MS
+export const FATAL_CRC_LIMIT = 0xe1; // NACK_CRC count exceeded MAX_CRC_ERRORS
 
 function delay(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
@@ -173,6 +185,10 @@ export class Session {
     private readonly _source: PacketSource;
     private readonly _statusSink: LatestSink<Uint8Array> | undefined;
     readonly window: number;
+    /** When set, run() emits per-event console.debug lines (D17): ACK seq+delta,
+     *  NACK + reason name, go-back to base, stall, fatal. Idle by default so a
+     *  normal stream makes no noise; flip on to trace a silent failure. */
+    verbose = false;
 
     private readonly _ctx: StreamContext;
     private readonly _abortResolve: () => void;
@@ -192,6 +208,10 @@ export class Session {
     retries = 0;
     nacks = 0;
     truncated = false;
+    /** Why run() returned false (D17). Unset on a successful/truncated run.
+     *  For a NACK it is the NACK reason byte; FATAL_STALL / FATAL_CRC_LIMIT
+     *  are self-inflicted. Read via `fatalReasonName()` for a human label. */
+    fatalReason: number | undefined;
 
     constructor(
         writer: Writer,
@@ -238,10 +258,15 @@ export class Session {
         this._abortResolve();
     }
 
-    /** Drive the stream to completion. Returns true on success or truncation, false on fatal. */
+    /**
+     * Drive the stream to completion. Returns true on success or truncation,
+     * false on fatal — in which case `fatalReason` (D17) names the cause.
+     */
     async run(): Promise<boolean> {
         let lastProgress = monotonicNow();
         let crcErrors = 0;
+        const v = this.verbose ? (m: string) => console.debug(`[session] ${m}`) : null;
+        v?.(`run start — window=${this.window}`);
 
         for (;;) {
             if (this.truncated) break;
@@ -269,31 +294,41 @@ export class Session {
             if (resp === null) {
                 // silence
                 if (monotonicNow() - lastProgress > STALL_TIMEOUT_MS) {
+                    this.fatalReason = FATAL_STALL;
+                    v?.(`FATAL: stall — no ACK/NACK for ${STALL_TIMEOUT_MS}ms (emitted=${this._emitted}, base=${this._base})`);
                     return false; // fatal — stalled
                 }
+                v?.(`silence ${ACK_TIMEOUT_MS}ms — go-back to base=${this._base}`);
                 await this._goBack(0x00, 0);
                 continue;
             }
 
             if (resp instanceof Ack) {
-                if (this._applyAck(resp.expectedSeq)) {
-                    lastProgress = monotonicNow();
-                }
+                const advanced = this._applyAck(resp.expectedSeq);
+                if (advanced) lastProgress = monotonicNow();
+                v?.(`ACK expectedSeq=${resp.expectedSeq} → base=${this._base} ${advanced ? "(advanced)" : "(duplicate)"}`);
                 continue;
             }
 
             // Nack
             this.nacks++;
             const r = resp.reason;
+            v?.(`NACK reason=0x${r.toString(16)} (${fatalReasonName(r)}) base=${this._base}`);
             if (r === NACK_BAD_MAGIC) {
+                this.fatalReason = NACK_BAD_MAGIC;
+                v?.(`FATAL: NACK_BAD_MAGIC`);
                 return false; // fatal
             }
             if (r === NACK_PAUSED || r === NACK_BAD_STATE) {
+                this.fatalReason = r;
+                v?.(`FATAL: wrong machine state (${fatalReasonName(r)})`);
                 return false; // fatal — wrong machine state
             }
             if (r === NACK_CRC) {
                 crcErrors++;
                 if (crcErrors > MAX_CRC_ERRORS) {
+                    this.fatalReason = FATAL_CRC_LIMIT;
+                    v?.(`FATAL: CRC errors ${crcErrors} > ${MAX_CRC_ERRORS}`);
                     return false; // fatal
                 }
                 await this._goBack(r, 0);
@@ -307,11 +342,26 @@ export class Session {
             lastProgress = monotonicNow();
         }
 
+        v?.(`run done — emitted=${this._emitted} acked=${this.acked} truncated=${this.truncated}`);
         return true;
     }
 
     stats(): SessionStats {
         return {
+            emitted: this._emitted,
+            sent: this.sent,
+            acked: this.acked,
+            nacks: this.nacks,
+            retries: this.retries,
+            truncated: this.truncated,
+        };
+    }
+
+    /** Stream outcome (D17) — `ok` plus the fatal reason and the stats tally. */
+    result(): StreamResult {
+        return {
+            ok: this.fatalReason === undefined,
+            fatalReason: this.fatalReason,
             emitted: this._emitted,
             sent: this.sent,
             acked: this.acked,
@@ -386,6 +436,40 @@ export class Session {
         this._next = this._base;
         this.retries++;
     }
+}
+
+const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
+    [NACK_CRC]: "NACK_CRC",
+    [NACK_FULL]: "NACK_FULL",
+    [NACK_BAD_MAGIC]: "NACK_BAD_MAGIC",
+    [NACK_PAUSED]: "NACK_PAUSED",
+    [NACK_BAD_STATE]: "NACK_BAD_STATE",
+    [NACK_ABORTING]: "NACK_ABORTING",
+    [FATAL_STALL]: "FATAL_STALL",
+    [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",
+};
+
+/** Human-readable name for a `Session.fatalReason` value (D17). */
+export function fatalReasonName(r: number): string {
+    return NACK_REASON_NAMES[r] ?? `FATAL(0x${r.toString(16)})`;
+}
+
+/**
+ * Stream outcome (D17) — `link.stream()` and `Session.run()` both surface WHY
+ * a stream died, not just THAT it died. `ok` mirrors the boolean callers that
+ * ignore the reason relied on (`if (await sess.run()) …`); `fatalReason` is set
+ * only when `ok === false`. Stats are the running tally at exit, so a failed
+ * stream shows how far it got (emitted/acked) before the failure.
+ */
+export interface StreamResult {
+    readonly ok: boolean;
+    readonly fatalReason?: number;
+    readonly emitted: number;
+    readonly sent: number;
+    readonly acked: number;
+    readonly nacks: number;
+    readonly retries: number;
+    readonly truncated: boolean;
 }
 
 function monotonicNow(): number {

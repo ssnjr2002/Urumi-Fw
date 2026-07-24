@@ -254,8 +254,12 @@ export {
     Session,
     ListSource,
     StreamContext,
+    fatalReasonName,
+    FATAL_STALL,
+    FATAL_CRC_LIMIT,
     type PacketSource,
     type SessionStats,
+    type StreamResult,
     DEFAULT_WINDOW,
 } from "./wire/link/session.js";
 

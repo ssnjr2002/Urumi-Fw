@@ -137,7 +137,7 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
     it("streams N packets, all ACKed; run() returns true", async () => {
         await withLink(async (link) => {
             const pkts = Array.from({ length: 16 }, () => mseg(1, 1000));
-            expect(await link.stream(pkts, 8)).toBe(true);
+            expect(await link.stream(pkts, 8)).toMatchObject({ ok: true });
             await tick(50);
             // sim is now RUNNING (or already drained to IDLE). The 16 step
             // deltas integrated into pos[0].
@@ -194,7 +194,7 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
                 const pkts = Array.from({ length: 10 }, () =>
                     packMicrosegment(microSegment(1, 0, 0, 0, 50000)),
                 );
-                expect(await link.stream(pkts, 8)).toBe(true);
+                expect(await link.stream(pkts, 8)).toMatchObject({ ok: true });
                 // wait for the executor to drain the ring
                 await new Promise<void>((r) => setTimeout(r, 400));
                 const st = await link.getStatus();
