@@ -163,6 +163,27 @@ bool handleCommand(const String& input) {
                       (long)(int32_t)multicore_fifo_pop_blocking());
         return true;
     }
+    // ── nodestat <node> — a stepper node's position AND engaged slot ──────────
+    // One round-trip debug read (CMD_NODE_STATUS). Reply is THREE FIFO words
+    // (status, pos, slot) like nodepos' two. slot 0xFF = disengaged.
+    if (input.startsWith("nodestat")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* a = argAfter(input, 8);
+        uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
+        if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
+        multicore_fifo_push_blocking(((uint32_t)CMD_NODE_STATUS << 8) | node);
+        if ((multicore_fifo_pop_blocking() & 0xFFFF) == 0) {
+            Serial.printf("node %d timeout\n", node);
+            return true;
+        }
+        int32_t pos  = (int32_t)multicore_fifo_pop_blocking();
+        uint8_t slot = (uint8_t)multicore_fifo_pop_blocking();
+        if (slot == 0xFF) Serial.printf("node %d pos %ld slot none\n", node, (long)pos);
+        else              Serial.printf("node %d pos %ld slot %d\n", node, (long)pos, slot);
+        return true;
+    }
     if (input == "stop") {
         machineState = STATE_ESTOP;            // Core 1 flushes, clears axes, → ALARM
         Serial.println("ok");
