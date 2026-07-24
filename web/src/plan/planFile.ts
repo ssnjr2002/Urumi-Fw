@@ -28,8 +28,9 @@
 
 import type { ToolProfile } from "../config/config.js";
 import { TOOL_PROFILES_BY_TYPE } from "../config/config.js";
-import type { MicroSegment } from "../wire/microsegment.js";
-import { PACKET_SIZE, packMicrosegment, decodePacket } from "../wire/packet.js";
+import type { MicroSegment } from "../wire/format/microsegment.js";
+import { PACKET_SIZE } from "../wire/format/constants.js";
+import { packMicrosegment, decodePacket } from "../wire/format/packet.js";
 import type { Block, Plan } from "./plan.js";
 import { planToolTypes } from "./plan.js";
 

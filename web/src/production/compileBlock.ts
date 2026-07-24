@@ -30,7 +30,7 @@ import { flatten } from "../toolpath/flatten.js";
 import { constrain } from "../toolpath/constrain.js";
 import { plan } from "../toolpath/plan.js";
 import { discretize } from "../toolpath/discretize.js";
-import type { MicroSegment } from "../wire/microsegment.js";
+import type { MicroSegment } from "../wire/format/microsegment.js";
 
 export interface CompileBlockResult {
     /** Compiled wire events in execution order. */

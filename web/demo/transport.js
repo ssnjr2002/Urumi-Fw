@@ -15,7 +15,9 @@
  *   NACK_BAD_MAGIC → fatal throw.
  */
 
-import { packMicrosegment, crc8, PACKET_SIZE } from '../src/wire/packet.js';
+import { packMicrosegment } from '../src/wire/format/packet.js';
+import { crc8 } from '../src/wire/format/crc.js';
+import { PACKET_SIZE } from '../src/wire/format/constants.js';
 
 // ── wire constants ─────────────────────────────────────────────────────────────
 

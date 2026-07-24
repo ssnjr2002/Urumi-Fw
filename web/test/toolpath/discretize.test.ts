@@ -15,7 +15,7 @@ import { flatten } from "../../src/toolpath/flatten.js";
 import { constrain } from "../../src/toolpath/constrain.js";
 import { plan } from "../../src/toolpath/plan.js";
 import { discretize } from "../../src/toolpath/discretize.js";
-import { MICRO_PATH_END, MICRO_JOG, MICRO_LIFT, type MicroSegment } from "../../src/wire/microsegment.js";
+import { MICRO_PATH_END, MICRO_JOG, MICRO_LIFT, type MicroSegment } from "../../src/wire/format/microsegment.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { CASES } from "./curves.cases.js";
 import {

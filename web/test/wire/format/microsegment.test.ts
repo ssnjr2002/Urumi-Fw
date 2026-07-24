@@ -1,5 +1,5 @@
 /**
- * Tests for wire/microsegment — MicroSegment type, flag constants, interval().
+ * Tests for wire/format/microsegment — MicroSegment type, flag constants, interval().
  * Fresh (no Python test_microsegment.py to port).
  */
 
@@ -10,14 +10,14 @@ import {
     MICRO_JOG,
     microSegment,
     interval,
-} from "../../src/wire/microsegment.js";
+} from "../../../src/wire/format/microsegment.js";
 import {
     resolvedAxes,
     qualityConfig,
-} from "../../src/config/config.js";
+} from "../../../src/config/config.js";
 import {
     defaultConfig,
-} from "../../src/config/fixtures.js";
+} from "../../../src/config/fixtures.js";
 
 const axes = resolvedAxes(defaultConfig().machine);
 const q = qualityConfig();

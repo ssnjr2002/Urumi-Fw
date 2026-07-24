@@ -26,7 +26,7 @@ import {
     decodePacket,
     FRAMED_PACKET_SIZE,
     FRAME_PREFIX_SIZE,
-} from "../../src/wire/packet.js";
+} from "../../src/wire/format/packet.js";
 import {
     KNIFE,
     qualityConfig,

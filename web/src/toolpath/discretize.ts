@@ -35,7 +35,7 @@ import {
     interval,
     microSegment,
     type MicroSegment,
-} from "../wire/microsegment.js";
+} from "../wire/format/microsegment.js";
 import {
     zMove,
     zStepCount,

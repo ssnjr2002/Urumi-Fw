@@ -28,7 +28,7 @@
 
 import type { MachineConfig, ResolvedAxes, ToolType } from "../config/config.js";
 import type { Plan } from "../plan/plan.js";
-import type { MicroSegment } from "../wire/microsegment.js";
+import type { MicroSegment } from "../wire/format/microsegment.js";
 import type { Schedule, MountSet } from "./schedule.js";
 import {
     aMoveTo,

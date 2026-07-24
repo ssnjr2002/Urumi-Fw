@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { microSegment } from "../../src/wire/microsegment.js";
+import { microSegment } from "../../src/wire/format/microsegment.js";
 import { PEN, KNIFE, REVOLVER_PEN } from "../../src/config/config.js";
 import type { Plan } from "../../src/plan/plan.js";
 import { planToolTypes } from "../../src/plan/plan.js";

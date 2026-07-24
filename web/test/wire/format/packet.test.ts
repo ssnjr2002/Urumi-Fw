@@ -1,5 +1,5 @@
 /**
- * Tests for wire/packet — CRC-8, 26-byte MicroSegment packer, framing.
+ * Tests for wire/format/packet — CRC-8, 26-byte MicroSegment packer, framing.
  * Validated against Python host.protocol.packets (pack_microsegment,
  * _crc8, stamp_seq, write_stream) — the reference byte sequences below
  * are the actual Python output, so a passing test here means the TS
@@ -7,17 +7,16 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { crc8 } from "../../../src/wire/format/crc.js";
+import { MAGIC_MICROSEG, PACKET_SIZE } from "../../../src/wire/format/constants.js";
 import {
-    crc8,
     packMicrosegment,
     serialiseMicrosegments,
     writeStream,
     decodePacket,
-    MAGIC_MICROSEG,
-    PACKET_SIZE,
     FRAMED_PACKET_SIZE,
-} from "../../src/wire/packet.js";
-import { microSegment, MICRO_JOG, MICRO_PATH_END } from "../../src/wire/microsegment.js";
+} from "../../../src/wire/format/packet.js";
+import { microSegment, MICRO_JOG, MICRO_PATH_END } from "../../../src/wire/format/microsegment.js";
 
 // ── reference vectors from Python host.protocol.packets ───────────────────────
 // pack_microsegment(MS(dx=10, dy=-5, dz=1, da=-3, interval=1500, flags=0x11))
@@ -31,7 +30,7 @@ const REF_BYTES_SEQ42 = [
     0xfd, 0xff, 0xff, 0xff, 0xdc, 0x05, 0x00, 0x00, 0x11, 0x2a, 0x00, 0x00, 0x2d,
 ];
 
-describe("wire/packet: crc8", () => {
+describe("wire/format/packet: crc8", () => {
     it("CRC-8 poly 0x8C over empty input is 0", () => {
         expect(crc8(new Uint8Array(0))).toBe(0);
     });
@@ -55,7 +54,7 @@ describe("wire/packet: crc8", () => {
     });
 });
 
-describe("wire/packet: packMicrosegment", () => {
+describe("wire/format/packet: packMicrosegment", () => {
     it("produces a 26-byte packet", () => {
         const ms = microSegment(10, -5, 1, -3, 1500, 0x11);
         const pkt = packMicrosegment(ms);
@@ -105,7 +104,7 @@ describe("wire/packet: packMicrosegment", () => {
     });
 });
 
-describe("wire/packet: serialiseMicrosegments", () => {
+describe("wire/format/packet: serialiseMicrosegments", () => {
     it("yields one 26-byte packet per MicroSegment", () => {
         const segs = [
             microSegment(1, 2, 0, 0, 100, 0),
@@ -123,7 +122,7 @@ describe("wire/packet: serialiseMicrosegments", () => {
     });
 });
 
-describe("wire/packet: writeStream (framing)", () => {
+describe("wire/format/packet: writeStream (framing)", () => {
     it("frames a single packet: [u16 LE 26][26-byte packet]", () => {
         const pkt = packMicrosegment(microSegment(10, -5, 1, -3, 1500, 0x11));
         const framed = writeStream([pkt]);
@@ -161,7 +160,7 @@ describe("wire/packet: writeStream (framing)", () => {
     });
 });
 
-describe("wire/packet: decodePacket (parity diagnostics)", () => {
+describe("wire/format/packet: decodePacket (parity diagnostics)", () => {
     it("roundtrips a packed packet field-by-field", () => {
         const ms = microSegment(10, -5, 1, -3, 1500, MICRO_JOG);
         const pkt = packMicrosegment(ms, 7);

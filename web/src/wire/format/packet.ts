@@ -23,37 +23,14 @@
  */
 
 import type { MicroSegment } from "./microsegment.js";
+import { MAGIC_MICROSEG, PACKET_SIZE } from "./constants.js";
+import { crc8 } from "./crc.js";
 
-// ── magic bytes ───────────────────────────────────────────────────────────────
-
-export const MAGIC_MICROSEG = 0xab;
-export const PACKET_SIZE = 26;
+// ── .bin framing (length-prefixed) ──────────────────────────────────────────────
+// The .bin file format packs each 26-byte packet with a u16 LE length prefix;
+// these are file-format constants, separate from the wire PACKET_SIZE.
 export const FRAME_PREFIX_SIZE = 2; // u16 LE length prefix
 export const FRAMED_PACKET_SIZE = FRAME_PREFIX_SIZE + PACKET_SIZE; // 28
-
-// ── CRC-8 (polynomial 0x8C, matches Pico firmware + Python _crc8) ─────────────
-
-/**
- * CRC-8 over data[start..end] (exclusive end). Polynomial 0x8C, init 0x00,
- * reflected — the "Dallas/Maxim" 1-Wire variant the firmware uses.
- *
- * Default range is the whole buffer. The start/end form lets the caller
- * CRC a slice without allocating a subarray.
- */
-export function crc8(data: ArrayLike<number>, start = 0, end = data.length): number {
-    let crc = 0x00;
-    for (let i = start; i < end; i++) {
-        crc ^= data[i]!;
-        for (let _ = 0; _ < 8; _++) {
-            if (crc & 0x01) {
-                crc = (crc >> 1) ^ 0x8c;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    return crc & 0xff;
-}
 
 // ── 26-byte MicroSegment packer ───────────────────────────────────────────────
 

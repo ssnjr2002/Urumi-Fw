@@ -155,17 +155,17 @@ export {
     MICRO_PAUSE,
     MICRO_LIFT,
     MICRO_JOG,
-} from "./wire/microsegment.js";
+} from "./wire/format/microsegment.js";
+
+export { crc8 } from "./wire/format/crc.js";
+export { MAGIC_MICROSEG, PACKET_SIZE } from "./wire/format/constants.js";
 
 export {
     packMicrosegment,
     serialiseMicrosegments,
     writeStream,
     decodePacket,
-    crc8,
     type DecodedPacket,
-    MAGIC_MICROSEG,
-    PACKET_SIZE,
     FRAME_PREFIX_SIZE,
     FRAMED_PACKET_SIZE,
-} from "./wire/packet.js";
+} from "./wire/format/packet.js";

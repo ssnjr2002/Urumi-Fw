@@ -25,7 +25,7 @@ import {
     microSegment,
     interval,
     type MicroSegment,
-} from "../wire/microsegment.js";
+} from "../wire/format/microsegment.js";
 
 // ── Z lift move (pure Z, constant velocity) ───────────────────────────────────
 // TODO: Z moves are currently single-segment constant-velocity (matching the

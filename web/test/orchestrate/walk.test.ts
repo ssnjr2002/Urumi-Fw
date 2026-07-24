@@ -19,7 +19,7 @@ import {
     type MachineConfig,
     type ToolProfile,
 } from "../../src/config/config.js";
-import { MICRO_JOG } from "../../src/wire/microsegment.js";
+import { MICRO_JOG } from "../../src/wire/format/microsegment.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 

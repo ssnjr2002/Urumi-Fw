@@ -14,7 +14,7 @@ import {
     aMoveTo,
     headOffsetJog,
 } from "../../src/choreograph/choreograph.js";
-import { MICRO_JOG, MICRO_LIFT } from "../../src/wire/microsegment.js";
+import { MICRO_JOG, MICRO_LIFT } from "../../src/wire/format/microsegment.js";
 import {
     resolvedAxes,
     KNIFE,
