@@ -92,8 +92,13 @@ void loop() {
     mBufTail = 0;
     queuedUsIn = 0;
     queuedUsOut = 0;
-    machineState = STATE_IDLE;
-    alarmReason = ALARM_NONE;
+    // Boot/connect into the config gate: the axis map is empty, so nothing may
+    // stream until the host commits a binding with axis_map (docs/engage_and_axis
+    // _map.md §6). ALARM_CONFIG ⇒ non-IDLE/RUNNING ⇒ every motion ingest is
+    // refused for free. The host re-asserts axis_map on connect (§8).
+    axisMapReset();
+    machineState = STATE_ALARM;
+    alarmReason = ALARM_CONFIG;
     runningReason = RUNNING_JOB;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
     axes_homed = 0;

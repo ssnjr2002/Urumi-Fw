@@ -450,6 +450,17 @@ void processBus() {
                 multicore_fifo_push_blocking((CMD_DISABLE << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
                 break;
             }
+            // Stepper ENGAGE — bind/unbind the node's stream slot. Dumb relay:
+            // Core 0 owns the axis map and the diff; here we just carry one
+            // [node][CMD_ENGAGE][1][slot] packet and ACK back (payload = slot,
+            // 0..3 or 0xFF = disengage). See docs/engage_and_axis_map.md §5.
+            case CMD_ENGAGE: {
+                uint8_t pkt[5] = {node, CMD_ENGAGE, 1, payload, 0};
+                sendPacket(pkt, 5);
+                uint8_t rxLen = receivePacket(node, CMD_ENGAGE, nullptr, RESPONSE_TIMEOUT_MS);
+                multicore_fifo_push_blocking((CMD_ENGAGE << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
+                break;
+            }
             // Vacuum-node commands. payload carries the args (packed by Core 0):
             //   servo — high nibble = channel idx (0=all, 1..6), low bit = on/off
             //   ssr   — low bit = state

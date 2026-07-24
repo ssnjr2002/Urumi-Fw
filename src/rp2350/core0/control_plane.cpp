@@ -25,6 +25,26 @@ static bool relayNode(uint8_t cmd, uint8_t node) {
     return (resp & 0xFFFF) != 0;
 }
 
+// ─── Axis map (Core-0-local; docs/engage_and_axis_map.md §5) ─────────────────
+// slotNode[i] = the bus id currently ENGAGE-bound to stream slot i (X/Y/Z/A), or
+// SLOT_NONE if that slot is unbound. Core 0 owns this map and the abstraction;
+// Core 1 only ever sees granular per-node CMD_ENGAGE. Boots all-unbound → the
+// machine sits in ALARM_CONFIG until axis_map commits a binding.
+#define SLOT_NONE 0xFF
+static uint8_t slotNode[4] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
+
+void axisMapReset() {
+    for (int i = 0; i < 4; i++) slotNode[i] = SLOT_NONE;
+}
+
+// Relay one CMD_ENGAGE to Core 1 (slot in the payload byte, like vac_servo packs
+// its idx). Returns true if the node ACKed. slot 0..3 binds, SLOT_NONE unbinds.
+static bool relayEngage(uint8_t node, uint8_t slot) {
+    multicore_fifo_push_blocking(((uint32_t)slot << 16) |
+                                 ((uint32_t)CMD_ENGAGE << 8) | node);
+    return (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+}
+
 // Map an axes string ("xyza", "xy", …) to a bitmask. Empty/absent → all axes.
 static uint8_t axisMask(const char* s) {
     if (!s || !*s) return 0x0F;
@@ -360,6 +380,75 @@ bool handleCommand(const String& input) {
         return true;
     }
 
+    // ── axis_map [<x> <y> <z> <a>] — bind bus nodes to stream slots ───────────
+    // No-arg: read back the committed map in setter syntax ('-' = unbound slot).
+    // Four tokens (a bus id, or '-'/'0' = unbound): diff against the committed map,
+    // emit the minimal engage/disengage packets, and commit each slot only once
+    // its packets ACK. A successful commit clears the ALARM_CONFIG boot gate.
+    // Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING corrupts motion (§6.2).
+    if (input.startsWith("axis_map")) {
+        const char* a = argAfter(input, 8);
+
+        if (*a == '\0') {                          // read-back form
+            Serial.print("axis_map");
+            for (int i = 0; i < 4; i++) {
+                if (slotNode[i] == SLOT_NONE) Serial.print(" -");
+                else                          Serial.printf(" %d", slotNode[i]);
+            }
+            Serial.println();
+            return true;
+        }
+
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+
+        // Parse exactly four tokens into desired[]: a bus id, or '-'/'0' = unbound.
+        uint8_t desired[4];
+        const char* p = a;
+        for (int i = 0; i < 4; i++) {
+            while (*p == ' ') p++;
+            if (*p == '\0') { Serial.println("err usage"); return true; }
+            if (*p == '-') { desired[i] = SLOT_NONE; p++; continue; }
+            char* endPtr;
+            unsigned long v = strtoul(p, &endPtr, 10);
+            if (endPtr == p) { Serial.println("err usage"); return true; }
+            p = endPtr;
+            if (v == 0)                 desired[i] = SLOT_NONE;
+            else if (v <= BUS_ADDR_MAX) desired[i] = (uint8_t)v;
+            else { Serial.println("err bad_node"); return true; }
+        }
+        // A bus id can occupy only one slot — reject a node bound twice.
+        for (int i = 0; i < 4; i++)
+            for (int j = i + 1; j < 4; j++)
+                if (desired[i] != SLOT_NONE && desired[i] == desired[j]) {
+                    Serial.println("err dup"); return true;
+                }
+
+        // Diff: per changed slot, disengage the old occupant then engage the new.
+        // Commit the slot only after its packets ACK, so slotNode never claims a
+        // binding the bus did not confirm; a partial failure is safe to retry
+        // (re-engaging to the same slot is idempotent — §5.3).
+        for (int i = 0; i < 4; i++) {
+            if (desired[i] == slotNode[i]) continue;
+            if (slotNode[i] != SLOT_NONE && !relayEngage(slotNode[i], SLOT_NONE)) {
+                Serial.printf("err node %d timeout\n", slotNode[i]); return true;
+            }
+            if (desired[i] != SLOT_NONE && !relayEngage(desired[i], (uint8_t)i)) {
+                Serial.printf("err node %d timeout\n", desired[i]); return true;
+            }
+            slotNode[i] = desired[i];
+        }
+
+        // Committed — clear the config gate if that is what was holding us.
+        if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
+            machineState = STATE_IDLE;
+            alarmReason  = ALARM_NONE;
+        }
+        Serial.println("ok");
+        return true;
+    }
+
     // ── setorigin [axes] (IDLE/PAUSED/ALARM) ──────────────────────────────────
     if (input.startsWith("setorigin")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
@@ -368,7 +457,9 @@ bool handleCommand(const String& input) {
         uint8_t m = axisMask(argAfter(input, 9));
         for (int i = 0; i < 4; i++) if (m & (1 << i)) machinePos[i] = 0;
         axes_homed |= m;
-        if (machineState == STATE_ALARM) {     // setorigin recovers from ALARM
+        // setorigin recovers from an ESTOP-alarm, but NOT the config gate — only a
+        // committed axis_map clears ALARM_CONFIG (docs/engage_and_axis_map.md §6.1).
+        if (machineState == STATE_ALARM && alarmReason != ALARM_CONFIG) {
             machineState = STATE_IDLE;
             alarmReason  = ALARM_NONE;
         }
@@ -407,6 +498,9 @@ bool handleCommand(const String& input) {
     }
     if (input == "unalarm") {
         if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
+        // The config gate is not a clearable fault — only a committed axis_map
+        // leaves it (docs/engage_and_axis_map.md §6.1).
+        if (alarmReason == ALARM_CONFIG) { Serial.println("err unconfigured"); return true; }
         machineState = STATE_IDLE;
         alarmReason  = ALARM_NONE;
         Serial.println("ok");                  // position still invalid — run setorigin

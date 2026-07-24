@@ -7,3 +7,8 @@
 // contract: `ok` / `err <reason>` / a typed read. Returns false if the command
 // is unknown (caller prints `err unknown`).
 bool handleCommand(const String& input);
+
+// Reset the committed axis map to all-unbound (SLOT_NONE). Called by the Core 0
+// soft-reset so each connect starts in the ALARM_CONFIG gate until the host
+// (re-)commits an axis_map. See docs/engage_and_axis_map.md §6.
+void axisMapReset();
