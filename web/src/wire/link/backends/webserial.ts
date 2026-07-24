@@ -34,6 +34,7 @@ interface SerialPortRequestOptions {
 export class WebSerialTransport implements Transport {
     private readonly _port: SerialPort;
     private _writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+    private _reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     constructor(port: SerialPort) {
         this._port = port;
@@ -77,19 +78,32 @@ export class WebSerialTransport implements Transport {
         if (!this._port.readable) {
             return; // no data stream
         }
-        const reader = this._port.readable.getReader();
+        this._reader = this._port.readable.getReader();
         try {
             for (;;) {
-                const { value, done } = await reader.read();
+                const { value, done } = await this._reader.read();
                 if (done) break;
                 if (value) yield value;
             }
         } finally {
-            reader.releaseLock();
+            this._reader.releaseLock();
+            this._reader = null;
         }
     }
 
     async close(): Promise<void> {
+        // Cancel the reader so the read() generator's for(;;) loop
+        // breaks and its finally block releases the reader lock (sets
+        // _reader = null). Poll until that happens — without it,
+        // port.close() hangs because the stream is locked by the reader
+        // the Link's read loop holds.
+        if (this._reader) {
+            try { await this._reader.cancel(); } catch { /* ignore */ }
+            const deadline = Date.now() + 2000;
+            while (this._reader !== null && Date.now() < deadline) {
+                await new Promise((r) => setTimeout(r, 5));
+            }
+        }
         if (this._writer) {
             this._writer.releaseLock();
             this._writer = null;
