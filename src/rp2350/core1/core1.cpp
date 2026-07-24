@@ -439,18 +439,23 @@ void processBus() {
                 break;
             }
             case CMD_NODE_STATUS: {
-                // Debug read — reply is [pos int32 BE][slot] (5 bytes). Push THREE
-                // words back like GET_POS's two: status, then pos, then slot.
+                // Generic status read — reply payload is [type][flags][tail…],
+                // variable length by type. Push a status word carrying the payload
+                // length (0 = timeout), then the payload packed 4 bytes/word (MSB
+                // first). Core 0 unpacks and decodes by type.
                 uint8_t pkt[4] = {node, CMD_NODE_STATUS, 0, 0};
                 sendPacket(pkt, 4);
-                uint8_t buf[5];
+                uint8_t buf[32];           // max node reply payload
                 uint8_t rxLen = receivePacket(node, CMD_NODE_STATUS, buf, RESPONSE_TIMEOUT_MS);
-                multicore_fifo_push_blocking((CMD_NODE_STATUS << 24) | (node << 16) | (rxLen == 5 ? 1u : 0u));
-                if (rxLen == 5) {
-                    int32_t pos = ((int32_t)buf[0] << 24) | ((int32_t)buf[1] << 16) |
-                                  ((int32_t)buf[2] <<  8) |  (int32_t)buf[3];
-                    multicore_fifo_push_blocking((uint32_t)pos);
-                    multicore_fifo_push_blocking((uint32_t)buf[4]);
+                bool ok = (rxLen != 0xFF && rxLen >= 2);   // at least [type][flags]
+                multicore_fifo_push_blocking((CMD_NODE_STATUS << 24) | (node << 16) | (ok ? rxLen : 0u));
+                if (ok) {
+                    for (uint8_t i = 0; i < rxLen; i += 4) {
+                        uint32_t w = 0;
+                        for (uint8_t j = 0; j < 4 && (i + j) < rxLen; j++)
+                            w |= (uint32_t)buf[i + j] << (24 - j * 8);
+                        multicore_fifo_push_blocking(w);
+                    }
                 }
                 break;
             }

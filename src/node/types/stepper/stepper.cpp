@@ -94,6 +94,18 @@ static int32_t readPositionAtomic() {
     return pos;
 }
 
+// Type-specific status tail: [pos int32 BE][slot]. Lets a host see both what the
+// node counted and which stream slot it is ENGAGE-bound to (0xFF = disengaged).
+uint8_t node_status(uint8_t* buf) {
+    int32_t pos = readPositionAtomic();
+    buf[0] = (pos >> 24) & 0xFF;
+    buf[1] = (pos >> 16) & 0xFF;
+    buf[2] = (pos >> 8)  & 0xFF;
+    buf[3] =  pos        & 0xFF;
+    buf[4] = slot;
+    return 5;
+}
+
 bool node_handle_command(const uint8_t* pkt, uint8_t len,
                          uint8_t* reply, uint8_t* replyLen) {
     (void)len;
@@ -140,21 +152,6 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             reply[5] = (pos >> 8)  & 0xFF;
             reply[6] =  pos        & 0xFF;
             *replyLen = 8;
-            return true;
-        }
-        case CMD_NODE_STATUS: {
-            // Debug: position AND the runtime stream slot in one reply, so a host
-            // can see both what a node counted and which slot it is engaged to.
-            int32_t pos = readPositionAtomic();
-            reply[0] = NODE_ID;
-            reply[1] = CMD_NODE_STATUS;
-            reply[2] = 5;
-            reply[3] = (pos >> 24) & 0xFF;
-            reply[4] = (pos >> 16) & 0xFF;
-            reply[5] = (pos >> 8)  & 0xFF;
-            reply[6] =  pos        & 0xFF;
-            reply[7] = slot;                    // 0..3, or SLOT_NONE (0xFF)
-            *replyLen = 9;
             return true;
         }
         default:

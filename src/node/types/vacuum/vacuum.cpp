@@ -147,6 +147,18 @@ void node_loop(void) {
     ssrUpdate();
 }
 
+// Type-specific status tail: [servo-active bits][ssr state]. Bit i of the first
+// byte = servo (i+1) is off-park (angle > 0); second byte = ssrState (0 off,
+// 1 ramp, 2 full).
+uint8_t node_status(uint8_t* buf) {
+    uint8_t bits = 0;
+    for (uint8_t i = 1; i <= HAL_VACUUM_SERVO_COUNT; i++)
+        if (servoAngle[i]) bits |= (1 << (i - 1));
+    buf[0] = bits;
+    buf[1] = (uint8_t)ssrState;
+    return 2;
+}
+
 // ─── Hooks: type-specific commands ──────────────────────────────────────────
 // Reply convention (see dispatch.cpp): reply[] = [id][cmd][payloadLen][payload…];
 // replyLen counts through the trailing CRC slot, which the core fills in.

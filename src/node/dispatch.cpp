@@ -16,6 +16,12 @@ static void replyAck(uint8_t cmd, uint8_t* reply, uint8_t* replyLen) {
     *replyLen = 4;
 }
 
+// Generic node state the core tracks itself, so CMD_NODE_STATUS can report it
+// uniformly across all types. Bit 0 = enabled (CMD_ENABLE/DISABLE); more generic
+// flags can join here without touching any node type. Boots disabled.
+#define NODE_FLAG_ENABLED 0x01
+static uint8_t g_nodeFlags = 0;
+
 // Returns true iff this was a generic command (reply staged in `reply`).
 static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
                                  uint8_t* replyLen) {
@@ -33,13 +39,28 @@ static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
 
         case CMD_ENABLE:
             node_set_enabled(true);
+            g_nodeFlags |= NODE_FLAG_ENABLED;
             replyAck(CMD_ENABLE, reply, replyLen);
             return true;
 
         case CMD_DISABLE:
             node_set_enabled(false);
+            g_nodeFlags &= ~NODE_FLAG_ENABLED;
             replyAck(CMD_DISABLE, reply, replyLen);
             return true;
+
+        case CMD_NODE_STATUS: {
+            // Uniform status: generic head [node_type][flags] + a type-specific
+            // tail from node_status(). One command reports any node's whole state.
+            reply[0] = NODE_ID;
+            reply[1] = CMD_NODE_STATUS;
+            reply[3] = node_type();
+            reply[4] = g_nodeFlags;
+            uint8_t tail = node_status(&reply[5]);
+            reply[2] = 2 + tail;                 // payload length
+            *replyLen = 3 + (2 + tail) + 1;      // header + payload + CRC slot
+            return true;
+        }
 
         default:
             return false;                // not generic — let the node type try

@@ -22,7 +22,8 @@ static_assert(NODE_TYPE == NODE_TYPE_KNIFE_OSC,
 #endif
 
 // ─── Output helpers ─────────────────────────────────────────────────────────
-static bool oscOn = false;
+static bool    oscOn      = false;
+static uint8_t blowerDuty = 0;          // last commanded duty %, for node_status
 
 static void oscSet(bool on) {
     oscOn = on;
@@ -32,6 +33,7 @@ static void oscSet(bool on) {
 // Scale a 0..100 % duty to the 8-bit analogWrite range (0..255).
 static void blowerSet(uint8_t dutyPct) {
     if (dutyPct > 100) dutyPct = 100;
+    blowerDuty = dutyPct;
     analogWrite(HAL_KNIFE_BLOWER_PIN, (uint16_t)dutyPct * 255u / 100u);
 }
 
@@ -61,6 +63,13 @@ void node_set_enabled(bool on) {
 // Both outputs are level-driven (digital pin / hardware PWM), so there is no
 // state machine to advance between commands.
 void node_loop(void) {}
+
+// Type-specific status tail: [osc on][blower duty %].
+uint8_t node_status(uint8_t* buf) {
+    buf[0] = oscOn ? 1 : 0;
+    buf[1] = blowerDuty;
+    return 2;
+}
 
 // ─── Hooks: type-specific commands ──────────────────────────────────────────
 // Reply convention (see dispatch.cpp): reply[] = [id][cmd][payloadLen][payload…];

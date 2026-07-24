@@ -163,9 +163,10 @@ bool handleCommand(const String& input) {
                       (long)(int32_t)multicore_fifo_pop_blocking());
         return true;
     }
-    // ── nodestat <node> — a stepper node's position AND engaged slot ──────────
-    // One round-trip debug read (CMD_NODE_STATUS). Reply is THREE FIFO words
-    // (status, pos, slot) like nodepos' two. slot 0xFF = disengaged.
+    // ── nodestat <node> — any node's generic + type-specific state ────────────
+    // One round-trip (CMD_NODE_STATUS). Core 1 pushes a status word (payload len,
+    // 0 = timeout) then the payload packed 4 bytes/word. Payload is
+    // [type][flags][type-specific tail]; we decode the tail by type.
     if (input.startsWith("nodestat")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
@@ -174,14 +175,40 @@ bool handleCommand(const String& input) {
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
         multicore_fifo_push_blocking(((uint32_t)CMD_NODE_STATUS << 8) | node);
-        if ((multicore_fifo_pop_blocking() & 0xFFFF) == 0) {
-            Serial.printf("node %d timeout\n", node);
-            return true;
+        uint8_t plen = multicore_fifo_pop_blocking() & 0xFF;
+        if (plen == 0) { Serial.printf("node %d timeout\n", node); return true; }
+
+        uint8_t buf[32] = {0};             // max node reply payload
+        for (uint8_t i = 0; i < plen; i += 4) {
+            uint32_t w = multicore_fifo_pop_blocking();
+            for (uint8_t j = 0; j < 4 && (i + j) < plen; j++)
+                buf[i + j] = (w >> (24 - j * 8)) & 0xFF;
         }
-        int32_t pos  = (int32_t)multicore_fifo_pop_blocking();
-        uint8_t slot = (uint8_t)multicore_fifo_pop_blocking();
-        if (slot == 0xFF) Serial.printf("node %d pos %ld slot none\n", node, (long)pos);
-        else              Serial.printf("node %d pos %ld slot %d\n", node, (long)pos, slot);
+
+        uint8_t type = buf[0];
+        uint8_t flags = buf[1];             // bit0 = enabled
+        Serial.printf("node %d type %d en %d", node, type, flags & 0x01);
+        switch (type) {
+            case NODE_TYPE_STEPPER: {
+                int32_t pos = ((int32_t)buf[2] << 24) | ((int32_t)buf[3] << 16) |
+                              ((int32_t)buf[4] <<  8) |  (int32_t)buf[5];
+                uint8_t slot = buf[6];
+                if (slot == 0xFF) Serial.printf(" pos %ld slot none", (long)pos);
+                else              Serial.printf(" pos %ld slot %d", (long)pos, slot);
+                break;
+            }
+            case NODE_TYPE_VACUUM:
+                Serial.printf(" servos 0x%02X ssr %d", buf[2], buf[3]);
+                break;
+            case NODE_TYPE_KNIFE_OSC:
+                Serial.printf(" osc %d blower %d", buf[2], buf[3]);
+                break;
+            default:                         // unknown type — dump the raw tail
+                Serial.print(" tail");
+                for (uint8_t i = 2; i < plen; i++) Serial.printf(" %02X", buf[i]);
+                break;
+        }
+        Serial.println();
         return true;
     }
     if (input == "stop") {

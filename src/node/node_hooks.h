@@ -31,3 +31,11 @@ void    node_set_enabled(bool on);
 // dropped by the core.
 bool    node_handle_command(const uint8_t* pkt, uint8_t len,
                             uint8_t* reply, uint8_t* replyLen);
+
+// Type-specific status tail for the generic CMD_NODE_STATUS. Writes this type's
+// state bytes into buf and returns the count. The core prepends a generic head
+// ([node_type][flags]); this hook adds only the type's own bytes:
+//   stepper: [pos int32 BE][slot]   vacuum: [servo-active bits][ssr state]
+//   knife:   [osc on][blower duty]  a type with no extra state returns 0.
+// buf has room for at least MAX_PACKET_LEN-5 bytes.
+uint8_t node_status(uint8_t* buf);
