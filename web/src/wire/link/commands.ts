@@ -86,7 +86,7 @@ export async function nodePos(link: Link, nodeId: number): Promise<{ nodeId: num
  * Syntax: `vac_servo <node> <idx> <on|off>`.
  */
 export async function vacServo(link: Link, nodeId: number, idx: number, on: boolean): Promise<boolean> {
-    return _ok(link, `vac_servo ${nodeId} ${idx} ${on ? "on" : "off"}`);
+    return _nodeOk(link, `vac_servo ${nodeId} ${idx} ${on ? "on" : "off"}`);
 }
 
 /**
@@ -94,7 +94,41 @@ export async function vacServo(link: Link, nodeId: number, idx: number, on: bool
  * Syntax: `vac_pump <node> <on|off>`.
  */
 export async function vacPump(link: Link, nodeId: number, on: boolean): Promise<boolean> {
-    return _ok(link, `vac_pump ${nodeId} ${on ? "on" : "off"}`);
+    return _nodeOk(link, `vac_pump ${nodeId} ${on ? "on" : "off"}`);
+}
+
+/**
+ * Read the vacuum node's NC switch. Reply: `node <id> switch open|closed (level=N)`.
+ * The switch is wired to GND with a pull-up, so closed (level 0) is rest and
+ * open (level 1) is actuated. Returns null if the node did not answer.
+ */
+export async function vacSwitch(link: Link, nodeId: number): Promise<boolean | null> {
+    const r = await link.command(`vac_switch ${nodeId}`);
+    const m = /^node\s+\d+\s+switch\s+(open|closed)/.exec(r);
+    return m ? m[1] === "open" : null;
+}
+
+// ── knife peripheral (oscillating drag knife) ────────────────────────────────
+
+/**
+ * Toggle the knife node's oscillator. Syntax: `knife_osc <node> <on|off>`.
+ *
+ * Refused while RUNNING — the firmware gates every peripheral relay on
+ * IDLE/PAUSED/ALARM (control_plane.cpp), because the relay blocks Core 0 on a
+ * Core 1 round trip that would otherwise interleave with the stream. Mid-job
+ * control therefore has to happen at a PAUSED boundary.
+ */
+export function knifeOsc(link: Link, nodeId: number, on: boolean): Promise<boolean> {
+    return _nodeOk(link, `knife_osc ${nodeId} ${on ? "on" : "off"}`);
+}
+
+/**
+ * Set the knife node's blower PWM duty, 0..100 %.
+ * Syntax: `knife_blower <node> <0..100>`. Same RUNNING restriction as knifeOsc.
+ */
+export function knifeBlower(link: Link, nodeId: number, dutyPct: number): Promise<boolean> {
+    const duty = Math.max(0, Math.min(100, Math.round(dutyPct)));
+    return _nodeOk(link, `knife_blower ${nodeId} ${duty}`);
 }
 
 // ── enable / disable (per node or all) ────────────────────────────────────────
@@ -197,6 +231,15 @@ export async function readAxisMap(link: Link): Promise<readonly [SlotBinding, Sl
  * Many control commands reply `ok` on success and `err <reason>` on
  * rejection or failure. Parse that into a boolean.
  */
+/**
+ * Node relays do NOT reply `ok` — they reply `node <id> ok` or `node <id>
+ * timeout`, because the answer is about a node on the RS485 bus and not about
+ * the Pico. Parsing these with `_ok` reads every success as a failure.
+ */
+async function _nodeOk(link: Link, cmd: string): Promise<boolean> {
+    return /^node\s+\d+\s+ok$/.test(await link.command(cmd));
+}
+
 async function _ok(link: Link, cmd: string): Promise<boolean> {
     const r = await link.command(cmd);
     if (r === "ok") return true;

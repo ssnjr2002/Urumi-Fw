@@ -107,6 +107,16 @@ export class SimTransport implements Transport {
      */
     slotNode: (number | null)[] = [null, null, null, null];
 
+    /**
+     * Peripheral state, keyed by bus id (servos by `node:idx`). Held so a demo
+     * or test can assert what the machine was actually told — the firmware's
+     * relays are fire-and-check-ACK and report nothing back.
+     */
+    knifeOsc = new Map<number, boolean>();
+    knifeBlower = new Map<number, number>();
+    vacPump = new Map<number, boolean>();
+    vacServo = new Map<string, boolean>();
+
     private motion: Array<{ ms: MicroSegment; interval: number; flags: number }> = [];
     private executing = false;
     private timeCredit = 0; // banked sim-seconds not yet spent
@@ -579,6 +589,54 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                     return "ok";
                 }
                 return "err bad_state";
+            // ── peripheral relays (knife / vacuum) ───────────────────────────
+            // Deliberately NOT state-gated: the firmware's gates on these five
+            // verbs are commented out so the operator can work the oscillator,
+            // blower and vacuum DURING a cut (control_plane.cpp). A sim that
+            // still refused them while RUNNING would make the demo look broken
+            // in exactly the case the change was made for.
+            //
+            // Replies follow the relay convention — `node <id> ok`, not `ok` —
+            // because the answer is about a bus node, not the Pico.
+            case "knife_osc": {
+                const node = parseInt(args[0] ?? "", 10);
+                if (!(node >= 1 && node <= BUS_ADDR_MAX) || args[1] === undefined) return "err usage";
+                if (!S.busNodes.has(node)) return `node ${node} timeout`;
+                S.knifeOsc.set(node, args[1] === "on" || args[1] === "1");
+                return `node ${node} ok`;
+            }
+            case "knife_blower": {
+                const node = parseInt(args[0] ?? "", 10);
+                const duty = parseInt(args[1] ?? "", 10);
+                if (!(node >= 1 && node <= BUS_ADDR_MAX) || !(duty >= 0 && duty <= 100)) return "err usage";
+                if (!S.busNodes.has(node)) return `node ${node} timeout`;
+                S.knifeBlower.set(node, duty);
+                return `node ${node} ok`;
+            }
+            case "vac_pump": {
+                const node = parseInt(args[0] ?? "", 10);
+                if (!(node >= 1 && node <= BUS_ADDR_MAX) || args[1] === undefined) return "err usage";
+                if (!S.busNodes.has(node)) return `node ${node} timeout`;
+                S.vacPump.set(node, args[1] === "on" || args[1] === "1");
+                return `node ${node} ok`;
+            }
+            case "vac_servo": {
+                const node = parseInt(args[0] ?? "", 10);
+                const idx = parseInt(args[1] ?? "", 10);
+                if (!(node >= 1 && node <= BUS_ADDR_MAX) || !(idx >= 0 && idx <= 6) || args[2] === undefined) {
+                    return "err usage";
+                }
+                if (!S.busNodes.has(node)) return `node ${node} timeout`;
+                S.vacServo.set(`${node}:${idx}`, args[2] === "on" || args[2] === "1");
+                return `node ${node} ok`;
+            }
+            case "vac_switch": {
+                const node = parseInt(args[0] ?? "", 10);
+                if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err usage";
+                if (!S.busNodes.has(node)) return `node ${node} timeout`;
+                // Nothing actuates the switch in a sim — it reads at rest.
+                return `node ${node} switch closed (level=0)`;
+            }
             default:
                 return "err unknown";
         }

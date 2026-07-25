@@ -19,6 +19,9 @@ import {
     nodePos,
     vacServo,
     vacPump,
+    vacSwitch,
+    knifeOsc,
+    knifeBlower,
     enable,
     disable,
     setOrigin,
@@ -157,10 +160,76 @@ describe("wire/link/commands: proactive verbs (vacuum + nodepos)", () => {
         });
     });
 
-    it("vacServo / vacPump: sim returns err unknown → false", async () => {
+    it("a node that is not on the bus → false, not a thrown error", async () => {
         await withLink(async (link) => {
+            // The default sim bus is 1..4; the relay answers `node 5 timeout`.
             expect(await vacServo(link, 5, 1, true)).toBe(false);
             expect(await vacPump(link, 5, true)).toBe(false);
+            expect(await knifeOsc(link, 5, true)).toBe(false);
+            expect(await vacSwitch(link, 5)).toBeNull();
+        });
+    });
+});
+
+describe("wire/link/commands: peripheral relays (knife + vacuum)", () => {
+    /** Peripherals live on ids the axis map never binds. */
+    async function withPeripherals<T>(fn: (link: Link, sim: SimTransport) => Promise<T>): Promise<T> {
+        const sim = new SimTransport({ axisMap: [1, 2, 3, 4], busNodes: [1, 2, 3, 4, 7, 8] });
+        const link = new Link(sim);
+        try {
+            return await fn(link, sim);
+        } finally {
+            await link.close();
+        }
+    }
+
+    it("knifeOsc / knifeBlower reach the node and record their state", async () => {
+        await withPeripherals(async (link, sim) => {
+            expect(await knifeOsc(link, 7, true)).toBe(true);
+            expect(sim.knifeOsc.get(7)).toBe(true);
+            expect(await knifeBlower(link, 7, 60)).toBe(true);
+            expect(sim.knifeBlower.get(7)).toBe(60);
+        });
+    });
+
+    it("knifeBlower clamps to 0..100 rather than sending `err usage`", async () => {
+        await withPeripherals(async (link, sim) => {
+            expect(await knifeBlower(link, 7, 250)).toBe(true);
+            expect(sim.knifeBlower.get(7)).toBe(100);
+            expect(await knifeBlower(link, 7, -5)).toBe(true);
+            expect(sim.knifeBlower.get(7)).toBe(0);
+        });
+    });
+
+    it("vacPump / vacServo / vacSwitch", async () => {
+        await withPeripherals(async (link, sim) => {
+            expect(await vacPump(link, 8, true)).toBe(true);
+            expect(sim.vacPump.get(8)).toBe(true);
+            expect(await vacServo(link, 8, 1, true)).toBe(true);
+            expect(sim.vacServo.get("8:1")).toBe(true);
+            expect(await vacSwitch(link, 8)).toBe(false); // closed = at rest
+        });
+    });
+
+    // The reason these exist: the firmware's IDLE/PAUSED/ALARM gate on all five
+    // verbs is commented out so the operator can work the knife and vacuum
+    // mid-cut. A relay that refused while RUNNING would defeat that.
+    it("reach the node while the machine is RUNNING", async () => {
+        await withPeripherals(async (link, sim) => {
+            sim._forceRunning();
+            expect(await knifeOsc(link, 7, true)).toBe(true);
+            expect(await knifeBlower(link, 7, 30)).toBe(true);
+            expect(await vacPump(link, 8, false)).toBe(true);
+            expect(await vacServo(link, 8, 0, true)).toBe(true);
+        });
+    });
+
+    // A relay answers `node <id> ok`, never a bare `ok` — the verdict is about
+    // the node, not the Pico. Parsing these as `ok` reads success as failure.
+    it("a bare `ok` is not what a relay replies", async () => {
+        await withPeripherals(async (link) => {
+            expect(await link.command("knife_osc 7 on")).toBe("node 7 ok");
+            expect(await link.command("vac_pump 8 off")).toBe("node 8 ok");
         });
     });
 });
