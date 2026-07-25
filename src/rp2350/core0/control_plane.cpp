@@ -506,20 +506,23 @@ bool handleCommand(const String& input) {
                     Serial.println("err dup"); return true;
                 }
 
-        // Diff: per changed slot, disengage the old occupant then engage the new.
-        // Commit the slot only after its packets ACK, so slotNode never claims a
-        // binding the bus did not confirm; a partial failure is safe to retry
-        // (re-engaging to the same slot is idempotent — §5.3).
+        // NOT a diff — deliberately dumb. First disengage every previously-bound
+        // node (best-effort: a since-removed/reset node that won't ACK is already
+        // where we want it), then engage EVERY desired node to its slot,
+        // unconditionally. Re-issuing the same axis_map therefore re-sends every
+        // engage, so a node that silently lost its slot (reflash / power blip /
+        // fresh Pico map) is always re-bound — the node state can never drift from
+        // what the map claims, which a skip-if-unchanged diff allowed.
+        for (int i = 0; i < 4; i++)
+            if (slotNode[i] != SLOT_NONE) relayEngage(slotNode[i], SLOT_NONE);
         for (int i = 0; i < 4; i++) {
-            if (desired[i] == slotNode[i]) continue;
-            if (slotNode[i] != SLOT_NONE && !relayEngage(slotNode[i], SLOT_NONE)) {
-                Serial.printf("err node %d timeout\n", slotNode[i]); return true;
+            if (desired[i] == SLOT_NONE) continue;
+            if (!relayEngage(desired[i], (uint8_t)i)) {
+                Serial.printf("err node %d timeout\n", desired[i]);
+                return true;              // leave the map as-is; a retry redoes all
             }
-            if (desired[i] != SLOT_NONE && !relayEngage(desired[i], (uint8_t)i)) {
-                Serial.printf("err node %d timeout\n", desired[i]); return true;
-            }
-            slotNode[i] = desired[i];
         }
+        for (int i = 0; i < 4; i++) slotNode[i] = desired[i];
 
         // Committed — clear the config gate if that is what was holding us.
         if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
@@ -588,10 +591,12 @@ bool handleCommand(const String& input) {
         return true;
     }
 
-    // ── step <node> <count> — debug stepping (bring-up only) ───────────────────
+    // ── step <node> <count> [sps] — debug stepping (bring-up only) ─────────────
     // <node> is a BUS id; we resolve it to its ENGAGE-bound stream slot via the
     // axis map, so the node must be in a committed axis_map first (err not_engaged
-    // otherwise). count sign = direction. Emits into that slot on Core 1.
+    // otherwise). count sign = direction. [sps] is the emit rate, defaulting to
+    // STEP_DEBUG_SPS and clamped to STEP_DEBUG_SPS_MAX. Emits into that slot on
+    // Core 1, which reads debugStepSps as it starts the burst.
     if (input.startsWith("step")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
@@ -601,13 +606,17 @@ bool handleCommand(const String& input) {
         uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
         long count = strtol(endPtr, &endPtr, 10);
         if (count == 0) { Serial.println("err usage"); return true; }
+        uint32_t sps = strtoul(endPtr, &endPtr, 10);   // optional — 0 if absent
+        if (sps == 0) sps = STEP_DEBUG_SPS;
+        if (sps > STEP_DEBUG_SPS_MAX) sps = STEP_DEBUG_SPS_MAX;
         uint8_t slot = nodeSlot(node);
         if (slot == SLOT_NONE) { Serial.println("err not_engaged"); return true; }
         uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
         if (count < 0) mag |= 0x8000;
+        debugStepSps = sps;                            // read by Core 1 on pickup
         uint32_t word = ((uint32_t)FIFO_STEP_DEBUG << 24) | ((uint32_t)slot << 16) | mag;
         multicore_fifo_push_blocking(word);
-        Serial.println("ok");
+        Serial.printf("ok %lu sps\n", (unsigned long)sps);
         return true;
     }
 
