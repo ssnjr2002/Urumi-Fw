@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bench — live compile &amp; run</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      background: #111;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      padding: 12px 20px;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    header h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+    header span { font-size: 12px; color: #555; }
+
+    .panel {
+      padding: 18px 20px;
+      border-right: 1px solid #2a2a2a;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      max-height: calc(100vh - 49px);
+    }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    label  { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .06em; }
+
+    input[type="file"], input[type="text"] {
+      background: #1a1a1a;
+      border: 1px solid #2e2e2e;
+      border-radius: 4px;
+      color: #e0e0e0;
+      padding: 7px 10px;
+      font-size: 13px;
+      width: 100%;
+    }
+    input[type="file"] { cursor: pointer; }
+    input[type="file"]::file-selector-button {
+      background: #2a2a2a; border: none; border-radius: 3px; color: #ccc;
+      padding: 3px 8px; margin-right: 8px; cursor: pointer; font-size: 12px;
+    }
+
+    .hint { font-size: 11px; color: #555; }
+
+    #config-editor {
+      flex: 1;
+      width: 100%;
+      resize: none;
+      background: #0f0f0f;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #d4d4d4;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      padding: 12px 14px;
+      tab-size: 2;
+      white-space: pre;
+      overflow: auto;
+    }
+    #config-editor:focus { outline: 1px solid #2563eb; border-color: #2563eb; }
+    #config-editor.invalid { border-color: #b91c1c; }
+
+    button {
+      padding: 9px 16px; border: none; border-radius: 4px;
+      font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity .15s;
+    }
+    button:disabled { opacity: .35; cursor: default; }
+
+    .row { display: flex; gap: 8px; }
+    .row > button { flex: 1; }
+
+    #connect-btn { background: #1a1a1a; color: #aaa; border: 1px solid #333; }
+    #connect-btn:not(:disabled):hover { background: #222; color: #e0e0e0; }
+    #run-btn     { background: #16a34a; color: #fff; }
+    #run-btn:not(:disabled):hover { background: #15803d; }
+    #stop-btn    { background: #7f1d1d; color: #fecaca; }
+    #stop-btn:not(:disabled):hover { background: #991b1b; color: #fff; }
+    #compile-btn { background: #2563eb; color: #fff; }
+    #compile-btn:not(:disabled):hover { background: #1d4ed8; }
+    .mini { background: #1a1a1a; color: #aaa; border: 1px solid #333; padding: 6px 10px; font-size: 12px; }
+    .mini:not(:disabled):hover { background: #222; color: #e0e0e0; }
+
+    .status {
+      font-size: 12px; padding: 7px 10px; border-radius: 4px; background: #1a1a1a;
+      white-space: pre-wrap;
+    }
+    .status[data-kind="working"] { color: #60a5fa; }
+    .status[data-kind="ok"]      { color: #4ade80; }
+    .status[data-kind="error"]   { color: #f87171; }
+    .status[data-kind="idle"]    { color: #666; }
+
+    #state-line { font-family: monospace; font-size: 12px; color: #888; }
+    #state-line b { color: #e0e0e0; }
+
+    #metrics {
+      font-family: monospace; font-size: 12px; color: #9ca3af;
+      background: #161616; border-radius: 4px; padding: 10px; white-space: pre;
+      min-height: 40px;
+    }
+
+    #progress-wrap { height: 6px; background: #1a1a1a; border-radius: 3px; overflow: hidden; }
+    #progress-fill { height: 100%; width: 0; background: #16a34a; transition: width .1s; }
+
+    .preview {
+      padding: 16px 20px 20px;
+      display: flex; flex-direction: column; gap: 12px;
+      background: #0d0d0d;
+      max-height: calc(100vh - 49px);
+      overflow: hidden;
+    }
+
+    .tabs { display: flex; align-items: center; gap: 6px; }
+    .tab {
+      background: transparent; color: #777; border: none;
+      border-bottom: 2px solid transparent; border-radius: 0;
+      padding: 6px 12px; font-size: 13px; font-weight: 600;
+    }
+    .tab:hover { color: #bbb; }
+    .tab.active { color: #e0e0e0; border-bottom-color: #2563eb; }
+    #revert-btn { margin-left: auto; }
+
+    .pane {
+      flex: 1; min-height: 0;
+      display: flex; flex-direction: column; gap: 8px;
+      align-items: center; justify-content: center;
+    }
+    .pane[hidden] { display: none; }
+    #config-pane { align-items: stretch; }
+
+    #svg-preview {
+      width: 100%; max-width: 640px; aspect-ratio: 1; background: #1a1a1a;
+      border-radius: 6px; display: flex; align-items: center; justify-content: center;
+      color: #333; font-size: 13px; overflow: hidden;
+    }
+    #svg-preview svg { display: block; max-width: 100%; max-height: 100%; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Bench</h1>
+    <span>SVG + editable config → live compile → stream</span>
+  </header>
+
+  <div class="panel">
+    <div class="field">
+      <label>SVG File</label>
+      <input type="file" id="svg-input" accept=".svg">
+      <span class="hint">Layer names (knife / pen / crease / revolver_pen) drive tool choice.</span>
+    </div>
+
+    <div class="field">
+      <label>Default tool <span style="text-transform:none;color:#444">(unlayered SVGs)</span></label>
+      <input type="text" id="default-tool" placeholder="knife / pen / crease">
+    </div>
+
+    <button id="compile-btn" type="button">Compile (dry run)</button>
+    <div id="metrics">No compile yet.</div>
+
+    <button id="connect-btn" type="button">Connect via WebSerial</button>
+    <div id="state-line">state: <b>—</b></div>
+
+    <div class="row">
+      <button class="mini" id="ping-btn"   type="button" disabled>Ping</button>
+      <button class="mini" id="enable-btn" type="button" disabled>Enable</button>
+      <button class="mini" id="origin-btn" type="button" disabled>Set origin</button>
+      <button class="mini" id="dump-btn"   type="button" disabled>Dump .bin</button>
+    </div>
+
+    <div class="row">
+      <button id="run-btn"  type="button" disabled>Compile &amp; Run</button>
+      <button id="stop-btn" type="button" disabled>Stop</button>
+    </div>
+
+    <div id="progress-wrap"><div id="progress-fill"></div></div>
+    <div class="status" id="status" data-kind="idle">Ready.</div>
+  </div>
+
+  <div class="preview">
+    <div class="tabs">
+      <button class="tab active" type="button" data-tab="svg">SVG</button>
+      <button class="tab" type="button" data-tab="config">Config</button>
+      <button class="mini" id="revert-btn" type="button" hidden>Revert to bench.json</button>
+    </div>
+
+    <div id="svg-pane" class="pane">
+      <div id="svg-preview">SVG preview</div>
+    </div>
+
+    <div id="config-pane" class="pane" hidden>
+      <textarea id="config-editor" spellcheck="false"></textarea>
+      <span class="hint">The whole config in memory: machine, heads, tools, quality. Compile parses this text — no file is written.</span>
+    </div>
+  </div>
+
+  <script type="module" src="./bench.js"></script>
+</body>
+</html>
