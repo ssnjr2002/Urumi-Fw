@@ -335,9 +335,19 @@ bool handleCommand(const String& input) {
     // The arg is packed into the FIFO word's payload byte (high nibble = idx, low
     // bit = on/off) for Core 1, which expands on→SERVO_ON_ANGLE before the wire.
     if (input.startsWith("vac_servo")) {
-        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-            Serial.println("err bad_state"); return true;
-        }
+        // STATE GATE COMMENTED OUT — peripheral control is wanted MID-JOB: the
+        // operator adjusts the oscillator / blower / vacuum while a cut is
+        // actually running, which is exactly when the machine is RUNNING and
+        // this gate answered `err bad_state`.
+        //
+        // What the gate was protecting: the relay below blocks Core 0 on a
+        // Core 1 round trip (push + pop, up to RESPONSE_TIMEOUT_MS). Core 1
+        // services it between microsegments, so a mid-stream peripheral
+        // command can stretch one step interval — a timing artefact in the
+        // cut, and a longer one if the node does not answer.
+        // if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+        //     Serial.println("err bad_state"); return true;
+        // }
         const char* p = argAfter(input, 9);
         char* endPtr;
         uint8_t node = (uint8_t)strtoul(p,      &endPtr, 10);
@@ -356,9 +366,19 @@ bool handleCommand(const String& input) {
 
     // ── vac_pump <node> <on|off> — vacuum-node SSR pump (soft-started) ─────────
     if (input.startsWith("vac_pump")) {
-        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-            Serial.println("err bad_state"); return true;
-        }
+        // STATE GATE COMMENTED OUT — peripheral control is wanted MID-JOB: the
+        // operator adjusts the oscillator / blower / vacuum while a cut is
+        // actually running, which is exactly when the machine is RUNNING and
+        // this gate answered `err bad_state`.
+        //
+        // What the gate was protecting: the relay below blocks Core 0 on a
+        // Core 1 round trip (push + pop, up to RESPONSE_TIMEOUT_MS). Core 1
+        // services it between microsegments, so a mid-stream peripheral
+        // command can stretch one step interval — a timing artefact in the
+        // cut, and a longer one if the node does not answer.
+        // if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+        //     Serial.println("err bad_state"); return true;
+        // }
         const char* p = argAfter(input, 8);
         char* endPtr;
         uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
@@ -378,9 +398,19 @@ bool handleCommand(const String& input) {
     // Relays CMD_KNIFE_OSC to a knife node. State packed into the FIFO word's
     // payload byte (low bit) for Core 1.
     if (input.startsWith("knife_osc")) {
-        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-            Serial.println("err bad_state"); return true;
-        }
+        // STATE GATE COMMENTED OUT — peripheral control is wanted MID-JOB: the
+        // operator adjusts the oscillator / blower / vacuum while a cut is
+        // actually running, which is exactly when the machine is RUNNING and
+        // this gate answered `err bad_state`.
+        //
+        // What the gate was protecting: the relay below blocks Core 0 on a
+        // Core 1 round trip (push + pop, up to RESPONSE_TIMEOUT_MS). Core 1
+        // services it between microsegments, so a mid-stream peripheral
+        // command can stretch one step interval — a timing artefact in the
+        // cut, and a longer one if the node does not answer.
+        // if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+        //     Serial.println("err bad_state"); return true;
+        // }
         const char* p = argAfter(input, 9);
         char* endPtr;
         uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
@@ -422,9 +452,19 @@ bool handleCommand(const String& input) {
     // Relays CMD_KNIFE_BLOWER to a knife node. Duty (0..100 %) packed into the
     // FIFO word's payload byte for Core 1.
     if (input.startsWith("knife_blower")) {
-        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-            Serial.println("err bad_state"); return true;
-        }
+        // STATE GATE COMMENTED OUT — peripheral control is wanted MID-JOB: the
+        // operator adjusts the oscillator / blower / vacuum while a cut is
+        // actually running, which is exactly when the machine is RUNNING and
+        // this gate answered `err bad_state`.
+        //
+        // What the gate was protecting: the relay below blocks Core 0 on a
+        // Core 1 round trip (push + pop, up to RESPONSE_TIMEOUT_MS). Core 1
+        // services it between microsegments, so a mid-stream peripheral
+        // command can stretch one step interval — a timing artefact in the
+        // cut, and a longer one if the node does not answer.
+        // if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+        //     Serial.println("err bad_state"); return true;
+        // }
         const char* p = argAfter(input, 12);
         char* endPtr;
         uint8_t node = (uint8_t)strtoul(p,      &endPtr, 10);
@@ -444,9 +484,19 @@ bool handleCommand(const String& input) {
     // nodepos. NC switch wired to GND w/ pull-up: level 0 = closed (rest),
     // level 1 = open (actuated).
     if (input.startsWith("vac_switch")) {
-        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-            Serial.println("err bad_state"); return true;
-        }
+        // STATE GATE COMMENTED OUT — peripheral control is wanted MID-JOB: the
+        // operator adjusts the oscillator / blower / vacuum while a cut is
+        // actually running, which is exactly when the machine is RUNNING and
+        // this gate answered `err bad_state`.
+        //
+        // What the gate was protecting: the relay below blocks Core 0 on a
+        // Core 1 round trip (push + pop, up to RESPONSE_TIMEOUT_MS). Core 1
+        // services it between microsegments, so a mid-stream peripheral
+        // command can stretch one step interval — a timing artefact in the
+        // cut, and a longer one if the node does not answer.
+        // if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+        //     Serial.println("err bad_state"); return true;
+        // }
         const char* a = argAfter(input, 10);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
