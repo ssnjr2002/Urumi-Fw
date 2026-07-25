@@ -288,6 +288,8 @@ export {
     stop,
     unalarm,
     axisMap,
+    readAxisMap,
+    type SlotBinding,
 } from "./wire/link/commands.js";
 
 // ── wire/link backends: Sim (env-agnostic; real ports import from the subpath) ─

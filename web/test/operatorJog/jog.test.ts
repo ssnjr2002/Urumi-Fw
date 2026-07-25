@@ -23,7 +23,8 @@ async function withLink<T>(
     fn: (link: Link, sim: SimTransport) => Promise<T>,
     simOpts?: { frameMs?: number },
 ): Promise<T> {
-    const sim = new SimTransport(simOpts);
+    // Configured boot — the ALARM_CONFIG gate would refuse every jog.
+    const sim = new SimTransport({ axisMap: [1, 2, 3, 4], ...simOpts });
     const link = new Link(sim);
     const poller = setInterval(() => {
         void link.getStatus().catch(() => undefined);

@@ -29,8 +29,10 @@ import {
     MAGIC_ABORT,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
+    MAGIC_JOG,
     NACK_FULL,
     NACK_BAD_STATE,
+    NACK_PAUSED,
 } from "../../format/constants.js";
 import {
     MachineState,
@@ -49,7 +51,24 @@ interface SimOptions {
     ackCoalesceMax?: number;
     frameMs?: number;
     fCpu?: number;
+    /**
+     * Bus ids that answer a relay. An id outside this set relays and times out,
+     * exactly like a missing node on real RS485 — which is what makes
+     * `axis_map` able to fail partway (`err node <id> timeout`).
+     */
+    busNodes?: readonly number[];
+    /**
+     * Skip the ALARM_CONFIG boot gate by committing this map immediately, as if
+     * `axis_map` had already run. For tests that are not about the gate; real
+     * firmware always boots unconfigured (core0.cpp).
+     */
+    axisMap?: readonly (number | null)[];
 }
+
+/** Provisional bus-address ceiling — control_plane.cpp BUS_ADDR_MAX. */
+const BUS_ADDR_MAX = 8;
+/** Stream-byte motion slots (X/Y/Z/A) — control_plane.cpp MOTION_SLOTS. */
+const MOTION_SLOTS = 4;
 
 export class SimTransport implements Transport {
     readonly ringSize: number;
@@ -57,8 +76,16 @@ export class SimTransport implements Transport {
     readonly frameMs: number;
     readonly fCpu: number;
 
-    state: MachineState = MachineState.IDLE;
-    alarm: AlarmReason = AlarmReason.NONE;
+    /** Ids that answer a relay (everything else times out). */
+    readonly busNodes: ReadonlySet<number>;
+
+    /**
+     * Boot state is the ALARM_CONFIG gate, not IDLE (core0.cpp): the axis map
+     * is empty, and since motion ingest gates on machineState alone, every
+     * job/jog is refused until `axis_map` commits a binding.
+     */
+    state: MachineState = MachineState.ALARM;
+    alarm: AlarmReason = AlarmReason.CONFIG;
     running: RunningReason = RunningReason.JOB;
     axesHomed = 0;
     axesEnabled = 0;
@@ -72,6 +99,14 @@ export class SimTransport implements Transport {
     private pendingAcks = 0; // accepted but not yet flushed
     private aborting = false; // abort barrier (see MAGIC_ABORT)
 
+    /**
+     * The committed axis map: slotNode[i] is the bus id bound to stream slot i,
+     * or null for unbound (control_plane.cpp `slotNode[]`, SLOT_NONE = 0xFF).
+     * Core-0-local on the firmware, so it is NOT in STATUS_RSP — the host reads
+     * it back with the no-arg `axis_map` (§8).
+     */
+    slotNode: (number | null)[] = [null, null, null, null];
+
     private motion: Array<{ ms: MicroSegment; interval: number; flags: number }> = [];
     private executing = false;
     private timeCredit = 0; // banked sim-seconds not yet spent
@@ -84,6 +119,12 @@ export class SimTransport implements Transport {
         this.ackCoalesceMax = opts.ackCoalesceMax ?? 8;
         this.frameMs = opts.frameMs ?? 40;
         this.fCpu = opts.fCpu ?? 150_000_000;
+        this.busNodes = new Set(opts.busNodes ?? [1, 2, 3, 4]);
+        if (opts.axisMap) {
+            for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axisMap[i] ?? null;
+            this.state = MachineState.IDLE;
+            this.alarm = AlarmReason.NONE;
+        }
         this.timer = setInterval(() => this._tick(), this.frameMs);
         // Don't hold the event loop open — a test's vitest worker should exit
         // when the test completes. The timer is unref'd where supported.
@@ -231,10 +272,35 @@ export class SimTransport implements Transport {
             this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
             return;
         }
-        if (this.state === MachineState.ALARM || this.state === MachineState.HOMING) {
-            this._flushAck(); // ACKs earned before a rewind land first
-            this.reply(new Uint8Array([MAGIC_NACK, NACK_BAD_STATE, 0]));
-            return; // stream not accepted in these states
+        // State gate, per magic (data_plane.cpp). The two stream types differ:
+        //   MSEG (job) — IDLE/RUNNING only; PAUSED gets its own NACK_PAUSED so
+        //     the host can hold rather than treat it as an error.
+        //   JOG        — IDLE/PAUSED, plus RUNNING when the burst in progress is
+        //     itself a jog. Packet 2+ of a multi-packet jog arrives after the
+        //     machine already flipped to RUNNING for packet 1; rejecting those
+        //     would NACK every jog after the first, forever.
+        // ALARM lands here too, which is how the ALARM_CONFIG boot gate refuses
+        // all motion without a separate predicate.
+        const isJog = data[0] === MAGIC_JOG;
+        const st = this.state;
+        if (!isJog) {
+            if (st === MachineState.PAUSED) {
+                this._flushAck();
+                this.reply(new Uint8Array([MAGIC_NACK, NACK_PAUSED, 0]));
+                return;
+            }
+            if (st !== MachineState.IDLE && st !== MachineState.RUNNING) {
+                this._flushAck(); // ACKs earned before a rewind land first
+                this.reply(new Uint8Array([MAGIC_NACK, NACK_BAD_STATE, 0]));
+                return;
+            }
+        } else {
+            const continuingJog = st === MachineState.RUNNING && this.running === RunningReason.JOG;
+            if (st !== MachineState.IDLE && st !== MachineState.PAUSED && !continuingJog) {
+                this._flushAck();
+                this.reply(new Uint8Array([MAGIC_NACK, NACK_BAD_STATE, 0]));
+                return;
+            }
         }
         if (this.motion.length >= this.ringSize) {
             this._flushAck();
@@ -247,7 +313,10 @@ export class SimTransport implements Transport {
             // continuation after a tool-change PAUSE; returns to IDLE.
             this.returnState =
                 this.state === MachineState.PAUSED ? MachineState.PAUSED : MachineState.IDLE;
-            this.running = this.state === MachineState.PAUSED ? RunningReason.JOG : RunningReason.JOB;
+            // runningReason follows the STREAM TYPE, not the entry state: a jog
+            // from IDLE is RUNNING_JOG, and that is exactly what lets packet 2+
+            // of the burst past the gate above.
+            this.running = isJog ? RunningReason.JOG : RunningReason.JOB;
             this.state = MachineState.RUNNING;
             this.executing = true;
         }
@@ -338,11 +407,75 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 return "seq reset";
             case "pingnode": {
                 // `all` (or no arg) answers on ONE line, not one per node — text
-                // plane is one line per command.
+                // plane is one line per command. The scan is the whole bus
+                // (1..BUS_ADDR_MAX), not just the axes: it is the bring-up verb
+                // that surfaces peripherals too.
+                if (!isIdlePausedAlarm(S.state)) return "err bad_state";
                 if (args.length === 0 || args[0] === "all") {
-                    return "nodes " + [1, 2, 3, 4].map((n) => `${n}=ok`).join(" ");
+                    let out = "nodes";
+                    for (let n = 1; n <= BUS_ADDR_MAX; n++) {
+                        out += ` ${n}=${S.busNodes.has(n) ? "ok" : "timeout"}`;
+                    }
+                    return out;
                 }
-                return `node ${args[0]} ok`;
+                const node = parseInt(args[0]!, 10);
+                if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
+                return `node ${node} ${S.busNodes.has(node) ? "ok" : "timeout"}`;
+            }
+            case "nodepos": {
+                // The node's OWN counter. The sim has no per-node counter
+                // distinct from machinePos, so it reports the slot's position —
+                // which is the no-lost-steps case, the only one a sim can model.
+                if (!isIdlePausedAlarm(S.state)) return "err bad_state";
+                const node = parseInt(args[0] ?? "", 10);
+                if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err usage";
+                if (!S.busNodes.has(node)) return `node ${node} timeout`;
+                const slot = S._nodeSlot(node);
+                return `node ${node} pos ${slot === null ? 0 : S.pos[slot]}`;
+            }
+            case "axis_map": {
+                // Read-back form (§8): the map is host-authored and absent from
+                // STATUS_RSP, so this is the only way to see what is committed.
+                if (args.length === 0) {
+                    return "axis_map " + S.slotNode.map((n) => (n === null ? "-" : String(n))).join(" ");
+                }
+                // Rebinding mid-RUNNING would corrupt in-flight motion (§6.2).
+                if (!isIdlePausedAlarm(S.state)) return "err bad_state";
+
+                const desired: (number | null)[] = [];
+                for (let i = 0; i < MOTION_SLOTS; i++) {
+                    const tok = args[i];
+                    if (tok === undefined || tok === "") return "err usage";
+                    if (tok === "-") { desired.push(null); continue; }
+                    const v = parseInt(tok, 10);
+                    if (Number.isNaN(v)) return "err usage";
+                    if (v === 0) { desired.push(null); continue; }
+                    if (v > BUS_ADDR_MAX) return "err bad_node";
+                    desired.push(v);
+                }
+                for (let i = 0; i < MOTION_SLOTS; i++) {
+                    for (let j = i + 1; j < MOTION_SLOTS; j++) {
+                        if (desired[i] !== null && desired[i] === desired[j]) return "err dup";
+                    }
+                }
+
+                // Deliberately NOT a diff: disengage everything previously
+                // bound, then engage every desired node unconditionally, so a
+                // node that silently lost its slot is always re-bound. A node
+                // that does not ACK leaves the map untouched — a retry redoes
+                // all of it (idempotent, no rollback needed).
+                for (const id of desired) {
+                    if (id !== null && !S.busNodes.has(id)) return `err node ${id} timeout`;
+                }
+                S.slotNode = desired;
+
+                // The gate condition is "every slot ACK-confirmed", not "a
+                // string parsed" — reaching here means it held.
+                if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
+                    S.state = MachineState.IDLE;
+                    S.alarm = AlarmReason.NONE;
+                }
+                return "ok";
             }
             case "getstate":
                 return (
@@ -360,13 +493,22 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 S.motion = [];
                 S.executing = false;
                 return "ok";
+            // enable/disable are TYPE-BLIND relays (§9): they go to any bus id,
+            // and the axis bookkeeping applies only when that id is in the axis
+            // map. The bit index is the id's SLOT, never `id - 1` — an axis node
+            // can be any bus address now.
             case "enable":
                 if (isIdlePausedAlarm(S.state)) {
                     if (args.length === 0 || args[0] === "all") {
-                        S.axesEnabled = axisMask("xyza"); // energise all present axes
+                        // `all` targets the map — bound slots only.
+                        for (let i = 0; i < MOTION_SLOTS; i++) {
+                            if (S.slotNode[i] !== null) S.axesEnabled |= 1 << i;
+                        }
                     } else {
                         const node = parseInt(args[0]!, 10);
-                        S.axesEnabled |= 1 << (node - 1);
+                        if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
+                        const slot = S._nodeSlot(node);
+                        if (slot !== null) S.axesEnabled |= 1 << slot;
                     }
                     return "ok";
                 }
@@ -374,12 +516,16 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             case "disable":
                 if (isIdlePausedAlarm(S.state)) {
                     if (args.length === 0 || args[0] === "all") {
-                        S.axesHomed = 0; // de-energise -> position invalid
+                        S.axesHomed = 0; // de-energise -> datum lost
                         S.axesEnabled = 0;
                     } else {
                         const node = parseInt(args[0]!, 10);
-                        S.axesEnabled &= ~(1 << (node - 1));
-                        S.axesHomed &= ~(1 << (node - 1));
+                        if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
+                        const slot = S._nodeSlot(node);
+                        if (slot !== null) {
+                            S.axesEnabled &= ~(1 << slot);
+                            S.axesHomed &= ~(1 << slot);
+                        }
                     }
                     return "ok";
                 }
@@ -392,8 +538,9 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 for (let i = 0; i < 4; i++) {
                     if (axes.includes(axisChars[i]!)) S.pos[i] = 0;
                 }
-                if (S.state === MachineState.ALARM) {
-                    // setorigin recovers from ALARM
+                // setorigin recovers from an ESTOP-alarm, but NOT from the
+                // config gate — only a committed axis_map leaves that (§6.1).
+                if (S.state === MachineState.ALARM && S.alarm !== AlarmReason.CONFIG) {
                     S.state = MachineState.IDLE;
                     S.alarm = AlarmReason.NONE;
                 }
@@ -425,6 +572,8 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 return "err bad_state";
             case "unalarm":
                 if (S.state === MachineState.ALARM) {
+                    // The config gate is not a clearable fault (§6.1).
+                    if (S.alarm === AlarmReason.CONFIG) return "err unconfigured";
                     S.state = MachineState.IDLE;
                     S.alarm = AlarmReason.NONE;
                     return "ok";
@@ -433,6 +582,12 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             default:
                 return "err unknown";
         }
+    }
+
+    /** Which stream slot a bus id is ENGAGE-bound to, or null (nodeSlot()). */
+    private _nodeSlot(node: number): number | null {
+        const i = this.slotNode.indexOf(node);
+        return i < 0 ? null : i;
     }
 
     /** Test hook: detect a text write (all bytes < 0x80, ASCII-printable). */

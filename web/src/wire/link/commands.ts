@@ -137,28 +137,58 @@ export function unalarm(link: Link): Promise<boolean> {
     return _ok(link, "unalarm");
 }
 
-// ── designed-for: axis_map (PROPOSED, not yet implemented in firmware) ────────
+// ── axis_map — bind bus nodes to the four stream slots ───────────────────────
+
+/** A slot binding: a bus id, or null for "leave this slot disengaged". */
+export type SlotBinding = number | null;
 
 /**
- * Declare the four motion-slot bindings to the Pico. The Pico owns the
- * current map and diffs each new `axis_map` into the minimal set of
- * per-node CMD_ENGAGE packets.
+ * Declare the four motion-slot bindings (X, Y, Z, A) to the Pico, which
+ * disengages every previously-bound node and engages each of these to its slot
+ * via per-node CMD_ENGAGE. Not a diff — re-issuing the same map deliberately
+ * re-sends every engage, so a node that silently lost its slot (reflash, power
+ * blip, fresh Pico) is re-bound rather than skipped.
  *
- * NOT YET IMPLEMENTED — the firmware does not accept this command yet
- * (docs/engage_and_axis_map.md, Workstream A). Bindings are always 4 nodes
- * (0 = no axis on that slot); a value of 0 leaves the slot disengaged.
+ * Until a map commits the machine sits in ALARM/ALARM_CONFIG and refuses ALL
+ * motion, so this is the first thing a host does after connecting — and the
+ * thing it re-asserts on every reconnect, since the map is host-authored and
+ * never appears in STATUS_RSP (docs/engage_and_axis_map.md §8).
+ *
+ * Throws with the firmware's reason on rejection (`err dup`, `err bad_node`,
+ * `err bad_state`, `err node <id> timeout`) — the failure modes are distinct
+ * enough that collapsing them to `false` would lose what the operator needs.
+ * A partial failure leaves the committed map untouched; retrying redoes all of
+ * it.
+ *
+ * Only valid in IDLE/PAUSED/ALARM — rebinding slots mid-RUNNING would corrupt
+ * in-flight motion (§6.2).
  */
 export async function axisMap(
-    _link: Link,
-    _x: number,
-    _y: number,
-    _z: number,
-    _a: number,
+    link: Link,
+    x: SlotBinding,
+    y: SlotBinding,
+    z: SlotBinding,
+    a: SlotBinding,
 ): Promise<boolean> {
-    throw new Error(
-        "axis_map: not yet implemented on the firmware side " +
-        "(docs/engage_and_axis_map.md, Workstream A)",
-    );
+    const tok = (n: SlotBinding): string => (n === null || n === 0 ? "-" : String(n));
+    const reply = await link.command(`axis_map ${tok(x)} ${tok(y)} ${tok(z)} ${tok(a)}`);
+    if (reply === "ok") return true;
+    throw new Error(`axis_map rejected: ${reply || "no reply"}`);
+}
+
+/**
+ * Read back the committed map as four slot bindings (null = unbound). The map
+ * lives on Core 0 and is absent from STATUS_RSP by design, so this no-arg form
+ * is the only way to observe it.
+ */
+export async function readAxisMap(link: Link): Promise<readonly [SlotBinding, SlotBinding, SlotBinding, SlotBinding]> {
+    const r = await link.command("axis_map");
+    const parts = r.split(/\s+/);
+    if (parts[0] !== "axis_map" || parts.length < 5) {
+        throw new Error(`bad axis_map reply: ${JSON.stringify(r)}`);
+    }
+    const one = (t: string): SlotBinding => (t === "-" || t === "0" ? null : parseInt(t, 10));
+    return [one(parts[1]!), one(parts[2]!), one(parts[3]!), one(parts[4]!)];
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

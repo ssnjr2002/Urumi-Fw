@@ -36,9 +36,20 @@ function mseg(dx = 1, interval = 1000): Uint8Array {
 
 async function withLink<T>(
     fn: (link: Link, sim: SimTransport) => Promise<T>,
-    simOpts?: { ackCoalesceMax?: number; ringSize?: number; frameMs?: number; fCpu?: number },
+    simOpts?: {
+        ackCoalesceMax?: number;
+        ringSize?: number;
+        frameMs?: number;
+        fCpu?: number;
+        busNodes?: readonly number[];
+        axisMap?: readonly (number | null)[];
+    },
 ): Promise<T> {
-    const sim = new SimTransport(simOpts);
+    // Boot into a COMMITTED map by default: the firmware boots into the
+    // ALARM_CONFIG gate and refuses all motion until `axis_map` commits, so
+    // every test that is not about the gate needs a configured machine. A gate
+    // test passes `{ axisMap: undefined }` to get the unconfigured boot.
+    const sim = new SimTransport({ axisMap: [1, 2, 3, 4], ...simOpts });
     const link = new Link(sim);
     try {
         return await fn(link, sim);
@@ -115,7 +126,12 @@ describe("wire/link/backends/sim: control plane", () => {
 
     it("pingnode all → one line, not one per node", async () => {
         await withLink(async (link) => {
-            expect(await link.command("pingnode all")).toBe("nodes 1=ok 2=ok 3=ok 4=ok");
+            // The scan is the whole bus (1..BUS_ADDR_MAX=8), not just the
+            // axes — it is the bring-up verb that surfaces peripherals too.
+            // Only 1..4 answer in the default sim bus.
+            expect(await link.command("pingnode all")).toBe(
+                "nodes 1=ok 2=ok 3=ok 4=ok 5=timeout 6=timeout 7=timeout 8=timeout",
+            );
             expect(await link.command("pingnode 3")).toBe("node 3 ok");
         });
     });
@@ -283,6 +299,47 @@ describe("wire/link/backends/sim: MSEG_FLAG_PAUSE", () => {
             await tick(100);
             const st = await link.getStatus();
             expect(st.state).toBe(MachineState.PAUSED);
+        });
+    });
+});
+describe("wire/link/backends/sim: the ALARM_CONFIG boot gate", () => {
+    it("refuses a stream until axis_map commits", async () => {
+        await withLink(
+            async (link, sim) => {
+                expect(sim.state).toBe(MachineState.ALARM);
+                expect(sim.alarm).toBe(AlarmReason.CONFIG);
+
+                // Motion ingest gates on machineState alone, so the config
+                // ALARM refuses the stream with no separate predicate.
+                const refused = await link.stream([mseg()], 4);
+                expect(refused.ok).toBe(false);
+                expect(sim.pos[0]).toBe(0);
+
+                expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
+                expect(sim.state).toBe(MachineState.IDLE);
+
+                const accepted = await link.stream([mseg()], 4);
+                expect(accepted.ok).toBe(true);
+            },
+            { axisMap: undefined }, // the real, unconfigured boot
+        );
+    });
+
+    it("axis_map is rejected while RUNNING — rebinding mid-motion corrupts it", async () => {
+        await withLink(async (link, sim) => {
+            sim._forceRunning();
+            expect(await link.command("axis_map 1 2 5 6")).toBe("err bad_state");
+        });
+    });
+
+    it("a job stream against a PAUSED machine gets NACK_PAUSED, not BAD_STATE", async () => {
+        await withLink(async (link, sim) => {
+            sim._forceRunning();
+            expect(await link.command("pause")).toBe("ok");
+            await link.resetSeq();
+            const r = await link.stream([mseg()], 4);
+            expect(r.ok).toBe(false);
+            expect(r.nacks).toBeGreaterThan(0);
         });
     });
 });
