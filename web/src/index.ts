@@ -301,6 +301,8 @@ export {
     ClickJogSource,
     jogClick,
     jogTo,
+    jogToPoint,
+    type JogTarget,
     type JogHandle,
     type ClickJogSourceOptions,
     type JogToOptions,
