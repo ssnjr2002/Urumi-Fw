@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comms — text plane, status &amp; jog harness</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      background: #111;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      padding: 10px 18px;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    header h1 { font-size: 15px; font-weight: 600; }
+    header .sub { font-size: 12px; color: #555; margin-right: auto; }
+
+    .col { padding: 14px 18px; display: flex; flex-direction: column; gap: 14px;
+           overflow-y: auto; max-height: calc(100vh - 48px); }
+    .col.right { border-left: 1px solid #2a2a2a; background: #0d0d0d; }
+
+    section { display: flex; flex-direction: column; gap: 8px; }
+    h2 { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+
+    label { font-size: 11px; color: #888; }
+    input, select {
+      background: #1a1a1a; border: 1px solid #2e2e2e; border-radius: 4px;
+      color: #e0e0e0; padding: 6px 8px; font-size: 13px; min-width: 0;
+    }
+    input:focus, select:focus { outline: 1px solid #2563eb; border-color: #2563eb; }
+
+    button {
+      padding: 6px 10px; border: 1px solid #333; border-radius: 4px; background: #1a1a1a;
+      color: #ccc; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    button:not(:disabled):hover { background: #242424; color: #fff; }
+    button:disabled { opacity: .3; cursor: default; }
+    button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+    button.go      { background: #16a34a; border-color: #16a34a; color: #fff; }
+    button.danger  { background: #7f1d1d; border-color: #7f1d1d; color: #fecaca; }
+
+    .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .row > .grow { flex: 1; }
+
+    pre, .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+
+    #console {
+      background: #0b0b0b; border: 1px solid #222; border-radius: 6px;
+      padding: 10px; height: 300px; overflow-y: auto; white-space: pre-wrap;
+      line-height: 1.5;
+    }
+    #console .tx   { color: #60a5fa; }
+    #console .rx   { color: #d4d4d4; }
+    #console .ok   { color: #4ade80; }
+    #console .err  { color: #f87171; }
+    #console .note { color: #6b7280; }
+
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    table.status { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 12px; }
+    table.status td { padding: 3px 4px; border-bottom: 1px solid #1c1c1c; }
+    table.status td:first-child { color: #777; width: 45%; }
+
+    .jog-axis {
+      display: grid; grid-template-columns: 96px repeat(2, 1fr) 1fr; gap: 6px; align-items: center;
+    }
+    .jog-axis .name {
+      font-family: ui-monospace, monospace; font-size: 12px; color: #ccc;
+      display: flex; align-items: center; gap: 5px; cursor: pointer;
+    }
+    .jog-axis .name input { margin: 0; }
+    .jog-axis .name:has(input:disabled) { color: #555; cursor: default; }
+    .jog-axis .cal  { font-size: 11px; color: #555; text-align: right; }
+    .periph { border: 1px solid #222; border-radius: 6px; padding: 9px 10px; margin-bottom: 8px;
+              display: flex; flex-direction: column; gap: 7px; }
+    .periph h3 { font-size: 12px; color: #9ca3af; font-weight: 600; }
+    .periph h3 span { color: #555; font-weight: 400; font-family: ui-monospace, monospace; }
+    .periph .state { font-size: 11px; color: #6b7280; font-family: ui-monospace, monospace; margin-left: auto; }
+
+    .head-group { border: 1px solid #222; border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .head-group h3 { font-size: 12px; color: #9ca3af; font-weight: 600; }
+    .absent { font-size: 11px; color: #555; font-style: italic; }
+
+    #queue { list-style: none; display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+    #queue li {
+      display: flex; gap: 8px; align-items: center; font-family: ui-monospace, monospace;
+      font-size: 12px; background: #161616; border-radius: 4px; padding: 5px 8px;
+    }
+    #queue li .st { margin-left: auto; font-size: 11px; }
+    #queue li[data-state="pending"] .st { color: #6b7280; }
+    #queue li[data-state="running"] .st { color: #60a5fa; }
+    #queue li[data-state="done"]    .st { color: #4ade80; }
+    #queue li[data-state="failed"]  .st { color: #f87171; }
+    #queue li button { padding: 1px 6px; font-size: 11px; }
+
+    .progress { height: 5px; background: #1a1a1a; border-radius: 3px; overflow: hidden; }
+    .progress > div { height: 100%; width: 0; background: #16a34a; transition: width .2s; }
+    #job-metrics { background: #0b0b0b; border: 1px solid #222; border-radius: 6px;
+                   padding: 8px 10px; color: #9ca3af; white-space: pre-wrap; max-height: 150px; overflow-y: auto; }
+
+    .banner { font-size: 12px; padding: 7px 10px; border-radius: 4px; background: #1a1a1a; white-space: pre-wrap; }
+    .banner[data-kind="ok"]    { color: #4ade80; }
+    .banner[data-kind="error"] { color: #f87171; }
+    .banner[data-kind="idle"]  { color: #6b7280; }
+    .hint { font-size: 11px; color: #555; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Comms</h1>
+    <span class="sub">wire/link text plane + status + operatorJog harness</span>
+    <select id="backend">
+      <option value="sim">Sim (in-process)</option>
+      <option value="webserial">WebSerial</option>
+    </select>
+    <input id="baud" type="text" value="115200" size="7" title="baud (WebSerial only)">
+    <button id="connect-btn" class="primary" type="button">Connect</button>
+    <button id="disconnect-btn" type="button" disabled>Disconnect</button>
+    <label><input type="checkbox" id="verbose"> verbose</label>
+  </header>
+
+  <div class="col">
+    <section>
+      <h2>Config</h2>
+      <div class="row">
+        <input id="config-url" class="grow" type="text" value="./comms.json">
+        <button id="reload-config" type="button">Load</button>
+      </div>
+      <div class="banner" id="config-banner" data-kind="idle">Loading config…</div>
+    </section>
+
+    <section>
+      <h2>Text console</h2>
+      <div id="console"></div>
+      <div class="row">
+        <input id="cmd-input" class="grow mono" type="text"
+               placeholder="ping | getstate | getpos | enable 1 …   (prefix ! to fire-and-forget)" disabled>
+        <button id="send-btn" type="button" disabled>Send</button>
+      </div>
+      <div class="chips" id="quick-cmds"></div>
+      <div class="row">
+        <button id="clear-console" type="button">Clear console</button>
+        <span class="hint">↑/↓ walks history. `!stop` and `!abort` skip the reply slot.</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Axis map <span class="hint" style="text-transform:none">— binds bus nodes to stream slots; nothing moves until it commits</span></h2>
+      <div class="row">
+        <label>engaged head</label>
+        <select id="head-sel"></select>
+        <button id="map-commit" class="primary" type="button" disabled>Commit axis_map</button>
+        <span class="banner" id="map-line" data-kind="idle">slots X Y Z A = — — — —</span>
+      </div>
+      <span class="hint">Both heads' Z/A share slots 2 and 3 — switching heads re-binds them. Rejected while RUNNING.</span>
+    </section>
+
+    <section>
+      <h2>Click jog <span class="hint" style="text-transform:none">— open session, re-click to blend</span></h2>
+      <div class="row">
+        <label>step mm <input id="jog-step" type="number" value="5" step="0.1" min="0.01" size="5"></label>
+        <label>feed mm/s <input id="jog-feed" type="number" value="20" step="1" min="0.1" size="5"></label>
+        <button id="jog-cancel" class="danger" type="button" disabled>Cancel jog</button>
+        <span class="hint" id="jog-state">idle</span>
+      </div>
+      <div class="hint" id="key-hint">Pick an axis to drive it with ← / →.</div>
+      <div id="jog-panel"></div>
+    </section>
+
+    <section>
+      <h2>Go to coordinate <span class="hint" style="text-transform:none">— one coordinated move per entry, closed session, one at a time</span></h2>
+      <div class="row" id="goto-axes"></div>
+      <div class="row">
+        <label>head <select id="goto-head"></select></label>
+        <label>feed <input id="goto-feed" type="number" value="20" step="1" min="0.1" size="5"></label>
+        <button id="goto-stack" type="button">Stack</button>
+        <button id="goto-next" class="primary" type="button" disabled>Send next</button>
+        <button id="goto-all" class="go" type="button" disabled>Send all</button>
+        <button id="goto-abort" class="danger" type="button" disabled>Abort</button>
+        <button id="goto-clear" type="button">Clear</button>
+      </div>
+      <ol id="queue"></ol>
+      <span class="hint">Each entry reads live position via STATUS_RSP, then streams one trapezoidal jog to the point —
+        all named axes start and stop together. Leave a field blank to hold that axis. An entry naming
+        the other head's Z/A commits its axis_map first.</span>
+    </section>
+
+    <section>
+      <h2>Peripherals <span class="hint" style="text-transform:none">— knife &amp; vacuum nodes; usable mid-job</span></h2>
+      <div id="periph-panel"></div>
+      <span class="hint">Type-blind relays: these address a bus id directly, not a motion slot, so they
+        work whatever the axis map holds. The firmware's IDLE/PAUSED/ALARM gate on these five verbs is
+        commented out, so they also answer while RUNNING — the relay blocks Core 0 on a Core 1 round
+        trip, so one mid-cut command can stretch a step interval.</span>
+    </section>
+
+    <section>
+      <h2>Job <span class="hint" style="text-transform:none">— SVG → bakePlan → schedule/walk → stream, on the config above</span></h2>
+      <div class="row">
+        <input id="job-svg" type="file" accept=".svg">
+        <label>default tool <input id="job-tool" type="text" size="8" placeholder="(from layer)"></label>
+        <button id="job-compile" type="button" disabled>Compile</button>
+        <button id="job-run" class="go" type="button" disabled>Run</button>
+        <button id="job-stop" class="danger" type="button" disabled>Stop</button>
+      </div>
+      <div class="progress"><div id="job-progress"></div></div>
+      <pre id="job-metrics" class="mono">No SVG loaded.</pre>
+      <span class="hint">Compile is a dry run from the origin. Run re-compiles from the machine's live
+        position, then streams phase by phase, pausing at each tool swap and committing the incoming
+        head's axis_map before it resumes. Scheduled one tool at a time even on a dual-head machine:
+        a motion event does not say which head it belongs to, so a mid-phase head switch is a rebind
+        the host cannot see coming.</span>
+    </section>
+  </div>
+
+  <div class="col right">
+    <section>
+      <h2>Status</h2>
+      <div class="row">
+        <button id="poll-once" type="button" disabled>Poll once</button>
+        <label><input type="checkbox" id="poll-auto" checked> auto every</label>
+        <input id="poll-ms" type="number" value="500" step="100" min="100" size="5"> ms
+      </div>
+      <table class="status" id="status-table"><tbody></tbody></table>
+      <div class="banner" id="status-banner" data-kind="idle">Not connected.</div>
+    </section>
+
+    <section>
+      <h2>Link counters</h2>
+      <table class="status" id="link-table"><tbody></tbody></table>
+    </section>
+  </div>
+
+  <script type="module" src="./comms.js"></script>
+</body>
+</html>
