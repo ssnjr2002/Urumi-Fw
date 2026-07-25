@@ -1,43 +1,36 @@
 {
   "machine": {
     "fCpu": 150000000,
-    "jogFeed": 80,
-    "zFeed": 20,
-    "x": { "node": { "nodeId": 1 }, "stepsPerUnit": 160, "maxRate": 80, "accel": 1000, "invert": true },
-    "y": { "node": { "nodeId": 2 }, "stepsPerUnit": 160, "maxRate": 80, "accel": 1000 }
+    "path": { "feed": 80 },
+    "rapid": { "feed": 80 },
+    "z": { "feed": 10 },
+    "x": { "node": { "id": 1 }, "stepsPerUnit": 160, "maxFeed": 80, "maxAccel": 1000, "invert": true },
+    "y": { "node": { "id": 2 }, "stepsPerUnit": 160, "maxFeed": 80, "maxAccel": 1000 }
   },
   "heads": [
     {
       "tool": "knife",
-      "z": { "node": { "nodeId": 3 }, "stepsPerUnit": 300, "maxRate": 10, "invert": true },
-      "a": { "node": { "nodeId": 4 }, "stepsPerUnit": 45.46, "maxRate": 100, "accel": 500, "invert": true, "rotary": true }
+      "z": { "node": { "id": 3 }, "stepsPerUnit": 300, "maxFeed": 10, "invert": false },
+      "a": { "node": { "id": 4 }, "stepsPerUnit": 45.46, "maxFeed": 100, "maxAccel": 500, "invert": true, "rotary": true }
     }
   ],
   "tools": {
     "knife": {
-      "feedMax": 40,
-      "accel": 1000,
-      "zFeed": 20,
-      "jogFeed": 80,
+      "path": { "feed": 40 },
+      "z": { "feed": 10 },
       "liftHeight": 2.0
     },
     "pen": {
-      "feedMax": 80,
-      "accel": 1000,
-      "zFeed": 20,
-      "jogFeed": 80
+      "path": { "feed": 80 },
+      "z": { "feed": 10 }
     },
     "crease": {
-      "feedMax": 80,
-      "accel": 1000,
-      "zFeed": 20,
-      "jogFeed": 80
+      "path": { "feed": 80 },
+      "z": { "feed": 10 }
     },
     "revolver_pen": {
-      "feedMax": 80,
-      "accel": 1000,
-      "zFeed": 20,
-      "jogFeed": 80
+      "path": { "feed": 80 },
+      "z": { "feed": 10 }
     }
   }
 }

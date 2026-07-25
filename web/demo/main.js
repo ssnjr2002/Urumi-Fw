@@ -1,4 +1,4 @@
-import { parseConfig, bakePlan } from "../src/index.js";
+import { loadConfig, bakePlan } from "../src/index.js";
 
 // ── elements ──────────────────────────────────────────────────────────────────
 
@@ -75,12 +75,15 @@ bakeBtn.addEventListener("click", async () => {
         return;
     }
 
-    const result = parseConfig(configText);
+    // loadConfig = parse + validate; parseConfig alone would accept a config
+    // that is well-formed but physically wrong (duplicate node ids, etc).
+    const result = loadConfig(configText);
     if (!result.ok) {
         setStatus("Config errors — see summary.", "error");
         summaryEl.textContent = result.errors.join("\n");
         return;
     }
+    for (const w of result.warnings) console.warn("[config]", w);
 
     setStatus("Baking plan…", "working");
     // yield to the browser so the status update paints before the heavy work
