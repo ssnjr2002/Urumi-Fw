@@ -32,6 +32,7 @@ volatile uint8_t runningReason  = RUNNING_JOB;
 volatile int32_t machinePos[4]  = {0, 0, 0, 0};   // X, Y, Z, A steps
 volatile uint8_t axes_homed     = 0;              // none homed until first setorigin
 volatile uint8_t axes_enabled   = 0;              // none energised until enable
+volatile uint32_t debugStepSps  = STEP_DEBUG_SPS; // `step` rate until one is given
 
 // Paused-job context (slimmed for Phase 1 — see shared.h)
 volatile bool    jobActive      = false;

@@ -79,7 +79,7 @@ uint8_t routeCommand(const uint8_t* pkt, uint8_t len, uint8_t* reply) {
         handled = node_handle_command(pkt, len, reply, &replyLen);
     return handled ? replyLen : 0;
 }
-
+//  1x 2y 3a 4z
 // Called by loop() once node-id + CRC have passed.
 void dispatchCommand(const uint8_t* pkt, uint8_t len) {
     uint8_t reply[MAX_PACKET_LEN];

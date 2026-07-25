@@ -194,7 +194,13 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 //   slot 0..3 (Core 0 resolves the target bus node → slot via the axis map)
 //   count is signed-magnitude: bit15 of the low word = direction (1 = negative)
 #define FIFO_STEP_DEBUG  0xF0
-#define STEP_DEBUG_SPS   1000   // fixed emit rate for debug stepping (steps/sec)
+#define STEP_DEBUG_SPS       1000   // default emit rate for debug stepping (steps/sec)
+#define STEP_DEBUG_SPS_MAX  40000   // ceiling — one stream byte per step, and the
+                                    // bus tops out near 92k bytes/s at 921.6 kbaud
+// Emit rate for the NEXT debug-step burst. Core 0 writes it just before pushing
+// the FIFO word (the FIFO word itself is full: tag | slot | signed count), Core 1
+// reads it once at the top of the burst. Single writer, so no locking needed.
+extern volatile uint32_t debugStepSps;
 #define MSEG_NACK_CRC    0x01
 #define MSEG_NACK_FULL   0x02
 #define MSEG_NACK_MAGIC  0x03

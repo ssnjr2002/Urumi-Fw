@@ -326,7 +326,7 @@ static void __time_critical_func(processMicroSegments)() {
 }
 
 // ─── Debug Step Emitter ───────────────────────────────────────────────────────
-// Emits `count` raw stream bytes into one stream SLOT at a fixed slow rate.
+// Emits `count` raw stream bytes into one stream SLOT at debugStepSps steps/sec.
 // Bypasses the MicroSegment path entirely — used to verify the Pico→node stream
 // path in isolation. Only the node ENGAGE-bound to this slot moves, and it must
 // also be enabled (CMD_ENABLE). Core 0 resolves the target bus node → slot (via
@@ -344,7 +344,9 @@ static void emitDebugSteps(uint32_t req) {
     uint8_t streamByte = (1 << bit);                  // step bit
     if (!neg) streamByte |= (1 << (bit + 1));         // dir bit (positive = CW)
 
-    uint32_t interval = F_CPU / STEP_DEBUG_SPS;
+    uint32_t sps = debugStepSps;                      // set by Core 0 with the word
+    if (sps == 0) sps = STEP_DEBUG_SPS;
+    uint32_t interval = F_CPU / sps;
 
     while (!rs485.txEmpty());
     rs485.flushRX();
