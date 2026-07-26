@@ -126,6 +126,9 @@ interface JsonToolOverride {
     readonly liftHeight?: number;
     readonly toolOffset?: { xOffset: number; yOffset: number };
     readonly slotOffsets?: readonly number[];
+    readonly dutyLimits?: {
+        maxOnS?: number; minOnS?: number; dwellS?: number; settleS?: number;
+    };
 }
 
 interface JsonQuality {
@@ -393,6 +396,21 @@ function patchToolProfile(
     // absent target stays undefined, meaning "inherit" (see resolveTargets).
     if (o.path !== undefined) merged.path = opTarget(o.path, base.path ?? {});
     if (o.z !== undefined) merged.z = opTarget(o.z, base.z ?? {});
+
+    // Duty limits merge field-wise over the preset, same rule as the targets.
+    // Missing numbers become 0 rather than an invented default: these are
+    // measurements of a specific tool, and validate rejects a zero budget or
+    // dwell with a message naming the field. Guessing them here would produce
+    // a config that runs and cuts wrong.
+    if (o.dutyLimits !== undefined) {
+        const b = base.dutyLimits;
+        merged.dutyLimits = {
+            maxOnS:  o.dutyLimits.maxOnS  ?? b?.maxOnS  ?? 0,
+            minOnS:  o.dutyLimits.minOnS  ?? b?.minOnS  ?? 0,
+            dwellS:  o.dutyLimits.dwellS  ?? b?.dwellS  ?? 0,
+            settleS: o.dutyLimits.settleS ?? b?.settleS ?? 0,
+        };
+    }
 
     return toolProfile(name, merged as Partial<Omit<ToolProfile, "name">>);
 }

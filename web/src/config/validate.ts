@@ -157,6 +157,31 @@ const headsSupportSeededTools: Rule = ({ machine }) =>
             : [],
     );
 
+/**
+ * Duty limits are only meaningful as a complete set, which is the whole reason
+ * they are one nested block. load.ts fills a missing number with 0 rather than
+ * inventing one — these are measurements of a specific tool, not defaults — so
+ * a partial block arrives here as a zero and is named precisely.
+ *
+ * minOnS >= maxOnS would leave the scheduler an empty band with no candidate
+ * lift in it, forcing an inserted break every time.
+ */
+const dutyLimitsCoherent: Rule = (config) =>
+    Object.entries(config.toolProfiles).flatMap(([name, t]) => {
+        const d = t.dutyLimits;
+        if (!d) return [];
+        const p = `tools.${name}.dutyLimits`;
+        const out: Issue[] = [];
+        if (!(d.maxOnS > 0)) out.push(error(`${p}.maxOnS: must be > 0 (got ${d.maxOnS})`));
+        if (!(d.minOnS > 0)) out.push(error(`${p}.minOnS: must be > 0 (got ${d.minOnS})`));
+        if (!(d.dwellS > 0)) out.push(error(`${p}.dwellS: must be > 0 (got ${d.dwellS})`));
+        if (d.settleS < 0) out.push(error(`${p}.settleS: must be >= 0 (got ${d.settleS})`));
+        if (d.maxOnS > 0 && d.minOnS > 0 && d.minOnS >= d.maxOnS) {
+            out.push(error(`${p}: minOnS (${d.minOnS}) must be < maxOnS (${d.maxOnS})`));
+        }
+        return out;
+    });
+
 const RULES: readonly Rule[] = [
     nonNegativeCeilings,
     nonNegativeTargets,
@@ -165,6 +190,7 @@ const RULES: readonly Rule[] = [
     uniqueNodeIds,
     defaultHeadInRange,
     headsSupportSeededTools,
+    dutyLimitsCoherent,
 ];
 
 // ── entry ─────────────────────────────────────────────────────────────────────

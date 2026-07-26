@@ -60,6 +60,7 @@ export {
     ToolType,
     type ToolProfile,
     toolProfile,
+    type DutyLimits,
     needsOffsetComp,
     // tool presets + lookup tables (demo uses TOOL_PROFILES_BY_TYPE)
     PEN,
@@ -159,7 +160,15 @@ export {
     MICRO_PAUSE,
     MICRO_LIFT,
     MICRO_JOG,
+    MICRO_DUTY_RELEASE,
+    MICRO_DUTY_ASSERT,
 } from "./wire/format/microsegment.js";
+
+export {
+    scheduleDutyBreaks,
+    segmentSeconds,
+    type DutyBreakResult,
+} from "./production/dutyBreaks.js";
 
 export { crc8 } from "./wire/format/crc.js";
 export { MAGIC_MICROSEG, PACKET_SIZE } from "./wire/format/constants.js";

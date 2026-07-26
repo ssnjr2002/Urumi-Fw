@@ -31,6 +31,7 @@ import { constrain } from "../toolpath/constrain.js";
 import { plan } from "../toolpath/plan.js";
 import { discretize } from "../toolpath/discretize.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
+import { scheduleDutyBreaks } from "./dutyBreaks.js";
 
 export interface CompileBlockResult {
     /** Compiled wire events in execution order. */
@@ -145,5 +146,16 @@ export function compileBlock(
 
     // Stage 8: discretize — Sample[] → MicroSegment[], choreograph at transitions
     const segments = discretize(planned, machine, profile, quality);
+
+    // Stage 9: duty breaks — mark enable-line resets for a duty-limited tool.
+    // A pure post-pass that ORs flags onto lifts already in the stream, so a
+    // tool WITHOUT dutyLimits (every tool but the ultrasonic knife) takes this
+    // branch and the output is byte-identical to before this stage existed.
+    if (profile.dutyLimits) {
+        const marked = scheduleDutyBreaks(
+            segments, profile.dutyLimits, axes, machine.fCpu, profile.name,
+        );
+        return { segments: marked.segments, startSteps };
+    }
     return { segments, startSteps };
 }

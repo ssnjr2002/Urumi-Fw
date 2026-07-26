@@ -173,6 +173,37 @@ export interface ReferencePoint {
  */
 export type ToolOffset = ReferencePoint;
 
+/**
+ * Duty limits for a tool that cannot run continuously (docs/tool_duty_limits.md).
+ *
+ * The ultrasonic knife's controller shuts itself off after ~40 s of continuous
+ * power and resets only when its enable line is released for a second or two.
+ * Rather than model heat, the planner works in the only terms it can observe:
+ * a budget of run time, and an off duration it must find room for.
+ *
+ * Grouped rather than spread flat across ToolProfile because the fields are
+ * interdependent — a budget with no dwell is a config error, and validate can
+ * only say so if it sees them together. Absent means no limit, so pens and
+ * crease tools carry none of this.
+ */
+export interface DutyLimits {
+    /** Hard budget of enable-line-on time between resets (seconds). */
+    readonly maxOnS: number;
+    /**
+     * Don't reset before this much has elapsed (seconds). Without it a drawing
+     * of many short subpaths would reset at every one of them for no benefit.
+     */
+    readonly minOnS: number;
+    /** Required release duration for the tool to reset (seconds). */
+    readonly dwellS: number;
+    /**
+     * Lead time between re-asserting and touching material (seconds) — an
+     * ultrasonic transducer needs a moment to reach full amplitude, and a blade
+     * that enters material below amplitude wedges rather than cuts.
+     */
+    readonly settleS: number;
+}
+
 export interface ToolProfile {
     readonly name: string;
     readonly toolType: ToolType;
@@ -195,6 +226,11 @@ export interface ToolProfile {
      * to slotOffsets[i] before cutting with slot i.
      */
     readonly slotOffsets?: readonly number[];
+    /**
+     * Duty limit for a tool that cannot run continuously. Absent = unlimited,
+     * which is every tool except the ultrasonic knife.
+     */
+    readonly dutyLimits?: DutyLimits;
 }
 
 export function toolProfile(
