@@ -52,6 +52,8 @@ import {
     MICRO_JOG,
     MICRO_LIFT,
     MICRO_PAUSE,
+    MICRO_DUTY_RELEASE,
+    MICRO_DUTY_ASSERT,
     TOOL_PROFILES_BY_TYPE,
     NodeType,
     ToolType,
@@ -1360,10 +1362,15 @@ function renderJobMetrics(plan, events) {
     const jogs = segs.filter(s => s.flags & MICRO_JOG).length;
     const lifts = segs.filter(s => s.flags & MICRO_LIFT).length;
     const secs = estimateSeconds(events, config.machine.fCpu);
+    // Duty breaks are baked into the segments, so they are invisible in the
+    // event list — an operator compiling a knife job wants to know how many
+    // resets it will stop for before they start it.
+    const duty = segs.filter(s => s.flags & MICRO_DUTY_RELEASE).length;
     jobMetrics.textContent =
         `${plan.blocks.length} block(s)  ${segs.length.toLocaleString()} segments\n` +
         `cut ${segs.length - jogs - lifts}  jog ${jogs}  lift ${lifts}  ` +
-        `pauses ${events.filter(e => e.kind === 'pause').length}\n` +
+        `pauses ${events.filter(e => e.kind === 'pause').length}` +
+        (duty ? `  duty breaks ${duty}` : '') + '\n' +
         `est run ${secs.toFixed(2)} s\n` +
         plan.blocks.map((b, i) => `  block ${i + 1}: ${b.profile.name}  ${b.segments.length} segs`).join('\n');
 }
@@ -1444,6 +1451,9 @@ jobRun.addEventListener('click', async () => {
         await applyPeripherals(schedule.phases[0]?.mount ?? [], 'job start');
 
         let i = 0, machinePaused = false;
+        // Which tools are live right now — a duty break needs the profile whose
+        // dutyLimits produced it, and the segments themselves carry only timing.
+        let activeMount = schedule.phases[0]?.mount ?? [];
         while (i < events.length) {
             if (events[i].kind === 'pause') {
                 const ev = events[i];
@@ -1451,6 +1461,7 @@ jobRun.addEventListener('click', async () => {
                 // After the blade is physically in and before anything moves —
                 // the machine is PAUSED here, the one window the gate allows.
                 await applyPeripherals(ev.mount, `phase: ${ev.mount.map(toolName).join(', ') || 'nothing'}`);
+                activeMount = ev.mount;
                 if (machinePaused) {
                     const reply = await link.command('resume');
                     log(`job: resume → ${reply}`, reply === 'ok' ? 'ok' : 'err');
@@ -1464,9 +1475,22 @@ jobRun.addEventListener('click', async () => {
             while (i < events.length && events[i].kind === 'motion') { batch.push(...events[i].segments); i++; }
             if (!batch.length) continue;
 
+            // A duty break is baked INTO the segments (compileBlock's stage 9),
+            // not signalled by a walk event, so it can land anywhere in a batch.
+            // Streaming past it is not an option: the firmware parks in PAUSED
+            // at that segment and NACKs the remainder with NACK_PAUSED. Cut the
+            // batch there and let the next loop iteration carry on.
+            const brk = batch.findIndex(s => s.flags & (MICRO_DUTY_RELEASE | MICRO_DUTY_ASSERT));
+            let dutyAt = -1;
+            if (brk >= 0 && brk < batch.length - 1) {
+                events.splice(i, 0, { kind: 'motion', segments: batch.slice(brk + 1) });
+                batch.length = brk + 1;
+            }
+            if (brk >= 0) { dutyAt = brk; machinePaused = true; }
+
             // The last segment before a swap carries MICRO_PAUSE, so the machine
             // parks itself in PAUSED rather than running on into the swap.
-            const nextIsPause = i < events.length && events[i].kind === 'pause';
+            const nextIsPause = dutyAt < 0 && i < events.length && events[i].kind === 'pause';
             if (nextIsPause) {
                 const last = batch[batch.length - 1];
                 batch[batch.length - 1] = { ...last, flags: last.flags | MICRO_PAUSE };
@@ -1482,7 +1506,16 @@ jobRun.addEventListener('click', async () => {
 
             sent += batch.length;
             jobProgress.style.width = `${(sent / total * 100).toFixed(1)}%`;
-            await waitForState(nextIsPause ? MachineState.PAUSED : MachineState.IDLE);
+            await waitForState(
+                nextIsPause || dutyAt >= 0 ? MachineState.PAUSED : MachineState.IDLE,
+            );
+
+            if (dutyAt >= 0) {
+                await handleDutyBreak(activeMount);
+                const reply = await link.command('resume');
+                log(`job: resume → ${reply}`, reply === 'ok' ? 'ok' : 'err');
+                machinePaused = false;
+            }
         }
         jobProgress.style.width = '100%';
         log(`job: done — ${sent} segments streamed`, 'ok');
@@ -1494,6 +1527,50 @@ jobRun.addEventListener('click', async () => {
         renderAll();
     }
 });
+
+/**
+ * A baked duty break (docs/tool_duty_limits.md §9). The machine is PAUSED at a
+ * lift, the blade is clear of the material, and the bus is free — the one
+ * window in a job where a peripheral relay is allowed.
+ *
+ * Release, wait out the dwell, re-assert. In this version both markers sit on
+ * the same segment, so the settle before the plunge is a wait here rather than
+ * something the pipeline guaranteed geometrically; splitting the markers across
+ * the off-window is the follow-up that makes it free.
+ *
+ * A failed re-assert ABORTS the job. Resuming would drive an unpowered blade
+ * back into the workpiece, which is the exact failure this whole mechanism
+ * exists to prevent — a logged warning is not good enough here.
+ */
+async function handleDutyBreak(mount) {
+    // The LOADED profiles, not TOOL_PROFILES_BY_TYPE. dutyLimits is config, not
+    // preset — the catalogue entry for 'knife' carries none, because not every
+    // knife is an ultrasonic one. Reading the presets here finds a knife with no
+    // limits and throws on a stream that legitimately contains a break.
+    const profile = mount
+        .map(t => Object.values(config.toolProfiles).find(p => p.toolType === t))
+        .find(p => p?.dutyLimits);
+    if (!profile) {
+        throw new Error('duty break in the stream, but no live tool declares dutyLimits');
+    }
+    const d = profile.dutyLimits;
+    const ctl = [...periphCtl.values()].find(c => c.wantsTool?.(profile.toolType));
+    if (!ctl) {
+        throw new Error(`duty break for '${profile.name}', but no peripheral node claims that tool`);
+    }
+
+    log(`job: duty break — ${ctl.title} off for ${d.dwellS}s`, 'note');
+    if (!await ctl.set(false)) throw new Error(`${ctl.title}: release failed`);
+    periphCommanded.set(ctl.node.id, false);
+
+    await new Promise(r => setTimeout(r, d.dwellS * 1000));
+
+    if (!await ctl.set(true)) {
+        throw new Error(`${ctl.title}: re-assert failed — aborting rather than plunging a dead tool`);
+    }
+    periphCommanded.set(ctl.node.id, true);
+    if (d.settleS > 0) await new Promise(r => setTimeout(r, d.settleS * 1000));
+}
 
 /**
  * A tool swap. On a dual-head machine this is also a slot rebind: the walk has

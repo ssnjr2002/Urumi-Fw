@@ -1,6 +1,7 @@
 # Tool Duty Limits
 
-**Status:** PROPOSED — nothing in this document is implemented.
+**Status:** IMPLEMENTED except §5 tier 2 (inserting a lift) and §10's masked
+dwell. `scheduleDutyBreaks` throws rather than insert; see §11.
 
 A design for tools that cannot run continuously: the planner schedules the
 pauses, bakes the deceleration, and marks where the tool's enable line must be
@@ -75,9 +76,14 @@ acts as a wedge — it deflects, pushes rather than parts, and loads the Z axis
 and the transducer tip.
 
 The transducer also needs a moment to reach full amplitude. The assert must
-therefore lead material contact by at least `settleS`. **The pipeline places
-the assert marker to guarantee this geometrically** — the runner acts on markers
-and never times blade physics.
+therefore lead material contact by at least `settleS`.
+
+> **As built, the runner waits `settleS` itself.** The design called for the
+> pipeline to place the assert marker far enough ahead of the plunge to
+> guarantee the lead geometrically, but with both markers on one segment (§7)
+> there is no geometry between them to spend — the plunge follows the resume
+> immediately. Splitting the markers across the off-window is what makes the
+> lead free, and until then the wait is real time the job pays for.
 
 **Corollary: the dwell cannot be hidden in a slow lift or plunge.** The window
 that must be ≥ `dwellS` lies strictly between release and assert; the lift
@@ -130,11 +136,16 @@ Within `[minOnS, maxOnS]` after the last reset, in priority order:
 
 1. **Reset at an existing lift.** No added motion, no witness mark. Prefer the
    latest qualifying lift in the band; fall back to the latest lift of any kind,
-   paying the shortfall as an explicit dwell.
+   paying the shortfall as an explicit dwell. *(Implemented.)*
 2. **Insert a lift.** Only when the band contains none. Place it at the most
    corner-like sample available — largest tangent change, equivalently lowest
    planned `v`, both already computed by `constrain`. That co-opts a corner
    that did not quite clear `cornerAngleDeg`, rather than stopping mid-sweep.
+   *(NOT implemented — `scheduleDutyBreaks` throws instead, naming the tool and
+   the empty window. Failing loudly beats overrunning the budget silently, but
+   it does mean a long lift-free stretch cannot be cut at all: widen the band or
+   shorten the path. This is the one case that most motivated the design, so it
+   is the obvious next piece of work.)*
 
 Insertion is last because it is the only option that leaves a witness mark: the
 blade decelerates to rest while buried, dwells, lifts and re-plunges at the same
@@ -238,22 +249,21 @@ pattern.
 
 ## 8. Pipeline changes
 
-The stop must be marked at `constrain`, but the qualifying-lift test needs
-durations that only exist after `discretize`. That circularity resolves by
-iterating:
+**As built this is a pure post-pass, and no stage in the chain changed.**
 
-```
-constrain → plan → discretize → measure timeline
-    → if a break is needed: mark the sample, re-run
-```
+The design assumed an iteration — mark a stop at `constrain`, re-plan, measure,
+repeat — because the qualifying-lift test needs durations that only exist after
+`discretize` while the stop must be marked before `plan`. That circularity is
+real, but only for INSERTING a lift. Reusing one needs no re-planning at all:
+every lift already sits at v≈0, because `plan` forces zero at `PATH_END` and
+`constrain` forces it at corners. A lift is already a clean stopping point.
 
-Each break sits at a reset boundary and does not consume the following budget
-window, so the inter-event durations along the path are invariant and the loop
-converges — expect one iteration per budget window.
+So `scheduleDutyBreaks` (`production/dutyBreaks.ts`) runs after `discretize` as
+stage 9 and only ORs flags onto segments that already exist. A tool without
+`dutyLimits` skips it entirely and the output is byte-identical — the golden
+snapshot did not move, which is the check that proves it.
 
-This makes `compileBlock` a fixed point rather than a straight chain. It also
-means regenerating the golden snapshot (`test/production/snapshot.test.ts`,
-`UPDATE_GOLDEN=1`) and reviewing the diff.
+The iteration comes back with §5 tier 2, and with it the golden regeneration.
 
 ---
 

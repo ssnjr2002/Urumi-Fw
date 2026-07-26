@@ -127,6 +127,12 @@
       "toolOffset": {
         "xOffset": 0,
         "yOffset": 0
+      },
+      "dutyLimits": {
+        "maxOnS": 30,
+        "minOnS": 20,
+        "dwellS": 2,
+        "settleS": 0.3
       }
     },
     "pen": {
