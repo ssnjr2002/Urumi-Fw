@@ -52,6 +52,16 @@
 #define MSEG_FLAG_ESTOP     0x02  // Poison pill — flush and halt immediately
 #define MSEG_FLAG_PAUSE     0x04  // Drain to this segment, then enter PAUSED
                                   // (host-inserted single-head tool-change marker)
+// Host-only hint bits. The firmware never reads these; they are listed so the
+// namespace stays documented in one place and nobody reuses the values.
+//   0x08 LIFT, 0x10 JOG           — host planning hints (choreograph).
+//   0x20 DUTY_RELEASE, 0x40 ASSERT — release / re-assert a duty-limited tool's
+//                                    enable line at this segment. Always paired
+//                                    with MSEG_FLAG_PAUSE, since the host can
+//                                    only relay to the node once we are PAUSED.
+//                                    See docs/tool_duty_limits.md.
+//   0x80                          — free.
+
 #define MSEG_FLAG_WIRE_MASK 0x06  // firmware honours only these bits — PATH_END
                                   // (0x01) is excluded on purpose, see above
 

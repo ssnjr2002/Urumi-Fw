@@ -43,12 +43,35 @@ export function microSegment(
 // host planning hints the firmware ignores:
 //   0x01 PATH_END (shared)   0x02 ESTOP (wire)   0x04 PAUSE (wire, sender-inserted)
 //   0x08 LIFT (host hint)    0x10 JOG (host hint)
+//   0x20 DUTY_RELEASE (host hint)   0x40 DUTY_ASSERT (host hint)
 // JOG must NOT be 0x04 — that would alias every travel move onto MSEG_FLAG_PAUSE.
 
 export const MICRO_PATH_END = 0x01;
 export const MICRO_PAUSE    = 0x04; // sender-inserted at tool-change boundary; firmware → PAUSED after this packet
 export const MICRO_LIFT = 0x08;
 export const MICRO_JOG = 0x10;
+
+/**
+ * Duty-limit markers (docs/tool_duty_limits.md §7). Host hints — outside
+ * MSEG_FLAG_WIRE_MASK, so the firmware never sees them.
+ *
+ * They carry TIMING, not identity: "release / assert the active tool's enable
+ * line at this segment". The runner resolves WHICH peripheral from the tool
+ * profile's dutyLimits and its peripheral registry.
+ *
+ * A pair rather than one "break" bit because a release and an assert may land
+ * on DIFFERENT segments — that is what lets a pivot or travel fill the required
+ * off-window instead of an idle dwell. The runner handles each independently,
+ * so both layouts need identical runner logic:
+ *
+ *   dwell in place:  LIFT | PAUSE | DUTY_RELEASE | DUTY_ASSERT   on one segment
+ *   masked:          LIFT | PAUSE | DUTY_RELEASE   … then …  PAUSE | DUTY_ASSERT
+ *
+ * INVARIANT: neither is meaningful without MICRO_PAUSE. The relay needs the
+ * bus, and the bus is only free once the firmware has parked in PAUSED.
+ */
+export const MICRO_DUTY_RELEASE = 0x20;
+export const MICRO_DUTY_ASSERT  = 0x40;
 
 // ── interval helper ───────────────────────────────────────────────────────────
 
