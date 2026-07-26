@@ -54,6 +54,7 @@ import {
     MICRO_PAUSE,
     TOOL_PROFILES_BY_TYPE,
     NodeType,
+    ToolType,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -375,6 +376,9 @@ disconnectBtn.addEventListener('click', async () => {
     }
     link = null;
     committedMap = null;
+    // Whatever the peripherals were doing, we can no longer command them and no
+    // longer know. Forget, so the next job re-asserts from scratch.
+    periphCommanded.clear();
     renderAxisMap();
     log('disconnected', 'note');
     statusBanner.dataset.kind = 'idle';
@@ -1004,14 +1008,27 @@ function renderQueue() {
 // unlike everything in the jog panel they neither need nor care about the axis
 // map — a knife node is reachable whichever head is engaged.
 //
-// They are also the one control surface deliberately live DURING a job. The
-// firmware's IDLE/PAUSED/ALARM gate on all five verbs is commented out
-// (control_plane.cpp) precisely so the operator can work the oscillator, blower
-// and vacuum while a cut is running, so these buttons stay enabled while
-// `running` is true — every other motion control here is disabled then.
+// They are NOT usable mid-stream. The firmware gates all five verbs on
+// IDLE/PAUSED/ALARM (control_plane.cpp) because the relay blocks Core 0 on a
+// Core 1 round trip that Core 1 services between microsegments — mid-cut it
+// stretches a step interval and marks the material. So these buttons are for
+// setup and teardown, and a running job gets its peripheral changes from the
+// orchestrator at phase boundaries instead (see applyPeripherals).
+
+/**
+ * node id → a handle the job orchestrator can drive: the same relay the manual
+ * buttons use, plus the card's live state readout so an orchestrated change
+ * shows up in the panel rather than silently diverging from it.
+ */
+const periphCtl = new Map();
 
 function renderPeriphPanel() {
     periphPanel.innerHTML = '';
+    periphCtl.clear();
+    // The memo describes hardware we are about to stop tracking. Keeping it
+    // across a rebuild would let applyPeripherals diff away a command it still
+    // owes — the knife would silently never start.
+    periphCommanded.clear();
     const nodes = config ? (config.machine.peripherals ?? []).filter(n => n.present) : [];
     if (!nodes.length) {
         const p = document.createElement('div');
@@ -1108,8 +1125,26 @@ function knifeCard(node) {
     off.addEventListener('click', () => relay(state, 'blower 0%', `knife_blower ${node.id} 0`));
     blowRow.append(set, off);
     card.appendChild(blowRow);
+
+    // The orchestrator drives oscillator and blower together: an oscillating
+    // knife with no air packs swarf into the cut, and a blower with no
+    // oscillator is just noise. The duty comes from the same field the operator
+    // set by hand, so the job honours whatever they dialled in.
+    periphCtl.set(node.id, {
+        node,
+        title: 'knife',
+        wantsTool: t => t === ToolType.KNIFE,
+        async set(on) {
+            const d = on ? Math.max(0, Math.min(100, parseInt(duty.value, 10) || 0)) : 0;
+            const a = await relay(state, `osc ${on ? 'on' : 'off'}`, `knife_osc ${node.id} ${on ? 'on' : 'off'}`);
+            const b = await relay(state, `blower ${d}%`, `knife_blower ${node.id} ${d}`);
+            return isNodeOk(a) && isNodeOk(b);
+        },
+    });
     return card;
 }
+
+const isNodeOk = reply => typeof reply === 'string' && /^node\s+\d+\s+ok$/.test(reply);
 
 function vacuumCard(node) {
     const { card, state } = periphCard('Vacuum', node);
@@ -1165,6 +1200,17 @@ function vacuumCard(node) {
         }
         card.appendChild(row);
     }
+
+    // Hold-down is not tool-specific — anything that cuts or draws wants the
+    // sheet held flat, so the pump follows the JOB, not the phase (wantsTool
+    // is absent; applyPeripherals reads that as "on for the whole run").
+    periphCtl.set(node.id, {
+        node,
+        title: 'vacuum pump',
+        async set(on) {
+            return isNodeOk(await relay(state, `pump ${on ? 'on' : 'off'}`, `vac_pump ${node.id} ${on ? 'on' : 'off'}`));
+        },
+    });
     return card;
 }
 
@@ -1241,7 +1287,61 @@ function compileJob(initialState) {
         headAssignment: headAssignment(),
         ...(initialState ? { initialState } : {}),
     });
-    return { plan, events };
+    return { plan, schedule, events };
+}
+
+// ── peripheral orchestration ────────────────────────────────────────────────
+//
+// The bus is the stream. While a job is RUNNING, Core 0 cannot relay a
+// peripheral command without stealing time from Core 1 between microsegments,
+// so the firmware refuses one (`err bad_state`) — clicking "oscillator on"
+// mid-cut simply does not work, and the fix is not to remove the gate but to
+// stop needing it.
+//
+// A job already has boundaries where the bus is free: the machine is IDLE or
+// PAUSED at every phase edge, because the last segment before a swap carries
+// MICRO_PAUSE and the runner waits for the state before continuing. That is
+// where peripheral state belongs, and the pause event now carries the phase's
+// mount set (walk.ts) so the runner knows what is about to cut.
+//
+// The policy is derived, not operated: a knife phase runs the oscillator and
+// blower; the vacuum runs for the whole job. Nobody has to remember to switch
+// the knife on, and — more to the point — nobody can leave it on through a pen
+// phase.
+
+/** Commanded state per node, so a phase boundary only sends what changed. */
+const periphCommanded = new Map();
+
+/**
+ * Reconcile every peripheral against `mount`, the tool set for the phase about
+ * to run. `mount` of null means teardown — everything off.
+ *
+ * Throws on refusal. A knife that did not start is not a cosmetic failure: the
+ * next thing that happens is a blade dragging through material it cannot cut.
+ */
+async function applyPeripherals(mount, why) {
+    for (const c of periphCtl.values()) {
+        // No wantsTool → not tool-specific (the vacuum): on for the whole job.
+        const on = mount !== null && (c.wantsTool ? mount.some(c.wantsTool) : true);
+        if (periphCommanded.get(c.node.id) === on) continue;
+        log(`job: ${c.title} ${on ? 'on' : 'off'} — ${why}`, 'note');
+        if (!await c.set(on)) throw new Error(`${c.title} (node ${c.node.id}) refused — see the reply above`);
+        periphCommanded.set(c.node.id, on);
+    }
+}
+
+/**
+ * Teardown that must not mask the error that caused it. Used from the run
+ * loop's finally, where throwing would replace a real stream failure with a
+ * peripheral one.
+ */
+async function shutdownPeripherals() {
+    try {
+        await applyPeripherals(null, 'job over');
+    } catch (e) {
+        log(`job: could not stop peripherals — ${e.message}`, 'err');
+        log('  the gate only passes IDLE/PAUSED/ALARM; after an e-stop, unalarm then use the panel', 'err');
+    }
 }
 
 /** machinePos is post-invert per axis; the walk wants TRUE steps. */
@@ -1310,11 +1410,11 @@ async function waitForState(target) {
 jobRun.addEventListener('click', async () => {
     if (running || jog || goTo || !isConnected() || !config) return;
 
-    let plan, events;
+    let plan, schedule, events;
     try {
         const initial = await liveInitialState();
         log(`job: head at x${initial.posX} y${initial.posY} steps — compiling`, 'note');
-        ({ plan, events } = compileJob(initial));
+        ({ plan, schedule, events } = compileJob(initial));
         renderJobMetrics(plan, events);
     } catch (e) {
         log(`job compile failed: ${e.message}`, 'err');
@@ -1337,11 +1437,20 @@ jobRun.addEventListener('click', async () => {
     let sent = 0;
 
     try {
+        // Before the first packet, while the machine is provably at rest: the
+        // vacuum comes up and the first phase's tool is armed. Doing it here
+        // rather than at the first pause event also covers a schedule whose
+        // first event is motion.
+        await applyPeripherals(schedule.phases[0]?.mount ?? [], 'job start');
+
         let i = 0, machinePaused = false;
         while (i < events.length) {
             if (events[i].kind === 'pause') {
                 const ev = events[i];
                 if (!await handleSwap(ev)) throw new Error('cancelled by operator at the tool swap');
+                // After the blade is physically in and before anything moves —
+                // the machine is PAUSED here, the one window the gate allows.
+                await applyPeripherals(ev.mount, `phase: ${ev.mount.map(toolName).join(', ') || 'nothing'}`);
                 if (machinePaused) {
                     const reply = await link.command('resume');
                     log(`job: resume → ${reply}`, reply === 'ok' ? 'ok' : 'err');
@@ -1380,6 +1489,7 @@ jobRun.addEventListener('click', async () => {
     } catch (e) {
         log(`job: ${e.message}`, 'err');
     } finally {
+        await shutdownPeripherals();
         running = false;
         renderAll();
     }
@@ -1454,9 +1564,10 @@ function renderAll() {
 
     // Compiling needs only a config and an SVG — it is a dry run and works
     // offline. Running needs the machine, and needs it to itself.
-    // Peripherals are the ONE control surface that stays live during a job —
-    // that is the whole point of ungating them in the firmware.
-    for (const b of periphPanel.querySelectorAll('button[data-periph]')) b.disabled = !on;
+    // Peripherals follow the firmware gate: refused while RUNNING, so offering
+    // the buttons mid-job would only produce `err bad_state`. During a job the
+    // orchestrator owns them and changes them at phase boundaries.
+    for (const b of periphPanel.querySelectorAll('button[data-periph]')) b.disabled = !on || running;
 
     jobCompile.disabled = !cfg || !svgText;
     jobRun.disabled     = !on || !cfg || !svgText || busy || running;

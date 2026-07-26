@@ -198,12 +198,13 @@
     </section>
 
     <section>
-      <h2>Peripherals <span class="hint" style="text-transform:none">— knife &amp; vacuum nodes; usable mid-job</span></h2>
+      <h2>Peripherals <span class="hint" style="text-transform:none">— knife &amp; vacuum nodes; setup and teardown</span></h2>
       <div id="periph-panel"></div>
       <span class="hint">Type-blind relays: these address a bus id directly, not a motion slot, so they
-        work whatever the axis map holds. The firmware's IDLE/PAUSED/ALARM gate on these five verbs is
-        commented out, so they also answer while RUNNING — the relay blocks Core 0 on a Core 1 round
-        trip, so one mid-cut command can stretch a step interval.</span>
+        work whatever the axis map holds. The firmware gates all five verbs on IDLE/PAUSED/ALARM — a
+        relay blocks Core 0 on a Core 1 round trip, which mid-stream would stretch a step interval and
+        mark the cut. So these are disabled while a job runs; the job drives them itself at phase
+        boundaries, where the machine is at rest and the bus is free.</span>
     </section>
 
     <section>
