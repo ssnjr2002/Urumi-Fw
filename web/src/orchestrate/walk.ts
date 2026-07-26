@@ -41,7 +41,19 @@ import {
 /** One unit of output from the walk. */
 export type WalkEvent =
     | { readonly kind: "motion"; readonly segments: readonly MicroSegment[] }
-    | { readonly kind: "pause"; readonly swapIn: MountSet; readonly swapOut: MountSet };
+    | {
+          readonly kind: "pause";
+          readonly swapIn: MountSet;
+          readonly swapOut: MountSet;
+          /**
+           * The full mount set in force for the phase this pause opens — not
+           * just the diff. swapIn/swapOut tell the operator what to change;
+           * `mount` tells the caller what will be cutting once it resumes,
+           * which is what a host needs to decide peripheral state (knife
+           * oscillator, blower, vacuum) for the phase ahead.
+           */
+          readonly mount: MountSet;
+      };
 
 /** Mutable state the walk maintains across blocks. All positions in TRUE steps (pre-invert). */
 export interface WalkState {
@@ -142,7 +154,12 @@ export function walkSchedule(
         if (phase.swapIn.length > 0 || phase.swapOut.length > 0) {
             const axes = axesForHead(machine, state.headIndex);
             aHome(axes);
-            events.push({ kind: "pause", swapIn: phase.swapIn, swapOut: phase.swapOut });
+            events.push({
+                kind: "pause",
+                swapIn: phase.swapIn,
+                swapOut: phase.swapOut,
+                mount: phase.mount,
+            });
         }
 
         // ── execute blocks in this phase ──────────────────────────────────────
