@@ -166,6 +166,57 @@ describe("scheduleDutyBreaks", () => {
         expect(s.dz).toBeLessThan(0);
     });
 
+    // ── settleS is powered time ───────────────────────────────────────────────
+    // The runner re-asserts the enable line, waits settleS, and only then moves.
+    // The tool is ON for that wait but it appears in no segment, so a scheduler
+    // that counts only segment durations under-counts every window after a
+    // break. These pin the charge.
+
+    it("charges settleS to the window after a break, shortening it", () => {
+        // 12 strokes of 3 s = ~36 s. With settleS 0 the second window can run
+        // the full 30 s; with a 5 s settle it must break ~5 s earlier.
+        const segs = Array.from({ length: 24 }, () => stroke(3, 0.1)).flat();
+        const none = scheduleDutyBreaks(segs, duty({ settleS: 0 }), axes, F_CPU);
+        const settled = scheduleDutyBreaks(segs, duty({ settleS: 5 }), axes, F_CPU);
+
+        // Same first break — nothing has been re-asserted yet, so window one is
+        // not charged.
+        expect(settled.breaksAtS[0]!).toBeCloseTo(none.breaksAtS[0]!, 6);
+        // But the second comes sooner, by about the settle.
+        const spanNone = none.breaksAtS[1]! - none.breaksAtS[0]!;
+        const spanSettled = settled.breaksAtS[1]! - settled.breaksAtS[0]!;
+        expect(spanSettled).toBeLessThan(spanNone);
+        expect(spanNone - spanSettled).toBeGreaterThanOrEqual(3);
+    });
+
+    it("keeps every powered window inside maxOnS once settle is counted", () => {
+        const d = duty({ settleS: 4 });
+        const segs = Array.from({ length: 30 }, () => stroke(3, 0.1)).flat();
+        const r = scheduleDutyBreaks(segs, d, axes, F_CPU);
+        expect(r.breaksAtS.length).toBeGreaterThanOrEqual(2);
+
+        const totalS = segs.reduce((a, s) => a + segmentSeconds(s, F_CPU), 0);
+        const stamps = [...r.breaksAtS, totalS];
+        let last = 0;
+        for (let i = 0; i < stamps.length; i++) {
+            // Powered time = motion since the last reset + the settle that
+            // preceded it (zero for the first window).
+            const powered = stamps[i]! - last + (i === 0 ? 0 : d.settleS);
+            expect(powered).toBeLessThanOrEqual(d.maxOnS + 1e-9);
+            last = stamps[i]!;
+        }
+    });
+
+    it("a settle wide enough to swallow the band is reported as an empty band", () => {
+        // settleS 29 against maxOnS 30 leaves 1 s of cutting per window — no
+        // candidate can satisfy it, and that must surface as the named error
+        // rather than as a silently over-budget schedule.
+        const segs = Array.from({ length: 20 }, () => stroke(3, 0.1)).flat();
+        expect(() =>
+            scheduleDutyBreaks(segs, duty({ settleS: 29 }), axes, F_CPU, "knife"),
+        ).toThrow(/'knife'.*no lift between/s);
+    });
+
     it("does not mutate the input", () => {
         const segs = [...stroke(10, 3), ...stroke(10, 3), ...stroke(10, 3), ...stroke(10, 3)];
         const before = segs.map((s) => s.flags);

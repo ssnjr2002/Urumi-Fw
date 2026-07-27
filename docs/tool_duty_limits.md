@@ -154,6 +154,47 @@ XY.
 `minOnS` prevents churn — without it, a drawing with many short subpaths would
 reset at every one of them for no benefit.
 
+### The break costs budget
+
+A break is an interval, not an instant, and most of that interval is *powered* —
+so the break spends the budget it exists to protect. Measured, not assumed
+(`test/production/dutyConverge.test.ts`):
+
+| part of the break | powered? | charged to | in the stream? |
+|---|---|---|---|
+| decel into the stop | yes | window N | yes, if the stop was planned |
+| lift | yes | window N | yes |
+| **dwell** | **no — this is the reset** | nobody | n/a |
+| re-assert + `settleS` | yes | window N+1 | **no** |
+| plunge | yes | window N+1 | yes |
+| accel back to feed | yes | window N+1 | yes, if planned |
+
+Two consequences. The costs **split across two windows** — decel and lift are the
+tail of the old one, settle/plunge/accel the head of the new — so a reserve is
+taken at both ends of the band, not subtracted once. And anything with a segment
+behind it is counted by `segmentSeconds` for free; only the parts with no
+segment need charging explicitly.
+
+`settleS` is the one such part today, and it is charged to the head of every
+window after a break. The first window is not charged: nothing has been
+re-asserted yet.
+
+For an *inserted* lift (tier 2) the decel, lift, plunge and accel are also
+uncharged, because they do not exist in the stream at the moment the sample is
+chosen. Those get a **worst-case reserve** — `feedMax / accel` for each ramp,
+`zSteps / zFeed` for each Z move — subtracted from both ends of the band. Worst
+case rather than the planned `v` at the chosen sample: `v` is not known until
+the sample is picked, and making the reserve depend on the pick reintroduces the
+ordering problem the reserve exists to remove. The cost of being conservative is
+at most one extra break on a long job.
+
+This makes the schedule **safe on the first pass**, which matters more than it
+sounds: the alternative was to place stops optimistically and iterate until the
+budget held, so safety depended on a loop converging. Measurement showed that
+loop needs ~3× more passes than expected and can settle *outside* the budget.
+The iteration survives as an optimisation — re-plan, observe the actual ramp,
+recover the slack — and if it fails to converge there is still a safe answer.
+
 ### Considered and rejected
 
 - **Greedy-latest for fewest resets.** This is the gas-station problem, and
@@ -320,6 +361,9 @@ counted against the budget. The `maxOnS` headroom below the device limit absorbs
 this. It is a margin, not a guarantee, and a job with unusually long inter-block
 travel could still overrun — in which case the controller shuts off, the cut
 fails visibly, and nothing is damaged.
+
+**Inter-block breaks are not modelled.** Same root as the above: the reserve and
+the settle charge are applied within a block's timeline only.
 
 **The controller's state is unobservable.** We cannot read the fault indicator,
 so a reset that does not take is undetectable: the next pass cuts with a dead

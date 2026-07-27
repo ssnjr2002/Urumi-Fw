@@ -20,6 +20,19 @@
  * where the planner did not plan one. That needs a constrain→plan→discretize
  * iteration and is not implemented — `scheduleDutyBreaks` throws rather than
  * let a cut silently overrun its budget.
+ *
+ * BUDGET ACCOUNTING. A break is an interval, not an instant, and most of that
+ * interval is POWERED — so the break spends the budget it exists to protect.
+ * Of the interval's parts, only the dwell is free (the tool is off; that is the
+ * reset). The lift, plunge and the decel into the stop are all real segments
+ * and are counted by segmentSeconds automatically. `settleS` is the one part
+ * with no segment behind it — the runner waits it after re-asserting, before
+ * moving — so it is charged explicitly to the head of each window after a
+ * break. Inserting a lift adds decel/lift/plunge/accel that likewise are not
+ * in the stream when the choice is made; when tier 2 lands, those get a
+ * WORST-CASE reserve (feedMax/accel for the ramps, zSteps/zFeed for the Z)
+ * subtracted from both ends of the band, so the schedule is safe on the first
+ * pass rather than relying on an iteration to converge.
  */
 
 import type { ResolvedAxes } from "../config/config.js";
@@ -144,16 +157,35 @@ export function scheduleDutyBreaks(
     const totalS = segments.reduce((acc, s) => acc + segmentSeconds(s, fCpu), 0);
 
     let lastResetS = 0;
-    for (;;) {
-        if (totalS - lastResetS <= duty.maxOnS) break; // the tail fits
+    // Settle time is POWERED time: the runner re-asserts the enable line, waits
+    // settleS for the tool to come up, and only then moves. It burns budget
+    // without appearing in any segment, so every window after a break is
+    // settleS shorter than its segment durations suggest. The first window is
+    // not charged — nothing has been re-asserted yet.
+    let settleCharge = 0;
 
+    for (;;) {
+        // Budget consumed by a candidate at time `c.atS`, counting the powered
+        // settle at the head of this window.
+        const spent = (atS: number): number => atS - lastResetS + settleCharge;
+
+        if (spent(totalS) <= duty.maxOnS) break; // the tail fits
+
+        // `c.atS > lastResetS` is not implied by the band: a settle wide enough
+        // relative to minOnS pushes the band's lower edge behind the last reset,
+        // and picking a candidate there would walk lastResetS BACKWARDS and
+        // loop forever. Resets are monotonic in time, always.
         const inBand = candidates.filter(
-            (c) => c.atS > lastResetS + duty.minOnS && c.atS <= lastResetS + duty.maxOnS,
+            (c) =>
+                c.atS > lastResetS &&
+                spent(c.atS) > duty.minOnS &&
+                spent(c.atS) <= duty.maxOnS,
         );
         if (inBand.length === 0) {
-            const t = (lastResetS + duty.maxOnS).toFixed(1);
+            const lo = (lastResetS + duty.minOnS - settleCharge).toFixed(1);
+            const t = (lastResetS + duty.maxOnS - settleCharge).toFixed(1);
             throw new Error(
-                `'${toolName}': no lift between ${(lastResetS + duty.minOnS).toFixed(1)}s and ${t}s ` +
+                `'${toolName}': no lift between ${lo}s and ${t}s ` +
                     `to release the enable line at, and inserting one is not implemented ` +
                     `(docs/tool_duty_limits.md §10). Shorten the path, raise dutyLimits.maxOnS, ` +
                     `or lower minOnS to widen the band.`,
@@ -172,6 +204,7 @@ export function scheduleDutyBreaks(
         );
         breaksAtS.push(pick.atS);
         lastResetS = pick.atS;
+        settleCharge = duty.settleS;
     }
 
     const out = segments.map((s, i) => {
