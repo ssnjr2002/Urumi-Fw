@@ -207,3 +207,44 @@ describe("stage 6: per-axis accel projection", () => {
         throw new Error("never reached 5mm accumulation on a 100mm diagonal");
     });
 });
+
+// ── forced stops survive planning ─────────────────────────────────────────────
+
+describe("stage 6: a constrain forcedStop becomes a real stop", () => {
+    it("plans v=0 at the stop and ramps on both sides of it", () => {
+        // The property tier 2 depends on: marking a sample is not cosmetic —
+        // plan's backward sweep must decelerate INTO it and the forward sweep
+        // accelerate OUT, so discretize can lift at a sample truly at rest.
+        const samples = flatten([[line({ x: 0, y: 0 }, { x: 200, y: 0 })]], {
+            chordTol: q.chordTol,
+            dsMax: q.dsMax,
+            dthetaMax: q.dthetaMax,
+            dtMax: q.dtMax,
+            dtMin: q.dtMin,
+        });
+        const idx = Math.floor(samples.length / 2);
+        const cOpts = { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation };
+
+        const free = plan(constrain(samples, cOpts), planOpts);
+        const stopped = plan(
+            constrain(samples, { ...cOpts, forcedStops: new Set([idx]) }),
+            planOpts,
+        );
+
+        // Without the stop this is a straight run at full feed mid-path.
+        expect(free[idx]!.v).toBeGreaterThan(0);
+        expect(stopped[idx]!.v).toBe(0);
+
+        // Monotone ramp down into the stop and up out of it, for a few samples
+        // either side — this is the decel/accel that costs budget (see
+        // docs/tool_duty_limits.md §5, "the break costs budget").
+        for (let k = 1; k <= 3; k++) {
+            expect(stopped[idx - k]!.v).toBeGreaterThan(stopped[idx - k + 1]!.v);
+            expect(stopped[idx + k]!.v).toBeGreaterThan(stopped[idx + k - 1]!.v);
+        }
+
+        // And it slows the neighbourhood without touching the far ends.
+        expect(stopped[0]!.v).toBeCloseTo(free[0]!.v, 9);
+        expect(stopped[stopped.length - 1]!.v).toBeCloseTo(free[free.length - 1]!.v, 9);
+    });
+});

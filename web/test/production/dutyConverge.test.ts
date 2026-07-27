@@ -26,6 +26,7 @@ import { describe, it, expect } from "vitest";
 import { cubic, type CubicBezier } from "../../src/toolpath/geometry.js";
 import { flatten } from "../../src/toolpath/flatten.js";
 import { constrain, type ConstrainedSample } from "../../src/toolpath/constrain.js";
+import type { Sample } from "../../src/toolpath/sample.js";
 import { plan, type PlannedSample } from "../../src/toolpath/plan.js";
 import { qualityConfig } from "../../src/config/config.js";
 import { defaultConfig } from "../../src/config/fixtures.js";
@@ -60,18 +61,22 @@ function longSnake(loops: number): CubicBezier[] {
     return out;
 }
 
-function samplesFor(loops: number): ConstrainedSample[] {
-    const s = flatten([longSnake(loops)], {
+function flattenFor(loops: number): Sample[] {
+    return flatten([longSnake(loops)], {
         chordTol: Q.chordTol,
         dsMax: Q.dsMax,
         dthetaMax: Q.dthetaMax,
         dtMax: Q.dtMax,
         dtMin: Q.dtMin,
     });
-    return constrain(s, {
+}
+
+function constrainWith(samples: readonly Sample[], forcedStops?: ReadonlySet<number>) {
+    return constrain(samples, {
         feedMax: FEED,
         aMax: XY_ACCEL,
         junctionDeviation: Q.junctionDeviation,
+        forcedStops,
     });
 }
 
@@ -89,9 +94,13 @@ function timeline(planned: readonly PlannedSample[]): number[] {
     return t;
 }
 
-/** Force a stop at `idx` — exactly what ConstrainOptions.forcedStops will do. */
-function withStops(base: readonly ConstrainedSample[], stops: ReadonlySet<number>): ConstrainedSample[] {
-    return base.map((s, i) => (stops.has(i) ? { ...s, vCeiling: 0 } : s));
+/**
+ * Re-run constrain with the given stops forced. This goes through the real
+ * ConstrainOptions.forcedStops rather than patching vCeiling by hand, so the
+ * probe measures the pipeline the production loop will actually drive.
+ */
+function withStops(base: readonly Sample[], stops: ReadonlySet<number>): ConstrainedSample[] {
+    return constrainWith(base, stops);
 }
 
 /**
@@ -152,7 +161,7 @@ function scheduleAllAtOnce(planned: readonly PlannedSample[], t: readonly number
  * timeline and the ceiling pulled in by the observed overshoot until it holds.
  */
 function scheduleIncremental(
-    base: readonly ConstrainedSample[],
+    base: readonly Sample[],
 ): { stops: Set<number>; passes: number } {
     const stops = new Set<number>();
     let lastIdx = -1;
@@ -190,8 +199,8 @@ function scheduleIncremental(
 }
 
 describe("insert-loop convergence", () => {
-    const base = samplesFor(70);
-    const p0 = plan(base, planOpts);
+    const base = flattenFor(70);
+    const p0 = plan(constrainWith(base), planOpts);
     const t0 = timeline(p0);
     const total = t0[t0.length - 1]!;
 
@@ -199,7 +208,7 @@ describe("insert-loop convergence", () => {
         // No corner stops requested, so nothing in the stream has vCeiling 0
         // except the two path ends — i.e. V1 would throw on this path.
         expect(total).toBeGreaterThan(60);
-        const interiorStops = base.filter((s, i) => i > 0 && i < base.length - 1 && s.vCeiling === 0);
+        const interiorStops = constrainWith(base).filter((s, i) => i > 0 && i < base.length - 1 && s.vCeiling === 0);
         expect(interiorStops).toHaveLength(0);
     });
 

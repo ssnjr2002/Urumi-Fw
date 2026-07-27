@@ -62,10 +62,14 @@ export interface ConstrainedSample extends Sample {
  *   ToolProfile    -> cornerStopAngleDeg
  *   QualityConfig  -> junctionDeviation
  *
- * The three "always needed" values are required. The three "disable switches"
- * are optional — their absence naturally means "disabled" (no A cap, no
- * forced corner stops). No config import, no hidden defaults; the caller
- * bridges all three tiers.
+ * The three "always needed" values are required. The optional ones are
+ * "disable switches" — their absence naturally means "disabled" (no A cap, no
+ * forced corner stops, no injected stops). No config import, no hidden
+ * defaults; the caller bridges all three tiers.
+ *
+ * `forcedStops` is the odd one out: it comes from no config tier at all, but
+ * from a downstream stage that measured a baked timeline and needs a stop the
+ * geometry does not imply. See its own doc comment.
  */
 export interface ConstrainOptions {
     // Required — always needed
@@ -87,6 +91,23 @@ export interface ConstrainOptions {
     readonly aAccelDegS2?: number;
     /** Boundary tangent jump (deg) at/above which vCeiling is forced to 0 (lift-pivot). Source: ToolProfile.cornerAngleDeg. */
     readonly cornerStopAngleDeg?: number;
+    /**
+     * Sample indices at which vCeiling is forced to 0 regardless of geometry —
+     * a stop the CALLER needs for a reason the geometry knows nothing about.
+     *
+     * The motivating case is a duty-limited tool (docs/tool_duty_limits.md §5
+     * tier 2): the ultrasonic knife must have its enable line released before
+     * its budget expires, and if the toolpath offers no natural lift inside the
+     * band, one has to be created. A stop here is what makes that possible —
+     * plan's backward sweep decelerates into it and the forward sweep
+     * accelerates out, so discretize can lift at a sample that is genuinely at
+     * rest rather than one merely marked as such.
+     *
+     * Indices are into `samples` as passed. Out-of-range entries are ignored;
+     * this is a hint from a stage that measured a timeline, not a contract that
+     * can be checked here.
+     */
+    readonly forcedStops?: ReadonlySet<number>;
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -145,12 +166,19 @@ export function constrain(
         aRateDegS = 0,
         aAccelDegS2 = 0,
         cornerStopAngleDeg,
+        forcedStops,
     } = options;
 
     const aRateRad = aRateDegS > 0 ? (aRateDegS * Math.PI) / 180 : 0;
     const aAccRad = aAccelDegS2 > 0 ? (aAccelDegS2 * Math.PI) / 180 : 0;
 
     return samples.map((s, i) => {
+        // Checked first and returned immediately: a forced stop is an OVERRIDE,
+        // not another candidate ceiling to min() against. Nothing below can
+        // raise a zero, but going through the motions would invite a later edit
+        // to reorder the min() chain and quietly resurrect the sample.
+        if (forcedStops?.has(i)) return { ...s, vCeiling: 0 };
+
         let cap = feedMax;
         if (s.kappa > 1e-9) {
             cap = Math.min(cap, Math.sqrt(aMax / s.kappa)); // centripetal (XY)

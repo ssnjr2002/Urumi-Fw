@@ -172,3 +172,67 @@ describe("stage 5: ceiling bounded by feed", () => {
         }
     });
 });
+
+// ── forced stops ──────────────────────────────────────────────────────────────
+// A stop the CALLER injects, for a reason the geometry knows nothing about —
+// today, releasing a duty-limited tool's enable line before its budget expires
+// (docs/tool_duty_limits.md §5 tier 2).
+
+describe("stage 5: forcedStops", () => {
+    const straight = () =>
+        flatten([[lineToCubic({ x: 0, y: 0 }, { x: 100, y: 0 })]], q);
+
+    const opts = (forcedStops?: ReadonlySet<number>) => ({
+        feedMax: FEED,
+        aMax: A_MAX,
+        junctionDeviation: q.junctionDeviation,
+        forcedStops,
+    });
+
+    it("zeroes the ceiling at the named sample and nowhere else", () => {
+        const s = straight();
+        const idx = Math.floor(s.length / 2);
+        const c = constrain(s, opts(new Set([idx])));
+
+        expect(c[idx]!.vCeiling).toBe(0);
+        for (let i = 0; i < c.length; i++) {
+            if (i !== idx) expect(c[i]!.vCeiling).toBeGreaterThan(0);
+        }
+    });
+
+    it("is a no-op when absent or empty — the byte-for-byte guarantee", () => {
+        // Every existing caller passes nothing. If this ever diverges, the
+        // golden snapshot moves for every tool, duty-limited or not.
+        const s = straight();
+        const base = constrain(s, opts());
+        for (const alt of [constrain(s, opts(new Set())), constrain(s, opts(undefined))]) {
+            expect(alt.map((x) => x.vCeiling)).toEqual(base.map((x) => x.vCeiling));
+        }
+    });
+
+    it("beats every geometric cap, including a straight line at full feed", () => {
+        // On a straight run nothing else constrains the sample, so a min()
+        // against feedMax would leave it at 80 mm/s. This is the case that
+        // proves the override is an override.
+        const s = straight();
+        const idx = Math.floor(s.length / 2);
+        expect(constrain(s, opts())[idx]!.vCeiling).toBeCloseTo(FEED, 6);
+        expect(constrain(s, opts(new Set([idx])))[idx]!.vCeiling).toBe(0);
+    });
+
+    it("accepts several stops at once", () => {
+        const s = straight();
+        const stops = new Set([2, 5, 9]);
+        const c = constrain(s, opts(stops));
+        for (const i of stops) expect(c[i]!.vCeiling).toBe(0);
+    });
+
+    it("ignores out-of-range indices rather than throwing", () => {
+        // The caller measured a timeline from a PREVIOUS bake; a stale index is
+        // a scheduling bug, not a crash. Failing soft keeps the pipeline's
+        // error surface at the stage that can explain it.
+        const s = straight();
+        const c = constrain(s, opts(new Set([-1, s.length, 9999])));
+        expect(c.map((x) => x.vCeiling)).toEqual(constrain(s, opts()).map((x) => x.vCeiling));
+    });
+});
