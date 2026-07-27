@@ -366,6 +366,28 @@ static void emitDebugSteps(uint32_t req) {
     axes_homed = 0;
 }
 
+// ─── Whole-bus safe-off ──────────────────────────────────────────────────────
+// CMD_DISABLE to every address, replies consumed and discarded.
+//
+// The sweep covers the WHOLE bus, not the axis map, because CMD_DISABLE is the
+// generic "park yourself" hook and each node type implements it as its own safe
+// state: a stepper de-energises, a vacuum node stops the pump, a knife node
+// kills the oscillator and the blower. Peripherals hold no motion slot, so
+// slotNode[] cannot reach them — and they are precisely the ones that must not
+// keep running after an estop, since the blade is still in the material.
+//
+// Costs up to RESPONSE_TIMEOUT_MS per ABSENT address (a present node answers in
+// microseconds), so a sparsely-populated bus makes this the slowest thing on
+// the estop path. That is acceptable: motion has already stopped by flushing
+// the queue, and this is the cleanup behind it.
+static void busDisableAll() {
+    for (uint8_t node = 1; node <= BUS_ADDR_MAX; node++) {
+        uint8_t pkt[4] = {node, CMD_DISABLE, 0, 0};
+        sendPacket(pkt, 4);
+        receivePacket(node, CMD_DISABLE, nullptr, RESPONSE_TIMEOUT_MS);  // consume
+    }
+}
+
 void processBus() {
     // 1. Estop — flush the queue, invalidate position, settle into ALARM.
     //    ALARM is sticky until Core 0 issues setorigin / unalarm.
@@ -375,9 +397,18 @@ void processBus() {
         pauseRequested = abortRequested = false;  // estop outranks a pending ramp
         runningReason  = RUNNING_JOB;
         axes_homed   = 0;              // datum lost
-        axes_enabled = 0;              // de-energised
         jobActive    = false;          // any suspended job is unrecoverable
         alarmReason  = ALARM_ESTOP;    // set reason before the ALARM transition
+
+        // Actually de-energise, rather than only claiming to. axes_enabled is
+        // host-side bookkeeping; clearing it alone left every node's EN pin
+        // asserted and the oscillator running, while STATUS_RSP reported the
+        // machine disarmed. The sweep runs BEFORE the ALARM transition so the
+        // invariant the host can rely on is: once you observe ALARM, everything
+        // on the bus is already parked.
+        busDisableAll();
+        axes_enabled = 0;              // de-energised — now true
+
         __dmb();
         machineState = STATE_ALARM;
         return;
@@ -603,11 +634,10 @@ void setup1() {
         // We only reach this line if soft_reset_requested became true!
         // TODO: deliberate if a proper reset handler should be put in
         // the node side
-        for (uint8_t node = 1; node <= 4; node++) {
-            uint8_t pkt[4] = {node, CMD_DISABLE, 0, 0};
-            sendPacket(pkt, 4);
-            receivePacket(node, CMD_DISABLE, nullptr, RESPONSE_TIMEOUT_MS); // simply consume the return message
-        }
+        //
+        // Was 1..4 — the axis range — which left peripherals running across a
+        // reset. Same sweep as the estop path now, for the same reason.
+        busDisableAll();
 
         // Loop back to the parking lot.
     }

@@ -365,6 +365,18 @@ extern volatile int32_t machinePos[4];
 extern volatile uint8_t axes_homed;
 extern volatile uint8_t axes_enabled;
 
+// Provisional bus-address ceiling for command relays. A real node registry
+// replaces this range check when the axis-map/ENGAGE work lands
+// (docs/engage_and_axis_map.md §9); until then a wrong id simply relays and
+// times out.
+//
+// Shared between cores because the safe-off sweep must cover the WHOLE bus, not
+// just the axis map: peripherals (vacuum, knife) hold no motion slot, so
+// `slotNode[]` cannot reach them, and they are exactly the nodes that must not
+// keep running after an estop. Core 0 range-checks operator input against this;
+// Core 1 sweeps it in busDisableAll().
+#define BUS_ADDR_MAX 8
+
 // Paused-job context (state_redesign: PausedJobContext, slimmed for Phase 1).
 // Captured when a job enters PAUSED. `resumePos` is the machinePos snapshot at
 // the pause boundary — Phase 2's onboard auto-return target; in Phase 1 the host

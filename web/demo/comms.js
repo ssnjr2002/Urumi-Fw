@@ -493,6 +493,7 @@ async function pollStatus() {
     if (!isConnected()) return;
     try {
         const st = await link.getStatus(500);
+        notePeripheralPark(st.state);
         renderStatus(st);
         statusBanner.dataset.kind = 'ok';
         statusBanner.textContent = `last poll ${new Date().toLocaleTimeString()}`;
@@ -1315,6 +1316,24 @@ function compileJob(initialState) {
 const periphCommanded = new Map();
 
 /**
+ * Firmware parks the WHOLE bus on estop and on soft reset (busDisableAll in
+ * core1/core1.cpp) — steppers de-energise, the pump stops, the oscillator and
+ * blower die. That silently invalidates the memo above: it still says "knife
+ * on" while the hardware is off, so the next applyPeripherals would diff the
+ * command away and the blade would drag through material cold.
+ *
+ * Same failure the panel rebuild guards against, reached by a different route.
+ * Forget once on entry, not every poll, so a machine sitting in ALARM does not
+ * clear a memo the operator has since rebuilt by hand from the panel.
+ */
+let parkedSeen = false;
+function notePeripheralPark(state) {
+    const parked = state === MachineState.ESTOP || state === MachineState.ALARM;
+    if (parked && !parkedSeen) periphCommanded.clear();
+    parkedSeen = parked;
+}
+
+/**
  * Reconcile every peripheral against `mount`, the tool set for the phase about
  * to run. `mount` of null means teardown — everything off.
  *
@@ -1406,6 +1425,7 @@ jobStop.addEventListener('click', async () => {
 async function waitForState(target) {
     for (;;) {
         const st = await link.getStatus();
+        notePeripheralPark(st.state);
         if (st.state === target) return;
         if (st.state === MachineState.ESTOP || st.state === MachineState.ALARM) {
             throw new Error(`machine went ${STATE_NAMES[st.state] ?? st.state}`);

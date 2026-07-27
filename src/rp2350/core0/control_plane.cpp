@@ -15,6 +15,24 @@ static inline bool stateIs(uint8_t a, uint8_t b, uint8_t c) {
     return s == a || s == b || s == c;
 }
 
+// ALARM is a fault state, and the peripheral gates admit it so an operator can
+// park a machine that faulted with the pump running or the blade hot. That
+// direction is recovery; the other is not. Turning a peripheral ON in ALARM
+// energises a hot blade or a pump on a machine whose datum is already lost and
+// whose estop sweep has just parked the whole bus — there is no workflow that
+// wants it, and an operator reaching for `knife_osc N on` to test something has
+// misread the state.
+//
+// Off stays permitted in every state the gate allows, so this can never trap a
+// running peripheral. Prints its own error; callers return on true.
+static inline bool alarmDeniesOn(bool turningOn) {
+    if (turningOn && machineState == STATE_ALARM) {
+        Serial.println("err bad_state");
+        return true;
+    }
+    return false;
+}
+
 // Relay a single-node command to Core 1 (which owns the RS485 bus) and block for
 // its result, so the control-plane reply is synchronous. Returns true if the node
 // responded (PONG/ACK) within the timeout. Not used for GET_POS (Core 1 pushes an
@@ -86,11 +104,7 @@ static bool parseState(const char* s) {
     return false;
 }
 
-// Provisional bus-address ceiling for command relays. A real node registry
-// replaces this range check when the axis-map/ENGAGE work lands
-// (docs/engage_and_axis_map.md §9); until then a wrong id simply relays and
-// times out.
-#define BUS_ADDR_MAX 8
+// BUS_ADDR_MAX lives in shared.h — Core 1's safe-off sweep walks the same range.
 
 // The stream byte has this many motion slots (X/Y/Z/A); axes_enabled/homed are
 // one bit PER SLOT. Which bus id occupies each slot is the runtime axis map
@@ -351,7 +365,9 @@ bool handleCommand(const String& input) {
         if (node < 1 || node > BUS_ADDR_MAX || idx > 6 || *endPtr == '\0') {
             Serial.println("err usage"); return true;
         }
-        uint8_t payload = (uint8_t)((idx << 4) | (parseState(endPtr) ? 1u : 0u));
+        bool on = parseState(endPtr);
+        if (alarmDeniesOn(on)) return true;
+        uint8_t payload = (uint8_t)((idx << 4) | (on ? 1u : 0u));
         multicore_fifo_push_blocking(((uint32_t)payload << 16) |
                                      ((uint32_t)CMD_SERVO_SET << 8) | node);
         bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
@@ -377,6 +393,7 @@ bool handleCommand(const String& input) {
             Serial.println("err usage"); return true;
         }
         uint8_t state = parseState(endPtr) ? 1u : 0u;
+        if (alarmDeniesOn(state != 0)) return true;
         multicore_fifo_push_blocking(((uint32_t)state << 16) |
                                      ((uint32_t)CMD_SSR_SET << 8) | node);
         bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
@@ -404,6 +421,7 @@ bool handleCommand(const String& input) {
             Serial.println("err usage"); return true;
         }
         uint8_t state = parseState(endPtr) ? 1u : 0u;
+        if (alarmDeniesOn(state != 0)) return true;
         multicore_fifo_push_blocking(((uint32_t)state << 16) |
                                      ((uint32_t)CMD_KNIFE_OSC << 8) | node);
         bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
@@ -426,6 +444,7 @@ bool handleCommand(const String& input) {
             Serial.println("err usage"); return true;
         }
         uint8_t state = parseState(endPtr) ? 1u : 0u;
+        if (alarmDeniesOn(state != 0)) return true;
         multicore_fifo_push_blocking(((uint32_t)state << 16) |
                                      ((uint32_t)CMD_LASER << 8) | node);
         bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
@@ -452,6 +471,7 @@ bool handleCommand(const String& input) {
         if (node < 1 || node > BUS_ADDR_MAX || duty < 0 || duty > 100) {
             Serial.println("err usage"); return true;
         }
+        if (alarmDeniesOn(duty > 0)) return true;
         multicore_fifo_push_blocking(((uint32_t)(uint8_t)duty << 16) |
                                      ((uint32_t)CMD_KNIFE_BLOWER << 8) | node);
         bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
