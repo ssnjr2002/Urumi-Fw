@@ -73,6 +73,11 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | P3 | plan | consequence of C1 | Carries unexecutable ceilings through; ~⅕ of the below-`vMin` span is self-inflicted by the sweeps | open, **test red** |
 | P4 | compileBlock | tuning | A non-tangential tool still pays the A-axis curvature cap — ~8× accel loss on a 5 mm arc | open, test documents |
 | P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
+| D1 | discretize | **defect** | Empty segment (all deltas 0) emitted with `interval = fCpu` — a full second. Reachable at a corner AND at every `PATH_END` | open, **test red** |
+| D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | open, **test red** |
+| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** |
+| D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | open, **test red** |
+| D5 | discretize | gap | Every tool ships `liftHeight = 0`, so the entire Z lift/lower path was dead and untested | **resolved** (tests) |
 
 ---
 
@@ -681,6 +686,192 @@ Two methodology notes worth keeping:
 
 ---
 
+## Stage 8 — `discretize`
+
+The bottom of the pipeline: what leaves here goes on the wire, so a defect here
+is a defect on metal. It is also the largest stage by responsibility — per-pair
+emit, velocity-aware subdivision, tangent tracking, and four choreography
+transitions — and it had **six** tests before this pass.
+
+### What holds (verified)
+
+Purity, determinism, XY conservation (every fixture × both tools, multi-subpath,
+and a real SVG through the repair chain), A conservation for a tangential tool,
+integer deltas, `interval ∈ [1, fCpu]`, one `PATH_END` per subpath, per-axis
+invert, and the `dvMax` subdivision bound. The float-accumulator-round-at-emit
+design telescopes correctly — that is the stage's best idea and it works.
+
+### D2 — sub-segment speed is interpolated linearly in distance
+
+`discretize.ts:183-185` interpolates the speed across a sub-segment as
+
+```
+v(f) = v0 + (v1 - v0) * f          f = fraction of ARC LENGTH
+```
+
+Under constant acceleration — exactly what `plan`'s sweeps produce — speed is
+not linear in distance:
+
+```
+v(s) = sqrt(v0² + 2·a·s)     i.e.    v(f) = sqrt(v0² + f·(v1² - v0²))
+```
+
+The consequences are sharp, and the isolation is clean (measured on a PEN, so no
+A axis, on a plain 10 mm line):
+
+```
+dvMax        inf      24       6       3      0.75
+ratio      1.0000  1.1027  1.2681  1.3608  1.5104      (emitted ÷ exact time)
+```
+
+At `k = 1` the pair-level mean `(v0+v1)/2` is **exactly** right for constant
+acceleration, so the emitted time is exact. Every subdivision replaces that one
+exact estimate with `k` wrong ones, and the error grows **monotonically the
+harder it subdivides**. Subdivision exists to improve fidelity (premortem P3);
+for timing it does the reverse, and the knob meant to buy accuracy is the knob
+that spends it.
+
+Worse at a ramp leaving rest: the linear model's time integral is
+
+```
+t = ds · ln(v1/v0) / (v1 - v0)      →  diverges as v0 → 0
+```
+
+against the true `ds / ((v0+v1)/2)`. For `v0 = 0, v1 = 10, ds = 0.5` that is
+15× the correct time. `quality.vMin` is the only reason the number is finite —
+that clamp is load-bearing by accident, which is also why C1's `vMin` story and
+this one are entangled.
+
+**The fix is small and local**: interpolate `v` as `sqrt(v0² + f·(v1² - v0²))`.
+Each sub-segment's own mean then becomes exact and the sub-times sum back to the
+pair time. Worth doing **before** the port — it changes emitted intervals, so it
+needs one deliberate re-golden, and doing that once is cheaper than doing it
+after a C++ rewrite has been validated against the wrong numbers.
+
+Why the golden never caught it: goldens are long SVG paths, which cruise. The
+error is concentrated where ramps dominate — 1.36× on a 10 mm line, 1.01× on a
+500 mm one.
+
+### D1 — an empty segment carrying a one-second interval
+
+The interior-skip guard (`discretize.ts:177`) exempts two cases from being
+skipped: a subpath's final sub-step, and a corner's last sub-step. Both can have
+every delta zero, and `interval`'s `if (major === 0) return fCpu` then hands the
+empty segment the largest interval representable:
+
+```
+dx = dy = dz = da = 0,  interval = 150,000,000  = one full second at fCpu
+```
+
+Both exemptions are reachable, and the second needs no strange geometry at all:
+
+| trigger | reached by |
+|---|---|
+| corner | `cusp` + KNIFE — dx/dy zero (coincident samples), da zero (tracking gated on `!isCorner`) |
+| final | `long_gentle_arc` + **PEN** at `dvMax = 0.05` — the last sub-step rounds to no motion and is emitted anyway because it carries `MICRO_PATH_END` |
+
+So the marker that ends every path can itself be the empty segment. Whether the
+firmware stalls a second on a zero-step segment or discards it is a wire-contract
+question this stage should not be leaving open.
+
+### D3 — `interval`'s rate floor is a second speed governor
+
+`interval` floors each segment's duration so no axis exceeds
+`maxFeed × stepsPerUnit`. The floor is correct and necessary. The problem is that
+it is applied **after** planning and nothing upstream knows it fired: where it
+binds, the executed timeline is slower than the planned one, and everything
+derived from the plan's timeline is wrong with it — including the window stage 9
+schedules the knife's enable-line resets against (`tool_duty_limits.md` §5).
+
+The root-cause chain, measured rather than assumed:
+
+```
+flatten's tangent cap overshoots (F7)
+    → actual sample-to-sample turn exceeds kappa*ds   (1.64x on near_cusp, 8.17x on cusp)
+constrain's A-slew cap is computed from kappa
+    → it under-caps v
+plan's timeline asks A for up to 16.8x its rate ceiling
+interval silently rescues it by stretching the segment
+```
+
+This is the second finding in this audit (with P1) whose cause lives in one stage
+and whose symptom appears in another. Both were invisible to per-stage review.
+
+### D4 — the corner rule is ungated, unlike constrain's
+
+`constrain` gates its corner-stop on `(flags & CURVE_BOUNDARY)`; `discretize`
+gates on nothing (`discretize.ts:137-138`). So `discretize` will lift-pivot at an
+intra-curve tangent jump that `constrain` never stopped for — contradicting this
+stage's own header ("velocity planning already brought the tool to v=0 at every
+corner"). This is F2, now measured.
+
+The gap is currently narrow: the only geometry that reaches it is a cusp, where
+the curvature caps happen to have crawled `v` down anyway (4.8e-3 mm/s). So the
+lift-pivot precondition holds **by accident, not by construction** — and D2's
+`vMin` floor lifts that crawl to 0.5 mm/s regardless, so the pivot does execute
+while moving.
+
+Filed rather than dismissed because the accident is F1's doing: a cusp is exactly
+where `flatten`'s tangent cap is skipped. Fix F1 so the marcher resolves cusps
+properly, and this stops being a cusp-only case.
+
+### D5 — the Z lift path was dead code under test — RESOLVED
+
+Every tool profile ships `liftHeight = 0`, so `lift` is false and **nothing** in
+the Z path executed: no lower-to-cut, no raise-at-end, no lift inside a corner
+pivot. The lift-pivot-lower that the entire corner design rests on had never
+actually lifted under test.
+
+Found by mutation testing, not by reading: deleting the lower-to-cut line changed
+nothing. Now covered through the documented `liftHeight` override — matched
+lower/raise, net Z zero across many subpaths, the pivot's interior lift/lower
+pair, and XY conservation under lift.
+
+### Test rewrite
+
+6 tests → 32, on the INVARIANTS / CONTRACT PROPERTIES split.
+
+The measurement that mattered: `emittedSeconds` re-derives wall time from
+`interval` and step counts **the way the firmware will**, not the way
+`discretize` computed it. D2 and D3 are both only visible from that side of the
+boundary. This is the same lesson as P1 — a check written in the implementation's
+own terms cannot see the implementation's own error.
+
+### Mutation-validated
+
+Nineteen deliberate breaks of `discretize.ts`; all nineteen caught.
+
+```
+X invert not applied              5    position accumulator rounded      3
+Y invert not applied              1    corner A rotation lost from aPhys 1
+Z lift never lowered              3    pivot not emitted at corner       3
+Z raise after stroke skipped      3    zero-motion skip removed          1
+A invert not applied              2    vbar uses entry speed only        1
+A tracking disabled               1    Z lower before cut skipped        3
+corner detection disabled         2    preOrient skipped                 3
+subdivision disabled (k=1)        2    travel jog skipped                1
+PATH_END never set                3    theta not advanced per pair       4
+dx rounding -> trunc              3
+```
+
+Three methodology notes, all of which changed the tests:
+
+- **Two survivors were equivalent mutants — and one was a real finding.** The
+  default machine has `y.invert = false`, so dropping the Y-invert branch is a
+  no-op; and every profile has `liftHeight = 0`, so the whole Z path is dead.
+  The first needed a non-default config to test against; the second **is** D5.
+  An equivalent mutant is not always noise — sometimes it is telling you the
+  production config never exercises the code.
+- **A red finding test masks mutations in its own area.** "zero-motion skip
+  removed" first showed as surviving because D1 was already failing, so no
+  *newly* failing test appeared. The fix was a companion test scoped to the
+  interior case only, which stays sensitive while D1 stays red.
+- **`file` before `grep`.** A mutation pattern silently failed to apply for
+  three runs because the source has CRLF endings and git-bash `grep` strips the
+  `\r` from its output. `cat -A` through `grep` lied; `file` did not.
+
+---
+
 ## Current test state
 
 `npx vitest run test/toolpath/flatten` — 20 passing, 4 red, all 4 intentional:
@@ -704,12 +895,22 @@ Two methodology notes worth keeping:
 × introduces no unexecutable speed of its OWN                   cusp only (P3)
 ```
 
-`tsc --noEmit` clean. The nine red across the three audited stages are all
-intentional and each names its finding; every other stage is green.
+`npx vitest run test/toolpath/discretize` — 27 passing, 5 red, all 5 intentional:
 
-`CUSP` is imported directly by the `flatten`, `constrain` and `plan` tests and is
-deliberately still outside the shared `CASES` registry, so `discretize` remains
-untouched — a cusp regression there will be attributable to that stage.
+```
+× emits no segment with zero motion on any axis                 cusp/knife (D1)
+× reaches the PATH_END marker on ordinary geometry              pen/arc    (D1)
+× emitted cut time matches the exact constant-accel time        3 fixtures (D2)
+× the plan never asks A for more than its rate ceiling          2 fixtures (D3)
+× every corner it pivots at was stopped for by constrain        cusp       (D4)
+```
+
+Full suite: **653 passing, 14 red**, 4 skipped; `tsc --noEmit` clean. All 14 red
+are intentional and each names its finding; every other stage is green.
+
+`CUSP` is now imported directly by the `flatten`, `constrain`, `plan` and
+`discretize` tests. All four stages that consume it have been audited, so it can
+move into the shared `CASES` registry whenever a fifth consumer wants it.
 
 ---
 
@@ -719,8 +920,8 @@ untouched — a cusp regression there will be attributable to that stage.
 |---|---|
 | 3 `repair` (`enforceC1`) | not audited |
 | 6 `plan` | **audited** — P1–P5 above |
-| 8 `discretize` | not audited — next |
-| 9 `dutyBreaks` | partially known: see `tool_duty_limits.md` §5, §11 |
+| 8 `discretize` | **audited** — D1–D5 above |
+| 9 `dutyBreaks` | not audited — next. Partially known: see `tool_duty_limits.md` §5, §11. Note it consumes the timeline D2 and D3 both corrupt, so audit those findings' impact here first |
 
 When auditing a later stage, consider adding `CUSP` to that stage's fixtures
 deliberately. It is the geometry every stage handles worst, and it is currently

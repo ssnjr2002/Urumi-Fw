@@ -1,32 +1,39 @@
 /**
- * Tests for the Discretize stage (redesign stage 8): Sample stream -> MicroSegments.
- * Ported from pipeline/stages/test_discretize.py.
+ * Tests for the Discretize stage (redesign stage 8): planned Sample stream ->
+ * MicroSegment[]. The bottom of the pipeline — what comes out of here goes on
+ * the wire, so a defect here is a defect on metal.
  *
- * The decisive check is XY conservation: the emitted net step deltas move the
- * tool exactly from the path's first sample to its last (the accumulator
- * telescopes to round(last) - round(first)), with per-axis invert applied.
- * Geometry in, correct net displacement out, regardless of segment density.
+ * Split, as with flatten / constrain / plan (docs/planner_audit.md):
+ *
+ *   INVARIANTS          — must hold for every input. A failure is a bug.
+ *   CONTRACT PROPERTIES — what the stage's doc comment claims. Some FAIL; each
+ *                         failing test names the finding it pins.
+ *
+ * Method note carried from the earlier stages: measure independently of the
+ * implementation. `emittedSeconds` re-derives wall time from interval and step
+ * counts the way the FIRMWARE will, not the way discretize computed it — which
+ * is how D2 (interval's rate floor is a second, unmodelled speed governor) came
+ * to light. Fixture loops aggregate via forEachFixture and fail once, so the
+ * worst case cannot hide behind the first.
  */
 
 import { describe, it, expect } from "vitest";
 import { readFixture } from "../helpers.js";
-import { lineToCubic, type CubicBezier } from "../../src/toolpath/geometry.js";
+import { lineToCubic, angleDelta, type CubicBezier } from "../../src/toolpath/geometry.js";
 import { flatten } from "../../src/toolpath/flatten.js";
 import { constrain } from "../../src/toolpath/constrain.js";
-import { plan } from "../../src/toolpath/plan.js";
+import { plan, subpathRanges, type PlannedSample } from "../../src/toolpath/plan.js";
 import { discretize } from "../../src/toolpath/discretize.js";
-import { MICRO_PATH_END, MICRO_JOG, MICRO_LIFT, type MicroSegment } from "../../src/wire/format/microsegment.js";
+import {
+    MICRO_PATH_END,
+    MICRO_JOG,
+    MICRO_LIFT,
+    type MicroSegment,
+} from "../../src/wire/format/microsegment.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
-import { CASES } from "./curves.cases.js";
-import {
-    resolvedAxes,
-    qualityConfig,
-    KNIFE,
-    PEN,
-} from "../../src/config/config.js";
-import {
-    defaultConfig,
-} from "../../src/config/fixtures.js";
+import { CASES, CUSP } from "./curves.cases.js";
+import { resolvedAxes, qualityConfig, KNIFE, PEN } from "../../src/config/config.js";
+import { defaultConfig } from "../../src/config/fixtures.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
 
 const CFG = defaultConfig();
@@ -37,127 +44,651 @@ const q = qualityConfig();
 const FEED = 80.0;
 const A_MAX = 1000.0;
 
-function svg(name: string): string {
-    return readFixture(name);
+type Profile = typeof KNIFE | typeof PEN;
+
+const GEOMETRY_CASES: Record<string, readonly CubicBezier[]> = Object.fromEntries([
+    ...Object.entries(CASES).map(([k, v]) => [k, v.curves]),
+    ["cusp", CUSP],
+]);
+
+function line(p0: { x: number; y: number }, p1: { x: number; y: number }): CubicBezier {
+    return lineToCubic(p0, p1);
 }
 
-function prep(
+function planFor(
     subpaths: readonly (readonly CubicBezier[])[],
-    profile: typeof KNIFE | typeof PEN,
-): MicroSegment[] {
+    profile: Profile,
+): PlannedSample[] {
     const s = flatten(subpaths, q);
-    const constrainOpts = {
+    const c = constrain(s, {
         feedMax: FEED,
         aMax: A_MAX,
         junctionDeviation: q.junctionDeviation,
         ...(profile.tangential
-            ? { aRateDegS: AXES.a.maxFeed, cornerStopAngleDeg: profile.cornerAngleDeg }
+            ? {
+                  aRateDegS: AXES.a.maxFeed,
+                  aAccelDegS2: HEAD.a.maxAccel,
+                  cornerStopAngleDeg: profile.cornerAngleDeg,
+              }
             : {}),
-    };
-    const c = constrain(s, constrainOpts);
-    const p = plan(c, {
+    });
+    return plan(c, {
         xAccel: MACH.x.maxAccel,
         yAccel: MACH.y.maxAccel,
         aAccelDegS2: HEAD.a.maxAccel,
         aMax: A_MAX,
     });
-    return discretize(p, MACH, profile, q);
+}
+
+function prep(
+    subpaths: readonly (readonly CubicBezier[])[],
+    profile: Profile,
+): MicroSegment[] {
+    return discretize(planFor(subpaths, profile), MACH, profile, q);
+}
+
+function forEachFixture(
+    probe: (name: string, curves: readonly CubicBezier[]) => string[],
+): void {
+    const violations: string[] = [];
+    for (const [name, curves] of Object.entries(GEOMETRY_CASES)) {
+        violations.push(...probe(name, curves));
+    }
+    if (violations.length > 0) {
+        throw new Error(`${violations.length} violation(s):\n  ${violations.join("\n  ")}`);
+    }
+}
+
+// ── measurement helpers (deliberately firmware-shaped, not discretize-shaped) ──
+
+/** Steps the firmware will clock on this segment: the major axis. */
+function major(s: MicroSegment): number {
+    return Math.max(Math.abs(s.dx), Math.abs(s.dy), Math.abs(s.dz), Math.abs(s.da));
+}
+
+/**
+ * Wall time the FIRMWARE will spend on these segments: interval cycles per
+ * major-axis step, times steps, over the clock. Derived the way the executor
+ * derives it — not from the planned v that produced it. That independence is
+ * what makes it able to catch D2.
+ */
+function emittedSeconds(segs: readonly MicroSegment[]): number {
+    return segs.reduce((t, s) => t + (s.interval * major(s)) / MACH.fCpu, 0);
+}
+
+/** Time the PLAN says the cut takes, with the same vMin floor interval applies. */
+function plannedSeconds(p: readonly PlannedSample[]): number {
+    let t = 0;
+    for (const [lo, hi] of subpathRanges(p)) {
+        for (let i = lo; i < hi; i++) {
+            t += p[i]!.ds / Math.max(0.5 * (p[i]!.v + p[i + 1]!.v), q.vMin);
+        }
+    }
+    return t;
+}
+
+/** Non-cutting motion: travel jogs, Z lifts, pivots, pre-orientation. */
+function isChoreography(s: MicroSegment): boolean {
+    return (s.flags & MICRO_JOG) !== 0 || (s.flags & MICRO_LIFT) !== 0 || s.dz !== 0;
+}
+
+function cutting(segs: readonly MicroSegment[]): MicroSegment[] {
+    return segs.filter((s) => !isChoreography(s));
 }
 
 function net(segs: readonly MicroSegment[]): [number, number, number] {
-    return segs.reduce(
-        (acc, s) => [acc[0] + s.dx, acc[1] + s.dy, acc[2] + s.da] as [number, number, number],
-        [0, 0, 0] as [number, number, number],
+    return segs.reduce<[number, number, number]>(
+        (a, s) => [a[0] + s.dx, a[1] + s.dy, a[2] + s.da],
+        [0, 0, 0],
     );
 }
 
 function expectedXY(subpaths: readonly (readonly CubicBezier[])[]): [number, number] {
     const s = flatten(subpaths, q);
-    const xSpu = MACH.x.stepsPerUnit;
-    const ySpu = MACH.y.stepsPerUnit;
-    let dx = Math.round(s[s.length - 1]!.x * xSpu) - Math.round(s[0]!.x * xSpu);
-    let dy = Math.round(s[s.length - 1]!.y * ySpu) - Math.round(s[0]!.y * ySpu);
+    let dx = Math.round(s[s.length - 1]!.x * MACH.x.stepsPerUnit) - Math.round(s[0]!.x * MACH.x.stepsPerUnit);
+    let dy = Math.round(s[s.length - 1]!.y * MACH.y.stepsPerUnit) - Math.round(s[0]!.y * MACH.y.stepsPerUnit);
     if (MACH.x.invert) dx = -dx;
     if (MACH.y.invert) dy = -dy;
     return [dx, dy];
 }
 
-// ── XY conservation: net steps land the tool at the geometric endpoint ────────
+/** Re-derive discretize's corner rule from the planned stream (see D3). */
+function cornerIndices(p: readonly PlannedSample[], profile: Profile): number[] {
+    if (!profile.tangential) return [];
+    const out: number[] = [];
+    for (const [lo, hi] of subpathRanges(p)) {
+        let theta = p[lo]!.theta;
+        for (let i = lo; i < hi; i++) {
+            if (Math.abs(angleDelta(theta, p[i + 1]!.theta)) >= profile.cornerAngleDeg) out.push(i);
+            theta = p[i + 1]!.theta;
+        }
+    }
+    return out;
+}
 
-describe("stage 8: XY conservation", () => {
-    it("snake SVG — net XY matches geometric endpoint", () => {
-        const { subpaths } = loadSvgMmSubpaths(svg("test_snake.svg"));
-        const repairOpts = { angleTolDeg: q.angleTol, gapTolMm: q.gapTol };
-        const repaired = subpaths.map((sp) => enforceC1(sp, repairOpts).repaired);
-        const [nx, ny] = net(prep(repaired, KNIFE));
-        const [ex, ey] = expectedXY(repaired);
+// ══════════════════════════════════════════════════════════════════════════════
+// INVARIANTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("stage 8 INVARIANT: purity and determinism", () => {
+    it("does not mutate its input", () => {
+        const p = planFor([CASES.s_curve!.curves], KNIFE);
+        const before = JSON.stringify(p);
+        discretize(p, MACH, KNIFE, q);
+        expect(JSON.stringify(p)).toBe(before);
+    });
+
+    it("is deterministic", () => {
+        const p = planFor([CASES.full_circle_r30!.curves], KNIFE);
+        expect(discretize(p, MACH, KNIFE, q)).toEqual(discretize(p, MACH, KNIFE, q));
+    });
+});
+
+describe("stage 8 INVARIANT: XY conservation", () => {
+    // The decisive property: whatever the segment density, the float
+    // accumulators telescope to round(last) - round(first), with invert applied.
+    it("net XY lands on the geometric endpoint, every fixture, both tools", () => {
+        forEachFixture((name, curves) => {
+            const bad: string[] = [];
+            for (const profile of [KNIFE, PEN]) {
+                const [nx, ny] = net(prep([curves], profile));
+                const [ex, ey] = expectedXY([curves]);
+                if (nx !== ex || ny !== ey) {
+                    bad.push(`${name}/${profile.name}: got (${nx},${ny}) want (${ex},${ey})`);
+                }
+            }
+            return bad;
+        });
+    });
+
+    it("holds across multiple subpaths, including the travel jogs between them", () => {
+        const subpaths = [
+            CASES.straight_line!.curves,
+            CASES.quarter_circle_r5!.curves,
+            [line({ x: 200, y: 40 }, { x: 260, y: 90 })],
+        ];
+        const [nx, ny] = net(prep(subpaths, KNIFE));
+        const [ex, ey] = expectedXY(subpaths);
         expect([nx, ny]).toEqual([ex, ey]);
     });
 
-    it("all 8 mock cases — net XY matches geometric endpoint", () => {
-        for (const [name, { curves }] of Object.entries(CASES)) {
-            const [nx, ny] = net(prep([curves], KNIFE));
-            const [ex, ey] = expectedXY([curves]);
-            if (nx !== ex || ny !== ey) {
-                throw new Error(`${name}: got (${nx},${ny}) expected (${ex},${ey})`);
+    it("holds on a real SVG through the full repair chain", () => {
+        const { subpaths } = loadSvgMmSubpaths(readFixture("test_snake.svg"));
+        const repaired = subpaths.map(
+            (sp) => enforceC1(sp, { angleTolDeg: q.angleTol, gapTolMm: q.gapTol }).repaired,
+        );
+        const [nx, ny] = net(prep(repaired, KNIFE));
+        expect([nx, ny]).toEqual(expectedXY(repaired));
+    });
+});
+
+describe("stage 8 INVARIANT: A conservation for a tangential tool", () => {
+    it("net A equals the entry orientation plus the total tracked turn", () => {
+        // Tracking, pre-orientation and corner pivots must telescope to exactly
+        // the geometry's total turn. A drift here is a knife pointing the wrong
+        // way, which no downstream stage can detect.
+        const aSpd = AXES.a.stepsPerUnit;
+        const aInv = AXES.a.invert ? -1 : 1;
+        forEachFixture((name, curves) => {
+            const p = planFor([curves], KNIFE);
+            const netA = (prep([curves], KNIFE).reduce((a, s) => a + s.da * aInv, 0)) / aSpd;
+            let turn = 0;
+            for (const [lo, hi] of subpathRanges(p)) {
+                let th = p[lo]!.theta;
+                for (let i = lo; i < hi; i++) {
+                    turn += angleDelta(th, p[i + 1]!.theta);
+                    th = p[i + 1]!.theta;
+                }
             }
+            const want = p[0]!.theta + turn;
+            // one A step of slack: da is rounded at every emit
+            const slack = 2 / aSpd;
+            return Math.abs(netA - want) > slack
+                ? [`${name}: net A ${netA.toFixed(4)}deg, want ${want.toFixed(4)}deg`]
+                : [];
+        });
+    });
+
+    it("unwind keeps physical A bounded over repeated closed loops", () => {
+        const circle = CASES.full_circle_r30!.curves;
+        const aInv = AXES.a.invert ? -1 : 1;
+        let phys = 0;
+        let peak = 0;
+        for (const s of prep([circle, circle, circle], KNIFE)) {
+            phys += s.da * aInv;
+            peak = Math.max(peak, Math.abs(phys));
         }
+        expect(peak).toBeLessThan(540 * AXES.a.stepsPerUnit);
+    });
+
+    it("unwind stays correct when the winding came from corner pivots", () => {
+        // The circles above wind A entirely through tracking. A square winds it
+        // entirely through corner PIVOTS, which update aPhys on a separate code
+        // path (discretize.ts:208). Repeat the square so a mis-tracked aPhys
+        // compounds into the next subpath's pre-orientation instead of
+        // cancelling within one.
+        const square = [
+            line({ x: 0, y: 0 }, { x: 20, y: 0 }),
+            line({ x: 20, y: 0 }, { x: 20, y: 20 }),
+            line({ x: 20, y: 20 }, { x: 0, y: 20 }),
+            line({ x: 0, y: 20 }, { x: 0, y: 0 }),
+        ];
+        const aInv = AXES.a.invert ? -1 : 1;
+        let phys = 0;
+        let peak = 0;
+        for (const s of prep([square, square, square], KNIFE)) {
+            phys += s.da * aInv;
+            peak = Math.max(peak, Math.abs(phys));
+        }
+        expect(peak).toBeLessThan(540 * AXES.a.stepsPerUnit);
     });
 });
 
-// ── pen tool: no A rotation, no lift unless asked ─────────────────────────────
+describe("stage 8 INVARIANT: every emitted segment is executable", () => {
+    it("interval is an integer in [1, fCpu] on every segment", () => {
+        forEachFixture((name, curves) => {
+            const bad: string[] = [];
+            for (const profile of [KNIFE, PEN]) {
+                for (const [i, s] of prep([curves], profile).entries()) {
+                    if (!Number.isInteger(s.interval) || s.interval < 1 || s.interval > MACH.fCpu) {
+                        bad.push(`${name}/${profile.name}: seg ${i} interval ${s.interval}`);
+                    }
+                }
+            }
+            return bad.slice(0, 3);
+        });
+    });
 
-describe("stage 8: pen tool", () => {
-    it("no A rotation, no MICRO_LIFT", () => {
-        const segs = prep([CASES.s_curve!.curves], PEN);
-        for (const s of segs) {
-            expect(Math.abs(s.da)).toBe(0);
-            expect(s.flags & MICRO_LIFT).toBeFalsy();
-        }
+    it("all step deltas are integers", () => {
+        forEachFixture((name, curves) => {
+            const bad: string[] = [];
+            for (const [i, s] of prep([curves], KNIFE).entries()) {
+                if (![s.dx, s.dy, s.dz, s.da].every(Number.isInteger)) {
+                    bad.push(`${name}: seg ${i} non-integer delta`);
+                }
+            }
+            return bad.slice(0, 3);
+        });
     });
 });
 
-// ── path end flag ─────────────────────────────────────────────────────────────
+describe("stage 8 INVARIANT: PATH_END marks each subpath exactly once", () => {
+    it("one MICRO_PATH_END per subpath, on a segment that moves", () => {
+        const subpaths = [CASES.straight_line!.curves, CASES.quarter_circle_r5!.curves];
+        const segs = prep(subpaths, KNIFE);
+        const ends = segs.filter((s) => s.flags & MICRO_PATH_END);
+        expect(ends.length).toBe(subpaths.length);
+        for (const e of ends) expect(major(e)).toBeGreaterThan(0);
+    });
 
-describe("stage 8: path end flag", () => {
-    it("last segment has MICRO_PATH_END", () => {
-        const segs = prep([CASES.straight_line!.curves], KNIFE);
+    it("the final cutting segment of a single subpath carries it", () => {
+        const segs = cutting(prep([CASES.straight_line!.curves], KNIFE));
         expect(segs[segs.length - 1]!.flags & MICRO_PATH_END).toBeTruthy();
     });
 });
 
-// ── corners produce a pivot ───────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// CONTRACT PROPERTIES — tool behaviour
+// ══════════════════════════════════════════════════════════════════════════════
 
-describe("stage 8: corner pivot", () => {
-    it("90deg corner emits pure-A MICRO_JOG pivot", () => {
-        const horiz = lineToCubic({ x: 0, y: 0 }, { x: 20, y: 0 });
-        const vert = lineToCubic({ x: 20, y: 0 }, { x: 20, y: 20 });
-        const segs = prep([[horiz, vert]], KNIFE);
-        const pivots = segs.filter(
-            (s) => (s.flags & MICRO_JOG) && s.da !== 0 && s.dx === 0 && s.dy === 0,
-        );
-        expect(pivots.length).toBeGreaterThan(0);
+describe("stage 8: a non-tangential tool", () => {
+    it("never rotates A and never lifts", () => {
+        forEachFixture((name, curves) => {
+            const bad: string[] = [];
+            for (const s of prep([curves], PEN)) {
+                if (s.da !== 0) bad.push(`${name}: da=${s.da}`);
+                if (s.flags & MICRO_LIFT) bad.push(`${name}: MICRO_LIFT set`);
+            }
+            return bad.slice(0, 2);
+        });
+    });
+
+    it("rounds a 90-degree corner at speed instead of stopping for it", () => {
+        // The junction-deviation path: a pen has no blade to reorient, so a
+        // sharp join is cornered, not lift-pivoted. Pins that PEN does NOT
+        // inherit the knife's stop.
+        const p = planFor([[line({ x: 0, y: 0 }, { x: 20, y: 0 }), line({ x: 20, y: 0 }, { x: 20, y: 20 })]], PEN);
+        const bi = p.findIndex((s) => s.flags & 0x04);
+        expect(bi).toBeGreaterThan(0);
+        expect(p[bi]!.v).toBeGreaterThan(1.0);
+        expect(prep([[line({ x: 0, y: 0 }, { x: 20, y: 0 }), line({ x: 20, y: 0 }, { x: 20, y: 20 })]], PEN)
+            .some((s) => s.da !== 0)).toBe(false);
     });
 });
 
-// ── unwind keeps physical A bounded ───────────────────────────────────────────
+describe("stage 8: a tangential tool at a corner", () => {
+    it("emits a pure-A pivot at a 90-degree join", () => {
+        const segs = prep([[line({ x: 0, y: 0 }, { x: 20, y: 0 }), line({ x: 20, y: 0 }, { x: 20, y: 20 })]], KNIFE);
+        const pivots = segs.filter((s) => (s.flags & MICRO_JOG) && s.da !== 0 && s.dx === 0 && s.dy === 0);
+        expect(pivots.length).toBeGreaterThan(0);
+        // and the pivot turns through the full corner
+        const turned = pivots.reduce((a, s) => a + s.da * (AXES.a.invert ? -1 : 1), 0) / AXES.a.stepsPerUnit;
+        expect(Math.abs(turned)).toBeGreaterThan(80);
+    });
 
-describe("stage 8: unwind bounds physical A", () => {
-    it("3 full circles — peak physical A < 540 deg", () => {
-        // Many small closed loops would wind A without unwind; KNIFE unwinds
-        // pen-up. A single full circle: net A ~ +/-360 deg of tracking; physical
-        // should stay within ~one turn since each PATH_START unwinds to the
-        // entry tangent.
-        const circle = CASES.full_circle_r30!.curves;
-        const segs = prep([circle, circle, circle], KNIFE);
-        const aInv = AXES.a.invert ? -1 : 1;
-        let phys = 0;
-        let peak = 0;
-        for (const s of segs) {
-            phys += s.da * aInv;
-            peak = Math.max(peak, Math.abs(phys));
+    it("does not pivot where the tangent turns smoothly", () => {
+        // A quarter circle turns 90 degrees in total but never more than
+        // dthetaMax at once, so it must be tracked continuously, not pivoted.
+        const p = planFor([CASES.quarter_circle_r50!.curves], KNIFE);
+        expect(cornerIndices(p, KNIFE)).toEqual([]);
+    });
+});
+
+describe("stage 8: per-axis invert is applied to every emitted delta", () => {
+    // The default machine has x.invert = true but y.invert = false, so the
+    // fixtures alone cannot tell "Y invert applied" from "Y invert ignored".
+    // Flip each axis explicitly and require the emitted deltas to negate.
+    function withInvert(axis: "x" | "y", invert: boolean) {
+        return { ...MACH, [axis]: { ...MACH[axis], invert } };
+    }
+
+    it("flipping x.invert negates every dx and nothing else", () => {
+        const p = planFor([CASES.s_curve!.curves], PEN);
+        const a = discretize(p, withInvert("x", false), PEN, q);
+        const b = discretize(p, withInvert("x", true), PEN, q);
+        expect(a.length).toBe(b.length);
+        for (let i = 0; i < a.length; i++) {
+            expect(b[i]!.dx).toBe(-a[i]!.dx);
+            expect(b[i]!.dy).toBe(a[i]!.dy);
         }
-        const aSpd = AXES.a.stepsPerUnit;
-        expect(peak).toBeLessThan(540 * aSpd);
+    });
+
+    it("flipping y.invert negates every dy and nothing else", () => {
+        const p = planFor([CASES.s_curve!.curves], PEN);
+        const a = discretize(p, withInvert("y", false), PEN, q);
+        const b = discretize(p, withInvert("y", true), PEN, q);
+        expect(a.length).toBe(b.length);
+        for (let i = 0; i < a.length; i++) {
+            expect(b[i]!.dy).toBe(-a[i]!.dy);
+            expect(b[i]!.dx).toBe(a[i]!.dx);
+        }
+    });
+});
+
+describe("stage 8: Z lift choreography", () => {
+    // Every tool profile ships liftHeight = 0, so in the default config `lift`
+    // is false and NOTHING in the Z path executes — no lower-to-cut, no
+    // raise-at-end, no lift inside a corner pivot. The lift-pivot-lower that
+    // the whole corner design rests on has never actually lifted under test.
+    // These drive it through the documented liftHeight override.
+    const LIFT = 2.0;
+    const lifted = (subpaths: readonly (readonly CubicBezier[])[], profile: Profile) =>
+        discretize(planFor(subpaths, profile), MACH, profile, q, { liftHeight: LIFT });
+
+    it("lowers before the stroke and raises after it, by the same step count", () => {
+        const segs = lifted([CASES.straight_line!.curves], KNIFE);
+        const zMoves = segs.filter((s) => s.dz !== 0);
+        expect(zMoves.length).toBeGreaterThanOrEqual(2);
+        expect(zMoves.reduce((a, s) => a + s.dz, 0)).toBe(0); // returns to travel height
+        expect(Math.abs(zMoves[0]!.dz)).toBe(Math.round(LIFT * AXES.z.stepsPerUnit));
+        expect(zMoves[0]!.dz).toBe(-zMoves[zMoves.length - 1]!.dz); // down first, up last
+    });
+
+    it("net Z is zero over many subpaths — every lower is matched by a raise", () => {
+        const segs = lifted(
+            [CASES.straight_line!.curves, CASES.quarter_circle_r5!.curves, CUSP],
+            KNIFE,
+        );
+        expect(segs.reduce((a, s) => a + s.dz, 0)).toBe(0);
+    });
+
+    it("a corner pivot lifts, turns, and lowers again", () => {
+        const corner = [line({ x: 0, y: 0 }, { x: 20, y: 0 }), line({ x: 20, y: 0 }, { x: 20, y: 20 })];
+        const segs = lifted([corner], KNIFE);
+        // The pivot's Z pair is interior: strip the leading lower and trailing raise.
+        const zIdx = segs.map((s, i) => (s.dz !== 0 ? i : -1)).filter((i) => i >= 0);
+        expect(zIdx.length).toBeGreaterThan(2);
+        const interior = zIdx.slice(1, -1);
+        expect(interior.length).toBe(2);
+        // and a pure-A rotation happens between the lift and the lower
+        const between = segs.slice(interior[0]!, interior[1]!);
+        expect(between.some((s) => s.da !== 0 && s.dx === 0 && s.dy === 0)).toBe(true);
+    });
+
+    it("XY conservation is unaffected by lifting", () => {
+        const [nx, ny] = net(lifted([CASES.s_curve!.curves], KNIFE));
+        expect([nx, ny]).toEqual(expectedXY([CASES.s_curve!.curves]));
+    });
+});
+
+describe("stage 8: velocity-aware subdivision", () => {
+    it("skips interior sub-steps that move nothing", () => {
+        // The interior-skip guard (discretize.ts:177) working as intended.
+        // Interior only — the guard's two exemptions are D1's subject.
+        const p = planFor([CASES.long_gentle_arc!.curves], PEN);
+        const dense = discretize(p, MACH, PEN, { ...q, dvMax: 0.05 });
+        const zeros = dense.map((s, i) => [s, i] as const).filter(([s]) => major(s) === 0);
+        for (const [s] of zeros) {
+            expect(s.flags & MICRO_PATH_END).toBeTruthy(); // only the exempted final one
+        }
+    });
+
+    it("no cutting segment spans a speed change greater than dvMax", () => {
+        forEachFixture((name, curves) => {
+            const p = planFor([curves], KNIFE);
+            const bad: string[] = [];
+            for (const [lo, hi] of subpathRanges(p)) {
+                for (let i = lo; i < hi; i++) {
+                    const dv = Math.abs(p[i + 1]!.v - p[i]!.v);
+                    const k = Math.min(256, Math.max(1, Math.ceil(dv / q.dvMax)));
+                    if (dv / k > q.dvMax * 1.001) {
+                        bad.push(`${name}: pair ${i} realised dv ${(dv / k).toFixed(3)} > ${q.dvMax}`);
+                    }
+                }
+            }
+            return bad.slice(0, 3);
+        });
+    });
+
+    it("a cruise at constant speed is not subdivided", () => {
+        // k=1 on cruise is what keeps segment counts sane; if this regresses the
+        // wire volume explodes without improving anything.
+        const mid = cutting(prep([CASES.long_gentle_arc!.curves], PEN));
+        const p = planFor([CASES.long_gentle_arc!.curves], PEN);
+        const cruisePairs = [...subpathRanges(p)].flatMap(([lo, hi]) => {
+            const n: number[] = [];
+            for (let i = lo; i < hi; i++) if (Math.abs(p[i + 1]!.v - p[i]!.v) < q.dvMax) n.push(i);
+            return n;
+        });
+        expect(cruisePairs.length).toBeGreaterThan(100);
+        expect(mid.length).toBeLessThan(p.length * 1.5);
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FINDINGS — these fail. Each pins a defect recorded in docs/planner_audit.md.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("stage 8 FINDING D1: an empty segment carrying a one-second interval", () => {
+    // The interior-skip guard (discretize.ts:177) exempts two cases from being
+    // skipped: the subpath's final sub-step, and a corner's last sub-step. Both
+    // can have every delta zero — and interval()'s `if (major === 0) return
+    // fCpu` then hands the empty segment the largest interval representable:
+    //
+    //     dx=dy=dz=da=0, interval = 150,000,000 = a full second at fCpu.
+    //
+    // Both exemptions are reachable, and neither needs strange geometry:
+    //
+    //   corner  — `cusp` fixture with a KNIFE. dx/dy are zero because the two
+    //             samples are coincident; da is zero because the tracking
+    //             branch is gated on `!isCorner`.
+    //   final   — `long_gentle_arc` with a PEN at dvMax = 0.05. The last
+    //             sub-step rounds to no motion, and the segment is emitted
+    //             anyway because it carries MICRO_PATH_END. So the marker that
+    //             ENDS every path is itself the empty one.
+    //
+    // Whether the firmware stalls a second on a zero-step segment or discards
+    // it is a wire-contract question this stage should not be leaving open, and
+    // the PATH_END case makes it reachable on ordinary work.
+    it("emits no segment with zero motion on any axis", () => {
+        forEachFixture((name, curves) => {
+            const bad: string[] = [];
+            for (const profile of [KNIFE, PEN]) {
+                for (const [i, s] of prep([curves], profile).entries()) {
+                    if (major(s) === 0) {
+                        bad.push(`${name}/${profile.name}: seg ${i} all-zero, interval ${s.interval} (${(s.interval / MACH.fCpu).toFixed(3)}s)`);
+                    }
+                }
+            }
+            return bad;
+        });
+    });
+
+    it("reaches the PATH_END marker on ordinary geometry, not just a cusp", () => {
+        // The exemption that matters most: this is a pen on a gentle arc.
+        const p = planFor([CASES.long_gentle_arc!.curves], PEN);
+        const dense = discretize(p, MACH, PEN, { ...q, dvMax: 0.05 });
+        const empty = dense.filter((s) => major(s) === 0);
+        expect(empty.length).toBe(0);
+    });
+});
+
+describe("stage 8 FINDING D2: sub-segment speed is interpolated linearly in distance", () => {
+    // discretize.ts:183-185 interpolates the sub-segment speed linearly in
+    // ARC LENGTH:  v(f) = v0 + (v1 - v0) * f.
+    //
+    // Under constant acceleration — which is exactly what plan's sweeps
+    // produce — speed is not linear in distance. It is
+    //     v(s) = sqrt(v0^2 + 2*a*s),   i.e.  v(f) = sqrt(v0^2 + f*(v1^2 - v0^2)).
+    //
+    // Consequences, measured:
+    //   - At k=1 the pair-level mean (v0+v1)/2 is EXACTLY right for constant
+    //     accel, so the emitted time is exact: ratio 1.0000.
+    //   - Every subdivision replaces that one exact estimate with k wrong ones,
+    //     and the error grows monotonically the harder it subdivides:
+    //         10mm line, dvMax = inf / 24 / 6 / 3 / 0.75
+    //                    1.000 / 1.103 / 1.268 / 1.361 / 1.510
+    //     Subdivision exists to improve fidelity (premortem P3). For timing it
+    //     does the opposite, and the knob that is supposed to buy accuracy is
+    //     the knob that costs it.
+    //   - Over a pair leaving rest the linear model's time integral diverges
+    //     logarithmically (v0 = 0 -> infinite). quality.vMin is the only reason
+    //     the number is finite; that clamp is load-bearing by accident.
+    //
+    // The fix is small and local: interpolate v as
+    //     sqrt(v0^2 + f*(v1^2 - v0^2))
+    // at which point each sub-segment's own mean is exact and the sub-times sum
+    // back to the pair time. Worth doing BEFORE the port, since it changes
+    // emitted intervals and so must be re-goldened once.
+    it("emitted cut time matches the exact constant-accel time", () => {
+        forEachFixture((name, curves) => {
+            const p = planFor([curves], KNIFE);
+            const ratio = emittedSeconds(cutting(prep([curves], KNIFE))) / plannedSeconds(p);
+            return ratio > 1.1
+                ? [`${name}: emitted ${ratio.toFixed(3)}x the exact cut time`]
+                : [];
+        });
+    });
+
+    it("is exact when subdivision is disabled, and degrades as it subdivides", () => {
+        // Passes today, and is the isolation that identifies the cause: the
+        // error is entirely in the sub-segment model, not in interval(), not in
+        // step rounding, not in the A axis (this runs a PEN).
+        const p = planFor([[line({ x: 0, y: 0 }, { x: 10, y: 0 })]], PEN);
+        const exact = plannedSeconds(p);
+        const ratioAt = (dvMax: number) =>
+            emittedSeconds(discretize(p, MACH, PEN, { ...q, dvMax })) / exact;
+
+        expect(ratioAt(1e9)).toBeCloseTo(1.0, 3); // k=1 everywhere: exact
+        expect(ratioAt(6)).toBeGreaterThan(1.2);
+        expect(ratioAt(0.75)).toBeGreaterThan(ratioAt(6)); // worse, not better
+    });
+
+    it("the error is concentrated where ramps dominate the path", () => {
+        // Passes today. Long paths cruise, so the ramp error is diluted; short
+        // ones are all ramp. This is why the golden fixtures (long SVG paths)
+        // never showed it and a 10mm line does.
+        const ratioFor = (L: number) => {
+            const p = planFor([[line({ x: 0, y: 0 }, { x: L, y: 0 })]], PEN);
+            return emittedSeconds(discretize(p, MACH, PEN, q)) / plannedSeconds(p);
+        };
+        expect(ratioFor(10)).toBeGreaterThan(1.3);
+        expect(ratioFor(500)).toBeLessThan(1.05);
+    });
+});
+
+describe("stage 8 FINDING D3: interval's rate floor is a second speed governor", () => {
+    // interval() floors each segment's duration so no axis exceeds
+    // maxFeed * stepsPerUnit. The floor itself is correct and necessary — but
+    // it is applied AFTER planning, and nothing upstream knows it fired. Where
+    // it binds, the executed timeline is slower than the planned one and every
+    // quantity derived from the plan's timeline is wrong with it.
+    //
+    // That matters most for stage 9: docs/tool_duty_limits.md §5 schedules the
+    // knife's enable-line resets against planned durations. An error in the
+    // window is a knife that runs past its budget.
+    //
+    // Root cause chain, measured rather than assumed:
+    //   flatten's tangent cap overshoots (F7), so the actual sample-to-sample
+    //   turn exceeds kappa*ds -- by 1.64x on near_cusp and 8.17x on cusp;
+    //   constrain's A-slew cap is computed from kappa, so it under-caps v;
+    //   plan's timeline then asks A for up to 16.8x its rate ceiling;
+    //   interval silently rescues it by stretching the segment.
+    it("the plan never asks the A axis for more than its rate ceiling", () => {
+        forEachFixture((name, curves) => {
+            const p = planFor([curves], KNIFE);
+            let worst = 0;
+            for (const [lo, hi] of subpathRanges(p)) {
+                for (let i = lo; i < hi; i++) {
+                    const a = p[i]!;
+                    const b = p[i + 1]!;
+                    if (a.ds < 1e-9 || a.v < 1e-9) continue;
+                    const dt = a.ds / (0.5 * (a.v + b.v));
+                    worst = Math.max(worst, Math.abs(angleDelta(a.theta, b.theta)) / dt);
+                }
+            }
+            return worst > AXES.a.maxFeed * 1.01
+                ? [`${name}: plan asks A for ${worst.toFixed(0)} deg/s (${(worst / AXES.a.maxFeed).toFixed(2)}x the ${AXES.a.maxFeed} ceiling)`]
+                : [];
+        });
+    });
+
+    it("documents the root cause: actual turn exceeds what kappa predicts", () => {
+        // Passes today. constrain's A-slew cap is rad(aRate)/kappa, which is
+        // only sound if the sample-to-sample turn equals kappa*ds. It does not.
+        // Delete this only together with F7.
+        const p = planFor([CUSP], KNIFE);
+        let worst = 0;
+        for (const [lo, hi] of subpathRanges(p)) {
+            for (let i = lo; i < hi; i++) {
+                const a = p[i]!;
+                const predicted = (a.kappa * a.ds * 180) / Math.PI;
+                if (predicted > 1e-9) {
+                    worst = Math.max(worst, Math.abs(angleDelta(a.theta, p[i + 1]!.theta)) / predicted);
+                }
+            }
+        }
+        expect(worst).toBeGreaterThan(4);
+    });
+});
+
+describe("stage 8 FINDING D4: the corner rule is ungated, unlike constrain's", () => {
+    // constrain gates its corner-stop on (flags & CURVE_BOUNDARY); discretize
+    // gates on nothing (discretize.ts:137-138). So discretize will lift-pivot at
+    // an INTRA-curve tangent jump that constrain never stopped for, contradicting
+    // this stage's own header ("velocity planning already brought the tool to
+    // v=0 at every corner").
+    //
+    // Measured, the gap is currently narrow: the only geometry that reaches it
+    // is a cusp, where the curvature caps happen to have crawled v down anyway
+    // (4.8e-3 mm/s on `cusp`, 4.8e-2 on a longer-armed variant). So today the
+    // precondition holds BY ACCIDENT, not by construction — and interval()
+    // floors that crawl up to vMin = 0.5 mm/s regardless, so the pivot does
+    // execute while moving.
+    //
+    // It is filed rather than dismissed because the accident is F1's doing: a
+    // cusp is exactly where flatten's tangent cap is skipped. Fix F1 so the
+    // marcher resolves cusps properly and this stops being a cusp-only case.
+    it("every corner it pivots at was stopped for by constrain", () => {
+        forEachFixture((name, curves) => {
+            const p = planFor([curves], KNIFE);
+            const bad: string[] = [];
+            for (const i of cornerIndices(p, KNIFE)) {
+                if (p[i]!.vCeiling !== 0) {
+                    bad.push(`${name}: corner at sample ${i} has vCeiling ${p[i]!.vCeiling.toExponential(2)}, not 0 (CURVE_BOUNDARY=${!!(p[i + 1]!.flags & 0x04)})`);
+                }
+            }
+            return bad.slice(0, 3);
+        });
     });
 });
