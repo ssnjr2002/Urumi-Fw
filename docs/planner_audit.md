@@ -192,6 +192,92 @@ headroom that is not currently needed.
 
 ---
 
+## Port setup
+
+Branch `cpp-port`. The C++ planner lives in `lib/motion/` and its tests in
+`test/test_motion/`, run by PlatformIO's native test runner:
+
+```
+pio test -e native
+```
+
+`[env:native]` is the odd env in `platformio.ini` — it uploads nothing and
+targets no board. `-msse2 -mfpmath=sse` there is mandatory rather than tuning:
+the host `g++` is `i686-w64-mingw32`, whose default x87 path evaluates
+intermediates in 80-bit registers and would quietly break the bit-equality
+everything below rests on.
+
+`lib/motion` is a normal PlatformIO library, so it is compiled into `env:pico`
+only where `src/rp2350/**` includes it, and never for the AVR node envs — LDF's
+default `chain` mode scans includes. Do not set `lib_ldf_mode = deep+`; that
+stops being true.
+
+doctest rather than the bundled Unity: the suite's whole method is comparing
+failing test NAMES across mutations, and Unity offers neither named subcases nor
+expression capture.
+
+### The differential harness
+
+The port's criterion is bit-equality with the TypeScript, so the two need to be
+fed identical inputs with no decimal round-trip in between.
+`web/test/port/cppRef.test.ts` generates reference vectors in which every number
+crosses as its raw IEEE-754 bit pattern:
+
+```
+<fn> <nIn> <in..> <nOut> <out..>
+GEN_CPP_REF=1 npx vitest run test/port/cppRef
+```
+
+The file carries INPUTS as well as outputs deliberately — C++ reads the inputs
+and computes its own outputs, so the case list exists in one place and cannot
+drift between the languages. There is **no epsilon anywhere in
+`test_geometry.cpp`**; an epsilon would hide exactly the transcription slips the
+file exists to catch.
+
+`geometry.ts` is transcribed and green: **1929 assertions over 770 cases, all
+bit-identical.**
+
+### What it caught, and what it proves
+
+On its first run the harness failed one case: `Math.round(-0.5)` is NEGATIVE
+zero in JavaScript, and the obvious C++ transcription returns `+0`. Every caller
+in the port's scope feeds that result to an integer step count, where the two
+zeros are indistinguishable — so an exemption would have been defensible. It was
+fixed instead (`copysign` on the zero branch), because a bit-equality harness is
+worth having precisely because it has no exemptions to argue about, and the
+first one is the expensive one to allow.
+
+Mutation-validated, 8 mutants:
+
+| mutation | result |
+|---|---|
+| `quadToCubic`: `2.0/3.0` → `2/3` (C++ integer division) | killed |
+| `bezierPoint`: reassociate `3*mt*mt*t` → `3*(mt*mt*t)` | killed |
+| `length`: `sqrt(x*x+y*y)` → `std::hypot` | killed |
+| `angleBetweenDeg`: `(acos*180)/PI` → `acos*(180/PI)` | killed |
+| `angleDelta`: `while (d > 180)` → `>= 180` | killed |
+| `jsRound` → `std::round` | killed |
+| `jsRound` → `floor(x + 0.5)` | killed |
+| `curvature`: `(s*s)*s` → `s*(s*s)` | **survived — equivalent** |
+
+The survivor is equivalent, not a gap: IEEE multiplication is commutative, so
+both spellings evaluate to `round(round(s*s) * s)` bit-for-bit.
+
+The four killed reassociation/idiom mutants are the load-bearing result. They
+are the transcription errors a human review would wave through — the arithmetic
+"obviously" means the same thing — and they are exactly what a golden diff on a
+3800x amplifier cannot attribute. Catching them at the primitive is why the
+port's own criterion is bit-equality rather than closeness.
+
+### Still to port
+
+`flatten` → `constrain` → `plan` → `discretize`, plus `choreograph`. Once
+`discretize` lands, the same differential idea applies one level up: bake the
+fixtures through the C++ chain and compare against the committed golden `.bin`
+byte-for-byte, with no epsilon there either.
+
+---
+
 ## Findings
 
 | # | Stage | Severity | Summary | Status |
