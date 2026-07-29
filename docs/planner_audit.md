@@ -73,8 +73,8 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | P3 | plan | consequence of C1 | Carries unexecutable ceilings through; ~⅕ of the below-`vMin` span is self-inflicted by the sweeps | open, **test red** |
 | P4 | compileBlock | tuning | A non-tangential tool still pays the A-axis curvature cap — ~8× accel loss on a 5 mm arc | open, test documents |
 | P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
-| D1 | discretize | **defect** | Empty segment (all deltas 0) emitted with `interval = fCpu` — a full second. Reachable at a corner AND at every `PATH_END` | open, **test red** |
-| D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | open, **test red** |
+| D1 | discretize | **defect** | Empty segment (all deltas 0) emitted with `interval = fCpu` — a full second. Reachable at a corner AND at every `PATH_END` | **resolved** (skipped; `PATH_END` re-homed) |
+| D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | **resolved** (`sqrt` interpolation) |
 | D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** |
 | D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | open, **test red** |
 | D5 | discretize | gap | `DEFAULTS.tool.liftHeight = 0`, so the Z lift/lower path was dead *under test*. The deployed config sets `knife.liftHeight = 2.0`, so production did lift | **resolved** (tests) |
@@ -1080,11 +1080,11 @@ Two process notes, both repeats of lessons from earlier stages:
 | `test/toolpath/flatten` | 19 | 4 | F1, F7 |
 | `test/toolpath/constrain` | 39 | 0 | — |
 | `test/toolpath/plan` | 48 | 3 | P1, P3 ×2 |
-| `test/toolpath/discretize` | 28 | 5 | D1 ×2, D2, D3, D4 |
+| `test/toolpath/discretize` | 36 | 3 | D3 ×2, D4 |
 | `test/toolpath/geometry` | 28 | 0 | — |
 | `test/choreograph` | 53 | 5 | H1 ×3, H2, H3 |
 
-Full suite: **680 passing, 17 red**, 4 skipped; `tsc --noEmit` clean. All 17 red
+Full suite: **688 passing, 15 red**, 4 skipped; `tsc --noEmit` clean. All 15 red
 are intentional and each names its finding; every other module is green.
 
 `CUSP` is now imported directly by the `flatten`, `constrain`, `plan` and
@@ -1103,13 +1103,64 @@ diffs, not simply the fewest batches.
 | Batch | Contents | Golden footprint | State |
 |---|---|---|---|
 | **A** | H5, F6, P2, H4 | none | **done** |
-| **B** | D2, D1 | cutting segments | next |
-| **C** | H1, H2 (H3 blocked) | non-cutting segments only | |
+| **B** | D2, D1 | cutting segments | **done** |
+| **C** | H1, H2 (H3 blocked) | non-cutting segments only | next |
 | **D** | F1, F7, F2/D4, C1/P3, P1, P4 | everything | gated on decisions |
 
 `D3` and `P3` are deliberately absent as work items: both are downstream of
 causes in batch D (the F1/F7 cap chain and C1 respectively), so they get
 re-measured after D rather than fixed on their own.
+
+### Batch B — done (one re-golden, fully attributable)
+
+**D2** — `discretize` interpolates sub-segment speed as
+`sqrt(v0² + f·(v1² − v0²))` (helper `subV`) instead of linearly in distance.
+Each sub-segment's own mean is now exact, so the sub-times sum back to the
+undivided pair time and subdivision is timing-neutral.
+
+**D1** — every zero-motion sub-step is skipped, including the two that used to
+be exempt (a subpath's final one, a corner's last one). `PATH_END` is not lost
+with them: it is re-homed onto the last segment the subpath actually emitted.
+That target is the last **cutting** segment, which genuinely differs from "the
+last segment emitted" — a subpath ending on a corner emits pivot and Z-raise
+segments after the cut, measured at 52 segments past the marker.
+
+Measured, emitted ÷ exact cut time:
+
+| fixture | before | after | note |
+|---|---|---|---|
+| `short_curve` | 1.215 | **1.000** | |
+| `cusp` | 1.132 | 1.088 | residual is D3 |
+| `near_cusp` | 1.909 | 1.861 | residual is D3 |
+| 10 mm line, `dvMax` 6 / 0.75 | 1.268 / 1.510 | **1.000 / 1.000** | PEN, no A axis |
+
+The two fixtures that did not go exact are precisely the two whose plan
+overdrives the A rate ceiling (16.82× and 1.02×) — the precondition for
+`interval`'s floor to stretch a segment. That is an attribution, not an
+exemption: every fixture where D3 cannot fire is now exact, and D3's block
+carries a red test for the two that remain.
+
+Golden diff, characterised before regenerating:
+
+| | packets | empty | cut seconds | Σ\|dx\| | Σ\|dy\| | Σ\|da\| |
+|---|---|---|---|---|---|---|
+| `test_circle` before | 640 | 0 | 4.6889 | 25600 | 25594 | 23247 |
+| `test_circle` after | 640 | 0 | **4.6406** | 25600 | 25594 | 23247 |
+| `fish` before | 8436 | 17 | 87.3852 | 157095 | 79237 | 374974 |
+| `fish` after | **8419** | **0** | **86.1852** | 157095 | 79237 | 374974 |
+
+Every step count is byte-identical — the geometry did not move, only the
+timing. `fish` lost exactly its 17 empty packets (D1) and 1.20 s of cut time
+(D2, −1.4%); `test_circle` had no empties, so its 1.03% is pure D2. Note the
+seconds column *understates* D1: an empty packet clocks no steps, so it
+contributes nothing to this metric while costing the firmware up to a full
+second each.
+
+Mutation-validated: 8 of 9 mutants killed by name. The survivor is
+`flags | MICRO_PATH_END` → `flags = MICRO_PATH_END`, equivalent under any
+reachable input (the relocation target is a cutting segment, which carries no
+other flag). The `|` is kept as defence for the fallback path, where the target
+could be a `zMove` carrying `MICRO_LIFT`.
 
 ### Batch A — done (byte-neutral)
 

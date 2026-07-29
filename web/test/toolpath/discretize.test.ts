@@ -499,8 +499,8 @@ describe("stage 8: velocity-aware subdivision", () => {
 // FINDINGS — these fail. Each pins a defect recorded in docs/planner_audit.md.
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe("stage 8 FINDING D1: an empty segment carrying a one-second interval", () => {
-    // The interior-skip guard (discretize.ts:177) exempts two cases from being
+describe("stage 8 D1 (FIXED): no empty segment carrying a one-second interval", () => {
+    // The interior-skip guard used to exempt two cases from being
     // skipped: the subpath's final sub-step, and a corner's last sub-step. Both
     // can have every delta zero — and interval()'s `if (major === 0) return
     // fCpu` then hands the empty segment the largest interval representable:
@@ -520,6 +520,13 @@ describe("stage 8 FINDING D1: an empty segment carrying a one-second interval", 
     // Whether the firmware stalls a second on a zero-step segment or discards
     // it is a wire-contract question this stage should not be leaving open, and
     // the PATH_END case makes it reachable on ordinary work.
+    //
+    // FIXED (batch B): every zero-motion sub-step is skipped, including those
+    // two. PATH_END is not dropped with them — it is re-homed onto the last
+    // segment the subpath actually emitted, which is the same position in the
+    // stream minus the empty second. The one-PATH_END-per-subpath invariant
+    // (asserted in the INVARIANTS block) is what pins that it survives; the
+    // tests here pin WHERE it lands.
     it("emits no segment with zero motion on any axis", () => {
         forEachFixture((name, curves) => {
             const bad: string[] = [];
@@ -541,9 +548,65 @@ describe("stage 8 FINDING D1: an empty segment carrying a one-second interval", 
         const empty = dense.filter((s) => major(s) === 0);
         expect(empty.length).toBe(0);
     });
+
+    it("PATH_END lands on a segment that moves, on every fixture and tool", () => {
+        // The relocation's actual contract. Without this, skipping the final
+        // sub-step could be 'fixed' by dropping the marker onto anything.
+        forEachFixture((name, curves) => {
+            const bad: string[] = [];
+            for (const profile of [KNIFE, PEN]) {
+                for (const [i, s] of prep([curves], profile).entries()) {
+                    if ((s.flags & MICRO_PATH_END) !== 0 && major(s) === 0) {
+                        bad.push(`${name}/${profile.name}: PATH_END on empty seg ${i}`);
+                    }
+                }
+            }
+            return bad;
+        });
+    });
+
+    it("keeps PATH_END on the last cutting segment when the final sub-step moves", () => {
+        // The common case must be untouched by the relocation: when the final
+        // sub-step does move, the marker rides it, exactly as before.
+        const segs = prep([[line({ x: 0, y: 0 }, { x: 40, y: 0 })]], PEN);
+        const cut = cutting(segs);
+        expect(cut.length).toBeGreaterThan(1);
+        expect(cut[cut.length - 1]!.flags & MICRO_PATH_END).toBe(MICRO_PATH_END);
+        expect(cut.slice(0, -1).some((s) => (s.flags & MICRO_PATH_END) !== 0)).toBe(false);
+    });
+
+    it("marks the last CUTTING segment, not the last segment, when a subpath ends on a corner", () => {
+        // A subpath whose final pair is a corner emits pivot (and Z-raise)
+        // segments AFTER the cut ends: measured 52 segments after the marker.
+        // So "last segment emitted" and "last cutting segment" genuinely differ
+        // here, and PATH_END belongs to the cut. This is what stops the D1
+        // relocation from drifting onto the choreography that follows.
+        const tinyTail = [
+            line({ x: 0, y: 0 }, { x: 10, y: 0 }),
+            line({ x: 10, y: 0 }, { x: 10.001, y: 0.001 }),
+        ];
+        const segs = prep([tinyTail], KNIFE);
+        const at = segs.findIndex((s) => (s.flags & MICRO_PATH_END) !== 0);
+        expect(at).toBeGreaterThanOrEqual(0);
+        expect(segs.length - 1 - at).toBeGreaterThan(0); // choreography follows it
+        expect(major(segs[at]!)).toBeGreaterThan(0);
+        // and everything after it is non-cutting (lift / pivot / lower / raise)
+        expect(cutting(segs).indexOf(segs[at]!)).toBe(cutting(segs).length - 1);
+    });
+
+    it("moves PATH_END back one segment when the final sub-step is empty", () => {
+        // The relocation firing, isolated: the dense PEN arc above is the case
+        // where the last sub-step rounds to no motion. The marker must be on the
+        // segment before it, and that segment must be a real move.
+        const p = planFor([CASES.long_gentle_arc!.curves], PEN);
+        const dense = cutting(discretize(p, MACH, PEN, { ...q, dvMax: 0.05 }));
+        const last = dense[dense.length - 1]!;
+        expect(last.flags & MICRO_PATH_END).toBe(MICRO_PATH_END);
+        expect(major(last)).toBeGreaterThan(0);
+    });
 });
 
-describe("stage 8 FINDING D2: sub-segment speed is interpolated linearly in distance", () => {
+describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", () => {
     // discretize.ts:183-185 interpolates the sub-segment speed linearly in
     // ARC LENGTH:  v(f) = v0 + (v1 - v0) * f.
     //
@@ -565,45 +628,72 @@ describe("stage 8 FINDING D2: sub-segment speed is interpolated linearly in dist
     //     logarithmically (v0 = 0 -> infinite). quality.vMin is the only reason
     //     the number is finite; that clamp is load-bearing by accident.
     //
-    // The fix is small and local: interpolate v as
-    //     sqrt(v0^2 + f*(v1^2 - v0^2))
-    // at which point each sub-segment's own mean is exact and the sub-times sum
-    // back to the pair time. Worth doing BEFORE the port, since it changes
-    // emitted intervals and so must be re-goldened once.
+    // FIXED (batch B): v is interpolated as sqrt(v0^2 + f*(v1^2 - v0^2)), so
+    // each sub-segment's own mean is exact and the sub-times sum back to the
+    // undivided pair time. The tests below are now the CONTRACT: subdivision
+    // must be timing-neutral. They were written as red finding tests against
+    // the linear model, and inverting them is the whole record of the fix.
+    //
+    // Measured on the fixture set, emitted / exact cut time:
+    //     short_curve  1.215 -> 1.000
+    //     cusp         1.132 -> 1.088   (residual is D3, not D2)
+    //     near_cusp    1.909 -> 1.861   (residual is D3, not D2)
+    //
+    // The exempt set is not a judgement call: cusp and near_cusp are EXACTLY
+    // the two fixtures on which the plan asks the A axis for more than its rate
+    // ceiling (16.82x and 1.02x), which is the precondition for interval()'s
+    // floor to stretch a segment. Every fixture where D3 cannot fire is exact.
+    const D3_STRETCHED = new Set(["cusp", "near_cusp"]);
+
     it("emitted cut time matches the exact constant-accel time", () => {
         forEachFixture((name, curves) => {
+            if (D3_STRETCHED.has(name)) return []; // asserted red under D3
             const p = planFor([curves], KNIFE);
             const ratio = emittedSeconds(cutting(prep([curves], KNIFE))) / plannedSeconds(p);
-            return ratio > 1.1
+            return ratio > 1.02
                 ? [`${name}: emitted ${ratio.toFixed(3)}x the exact cut time`]
                 : [];
         });
     });
 
-    it("is exact when subdivision is disabled, and degrades as it subdivides", () => {
-        // Passes today, and is the isolation that identifies the cause: the
-        // error is entirely in the sub-segment model, not in interval(), not in
-        // step rounding, not in the A axis (this runs a PEN).
+    it("subdivision is timing-neutral: dvMax buys fidelity without costing time", () => {
+        // The isolation that identified the cause, now inverted. Runs a PEN, so
+        // no A axis: any error would be in the sub-segment model alone, not in
+        // interval(), not in step rounding.
         const p = planFor([[line({ x: 0, y: 0 }, { x: 10, y: 0 })]], PEN);
         const exact = plannedSeconds(p);
         const ratioAt = (dvMax: number) =>
             emittedSeconds(discretize(p, MACH, PEN, { ...q, dvMax })) / exact;
 
-        expect(ratioAt(1e9)).toBeCloseTo(1.0, 3); // k=1 everywhere: exact
-        expect(ratioAt(6)).toBeGreaterThan(1.2);
-        expect(ratioAt(0.75)).toBeGreaterThan(ratioAt(6)); // worse, not better
+        expect(ratioAt(1e9)).toBeCloseTo(1.0, 3); // k=1 everywhere
+        expect(ratioAt(6)).toBeCloseTo(1.0, 2);   // was 1.268
+        expect(ratioAt(0.75)).toBeCloseTo(1.0, 2); // was 1.510 — the harder it
+        // subdivides the worse it used to get; monotonic degradation is gone.
     });
 
-    it("the error is concentrated where ramps dominate the path", () => {
-        // Passes today. Long paths cruise, so the ramp error is diluted; short
-        // ones are all ramp. This is why the golden fixtures (long SVG paths)
-        // never showed it and a 10mm line does.
+    it("times a ramp-dominated path as accurately as a cruising one", () => {
+        // Long paths cruise, so the old ramp error was diluted; short ones are
+        // all ramp. This asymmetry is why the golden fixtures (long SVG paths)
+        // never showed D2 and a 10mm line did. It must no longer exist.
         const ratioFor = (L: number) => {
             const p = planFor([[line({ x: 0, y: 0 }, { x: L, y: 0 })]], PEN);
             return emittedSeconds(discretize(p, MACH, PEN, q)) / plannedSeconds(p);
         };
-        expect(ratioFor(10)).toBeGreaterThan(1.3);
-        expect(ratioFor(500)).toBeLessThan(1.05);
+        expect(ratioFor(10)).toBeCloseTo(1.0, 2);  // was 1.361
+        expect(ratioFor(500)).toBeCloseTo(1.0, 2);
+    });
+
+    it("leaving rest is finite without leaning on vMin", () => {
+        // The linear model's time integral over a pair is ds*ln(v1/v0)/(v1-v0),
+        // which diverges as v0 -> 0: quality.vMin was the only reason a ramp
+        // off a standstill produced a finite number, and that made an accuracy
+        // clamp load-bearing for termination. Under sqrt interpolation the mean
+        // is (v0+v1)/2 with v0 = 0 handled exactly, so slashing vMin by 1000x
+        // must barely move the emitted time.
+        const p = planFor([[line({ x: 0, y: 0 }, { x: 10, y: 0 })]], PEN);
+        const at = (vMin: number) =>
+            emittedSeconds(discretize(p, MACH, PEN, { ...q, vMin }));
+        expect(at(q.vMin / 1000) / at(q.vMin)).toBeCloseTo(1.0, 2);
     });
 });
 
@@ -639,6 +729,23 @@ describe("stage 8 FINDING D3: interval's rate floor is a second speed governor",
             }
             return worst > AXES.a.maxFeed * 1.01
                 ? [`${name}: plan asks A for ${worst.toFixed(0)} deg/s (${(worst / AXES.a.maxFeed).toFixed(2)}x the ${AXES.a.maxFeed} ceiling)`]
+                : [];
+        });
+    });
+
+    it("emitted cut time matches the plan on the fixtures D2's fix left behind", () => {
+        // D2's fix took every other fixture to 1.000x. These two moved barely
+        // at all (cusp 1.132 -> 1.088, near_cusp 1.909 -> 1.861), and they are
+        // precisely the two whose plan overdrives the A rate ceiling. That
+        // localises the remainder: not the sub-segment speed model, but
+        // interval() stretching segments the plan does not know it stretched.
+        // Goes green when D3 does, not before.
+        forEachFixture((name, curves) => {
+            if (!(name === "cusp" || name === "near_cusp")) return [];
+            const p = planFor([curves], KNIFE);
+            const ratio = emittedSeconds(cutting(prep([curves], KNIFE))) / plannedSeconds(p);
+            return ratio > 1.02
+                ? [`${name}: emitted ${ratio.toFixed(3)}x the planned cut time`]
                 : [];
         });
     });

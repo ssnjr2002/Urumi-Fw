@@ -44,6 +44,17 @@ import {
     preOrient,
 } from "../choreograph/choreograph.js";
 
+/**
+ * Speed a fraction `f` of the way along a sub-segment, under the constant
+ * acceleration `plan` actually produces: v² is linear in distance, v is not.
+ * Reduces to plain interpolation when v0 === v1 (cruise), and is exact at
+ * f = 0 and f = 1.
+ */
+function subV(v0: number, v1: number, f: number): number {
+    const sq = v0 * v0 + f * (v1 * v1 - v0 * v0);
+    return sq > 0 ? Math.sqrt(sq) : 0;
+}
+
 export interface DiscretizeOverrides {
     readonly jogFeed?: number;
     readonly liftHeight?: number;
@@ -130,6 +141,13 @@ export function discretize(
 
         if (lift) out.push(zMove(-zSteps, axes, zFeed)); // lower to cut
 
+        // Index of the last segment that may carry this subpath's PATH_END. It
+        // tracks the last CUTTING segment; if the subpath's final sub-step turns
+        // out to be zero-motion (and so is skipped, D1) the marker lands here
+        // instead — same position in the stream, minus the empty second.
+        let endIdx = out.length - 1;
+        let endEmitted = false;
+
         // ── walk the cutting samples ──────────────────────────────────────────
         for (let i = lo; i < hi; i++) {
             const a = samples[i]!;
@@ -173,15 +191,25 @@ export function discretize(
                 const lastSub = j === k;
                 const segFinal = final && lastSub;
 
-                // skip zero-motion interior sub-steps (don't drop the final/corner)
-                if (!segFinal && !(isCorner && lastSub) && dx === 0 && dy === 0 && da === 0) {
+                // Skip every zero-motion sub-step, including the final one and a
+                // corner's last one (D1). An empty segment is not free: interval()
+                // returns fCpu when no axis moves, so emitting one would park the
+                // machine for a full second. PATH_END is not lost — it is applied
+                // to the last segment that actually moved, after the walk.
+                if (dx === 0 && dy === 0 && da === 0) {
                     posX = tgtX;
                     posY = tgtY;
                     continue;
                 }
 
-                const v0 = a.v + (b.v - a.v) * ((j - 1) / k);
-                const v1 = a.v + (b.v - a.v) * f;
+                // Speed across a sub-segment follows constant acceleration, so it
+                // is linear in v², not in distance (D2): v(f) = sqrt(v0² + f·(v1²-v0²)).
+                // Interpolating linearly in f makes each sub-segment's mean wrong
+                // and the error grows the harder the pair subdivides — up to 1.51x
+                // at dvMax=0.75. Under this form each sub-time is exact and they
+                // sum back to the undivided pair time.
+                const v0 = subV(a.v, b.v, (j - 1) / k);
+                const v1 = subV(a.v, b.v, f);
                 const vbar = 0.5 * (v0 + v1);
                 const iv = interval(vbar, axes, quality.vMin, dx, dy, 0, da);
                 const flags = segFinal ? MICRO_PATH_END : 0;
@@ -193,6 +221,8 @@ export function discretize(
                     iv,
                     flags,
                 ));
+                endIdx = out.length - 1;
+                if (segFinal) endEmitted = true;
                 aPhys += da;
                 posX = tgtX;
                 posY = tgtY;
@@ -209,6 +239,21 @@ export function discretize(
                 }
                 aAccum = aPhys;
             }
+        }
+
+        // Every subpath ends with exactly one PATH_END. If the final sub-step
+        // moved nothing it was skipped, so re-home the marker onto the last
+        // segment this subpath did emit — cutting if there was one, otherwise
+        // the Z-lower/pre-orient that opened it. A subpath that emitted nothing
+        // at all is not representable and would silently vanish from the stream.
+        if (!endEmitted) {
+            if (endIdx < 0) {
+                throw new Error(
+                    "discretize: subpath produced no motion at all — cannot place " +
+                        "its PATH_END. Upstream emitted a degenerate subpath.",
+                );
+            }
+            out[endIdx] = { ...out[endIdx]!, flags: out[endIdx]!.flags | MICRO_PATH_END };
         }
 
         if (lift) out.push(zMove(+zSteps, axes, zFeed)); // raise after the stroke
