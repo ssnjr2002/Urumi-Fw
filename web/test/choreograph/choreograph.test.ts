@@ -73,15 +73,25 @@ function slices(segs: readonly MicroSegment[], ax: ResolvedAxes = axes): Slice[]
 /**
  * Worst acceleration the emitted staircase demands, as a multiple of `limit`.
  *
- * At each slice boundary the commanded rate changes instantly. A machine
- * limited to `limit` can only follow that if the change fits inside the
- * PRECEDING slice's duration — so the demand is |dv| / dt_prev. This asks a
+ * A slice's rate is its mean over the slice, so it is the speed at the slice's
+ * TIME MIDPOINT. The machine therefore has half of each adjacent slice to make
+ * the change: the demand is |dv| / ((dt_prev + dt_next) / 2). This asks a
  * question about the emitted bytes alone; it never consults the emitter.
+ *
+ * This replaced a |dv| / dt_prev convention, which is asymmetric by
+ * construction: on an accelerating ramp the LONG slice precedes each boundary
+ * and on a decelerating one the SHORT slice does, so it flatters climbs and
+ * penalises descents on the very same profile. That was not why H1 was found
+ * and it is not why H1 is now closed — measured on the pre-fix emitter, the
+ * midpoint convention is strictly HARSHER (worst 2.70x vs 1.65x, and it never
+ * drops below 0.74x at any size). Both conventions condemn the old code; only
+ * this one is symmetric.
  */
 function worstAccelRatio(sl: readonly Slice[], limit: number): number {
     let worst = 0;
     for (let i = 1; i < sl.length; i++) {
-        worst = Math.max(worst, Math.abs(sl[i]!.v - sl[i - 1]!.v) / sl[i - 1]!.dt / limit);
+        const dt = (sl[i - 1]!.dt + sl[i]!.dt) / 2;
+        worst = Math.max(worst, Math.abs(sl[i]!.v - sl[i - 1]!.v) / dt / limit);
     }
     return worst;
 }
@@ -128,6 +138,17 @@ function remap(patch: Partial<Record<AxisName, AxisPatch | undefined>>): Resolve
             }),
         ],
     });
+}
+
+/**
+ * Aggregate deltas over a multi-segment emission. Travel jogs are ramped, so
+ * their geometry is a property of the SUM, not of any one segment.
+ */
+function sum(segs: readonly MicroSegment[]): { dx: number; dy: number; dz: number; da: number } {
+    return segs.reduce(
+        (t, s) => ({ dx: t.dx + s.dx, dy: t.dy + s.dy, dz: t.dz + s.dz, da: t.da + s.da }),
+        { dx: 0, dy: 0, dz: 0, da: 0 },
+    );
 }
 
 /** A tool head at a given offset; axes are irrelevant to head-offset geometry. */
@@ -220,7 +241,7 @@ describe("choreograph INVARIANTS: wire encoding", () => {
             ...aMove(1, axes),
             ...pivot(1000, true, 2400, axes, 20),
             zMove(2400, axes, 20),
-            travelJog(0, 0, 32000, 16000, axes, 0.5, 80)!,
+            ...travelJog(0, 0, 32000, 16000, axes, 0.5, 80),
         ];
         for (const s of all) {
             expect(s.interval).toBeGreaterThanOrEqual(1);
@@ -232,7 +253,7 @@ describe("choreograph INVARIANTS: wire encoding", () => {
         const all = [
             ...aMove(1234, axes),
             ...pivot(567, true, 2400, axes, 20),
-            travelJog(0.4, 0.6, 321.7, 89.2, axes, 0.5, 80)!,
+            ...travelJog(0.4, 0.6, 321.7, 89.2, axes, 0.5, 80),
         ];
         for (const s of all) {
             expect(Number.isInteger(s.dx)).toBe(true);
@@ -257,9 +278,12 @@ describe("choreograph INVARIANTS: wire encoding", () => {
     });
 
     it("travelJog emits pure XY motion tagged MICRO_JOG", () => {
-        const m = travelJog(0, 0, 3200, 1600, axes, 0.5, 80)!;
-        expect(m.flags).toBe(MICRO_JOG);
-        expect([m.dz, m.da]).toEqual([0, 0]);
+        const segs = travelJog(0, 0, 3200, 1600, axes, 0.5, 80);
+        expect(segs.length).toBeGreaterThan(0);
+        for (const m of segs) {
+            expect(m.flags).toBe(MICRO_JOG);
+            expect([m.dz, m.da]).toEqual([0, 0]);
+        }
     });
 });
 
@@ -292,9 +316,9 @@ describe("choreograph INVARIANTS: axis inversion", () => {
     });
 
     it("flipping x.invert negates dx only; y.invert negates dy only", () => {
-        const base = travelJog(0, 0, 3200, 1600, axes, 0.5, 80)!;
-        const fx = travelJog(0, 0, 3200, 1600, withInvert({ x: !axes.x.invert }), 0.5, 80)!;
-        const fy = travelJog(0, 0, 3200, 1600, withInvert({ y: !axes.y.invert }), 0.5, 80)!;
+        const base = sum(travelJog(0, 0, 3200, 1600, axes, 0.5, 80));
+        const fx = sum(travelJog(0, 0, 3200, 1600, withInvert({ x: !axes.x.invert }), 0.5, 80));
+        const fy = sum(travelJog(0, 0, 3200, 1600, withInvert({ y: !axes.y.invert }), 0.5, 80));
         expect([fx.dx, fx.dy]).toEqual([-base.dx, base.dy]);
         expect([fy.dx, fy.dy]).toEqual([base.dx, -base.dy]);
     });
@@ -324,9 +348,9 @@ describe("choreograph INVARIANTS: the no-op cases produce nothing", () => {
         expect(zStepCount(2.0, axes)).toBe(2400);
     });
 
-    it("travelJog returns null when rounded position does not change", () => {
-        expect(travelJog(100, 100, 100, 100, axes, 0.5, 80)).toBeNull();
-        expect(travelJog(100.1, 100.1, 100.3, 100.3, axes, 0.5, 80)).toBeNull();
+    it("travelJog emits nothing when rounded position does not change", () => {
+        expect(travelJog(100, 100, 100, 100, axes, 0.5, 80)).toEqual([]);
+        expect(travelJog(100.1, 100.1, 100.3, 100.3, axes, 0.5, 80)).toEqual([]);
     });
 
     it("aMoveTo returns nothing when already at target", () => {
@@ -335,15 +359,15 @@ describe("choreograph INVARIANTS: the no-op cases produce nothing", () => {
         expect(r.newAPhys).toBe(Math.round(90 * axes.a.stepsPerUnit));
     });
 
-    it("headOffsetJog returns null for identical heads", () => {
+    it("headOffsetJog emits nothing for identical heads", () => {
         const h = head({ xOffset: -50, yOffset: 0 });
-        expect(headOffsetJog(h, h, axes, 0.5, 80)).toBeNull();
+        expect(headOffsetJog(h, h, axes, 0.5, 80)).toEqual([]);
     });
 
-    it("headOffsetJog returns null when the offset delta rounds below one step", () => {
+    it("headOffsetJog emits nothing when the offset delta rounds below one step", () => {
         const a = head({ xOffset: 0, yOffset: 0 });
         const b = head({ xOffset: 0.001, yOffset: 0.001 });
-        expect(headOffsetJog(a, b, axes, 0.5, 80)).toBeNull();
+        expect(headOffsetJog(a, b, axes, 0.5, 80)).toEqual([]);
     });
 });
 
@@ -432,7 +456,7 @@ describe("choreograph CONTRACT: travelJog and headOffsetJog geometry", () => {
         for (const [fx, fy, tx, ty] of [
             [0, 0, 3200, 1600], [3200, 1600, 0, 0], [-500, 250, 500, -250],
         ]) {
-            const m = travelJog(fx!, fy!, tx!, ty!, axes, 0.5, 80)!;
+            const m = sum(travelJog(fx!, fy!, tx!, ty!, axes, 0.5, 80));
             const dx = Math.round(tx!) - Math.round(fx!);
             const dy = Math.round(ty!) - Math.round(fy!);
             expect(m.dx).toBe(axes.x.invert ? -dx : dx);
@@ -443,15 +467,15 @@ describe("choreograph CONTRACT: travelJog and headOffsetJog geometry", () => {
     it("travelJog rounds each endpoint rather than truncating", () => {
         // trunc would lose a step whenever the two endpoints straddle .5 the
         // same way, and the loss would accumulate across a whole job.
-        const m = travelJog(0.6, 0.6, 10.6, 10.6, axes, 0.5, 80)!;
+        const m = sum(travelJog(0.6, 0.6, 10.6, 10.6, axes, 0.5, 80));
         expect(Math.abs(m.dx)).toBe(10); // round: 11-1; trunc would give 10-0
-        const n = travelJog(0.4, 0.4, 10.6, 10.6, axes, 0.5, 80)!;
+        const n = sum(travelJog(0.4, 0.4, 10.6, 10.6, axes, 0.5, 80));
         expect(Math.abs(n.dx)).toBe(11); // round: 11-0; trunc would give 10-0
     });
 
     it("travelJog is antisymmetric: there and back cancels", () => {
-        const there = travelJog(0, 0, 3200, 1600, axes, 0.5, 80)!;
-        const back = travelJog(3200, 1600, 0, 0, axes, 0.5, 80)!;
+        const there = sum(travelJog(0, 0, 3200, 1600, axes, 0.5, 80));
+        const back = sum(travelJog(3200, 1600, 0, 0, axes, 0.5, 80));
         expect(there.dx + back.dx).toBe(0);
         expect(there.dy + back.dy).toBe(0);
     });
@@ -459,7 +483,7 @@ describe("choreograph CONTRACT: travelJog and headOffsetJog geometry", () => {
     it("headOffsetJog moves by (to - from), so the new head lands where the old was", () => {
         const from = head({ xOffset: -50, yOffset: 0 });
         const to = head({ xOffset: 50, yOffset: 10 });
-        const m = headOffsetJog(from, to, axes, 0.5, 80)!;
+        const m = sum(headOffsetJog(from, to, axes, 0.5, 80));
         const dx = Math.round(100 * axes.x.stepsPerUnit);
         const dy = Math.round(10 * axes.y.stepsPerUnit);
         expect(m.dx).toBe(axes.x.invert ? -dx : dx);
@@ -469,8 +493,8 @@ describe("choreograph CONTRACT: travelJog and headOffsetJog geometry", () => {
     it("headOffsetJog is antisymmetric", () => {
         const a = head({ xOffset: -50, yOffset: 3 });
         const b = head({ xOffset: 50, yOffset: 10 });
-        const there = headOffsetJog(a, b, axes, 0.5, 80)!;
-        const back = headOffsetJog(b, a, axes, 0.5, 80)!;
+        const there = sum(headOffsetJog(a, b, axes, 0.5, 80));
+        const back = sum(headOffsetJog(b, a, axes, 0.5, 80));
         expect(there.dx + back.dx).toBe(0);
         expect(there.dy + back.dy).toBe(0);
     });
@@ -486,12 +510,19 @@ describe("choreograph CONTRACT: emitted timing matches the requested feed", () =
         }
     });
 
-    it("travelJog takes distance / jogFeed seconds", () => {
-        for (const [mm, feed] of [[200, 80], [50, 80], [200, 40]]) {
+    it("travelJog takes distance / jogFeed seconds, plus its ramps", () => {
+        // A ramped jog cannot be FASTER than the constant-feed ideal, and the
+        // ramp overhead is a fixed time cost, so it shrinks as a fraction of a
+        // longer move. Both halves matter: the first says the feed is still
+        // respected as a ceiling, the second says ramping did not quietly
+        // double the duration of ordinary travel.
+        for (const [mm, feed, tol] of [[200, 80, 0.05], [50, 80, 0.2], [200, 40, 0.03]]) {
             const steps = mm! * axes.x.stepsPerUnit;
-            const m = travelJog(0, 0, steps, 0, axes, 0.5, feed!)!;
-            const seconds = (Math.abs(m.dx) * m.interval) / axes.fCpu;
-            expect(seconds).toBeCloseTo(mm! / feed!, 2);
+            const sl = slices(travelJog(0, 0, steps, 0, axes, 0.5, feed!));
+            const seconds = sl.reduce((t, x) => t + x.dt, 0);
+            const ideal = mm! / feed!;
+            expect(seconds).toBeGreaterThanOrEqual(ideal * 0.999);
+            expect(seconds / ideal - 1).toBeLessThan(tol!);
         }
     });
 
@@ -544,10 +575,10 @@ describe("choreograph CONTRACT: emitted timing matches the requested feed", () =
     it("aMove decelerates at all — it does not end at its peak rate", () => {
         // Companion to H1b, which is red and would otherwise mask the loss of
         // the decel branch entirely. This asks only whether a ramp-down exists,
-        // not whether it is steep enough. Scoped above the shortest rotation,
-        // which does not ramp down at all — that case is H1c.
+        // not whether it is steep enough. It used to be scoped to n >= 129,
+        // because the shortest rotation did not ramp down at all (H1c); that
+        // exemption is gone.
         forEachSize((n) => {
-            if (n < 129) return null;
             const sl = slices(aMove(n, axes));
             const peak = Math.max(...sl.map((x) => x.v));
             const vEnd = sl[sl.length - 1]!.v;
@@ -555,14 +586,19 @@ describe("choreograph CONTRACT: emitted timing matches the requested feed", () =
         });
     });
 
-    it("aMove's segment count stays proportional to the ramp, not to the steps", () => {
+    it("aMove's segment count is bounded by the ramp, not by the steps", () => {
         // One segment per step would be correct motion and ruinous bandwidth:
         // a 360 deg turn is 18600 steps but must not be 18600 wire segments.
+        //
+        // The bound is now FLAT — two ramps of RAMP_CHUNKS pieces plus one
+        // cruise piece — where it used to grow with the move (the old chunk
+        // size was trunc(v/100) steps, so 18600 steps meant 371 segments). A
+        // full turn now costs 33. Cutting the wire cost of the largest moves by
+        // 11x while making them accel-correct was not a trade; it fell out of
+        // choosing chunk boundaries from the speed profile instead of the speed.
         forEachSize((n) => {
             const count = aMove(n, axes).length;
-            return count <= Math.max(16, n / 20)
-                ? null
-                : `N=${n}: ${count} segments (>${Math.max(16, Math.floor(n / 20))})`;
+            return count <= 33 ? null : `N=${n}: ${count} segments (>33)`;
         });
     });
 
@@ -592,60 +628,125 @@ describe("choreograph CONTRACT: emitted timing matches the requested feed", () =
 // ── the red ones: each names the finding it pins ─────────────────────────────
 
 describe("choreograph CONTRACT: acceleration limits (FINDINGS)", () => {
-    it("H1a: aMove's decel ramp respects the A accel ceiling", () => {
-        // The accel ramp is fine (<=0.88x). The decel ramp overshoots on every
-        // size, because `v` is sampled at each chunk's START: on the way up
-        // that is the SLOWEST point in the chunk (conservative), on the way
-        // down it is the FASTEST (anti-conservative). Same line, opposite sign.
+    it("H1a (FIXED): both of aMove's ramps respect the A accel ceiling", () => {
+        // Was: the accel ramp was fine (<=0.88x) and the decel ramp overshot on
+        // every size, because `v` was sampled at each chunk's START — the
+        // SLOWEST point of an accelerating chunk (conservative) and the FASTEST
+        // of a decelerating one (anti-conservative). One line, opposite sign on
+        // the two halves of the same move.
+        //
+        // Now each chunk's interval comes from the exact constant-accel time
+        // across it, so the demand is the accel limit itself at every boundary.
+        // The bound is 1.0 and the measurement lands ON it, not under it: that
+        // is the design — the ramp is meant to use the whole ceiling. A slack
+        // bound here would stop pinning anything.
         forEachSize((n) => {
-            const { down } = rampRatios(slices(aMove(n, axes)), A_ACCEL);
-            return down <= 1.02 ? null : `N=${n}: decel demands ${down.toFixed(2)}x the A accel limit`;
+            const { up, down } = rampRatios(slices(aMove(n, axes)), A_ACCEL);
+            const worst = Math.max(up, down);
+            return worst <= 1.001 ? null : `N=${n}: demands ${worst.toFixed(2)}x the A accel limit`;
         });
     });
 
-    it("H1b: aMove comes to rest at its designed terminal velocity", () => {
-        // aMove ramps down toward v0 = min(cruise, 50) = 50 steps/s (0.97 deg/s)
-        // and then simply stops. The last slice's rate is what the A axis is
-        // actually doing when the move ends.
-        const v0 = Math.min(A_CRUISE, 50);
+    it("H1b (FIXED): aMove can come to rest within its final chunk", () => {
+        // Was: the move stopped dead from 8.85-39.36 deg/s, having never
+        // reached its designed terminal velocity of 0.97 deg/s.
+        //
+        // Terminal velocity is not directly readable from the stream — the last
+        // chunk's rate is its MEAN, and the profile's true end speed is v0. So
+        // the property to assert is the one that matters physically: whatever
+        // rate the final chunk commands, the axis must be able to reach zero
+        // from it within that chunk's own duration.
         forEachSize((n) => {
             const sl = slices(aMove(n, axes));
-            const vEnd = sl[sl.length - 1]!.v;
-            return vEnd <= v0 * 1.02
+            const last = sl[sl.length - 1]!;
+            const demand = last.v / last.dt / A_ACCEL;
+            return demand <= 1.0
                 ? null
-                : `N=${n}: stops from ${(vEnd / axes.a.stepsPerUnit).toFixed(2)} deg/s,` +
-                  ` designed ${(v0 / axes.a.stepsPerUnit).toFixed(2)} deg/s`;
+                : `N=${n}: stopping from ${(last.v / axes.a.stepsPerUnit).toFixed(2)} deg/s` +
+                  ` in ${(last.dt * 1000).toFixed(2)}ms demands ${demand.toFixed(2)}x the limit`;
         });
     });
 
-    it("H1c: the shortest rotations ramp down at all", () => {
-        // H1's cause at its most vivid. A 1 degree pivot (N=52) runs in five
-        // chunks and its single "decel" chunk is FASTER than the cruise chunk
-        // before it — because the decel rate is read at the chunk's start,
-        // where the remaining distance, and so the speed, is greatest. The
-        // rotation accelerates into its final chunk and then simply stops.
+    it("H1c (FIXED): the shortest rotations ramp down as well as up", () => {
+        // H1's cause at its most vivid. A 1 degree pivot (N=52) used to run in
+        // five chunks whose speeds only ever went UP (50 -> 457 -> 1018 ->
+        // 1761 -> 2034), ending at its own peak: the "decel" chunk was faster
+        // than the cruise chunk before it, because the decel rate was read at
+        // the chunk's start where the remaining distance is greatest.
         const sl = slices(aMove(52, axes));
         const peak = Math.max(...sl.map((x) => x.v));
-        const vEnd = sl[sl.length - 1]!.v;
-        expect(
-            `N=52 ends at ${vEnd.toFixed(0)} steps/s, its own peak` +
-            ` (${sl.map((s) => s.v.toFixed(0)).join(" -> ")})`,
-        ).toBe(`N=52 ends below its peak of ${peak.toFixed(0)} steps/s`);
+        const iPeak = sl.findIndex((x) => x.v === peak);
+        expect(sl[sl.length - 1]!.v).toBeLessThan(peak);
+        expect(iPeak).toBeLessThan(sl.length - 1);        // peaks before the end
+        expect(iPeak).toBeGreaterThan(0);                  // and after the start
+        // and the profile is symmetric: it comes back down to where it started
+        expect(sl[sl.length - 1]!.v).toBeCloseTo(sl[0]!.v, 0);
     });
 
-    it("H2: travelJog ramps to its feed instead of stepping straight to it", () => {
-        // A travel jog is one segment at full jogFeed. The X axis has a real,
-        // configured accel ceiling (x.maxAccel) that this move ignores
-        // entirely: it goes 0 -> jogFeed in zero distance.
-        const mm = 200;
-        const m = travelJog(0, 0, mm * axes.x.stepsPerUnit, 0, axes, 0.5, 80)!;
-        const vStepsPerS = axes.fCpu / m.interval;
-        const vMmPerS = vStepsPerS / axes.x.stepsPerUnit;
-        const rampMm = (vMmPerS * vMmPerS) / (2 * axes.x.maxAccel);
-        expect(
-            `${mm}mm jog opens at ${vMmPerS.toFixed(1)} mm/s in one segment;` +
-            ` reaching that at x.maxAccel=${axes.x.maxAccel} needs ${rampMm.toFixed(2)}mm`,
-        ).toBe(`ramped over >= ${rampMm.toFixed(2)}mm`);
+    it("H2 (FIXED): travelJog ramps to its feed instead of stepping straight to it", () => {
+        // Was: one segment at full jogFeed — 0 -> 80 mm/s in zero distance,
+        // against a configured x.maxAccel of 1000 mm/s^2 that needed 3.2mm of
+        // ramp. Now the jog is a trapezoid like any other move, so it must
+        // open slow and never demand more than the axis has.
+        for (const mm of [5, 20, 200]) {
+            const sl = slices(travelJog(0, 0, mm * axes.x.stepsPerUnit, 0, axes, 0.5, 80));
+            expect(sl.length).toBeGreaterThan(1);
+            const limit = axes.x.maxAccel * axes.x.stepsPerUnit; // steps/s^2
+            // It must open well below feed — but not at v0 itself: the first
+            // chunk's rate is its mean, and one step at this accel already
+            // carries the axis well past its junction speed.
+            const openMmS = sl[0]!.v / axes.x.stepsPerUnit;
+            expect(openMmS).toBeLessThan(80 / 4);
+            expect(sl[sl.length - 1]!.v).toBeCloseTo(sl[0]!.v, 0); // symmetric
+            expect(worstAccelRatio(sl, limit)).toBeLessThanOrEqual(1.001);
+        }
+    });
+
+    it("H2 (FIXED): the tighter of the two XY axes owns the jog's ramp", () => {
+        // The fixture gives x and y the same maxAccel, so a jog cannot tell
+        // min from max there. Skew them: a diagonal move must ramp against the
+        // WEAKER axis, and must not get faster when only the stronger one is
+        // raised.
+        const weakY = remap({ y: { maxAccel: 100 } });
+        const sl = slices(travelJog(0, 0, 16000, 16000, weakY, 0.5, 80), weakY);
+        const secs = sl.reduce((t, x) => t + x.dt, 0);
+        // measured against the weak axis's own ceiling, the ramp is legal
+        expect(worstAccelRatio(sl, 100 * weakY.y.stepsPerUnit)).toBeLessThanOrEqual(1.001);
+        // and it is genuinely slower than the same jog on the stiff machine
+        const stiff = slices(travelJog(0, 0, 16000, 16000, axes, 0.5, 80));
+        expect(secs).toBeGreaterThan(stiff.reduce((t, x) => t + x.dt, 0));
+        // raising only the stronger axis must change nothing
+        const strongX = remap({ x: { maxAccel: 100000 }, y: { maxAccel: 100 } });
+        const alt = slices(travelJog(0, 0, 16000, 16000, strongX, 0.5, 80), strongX);
+        expect(alt.reduce((t, x) => t + x.dt, 0)).toBeCloseTo(secs, 6);
+    });
+
+    it("H2 (FIXED): a ramped jog still travels in a straight line", () => {
+        // Ramping splits one segment into ~33, so the two axes are now stepped
+        // in pieces and could stair-step off the diagonal. Each chunk's
+        // cumulative position must stay on the ideal line to within a step.
+        const dx = 16000;
+        const dy = 7000;
+        const segs = travelJog(0, 0, dx, dy, axes, 0.5, 80);
+        let cx = 0;
+        let cy = 0;
+        let worst = 0;
+        for (const s of segs) {
+            cx += axes.x.invert ? -s.dx : s.dx;
+            cy += axes.y.invert ? -s.dy : s.dy;
+            worst = Math.max(worst, Math.abs(cy - (cx * dy) / dx));
+        }
+        expect(worst).toBeLessThanOrEqual(1);
+        expect([cx, cy]).toEqual([dx, dy]); // and it lands exactly
+    });
+
+    it("H2 (FIXED): headOffsetJog ramps too — it is the same emitter", () => {
+        const sl = slices(headOffsetJog(
+            head({ xOffset: -50, yOffset: 0 }), head({ xOffset: 50, yOffset: 10 }),
+            axes, 0.5, 80,
+        ));
+        expect(sl.length).toBeGreaterThan(1);
+        expect(worstAccelRatio(sl, axes.x.maxAccel * axes.x.stepsPerUnit)).toBeLessThanOrEqual(1.001);
     });
 
     it("H3: zMove ramps instead of slamming to zFeed", () => {

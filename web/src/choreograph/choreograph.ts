@@ -27,6 +27,92 @@ import {
     type MicroSegment,
 } from "../wire/format/microsegment.js";
 
+// ── trapezoidal ramp generator (shared by A rotation and XY jogs) ─────────────
+
+/** One emitted piece of a ramp: `steps` major-axis steps clocked at `interval`. */
+export interface RampChunk {
+    readonly steps: number;
+    readonly interval: number;
+}
+
+/**
+ * How many pieces each ramp is cut into. The ramp is exact at every chunk
+ * BOUNDARY regardless of this number — it only sets how finely the speed
+ * staircase approximates the continuous ramp, and so how much the axis is
+ * asked to jerk at each boundary. 16 keeps a full-speed ramp under ~1/16th of
+ * a step change per boundary while costing ~32 segments for the whole move.
+ */
+const RAMP_CHUNKS = 16;
+
+/**
+ * Cut a pure single-axis move of `N` steps into a trapezoidal speed profile:
+ * accelerate v0 → peak, cruise, decelerate peak → v0, never exceeding `accel`.
+ *
+ * The interval of each chunk is derived from the EXACT time that chunk takes
+ * under constant acceleration — dt = |v_end - v_start| / accel — not from the
+ * speed sampled at one end of it. That distinction is the whole of audit H1:
+ * sampling at the chunk START is the slowest point of an accelerating chunk
+ * (conservative) and the FASTEST point of a decelerating one (anti-conservative
+ * by 1.26-1.65x), which is one line producing an error of opposite sign on the
+ * two halves of the same move. A mean derived from the kinematics has no side.
+ *
+ * All speeds are in steps/s, `accel` in steps/s^2. Chunk boundaries are integer
+ * step counts, so the emitted move is exactly N steps.
+ */
+export function rampChunks(
+    N: number,
+    v0: number,
+    cruise: number,
+    accel: number,
+    fCpu: number,
+): RampChunk[] {
+    if (N <= 0) return [];
+
+    // Ramp length, triangular-clamped when there is no room to reach cruise.
+    let dAcc = (cruise * cruise - v0 * v0) / (2 * accel);
+    if (2 * dAcc > N) dAcc = N / 2;
+    const peak = Math.sqrt(v0 * v0 + 2 * accel * dAcc);
+
+    /** Speed of the continuous profile at step distance n. */
+    const vAt = (n: number): number => {
+        if (n <= dAcc) return Math.sqrt(v0 * v0 + 2 * accel * n);
+        if (n >= N - dAcc) return Math.sqrt(Math.max(v0 * v0, v0 * v0 + 2 * accel * (N - n)));
+        return peak;
+    };
+
+    // Boundaries: equal speed increments up the ramp, one piece across the
+    // cruise (dv = 0 there, so a single chunk is already exact), mirrored down.
+    const marks = new Set<number>([0, N]);
+    const dv = (peak - v0) / RAMP_CHUNKS;
+    if (dv > 0) {
+        for (let i = 1; i <= RAMP_CHUNKS; i++) {
+            const v = v0 + i * dv;
+            const n = (v * v - v0 * v0) / (2 * accel);
+            marks.add(Math.min(Math.round(n), N));
+            marks.add(Math.max(N - Math.round(n), 0));
+        }
+    }
+    const bounds = [...marks].sort((p, q) => p - q);
+
+    const out: RampChunk[] = [];
+    for (let i = 0; i + 1 < bounds.length; i++) {
+        const a = bounds[i]!;
+        const b = bounds[i + 1]!;
+        const steps = b - a;
+        if (steps <= 0) continue;
+        const vA = vAt(a);
+        const vB = vAt(b);
+        // Exact duration: constant-accel over the chunk, or constant speed when
+        // the two ends agree (the cruise piece, and any degenerate ramp piece).
+        const dt = Math.abs(vB - vA) > 1e-9
+            ? Math.abs(vB - vA) / accel
+            : steps / Math.max(vA, 1e-9);
+        const iv = Math.max(1, Math.min(Math.round((fCpu * dt) / steps), fCpu));
+        out.push({ steps, interval: iv });
+    }
+    return out;
+}
+
 // ── Z lift move (pure Z, constant velocity) ───────────────────────────────────
 // TODO: Z moves are currently single-segment constant-velocity (matching the
 // Python). A future refinement should ramp Z trapezoidally like aMove —
@@ -93,33 +179,9 @@ export function aMove(da: number, axes: ResolvedAxes, slew?: OpTarget): MicroSeg
 
     const sign = (da > 0 ? 1 : -1) * (axes.a.invert ? -1 : 1);
 
-    let dAcc = (cruise * cruise - v0 * v0) / (2 * accel);
-    if (2 * dAcc > N) dAcc = N / 2;
-
-    const out: MicroSegment[] = [];
-    let n = 0;
-    while (n < N) {
-        let v: number;
-        if (n < dAcc) {
-            v = Math.sqrt(v0 * v0 + 2 * accel * n);
-        } else if (n >= N - dAcc) {
-            v = Math.sqrt(Math.max(v0 * v0, v0 * v0 + 2 * accel * (N - n)));
-        } else {
-            v = cruise;
-        }
-        // Belt-and-braces: both branches above already return >= v0, so this
-        // cannot fire today (audit H5). Kept as a floor because everything
-        // below depends on v being strictly positive.
-        v = Math.max(v, v0);
-        const chunk = Math.min(Math.max(1, Math.trunc(v / 100)), N - n);
-        // Likewise cannot fire while v is in [v0, cruise] — fCpu/v then lands
-        // well inside [1, fCpu]. It is a guard on the arithmetic, NOT a
-        // guarantee about v, and the C++ port must not read it as one.
-        const iv = Math.max(1, Math.min(Math.trunc(axes.fCpu / v), axes.fCpu));
-        out.push(microSegment(0, 0, 0, sign * chunk, iv, MICRO_JOG));
-        n += chunk;
-    }
-    return out;
+    return rampChunks(N, v0, cruise, accel, axes.fCpu).map((c) =>
+        microSegment(0, 0, 0, sign * c.steps, c.interval, MICRO_JOG),
+    );
 }
 
 // ── lift-pivot-lower ──────────────────────────────────────────────────────────
@@ -147,8 +209,83 @@ export function pivot(
 // ── travel jog between subpaths ───────────────────────────────────────────────
 
 /**
- * Emit a travel jog from (fromX, fromY) to (toX, toY) in STEPS.
- * Returns null if there's no movement (dx=dy=0).
+ * Emit a straight XY move of (dx, dy) STEPS as a ramped travel jog.
+ *
+ * Shared by `travelJog` and `headOffsetJog`: both used to emit ONE segment at
+ * full jog feed, which asks the machine for its whole travel speed in zero
+ * distance — 0 → 80 mm/s instantly, against a configured `x.maxAccel` of 1000
+ * mm/s² that the cutting path respects everywhere (audit H2). The step totals
+ * are unchanged; only the timeline is.
+ *
+ * The per-axis deltas are distributed proportionally with float accumulators
+ * rounded at emit, so the chunks sum to exactly (dx, dy) with no drift.
+ */
+function xyJog(
+    dx: number,
+    dy: number,
+    axes: ResolvedAxes,
+    vMin: number,
+    jogFeed: number,
+): MicroSegment[] {
+    if (dx === 0 && dy === 0) return [];
+
+    // Cruise speed comes from interval() exactly as before, so the jog's top
+    // speed and every per-axis feed floor keep their existing meaning.
+    const ivCruise = interval(jogFeed, axes, vMin, dx, dy, 0, 0);
+    const major = Math.max(Math.abs(dx), Math.abs(dy));
+    const cruise = axes.fCpu / ivCruise; // major-axis steps/s
+
+    // XY acceleration ceiling, converted from mm/s^2 to major-axis steps/s^2
+    // along THIS path. Whichever axis is tighter owns the move.
+    const lenMm = Math.hypot(dx / axes.x.stepsPerUnit, dy / axes.y.stepsPerUnit);
+    const accelMm = Math.min(
+        axes.x.maxAccel > 0 ? axes.x.maxAccel : Infinity,
+        axes.y.maxAccel > 0 ? axes.y.maxAccel : Infinity,
+    );
+    if (!(accelMm > 0) || !Number.isFinite(accelMm) || lenMm <= 0) {
+        // No declared XY accel means there is nothing to ramp against. Refuse
+        // rather than silently slam, the same policy aMove uses for A (H4).
+        throw new Error(
+            `travel jog of ${major} steps: no XY acceleration limit. Set ` +
+            "machine.x.maxAccel and machine.y.maxAccel.",
+        );
+    }
+    const accel = (accelMm * major) / lenMm;
+
+    // Junction speed: the same standstill-ish entry/exit aMove uses, so a jog
+    // starts and ends slow instead of at feed.
+    const v0 = Math.min(cruise, 50);
+
+    const chunks = rampChunks(major, v0, cruise, accel, axes.fCpu);
+    const out: MicroSegment[] = [];
+    let doneMajor = 0;
+    let accX = 0;
+    let accY = 0;
+    for (const c of chunks) {
+        doneMajor += c.steps;
+        const f = doneMajor / major;
+        const tgtX = dx * f;
+        const tgtY = dy * f;
+        const sx = Math.round(tgtX) - Math.round(accX);
+        const sy = Math.round(tgtY) - Math.round(accY);
+        accX = tgtX;
+        accY = tgtY;
+        if (sx === 0 && sy === 0) continue;
+        out.push(microSegment(
+            axes.x.invert ? -sx : sx,
+            axes.y.invert ? -sy : sy,
+            0,
+            0,
+            c.interval,
+            MICRO_JOG,
+        ));
+    }
+    return out;
+}
+
+/**
+ * Emit a ramped travel jog from (fromX, fromY) to (toX, toY) in STEPS.
+ * Returns [] if there's no movement (dx=dy=0).
  * Invert is applied to the emitted dx/dy.
  */
 export function travelJog(
@@ -159,14 +296,10 @@ export function travelJog(
     axes: ResolvedAxes,
     vMin: number,
     jogFeed: number,
-): MicroSegment | null {
+): MicroSegment[] {
     const dx = Math.round(toX) - Math.round(fromX);
     const dy = Math.round(toY) - Math.round(fromY);
-    if (dx === 0 && dy === 0) return null;
-    const emittedDx = axes.x.invert ? -dx : dx;
-    const emittedDy = axes.y.invert ? -dy : dy;
-    const iv = interval(jogFeed, axes, vMin, dx, dy, 0, 0);
-    return microSegment(emittedDx, emittedDy, 0, 0, iv, MICRO_JOG);
+    return xyJog(dx, dy, axes, vMin, jogFeed);
 }
 
 // ── A pre-orientation at PATH_START ───────────────────────────────────────────
@@ -256,8 +389,8 @@ export function aMoveTo(
  * head's center is where the old head's center was.
  *
  * The offsets are in mm; the jog is emitted in steps (with invert
- * applied). Returns null if the two heads have the same offset (no
- * compensation needed).
+ * applied), ramped like any other travel move. Returns [] if the two heads
+ * have the same offset (no compensation needed).
  *
  * The caller (orchestrator) emits this AFTER a tool-change pause and
  * BEFORE the travel jog to the next block's start. It does NOT depend
@@ -269,17 +402,12 @@ export function headOffsetJog(
     axes: ResolvedAxes,
     vMin: number,
     jogFeed: number,
-): MicroSegment | null {
+): MicroSegment[] {
     const dxMm = toHead.xOffset - fromHead.xOffset;
     const dyMm = toHead.yOffset - fromHead.yOffset;
-    if (Math.abs(dxMm) < 1e-9 && Math.abs(dyMm) < 1e-9) return null;
+    if (Math.abs(dxMm) < 1e-9 && Math.abs(dyMm) < 1e-9) return [];
 
     const dxSteps = Math.round(dxMm * axes.x.stepsPerUnit);
     const dySteps = Math.round(dyMm * axes.y.stepsPerUnit);
-    if (dxSteps === 0 && dySteps === 0) return null;
-
-    const emittedDx = axes.x.invert ? -dxSteps : dxSteps;
-    const emittedDy = axes.y.invert ? -dySteps : dySteps;
-    const iv = interval(jogFeed, axes, vMin, dxSteps, dySteps, 0, 0);
-    return microSegment(emittedDx, emittedDy, 0, 0, iv, MICRO_JOG);
+    return xyJog(dxSteps, dySteps, axes, vMin, jogFeed);
 }

@@ -187,7 +187,7 @@ export function walkSchedule(
                     vMin,
                     jogFeed,
                 );
-                if (jog) interBlock.push(jog);
+                interBlock.push(...jog);
                 state.headIndex = targetHead;
             }
 
@@ -217,7 +217,7 @@ export function walkSchedule(
             // ── travel jog to block start ─────────────────────────────────────
             const start = block.startSteps;
             const jog = travelJog(state.posX, state.posY, start.x, start.y, axes, vMin, jogFeed);
-            if (jog) interBlock.push(jog);
+            interBlock.push(...jog);
             state.posX = start.x;
             state.posY = start.y;
 

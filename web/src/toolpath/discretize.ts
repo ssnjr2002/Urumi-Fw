@@ -124,7 +124,7 @@ export function discretize(
         // travel jog from previous subpath's end
         if (started) {
             const jog = travelJog(posX, posY, targetX, targetY, axes, quality.vMin, jogFeed);
-            if (jog) out.push(jog);
+            out.push(...jog);
         }
 
         // A pre-orientation to the entry tangent (pen-up), incl. unwind

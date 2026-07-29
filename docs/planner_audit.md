@@ -78,11 +78,11 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** |
 | D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | open, **test red** |
 | D5 | discretize | gap | `DEFAULTS.tool.liftHeight = 0`, so the Z lift/lower path was dead *under test*. The deployed config sets `knife.liftHeight = 2.0`, so production did lift | **resolved** (tests) |
-| H1 | choreograph | **defect** | `aMove`'s decel ramp exceeds the A accel limit by 1.26–1.65× and never reaches rest — stops dead from up to 39 deg/s. Chunk-start rate sampling is conservative going up, anti-conservative coming down | open, **test red** ×3 |
-| H2 | choreograph | **defect** | `travelJog` / `headOffsetJog` emit one segment at full feed — 0→80 mm/s in zero distance, ignoring `x.maxAccel` entirely | open, **test red** |
+| H1 | choreograph | **defect** | `aMove`'s decel ramp exceeds the A accel limit by 1.26–1.65× and never reaches rest — stops dead from up to 39 deg/s. Chunk-start rate sampling is conservative going up, anti-conservative coming down | **resolved** (`rampChunks`) |
+| H2 | choreograph | **defect** | `travelJog` / `headOffsetJog` emit one segment at full feed — 0→80 mm/s in zero distance, ignoring `x.maxAccel` entirely | **resolved** (same generator) |
 | H3 | choreograph | known | `zMove` is likewise unramped (0→24000 steps/s); acknowledged by the module TODO, and `z.maxAccel` is 0 so there is no limit to check against | open, **test red** |
 | H4 | choreograph | **contract** | `aMove` silently invented 180 deg/s + 2000 deg/s² when the A ceilings are 0 — `load.ts` refuses to invent calibration, this invented limits | **resolved** (throws) |
-| H5 | choreograph | cleanup | Three redundant guards all defend `v ≥ v0`; each is an equivalent mutant | **resolved** (documented as belt-and-braces) |
+| H5 | choreograph | cleanup | Three redundant guards all defend `v ≥ v0`; each is an equivalent mutant | **resolved** — two vanished with the batch C rewrite; the `[1, fCpu]` interval clamp survives in `rampChunks` |
 
 ---
 
@@ -1082,9 +1082,9 @@ Two process notes, both repeats of lessons from earlier stages:
 | `test/toolpath/plan` | 48 | 3 | P1, P3 ×2 |
 | `test/toolpath/discretize` | 36 | 3 | D3 ×2, D4 |
 | `test/toolpath/geometry` | 28 | 0 | — |
-| `test/choreograph` | 53 | 5 | H1 ×3, H2, H3 |
+| `test/choreograph` | 60 | 1 | H3 |
 
-Full suite: **688 passing, 15 red**, 4 skipped; `tsc --noEmit` clean. All 15 red
+Full suite: **695 passing, 11 red**, 4 skipped; `tsc --noEmit` clean. All 11 red
 are intentional and each names its finding; every other module is green.
 
 `CUSP` is now imported directly by the `flatten`, `constrain`, `plan` and
@@ -1104,7 +1104,7 @@ diffs, not simply the fewest batches.
 |---|---|---|---|
 | **A** | H5, F6, P2, H4 | none | **done** |
 | **B** | D2, D1 | cutting segments | **done** |
-| **C** | H1, H2 (H3 blocked) | non-cutting segments only | next |
+| **C** | H1, H2 (H3 blocked) | non-cutting segments only | **done** |
 | **D** | F1, F7, F2/D4, C1/P3, P1, P4 | everything | gated on decisions |
 
 `D3` and `P3` are deliberately absent as work items: both are downstream of
@@ -1161,6 +1161,86 @@ Mutation-validated: 8 of 9 mutants killed by name. The survivor is
 reachable input (the relocation target is a cutting segment, which carries no
 other flag). The `|` is kept as defence for the fallback path, where the target
 could be a `zMove` carrying `MICRO_LIFT`.
+
+### Batch C — done (one re-golden; not one byte of cutting motion moved)
+
+H1 and H2 were one defect wearing two hats: neither the A rotation nor the XY
+jog derived its timing from an acceleration limit. Both now call one generator,
+`rampChunks(N, v0, cruise, accel, fCpu)`, which cuts a move into equal-speed-
+increment pieces and gives each the EXACT constant-accel time across it,
+`dt = |v_end - v_start| / accel`.
+
+What that replaced: a rate sampled at each chunk's START, with chunk length
+`trunc(v / 100)`. Sampling at the start is the slowest point of an accelerating
+chunk and the fastest point of a decelerating one — one line, opposite sign on
+the two halves of the same move. Deriving the time from the kinematics has no
+side to be wrong on.
+
+#### The measurement convention had to change, and that needed justifying
+
+`worstAccelRatio` charged each boundary's speed change to the PRECEDING slice's
+duration. That is asymmetric by construction: climbing, the long slice precedes
+each boundary; descending, the short one does. A slice's rate is its mean, i.e.
+its speed at the slice's time MIDPOINT, so the machine actually has half of each
+adjacent slice — `|dv| / ((dt_prev + dt_next) / 2)`.
+
+Changing a metric while fixing what it measures is exactly how a fix gets
+faked, so it was checked against the OLD emitter before being adopted:
+
+| N | old, `dt_prev` | old, midpoint | new, midpoint | segments |
+|---|---|---|---|---|
+| 52 | 0.73 | 0.74 | **1.00** | 5 → 28 |
+| 129 | 1.32 | 1.56 | **1.00** | 8 → 31 |
+| 500 | 1.45 | 2.01 | **1.00** | 16 → 33 |
+| 2325 | 1.65 | 2.70 | **1.00** | 52 → 33 |
+| 18600 | 1.48 | 2.13 | **1.00** | 371 → **33** |
+
+The midpoint convention is strictly HARSHER on the pre-fix code (worst 2.70×
+against 1.65×, never below 0.74× at any size). Both conventions condemn the old
+emitter; only the new one is symmetric. The new emitter lands on exactly 1.00 —
+on the limit, not under it, which is the design: the ramp is meant to spend the
+whole ceiling. The tests bound it at 1.001 rather than something slack, because
+a loose bound here would stop pinning anything.
+
+Segment count fell out for free: the bound is now flat (two ramps plus a cruise
+piece, 33 max) where it used to grow with the move. A full turn costs 33
+segments instead of 371.
+
+H1b needed restating rather than just flipping. Terminal velocity is not
+readable from the stream — the last chunk's rate is its MEAN, and the profile's
+true end speed is `v0`. The property that matters physically is that the axis
+can reach zero from whatever the final chunk commands, within that chunk's own
+duration, and that is what the test now asserts.
+
+#### Golden diff
+
+| | packets | jog | cutting | total s | jog s |
+|---|---|---|---|---|---|
+| `test_circle` before | 640 | 97 | 543 | 4.641 | 0.964 |
+| `test_circle` after | **576** | **33** | 543 | 4.627 | 0.950 |
+| `fish` before | 8419 | 4369 | 4050 | 86.185 | 47.280 |
+| `fish` after | **5106** | **1056** | 4050 | 86.304 | 47.399 |
+
+The cutting-segment count is untouched on both fixtures and every step total is
+identical — this batch could not move cutting motion and did not. `fish` sheds
+**39% of its wire packets** while its total duration changes by +0.14%: the
+ramps cost about a tenth of a second across the whole job, and buy an emitted
+stream that no longer asks either axis for acceleration it does not have.
+
+Mutation-validated: 10 mutants, 8 killed by name immediately. Both survivors
+were real test gaps, not equivalence — the fixture gives x and y the SAME
+`maxAccel` (so a jog could not tell `min` from `max`) and nothing asserted a
+ramped diagonal jog still travels in a straight line. Two tests added; the first
+survivor now dies. The second (`round(a) - round(b)` → `round(a - b)`) is kept
+as a survivor on the record: the telescoping form is *provably* exact, the
+mutant merely happens to land exactly on every input tried.
+
+#### One fixture was wrong, not one caller
+
+`dualHeadMachine` in `test/orchestrate/walk.test.ts` declared no `x/y.maxAccel`,
+so the new refusal fired there. Its sibling `singleHeadMachine` and the deployed
+`web/demo/config.json` both declare it; the fixture was an incomplete machine,
+and it was fixed rather than the refusal being softened.
 
 ### Batch A — done (byte-neutral)
 

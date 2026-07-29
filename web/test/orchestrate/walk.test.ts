@@ -41,8 +41,10 @@ function dualHeadMachine(): MachineConfig {
     const z = axisConfig(busNode(3), 1200, { invert: true });
     const a = axisConfig(busNode(4), 51.667, { rotary: true, invert: true });
     return machineConfig(
-        axisConfig(busNode(1), 160, { invert: true, maxFeed: 80 }),
-        axisConfig(busNode(2), 160, { maxFeed: 80 }),
+        // maxAccel is not optional decoration: travel jogs are ramped against
+        // it, and a machine that declares none is refused rather than slammed.
+        axisConfig(busNode(1), 160, { invert: true, maxFeed: 80, maxAccel: 1000 }),
+        axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
         [
             toolHead(z, a, { xOffset: -50, yOffset: 0 }),
             toolHead(z, a, { xOffset:  50, yOffset: 0 }),
