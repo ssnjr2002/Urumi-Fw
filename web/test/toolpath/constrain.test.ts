@@ -1,147 +1,320 @@
 /**
  * Tests for the Constrain stage (redesign stage 5): per-sample velocity ceiling.
- * Ported from pipeline/stages/test_constrain.py.
  *
- * The test is the caller — it sources config values inline (FEED, A_MAX, etc.,
- * matching the Python test constants) and passes them via ConstrainOptions.
- * constrain() never imports config.
+ * Same split as flatten.test.ts:
+ *
+ *   1. INVARIANTS — true of any correct constrain. Bounded output, purity,
+ *      determinism. These must survive the C++ port unchanged.
+ *
+ *   2. CONTRACT PROPERTIES — the caps that define the stage:
+ *        vCeiling <= feedMax
+ *        vCeiling <= sqrt(aMax / kappa)              centripetal
+ *        vCeiling <= rad(aRateDegS) / kappa          A slew
+ *        vCeiling <= sqrt(rad(aAccelDegS2) / |k'|)   A angular accel
+ *        vCeiling == 0 at a corner-stop or a forcedStop
+ *      Asserted over every fixture rather than at one hand-picked sample.
+ *
+ * Where a cap's formula would have to be re-derived in the test to check it
+ * directly (the curvature-gradient term needs `kappaPrime`, which is internal),
+ * MONOTONICITY is asserted instead: tightening any limit must never raise any
+ * ceiling. That is implementation-independent, catches a botched min() chain —
+ * the single most likely transcription error in the port — and needs none of
+ * constrain's internals.
+ *
+ * The test is the caller: it sources config values inline and passes them via
+ * ConstrainOptions. constrain() never imports config.
+ *
+ * See docs/planner_audit.md for findings.
  */
 
 import { describe, it, expect } from "vitest";
-import { lineToCubic } from "../../src/toolpath/geometry.js";
+import { lineToCubic, type CubicBezier } from "../../src/toolpath/geometry.js";
 import { flatten } from "../../src/toolpath/flatten.js";
-import { constrain, junctionCap } from "../../src/toolpath/constrain.js";
-import { CURVE_BOUNDARY } from "../../src/toolpath/sample.js";
-import { CASES } from "./curves.cases.js";
+import { constrain, junctionCap, type ConstrainOptions } from "../../src/toolpath/constrain.js";
+import { CURVE_BOUNDARY, PATH_START, type Sample } from "../../src/toolpath/sample.js";
+import { CASES, CUSP } from "./curves.cases.js";
 import { qualityConfig } from "../../src/config/config.js";
+import { readFixture } from "../helpers.js";
+import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
+import { enforceC1 } from "../../src/toolpath/repair.js";
 
 const FEED = 80.0;
 const A_MAX = 1000.0;
 const q = qualityConfig();
 
-// ── straight -> feed_max everywhere ───────────────────────────────────────────
+const BASE: ConstrainOptions = {
+    feedMax: FEED,
+    aMax: A_MAX,
+    junctionDeviation: q.junctionDeviation,
+};
 
-describe("stage 5: straight line", () => {
-    it("ceiling == feed_max everywhere", () => {
-        const s = flatten([CASES.straight_line!.curves], q);
-        const c = constrain(s, {
-            feedMax: FEED,
-            aMax: A_MAX,
-            junctionDeviation: q.junctionDeviation,
+/** Every fixture, including the cusp that lives outside the CASES registry. */
+const GEOMETRY_CASES: Readonly<Record<string, CubicBezier[]>> = {
+    ...Object.fromEntries(Object.entries(CASES).map(([k, v]) => [k, v.curves])),
+    cusp: CUSP,
+};
+
+const samplesFor = (curves: CubicBezier[]): Sample[] => flatten([curves], q);
+
+/**
+ * Run `probe` over every fixture and fail ONCE with all violations.
+ * See flatten.test.ts — an `expect` inside a fixture loop reports only the first
+ * failure and silently skips the rest, which is how the worst case hides.
+ */
+function forEachFixture(probe: (name: string, samples: Sample[]) => string[]): void {
+    const problems: string[] = [];
+    for (const [name, curves] of Object.entries(GEOMETRY_CASES)) {
+        problems.push(...probe(name, samplesFor(curves)));
+    }
+    if (problems.length === 0) return;
+    const shown = problems.slice(0, 12).join("\n  ");
+    const rest = problems.length > 12 ? `\n  ...and ${problems.length - 12} more` : "";
+    throw new Error(`${problems.length} violation(s):\n  ${shown}${rest}`);
+}
+
+// ═══ 1. INVARIANTS ════════════════════════════════════════════════════════════
+
+describe("constrain: bounds", () => {
+    it("vCeiling never exceeds feedMax", () => {
+        forEachFixture((name, s) => {
+            const c = constrain(s, { ...BASE, aRateDegS: 100, cornerStopAngleDeg: 20 });
+            const over = c.filter((x) => x.vCeiling > FEED + 1e-6).length;
+            return over === 0 ? [] : [`${name}: ${over} sample(s) above feedMax`];
         });
-        for (const x of c) {
+    });
+
+    it("vCeiling is finite and non-negative", () => {
+        // kappa can be enormous at a cusp and kappaPrime larger still; every cap
+        // is a division by one of them. A NaN or negative here would propagate
+        // into plan's sqrt and out the far end as a garbage interval.
+        forEachFixture((name, s) => {
+            const c = constrain(s, { ...BASE, aRateDegS: 100, aAccelDegS2: 50, cornerStopAngleDeg: 20 });
+            const bad = c.flatMap((x, i) =>
+                Number.isFinite(x.vCeiling) && x.vCeiling >= 0 ? [] : [`${i}=${x.vCeiling}`]);
+            return bad.length === 0 ? [] : [`${name}: ${bad.slice(0, 4).join(", ")}`];
+        });
+    });
+
+    it("does not mutate its input", () => {
+        // constrain documents itself as pure. The port will reuse buffers for
+        // memory reasons, which is exactly when accidental mutation appears.
+        const s = samplesFor(CASES.s_curve!.curves);
+        const before = JSON.stringify(s);
+        constrain(s, { ...BASE, aRateDegS: 100, aAccelDegS2: 50, cornerStopAngleDeg: 20 });
+        expect(JSON.stringify(s)).toBe(before);
+    });
+
+    it("is deterministic", () => {
+        forEachFixture((name, s) => {
+            const a = JSON.stringify(constrain(s, { ...BASE, aRateDegS: 100 }));
+            const b = JSON.stringify(constrain(s, { ...BASE, aRateDegS: 100 }));
+            return a === b ? [] : [`${name}: two runs differ`];
+        });
+    });
+
+    it("preserves sample count and geometry", () => {
+        // constrain adds a field; it must not drop, reorder or edit samples.
+        forEachFixture((name, s) => {
+            const c = constrain(s, BASE);
+            if (c.length !== s.length) return [`${name}: length ${c.length} != ${s.length}`];
+            for (let i = 0; i < s.length; i++) {
+                const a = s[i]!;
+                const b = c[i]!;
+                if (a.x !== b.x || a.y !== b.y || a.kappa !== b.kappa || a.ds !== b.ds || a.flags !== b.flags) {
+                    return [`${name}: sample ${i} altered`];
+                }
+            }
+            return [];
+        });
+    });
+});
+
+// ═══ 2. CONTRACT PROPERTIES ═══════════════════════════════════════════════════
+
+describe("constrain: straight line", () => {
+    it("ceiling == feedMax everywhere", () => {
+        for (const x of constrain(samplesFor(CASES.straight_line!.curves), BASE)) {
             expect(Math.abs(x.vCeiling - FEED)).toBeLessThan(1e-6);
         }
     });
 });
 
-// ── circle -> constant centripetal cap ────────────────────────────────────────
-
-describe("stage 5: centripetal cap", () => {
-    it("r5 circle: kappa=0.2 -> v ≈ sqrt(1000/0.2) ≈ 70.7 < feed", () => {
-        const s = flatten([CASES.quarter_circle_r5!.curves], q);
-        const c = constrain(s, {
-            feedMax: FEED,
-            aMax: A_MAX,
-            junctionDeviation: q.junctionDeviation,
+describe("constrain: centripetal cap", () => {
+    it("holds at EVERY sample on every fixture", () => {
+        // Was checked at one hand-picked mid-sample on one fixture. The cap is a
+        // per-sample contract, so assert it per sample.
+        forEachFixture((name, s) => {
+            const c = constrain(s, BASE);
+            let worst = 0;
+            let count = 0;
+            for (let i = 0; i < s.length; i++) {
+                if (s[i]!.kappa <= 1e-9) continue;
+                const lim = Math.sqrt(A_MAX / s[i]!.kappa);
+                if (c[i]!.vCeiling > lim + 1e-9) { count++; worst = Math.max(worst, c[i]!.vCeiling / lim); }
+            }
+            return count === 0 ? [] : [`${name}: ${count} sample(s), worst ${worst.toFixed(3)}x the cap`];
         });
+    });
+
+    it("r5 circle: kappa=0.2 -> v ~ sqrt(1000/0.2) ~ 70.7", () => {
+        const c = constrain(samplesFor(CASES.quarter_circle_r5!.curves), BASE);
         const expected = Math.sqrt(A_MAX / 0.2);
-        for (const x of c) {
-            expect(x.vCeiling).toBeLessThanOrEqual(FEED + 1e-6);
-        }
         const mid = c[Math.floor(c.length / 2)]!.vCeiling;
         expect(Math.abs(mid - expected) / expected).toBeLessThan(0.05);
     });
 
+    it("scales as sqrt(aMax)", () => {
+        // Pins the sqrt. A cap written as aMax/kappa (the A-slew form, easy to
+        // paste into the wrong branch) would scale linearly and give 4x here.
+        const mid = (aMax: number) => {
+            const c = constrain(samplesFor(CASES.quarter_circle_r5!.curves), { ...BASE, aMax });
+            return c[Math.floor(c.length / 2)]!.vCeiling;
+        };
+        expect(mid(1000) / mid(250)).toBeCloseTo(2.0, 6);
+    });
+
     it("tighter circle -> lower cap", () => {
-        const s50 = flatten([CASES.quarter_circle_r50!.curves], q);
-        const s5 = flatten([CASES.quarter_circle_r5!.curves], q);
-        const c50 = constrain(s50, { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation });
-        const c5 = constrain(s5, { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation });
-        const mid50 = c50[Math.floor(c50.length / 2)]!.vCeiling;
-        const mid5 = c5[Math.floor(c5.length / 2)]!.vCeiling;
-        expect(mid5).toBeLessThan(mid50);
+        const mid = (curves: CubicBezier[]) => {
+            const c = constrain(samplesFor(curves), BASE);
+            return c[Math.floor(c.length / 2)]!.vCeiling;
+        };
+        expect(mid(CASES.quarter_circle_r5!.curves)).toBeLessThan(mid(CASES.quarter_circle_r50!.curves));
     });
 });
 
-// ── A-slew cap ────────────────────────────────────────────────────────────────
+describe("constrain: A-slew cap", () => {
+    it("holds at EVERY sample on every fixture", () => {
+        const aRateDegS = 100.0;
+        const aRateRad = (aRateDegS * Math.PI) / 180;
+        forEachFixture((name, s) => {
+            const c = constrain(s, { ...BASE, aRateDegS });
+            let worst = 0;
+            let count = 0;
+            for (let i = 0; i < s.length; i++) {
+                if (s[i]!.kappa <= 1e-9) continue;
+                const lim = aRateRad / s[i]!.kappa;
+                if (c[i]!.vCeiling > lim + 1e-9) { count++; worst = Math.max(worst, c[i]!.vCeiling / lim); }
+            }
+            return count === 0 ? [] : [`${name}: ${count} sample(s), worst ${worst.toFixed(3)}x the cap`];
+        });
+    });
 
-describe("stage 5: A-slew cap", () => {
-    it("slow A axis lowers ceiling on tight curve (rad(100)/0.2)", () => {
-        const baseOpts = { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation };
-        const sNo = flatten([CASES.quarter_circle_r5!.curves], q);
-        const sA = flatten([CASES.quarter_circle_r5!.curves], q);
-        const cNo = constrain(sNo, baseOpts);
-        const cA = constrain(sA, { ...baseOpts, aRateDegS: 100.0 });
-        const midNo = cNo[Math.floor(cNo.length / 2)]!.vCeiling;
-        const midA = cA[Math.floor(cA.length / 2)]!.vCeiling;
-        expect(midA).toBeLessThan(midNo);
-        expect(Math.abs(midA - (Math.PI * 100 / 180) / 0.2) / midA).toBeLessThan(0.05);
+    it("slow A axis lowers the ceiling on a tight curve", () => {
+        const mid = (o: ConstrainOptions) => {
+            const c = constrain(samplesFor(CASES.quarter_circle_r5!.curves), o);
+            return c[Math.floor(c.length / 2)]!.vCeiling;
+        };
+        const withA = mid({ ...BASE, aRateDegS: 100.0 });
+        expect(withA).toBeLessThan(mid(BASE));
+        expect(Math.abs(withA - (Math.PI * 100 / 180) / 0.2) / withA).toBeLessThan(0.05);
     });
 });
 
-// ── A-accel curvature-gradient cap ────────────────────────────────────────────
-
-describe("stage 5: A-accel gradient cap", () => {
-    it("changing curvature (s_curve) — tight a_accel lowers min ceiling", () => {
-        const baseOpts = { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation };
-        const s0 = flatten([CASES.s_curve!.curves], q);
-        const s1 = flatten([CASES.s_curve!.curves], q);
-        const c0 = constrain(s0, baseOpts);
-        const c1 = constrain(s1, { ...baseOpts, aAccelDegS2: 50.0 });
-        const min0 = c0.reduce((m, x) => Math.min(m, x.vCeiling), Infinity);
-        const min1 = c1.reduce((m, x) => Math.min(m, x.vCeiling), Infinity);
-        expect(min1).toBeLessThan(min0);
+describe("constrain: A-accel gradient cap", () => {
+    it("changing curvature — tight a_accel lowers the min ceiling", () => {
+        const minOf = (o: ConstrainOptions) =>
+            constrain(samplesFor(CASES.s_curve!.curves), o).reduce((m, x) => Math.min(m, x.vCeiling), Infinity);
+        expect(minOf({ ...BASE, aAccelDegS2: 50.0 })).toBeLessThan(minOf(BASE));
     });
 
-    it("constant curvature — A-accel cap inactive (dk/ds = 0)", () => {
-        const baseOpts = { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation };
-        const s0 = flatten([CASES.quarter_circle_r50!.curves], q);
-        const s1 = flatten([CASES.quarter_circle_r50!.curves], q);
-        const c0 = constrain(s0, baseOpts);
-        const c1 = constrain(s1, { ...baseOpts, aAccelDegS2: 50.0 });
-        const mid = Math.floor(c0.length / 2);
-        expect(Math.abs(c0[mid]!.vCeiling - c1[mid]!.vCeiling)).toBeLessThan(1e-9);
+    it("constant curvature — cap inactive (dk/ds = 0)", () => {
+        const at = (o: ConstrainOptions) => {
+            const c = constrain(samplesFor(CASES.quarter_circle_r50!.curves), o);
+            return c[Math.floor(c.length / 2)]!.vCeiling;
+        };
+        expect(Math.abs(at(BASE) - at({ ...BASE, aAccelDegS2: 50.0 }))).toBeLessThan(1e-9);
+    });
+
+    it("scales as sqrt(aAccel) where the cap binds", () => {
+        // The only assertion that pins the FORM of this cap rather than its
+        // direction. v <= sqrt(alpha/|k'|), so 4x the angular-accel budget must
+        // buy exactly 2x the speed. A cap implemented as alpha/|k'| — a plausible
+        // transcription slip, and dimensionally wrong — would give 4x and fail.
+        const minOf = (aAccelDegS2: number) =>
+            constrain(samplesFor(CASES.s_curve!.curves), { ...BASE, aAccelDegS2 })
+                .reduce((m, x) => Math.min(m, x.vCeiling), Infinity);
+        const lo = minOf(12.5);
+        const hi = minOf(50.0);
+        expect(hi / lo).toBeCloseTo(2.0, 3);
+    });
+});
+
+// ── monotonicity: the min() chain, checked without re-deriving it ─────────────
+
+describe("constrain: monotonicity", () => {
+    /** Tightening a limit must never raise ANY ceiling. */
+    function assertNeverRaises(label: string, loose: ConstrainOptions, tight: ConstrainOptions): void {
+        forEachFixture((name, s) => {
+            const a = constrain(s, loose);
+            const b = constrain(s, tight);
+            const raised = b.flatMap((x, i) =>
+                x.vCeiling > a[i]!.vCeiling + 1e-9
+                    ? [`${i}: ${a[i]!.vCeiling.toFixed(4)} -> ${x.vCeiling.toFixed(4)}`]
+                    : []);
+            return raised.length === 0
+                ? []
+                : [`${label} on ${name}: ${raised.length} ceiling(s) went UP, e.g. ${raised[0]}`];
+        });
+    }
+
+    it("lowering feedMax never raises a ceiling", () => {
+        assertNeverRaises("feedMax 80->40", BASE, { ...BASE, feedMax: 40 });
+    });
+
+    it("lowering aMax never raises a ceiling", () => {
+        assertNeverRaises("aMax 1000->250", BASE, { ...BASE, aMax: 250 });
+    });
+
+    it("enabling the A-slew cap never raises a ceiling", () => {
+        assertNeverRaises("aRateDegS off->100", BASE, { ...BASE, aRateDegS: 100 });
+    });
+
+    it("enabling the A-accel cap never raises a ceiling", () => {
+        assertNeverRaises("aAccelDegS2 off->50", BASE, { ...BASE, aAccelDegS2: 50 });
+    });
+
+    it("lowering the corner-stop threshold never raises a ceiling", () => {
+        assertNeverRaises(
+            "cornerStop 90->20",
+            { ...BASE, cornerStopAngleDeg: 90 },
+            { ...BASE, cornerStopAngleDeg: 20 },
+        );
     });
 });
 
 // ── corner stop ───────────────────────────────────────────────────────────────
 
-describe("stage 5: corner stop", () => {
+describe("constrain: corner stop", () => {
+    const rightAngle = () => flatten([[
+        lineToCubic({ x: 0, y: 0 }, { x: 10, y: 0 }),
+        lineToCubic({ x: 10, y: 0 }, { x: 10, y: 10 }),
+    ]], q);
+
     it("sharp corner forces vCeiling = 0", () => {
-        const horiz = lineToCubic({ x: 0, y: 0 }, { x: 10, y: 0 });
-        const vert = lineToCubic({ x: 10, y: 0 }, { x: 10, y: 10 });
-        const s = flatten([[horiz, vert]], q);
-        const c = constrain(s, {
-            feedMax: FEED,
-            aMax: A_MAX,
-            junctionDeviation: q.junctionDeviation,
-            cornerStopAngleDeg: 20.0,
-        });
-        const bi = c.findIndex((x) => x.flags & CURVE_BOUNDARY);
-        expect(c[bi]!.vCeiling).toBe(0);
+        const s = rightAngle();
+        const c = constrain(s, { ...BASE, cornerStopAngleDeg: 20.0 });
+        expect(c[c.findIndex((x) => x.flags & CURVE_BOUNDARY)]!.vCeiling).toBe(0);
     });
 
     it("no corner stop when disabled — junction cap still applies", () => {
-        const horiz = lineToCubic({ x: 0, y: 0 }, { x: 10, y: 0 });
-        const vert = lineToCubic({ x: 10, y: 0 }, { x: 10, y: 10 });
-        const s = flatten([[horiz, vert]], q);
-        const c = constrain(s, {
-            feedMax: FEED,
-            aMax: A_MAX,
-            junctionDeviation: q.junctionDeviation,
-            // cornerStopAngleDeg omitted — no forced stops
-        });
+        const c = constrain(rightAngle(), BASE);
         const bi = c.findIndex((x) => x.flags & CURVE_BOUNDARY);
         expect(c[bi]!.vCeiling).toBeGreaterThan(0);
         expect(c[bi]!.vCeiling).toBeLessThan(FEED);
     });
+
+    it("a corner stop lands on the boundary sample only", () => {
+        // discretize choreographs the lift-pivot-lower around this exact index.
+        // If the zero ever spreads to a neighbour, the pivot is placed wrong.
+        const c = constrain(rightAngle(), { ...BASE, cornerStopAngleDeg: 20.0 });
+        const zeros = c.flatMap((x, i) => (x.vCeiling === 0 ? [i] : []));
+        const boundaries = c.flatMap((x, i) => (x.flags & CURVE_BOUNDARY ? [i] : []));
+        expect(zeros).toEqual(boundaries);
+    });
 });
 
-// ── junction cap helper ───────────────────────────────────────────────────────
-
-describe("stage 5: junctionCap helper", () => {
-    it("monotone — sharper turn -> lower cap, straight = feedMax", () => {
+describe("constrain: junctionCap helper", () => {
+    it("monotone — sharper turn lowers the cap; straight = feedMax", () => {
         const straight = junctionCap(1.0, A_MAX, 0.05, FEED);
         const gentle = junctionCap(30.0, A_MAX, 0.05, FEED);
         const sharp = junctionCap(120.0, A_MAX, 0.05, FEED);
@@ -149,51 +322,120 @@ describe("stage 5: junctionCap helper", () => {
         expect(gentle).toBeGreaterThanOrEqual(sharp);
         expect(junctionCap(0.0, A_MAX, 0.05, FEED)).toBe(FEED);
     });
+
+    it("a full reversal caps at zero", () => {
+        // cos(180/2) = 0 -> the arc radius collapses. The tool cannot carry any
+        // speed through a doubling-back join.
+        expect(junctionCap(180.0, A_MAX, 0.05, FEED)).toBe(0);
+    });
+
+    it("is symmetric in turn direction", () => {
+        for (const deg of [15, 45, 90, 150]) {
+            expect(junctionCap(-deg, A_MAX, 0.05, FEED)).toBe(junctionCap(deg, A_MAX, 0.05, FEED));
+        }
+    });
+
+    it("a larger deviation budget allows more speed", () => {
+        expect(junctionCap(45, A_MAX, 0.2, FEED)).toBeGreaterThan(junctionCap(45, A_MAX, 0.02, FEED));
+    });
+
+    it("matches the closed form at 90 degrees", () => {
+        // GRBL junction deviation: model the corner as an arc of radius
+        //   r = d*cos(t/2) / (1 - cos(t/2))
+        // and hold centripetal accel on it, v = sqrt(a*r). Computed here from
+        // the definition rather than copied from the implementation, so a
+        // dropped factor shows up as a number rather than as a direction.
+        const halfCos = Math.cos(Math.PI / 4);
+        const r = (0.05 * halfCos) / (1 - halfCos);
+        expect(junctionCap(90, A_MAX, 0.05, FEED)).toBeCloseTo(Math.sqrt(A_MAX * r), 9);
+    });
+
+    it("scales as sqrt(deviation) below the feed clamp", () => {
+        // v ~ sqrt(a*r) and r ~ deviation, so 4x the budget is 2x the speed.
+        // A sharp turn is used so neither result is clamped at feedMax.
+        const lo = junctionCap(150, A_MAX, 0.01, FEED);
+        const hi = junctionCap(150, A_MAX, 0.04, FEED);
+        expect(hi).toBeLessThan(FEED);
+        expect(hi / lo).toBeCloseTo(2.0, 6);
+    });
 });
 
-// ── ceiling never exceeds feed ────────────────────────────────────────────────
+// ═══ 3. THE CUSP — what constrain actually does ═══════════════════════════════
 
-describe("stage 5: ceiling bounded by feed", () => {
-    it("all cases — vCeiling <= feedMax", () => {
-        for (const [name, { curves }] of Object.entries(CASES)) {
-            const s = flatten([curves], q);
-            const c = constrain(s, {
-                feedMax: FEED,
-                aMax: A_MAX,
-                junctionDeviation: q.junctionDeviation,
-                aRateDegS: 100.0,
-                cornerStopAngleDeg: 20.0,
-            });
-            for (const x of c) {
-                if (x.vCeiling > FEED + 1e-6) {
-                    throw new Error(`${name}: vCeiling ${x.vCeiling} > feed ${FEED}`);
-                }
+describe("constrain: cusp handling", () => {
+    it("does not stop at an intra-curve tangent reversal", () => {
+        // Documents audit F2. The corner-stop branch is gated on CURVE_BOUNDARY,
+        // which flatten only sets at curve JOINS. A 178deg reversal inside a
+        // single curve is therefore never considered for a corner stop, even
+        // though discretize's ungated dtheta check will treat it as one.
+        //
+        // Passes today. REVISIT — do not delete — when F2 is resolved.
+        const s = flatten([CUSP], q);
+        const c = constrain(s, { ...BASE, cornerStopAngleDeg: 20.0 });
+        expect(s.filter((x) => x.flags & CURVE_BOUNDARY)).toHaveLength(0);
+        expect(c.filter((x) => x.vCeiling === 0)).toHaveLength(0);
+    });
+
+    it("crawls through the cusp instead, far below the executable floor", () => {
+        // Audit C1. The A caps drive the ceiling to ~3e-3 mm/s — 166x BELOW
+        // quality.vMin (0.5 mm/s), the floor discretize clamps the interval to.
+        // So the planned profile and the executed profile diverge here by two
+        // orders of magnitude, and every timeline derived from the plan (notably
+        // dutyBreaks' budget) is wrong across a cusp.
+        //
+        // Asserted as the CURRENT behaviour so the gap is visible and attributable.
+        const c = constrain(flatten([CUSP], q), { ...BASE, aRateDegS: 100, aAccelDegS2: 50 });
+        const min = c.reduce((m, x) => Math.min(m, x.vCeiling), Infinity);
+        expect(min).toBeGreaterThan(0);
+        expect(min).toBeLessThan(q.vMin / 100);
+    });
+});
+
+// ═══ 4. REAL SVG ══════════════════════════════════════════════════════════════
+
+describe("constrain: real SVG", () => {
+    const repaired = loadSvgMmSubpaths(readFixture("test_snake.svg")).subpaths
+        .map((sp) => enforceC1(sp, { angleTolDeg: q.angleTol, gapTolMm: q.gapTol }).repaired);
+
+    it("snake.svg — every cap holds and the output is usable", () => {
+        const s = flatten(repaired, q);
+        const c = constrain(s, { ...BASE, aRateDegS: 100, aAccelDegS2: 50, cornerStopAngleDeg: 20 });
+        const aRateRad = (100 * Math.PI) / 180;
+        const bad: string[] = [];
+        for (let i = 0; i < s.length; i++) {
+            const v = c[i]!.vCeiling;
+            if (!Number.isFinite(v) || v < 0 || v > FEED + 1e-6) bad.push(`${i}: v=${v}`);
+            if (s[i]!.kappa > 1e-9) {
+                if (v > Math.sqrt(A_MAX / s[i]!.kappa) + 1e-9) bad.push(`${i}: centripetal`);
+                if (v > aRateRad / s[i]!.kappa + 1e-9) bad.push(`${i}: A-slew`);
             }
+        }
+        expect(bad.slice(0, 6).join("; ")).toBe("");
+    });
+
+    it("snake.svg — only boundary samples are forced to zero", () => {
+        const s = flatten(repaired, q);
+        const c = constrain(s, { ...BASE, cornerStopAngleDeg: 20 });
+        for (const [i, x] of c.entries()) {
+            if (x.vCeiling !== 0) continue;
+            expect(s[i]!.flags & (CURVE_BOUNDARY | PATH_START), `sample ${i} zeroed`).toBeTruthy();
         }
     });
 });
 
-// ── forced stops ──────────────────────────────────────────────────────────────
+// ═══ 5. FORCED STOPS ══════════════════════════════════════════════════════════
 // A stop the CALLER injects, for a reason the geometry knows nothing about —
 // today, releasing a duty-limited tool's enable line before its budget expires
 // (docs/tool_duty_limits.md §5 tier 2).
 
-describe("stage 5: forcedStops", () => {
-    const straight = () =>
-        flatten([[lineToCubic({ x: 0, y: 0 }, { x: 100, y: 0 })]], q);
-
-    const opts = (forcedStops?: ReadonlySet<number>) => ({
-        feedMax: FEED,
-        aMax: A_MAX,
-        junctionDeviation: q.junctionDeviation,
-        forcedStops,
-    });
+describe("constrain: forcedStops", () => {
+    const straight = () => flatten([[lineToCubic({ x: 0, y: 0 }, { x: 100, y: 0 })]], q);
+    const opts = (forcedStops?: ReadonlySet<number>): ConstrainOptions => ({ ...BASE, forcedStops });
 
     it("zeroes the ceiling at the named sample and nowhere else", () => {
         const s = straight();
         const idx = Math.floor(s.length / 2);
         const c = constrain(s, opts(new Set([idx])));
-
         expect(c[idx]!.vCeiling).toBe(0);
         for (let i = 0; i < c.length; i++) {
             if (i !== idx) expect(c[i]!.vCeiling).toBeGreaterThan(0);
@@ -234,5 +476,17 @@ describe("stage 5: forcedStops", () => {
         const s = straight();
         const c = constrain(s, opts(new Set([-1, s.length, 9999])));
         expect(c.map((x) => x.vCeiling)).toEqual(constrain(s, opts()).map((x) => x.vCeiling));
+    });
+
+    it("wins over a corner stop at the same index", () => {
+        // Both produce 0, so this pins intent rather than arithmetic: the early
+        // return must not be reordered below the corner branch during the port.
+        const s = flatten([[
+            lineToCubic({ x: 0, y: 0 }, { x: 10, y: 0 }),
+            lineToCubic({ x: 10, y: 0 }, { x: 10, y: 10 }),
+        ]], q);
+        const bi = s.findIndex((x) => x.flags & CURVE_BOUNDARY);
+        const c = constrain(s, { ...BASE, cornerStopAngleDeg: 20, forcedStops: new Set([bi]) });
+        expect(c[bi]!.vCeiling).toBe(0);
     });
 });

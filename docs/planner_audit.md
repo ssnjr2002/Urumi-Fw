@@ -66,6 +66,8 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | F5 | flatten | tuning | `chordTol` is near-vestigial: binds 0.8% of steps | note only |
 | F6 | geometry | cleanup | `arcLength` (5-point Gauss-Legendre) has no production caller | open, test pins it |
 | F7 | flatten | **contract** | All three caps are PREDICTORS, not bounds — `dsMax` soft by up to 8% | open, **test red** |
+| C1 | constrain | **defect** | No lower bound on `vCeiling` — a cusp yields 3.2e-3 mm/s, 166× under `vMin` | open, test documents |
+| C2 | constrain | ok | All four caps hold as per-sample properties on every fixture | verified |
 
 ---
 
@@ -185,12 +187,27 @@ k=1."*
 For a non-tangential tool `isCorner` is false and nothing catches it: an
 instantaneous XY direction reversal at full feed.
 
+**CORRECTION.** The original write-up claimed the cusp sample "gets
+`cap = feedMax`" — full speed through the reversal. **That is wrong.** Measured
+against the `CUSP` fixture, κ at the reversal is 1.5e+1 (large, not zero), so
+the curvature caps bite hard and the ceiling collapses to ~3e-3 mm/s. Constrain
+does not race through the cusp; it *crawls*. The consequence is C1 below, not a
+dynamics violation.
+
+The structural claim stands: the corner-stop branch is gated on
+`CURVE_BOUNDARY`, `flatten` only sets that at curve JOINS, so an intra-curve
+reversal is never *considered* for a corner stop while `discretize`'s ungated
+`dtheta` check treats it as one.
+
 **Proposed action:** make the two agree. Natural fix is for `flatten` to mark
 cusps with a flag the way it already marks curve joins, so both stages read the
 same signal from the same place.
 
 **Open question:** is an intra-curve cusp a corner (lift-pivot-lower) or a
-tangency event to be slowed through? Decide before either stage changes.
+tangency event to be slowed through? Decide before either stage changes. The
+measurement above argues for lift-pivot: a tangential knife physically cannot
+track a 178° tangent change while moving, so the "slow through it" branch is
+asking for a crawl that C1 shows is not even executable.
 
 ---
 
@@ -345,6 +362,109 @@ into C++ is pure cost.
 
 ---
 
+## Stage 5 — `constrain`
+
+Materially healthier than `flatten`. Every cap holds as a per-sample property on
+every fixture including the cusp — **zero violations** — so the min() chain and
+its formulas are sound. One real defect, and it is about what the ceiling means
+rather than how it is computed.
+
+### C2 — the caps hold (verified, no action)
+
+Asserted per sample over all nine fixtures and `snake.svg`, not at one
+hand-picked mid-sample as before:
+
+```
+centripetal  v <= sqrt(aMax / kappa)          0 violations
+A-slew       v <= rad(aRateDegS) / kappa      0 violations
+feedMax      v <= feedMax                     0 violations
+corner stop  v == 0 exactly at CURVE_BOUNDARY samples, and nowhere else
+```
+
+Unlike `flatten`'s caps (F7), these are computed from the sample's own κ and
+applied to that same sample — no forward prediction, so nothing to drift.
+
+### C1 — `vCeiling` has no lower bound
+
+**Severity: defect. Affects timing, not safety.**
+
+On the `CUSP` fixture the A-axis caps drive the ceiling to **3.24e-3 mm/s**.
+`quality.vMin` is **0.5 mm/s**, and `discretize` clamps the step interval to it.
+So:
+
+```
+planned speed at the cusp    0.00324 mm/s
+executed speed at the cusp   0.5     mm/s      (vMin floor in discretize)
+ratio                        ~166x
+```
+
+The plan and the machine disagree by two orders of magnitude at that sample.
+Consequences, in order of how much they matter:
+
+1. **Every timeline derived from the plan is wrong across a cusp.** This is not
+   academic — `dutyBreaks` schedules enable-line resets against exactly that
+   timeline, and `tool_duty_limits.md` §5 already establishes that a mis-measured
+   window is how the knife overruns its budget.
+2. The decel ramp `plan` builds into the cusp is real, but its floor is not
+   executed, so the profile the machine follows is not the profile that was
+   planned.
+3. It is the redesign's founding bug wearing different clothes. `PLAN_pipeline_
+   redesign.md` §1 was written about a curve dragged to **0.30 mm/s**; this is
+   0.003 mm/s, 100× worse. The per-sample fix stopped one *sample's* spike from
+   taxing a whole curve — it did not stop the spike itself from being unusable.
+
+**Proposed action:** give `constrain` the same floor `discretize` already
+enforces. A ceiling below `vMin` is not a ceiling, it is a stop that has not
+admitted it — so clamp to `vMin`, or force 0 and let the corner machinery handle
+it honestly. The second is probably right, and it is the same decision F2 asks
+for.
+
+**Open question:** `vMin` currently lives in `QualityConfig` and is only read by
+`discretize`. If `constrain` needs it too, it should be passed in explicitly
+rather than imported — the stage takes no config today and that property is
+worth keeping.
+
+### Test rewrite
+
+39 tests, all green, same INVARIANTS / CONTRACT PROPERTIES split as `flatten`.
+Added: purity (constrain documents itself as pure, and the port will reuse
+buffers), determinism, sample-preservation, per-sample cap properties, real-SVG
+coverage, and cusp documentation.
+
+**Monotonicity instead of formula-copying.** Where checking a cap directly would
+mean re-deriving internals (`kappaPrime` is not exported), the test asserts that
+*tightening any limit never raises any ceiling*. That catches a botched `min()`
+chain — the most likely transcription error in the port — without touching
+internals.
+
+**Scaling laws instead of directions.** `sqrt(aMax/κ)` and `aRateRad/κ` differ
+only in shape, and pasting one into the other's branch is an easy slip. So the
+tests pin exponents: 4× `aMax` must buy exactly 2× speed; 4× `aAccel` exactly 2×;
+4× `junctionDeviation` exactly 2×. A dimensionally-wrong cap gives 4× and fails.
+
+### Mutation-validated
+
+The tests were checked by deliberately breaking `constrain` nine ways and
+confirming each one goes red. All nine caught:
+
+```
+centripetal: sqrt dropped          4 failed
+A-slew removed                     1 failed
+gradient: sqrt dropped             2 failed
+junctionCap: deviation dropped     3 failed
+junctionCap: reversal guard gone   1 failed
+forcedStops ignored                3 failed
+junction cap not applied           1 failed
+feedMax clamp loosened             4 failed
+curvature caps disabled            7 failed
+```
+
+Worth repeating for later stages. A green suite says nothing about whether the
+tests can *fail*; this is the cheap way to find out. Restore with
+`git diff --exit-code` afterwards rather than trusting the edit was undone.
+
+---
+
 ## Current test state
 
 `npx vitest run test/toolpath/flatten` — 20 passing, 4 red, all 4 intentional:
@@ -356,10 +476,15 @@ into C++ is pure cost.
 × snake.svg — tangent cap holds     2.062deg vs 2.0 (F7)
 ```
 
-Full suite: 575 passing, 4 red, `tsc --noEmit` clean. The `CUSP` fixture is
-deliberately outside the shared `CASES` registry, so `constrain` / `plan` /
-`discretize` tests are unchanged and still green — a cusp regression in a later
-stage will be attributable to that stage.
+`npx vitest run test/toolpath/constrain` — 39 passing, 0 red.
+
+Full suite: **599 passing, 4 red**, `tsc --noEmit` clean. The four red are the
+`flatten` caps above; every other stage is green.
+
+`CUSP` is imported directly by `flatten` and `constrain` tests and is
+deliberately still outside the shared `CASES` registry, so `plan` and
+`discretize` remain untouched — a cusp regression in a later stage will be
+attributable to that stage.
 
 ---
 
@@ -368,8 +493,7 @@ stage will be attributable to that stage.
 | Stage | Status |
 |---|---|
 | 3 `repair` (`enforceC1`) | not audited |
-| 5 `constrain` | not audited — next |
-| 6 `plan` | not audited |
+| 6 `plan` | not audited — next |
 | 8 `discretize` | not audited |
 | 9 `dutyBreaks` | partially known: see `tool_duty_limits.md` §5, §11 |
 
