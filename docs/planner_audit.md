@@ -68,6 +68,11 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | F7 | flatten | **contract** | All three caps are PREDICTORS, not bounds — `dsMax` soft by up to 8% | open, **test red** |
 | C1 | constrain | **defect** | No lower bound on `vCeiling` — a cusp yields 3.2e-3 mm/s, 166× under `vMin` | open, test documents |
 | C2 | constrain | ok | All four caps hold as per-sample properties on every fixture | verified |
+| P1 | constrain + plan | **defect** | Axis accel budget spent twice: centripetal and tangential each capped at `aMax`, nothing owns the sum (→ √2·aMax) | open, **test red** |
+| P2 | plan | **contract** | A stream without `PATH_START`/`PATH_END` is silently unplanned — `v = vCeiling`, no error | open, **test red** |
+| P3 | plan | consequence of C1 | Carries unexecutable ceilings through; ~⅕ of the below-`vMin` span is self-inflicted by the sweeps | open, **test red** |
+| P4 | compileBlock | tuning | A non-tangential tool still pays the A-axis curvature cap — ~8× accel loss on a 5 mm arc | open, test documents |
+| P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
 
 ---
 
@@ -465,6 +470,217 @@ tests can *fail*; this is the cheap way to find out. Restore with
 
 ---
 
+## Stage 6 — `plan`
+
+### How it actually works
+
+Two O(n) sweeps per subpath over the sample stream, and nothing else:
+
+```
+backward, last → first:   v[i] = min(v[i],  sqrt(v[i+1]² + 2·a·ds[i]))
+forward,  first → last:   v[i] = min(v[i],  sqrt(v[i-1]² + 2·a·ds[i-1]))
+```
+
+with `v` initialised to `vCeiling` and the two endpoints pinned to 0. No
+iterate-to-convergence, no retry, no global state. **This is the stage best
+suited to the port as written** — it is already a streaming-shaped algorithm,
+and the backward sweep is the only part needing lookahead (the windowing
+question, premortem P1/P2).
+
+Two structural notes worth carrying into C++:
+
+- `segAccel` is symmetric and depends only on the two endpoint samples, so it
+  can be computed once per segment as the stream arrives.
+- The endpoint re-pin after the forward sweep is **dead code**: both sweeps only
+  ever take a `min`, and `v[hi]` starts at 0, so it cannot be lifted. The
+  comment above it claims otherwise. Harmless, but do not port the comment.
+
+### P5 — the sweeps are sound (verified, no action)
+
+Checked as properties over all nine fixtures (`CASES` + `CUSP`), not spot cases:
+
+| Property | Result |
+|---|---|
+| `0 ≤ v ≤ vCeiling`, finite everywhere | holds |
+| Every adjacent pair reachable and stoppable | holds |
+| `PATH_START` / `PATH_END` plan to exactly 0 | holds |
+| Subpaths planned independently | holds |
+| Raising any accel or ceiling never lowers any `v` | holds, 0 violations |
+| `subpathRanges` covers every sample once, no gaps or overlaps | holds |
+
+Monotonicity is the one worth keeping in mind for the port: it is cheap to check
+and it catches a botched `min()` chain, which is the likeliest transcription
+error.
+
+### P1 — the axis acceleration budget is spent twice
+
+The tool's acceleration has two orthogonal components:
+
+```
+tangential   a_t = dv/dt        bounded by plan, via segAccel's per-axis projection
+centripetal  a_c = v²·κ         bounded by constrain, via vCeiling ≤ sqrt(aMax/κ)
+```
+
+Each stage bounds its own component by `aMax`. Neither bounds the **vector
+sum**, which is what an axis actually has to supply. The analytic worst case is
+`√2·aMax`; measured, it is essentially attained:
+
+```
+fixture              |ax| max        |ay| max        |a| total
+s_curve                557 (0.56×)    1014 (1.01×)     1128
+near_cusp             1002 (1.00×)      41 (0.04×)     1002
+cusp                   990 (0.99×)    1081 (1.08×)     1412   ← √2·aMax = 1414
+```
+
+Neither stage is wrong in isolation, which is why per-stage review missed it —
+it is an **interface** defect, visible only when the two are composed. That
+makes it exactly the kind of thing the port would otherwise carry across
+silently into C++, where it is harder to see.
+
+The overrun is modest on real geometry (1–8%) and severe only at cusps, so this
+is not urgent. But note it compounds with F1: `flatten` steps *over* a cusp, so
+the sample stream understates the turn that produces the centripetal term.
+
+**Options, not yet decided:**
+
+1. Budget the sum explicitly: have `constrain` leave headroom, e.g. cap
+   centripetal at `aMax·sin(φ)` and tangential at `aMax·cos(φ)` for some split
+   φ. Correct, and costs speed everywhere for a bound that binds at cusps.
+2. Bound the sum in `plan`, where both terms are known: the backward/forward
+   sweeps could clamp `v` so that `hypot(a_t, v²κ) ≤ aMax`. Fixes it where the
+   information is, but makes the sweeps non-closed-form.
+3. Accept it and document the real ceiling as `√2·aMax`, sizing `aMax` config
+   accordingly. Cheapest; makes the config value mean something non-obvious.
+
+Do **not** resolve this by lowering `aMax` until the test goes green — that
+trades a stated bound for a tuned one, and the √2 will still be there.
+
+### P2 — an unbracketed stream is silently unplanned
+
+`subpathRanges` yields nothing for a stream carrying no `PATH_START`/`PATH_END`,
+so both sweeps are skipped, the endpoints are never pinned, and `plan` returns
+`v = vCeiling` verbatim. A 100 mm line comes back at **full feed from a standing
+start**, with no error. The same happens to a subpath whose `PATH_END` is
+missing: the range is dropped entirely.
+
+`flatten` always brackets correctly, so production is safe **today**. The reason
+this is filed rather than ignored:
+
+- `plan` is an exported pure stage typed against arbitrary `ConstrainedSample[]`,
+  and the port will give it callers that are not `flatten` — jog moves and
+  streamed tiles both construct sample runs directly.
+- The failure mode is the worst available: not a crash, but full-speed motion
+  from rest. On metal that is a lost-steps or crashed-gantry event.
+- It is nearly free to fix now (throw, or treat an unterminated run as ending at
+  the last sample) and awkward to retrofit once callers rely on the current
+  silence.
+
+### P3 — `plan` carries C1's unexecutable ceilings through
+
+Severity here must be measured as **arc length spent below `vMin`**, not as a
+count of samples. Every ramp from rest necessarily crosses `(0, vMin)` on the
+way up, so a sample landing in that band is sometimes legitimate — one does, at
+`v = 0.498`, on the cusp fixture. The distance an honest crossing costs is
+bounded and tiny:
+
+```
+vMin² / 2a = 0.5² / 2000 = 1.25e-4 mm
+```
+
+Against that yardstick the fixtures separate completely:
+
+```
+straight_line … full_circle_r30    0 mm          (0×)
+near_cusp                          1.11e-1 mm  (887×)   slowest 1.6e-2 mm/s
+cusp                               6.75e-2 mm  (540×)   slowest 4.8e-3 mm/s
+```
+
+**A hypothesis that did not survive measurement:** I expected `plan` to amplify
+C1 — for the sweeps to spread one bad ceiling across a wide neighbourhood. The
+sample *counts* are identical before and after planning (near_cusp: 72 ceilings
+below `vMin`, 72 speeds below it). By arc length there is a real but modest
+spread: on `cusp`, 1.40e-2 mm of the 6.75e-2 mm total (about a fifth) lands on
+samples whose own ceiling was healthy.
+
+That ratio is the useful part, because it localises the fix. **A `vMin` floor
+belongs in `constrain`**, where the ceiling is set: it removes the four fifths
+directly, and the remaining fifth goes with it, because the sweeps will have
+nothing pathological left to ramp toward. Clamping in `plan` would only move the
+same divergence one stage later — and clamping in `discretize`, which is what
+happens today, is what produces the planned-vs-executed mismatch in the first
+place.
+
+### P4 — a non-tangential tool still pays the A-axis cap
+
+`compileBlock` gates the A-axis limits it passes to `constrain` on
+`profile.tangential`, but passes `axes.a.maxAccel` to `plan`
+**unconditionally** (`compileBlock.ts:143`). So a pen — not tracking the tangent
+at all — has its path acceleration cut by `rad(aAccel)/κ` on every curve:
+
+```
+fixture              worst ratio   mean ratio     (segAccel with A ÷ without)
+quarter_circle_r5       0.124        0.155
+full_circle_r30         0.749        0.923
+s_curve                 0.524        0.895
+```
+
+An 8× accel loss on a 5 mm arc, for an axis that is not moving. The asymmetry is
+called deliberate in `compileBlock`'s header; the cost of it is not stated
+there. This is a tuning question, not a correctness one — but it is worth
+settling *before* the port, since the gate lives in the config bridge and the
+port is the moment that bridge gets rewritten.
+
+### Test rewrite
+
+`plan.test.ts` went from 12 tests to 48, on the same INVARIANTS / CONTRACT
+PROPERTIES split as `flatten` and `constrain`. What the old suite lacked:
+
+- No purity, determinism, or sample-preservation check.
+- No monotonicity: nothing said more accel cannot plan slower.
+- `segAccel` was tested with two loose assertions (`< A_MAX`, and a 10%-tolerance
+  match). Now: closed forms for each axis, the exact `√2` diagonal, the A term's
+  inverse-linear-in-κ shape, degenerate and unlimited-axis fallbacks, symmetry.
+- Accel continuity was asserted only by recomputing `segAccel` — self-consistent,
+  and blind to `segAccel` itself being wrong. That check is kept (it validates
+  the sweeps) and paired with `axisAccelViolations`, which re-derives
+  acceleration from planned speeds and geometry alone. **P1 is what the second
+  measurement found and the first could not.**
+- Fixture loops used `expect` inline, stopping at the first violation. Now
+  `forEachFixture` aggregates and fails once.
+
+Two closed forms replaced "goes down"-style assertions, both of which had been
+wrong in an earlier draft of this file and were corrected by running them:
+triangular peak is `sqrt(a·L)`, and a forced stop's decel ramp reaches back
+`v²/2a` (to within one `dsMax` of sample quantisation).
+
+### Mutation-validated
+
+Thirteen deliberate breaks of `plan.ts`; all thirteen caught.
+
+```
+backward sweep: drop the 2*a*ds term        7      segAccel: A term uses min kappa      2
+forward sweep removed                       7      segAccel: pathAccel ignored          2
+backward sweep removed                      9      segAccel: y axis ignored             2
+endpoints not pinned to zero                7      segAccel: degenerate returns 0       2
+sqrt dropped in backward sweep              8      ds off by one in forward sweep       2
+segAccel: per-axis projection dropped       2      subpathRanges: END not closing      11
+segAccel: A term uses sqrt shape           22
+```
+
+Two methodology notes worth keeping:
+
+- **Count the failing test *names*, not the number of failures.** The first run
+  of this harness reported two survivors. Both were false: a mutation had
+  flipped a known-red finding test green while turning another red, netting zero
+  change in the count. Comparing name sets against baseline found them.
+- **"y axis ignored" initially survived a test written to catch it.** The default
+  config is square (`x.maxAccel == y.maxAccel == aMax`), so dropping the Y
+  candidate returned the same number via the scalar fallback. Fixed with an
+  explicitly non-square option set. Any test whose expected value coincides with
+  a fallback proves nothing.
+
+---
+
 ## Current test state
 
 `npx vitest run test/toolpath/flatten` — 20 passing, 4 red, all 4 intentional:
@@ -478,13 +694,22 @@ tests can *fail*; this is the cheap way to find out. Restore with
 
 `npx vitest run test/toolpath/constrain` — 39 passing, 0 red.
 
-Full suite: **599 passing, 4 red**, `tsc --noEmit` clean. The four red are the
-`flatten` caps above; every other stage is green.
+`npx vitest run test/toolpath/plan` — 43 passing, 5 red, all 5 intentional:
 
-`CUSP` is imported directly by `flatten` and `constrain` tests and is
-deliberately still outside the shared `CASES` registry, so `plan` and
-`discretize` remain untouched — a cusp regression in a later stage will be
-attributable to that stage.
+```
+× no axis is asked for more acceleration than it has            3 fixtures (P1)
+× refuses, or plans, a stream with no PATH_START/PATH_END       (P2)
+× does not drop a subpath whose PATH_END is missing             (P2)
+× spends no meaningful arc length below vMin                    2 fixtures (P3)
+× introduces no unexecutable speed of its OWN                   cusp only (P3)
+```
+
+`tsc --noEmit` clean. The nine red across the three audited stages are all
+intentional and each names its finding; every other stage is green.
+
+`CUSP` is imported directly by the `flatten`, `constrain` and `plan` tests and is
+deliberately still outside the shared `CASES` registry, so `discretize` remains
+untouched — a cusp regression there will be attributable to that stage.
 
 ---
 
@@ -493,8 +718,8 @@ attributable to that stage.
 | Stage | Status |
 |---|---|
 | 3 `repair` (`enforceC1`) | not audited |
-| 6 `plan` | not audited — next |
-| 8 `discretize` | not audited |
+| 6 `plan` | **audited** — P1–P5 above |
+| 8 `discretize` | not audited — next |
 | 9 `dutyBreaks` | partially known: see `tool_duty_limits.md` §5, §11 |
 
 When auditing a later stage, consider adding `CUSP` to that stage's fixtures
