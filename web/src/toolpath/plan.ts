@@ -154,6 +154,30 @@ export function plan(
     samples: readonly ConstrainedSample[],
     options: PlanOptions,
 ): PlannedSample[] {
+    // Every sample must belong to a bracketed subpath, or the sweeps below
+    // silently skip it and its vCeiling is returned verbatim — full feed from
+    // a standing start, no error (audit P2). flatten always brackets, but plan
+    // is an exported pure stage and the port gives it callers that are not
+    // flatten (jog, streamed tiles). Cheap to check here, expensive to retrofit
+    // after a caller has been built on the silence.
+    let next = 0;
+    for (const [lo, hi] of subpathRanges(samples)) {
+        if (lo !== next) {
+            throw new Error(
+                `plan: samples [${next}, ${lo - 1}] are outside any PATH_START/PATH_END ` +
+                `bracket and would be left unplanned`,
+            );
+        }
+        next = hi + 1;
+    }
+    if (next !== samples.length) {
+        throw new Error(
+            `plan: samples [${next}, ${samples.length - 1}] are outside any ` +
+            `PATH_START/PATH_END bracket and would be left unplanned` +
+            (samples.length > 0 ? " (unterminated subpath — missing PATH_END?)" : ""),
+        );
+    }
+
     // Work on a mutable v array indexed by sample position; fold into
     // PlannedSample at the end. This mirrors the Python in-place mutation
     // pattern but on a local array — the input ConstrainedSample[] is never

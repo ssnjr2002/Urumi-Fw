@@ -68,13 +68,27 @@ export function aMove(da: number, axes: ResolvedAxes, slew?: OpTarget): MicroSeg
     const N = Math.abs(Math.trunc(da));
     if (N === 0) return [];
 
-    // Standalone-A slew target (machine-owned). Feed/accel unset → the A axis
-    // ceiling (which is itself 0 → the legacy 180/2000 emergency floor).
+    // Standalone-A slew target (machine-owned), falling back to the A axis
+    // ceiling. A 0 ceiling means "uncapped" everywhere else in the config, but
+    // a trapezoid cannot be built from "uncapped" — it needs an actual speed.
+    // This used to substitute 180 deg/s and 2000 deg/s^2 silently, which made
+    // an undeclared A axis run FASTER than a declared one (audit H4). load.ts
+    // refuses to invent stepsPerUnit/invert for the same reason; refuse here
+    // too, and say which knob is missing.
     const aSpd = axes.a.stepsPerUnit;
     const feed = slew?.feed ?? axes.a.maxFeed;
     const rate = slew?.accel ?? axes.a.maxAccel;
-    const cruise = Math.max((feed > 0 ? feed : 180) * aSpd, 1);
-    const accel = Math.max((rate > 0 ? rate : 2000) * aSpd, 1);
+    if (!(feed > 0) || !(rate > 0)) {
+        const missing = [!(feed > 0) ? "feed" : null, !(rate > 0) ? "accel" : null]
+            .filter(Boolean)
+            .join(" and ");
+        throw new Error(
+            `aMove: cannot rotate A by ${N} steps — no ${missing} limit. Set ` +
+            `machine.heads[].a.maxFeed/maxAccel, or pass an explicit slew target.`,
+        );
+    }
+    const cruise = Math.max(feed * aSpd, 1);
+    const accel = Math.max(rate * aSpd, 1);
     const v0 = Math.min(cruise, 50);
 
     const sign = (da > 0 ? 1 : -1) * (axes.a.invert ? -1 : 1);
@@ -93,8 +107,14 @@ export function aMove(da: number, axes: ResolvedAxes, slew?: OpTarget): MicroSeg
         } else {
             v = cruise;
         }
+        // Belt-and-braces: both branches above already return >= v0, so this
+        // cannot fire today (audit H5). Kept as a floor because everything
+        // below depends on v being strictly positive.
         v = Math.max(v, v0);
         const chunk = Math.min(Math.max(1, Math.trunc(v / 100)), N - n);
+        // Likewise cannot fire while v is in [v0, cruise] — fCpu/v then lands
+        // well inside [1, fCpu]. It is a guard on the arithmetic, NOT a
+        // guarantee about v, and the C++ port must not read it as one.
         const iv = Math.max(1, Math.min(Math.trunc(axes.fCpu / v), axes.fCpu));
         out.push(microSegment(0, 0, 0, sign * chunk, iv, MICRO_JOG));
         n += chunk;

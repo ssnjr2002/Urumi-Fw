@@ -139,27 +139,12 @@ export function bezierDeriv2(c: CubicBezier, t: number): Pt {
     };
 }
 
-// ── Arc length (5-point Gauss-Legendre quadrature of |B'(t)|) ─────────────────
-// Standard nodes/weights on [-1,1] mapped to [0,1]: t = (x+1)/2, w' = w/2.
-
-const GL5_NODES: readonly number[] = [-0.9061798459, -0.5384693101, 0.0, 0.5384693101, 0.9061798459].map(
-    (x) => 0.5 * (1 + x),
-);
-const GL5_WEIGHTS: readonly number[] = [0.2369268851, 0.4786286705, 0.5688888889, 0.4786286705, 0.2369268851].map(
-    (w) => 0.5 * w,
-);
-
-/** Arc length of a cubic Bezier via 5-point Gauss-Legendre quadrature of |B'(t)| over [0,1]. */
-export function arcLength(c: CubicBezier): number {
-    let total = 0;
-    for (let i = 0; i < GL5_NODES.length; i++) {
-        const t = GL5_NODES[i]!;
-        const w = GL5_WEIGHTS[i]!;
-        const d = bezierDeriv1(c, t);
-        total += w * Math.sqrt(d.x * d.x + d.y * d.y);
-    }
-    return total;
-}
+// Arc length: there is deliberately no arcLength() here. A 5-point
+// Gauss-Legendre quadrature of |B'(t)| used to live at this spot with no
+// production caller (audit F6) — flatten measures length by summing the
+// samples it actually emits, which is both what the timeline needs and
+// accurate on the near-cusp curves where GL5 is worst. Removed rather than
+// ported: dead numerics are the most expensive kind of code to carry into C++.
 
 /** κ(t) = |B'×B''| / |B'|³  (2D cross product = scalar). Returns 0 for near-zero speed. */
 export function curvature(c: CubicBezier, t: number): number {

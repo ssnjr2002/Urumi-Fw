@@ -1,7 +1,7 @@
 # Planner Audit — findings before the C++ port
 
 **Started:** 2026-07-29
-**Status:** In progress — `flatten` audited, other stages pending.
+**Status:** In progress — every stage in the port's scope is audited; fixing in batches (see *Fix batches*).
 
 Living document. One section per stage; append as each is audited. Findings stay
 here until they are fixed or explicitly dismissed, and each carries a proposed
@@ -64,12 +64,12 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | F3 | flatten | minor | Truncated final step manufactures degenerate near-zero-`ds` samples | open, test green |
 | F4 | flatten | gap | `chordTol` and `dthetaMax` had no tests — two of three caps unverified | **resolved** |
 | F5 | flatten | tuning | `chordTol` is near-vestigial: binds 0.8% of steps | note only |
-| F6 | geometry | cleanup | `arcLength` (5-point Gauss-Legendre) has no production caller | open, test pins it |
+| F6 | geometry | cleanup | `arcLength` (5-point Gauss-Legendre) had no production caller | **resolved** (deleted) |
 | F7 | flatten | **contract** | All three caps are PREDICTORS, not bounds — `dsMax` soft by up to 8% | open, **test red** |
 | C1 | constrain | **defect** | No lower bound on `vCeiling` — a cusp yields 3.2e-3 mm/s, 166× under `vMin` | open, test documents |
 | C2 | constrain | ok | All four caps hold as per-sample properties on every fixture | verified |
 | P1 | constrain + plan | **defect** | Axis accel budget spent twice: centripetal and tangential each capped at `aMax`, nothing owns the sum (→ √2·aMax) | open, **test red** |
-| P2 | plan | **contract** | A stream without `PATH_START`/`PATH_END` is silently unplanned — `v = vCeiling`, no error | open, **test red** |
+| P2 | plan | **contract** | A stream without `PATH_START`/`PATH_END` was silently unplanned — `v = vCeiling`, no error | **resolved** (throws) |
 | P3 | plan | consequence of C1 | Carries unexecutable ceilings through; ~⅕ of the below-`vMin` span is self-inflicted by the sweeps | open, **test red** |
 | P4 | compileBlock | tuning | A non-tangential tool still pays the A-axis curvature cap — ~8× accel loss on a 5 mm arc | open, test documents |
 | P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
@@ -77,12 +77,12 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | open, **test red** |
 | D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** |
 | D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | open, **test red** |
-| D5 | discretize | gap | Every tool ships `liftHeight = 0`, so the entire Z lift/lower path was dead and untested | **resolved** (tests) |
+| D5 | discretize | gap | `DEFAULTS.tool.liftHeight = 0`, so the Z lift/lower path was dead *under test*. The deployed config sets `knife.liftHeight = 2.0`, so production did lift | **resolved** (tests) |
 | H1 | choreograph | **defect** | `aMove`'s decel ramp exceeds the A accel limit by 1.26–1.65× and never reaches rest — stops dead from up to 39 deg/s. Chunk-start rate sampling is conservative going up, anti-conservative coming down | open, **test red** ×3 |
 | H2 | choreograph | **defect** | `travelJog` / `headOffsetJog` emit one segment at full feed — 0→80 mm/s in zero distance, ignoring `x.maxAccel` entirely | open, **test red** |
 | H3 | choreograph | known | `zMove` is likewise unramped (0→24000 steps/s); acknowledged by the module TODO, and `z.maxAccel` is 0 so there is no limit to check against | open, **test red** |
-| H4 | choreograph | **contract** | `aMove` silently invents 180 deg/s + 2000 deg/s² when the A ceilings are 0 — `load.ts` refuses to invent calibration, this invents limits | open, **test red** |
-| H5 | choreograph | cleanup | Three redundant guards all defend `v ≥ v0`; each is an equivalent mutant | note only |
+| H4 | choreograph | **contract** | `aMove` silently invented 180 deg/s + 2000 deg/s² when the A ceilings are 0 — `load.ts` refuses to invent calibration, this invented limits | **resolved** (throws) |
+| H5 | choreograph | cleanup | Three redundant guards all defend `v ≥ v0`; each is an equivalent mutant | **resolved** (documented as belt-and-braces) |
 
 ---
 
@@ -1075,49 +1075,16 @@ Two process notes, both repeats of lessons from earlier stages:
 
 ## Current test state
 
-`npx vitest run test/toolpath/flatten` — 20 passing, 4 red, all 4 intentional:
+| Suite | Passing | Red | Findings the red tests pin |
+|---|---|---|---|
+| `test/toolpath/flatten` | 19 | 4 | F1, F7 |
+| `test/toolpath/constrain` | 39 | 0 | — |
+| `test/toolpath/plan` | 48 | 3 | P1, P3 ×2 |
+| `test/toolpath/discretize` | 28 | 5 | D1 ×2, D2, D3, D4 |
+| `test/toolpath/geometry` | 28 | 0 | — |
+| `test/choreograph` | 53 | 5 | H1 ×3, H2, H3 |
 
-```
-× cap 2 — spacing <= dsMax          7 violations (F7)
-× cap 3 — tangent turn <= dthetaMax 3 violations (F1 + F7)
-× snake.svg — spacing cap holds     142 of 356 steps (F7)
-× snake.svg — tangent cap holds     2.062deg vs 2.0 (F7)
-```
-
-`npx vitest run test/toolpath/constrain` — 39 passing, 0 red.
-
-`npx vitest run test/toolpath/plan` — 43 passing, 5 red, all 5 intentional:
-
-```
-× no axis is asked for more acceleration than it has            3 fixtures (P1)
-× refuses, or plans, a stream with no PATH_START/PATH_END       (P2)
-× does not drop a subpath whose PATH_END is missing             (P2)
-× spends no meaningful arc length below vMin                    2 fixtures (P3)
-× introduces no unexecutable speed of its OWN                   cusp only (P3)
-```
-
-`npx vitest run test/toolpath/discretize` — 27 passing, 5 red, all 5 intentional:
-
-```
-× emits no segment with zero motion on any axis                 cusp/knife (D1)
-× reaches the PATH_END marker on ordinary geometry              pen/arc    (D1)
-× emitted cut time matches the exact constant-accel time        3 fixtures (D2)
-× the plan never asks A for more than its rate ceiling          2 fixtures (D3)
-× every corner it pivots at was stopped for by constrain        cusp       (D4)
-```
-
-`npx vitest run test/choreograph` — 50 passing, 6 red, all 6 intentional:
-
-```
-× H1a: aMove's decel ramp respects the A accel ceiling      8 of 9 sizes (H1)
-× H1b: aMove comes to rest at its designed terminal velocity 9 of 9 sizes (H1)
-× H1c: the shortest rotations ramp down at all               N=52         (H1)
-× H2: travelJog ramps to its feed instead of stepping to it               (H2)
-× H3: zMove ramps instead of slamming to zFeed                            (H3)
-× H4: aMove does not invent A limits for an under-specified machine       (H4)
-```
-
-Full suite: **676 passing, 20 red**, 4 skipped; `tsc --noEmit` clean. All 20 red
+Full suite: **680 passing, 17 red**, 4 skipped; `tsc --noEmit` clean. All 17 red
 are intentional and each names its finding; every other module is green.
 
 `CUSP` is now imported directly by the `flatten`, `constrain`, `plan` and
@@ -1126,15 +1093,71 @@ move into the shared `CASES` registry whenever a fifth consumer wants it.
 
 ---
 
+## Fix batches
+
+Ordered by cheapness, and grouped so that each batch's golden diff is
+attributable to one cause. Regenerating a golden is a script; *justifying* the
+diff is the expensive part, so the goal is the fewest **unattributable** golden
+diffs, not simply the fewest batches.
+
+| Batch | Contents | Golden footprint | State |
+|---|---|---|---|
+| **A** | H5, F6, P2, H4 | none | **done** |
+| **B** | D2, D1 | cutting segments | next |
+| **C** | H1, H2 (H3 blocked) | non-cutting segments only | |
+| **D** | F1, F7, F2/D4, C1/P3, P1, P4 | everything | gated on decisions |
+
+`D3` and `P3` are deliberately absent as work items: both are downstream of
+causes in batch D (the F1/F7 cap chain and C1 respectively), so they get
+re-measured after D rather than fixed on their own.
+
+### Batch A — done (byte-neutral)
+
+Four changes that make the code honest without moving a single emitted byte.
+Verified: `test/production/data/*_golden.bin` untouched (`git status` clean) and
+the 37 production tests pass unchanged.
+
+- **F6** — `arcLength()` deleted from `geometry.ts` along with its two tests.
+  Dead numerics are the most expensive kind of code to carry into C++. The
+  `CASES.expected.arcLength` values are left in place as fixture reference data;
+  nothing consumes them, which is worth a separate look.
+- **P2** — `plan()` now validates that its samples are fully covered by
+  contiguous `PATH_START`/`PATH_END` brackets and throws naming the offending
+  index range. The check is *coverage*, not merely termination, so a gap between
+  two well-formed subpaths is caught too — that case was equally invisible and
+  had no test before.
+- **H4** — `aMove()` throws rather than substituting 180 deg/s and 2000 deg/s²
+  when the A ceilings are 0, naming which knob is missing. Two guards keep this
+  from being a regression: an explicit `slew` target still satisfies an
+  otherwise-uncapped axis, and `aMove(0)` stays a no-op — `load.ts` builds an
+  *absent* axis with 0 ceilings, so a no-op call on a machine with no A axis
+  must not throw.
+- **H5** — the three redundant `v ≥ v0` guards are kept and commented as
+  belt-and-braces, not deleted. The `[1, fCpu]` interval clamp in particular is a
+  guard on the arithmetic and *not* a guarantee about `v`; the comment says so,
+  because in C++ it would otherwise read as one. They remain equivalent mutants
+  by design.
+
+Confirmed while doing this, from `web/demo/config.json` (the deployed machine):
+
+- `a.maxFeed = 100`, `a.maxAccel = 500` — both set, which is what made H4
+  byte-neutral. Note the real accel is **500**, not the fixture's 2000.
+- `z.maxAccel` is **absent** (⇒ 0), so H3 is blocked on characterizing the Z
+  axis on the real machine, not just in the fixture.
+- `knife.liftHeight = 2.0`. D5's original wording overstated the case: the Z
+  path was dead *under test*, not in production. Corrected in the table above.
+
+---
+
 ## Stages pending
 
 | Stage | Status |
 |---|---|
-| 3 `repair` (`enforceC1`) | not audited |
+| 3 `repair` (`enforceC1`) | **out of scope** — host-side (`production/compileBlock.ts`); the Pico receives `SplineTile` Bezier packets, so the ported pipeline is flatten → constrain → plan → discretize plus `choreograph` |
 | 6 `plan` | **audited** — P1–P5 above |
 | 8 `discretize` | **audited** — D1–D5 above |
 | — `choreograph` | **audited** — H1–H5 above. Not a stage; audited because `discretize` could only see it through one caller |
-| 9 `dutyBreaks` | not audited — next. Partially known: see `tool_duty_limits.md` §5, §11. Note it consumes the timeline D2 and D3 both corrupt, so audit those findings' impact here first |
+| 9 `dutyBreaks` | **out of scope** — host-side, same reason. One follow-up that is *not* an audit: batches B and C change the timeline it schedules knife enable-line resets against (`tool_duty_limits.md` §5), so re-check it once those land |
 
 When auditing a later stage, consider adding `CUSP` to that stage's fixtures
 deliberately. It is the geometry every stage handles worst, and it is currently

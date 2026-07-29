@@ -31,7 +31,6 @@
 import { describe, it, expect } from "vitest";
 import { readFixture } from "../helpers.js";
 import {
-    arcLength,
     bezierPoint,
     bezierDeriv1,
     lineToCubic,
@@ -50,11 +49,13 @@ const q = qualityConfig();
 // ── reference geometry (independent of flatten) ───────────────────────────────
 
 /**
- * Arc length by dense chord summation. Slower but far more trustworthy than the
- * 5-point Gauss-Legendre in `arcLength()` on curves whose |B'| varies sharply —
- * GL5 under-reports a near-cusp badly, and the previous version of this file
- * had a test pinned to that error (it asserted chordSum >= GL5, which is only
- * true because GL5 was wrong; a chord sum can never exceed true arc length).
+ * Arc length by dense chord summation — the reference the flatten tests measure
+ * against. Slower but far more trustworthy than quadrature on curves whose |B'|
+ * varies sharply. geometry.ts used to export a 5-point Gauss-Legendre
+ * `arcLength()` which under-reported a near-cusp badly; an earlier version of
+ * this file had a test pinned to that error (it asserted chordSum >= GL5, which
+ * is only true because GL5 was wrong — a chord sum can never exceed true arc
+ * length). That function had no production caller and was removed (audit F6).
  */
 function denseArcLength(c: CubicBezier, n = 20000): number {
     let total = 0;
@@ -177,18 +178,6 @@ describe("flatten: arc length", () => {
         expect(Math.abs(total - 100.0)).toBeLessThan(0.01);
     });
 
-    it("GL5 arcLength agrees with dense summation on smooth curves", () => {
-        // Pins the ONE claim the production pipeline does not rely on: arcLength()
-        // has no production caller (audit F6). If it is kept, this is its test;
-        // if it is dropped, this test goes with it. Smooth curves only — GL5 is
-        // known-bad on near-cusps, which is precisely why flatten does not use it.
-        for (const name of ["straight_line", "quarter_circle_r50", "full_circle_r30", "long_gentle_arc"]) {
-            const curves = CASES[name]!.curves;
-            const gl5 = curves.reduce((s, c) => s + arcLength(c), 0);
-            const dense = denseArcLengthAll(curves);
-            expect(Math.abs(gl5 - dense) / dense, name).toBeLessThan(0.001);
-        }
-    });
 });
 
 describe("flatten: endpoints", () => {

@@ -20,7 +20,6 @@ import {
     bezierPoint,
     bezierDeriv1,
     bezierDeriv2,
-    arcLength,
     curvature,
     type Pt,
 } from "../../src/toolpath/geometry.js";
@@ -184,38 +183,6 @@ describe("geometry: bezierDeriv2", () => {
         const d2 = bezierDeriv2(c, 0);
         // 6 * (3 - 2*1 + 0) = 6 * 1 = 6
         expect(approxPt(d2, { x: 6, y: 0 }, 1e-9)).toBe(true);
-    });
-});
-
-// ── arcLength ─────────────────────────────────────────────────────────────────
-
-describe("geometry: arcLength", () => {
-    it("straight line cubic: length = endpoint distance", () => {
-        const line = lineToCubic({ x: 0, y: 0 }, { x: 3, y: 4 });
-        // 3-4-5 triangle
-        expect(arcLength(line)).toBeCloseTo(5, 6);
-    });
-
-    it("horizontal line: length = dx", () => {
-        const line = lineToCubic({ x: 0, y: 0 }, { x: 10, y: 0 });
-        expect(arcLength(line)).toBeCloseTo(10, 6);
-    });
-
-    it("quarter-circle approximation: length ≈ π/2 * r", () => {
-        // 4-cubic kappa approximation of a unit circle quarter-arc
-        // Each quarter: (1,0) -> (1, kappa) -> (kappa, 1) -> (0, 1)
-        const quarter = cubic(
-            { x: 1, y: 0 },
-            { x: 1, y: KAPPA },
-            { x: KAPPA, y: 1 },
-            { x: 0, y: 1 },
-        );
-        const L = arcLength(quarter);
-        // GL5 quadrature is exact for the integral it computes, but the kappa
-        // cubic is itself only an approximation of a true circular arc — the
-        // ~0.014% length error vs π/2 is the kappa approximation's error, not
-        // the quadrature's. Loose tolerance reflects that.
-        expect(L).toBeCloseTo(Math.PI / 2, 2);
     });
 });
 

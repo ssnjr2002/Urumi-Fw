@@ -625,27 +625,53 @@ describe("stage 6 FINDING P1: the axis accel budget is spent twice", () => {
     });
 });
 
-describe("stage 6 FINDING P2: an unbracketed stream is silently unplanned", () => {
+describe("stage 6 P2: an unbracketed stream is refused, not silently unplanned", () => {
     // subpathRanges yields nothing for a stream without PATH_START/PATH_END, so
-    // the sweeps never run, the endpoints are never pinned, and plan returns
+    // the sweeps never ran, the endpoints were never pinned, and plan returned
     // v = vCeiling verbatim: full feed from a standing start, no error.
     //
-    // flatten always brackets, so production is safe today. But plan is an
-    // exported pure stage taking arbitrary ConstrainedSample[], and the C++ port
-    // will have callers (jog, streamed tiles) that are not flatten. Failing
-    // loudly is cheap now and expensive to retrofit.
-    it("refuses, or plans, a stream with no PATH_START/PATH_END", () => {
-        const bare = flatten([[line({ x: 0, y: 0 }, { x: 100, y: 0 })]], q)
-            .map((s) => ({ ...s, flags: 0 }));
-        const c = constrain(bare, { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation });
-        const p = plan(c, PLAN_OPTS);
-        expect(p[0]!.v).toBe(0);
+    // flatten always brackets, so production was safe. But plan is an exported
+    // pure stage taking arbitrary ConstrainedSample[], and the port gives it
+    // callers (jog, streamed tiles) that are not flatten.
+    const bare = () =>
+        constrain(
+            flatten([[line({ x: 0, y: 0 }, { x: 100, y: 0 })]], q).map((s) => ({ ...s, flags: 0 })),
+            { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation },
+        );
+
+    it("throws on a stream with no PATH_START/PATH_END at all", () => {
+        expect(() => plan(bare(), PLAN_OPTS)).toThrow(/outside any PATH_START\/PATH_END bracket/);
     });
 
-    it("does not drop a subpath whose PATH_END is missing", () => {
+    it("throws on a subpath whose PATH_END is missing, naming the cause", () => {
         const st = flatten([[line({ x: 0, y: 0 }, { x: 100, y: 0 })]], q)
             .map((s, i, arr) => (i === arr.length - 1 ? { ...s, flags: 0 } : s));
-        expect([...subpathRanges(st)].length).toBe(1);
+        const c = constrain(st, { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation });
+        expect(() => plan(c, PLAN_OPTS)).toThrow(/missing PATH_END/);
+        expect([...subpathRanges(st)].length).toBe(0); // the silence plan now refuses
+    });
+
+    it("throws on a gap BETWEEN two otherwise well-formed subpaths", () => {
+        // The check is coverage, not just termination: an unbracketed sample
+        // sandwiched between good subpaths was equally invisible.
+        const a = flatten([[line({ x: 0, y: 0 }, { x: 10, y: 0 })]], q);
+        const b = flatten([[line({ x: 20, y: 0 }, { x: 30, y: 0 })]], q);
+        const gap = [...a, { ...a[a.length - 1]!, flags: 0 }, ...b];
+        const c = constrain(gap, { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation });
+        expect(() => plan(c, PLAN_OPTS)).toThrow(/outside any PATH_START\/PATH_END bracket/);
+    });
+
+    it("still accepts what flatten actually emits, single and multi subpath", () => {
+        const one = flatten([[line({ x: 0, y: 0 }, { x: 10, y: 0 })]], q);
+        const two = [...one, ...flatten([[line({ x: 20, y: 0 }, { x: 30, y: 0 })]], q)];
+        for (const st of [one, two]) {
+            const c = constrain(st, { feedMax: FEED, aMax: A_MAX, junctionDeviation: q.junctionDeviation });
+            expect(() => plan(c, PLAN_OPTS)).not.toThrow();
+        }
+    });
+
+    it("accepts an empty stream", () => {
+        expect(plan([], PLAN_OPTS)).toEqual([]);
     });
 });
 

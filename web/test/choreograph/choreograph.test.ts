@@ -661,18 +661,33 @@ describe("choreograph CONTRACT: acceleration limits (FINDINGS)", () => {
     });
 });
 
-describe("choreograph CONTRACT: fallbacks (FINDING)", () => {
-    it("H4: aMove does not invent A limits for an under-specified machine", () => {
+describe("choreograph CONTRACT: fallbacks", () => {
+    it("H4: aMove refuses to invent A limits for an under-specified machine", () => {
         // load.ts refuses to invent stepsPerUnit/invert/node because guessing
-        // calibration is how you crash a machine. aMove happily invents
-        // 180 deg/s and 2000 deg/s^2 when the A ceilings are 0 ("uncapped"),
-        // silently, at the emitter. Same class of number, opposite policy.
+        // calibration is how you crash a machine. aMove used to invent
+        // 180 deg/s and 2000 deg/s^2 when the A ceilings were 0 ("uncapped"),
+        // silently — which made an undeclared axis run 1.8x FASTER than the
+        // real machine's declared 100 deg/s. Same class of number, and now the
+        // same policy.
+        expect(() => aMove(4650, remap({ a: { maxFeed: 0, maxAccel: 0 } })))
+            .toThrow(/no feed and accel limit/);
+        expect(() => aMove(4650, remap({ a: { maxFeed: 0 } })))
+            .toThrow(/no feed limit/);
+        expect(() => aMove(4650, remap({ a: { maxAccel: 0 } })))
+            .toThrow(/no accel limit/);
+    });
+
+    it("H4: an explicit slew target satisfies an otherwise uncapped A axis", () => {
+        // "Uncapped" is refused for lack of a number, not as a policy against
+        // the axis — supplying the number by any route is enough.
         const uncapped = remap({ a: { maxFeed: 0, maxAccel: 0 } });
-        const peak = Math.max(...slices(aMove(4650, uncapped), uncapped).map((s) => s.v));
-        const invented = 180 * uncapped.a.stepsPerUnit;
-        expect(
-            `uncapped A move peaks at ${peak.toFixed(0)} steps/s` +
-            ` (= the invented ${invented.toFixed(0)} floor)`,
-        ).toBe("no motion emitted, or an explicit error");
+        const segs = aMove(4650, uncapped, { feed: 100, accel: 500 });
+        expect(segs.reduce((s, x) => s + Math.abs(x.da), 0)).toBe(4650);
+    });
+
+    it("H4: a zero rotation on an uncapped axis is still a no-op, not a throw", () => {
+        // Nothing to rotate needs no limits. Keeps an absent A axis (which
+        // load.ts builds with 0 ceilings) from throwing on a no-op call.
+        expect(aMove(0, remap({ a: { maxFeed: 0, maxAccel: 0 } }))).toEqual([]);
     });
 });
