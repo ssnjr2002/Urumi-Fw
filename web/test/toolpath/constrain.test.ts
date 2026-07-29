@@ -28,7 +28,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { lineToCubic, type CubicBezier } from "../../src/toolpath/geometry.js";
+import { lineToCubic, angleDelta, type CubicBezier } from "../../src/toolpath/geometry.js";
 import { flatten } from "../../src/toolpath/flatten.js";
 import { constrain, junctionCap, type ConstrainOptions } from "../../src/toolpath/constrain.js";
 import { CURVE_BOUNDARY, PATH_START, type Sample } from "../../src/toolpath/sample.js";
@@ -363,30 +363,57 @@ describe("constrain: junctionCap helper", () => {
 // ═══ 3. THE CUSP — what constrain actually does ═══════════════════════════════
 
 describe("constrain: cusp handling", () => {
-    it("does not stop at an intra-curve tangent reversal", () => {
-        // Documents audit F2. The corner-stop branch is gated on CURVE_BOUNDARY,
-        // which flatten only sets at curve JOINS. A 178deg reversal inside a
-        // single curve is therefore never considered for a corner stop, even
-        // though discretize's ungated dtheta check will treat it as one.
-        //
-        // Passes today. REVISIT — do not delete — when F2 is resolved.
+    it("F2 (FIXED): stops at an intra-curve tangent reversal", () => {
+        // Was: the corner-stop branch was gated on CURVE_BOUNDARY, which flatten
+        // only sets at curve JOINS. A 178deg reversal INSIDE a single curve was
+        // never considered for a corner stop — while discretize's ungated
+        // dtheta check treated it as one and inserted a lift-pivot-lower there.
+        // The two stages disagreed about what a corner is.
         const s = flatten([CUSP], q);
         const c = constrain(s, { ...BASE, cornerStopAngleDeg: 20.0 });
         expect(s.filter((x) => x.flags & CURVE_BOUNDARY)).toHaveLength(0);
-        expect(c.filter((x) => x.vCeiling === 0)).toHaveLength(0);
+        expect(c.filter((x) => x.vCeiling === 0).length).toBeGreaterThan(0);
     });
 
-    it("crawls through the cusp instead, far below the executable floor", () => {
-        // Audit C1. The A caps drive the ceiling to ~3e-3 mm/s — 166x BELOW
+    it("F2 (FIXED): the stop lands on the sample the pivot happens at", () => {
+        // Off-by-one guard, and it is not hypothetical: the finding test for
+        // this in discretize.test.ts checked the sample BEFORE the jump while
+        // printing the flag of the sample AFTER it, so it under-reported the
+        // defect (4.84e-3 mm/s at the approach sample, 2.14e-2 at the sample
+        // that actually pivots). The corner is at the LATER sample of the pair.
+        const s = flatten([CUSP], q);
+        const c = constrain(s, { ...BASE, cornerStopAngleDeg: 20.0 });
+        let found = 0;
+        for (let i = 1; i < s.length; i++) {
+            if (Math.abs(angleDelta(s[i - 1]!.theta, s[i]!.theta)) >= 20.0) {
+                found++;
+                expect(c[i]!.vCeiling).toBe(0);
+            }
+        }
+        expect(found).toBeGreaterThan(0);
+    });
+
+    it("C1 (FIXED): a ceiling below vMin becomes a stop, not a crawl", () => {
+        // Was: the A caps drove the ceiling to ~3e-3 mm/s — 166x BELOW
         // quality.vMin (0.5 mm/s), the floor discretize clamps the interval to.
-        // So the planned profile and the executed profile diverge here by two
-        // orders of magnitude, and every timeline derived from the plan (notably
-        // dutyBreaks' budget) is wrong across a cusp.
-        //
-        // Asserted as the CURRENT behaviour so the gap is visible and attributable.
+        // The planned and executed profiles diverged by two orders of magnitude
+        // there, and every timeline derived from the plan went with them
+        // (notably dutyBreaks' budget).
+        const c = constrain(flatten([CUSP], q), {
+            ...BASE, aRateDegS: 100, aAccelDegS2: 50, vMin: q.vMin,
+        });
+        const nonZero = c.map((x) => x.vCeiling).filter((v) => v > 0);
+        expect(Math.min(...nonZero)).toBeGreaterThanOrEqual(q.vMin);
+        expect(c.some((x) => x.vCeiling === 0)).toBe(true);
+    });
+
+    it("C1: the floor is opt-in — absent vMin leaves the old crawl", () => {
+        // The stage takes no config and invents no defaults: a caller that does
+        // not state a floor does not get one. This is what keeps constrain
+        // usable outside the production bridge, and it is why the value is
+        // passed rather than imported.
         const c = constrain(flatten([CUSP], q), { ...BASE, aRateDegS: 100, aAccelDegS2: 50 });
-        const min = c.reduce((m, x) => Math.min(m, x.vCeiling), Infinity);
-        expect(min).toBeGreaterThan(0);
+        const min = Math.min(...c.map((x) => x.vCeiling).filter((v) => v > 0));
         expect(min).toBeLessThan(q.vMin / 100);
     });
 });

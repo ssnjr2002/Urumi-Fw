@@ -335,6 +335,12 @@ export interface QualityConfig {
     readonly junctionDeviation: number;
     readonly dsMax: number;
     readonly dthetaMax: number;
+    /**
+     * Halvings allowed when a flatten step overshoots dsMax or dthetaMax
+     * (audit F1/F7). Bounds how many samples a cusp can cost. 0 disables
+     * enforcement, restoring the pre-F7 predict-and-hope behaviour.
+     */
+    readonly maxRefine: number;
 }
 
 export function qualityConfig(overrides?: Partial<QualityConfig>): QualityConfig {

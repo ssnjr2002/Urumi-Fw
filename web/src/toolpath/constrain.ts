@@ -108,6 +108,22 @@ export interface ConstrainOptions {
      * can be checked here.
      */
     readonly forcedStops?: ReadonlySet<number>;
+    /**
+     * Execution speed floor (mm/s). A ceiling below this is not a ceiling — it
+     * is a stop that has not admitted it, so it is forced to 0 and the corner
+     * machinery handles it honestly.
+     *
+     * Source: QualityConfig.vMin — the SAME value `discretize` clamps the step
+     * interval to. Passed in explicitly rather than imported, because this
+     * stage takes no config and that property is worth keeping. Absence
+     * disables the floor, like the other optional switches.
+     *
+     * Audit C1: on the cusp fixture the A caps drove the ceiling to 3.24e-3
+     * mm/s while discretize executed it at vMin = 0.5 — the plan and the
+     * machine disagreed by 166x, and every timeline derived from the plan was
+     * wrong across the cusp with it.
+     */
+    readonly vMin?: number;
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -167,6 +183,7 @@ export function constrain(
         aAccelDegS2 = 0,
         cornerStopAngleDeg,
         forcedStops,
+        vMin = 0,
     } = options;
 
     const aRateRad = aRateDegS > 0 ? (aRateDegS * Math.PI) / 180 : 0;
@@ -195,15 +212,32 @@ export function constrain(
             }
         }
 
-        // Tangent jump across a curve boundary (the corner signal)
-        if ((s.flags & CURVE_BOUNDARY) && i > 0) {
+        // Tangent jump — the corner signal.
+        //
+        // The STOP test is ungated (audit F2/D4): `discretize` computes dtheta
+        // between consecutive samples with no flag test at all, so an
+        // intra-curve cusp is a corner there. Gating this half on
+        // CURVE_BOUNDARY meant discretize inserted a lift-pivot-lower at a
+        // sample plan had never decelerated into — the two stages disagreed
+        // about what a corner is, and discretize was the one that was right.
+        //
+        // The junction-deviation cap stays gated. It models a VERTEX between
+        // two curves across a near-zero-length span; applying it to ordinary
+        // in-curve samples would double-count the centripetal cap, which
+        // already owns continuous turning.
+        if (i > 0) {
             const turn = angleDelta(samples[i - 1]!.theta, s.theta);
             if (cornerStopAngleDeg !== undefined && Math.abs(turn) >= cornerStopAngleDeg) {
                 cap = 0;
-            } else if (Math.abs(turn) > 1e-6) {
+            } else if ((s.flags & CURVE_BOUNDARY) && Math.abs(turn) > 1e-6) {
                 cap = Math.min(cap, junctionCap(turn, aMax, junctionDeviation, feedMax));
             }
         }
+
+        // A ceiling under the floor the machine will actually execute is a stop
+        // (audit C1). Forcing it to 0 makes plan decelerate into it and
+        // accelerate out, so the executed profile is the planned one.
+        if (vMin > 0 && cap < vMin) cap = 0;
 
         return { ...s, vCeiling: cap };
     });

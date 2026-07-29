@@ -122,6 +122,7 @@ export function compileBlock(
         dthetaMax: quality.dthetaMax,
         dtMax: quality.dtMax,
         dtMin: quality.dtMin,
+        maxRefine: quality.maxRefine,
     });
 
     // Stage 5: constrain — per-sample velocity ceiling
@@ -132,14 +133,26 @@ export function compileBlock(
         aRateDegS: aRate,
         aAccelDegS2: aAccel,
         cornerStopAngleDeg: cornerStop,
+        // The same floor discretize clamps intervals to — constrain must not
+        // plan a speed the machine will refuse to execute (audit C1).
+        vMin: quality.vMin,
     });
 
-    // Stage 6: plan — look-ahead feedrate, per-axis accel (A accel always read
-    // directly here, unlike the tangential-gated form constrain gets above)
+    // Stage 6: plan — look-ahead feedrate, per-axis accel.
+    //
+    // The A term is gated on `tangential`, the same as constrain's above (audit
+    // P4). It used to be passed unconditionally, so a pen — not tracking the
+    // tangent at all — had its path acceleration cut by rad(aAccel)/kappa on
+    // every curve: 8x on a 5mm arc, for an axis that is not moving.
+    //
+    // A revolver pen does rotate A, but only between operations, and that
+    // motion is emitted by choreograph (preOrient / aMoveTo) against A's own
+    // limits — it never rides a cutting segment, so it has no claim on the
+    // cutting path's acceleration budget.
     const planned = plan(constrained, {
         xAccel: machine.x.maxAccel,
         yAccel: machine.y.maxAccel,
-        aAccelDegS2: axes.a.maxAccel,
+        aAccelDegS2: aAccel,
         aMax: xyAccel,
         pathAccel,
     });

@@ -299,9 +299,12 @@ describe("flatten: cap 2 — spacing <= dsMax", () => {
         // Previously asserted on the straight line only — the one case where the
         // cap is trivially satisfied.
         //
-        // KNOWN FAILING (audit F7): `dt <= dsMax / |B'(t)|` reads speed at the
-        // step START, so wherever the curve accelerates across a step the chord
-        // lands longer than dsMax. Predictor, not guarantee.
+        // WAS FAILING (audit F7): `dt <= dsMax / |B'(t)|` reads speed at the
+        // step START, so wherever the curve accelerated across a step the chord
+        // landed longer than dsMax — a predictor, not a guarantee, and
+        // `snake.svg` had 142 of 356 steps over. The step is now MEASURED after
+        // being proposed and halved on overshoot, which makes the cap a bound.
+        // Cost: ~50% more samples (snake 356 -> 531).
         forEachFixture((name, curves) => {
             const samples = flatten([curves], q);
             let worst = 0;
@@ -331,11 +334,25 @@ describe("flatten: cap 3 — tangent turn <= dthetaMax", () => {
         // constrain reads, and is deliberate. Anywhere else it is an unplanned
         // discontinuity the planner never decelerates for.
         //
-        // KNOWN FAILING (audit F1 + F7). Two distinct magnitudes, and the test
-        // must report BOTH — they have different causes and different fixes:
+        // WAS FAILING (audit F1 + F7) with two distinct magnitudes:
         //   near_cusp ~2.8deg (1.4x)  — predictor error, kappa read at step start
         //   cusp    ~178.0deg (89x)   — cap SKIPPED entirely at |B'| -> 0
+        //
+        // The predictor error is gone: measuring the realised turn and halving
+        // takes near_cusp to 2.0, quarter_circle_r5's 22 overshoots to 0, and
+        // snake.svg's 31 to 0.
+        //
+        // The cusp is EXEMPT, and that is a correction to F1 rather than a
+        // concession. A true cusp reverses the tangent at a single parameter
+        // value, so the realised turn tends to 180deg however small the step
+        // gets — "force fine sampling at a cusp" is not achievable, because
+        // there is no sampling density at which a reversal is a small turn.
+        // What the pipeline does instead is read it as the CORNER it is:
+        // constrain stops there (C1/F2) and discretize lift-pivots. The
+        // companion test below pins that the exemption is exactly one sample.
+        const CUSP_EXEMPT = new Set(["cusp"]);
         forEachFixture((name, curves) => {
+            if (CUSP_EXEMPT.has(name)) return [];
             const samples = flatten([curves], q);
             let worst = 0;
             let at = -1;
@@ -349,6 +366,35 @@ describe("flatten: cap 3 — tangent turn <= dthetaMax", () => {
                 : [`${name}: sample ${at} turned ${worst.toFixed(3)}deg ` +
                    `(${(worst / q.dthetaMax).toFixed(1)}x dthetaMax)`];
         });
+    });
+
+    it("a true cusp overshoots at exactly one sample, and it is a reversal", () => {
+        // The exemption above, bounded. If refinement ever started giving up
+        // early on ORDINARY geometry this count would climb, and if the cusp
+        // stopped being read as a near-reversal the pipeline's corner handling
+        // would silently stop applying to it.
+        const samples = flatten([CUSP], q);
+        const over: number[] = [];
+        for (let i = 1; i < samples.length; i++) {
+            if (samples[i]!.flags & (CURVE_BOUNDARY | PATH_START)) continue;
+            if (absAngleDelta(samples[i - 1]!.theta, samples[i]!.theta) > q.dthetaMax + 1e-9) {
+                over.push(i);
+            }
+        }
+        expect(over).toHaveLength(1);
+        expect(absAngleDelta(samples[over[0]! - 1]!.theta, samples[over[0]!]!.theta))
+            .toBeGreaterThan(170);
+    });
+
+    it("refinement is bounded: maxRefine caps what a cusp costs in samples", () => {
+        // The firmware ships one fixed maxRefine and a sample-count-bounded
+        // window; the host may raise it. Depth 4 already removes every
+        // overshoot on every fixture, so the shipped 8 is margin, not need.
+        const at = (maxRefine: number) => flatten([CUSP], { ...q, maxRefine }).length;
+        expect(at(0)).toBe(78);
+        expect(at(4)).toBe(at(8));
+        expect(at(8)).toBe(at(16));
+        expect(at(8)).toBeLessThan(at(0) * 2);
     });
 });
 

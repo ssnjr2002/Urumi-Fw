@@ -89,6 +89,9 @@ function constrained(
         aRateDegS: aRate,
         aAccelDegS2: HEAD.a.maxAccel,
         cornerStopAngleDeg: cornerStop,
+        // the production bridge passes this; the tests must too, or they
+        // measure a pipeline nobody ships (audit C1)
+        vMin: q.vMin,
     });
 }
 
@@ -413,7 +416,24 @@ describe("stage 6: monotonicity — more budget never plans slower", () => {
         );
     });
 
-    it("a higher vCeiling everywhere never lowers any planned speed", () => {
+    it("a higher vCeiling never lowers planned speed where there is no curvature", () => {
+        // This used to hold unconditionally. It cannot any more, and the reason
+        // is the P1 fix rather than a regression: the accel budget is now
+        // SHARED, so a ceiling that lets the tool take a curve faster really
+        // does leave less acceleration to speed up alongside it. Where kappa is
+        // 0 there is no centripetal term, nothing to share, and the original
+        // property still holds exactly.
+        const c = constrained([[line({ x: 0, y: 0 }, { x: 100, y: 0 })]], 100, 20);
+        const lifted = c.map((s) => ({ ...s, vCeiling: s.vCeiling * 2 }));
+        const a = plan(c, PLAN_OPTS);
+        const b = plan(lifted, PLAN_OPTS);
+        for (let i = 0; i < a.length; i++) expect(b[i]!.v).toBeGreaterThanOrEqual(a[i]!.v - 1e-9);
+    });
+
+    it("on curved geometry the coupling is real, bounded, and only at kappa > 0", () => {
+        // The other half: where it does lower a speed, that must be explained by
+        // curvature and must be small. An unbounded or kappa-free regression
+        // here would mean the headroom term is wrong, not merely conservative.
         forEachFixture((name, curves) => {
             const c = constrained([curves], 100, 20);
             const lifted = c.map((s) => ({ ...s, vCeiling: s.vCeiling * 2 }));
@@ -421,7 +441,9 @@ describe("stage 6: monotonicity — more budget never plans slower", () => {
             const b = plan(lifted, PLAN_OPTS);
             const bad: string[] = [];
             for (let i = 0; i < a.length; i++) {
-                if (b[i]!.v < a[i]!.v - 1e-9) bad.push(`${name}: sample ${i}`);
+                if (b[i]!.v < a[i]!.v - 1e-9 && c[i]!.kappa <= 1e-9) {
+                    bad.push(`${name}: sample ${i} slowed with kappa=0`);
+                }
             }
             return bad.slice(0, 3);
         });
@@ -599,20 +621,24 @@ describe("stage 6: subpathRanges", () => {
 // FINDINGS — these fail. Each pins a defect recorded in docs/planner_audit.md.
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe("stage 6 FINDING P1: the axis accel budget is spent twice", () => {
+describe("stage 6 P1 (FIXED): the axis accel budget is one budget", () => {
     // constrain bounds the CENTRIPETAL accel by aMax (v <= sqrt(aMax/kappa));
     // plan bounds the TANGENTIAL accel by the per-axis projection. The two are
-    // orthogonal, so an axis can be asked for up to sqrt(2)*aMax = 1414 mm/s^2
-    // against a 1000 mm/s^2 limit. Neither stage is wrong in isolation; nothing
-    // owns the sum.
+    // orthogonal, so an axis could be asked for up to sqrt(2)*aMax = 1414
+    // mm/s^2 against a 1000 mm/s^2 limit, and was: 1412 on `cusp`. Neither
+    // stage was wrong in isolation; nothing owned the sum.
+    //
+    // plan now spends one budget: each segment's tangential allowance is
+    // reduced by the centripetal load already committed there,
+    // a_t <= sqrt(aMax^2 - a_c^2). Measured cost in path time: +0.9% on `cusp`,
+    // under +0.3% on every other fixture.
     it("no axis is asked for more acceleration than it has", () => {
         forEachFixture((name, curves) => axisAccelViolations(prep([curves], 100, 20), name));
     });
 
-    it("documents the worst case: the cusp reaches ~sqrt(2) x aMax", () => {
-        // Passes today. It records the SIZE of P1 so a fix can be seen to shrink
-        // it, and so the sqrt(2) is understood as the analytic bound it is
-        // rather than an accident of one fixture. Delete only with P1.
+    it("the cusp no longer reaches ~sqrt(2) x aMax", () => {
+        // The measurement that sized P1, inverted. It was 1412 against a 1000
+        // limit — 1.41x, essentially the analytic worst case.
         const p = prep([CUSP], 100, 20);
         let worst = 0;
         for (let i = 0; i < p.length - 1; i++) {
@@ -620,8 +646,7 @@ describe("stage 6 FINDING P1: the axis accel budget is spent twice", () => {
             const aTan = (p[i + 1]!.v ** 2 - p[i]!.v ** 2) / (2 * p[i]!.ds);
             worst = Math.max(worst, Math.hypot(aTan, p[i]!.v ** 2 * p[i]!.kappa));
         }
-        expect(worst).toBeGreaterThan(1.3 * A_MAX);
-        expect(worst).toBeLessThanOrEqual(Math.SQRT2 * A_MAX * 1.001);
+        expect(worst).toBeLessThanOrEqual(A_MAX * 1.001);
     });
 });
 
@@ -699,19 +724,49 @@ describe("stage 6 FINDING P3: plan carries unexecutable ceilings straight throug
     // well-behaved case spends exactly 0, the two cusps spend 540x and 887x.
     const RAMP_SPAN = (q.vMin * q.vMin) / (2 * A_MAX);
 
-    it("spends no meaningful arc length below vMin", () => {
+    /**
+     * Maximal runs of samples with 0 < v < vMin, as [firstIndex, lastIndex].
+     */
+    function subVMinRuns(p: readonly { v: number }[]): [number, number][] {
+        const runs: [number, number][] = [];
+        let start = -1;
+        for (let i = 0; i < p.length; i++) {
+            const below = p[i]!.v > 0 && p[i]!.v < q.vMin;
+            if (below && start < 0) start = i;
+            if (!below && start >= 0) { runs.push([start, i - 1]); start = -1; }
+        }
+        if (start >= 0) runs.push([start, p.length - 1]);
+        return runs;
+    }
+
+    it("every below-vMin stretch is a ramp out of a stop, not a crawl", () => {
+        // The instrument changed with C1, and the reason is worth stating.
+        //
+        // The old bound was an arc length: vMin^2 / 2a with a = A_MAX. That was
+        // right when the question was "is the tool crawling at 3e-3 mm/s", and
+        // it is wrong now, because it assumes the NOMINAL acceleration. Near a
+        // cusp the locally available accel is a small fraction of A_MAX (the A
+        // cap, and now P1's shared budget), so ramping out of a stop honestly
+        // spends far more than vMin^2/2*A_MAX in the band — 2.45e-2 mm on the
+        // cusp, which the old bound called a 196x violation and which is simply
+        // arithmetic.
+        //
+        // What actually distinguishes the defect from the arithmetic is WHERE
+        // the slow samples are. Ramping through (0, vMin) on the way out of a
+        // stop is unavoidable. Sitting below vMin in the middle of a moving
+        // stretch is C1's crawl. So: every below-vMin run must touch a full
+        // stop at one end.
         forEachFixture((name, curves) => {
             const p = prep([curves], 100, 20);
-            let span = 0;
-            let min = Infinity;
-            for (const s of p) {
-                if (s.v > 0 && s.v < q.vMin) {
-                    span += s.ds;
-                    min = Math.min(min, s.v);
+            const bad: string[] = [];
+            for (const [a, b] of subVMinRuns(p)) {
+                const touchesStop = (a > 0 && p[a - 1]!.v === 0) || (b < p.length - 1 && p[b + 1]!.v === 0);
+                if (!touchesStop) {
+                    const slowest = Math.min(...p.slice(a, b + 1).map((x) => x.v));
+                    bad.push(`${name}: samples ${a}-${b} sit below vMin with no stop at either end, slowest ${slowest.toExponential(2)} mm/s`);
                 }
             }
-            if (span <= 10 * RAMP_SPAN) return [];
-            return [`${name}: ${span.toExponential(2)} mm below vMin (${(span / RAMP_SPAN).toFixed(0)}x a ramp crossing), slowest ${min.toExponential(2)} mm/s`];
+            return bad.slice(0, 3);
         });
     });
 
@@ -729,12 +784,18 @@ describe("stage 6 FINDING P3: plan carries unexecutable ceilings straight throug
         forEachFixture((name, curves) => {
             const c = constrained([curves], 100, 20);
             const p = plan(c, PLAN_OPTS);
-            let span = 0;
-            for (let i = 0; i < p.length; i++) {
-                const ceilOk = c[i]!.vCeiling === 0 || c[i]!.vCeiling >= q.vMin;
-                if (ceilOk && p[i]!.v > 0 && p[i]!.v < q.vMin) span += p[i]!.ds;
+            const bad: string[] = [];
+            for (const [a, b] of subVMinRuns(p)) {
+                const touchesStop = (a > 0 && p[a - 1]!.v === 0) || (b < p.length - 1 && p[b + 1]!.v === 0);
+                if (touchesStop) continue; // an honest ramp crossing
+                for (let i = a; i <= b; i++) {
+                    if (c[i]!.vCeiling === 0 || c[i]!.vCeiling >= q.vMin) {
+                        bad.push(`${name}: sample ${i} below vMin from a healthy ceiling`);
+                        break;
+                    }
+                }
             }
-            return span > 10 * RAMP_SPAN ? [`${name}: ${span.toExponential(2)} mm self-inflicted`] : [];
+            return bad.slice(0, 3);
         });
     });
 });

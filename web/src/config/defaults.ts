@@ -61,6 +61,7 @@ export const DEFAULTS = {
         junctionDeviation: 0.05,
         dsMax: 0.5,
         dthetaMax: 2.0,
+        maxRefine: 8,
     },
 
     tool: {

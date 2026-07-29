@@ -59,24 +59,24 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 
 | # | Stage | Severity | Summary | Status |
 |---|---|---|---|---|
-| F1 | flatten | **defect** | Tangent cap SKIPPED at `\|B'\|→0` — 178° reversal in one step (89×) | open, **test red** |
-| F2 | flatten / constrain | **inconsistency** | Intra-curve cusp is a corner to `discretize`, invisible to `constrain` | open, test documents |
+| F1 | flatten | **defect** | Tangent cap SKIPPED at `\|B'\|→0` — 178° reversal in one step (89×) | **resolved** — enforcement, and the premise corrected (a cusp is a corner, not a sampling problem) |
+| F2 | flatten / constrain | **inconsistency** | Intra-curve cusp is a corner to `discretize`, invisible to `constrain` | **resolved** (constrain's stop ungated) |
 | F3 | flatten | minor | Truncated final step manufactures degenerate near-zero-`ds` samples | open, test green |
 | F4 | flatten | gap | `chordTol` and `dthetaMax` had no tests — two of three caps unverified | **resolved** |
 | F5 | flatten | tuning | `chordTol` is near-vestigial: binds 0.8% of steps | note only |
 | F6 | geometry | cleanup | `arcLength` (5-point Gauss-Legendre) had no production caller | **resolved** (deleted) |
-| F7 | flatten | **contract** | All three caps are PREDICTORS, not bounds — `dsMax` soft by up to 8% | open, **test red** |
-| C1 | constrain | **defect** | No lower bound on `vCeiling` — a cusp yields 3.2e-3 mm/s, 166× under `vMin` | open, test documents |
+| F7 | flatten | **contract** | All three caps are PREDICTORS, not bounds — `dsMax` soft by up to 8% | **resolved** (measure-and-halve; +50% samples) |
+| C1 | constrain | **defect** | No lower bound on `vCeiling` — a cusp yields 3.2e-3 mm/s, 166× under `vMin` | **resolved** (sub-`vMin` ceiling → stop) |
 | C2 | constrain | ok | All four caps hold as per-sample properties on every fixture | verified |
-| P1 | constrain + plan | **defect** | Axis accel budget spent twice: centripetal and tangential each capped at `aMax`, nothing owns the sum (→ √2·aMax) | open, **test red** |
+| P1 | constrain + plan | **defect** | Axis accel budget spent twice: centripetal and tangential each capped at `aMax`, nothing owns the sum (→ √2·aMax) | **resolved** (shared budget in `plan`) |
 | P2 | plan | **contract** | A stream without `PATH_START`/`PATH_END` was silently unplanned — `v = vCeiling`, no error | **resolved** (throws) |
-| P3 | plan | consequence of C1 | Carries unexecutable ceilings through; ~⅕ of the below-`vMin` span is self-inflicted by the sweeps | open, **test red** |
-| P4 | compileBlock | tuning | A non-tangential tool still pays the A-axis curvature cap — ~8× accel loss on a 5 mm arc | open, test documents |
+| P3 | plan | consequence of C1 | Carries unexecutable ceilings through; ~⅕ of the below-`vMin` span is self-inflicted by the sweeps | **resolved with C1** — residual is a ramp out of a stop, i.e. arithmetic |
+| P4 | compileBlock | tuning | A non-tangential tool still pays the A-axis curvature cap — ~8× accel loss on a 5 mm arc | **resolved** (A term gated on `tangential`) |
 | P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
 | D1 | discretize | **defect** | Empty segment (all deltas 0) emitted with `interval = fCpu` — a full second. Reachable at a corner AND at every `PATH_END` | **resolved** (skipped; `PATH_END` re-homed) |
 | D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | **resolved** (`sqrt` interpolation) |
-| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** |
-| D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | open, **test red** |
+| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** — cause has MOVED, see below |
+| D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | **resolved with F2** |
 | D5 | discretize | gap | `DEFAULTS.tool.liftHeight = 0`, so the Z lift/lower path was dead *under test*. The deployed config sets `knife.liftHeight = 2.0`, so production did lift | **resolved** (tests) |
 | H1 | choreograph | **defect** | `aMove`'s decel ramp exceeds the A accel limit by 1.26–1.65× and never reaches rest — stops dead from up to 39 deg/s. Chunk-start rate sampling is conservative going up, anti-conservative coming down | **resolved** (`rampChunks`) |
 | H2 | choreograph | **defect** | `travelJog` / `headOffsetJog` emit one segment at full feed — 0→80 mm/s in zero distance, ignoring `x.maxAccel` entirely | **resolved** (same generator) |
@@ -1077,15 +1077,22 @@ Two process notes, both repeats of lessons from earlier stages:
 
 | Suite | Passing | Red | Findings the red tests pin |
 |---|---|---|---|
-| `test/toolpath/flatten` | 19 | 4 | F1, F7 |
-| `test/toolpath/constrain` | 39 | 0 | — |
-| `test/toolpath/plan` | 48 | 3 | P1, P3 ×2 |
-| `test/toolpath/discretize` | 36 | 3 | D3 ×2, D4 |
+| `test/toolpath/flatten` | 25 | 0 | — |
+| `test/toolpath/constrain` | 41 | 0 | — |
+| `test/toolpath/plan` | 52 | 0 | — |
+| `test/toolpath/discretize` | 38 | 1 | D3 |
 | `test/toolpath/geometry` | 28 | 0 | — |
-| `test/choreograph` | 60 | 1 | H3 |
+| `test/choreograph` | 62 | 1 | H3 |
 
-Full suite: **695 passing, 11 red**, 4 skipped; `tsc --noEmit` clean. All 11 red
-are intentional and each names its finding; every other module is green.
+Full suite: **709 passing, 2 red**, 4 skipped; `tsc --noEmit` clean. Both red are
+intentional and each names its finding:
+
+- **H3** — `zMove` is unramped, and `z.maxAccel` is absent from the fixture AND
+  from the deployed `web/demo/config.json`. Blocked on characterizing the Z axis
+  on hardware; there is no ceiling to ramp against until then.
+- **D3** — `interval`'s floor still stretches `near_cusp` by 1.87×, but the cause
+  has moved from an upstream A overdrive to sub-segment `da` distribution (see
+  batch D). Wants its own measurement rather than a fix.
 
 `CUSP` is now imported directly by the `flatten`, `constrain`, `plan` and
 `discretize` tests. All four stages that consume it have been audited, so it can
@@ -1105,7 +1112,7 @@ diffs, not simply the fewest batches.
 | **A** | H5, F6, P2, H4 | none | **done** |
 | **B** | D2, D1 | cutting segments | **done** |
 | **C** | H1, H2 (H3 blocked) | non-cutting segments only | **done** |
-| **D** | F1, F7, F2/D4, C1/P3, P1, P4 | everything | gated on decisions |
+| **D** | F1, F7, F2/D4, C1/P3, P1, P4 | everything | **done** |
 
 `D3` and `P3` are deliberately absent as work items: both are downstream of
 causes in batch D (the F1/F7 cap chain and C1 respectively), so they get
@@ -1161,6 +1168,111 @@ Mutation-validated: 8 of 9 mutants killed by name. The survivor is
 reachable input (the relocation target is a cutting segment, which carries no
 other flag). The `|` is kept as defence for the fallback path, where the target
 could be a `zMove` carrying `MICRO_LIFT`.
+
+### Batch D — done (the five decisions)
+
+All five were settled deliberately; each is recorded with what it cost.
+
+**3 — a ceiling below `vMin` is a stop (C1), and a cusp is a corner (F2/D4).**
+`constrain` takes `vMin` as an explicit option (absent = disabled, like its other
+switches — the stage still imports no config) and forces a sub-`vMin` ceiling to
+0. Its corner STOP is ungated; the junction-deviation cap stays gated on
+`CURVE_BOUNDARY`, because that models a vertex across a near-zero-length span and
+applying it in-curve would double-count the centripetal cap.
+
+**1 + 2 — the caps are enforced (F7), and F1's premise was wrong.** Each step is
+now measured after being proposed: realised chord and realised turn, halve on
+overshoot, up to `quality.maxRefine` times. Enforcement closes F1 without a
+second epsilon rule.
+
+But F1 asked for something unachievable. "A cusp must force fine sampling" cannot
+work: a true cusp reverses the tangent at a single parameter value, so the
+realised turn tends to 180° however small the step becomes. Refinement there buys
+samples and changes nothing, so the loop detects the irreducible case and stops.
+The cusp is then read as the CORNER it is — which is exactly what decision 3 made
+`constrain` do. **F1 and F2 turned out to be one finding.**
+
+| fixture | over `dsMax` before → after | over `dthetaMax` before → after | samples |
+|---|---|---|---|
+| `straight_line` | 99 → **0** | 0 → 0 | 201 → 302 |
+| `s_curve` | 176 → **0** | 0 → 0 | 358 → 534 |
+| `long_gentle_arc` | 506 → **0** | 0 → 0 | 1016 → 1522 |
+| `quarter_circle_r5` | 0 → 0 | 22 → **0** | 46 → 68 |
+| `near_cusp` | 54 → **0** | 40 → **0** | 205 → 302 |
+| `snake.svg` | 142 → **0** | 31 → **0** | 356 → 531 |
+| `cusp` | 11 → **0** | 29 → **1** (irreducible) | 78 → 118 |
+
+Cost is ~50% more samples. `maxRefine` is the knob the firmware pins and the host
+may raise; depth **4** already achieves every number above, so the shipped default
+of 8 is margin rather than need.
+
+**4 — one acceleration budget (P1).** `plan` reduces each segment's tangential
+allowance by the centripetal load committed there, `a_t ≤ sqrt(aMax² − a_c²)`.
+The cusp's 1412 mm/s² against a 1000 limit is now ≤ 1000. Cost in path time:
+**+0.9% on `cusp`, under +0.3% everywhere else.**
+
+The load is computed from the CEILING, not from a first pass's `v`. Both were
+implemented and measured, and the choice is a real trade:
+
+| headroom from | bounds the sum | monotone in accel | monotone in vCeiling | sweeps |
+|---|---|---|---|---|
+| planned `v` | yes | **no** (−0.12% reversal) | yes | 4 |
+| `vCeiling` | yes | yes | **no** | 2 |
+
+"More budget never plans slower" is about the machine's capability and is worth
+more than the last fraction of a percent, so the ceiling form won. Its casualty is
+the vCeiling-monotonicity test, and that is not a regression to hide: with a
+SHARED budget, a ceiling that lets the tool take a curve faster genuinely leaves
+less acceleration to speed up alongside it. The test now asserts the exact
+property that survives — raising a ceiling never lowers speed where `κ = 0`, and
+where it does lower one, `κ > 0` there.
+
+**5 — a pen no longer pays the A cap (P4).** `compileBlock` gates the A term it
+gives `plan` on `tangential`, matching the gate `constrain` already had. A
+revolver pen does rotate A, but between operations, and choreograph emits that
+motion against A's own limits — it never rides a cutting segment, so it has no
+claim on the cutting path's budget.
+
+#### Golden diff
+
+| | packets | jog | cutting | total s |
+|---|---|---|---|---|
+| `test_circle` before | 576 | 33 | 543 | 4.627 |
+| `test_circle` after | 823 | 33 | **790** | 4.643 |
+| `fish` before | 5106 | 1056 | 4050 | 86.304 |
+| `fish` after | 6136 | 1056 | **5080** | 86.820 |
+
+Jog counts are byte-identical on both — choreograph was not touched, and the diff
+is confined to where it should be. The cutting-segment growth (+45% / +25%) is
+F7's enforcement buying finer sampling, and duration moves +0.35% / +0.6%.
+
+#### Three things this batch found rather than fixed
+
+**The D4 finding was measured one sample early.** `cornerIndices` returned the
+sample BEFORE the tangent jump while the failure message printed the flags of the
+sample AFTER it. `discretize` pivots on arrival at the LATER sample of the pair,
+so that is the one which must be at rest. Corrected — and the finding was worse
+than filed: at the cusp the approach sample read 4.84e-3 mm/s and the sample that
+actually pivots read **2.14e-2**, 4.4× higher.
+
+**D3's cause has moved.** The plan-level check is now green — `plan` no longer
+asks the A axis for more than its rate ceiling — yet the emitted cut time on
+`near_cusp` is still 1.87× the planned one, with A and X both sitting at exactly
+1.000 of their ceilings. So `interval`'s floor is no longer rescuing a gross
+upstream violation; it is binding at the SUB-SEGMENT level, where subdivision
+distributes `da` unevenly across a pair and one sub-segment demands more than the
+pair average. That is a different defect wearing D3's name and it wants its own
+measurement.
+
+**P3 dissolved into arithmetic.** Its instrument had to change with C1: the old
+bound was `vMin²/2a` with `a` the NOMINAL acceleration, which assumes a ramp out
+of a stop happens at full accel. Near a cusp the locally available accel is a
+small fraction of that, so an honest ramp spends far more distance in the band —
+2.45e-2 mm on the cusp, which the old bound called a 196× violation and which is
+simply what accelerating from rest costs. The test now asserts what actually
+separates the defect from the arithmetic: every below-`vMin` run must touch a full
+stop at one end. Verified non-vacuous by disabling C1, which fails it with 107
+samples crawling at 1.64e-2 mm/s and no stop at either end.
 
 ### Batch C — done (one re-golden; not one byte of cutting motion moved)
 

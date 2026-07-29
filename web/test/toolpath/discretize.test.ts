@@ -71,6 +71,9 @@ function planFor(
                   cornerStopAngleDeg: profile.cornerAngleDeg,
               }
             : {}),
+        // the production bridge passes this; the tests must too, or they
+        // measure a pipeline nobody ships (audit C1)
+        vMin: q.vMin,
     });
     return plan(c, {
         xAccel: MACH.x.maxAccel,
@@ -152,14 +155,23 @@ function expectedXY(subpaths: readonly (readonly CubicBezier[])[]): [number, num
     return [dx, dy];
 }
 
-/** Re-derive discretize's corner rule from the planned stream (see D3). */
+/**
+ * Re-derive discretize's corner rule from the planned stream, returning the
+ * index of the sample the PIVOT HAPPENS AT.
+ *
+ * discretize walks pairs (i, i+1) and pivots after arriving at i+1, so the
+ * sample that must be at rest is the LATER one. This used to return `i` while
+ * the caller printed the flags of `i + 1`, which under-reported D4: at the cusp
+ * the approach sample read 4.84e-3 mm/s and the sample that actually pivots
+ * read 2.14e-2 — 4.4x worse than the number the finding was filed with.
+ */
 function cornerIndices(p: readonly PlannedSample[], profile: Profile): number[] {
     if (!profile.tangential) return [];
     const out: number[] = [];
     for (const [lo, hi] of subpathRanges(p)) {
         let theta = p[lo]!.theta;
         for (let i = lo; i < hi; i++) {
-            if (Math.abs(angleDelta(theta, p[i + 1]!.theta)) >= profile.cornerAngleDeg) out.push(i);
+            if (Math.abs(angleDelta(theta, p[i + 1]!.theta)) >= profile.cornerAngleDeg) out.push(i + 1);
             theta = p[i + 1]!.theta;
         }
     }

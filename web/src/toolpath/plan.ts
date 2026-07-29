@@ -185,34 +185,73 @@ export function plan(
     const v = samples.map((s) => s.vCeiling);
 
     for (const [lo, hi] of subpathRanges(samples)) {
-        // init from ceilings; pin the endpoints to rest
-        for (let i = lo; i <= hi; i++) v[i] = samples[i]!.vCeiling;
-        v[lo] = 0;
-        v[hi] = 0;
-
-        // precompute per-segment accel (segment i links sample i and i+1)
+        // precompute per-segment TANGENTIAL accel (segment i links i and i+1)
         const aSeg = new Array<number>(hi).fill(0);
         for (let i = lo; i < hi; i++) {
             aSeg[i] = segAccel(samples[i]!, samples[i + 1]!, options);
         }
 
-        // backward: ensure we can brake to each downstream speed
-        for (let i = hi - 1; i >= lo; i--) {
-            const ds = samples[i]!.ds;
-            const reachable = Math.sqrt(v[i + 1]! * v[i + 1]! + 2 * aSeg[i]! * ds);
-            if (reachable < v[i]!) v[i] = reachable;
+        // ── the acceleration budget is one budget, not two (audit P1) ────────
+        //
+        // An axis supplies the VECTOR sum of the tangential term (dv/dt, bounded
+        // here) and the centripetal term (v^2*kappa, bounded by constrain's
+        // ceiling). Each stage bounded its own component at aMax and nothing
+        // bounded the sum, so the analytic worst case was sqrt(2)*aMax and it
+        // was essentially attained (1412 against a 1000 limit on `cusp`).
+        // Neither stage was wrong alone, which is why per-stage review missed
+        // it: it is an interface defect, visible only in composition.
+        //
+        // Fixed here rather than in constrain because this is where both terms
+        // are known. Charging constrain to leave headroom would cost speed
+        // everywhere for a bound that binds at corners.
+        //
+        // The centripetal load is computed from the CEILING, not from a first
+        // pass's v. Using the planned v would be tighter, and would cost
+        // monotonicity: raising xAccel would raise v, raise the centripetal
+        // load, shrink the headroom and end up planning some samples SLOWER —
+        // measured, a 0.12% reversal on quarter_circle_r50. "More budget never
+        // plans slower" is worth more than the last fraction of a percent, and
+        // this form also keeps plan at two O(n) passes rather than four (P5).
+        // vCeiling >= v always, so the headroom is an under-estimate: safe.
+        const aMax = options.aMax;
+        if (aMax > 0) {
+            for (let i = lo; i < hi; i++) {
+                const ac = Math.max(
+                    samples[i]!.vCeiling * samples[i]!.vCeiling * samples[i]!.kappa,
+                    samples[i + 1]!.vCeiling * samples[i + 1]!.vCeiling * samples[i + 1]!.kappa,
+                );
+                const free = Math.sqrt(Math.max(0, aMax * aMax - ac * ac));
+                if (free < aSeg[i]!) aSeg[i] = free;
+            }
         }
 
-        // forward: ensure we can accelerate up to each speed
-        for (let i = lo + 1; i <= hi; i++) {
-            const ds = samples[i - 1]!.ds;
-            const reachable = Math.sqrt(v[i - 1]! * v[i - 1]! + 2 * aSeg[i - 1]! * ds);
-            if (reachable < v[i]!) v[i] = reachable;
-        }
+        /** The two feasibility sweeps, given a per-segment accel budget. */
+        const sweep = (budget: readonly number[]): void => {
+            // init from ceilings; pin the endpoints to rest
+            for (let i = lo; i <= hi; i++) v[i] = samples[i]!.vCeiling;
+            v[lo] = 0;
+            v[hi] = 0;
 
-        // endpoints stay pinned (forward pass may have lifted hi off 0)
-        v[lo] = 0;
-        v[hi] = 0;
+            // backward: ensure we can brake to each downstream speed
+            for (let i = hi - 1; i >= lo; i--) {
+                const ds = samples[i]!.ds;
+                const reachable = Math.sqrt(v[i + 1]! * v[i + 1]! + 2 * budget[i]! * ds);
+                if (reachable < v[i]!) v[i] = reachable;
+            }
+
+            // forward: ensure we can accelerate up to each speed
+            for (let i = lo + 1; i <= hi; i++) {
+                const ds = samples[i - 1]!.ds;
+                const reachable = Math.sqrt(v[i - 1]! * v[i - 1]! + 2 * budget[i - 1]! * ds);
+                if (reachable < v[i]!) v[i] = reachable;
+            }
+
+            // endpoints stay pinned (forward pass may have lifted hi off 0)
+            v[lo] = 0;
+            v[hi] = 0;
+        };
+
+        sweep(aSeg);
     }
 
     return samples.map((s, i) => ({ ...s, v: v[i]! }));

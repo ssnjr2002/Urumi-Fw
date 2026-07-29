@@ -34,6 +34,7 @@ import {
     bezierDeriv1,
     bezierDeriv2,
     curvature,
+    angleDelta,
     type CubicBezier,
 } from "./geometry.js";
 import { PATH_START, PATH_END, CURVE_BOUNDARY, type Sample } from "./sample.js";
@@ -44,6 +45,21 @@ export interface FlattenOptions {
     readonly dthetaMax: number;
     readonly dtMax: number;
     readonly dtMin: number;
+    /**
+     * How many times a step may be halved when the step it predicted turns out
+     * to have overshot a cap (audit F1/F7). Each halving at most doubles the
+     * samples in that neighbourhood, so this is the knob that bounds how many
+     * samples a cusp can cost — the thing a sample-count-bounded window on the
+     * Pico actually cares about.
+     *
+     * The firmware ships one fixed value; a host doing offline work can raise
+     * it to resolve pathological geometry more finely. `dtMin` still applies
+     * underneath as a hard floor.
+     *
+     * Absent = 0 = no enforcement, i.e. the pre-F7 behaviour where the three
+     * caps were predictors rather than bounds.
+     */
+    readonly maxRefine?: number;
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -54,7 +70,23 @@ function tangentDeg(c: CubicBezier, t: number, fallback = 0): number {
     return (Math.atan2(d1.y, d1.x) * 180) / Math.PI;
 }
 
-/** Geometry-only adaptive step: min of three caps (chord, spacing, tangent). */
+/**
+ * Geometry-only adaptive step: min of three caps (chord, spacing, tangent).
+ *
+ * PREDICTION ONLY. Every cap here is evaluated at the step's START and then
+ * applied across the whole step, so where the curve speeds up or bends harder
+ * over that interval the realised value overshoots — systematically, not as
+ * float noise (`snake.svg`: 142 of 356 steps over `dsMax`). `tsForCurve` is
+ * what turns these predictions into bounds.
+ *
+ * The epsilon guards are the other half of the problem (audit F1). Both are
+ * gated on "is this quantity measurable", when at a cusp the correct
+ * behaviour is the opposite: near-zero speed is exactly where the tangent is
+ * least stable and the cap matters most. Left as they are here — deliberately,
+ * because the fix belongs in the enforcement loop rather than in a second
+ * epsilon — so a cusp yields dtMax from this function and gets cut down by
+ * measurement instead of by prediction.
+ */
 function dtAt(
     c: CubicBezier,
     t: number,
@@ -81,7 +113,21 @@ function dtAt(
     return dt;
 }
 
-/** Parameter values [0..1] at which to sample one curve (both ends inclusive). */
+/**
+ * Parameter values [0..1] at which to sample one curve (both ends inclusive).
+ *
+ * Each candidate step is proposed by `dtAt` and then MEASURED: the realised
+ * chord and the realised tangent turn are computed from the two endpoints, and
+ * a step that overshot either cap is halved and re-measured (audit F7 option 1,
+ * chosen deliberately over restating the caps as targets). Enforcement also
+ * closes F1 without a second epsilon rule — a cusp, where `dtAt`'s guards skip
+ * both caps and return `dtMax`, is now cut down by the turn it actually makes
+ * instead of being stepped straight over.
+ *
+ * `maxRefine` bounds the halving, so a pathological curve costs bounded extra
+ * samples rather than unbounded ones. On exhaustion the step is taken anyway:
+ * the caps are enforced as far as the sample budget allows, and no further.
+ */
 function tsForCurve(
     c: CubicBezier,
     chordTol: number,
@@ -89,11 +135,35 @@ function tsForCurve(
     dthetaMax: number,
     dtMax: number,
     dtMin: number,
+    maxRefine: number,
 ): number[] {
     const ts: number[] = [0];
     let t = 0;
     while (t < 1) {
-        const dt = Math.max(dtMin, dtAt(c, t, chordTol, dsMax, dthetaMax, dtMax));
+        let dt = Math.max(dtMin, dtAt(c, t, chordTol, dsMax, dthetaMax, dtMax));
+        if (maxRefine > 0) {
+            const p0 = bezierPoint(c, t);
+            const th0 = tangentDeg(c, t);
+            let prevTurn = Infinity;
+            for (let r = 0; r < maxRefine; r++) {
+                const tEnd = Math.min(t + dt, 1);
+                const p1 = bezierPoint(c, tEnd);
+                const chord = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+                const turn = Math.abs(angleDelta(th0, tangentDeg(c, tEnd, th0)));
+                if (chord <= dsMax + 1e-12 && turn <= dthetaMax + 1e-12) break;
+                if (dt <= dtMin) break;
+                // A TRUE cusp cannot be resolved by sampling harder: the tangent
+                // reverses at a single parameter value, so the realised turn
+                // tends to 180 deg no matter how small the step gets. Halving
+                // further would buy samples and change nothing. Stop, and let
+                // the 180 deg jump be read as the CORNER it is — constrain stops
+                // there and discretize pivots (F2/C1). This is the correction to
+                // F1's original premise that "a cusp must force fine sampling".
+                if (chord <= dsMax + 1e-12 && turn > dthetaMax && turn >= prevTurn * 0.99) break;
+                prevTurn = turn;
+                dt = Math.max(dtMin, dt / 2);
+            }
+        }
         t = Math.min(t + dt, 1);
         ts.push(t);
     }
@@ -114,7 +184,7 @@ export function flatten(
     subpaths: readonly (readonly CubicBezier[])[],
     options: FlattenOptions,
 ): Sample[] {
-    const { chordTol, dsMax, dthetaMax, dtMax, dtMin } = options;
+    const { chordTol, dsMax, dthetaMax, dtMax, dtMin, maxRefine = 0 } = options;
     const out: Sample[] = [];
 
     for (const subpath of subpaths) {
@@ -124,7 +194,7 @@ export function flatten(
 
         for (let ci = 0; ci < subpath.length; ci++) {
             const c = subpath[ci]!;
-            const ts = tsForCurve(c, chordTol, dsMax, dthetaMax, dtMax, dtMin);
+            const ts = tsForCurve(c, chordTol, dsMax, dthetaMax, dtMax, dtMin, maxRefine);
             for (let k = 0; k < ts.length; k++) {
                 const t = ts[k]!;
                 const p = bezierPoint(c, t);

@@ -143,6 +143,7 @@ interface JsonQuality {
     readonly junctionDeviation?: number;
     readonly dsMax?: number;
     readonly dthetaMax?: number;
+    readonly maxRefine?: number;
 }
 
 interface ConfigJson {
