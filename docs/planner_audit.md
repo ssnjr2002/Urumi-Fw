@@ -78,6 +78,11 @@ a useful baseline and that fix should go in immediately, ahead of the port.
 | D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** |
 | D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | open, **test red** |
 | D5 | discretize | gap | Every tool ships `liftHeight = 0`, so the entire Z lift/lower path was dead and untested | **resolved** (tests) |
+| H1 | choreograph | **defect** | `aMove`'s decel ramp exceeds the A accel limit by 1.26–1.65× and never reaches rest — stops dead from up to 39 deg/s. Chunk-start rate sampling is conservative going up, anti-conservative coming down | open, **test red** ×3 |
+| H2 | choreograph | **defect** | `travelJog` / `headOffsetJog` emit one segment at full feed — 0→80 mm/s in zero distance, ignoring `x.maxAccel` entirely | open, **test red** |
+| H3 | choreograph | known | `zMove` is likewise unramped (0→24000 steps/s); acknowledged by the module TODO, and `z.maxAccel` is 0 so there is no limit to check against | open, **test red** |
+| H4 | choreograph | **contract** | `aMove` silently invents 180 deg/s + 2000 deg/s² when the A ceilings are 0 — `load.ts` refuses to invent calibration, this invents limits | open, **test red** |
+| H5 | choreograph | cleanup | Three redundant guards all defend `v ≥ v0`; each is an equivalent mutant | note only |
 
 ---
 
@@ -872,6 +877,202 @@ Three methodology notes, all of which changed the tests:
 
 ---
 
+## `choreograph` — the non-cutting emitters
+
+Not a pipeline stage: a peer module (`src/choreograph/choreograph.ts`) holding
+every move that is **not** cutting — Z lift/lower, ramped A rotation, the
+lift-pivot-lower at a corner, the travel jog between subpaths, A pre-orientation
+at `PATH_START`, absolute A moves for homing and revolver slots, and the
+head-offset compensation jog.
+
+It was audited *after* `discretize` because `discretize` calls into it, and the
+discretize audit could only see it through that one caller. Its other callers
+(`orchestrate/walk.ts`, `orchestrate/schedule.ts`, `production/dutyBreaks.ts`,
+`production/compileBlock.ts`) reach it directly.
+
+### Why the existing tests missed all of this
+
+The 26 tests here were **shape** tests: right flag, right sign, right count,
+intervals within `[1, fCpu]`, steps telescoping to `|da|`. Every one of them
+passes today and every one is worth keeping. Not one asked what the emitted
+segments would *do* on a machine.
+
+The measurement that found H1–H4 is the same one that found D2 and D3:
+reconstruct the motion the way the **firmware** executes it — `|steps|` clocked
+at `interval` cycles apiece — and ask whether a machine with the configured
+limits could follow it. Expressed that way the emitter's own belief about its
+velocity never enters the check.
+
+```ts
+function slices(segs) {                     // the firmware's view
+    return segs.map(s => ({ steps: major(s),
+                            v:  fCpu / s.interval,
+                            dt: major(s) * s.interval / fCpu }));
+}
+// a rate change at a slice boundary is instantaneous; a machine limited to
+// `limit` can only follow it if the change fits in the PRECEDING slice
+worst = max(|v[i] - v[i-1]| / dt[i-1]) / limit
+```
+
+### H1 — `aMove`'s trapezoid brakes harder than the axis can, and never stops
+
+`aMove` walks the rotation in chunks, choosing a rate for each from the distance
+already travelled (`n`) or remaining (`N - n`):
+
+```ts
+if      (n < dAcc)      v = sqrt(v0² + 2·accel·n);        // accel ramp
+else if (n >= N - dAcc) v = sqrt(v0² + 2·accel·(N - n));  // decel ramp
+else                    v = cruise;
+const chunk = min(max(1, trunc(v / 100)), N - n);
+```
+
+`v` is sampled at each chunk's **start**. On the way up that is the slowest
+point in the chunk, so holding it for the whole chunk under-drives the axis —
+conservative. On the way down the same point is the **fastest**, so holding it
+over-drives — anti-conservative. One line, opposite sign depending on which
+ramp you are on.
+
+Measured against `a.maxAccel = 2000 deg/s²` (103334 steps/s²):
+
+| N (steps) | deg | accel ramp | decel ramp | ends at |
+|---|---|---|---|---|
+| 52 | 1 | 0.73× | — *(never decelerates)* | 39.36 deg/s |
+| 129 | 2.5 | 0.86× | **1.32×** | 27.84 deg/s |
+| 258 | 5 | 0.88× | **1.33×** | 26.41 deg/s |
+| 500 | 9.7 | 0.88× | **1.45×** | 17.62 deg/s |
+| 1000 | 19.4 | 0.88× | **1.65×** | 8.85 deg/s |
+| 2325 | 45 | 0.88× | **1.65×** | 8.85 deg/s |
+| 4650 | 90 | 0.88× | **1.31×** | 29.20 deg/s |
+| 9300 | 180 | 0.88× | **1.26×** | 35.21 deg/s |
+| 18600 | 360 | 0.88× | **1.48×** | 15.27 deg/s |
+
+Two separate consequences, so three red tests:
+
+- **H1a** — the decel ramp demands 1.26–1.65× the configured A acceleration, on
+  every size. The accel ramp never exceeds 0.88×.
+- **H1b** — the move is designed to ramp down to `v0 = min(cruise, 50)` = 50
+  steps/s = **0.97 deg/s** and then stop. It actually stops from between 8.85
+  and 39.36 deg/s — up to **40× the intended terminal velocity**, as a hard
+  stop. Note the column does not fall off with size; it is set by where the
+  chunk grid happens to land.
+- **H1c** — at `N = 52` (a 1° pivot, five chunks) the single "decel" chunk is
+  *faster* than the cruise chunk before it: `50 → 457 → 1018 → 1761 → 2034`.
+  The rotation **accelerates into its final chunk and then stops.** This is the
+  clearest statement of the cause.
+
+The obvious one-line remedy does not work. Sampling the decel rate at the chunk
+**end** instead fixes the terminal velocity exactly (50 steps/s at every size)
+but makes the acceleration worse, up to 2.28×, because the tail then runs in
+1-step chunks whose durations are tiny. Measured, not assumed. A real fix has to
+choose the chunk boundaries from the accel limit rather than from `trunc(v/100)`
+— which is to say the `100` is the thing to remove.
+
+Where it bites: `preOrient` runs at every `PATH_START` and `pivot` at every
+tangential corner, so this is on the hot path for every knife job.
+
+### H2 — travel jogs ignore the acceleration limit entirely
+
+`travelJog` emits exactly one segment for the whole move, at full `jogFeed`:
+
+```
+200 mm jog → dx = 32000 steps, interval = 11718 → 12800 steps/s = 80 mm/s
+```
+
+`x.maxAccel = 1000 mm/s²` is configured, respected everywhere in the cutting
+path, and not consulted here. Reaching 80 mm/s at that limit needs 0.08 s and
+**3.2 mm** of ramp; the jog allows zero. The same is true of `headOffsetJog`,
+which runs at every tool change.
+
+Unlike H3 there is no TODO acknowledging this, and unlike H3 the limit it
+violates is a real configured number rather than an uncharacterized 0.
+
+### H3 — `zMove` is unramped too (known)
+
+One segment, 0 → 24000 steps/s instantly. Already acknowledged by the TODO at
+the top of the module. Recorded as a red test so it is *counted* rather than
+only commented — and because `z.maxAccel` is `0`, characterizing the Z axis is a
+prerequisite for fixing it. Nothing can check the fix until that number exists.
+
+### H4 — `aMove` invents machine limits `load.ts` would refuse to invent
+
+```ts
+const cruise = Math.max((feed > 0 ? feed : 180) * aSpd, 1);
+const accel  = Math.max((rate > 0 ? rate : 2000) * aSpd, 1);
+```
+
+`0` means "uncapped" for `maxFeed`/`maxAccel` (see `defaults.ts`), and
+`DEFAULTS.axis` ships both as `0`. So a machine that declines to state its A
+limits gets 180 deg/s and 2000 deg/s² substituted silently, at the emitter.
+
+Measured: with `a.maxFeed = a.maxAccel = 0`, `aMove` peaks at **9301 steps/s =
+180 deg/s** — exactly the invented floor, and **1.8× the real machine's stated
+100 deg/s ceiling**. Declaring the axis uncapped makes it run *faster* than
+declaring its true limit.
+
+`load.ts`'s header is explicit that `stepsPerUnit`, `invert` and node ids have
+no silent fallback, because guessing calibration is how you crash a machine.
+These are the same class of number under the opposite policy. Whichever way it
+is resolved, the two files should agree.
+
+### H5 — three guards defending the same thing (cleanup)
+
+Mutation testing left three survivors in `aMove`, all equivalent mutants and all
+the same redundancy — `v` is floored at `v0` three times over:
+
+| Removed | Why it changes nothing |
+|---|---|
+| `if (N === 0) return [];` | the `while (n < N)` loop already emits nothing |
+| `v = Math.max(v, v0);` | both ramp branches already return ≥ `v0` |
+| the `[1, fCpu]` clamp on `interval` | `v ∈ [50, cruise]` ⟹ `fCpu/v ∈ [29033, 3e6]`, always in range |
+
+Harmless, but the third is load-bearing-looking code that cannot fire, and in
+C++ that reads as a guarantee the port would be entitled to rely on. Worth
+deleting *or* keeping with a comment saying it is belt-and-braces — not left
+ambiguous.
+
+### Test rewrite
+
+26 → 56 tests, on the same INVARIANTS / CONTRACT PROPERTIES split as the stages.
+All 26 originals survive in substance; the additions are the kinematic ones.
+
+Verified holding: purity and determinism; step conservation across every size
+and both signs (including that `newAPhys` always matches the steps actually
+emitted, for both `preOrient` modes and `aMoveTo`); `pivot`'s Z lift and lower
+cancelling exactly; integer deltas; `interval ∈ [1, fCpu]`; per-axis invert
+isolated to its own axis and presentation-only; `preOrient`'s unwind mode
+bounding `|aPhys|` no matter how far a cut wound A, and its non-unwind mode
+always taking the shortest way round; `pivot` ordering lift → rotate → lower;
+`travelJog` and `headOffsetJog` antisymmetry; `zMove` and `travelJog` timing
+matching the requested feed; and `aMove` reaching — but not exceeding — the A
+feed ceiling.
+
+### Mutation-validated
+
+34 deliberate breaks, 31 caught, 3 survivors — all three the equivalent mutants
+of H5 above, i.e. the surviving mutations *are* the finding.
+
+The first pass had 11 survivors. Eight were genuine test gaps, closed by adding:
+`zStepCount` rounding on a non-integral height; `zMove`'s interval clamp at
+absurd feeds; a long `aMove` actually *reaching* the feed ceiling (not merely
+staying under it); an upper as well as a lower bound on total time against the
+analytic trapezoid; the triangular clamp on short moves; a decel-exists
+companion to H1b; a bound on segment count; and `travelJog` rounding each
+endpoint rather than truncating.
+
+Two process notes, both repeats of lessons from earlier stages:
+
+- **A red finding test masks mutations in its own area.** `H1b` being red hid
+  "decel branch removed" completely. The companion test — does a ramp-down
+  exist at all, ignoring whether it is steep enough — catches it. Same shape as
+  the `D1` / zero-motion-skip problem in stage 8.
+- **The CRLF trap again**, and a new one: piping the mutation harness to `head`
+  sends SIGPIPE and kills it *mid-mutation*, leaving the source file modified.
+  That corruption then looked like four new test failures. `git diff --stat
+  web/src/` before trusting any result — and never `| head` a script that edits
+  files in place.
+
+---
+
 ## Current test state
 
 `npx vitest run test/toolpath/flatten` — 20 passing, 4 red, all 4 intentional:
@@ -905,8 +1106,19 @@ Three methodology notes, all of which changed the tests:
 × every corner it pivots at was stopped for by constrain        cusp       (D4)
 ```
 
-Full suite: **653 passing, 14 red**, 4 skipped; `tsc --noEmit` clean. All 14 red
-are intentional and each names its finding; every other stage is green.
+`npx vitest run test/choreograph` — 50 passing, 6 red, all 6 intentional:
+
+```
+× H1a: aMove's decel ramp respects the A accel ceiling      8 of 9 sizes (H1)
+× H1b: aMove comes to rest at its designed terminal velocity 9 of 9 sizes (H1)
+× H1c: the shortest rotations ramp down at all               N=52         (H1)
+× H2: travelJog ramps to its feed instead of stepping to it               (H2)
+× H3: zMove ramps instead of slamming to zFeed                            (H3)
+× H4: aMove does not invent A limits for an under-specified machine       (H4)
+```
+
+Full suite: **676 passing, 20 red**, 4 skipped; `tsc --noEmit` clean. All 20 red
+are intentional and each names its finding; every other module is green.
 
 `CUSP` is now imported directly by the `flatten`, `constrain`, `plan` and
 `discretize` tests. All four stages that consume it have been audited, so it can
@@ -921,6 +1133,7 @@ move into the shared `CASES` registry whenever a fifth consumer wants it.
 | 3 `repair` (`enforceC1`) | not audited |
 | 6 `plan` | **audited** — P1–P5 above |
 | 8 `discretize` | **audited** — D1–D5 above |
+| — `choreograph` | **audited** — H1–H5 above. Not a stage; audited because `discretize` could only see it through one caller |
 | 9 `dutyBreaks` | not audited — next. Partially known: see `tool_duty_limits.md` §5, §11. Note it consumes the timeline D2 and D3 both corrupt, so audit those findings' impact here first |
 
 When auditing a later stage, consider adding `CUSP` to that stage's fixtures
