@@ -97,6 +97,25 @@ export const FULL_CIRCLE_R30: CubicBezier[] = [
     cubic(pt(0, -R30),    pt(H30, -R30),    pt(R30, -H30),     pt(R30, 0)),
 ];
 
+// ── case 9: exact cusp ────────────────────────────────────────────────────────
+// B'(0.5) = 0 exactly: the tangent REVERSES through a point of zero speed.
+// Derived from the cubic derivative at t=0.5,
+//   0.25(p1-p0) + 0.5(p2-p1) + 0.25(p3-p2) = 0,
+// which for p0=(0,0) reduces to p1x = p2x + p3x and p3y = -p2y.
+//
+// Deliberately NOT in the CASES registry. Four test files iterate CASES, and
+// adding a cusp there would change constrain / plan / discretize expectations
+// before those stages have been audited. Stages opt in by importing this
+// directly, so a cusp regression is always attributable to one stage.
+//
+// This is the geometry that breaks flatten's tangent cap: at t=0.5 both
+// `speed > 1e-12` and `kappa > 1e-9` are false, so the step-size caps that
+// depend on them are skipped entirely (docs/planner_audit.md F1).
+
+export const CUSP: CubicBezier[] = [
+    cubic(pt(0, 0), pt(10, 0), pt(0, 5), pt(10, -5)),
+];
+
 // ── registry ──────────────────────────────────────────────────────────────────
 
 export interface CurveCase {
