@@ -42,7 +42,9 @@ The agreed order:
    by its own docstring and we now know it encodes at least one defect. It
    cannot tell us the planner is correct. Its only job is attribution during the
    port: *"this is what the machine that cuts fish today does."*
-3. **Port bug-for-bug.** Output should match modulo `float32` rounding. Any
+3. **Port bug-for-bug.** ~~Output should match modulo `float32` rounding.~~
+   **Superseded** — see *Numeric porting rule* below: the port stays in
+   `double`, so the criterion is byte-IDENTICAL, not "close". Any
    structural difference is a transcription bug — a binary signal needing no
    judgement. The failing property tests stay red in both implementations, which
    is *evidence the port is faithful*.
@@ -52,6 +54,141 @@ The agreed order:
 **What would change this:** if a later stage turns out to be *actively* wrong on
 the machine rather than latently wrong, "preserve today's behaviour" stops being
 a useful baseline and that fix should go in immediately, ahead of the port.
+
+---
+
+## Numeric porting rule
+
+**Decided:** 2026-07-29. This section AMENDS the sequencing decision above, which
+assumed the port would narrow to `float32` and that C++ output would therefore
+match TypeScript only *"modulo float32 rounding"*.
+
+That assumption was never measured. It is measured now, and it does not hold.
+
+### The rule
+
+| quantity | type | why |
+|---|---|---|
+| geometry & kinematics — coordinates, velocities, accelerations, curvature, angles | **`double`** | affordable (below), and it makes the port byte-comparable to TypeScript |
+| wire fields — `dx/dy/dz/da`, `interval`, `flags` | **integers** (`int32` / `uint32`) | already integral on the wire; going through float and rounding back is pure loss |
+| `core1`'s per-step ramp loop | **stays `float`** | different budget entirely — see below |
+
+`float32` is NOT used anywhere in the ported planner. TypeScript needs no
+precision change, and **the golden does not move for this.**
+
+### Why `double` is affordable
+
+Two budgets exist on this machine and they are ~50× apart. Conflating them is
+the mistake this section exists to prevent.
+
+`core1.cpp`'s step loop carries the comment *"a bare 1.0 is a double and would
+promote the expression onto the (much slower) double path"*, against a stated
+`~5000-cycle step budget`. That is correct **for that loop** — it runs per STEP,
+at up to 30 kHz. It is not a statement about the planner, which runs per
+MICROSEGMENT.
+
+Measured per-microsegment budget, decoded from the committed goldens
+(duration = `max|steps| × interval / fCpu`):
+
+| golden | packets | total s | mean rate | cycles/segment: p1 | p50 | min |
+|---|---|---|---|---|---|---|
+| `test_circle` | 824 | 4.652 | 177 /s | 272,182 | 551,592 | 213,451 |
+| `fish` | 6,137 | 86.845 | 71 /s | 229,610 | 753,298 | 29,032 |
+
+And the planner does **less than one sample's work per emitted microsegment** —
+measured `samples/segment` is 0.92 (`test_circle`) and 0.67 (`fish`), because
+choreograph and subdivision emit segments that cost no sampling at all.
+
+Cost of one sample in `double`, counted from the source: `flatten` dominates at
+~200 arithmetic ops plus ~2 `atan2`, ~2 `sqrt`, ~3 `hypot` (`dtAt` evaluates
+`bezierDeriv1`/`2` and `curvature`; the F7 refine loop re-evaluates once or
+twice); `constrain` + `plan` + `discretize` add ~100 ops and a few `sqrt`. Call
+it **~300 arithmetic + ~8 transcendental** per sample.
+
+On Cortex-M33 every one of those is a call — verified by compiling for the real
+target (`-mcpu=cortex-m33 -mfpu=fpv5-sp-d16`), not from memory:
+
+```
+double kernel:  __aeabi_dadd ×4   __aeabi_dmul ×6   __aeabi_ddiv   sqrt  atan2  hypot
+float  kernel:  vadd.f32  vmul.f32 ×3  vdiv.f32  vsqrt.f32         atan2f hypotf
+```
+
+The FPU is FPv5-**SP** — single precision only, so `double` is bootrom software
+emulation (tens of cycles for add/mul, ~100 for div/sqrt, several hundred for a
+transcendental) while `float` is one instruction. At those rates one sample
+costs roughly **25,000 cycles** in `double`.
+
+Against a p1 budget of ~230,000 that is **~11% utilisation**, and the planner
+belongs on core 0 (core 1 is the time-critical streaming engine), which is
+otherwise mostly idle. `float32` would cost ~2,000 cycles instead — so the
+entire saving on offer is about 9% of a core that has nothing else to do.
+
+The op count is an estimate; the budget and the codegen are measurements. The
+conclusion survives the estimate being **4× too low**.
+
+### What `double` buys, which is the actual argument
+
+`float32` was never chosen for its own sake — it was assumed to be forced. Now
+that it is optional, it is strictly worse here, because *"matches modulo
+`float32` rounding"* is not a testable claim. It makes the port's pass/fail
+signal a judgement call on a 3800× amplifier, where a rounding difference and a
+transcription bug look the same.
+
+In `double`, the port's criterion becomes **byte-identical to the TypeScript
+golden** — binary, mechanical, needing no judgement. That is what the sequencing
+decision wanted from the golden all along, and the goldens have already spent
+their attribution budget on batches A–D.
+
+This rests on the two `double` libms agreeing. Measured across 15 values
+spanning the port's whole transcendental surface — `hypot`, `atan2`, `acos`,
+`cos`, `sqrt` — node/V8 and mingw g++ agree **bit-for-bit**, including cases
+with no obligation to agree (V8's `Math.hypot` is a compensated algorithm;
+`atan2`/`acos` are implementation-defined in both languages):
+
+```
+hypot(12345.678, 0.0009) = 12345.678000000033    both
+atan2(4.4, -4.4)         = 2.3561944901923448    both
+acos(-0.87)              = 2.6259986473437027    both
+```
+
+This is a property of these libms, not of the languages — a different host or a
+libm update can break it. So byte-equality is a high-value **canary**, not the
+contract. The contract remains the invariant tests, which is the right split
+anyway: a golden can say a byte moved, never why.
+
+Host builds must force IEEE semantics — the local `g++` is `i686-w64-mingw32`,
+so **`-msse2 -mfpmath=sse` is mandatory** or intermediates evaluate in 80-bit
+x87 registers and drift from `double` in exactly the accumulator-heavy code the
+planner is made of.
+
+### `Math.round` is not `std::round`
+
+Unrelated to precision, lands in the same transcription, and is silent:
+
+```
+JS    Math.round(-1.5) = -1      (ties toward +infinity)
+C++   std::round(-1.5) = -2      (ties away from zero)
+```
+
+There are 24 `Math.round` sites in the port's scope and several take signed
+values (`Math.round(tgtX)`, `Math.round(dxMm * stepsPerUnit)`). `std::round` is
+the obvious thing to type and is wrong on half the number line; **the faithful
+idiom is `std::floor(x + 0.5)`**.
+
+Blast radius is uneven and the difference matters when triaging a diff. The
+`Math.round(tgt) - Math.round(pos)` differencing pattern in `discretize` and
+`xyJog` is self-correcting — it re-reads absolute position, so an error costs
+one step and heals. `daTrue` and the jog step counts are not differenced that
+way; those keep it.
+
+### What would flip this
+
+A measurement on real hardware showing the planner missing its refill deadline.
+The response then is to narrow the hot path — almost certainly `flatten` alone —
+to `float`, which is a localised change made against a working, byte-verified
+port. Starting in `float32` inverts that: it spends a golden move up front and
+permanently degrades the signal used to validate the transcription, to buy
+headroom that is not currently needed.
 
 ---
 
