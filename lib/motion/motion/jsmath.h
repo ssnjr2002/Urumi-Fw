@@ -13,6 +13,11 @@
  * implemented in jsmath.cpp, which explains why the port has to own them and
  * why it matters beyond testing.
  *
+ * The list of owned functions grows as stages land — `cos` joined it with
+ * `constrain`. Assume nothing about a transcendental until it has been
+ * measured against V8 in bulk; the one time that was skipped, a 15-value probe
+ * reported a false pass.
+ *
  * See docs/planner_audit.md, "Numeric porting rule".
  */
 
@@ -89,6 +94,15 @@ double jsAcos(double x);
 
 /** Math.hypot. V8's own algorithm (scale by max + Kahan), NOT std::hypot. */
 double jsHypot(double a, double b);
+
+/**
+ * Math.cos. fdlibm (Payne-Hanek-lite argument reduction + the degree-14 kernel
+ * polynomial). The worst offender measured so far: mingw's cos disagrees with
+ * V8 on 2.8% of inputs by up to 26 ULP, not the 1 ULP the others cost, because
+ * the x87 path reduces the argument against a 66-bit pi. Only `constrain`'s
+ * junction cap calls it today.
+ */
+double jsCos(double x);
 
 } // namespace motion
 

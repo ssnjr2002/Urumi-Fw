@@ -382,6 +382,119 @@ has not been constructed.
 
 ---
 
+### Stage 5 ported — and `cos` joined the owned set
+
+`lib/motion/constrain.cpp` is bit-identical to the TypeScript: **75 cases,
+21,339 ceilings, 6,096 direct function cases.** Suite total 146,289 assertions.
+
+Constrain is a smaller surface than flatten — one loop, no adaptive stepping —
+and it ported cleanly. Two things came out of it that were not in the stage
+itself.
+
+#### `Math.cos` is the worst libm offender so far
+
+Measured over 200,000 inputs, half in the shape `junctionCap` actually calls it
+with (`cos((|turnDeg|·pi/180)/2)`, so `[0, pi/2]`) and half a wider sweep:
+
+| | mingw libm vs V8 | owned implementation vs V8 |
+|---|---|---|
+| `cos` | 5,596 / 200,000 (**2.8%**) | **0** — fdlibm |
+
+The number that matters is not 2.8% but the magnitude: **up to 26 ULP**, where
+`atan2`, `acos` and `hypot` were all capped at 1. That is not a last-place
+rounding difference, it is a worse answer — x87's `fcos` reduces its argument
+against a 66-bit approximation of pi, so accuracy decays with magnitude, while
+fdlibm reduces against a multi-word pi. Which is "right" remains irrelevant
+(V8 is the reference because the TypeScript is the reference), but this one was
+never merely cosmetic.
+
+`jsCos` is fdlibm's `__kernel_cos` / `__kernel_sin` plus argument reduction.
+The reduction is ported for **medium range only** (`|x| < 2^20·pi/2`); fdlibm's
+150-line multi-precision path beyond that is not, because the only caller never
+leaves `[0, pi/2]`. The unported branch returns NaN rather than a plausible
+wrong number, so a future caller that reaches it fails the differential test
+loudly instead of shifting a toolpath quietly.
+
+#### The mutation harness reported a false green, again
+
+The first mutation run came back **25 survivors out of 25** — and that was the
+script, not the port. Its kill detector matched a regex against PlatformIO's
+output that never matched, so every run read as a pass. It was caught only
+because 25/25 is not a believable result and a hand-run mutant died.
+
+Two fixes, both worth keeping in any future mutation script:
+- decide kill/survive from the **`[FAILED]` suite names and the exit code**,
+  with an explicit `HARNESS-BROKE` branch when neither a PASSED nor a FAILED
+  line appears — silence must never read as "survived";
+- **verify the mutation applied** (checksum before/after) before believing its
+  result. One mutant in this batch was a no-op that would otherwise have been
+  filed as equivalent.
+
+This is the third time in this port that a verification step passed for a
+reason unrelated to what it claimed to verify (the 15-value libm probe, and
+before it the geometry `const char*` print). The pattern is consistent enough
+to name: **a check that has never been seen to fail is not evidence.**
+
+#### Mutation validation
+
+25 mutants, 14 killed, 1 no-op (excluded), 10 survived:
+
+| mutation | result |
+|---|---|
+| `junctionCap`: `jsCos` -> `std::cos` | killed |
+| `junctionCap`: drop the `feedMax` min | killed |
+| `kappaPrime`: drop the `i` flag test | killed |
+| `kappaPrime`: drop the `i+1` flag test | killed |
+| `kappaPrime`: span guard `1e-6` -> `1e-7` | killed |
+| `kappaPrime`: span `i-1,i` -> `i,i+1` | killed |
+| `constrain`: `aRate` gate `> 0` -> `>= 0` | killed |
+| `constrain`: `aAcc` gate `> 0` -> `>= 0` | killed |
+| `constrain`: corner stop `>=` -> `>` | killed |
+| `constrain`: ignore `hasCornerStopAngle` | killed |
+| `constrain`: drop the `CURVE_BOUNDARY` gate | killed |
+| `constrain`: A-slew cap `aRateRad / kappa` -> `* kappa` | killed |
+| `jsCos`: `n & 3` case 1 sign | killed |
+| `jsCos`: `kernelSin` `iy` branch ignored | killed |
+| `jsCos`: kernel split `0x3FD33333` -> `0x3FD00000` | killed |
+| `constrain`: kappa gate `1e-9` -> `1e-8` | survived — **equivalent** |
+| `constrain`: kappa-prime gate `1e-9` -> `1e-8` | survived — **equivalent** |
+| `constrain`: `angleDelta` args swapped | survived — **equivalent** |
+| `junctionCap`: straight gate `>=` -> `>` | survived — measure-zero boundary |
+| `junctionCap`: reversal gate `<=` -> `<` | survived — measure-zero boundary |
+| `constrain`: junction gate `> 1e-6` -> `>= 1e-6` | survived — measure-zero boundary |
+| `constrain`: `vMin` `<` -> `<=` | survived — measure-zero boundary |
+| `jsCos`: `qx` `0.28125` -> `0.28` | survived — algebraically equal, low bits |
+| `jsCos`: drop the 3rd reduction iteration | survived — **genuine gap** |
+
+**The two epsilon guards are unobservable, and this is the same finding as
+flatten's.** `kappa > 1e-9` gates two caps that cannot bind anywhere near it:
+the centripetal cap binds only above `kappa > aMax/feedMax²` = 800/3600 ≈ 0.22,
+and the A-slew cap above `kappa > aRateRad/feedMax` ≈ 0.21 — both about eight
+orders of magnitude above the guard. The `kp > 1e-9` guard is the same shape:
+its cap binds above `kp > aAccRad/feedMax²` ≈ 0.017. In the entire dead band
+the ceiling is `feedMax` with or without the guard.
+
+That is now **four** measurability guards across two stages that gate nothing
+(F1's two in `dtAt`, and these two). They are not harmful, but the codebase
+reads as though small-magnitude inputs are a handled hazard, and they are not
+handled — they are simply never dangerous, because every cap here is a
+*ceiling* and a ceiling computed from a tiny denominator is enormous. Worth
+stating once rather than rediscovering per stage.
+
+**`angleDelta`'s sign is unused.** Swapping its arguments survives because
+`angleDelta` is antisymmetric and both call sites immediately take `fabs` —
+including at exactly ±180°, where both orderings return +180. So `constrain`
+sees turn *magnitude* only; it cannot distinguish a left corner from a right
+one. That is correct for both caps as specified, and is noted only because the
+code reads as if direction were available.
+
+The real gap is `jsCos`'s third reduction iteration, reached only for arguments
+very near a large multiple of pi/2. The sweep tops out at 1e3 and the only
+caller works in `[0, pi/2]`, so it is unreachable today and untested; if a later
+stage calls `cos` on a raw accumulated angle, it needs its own cases.
+
+---
+
 ## Findings
 
 | # | Stage | Severity | Summary | Status |

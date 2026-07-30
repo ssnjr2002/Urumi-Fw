@@ -7,12 +7,20 @@
  * spanning the magnitudes the planner works in, mingw's libm disagrees with
  * V8 on:
  *
- *     atan2   35,247 / 200,000   (17.6%)
- *     acos    15,329 / 200,000   ( 7.7%)
- *     hypot        44 / 200,000   ( 0.02%)
+ *     atan2   35,247 / 200,000   (17.6%)   max 1 ULP
+ *     acos    15,329 / 200,000   ( 7.7%)   max 1 ULP
+ *     hypot        44 / 200,000   ( 0.02%)  max 1 ULP
+ *     cos       5,596 / 200,000   ( 2.8%)   max 26 ULP
  *     sqrt          0             (IEEE-754 mandates correct rounding)
  *
- * all by 1 ULP. That is not a testing inconvenience — it means the same
+ * cos is the outlier and worth reading twice: 26 ULP is not a last-place
+ * rounding difference, it is a WORSE ANSWER. The x87 fcos reduces its argument
+ * against a 66-bit approximation of pi, so accuracy degrades with magnitude;
+ * fdlibm reduces against a multi-word pi and stays correct. That is not a
+ * reason to prefer fdlibm here — V8 is the reference because the TypeScript is
+ * the reference — but it does mean this one was never merely cosmetic.
+ *
+ * The rest are 1 ULP. That is not a testing inconvenience — it means the same
  * planner, compiled for the host harness and for the Pico, would produce
  * DIFFERENT TOOLPATHS, because newlib's libm is a third answer again. The
  * whole point of consolidating on one implementation is that the machine cuts
@@ -27,6 +35,7 @@
  *   - hypot: NOT fdlibm. V8 implements Math.hypot itself as scale-by-max plus
  *     a Kahan-compensated sum of squares, which is why std::hypot — a
  *     different, also-good algorithm — disagrees on 0.02% of inputs.
+ *   - cos: fdlibm, argument reduction plus the even kernel polynomial.
  *
  * DO NOT "improve" any of this. Every constant and every operation order is
  * load-bearing. The polynomial evaluation order in particular is not stylistic;
@@ -45,6 +54,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 namespace motion {
 
@@ -60,6 +70,14 @@ inline uint32_t loWord(double x) {
     uint64_t b;
     std::memcpy(&b, &x, sizeof b);
     return static_cast<uint32_t>(b);
+}
+
+/** Replace the high 32 bits, fdlibm's SET_HIGH_WORD. */
+inline void setHiWord(double& x, int32_t hi) {
+    uint64_t b;
+    std::memcpy(&b, &x, sizeof b);
+    b = (b & 0x00000000ffffffffULL) | (static_cast<uint64_t>(static_cast<uint32_t>(hi)) << 32);
+    std::memcpy(&x, &b, sizeof x);
 }
 
 /** Zero the low 32 bits, fdlibm's SET_LOW_WORD(x, 0). */
@@ -164,6 +182,167 @@ const double qS1 = -2.40339491173441421878e+00;
 const double qS2 = 2.02094576023350569471e+00;
 const double qS3 = -6.88283971605453293030e-01;
 const double qS4 = 7.70381505559019352791e-02;
+
+// ── fdlibm cos ───────────────────────────────────────────────────────────────
+
+const double C1 = 4.16666666666666019037e-02;
+const double C2 = -1.38888888888741095749e-03;
+const double C3 = 2.48015872894767294178e-05;
+const double C4 = -2.75573143513906633035e-07;
+const double C5 = 2.08757232129817482790e-09;
+const double C6 = -1.13596475577881948265e-11;
+
+const double S1 = -1.66666666666666324348e-01;
+const double S2 = 8.33333333332248946124e-03;
+const double S3 = -1.98412698298579493134e-04;
+const double S4 = 2.75573137070700676789e-06;
+const double S5 = -2.50507602534068634195e-08;
+const double S6 = 1.58969099521155010221e-10;
+
+/** __kernel_cos, valid for |x| <= pi/4; y is the low half of the reduced arg. */
+double kernelCos(double x, double y) {
+    const int32_t ix = hiWord(x) & 0x7fffffff;
+    if (ix < 0x3e400000) {                    // |x| < 2^-27
+        if (static_cast<int>(x) == 0) return one;
+    }
+    const double z = x * x;
+    const double r = z * (C1 + z * (C2 + z * (C3 + z * (C4 + z * (C5 + z * C6)))));
+    if (ix < 0x3FD33333) return one - (0.5 * z - (z * r - x * y)); // |x| < 0.3
+
+    // The 1 - 0.5*z split loses bits near pi/4, so fdlibm shifts the split
+    // point. `qx` is deliberately built by bit-twiddling, not arithmetic: it
+    // must be exactly representable for `a - iz` to be error-free.
+    double qx;
+    if (ix > 0x3fe90000) {                    // |x| > 0.78125
+        qx = 0.28125;
+    } else {
+        qx = 0.0;
+        setHiWord(qx, ix - 0x00200000);       // x/4
+    }
+    const double iz = 0.5 * z - qx;
+    const double a = one - qx;
+    return a - (iz - (z * r - x * y));
+}
+
+/** __kernel_sin, valid for |x| <= pi/4. iy != 0 means y is a real correction. */
+double kernelSin(double x, double y, int iy) {
+    const int32_t ix = hiWord(x) & 0x7fffffff;
+    if (ix < 0x3e400000) {                    // |x| < 2^-27
+        if (static_cast<int>(x) == 0) return x;
+    }
+    const double z = x * x;
+    const double v = z * x;
+    const double r = S2 + z * (S3 + z * (S4 + z * (S5 + z * S6)));
+    if (iy == 0) return x + v * (S1 + z * r);
+    return x - ((z * (0.5 * y - v * r) - y) - v * S1);
+}
+
+const double invpio2 = 6.36619772367581382433e-01;
+const double pio2_1 = 1.57079632673412561417e+00;
+const double pio2_1t = 6.07710050650619224932e-11;
+const double pio2_2 = 6.07710050630396597660e-11;
+const double pio2_2t = 2.02226624879595063154e-21;
+const double pio2_3 = 2.02226624871116645580e-21;
+const double pio2_3t = 8.47842766036889956997e-32;
+
+const int32_t npio2_hw[] = {
+    0x3FF921FB, 0x400921FB, 0x4012D97C, 0x401921FB, 0x401F6A7A, 0x4022D97C,
+    0x4025FDBB, 0x402921FB, 0x402C463A, 0x402F6A7A, 0x4031475C, 0x4032D97C,
+    0x40346B9C, 0x4035FDBB, 0x40378FDB, 0x403921FB, 0x403AB41B, 0x403C463A,
+    0x403DD85A, 0x403F6A7A, 0x40407E4C, 0x4041475C, 0x4042106C, 0x4042D97C,
+    0x4043A28C, 0x40446B9C, 0x404534AC, 0x4045FDBB, 0x4046C6CB, 0x40478FDB,
+    0x404858EB, 0x404921FB,
+};
+
+/**
+ * __ieee754_rem_pio2, MEDIUM RANGE ONLY: |x| < 2^20 * pi/2 ~ 1.65e6.
+ *
+ * fdlibm's full version falls through to __kernel_rem_pio2, a 150-line
+ * multi-precision reduction against a table of 2/pi. That path is not ported,
+ * because the only caller is the junction cap, whose argument is
+ * (|turnDeg| * pi/180) / 2 with |turnDeg| <= 180 — i.e. [0, pi/2], which does
+ * not even leave the first branch. Rather than let an unported branch return a
+ * quietly wrong number, the huge case returns NaN: if a future caller reaches
+ * it the differential test fails loudly and this comment is the fix list.
+ */
+int remPio2(double x, double* y) {
+    const int32_t hx = hiWord(x);
+    const int32_t ix = hx & 0x7fffffff;
+
+    if (ix <= 0x3fe921fb) { // |x| <= pi/4, no reduction
+        y[0] = x;
+        y[1] = 0;
+        return 0;
+    }
+    if (ix < 0x4002d97c) { // |x| < 3pi/4, one round of reduction
+        double z;
+        if (hx > 0) {
+            z = x - pio2_1;
+            if (ix != 0x3ff921fb) { // 33+53 bit pi is good enough
+                y[0] = z - pio2_1t;
+                y[1] = (z - y[0]) - pio2_1t;
+            } else { // near pi/2, use the next two terms
+                z -= pio2_2;
+                y[0] = z - pio2_2t;
+                y[1] = (z - y[0]) - pio2_2t;
+            }
+            return 1;
+        }
+        z = x + pio2_1;
+        if (ix != 0x3ff921fb) {
+            y[0] = z + pio2_1t;
+            y[1] = (z - y[0]) + pio2_1t;
+        } else {
+            z += pio2_2;
+            y[0] = z + pio2_2t;
+            y[1] = (z - y[0]) + pio2_2t;
+        }
+        return -1;
+    }
+    if (ix <= 0x413921fb) { // |x| < 2^20 * pi/2
+        double t = std::fabs(x);
+        const int32_t n = static_cast<int32_t>(t * invpio2 + 0.5);
+        const double fn = static_cast<double>(n);
+        double r = t - fn * pio2_1;
+        double w = fn * pio2_1t;
+        // Cancellation check: if the first reduction lost too many bits, redo
+        // it carrying the next term, and again after that. The npio2_hw guard
+        // skips the check when x is nowhere near a multiple of pi/2.
+        if (n < 32 && ix != npio2_hw[n - 1]) {
+            y[0] = r - w;
+        } else {
+            const int32_t j = ix >> 20;
+            y[0] = r - w;
+            int32_t i = j - ((hiWord(y[0]) >> 20) & 0x7ff);
+            if (i > 16) { // 2nd iteration, 24+24+24 bit pi
+                t = r;
+                w = fn * pio2_2;
+                r = t - w;
+                w = fn * pio2_2t - ((t - r) - w);
+                y[0] = r - w;
+                i = j - ((hiWord(y[0]) >> 20) & 0x7ff);
+                if (i > 49) { // 3rd iteration, 72 bits is the last resort
+                    t = r;
+                    w = fn * pio2_3;
+                    r = t - w;
+                    w = fn * pio2_3t - ((t - r) - w);
+                    y[0] = r - w;
+                }
+            }
+        }
+        y[1] = (r - y[0]) - w;
+        if (hx < 0) {
+            y[0] = -y[0];
+            y[1] = -y[1];
+            return -n;
+        }
+        return n;
+    }
+
+    // Not ported (see above) — and NaN rather than a plausible wrong answer.
+    y[0] = y[1] = std::numeric_limits<double>::quiet_NaN();
+    return 0;
+}
 
 } // namespace
 
@@ -293,6 +472,21 @@ double jsHypot(double a, double b) {
         sum = preliminary;
     }
     return maxAbs * std::sqrt(sum);
+}
+
+double jsCos(double x) {
+    const int32_t ix = hiWord(x) & 0x7fffffff;
+    if (ix <= 0x3fe921fb) return kernelCos(x, 0.0); // |x| <= pi/4
+    if (ix >= 0x7ff00000) return x - x;             // inf or NaN
+
+    double y[2];
+    const int n = remPio2(x, y);
+    switch (n & 3) {
+        case 0: return kernelCos(y[0], y[1]);
+        case 1: return -kernelSin(y[0], y[1], 1);
+        case 2: return -kernelCos(y[0], y[1]);
+        default: return kernelSin(y[0], y[1], 1);
+    }
 }
 
 } // namespace motion

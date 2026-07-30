@@ -11,10 +11,13 @@
  *     float32 would buy ~9% of an idle core and cost byte-comparability
  *     against the TypeScript golden, which is the port's only mechanical
  *     attribution signal.
- *   - Transcendentals are the DOUBLE libm ones (`std::hypot`, not `hypotf`).
- *     Measured bit-identical to V8's across the port's whole surface.
+ *   - Transcendentals come from motion/jsmath.h, NOT from the platform libm.
+ *     An early note here claimed the two were measured bit-identical; they are
+ *     not — mingw disagrees with V8 on 17.6% of atan2 inputs, and the Pico's
+ *     newlib would be a third answer again. jsmath.cpp explains why that is a
+ *     production problem rather than a testing one.
  *   - `std::round` is NOT `Math.round` (ties away from zero vs toward +inf).
- *     Not used here; see motion/round.h for the faithful idiom.
+ *     Not used here; see motion/jsmath.h for the faithful idiom.
  *
  * Deliberately absent, as in the TypeScript: there is no arcLength(). A
  * 5-point Gauss-Legendre quadrature lived there with no production caller
