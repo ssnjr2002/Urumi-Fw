@@ -139,22 +139,26 @@ golden** — binary, mechanical, needing no judgement. That is what the sequenci
 decision wanted from the golden all along, and the goldens have already spent
 their attribution budget on batches A–D.
 
-This rests on the two `double` libms agreeing. Measured across 15 values
-spanning the port's whole transcendental surface — `hypot`, `atan2`, `acos`,
-`cos`, `sqrt` — node/V8 and mingw g++ agree **bit-for-bit**, including cases
-with no obligation to agree (V8's `Math.hypot` is a compensated algorithm;
-`atan2`/`acos` are implementation-defined in both languages):
+This rests on the two `double` libms agreeing.
 
-```
-hypot(12345.678, 0.0009) = 12345.678000000033    both
-atan2(4.4, -4.4)         = 2.3561944901923448    both
-acos(-0.87)              = 2.6259986473437027    both
-```
+**CORRECTED — they do not.** This section originally recorded a 15-value probe
+showing node/V8 and mingw g++ agreeing bit-for-bit on `hypot`, `atan2`, `acos`,
+`cos` and `sqrt`. That probe was far too small: measured over 200,000 inputs
+while porting `flatten`, mingw disagrees with V8 on **17.6% of `atan2`** and
+**7.7% of `acos`** calls, by 1 ULP. At those rates, 15 values report a false
+pass a few percent of the time, and did.
 
-This is a property of these libms, not of the languages — a different host or a
-libm update can break it. So byte-equality is a high-value **canary**, not the
-contract. The contract remains the invariant tests, which is the right split
-anyway: a golden can say a byte moved, never why.
+The fix is not tolerance — it is that the port **owns** `atan2`, `acos` and
+`hypot` rather than taking them from whatever libm the toolchain ships. That
+restores exact bit-equality AND makes the planner's output independent of the
+toolchain, which matters far more: newlib on the Pico is a third answer, so
+without this the firmware would not cut what the harness verified. See *Stage 4
+ported* below for the measurements and `lib/motion/jsmath.cpp` for the
+implementations. `sqrt` needs no such treatment — IEEE-754 mandates correct
+rounding, and it measured 0 disagreements.
+
+Byte-equality remains a **canary** rather than the contract: the contract is the
+invariant tests, since a golden can say a byte moved but never why.
 
 Host builds must force IEEE semantics — the local `g++` is `i686-w64-mingw32`,
 so **`-msse2 -mfpmath=sse` is mandatory** or intermediates evaluate in 80-bit
@@ -275,6 +279,106 @@ port's own criterion is bit-equality rather than closeness.
 `discretize` lands, the same differential idea applies one level up: bake the
 fixtures through the C++ chain and compare against the committed golden `.bin`
 byte-for-byte, with no epsilon there either.
+
+---
+
+### Stage 4 ported — and the transcendentals had to come with it
+
+`lib/motion/flatten.cpp` is bit-identical to the TypeScript: **32 cases, 7,325
+samples, every field and flag exact.** Suite total 67,401 assertions, 0.86 s.
+
+Getting there overturned the libm assumption recorded above, which had been
+measured far too weakly.
+
+#### The platform libm is not a shared reference
+
+The first `flatten` run diverged on `theta` by 1 ULP. Chasing it produced this,
+over 200,000 inputs spanning the magnitudes the planner works in:
+
+| function | mingw libm vs V8 | owned implementation vs V8 |
+|---|---|---|
+| `atan2` | 35,247 / 200,000 (**17.6%**) | **0** — fdlibm |
+| `acos` | 15,329 / 200,000 (**7.7%**) | **0** — fdlibm |
+| `hypot` | 44 / 200,000 (0.02%) | **0** — V8's own algorithm |
+| `sqrt` | 0 | n/a — IEEE-754 mandates correct rounding |
+
+All disagreements are 1 ULP. The earlier claim in *Numeric porting rule* that
+node and mingw agree bit-for-bit came from a 15-value probe — a sample size
+that, at a 17.6% rate, reports a false pass about 6% of the time and reported
+one. **Corrected in place above.**
+
+`atan2l` rounded to double reproduces mingw's disagreement set exactly, so that
+comparison does not identify which side is correctly rounded — both are
+presumably the same x87 path. It does not matter which is "right": V8 is the
+reference because the TypeScript is the reference.
+
+#### Why this is a production issue, not a testing one
+
+Newlib on the Pico is a third answer again. Left alone, the same planner source
+compiled for the host harness and for the RP2350 would produce **different
+toolpaths** — which defeats the stated purpose of consolidating on one
+implementation, since the machine would not be cutting what the harness
+verified.
+
+So the port owns all three (`lib/motion/jsmath.cpp`), each verified
+bit-identical to V8 across the same 200,000 inputs. `atan2`/`acos` are fdlibm,
+which V8's `src/base/ieee754.cc` derives from. `hypot` is NOT fdlibm — V8
+implements `Math.hypot` itself as scale-by-max plus a Kahan-compensated sum of
+squares, which is exactly why `std::hypot`, a different and equally good
+algorithm, disagrees at all.
+
+This also removes a dependency the port should never have had: output no longer
+varies with the toolchain.
+
+#### Mutation validation
+
+13 mutants against `flatten` and the owned transcendentals, 9 killed:
+
+| mutation | result |
+|---|---|
+| `dtAt`: `8 * chordTol` perturbed | killed |
+| refine: drop the irreducible-cusp break | killed |
+| `tsForCurve`: `dt / 2` -> `dt / 2.0001` | killed |
+| `flatten`: `CURVE_BOUNDARY` gate `ci > 0` -> `ci >= 0` | killed |
+| `flatten`: `ds` fill off-by-one | killed |
+| `flatten`: `tangentDeg` fallback `prevTheta` -> `0` | killed **after** a fixture was added |
+| `jsHypot` -> `std::hypot` | killed |
+| `jsAtan2` -> `std::atan2` | killed |
+| `jsAcos` -> `std::acos` | killed |
+| `dtAt`: speed guard `1e-12` -> `1e-11` | survived — **equivalent** |
+| `dtAt`: kappa guard `1e-9` -> `1e-8` | survived — **equivalent** |
+| refine: `chord <= dsMax` -> `<` | survived — measure-zero boundary |
+| refine: `prevTurn * 0.99` -> `0.999` | survived — **genuine gap** |
+
+Three fixtures were added to close gaps the first round exposed: `tiny_speed`,
+`tiny_kappa`, and `degenerate_after_curve`. Only the last of those killed its
+mutant, and the two that did not are the interesting result.
+
+**`dtAt`'s two epsilon guards are unobservable, provably.** Not for want of a
+fixture — the caps they gate cannot bind anywhere in the guards' dead bands:
+
+- The spacing cap `dsMax / speed` binds only when `speed > dsMax / dtMax` = 5
+  with the shipped quality config, five orders of magnitude above the `1e-12`
+  guard.
+- The tangent cap inside the same branch needs `kappa > 0`, and `curvature()`
+  has its OWN `speed < 1e-10` guard that returns 0 first. So in the whole band
+  below `1e-10`, kappa is zero by construction and the tangent cap is skipped
+  regardless.
+- The kappa guard is the same story from the other side: the tangent cap binds
+  only when `kappa * speed > (dthetaMax·pi/180) / dtMax` ~ 0.35, which at
+  `kappa ~ 1e-9` needs `speed > 3.5e8`.
+
+This is worth knowing because audit F1 treated those guards as load-bearing —
+"gated on is-this-measurable, when at a cusp the opposite is correct". At the
+magnitudes they actually test, they gate nothing. The cusp behaviour F1 cared
+about comes entirely from the enforcement loop, which is what batch D
+concluded by a different route.
+
+The one real gap is the `0.99` tolerance in the irreducible-cusp detector.
+Removing that clause is caught; changing its constant to `0.999` is not, so its
+exact value rests on judgement rather than on a fixture. Killing it needs a
+curve whose successive turn measurements shrink by between 0.1% and 1%, which
+has not been constructed.
 
 ---
 

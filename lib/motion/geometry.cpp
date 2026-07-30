@@ -8,15 +8,11 @@
  */
 
 #include "motion/geometry.h"
+#include "motion/jsmath.h"
 
 #include <cmath>
 
 namespace motion {
-
-// JS Math.PI is the double nearest pi; so is this. Spelled out rather than
-// pulled from <cmath>'s M_PI, which is not standard C++ and needs
-// _USE_MATH_DEFINES on some toolchains.
-static constexpr double PI = 3.141592653589793;
 
 CubicBezier cubic(Pt p0, Pt p1, Pt p2, Pt p3) {
     return CubicBezier{p0, p1, p2, p3};
@@ -66,8 +62,10 @@ Pt normalize(Pt v) {
 
 double angleBetweenDeg(Pt u, Pt v) {
     const double dot = u.x * v.x + u.y * v.y;
-    const double clamped = std::fmax(-1.0, std::fmin(1.0, dot));
-    return (std::acos(clamped) * 180) / PI;
+    // jsMax/jsMin, not fmax/fmin: fmin(1, NaN) is 1 but Math.min(1, NaN) is
+    // NaN. See motion/jsmath.h.
+    const double clamped = jsMax(-1.0, jsMin(1.0, dot));
+    return (jsAcos(clamped) * 180) / PI;
 }
 
 // ── Bezier endpoint tangents ─────────────────────────────────────────────────

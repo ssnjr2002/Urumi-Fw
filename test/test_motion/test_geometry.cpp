@@ -18,7 +18,9 @@
 #include <doctest.h>
 
 #include "motion/geometry.h"
-#include "motion/round.h"
+#include "motion/jsmath.h"
+
+#include "bits.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -29,55 +31,12 @@
 #include <vector>
 
 using namespace motion;
+using testbits::fromHex;
+using testbits::toHex;
+using testbits::sameBits;
 
 namespace {
 
-double fromHex(const std::string& h) {
-    uint64_t bits = 0;
-    for (char ch : h) {
-        bits <<= 4;
-        bits |= static_cast<uint64_t>(
-            ch <= '9' ? ch - '0' : (ch | 0x20) - 'a' + 10);
-    }
-    double d = 0;
-    std::memcpy(&d, &bits, sizeof d);
-    return d;
-}
-
-std::string toHex(double d) {
-    uint64_t bits = 0;
-    std::memcpy(&bits, &d, sizeof bits);
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%016llx",
-                  static_cast<unsigned long long>(bits));
-    return std::string(buf);
-}
-
-/** Bit-level identity. NaN == NaN here, and +0 != -0 — both intended. */
-bool sameBits(double a, double b) {
-    uint64_t x = 0, y = 0;
-    std::memcpy(&x, &a, sizeof x);
-    std::memcpy(&y, &b, sizeof y);
-    return x == y;
-}
-
-std::ifstream openRef() {
-    // PlatformIO's native test runner's working directory is not contractual,
-    // so try the project root and a couple of plausible build dirs rather than
-    // assuming one.
-    static const char* candidates[] = {
-        "test/test_motion/data/geometry_ref.txt",
-        "../test/test_motion/data/geometry_ref.txt",
-        "../../test/test_motion/data/geometry_ref.txt",
-        "../../../test/test_motion/data/geometry_ref.txt",
-        "../../../../test/test_motion/data/geometry_ref.txt",
-    };
-    for (const char* p : candidates) {
-        std::ifstream f(p);
-        if (f.good()) return f;
-    }
-    return std::ifstream();
-}
 
 struct Case {
     std::string fn;
@@ -121,6 +80,12 @@ bool evaluate(const Case& c, std::vector<double>& got) {
         got = {angleDelta(i[0], i[1])};
     } else if (c.fn == "jsRound") {
         got = {jsRound(i[0])};
+    } else if (c.fn == "jsAtan2") {
+        got = {jsAtan2(i[0], i[1])};
+    } else if (c.fn == "jsAcos") {
+        got = {jsAcos(i[0])};
+    } else if (c.fn == "jsHypot") {
+        got = {jsHypot(i[0], i[1])};
     } else if (c.fn == "lineToCubic") {
         CubicBezier b = lineToCubic(Pt{i[0], i[1]}, Pt{i[2], i[3]});
         got = {b.p0.x, b.p0.y, b.p1.x, b.p1.y, b.p2.x, b.p2.y, b.p3.x, b.p3.y};
@@ -145,7 +110,7 @@ std::string describe(const Case& c) {
 } // namespace
 
 TEST_CASE("geometry is bit-identical to the TypeScript reference") {
-    std::ifstream f = openRef();
+    std::ifstream f = testbits::openRef("geometry_ref.txt");
     REQUIRE_MESSAGE(f.good(),
                     "geometry_ref.txt not found — regenerate with "
                     "`cd web && GEN_CPP_REF=1 npx vitest run test/port/cppRef`");

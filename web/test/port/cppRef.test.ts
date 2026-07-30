@@ -141,6 +141,43 @@ it("generates the C++ differential reference", (ctx) => {
     ];
     for (const v of rounds) emit("jsRound", [v], [Math.round(v)]);
 
+    // The three transcendentals the port had to OWN rather than take from the
+    // platform libm (docs/planner_audit.md). Pinned directly and in bulk, not
+    // just through their callers: mingw's libm disagrees with V8 on 17.6% of
+    // atan2 inputs and 7.7% of acos inputs, so a handful of hand-picked cases
+    // is exactly the sample size that reports a false pass. A deterministic
+    // xorshift keeps the set reproducible; the magnitude sweep spans the range
+    // Bezier derivatives actually reach.
+    let seed = 12345 >>> 0;
+    const rnd = (): number => {
+        seed ^= seed << 13; seed >>>= 0;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5; seed >>>= 0;
+        return seed / 4294967296;
+    };
+    for (let i = 0; i < 4000; i++) {
+        const mag = Math.pow(10, rnd() * 8 - 4);
+        const x = (rnd() * 2 - 1) * mag;
+        const y = (rnd() * 2 - 1) * mag;
+        emit("jsAtan2", [y, x], [Math.atan2(y, x)]);
+        emit("jsHypot", [x, y], [Math.hypot(x, y)]);
+        const c = rnd() * 2 - 1; // bind once — two rnd() calls emit an input
+        emit("jsAcos", [c], [Math.acos(c)]); // that is not the one measured
+
+    }
+    // Exact-boundary cases the random sweep will never hit.
+    for (const [y, x] of [[0, 1], [-0, 1], [0, -1], [-0, -1], [1, 0], [-1, 0],
+                          [1, 1], [-1, -1], [Infinity, 1], [1, Infinity],
+                          [Infinity, Infinity], [-Infinity, -Infinity]]) {
+        emit("jsAtan2", [y!, x!], [Math.atan2(y!, x!)]);
+    }
+    for (const v of [-1, -0.5, 0, 0.5, 1, 1e-300, -1e-300, 0.9999999999999999]) {
+        emit("jsAcos", [v], [Math.acos(v)]);
+    }
+    for (const [a, b] of [[0, 0], [-0, 0], [1e-320, 1e-320], [1e308, 1e308], [3, 4]]) {
+        emit("jsHypot", [a!, b!], [Math.hypot(a!, b!)]);
+    }
+
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(
         OUT,

@@ -41,6 +41,14 @@ struct CubicBezier {
 /** Cubic Bezier approximation constant for a quarter-circle arc. */
 constexpr double KAPPA = 0.5522847498;
 
+/**
+ * JS Math.PI is the double nearest pi; so is this. Spelled out rather than
+ * pulled from <cmath>'s M_PI, which is not standard C++ and needs
+ * _USE_MATH_DEFINES on some toolchains. Shared so the several deg/rad
+ * conversions in the port cannot drift apart.
+ */
+constexpr double PI = 3.141592653589793;
+
 CubicBezier cubic(Pt p0, Pt p1, Pt p2, Pt p3);
 
 /** Degenerate cubic from a line: control points on the line at 1/3 and 2/3. */
