@@ -31,7 +31,7 @@ import { describe, it, expect } from "vitest";
 import { lineToCubic, angleDelta, type CubicBezier } from "../../src/toolpath/geometry.js";
 import { flatten } from "../../src/toolpath/flatten.js";
 import { constrain, junctionCap, type ConstrainOptions } from "../../src/toolpath/constrain.js";
-import { CURVE_BOUNDARY, PATH_START, type Sample } from "../../src/toolpath/sample.js";
+import { CURVE_BOUNDARY, PATH_START, PATH_END, type Sample } from "../../src/toolpath/sample.js";
 import { CASES, CUSP } from "./curves.cases.js";
 import { qualityConfig } from "../../src/config/config.js";
 import { readFixture } from "../helpers.js";
@@ -223,6 +223,72 @@ describe("constrain: A-accel gradient cap", () => {
             return c[Math.floor(c.length / 2)]!.vCeiling;
         };
         expect(Math.abs(at(BASE) - at({ ...BASE, aAccelDegS2: 50.0 }))).toBeLessThan(1e-9);
+    });
+
+    // ── FINDING C3 ────────────────────────────────────────────────────────────
+    // The two tests above are both blind to a cap that is too TIGHT, and that is
+    // structural rather than incidental: monotonicity is one-sided, and the
+    // scaling law is a ratio, so any constant factor on |k'| cancels out of it.
+    // Two kappaPrime mutants survive every other test in this file — halving the
+    // arc-length span (slows every curvature-varying move by sqrt(2)) and
+    // dropping the guard that stops a difference straddling a curve join (a
+    // near-zero ceiling at every curve join in every job). Found by mutating the
+    // C++ port; see docs/planner_audit.md C3. Both tests below are two-sided.
+
+    it("binds at exactly sqrt(alpha/|k'|) where it is the active cap", () => {
+        // |k'| is re-derived here by the same central difference constrain uses,
+        // so this cannot catch the two agreeing on a wrong definition of dk/ds —
+        // it catches a wrong span, a wrong index, or a missing guard.
+        const aAccelDegS2 = 50.0;
+        const aAccRad = (aAccelDegS2 * Math.PI) / 180;
+        const s = samplesFor(CASES.s_curve!.curves);
+        const c = constrain(s, { ...BASE, aAccelDegS2 });
+        const BREAK = PATH_START | PATH_END | CURVE_BOUNDARY;
+
+        let binding = 0;
+        const bad: string[] = [];
+        for (let i = 1; i < s.length - 1; i++) {
+            if (s[i]!.flags & BREAK || s[i + 1]!.flags & BREAK) continue;
+            const span = s[i - 1]!.ds + s[i]!.ds;
+            if (span < 1e-6) continue;
+            const kp = Math.abs(s[i + 1]!.kappa - s[i - 1]!.kappa) / span;
+            if (kp <= 1e-9) continue;
+
+            const lim = Math.sqrt(aAccRad / kp);
+            let others = FEED;
+            if (s[i]!.kappa > 1e-9) others = Math.min(others, Math.sqrt(A_MAX / s[i]!.kappa));
+            if (lim >= others * 0.999) continue; // only where this cap is the min
+
+            binding++;
+            if (Math.abs(c[i]!.vCeiling - lim) > 1e-9 && bad.length < 4) {
+                bad.push(`${i}: got ${c[i]!.vCeiling} expected ${lim}`);
+            }
+        }
+        // Guards against the test going vacuous if s_curve stops driving the cap.
+        expect(binding, "cap never bound").toBeGreaterThan(10);
+        expect(bad.join("; ")).toBe("");
+    });
+
+    it("a kappa jump ACROSS a curve join is not an angular acceleration", () => {
+        // kappa is genuinely discontinuous where two curves meet; the jump is an
+        // artefact of the representation, not a rotation the A axis performs.
+        // Stated behaviourally: enabling the cap must change NOTHING there.
+        const BREAK = PATH_START | PATH_END | CURVE_BOUNDARY;
+        let checked = 0;
+        forEachFixture((name, s) => {
+            const a = constrain(s, BASE);
+            const b = constrain(s, { ...BASE, aAccelDegS2: 50.0 });
+            const bad: string[] = [];
+            for (let i = 1; i < s.length - 1; i++) {
+                if (!(s[i]!.flags & BREAK || s[i + 1]!.flags & BREAK)) continue;
+                checked++;
+                if (a[i]!.vCeiling !== b[i]!.vCeiling && bad.length < 4) {
+                    bad.push(`${name}[${i}]: ${a[i]!.vCeiling} -> ${b[i]!.vCeiling}`);
+                }
+            }
+            return bad;
+        });
+        expect(checked, "no boundary samples examined").toBeGreaterThan(5);
     });
 
     it("scales as sqrt(aAccel) where the cap binds", () => {
