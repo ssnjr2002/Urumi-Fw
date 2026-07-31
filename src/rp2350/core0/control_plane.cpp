@@ -55,6 +55,17 @@ void axisMapReset() {
     for (int i = 0; i < 4; i++) slotNode[i] = SLOT_NONE;
 }
 
+// The stream byte has this many motion slots (X/Y/Z/A); axes_enabled/homed are
+// one bit PER SLOT. Which bus id occupies each slot is the runtime axis map
+// (slotNode[], §5), so "is this id an axis, and which slot" is a map lookup —
+// no longer the id==slot+1 assumption. An axis node can now be any bus id.
+#define MOTION_SLOTS 4
+static uint8_t nodeSlot(uint8_t n) {
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++) if (slotNode[i] == n) return i;
+    return SLOT_NONE;
+}
+static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
+
 static uint8_t popStatusPayload(uint8_t* buf, uint8_t cap);   // defined below
 
 // Relay one CMD_ENGAGE to Core 1 (slot in the payload byte, like vac_servo packs
@@ -95,6 +106,31 @@ static uint16_t nodeHomed = 0;               // bit n = nodeOrigin[n] is valid
 // engaging any, so an entry is always refreshed before it is used.
 static int32_t  parkPos[BUS_ADDR_MAX + 1] = {0};
 static uint16_t parkSeen = 0;
+
+// ─── The one place a position reference dies ──────────────────────────────────
+// Every path that destroys a position went through its own open-coded pair of
+// bit clears, and the recurring bug was updating one frame and forgetting the
+// other: clear axes_homed but leave nodeOrigin, and the next axis_map cheerfully
+// resurrects the datum. Both frames die together, here, or the two disagree.
+//
+// NAMING: this is the ORIGIN — Core 0's stored reference for a node, the thing
+// machinePos is measured from. It is NOT the node-side datum (NODE_FLAG_DATUM /
+// CMD_DATUM_SET), which is the node's own continuity witness. Core 0 never writes
+// that; only the node sets or clears it. Two different facts, deliberately
+// separate, and validity is the conjunction of them (see slotAdoptStatus).
+static void originInvalidate(uint8_t node) {
+    nodeHomed &= ~(1u << node);
+    parkSeen  &= ~(1u << node);        // its parked counter means nothing now
+    uint8_t s = nodeSlot(node);
+    if (s != SLOT_NONE) axes_homed &= ~(1 << s);
+}
+
+// Whole-machine version — estop, soft limit, disable-all.
+static void originInvalidateAll() {
+    nodeHomed  = 0;
+    parkSeen   = 0;
+    axes_homed = 0;
+}
 
 // ─── Node status payload ──────────────────────────────────────────────────────
 // Every command that reports node state answers with the SAME bytes, produced by
@@ -163,7 +199,9 @@ static void slotAdoptStatus(uint8_t s, uint8_t n, const uint8_t* st, uint8_t stL
     if (flags & NODE_FLAG_ENABLED) axes_enabled |=  (1 << s);
     else                           axes_enabled &= ~(1 << s);
 
-    if (!(flags & NODE_FLAG_DATUM)) nodeHomed &= ~(1u << n);   // witness broken
+    // The node's continuity witness is broken (reset, or de-energised at some
+    // point) — whatever origin we hold for it no longer refers to anything.
+    if (!(flags & NODE_FLAG_DATUM)) originInvalidate(n);
 
     if (haveTail && (nodeHomed & (1u << n))) {
         machinePos[s] = nsPos(st) - nodeOrigin[n];
@@ -194,11 +232,9 @@ static void slotAdoptStatus(uint8_t s, uint8_t n, const uint8_t* st, uint8_t stL
 void reconcileValidity() {
     uint8_t st = machineState, ar = alarmReason;
 
-    // Datum dies the instant motion stops abruptly — before the bus sweep.
-    if (st == STATE_ESTOP || ar == ALARM_ESTOP || ar == ALARM_SOFT_LIMIT) {
-        axes_homed = 0;
-        nodeHomed  = 0;
-    }
+    // Position dies the instant motion stops abruptly — before the bus sweep.
+    if (st == STATE_ESTOP || ar == ALARM_ESTOP || ar == ALARM_SOFT_LIMIT)
+        originInvalidateAll();
     // Energisation, however, is only false once Core 1's busDisableAll() has
     // actually run. Core 1 sets ALARM_ESTOP *before* the sweep and STATE_ALARM
     // *after* it, so the conjunction is precisely "the sweep has completed".
@@ -249,17 +285,6 @@ static bool parseState(const char* s) {
 }
 
 // BUS_ADDR_MAX lives in shared.h — Core 1's safe-off sweep walks the same range.
-
-// The stream byte has this many motion slots (X/Y/Z/A); axes_enabled/homed are
-// one bit PER SLOT. Which bus id occupies each slot is the runtime axis map
-// (slotNode[], §5), so "is this id an axis, and which slot" is a map lookup —
-// no longer the id==slot+1 assumption. An axis node can now be any bus id.
-#define MOTION_SLOTS 4
-static uint8_t nodeSlot(uint8_t n) {
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++) if (slotNode[i] == n) return i;
-    return SLOT_NONE;
-}
-static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
 
 // Handle one control-plane text line. Replies with exactly one line per the wire
 // contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
@@ -476,9 +501,7 @@ bool handleCommand(const String& input) {
             for (uint8_t i = 0; i < MOTION_SLOTS; i++)
                 if (slotNode[i] != SLOT_NONE) relayNode(CMD_DISABLE, slotNode[i]);
             axes_enabled = 0;
-            axes_homed   = 0;          // de-energised → datum lost on every axis
-            nodeHomed    = 0;          // …and in the node frame too, or the next
-                                       // axis_map would resurrect it
+            originInvalidateAll();     // de-energised → position lost everywhere
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
             if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
@@ -487,12 +510,9 @@ bool handleCommand(const String& input) {
             // it currently holds a slot, so its origin is void either way. This
             // is exactly the case slot-indexed bookkeeping could not express —
             // a PARKED head losing holding torque and sagging under gravity.
-            nodeHomed &= ~(1u << node);
+            originInvalidate(node);
             uint8_t s = nodeSlot(node);
-            if (s != SLOT_NONE) {
-                axes_enabled &= ~(1 << s);
-                axes_homed   &= ~(1 << s);   // de-energised → datum lost
-            }
+            if (s != SLOT_NONE) axes_enabled &= ~(1 << s);
         }
         Serial.println("ok");
         return true;
@@ -745,7 +765,7 @@ bool handleCommand(const String& input) {
             // un-homed, which getpos's mask and getstate both surface.
             if ((parkSeen & (1u << desired[i])) && stLen >= NS_STEP_LEN &&
                 nsPos(st) != parkPos[desired[i]])
-                nodeHomed &= ~(1u << desired[i]);   // moved while parked → datum void
+                originInvalidate(desired[i]);       // moved while parked
             slotNode[i] = desired[i];
             slotAdoptStatus((uint8_t)i, desired[i], st, stLen);
         }
@@ -798,8 +818,7 @@ bool handleCommand(const String& input) {
             multicore_fifo_push_blocking(((uint32_t)CMD_DATUM_SET << 8) | n);
             stLen = popStatusPayload(st, sizeof st);
             if (stLen < NS_STEP_LEN || !(st[NS_FLAGS] & NODE_FLAG_DATUM)) {
-                nodeHomed  &= ~(1u << n);      // no answer, or witness not armed
-                axes_homed &= ~(1 << i);
+                originInvalidate(n);           // no answer, or witness not armed
                 continue;
             }
             nodeOrigin[n]  = nsPos(st);
