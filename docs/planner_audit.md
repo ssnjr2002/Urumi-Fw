@@ -495,6 +495,94 @@ stage calls `cos` on a raw accumulated angle, it needs its own cases.
 
 ---
 
+### Stage 6 ported — and the workflow was reordered first
+
+`lib/motion/plan.cpp` is bit-identical to the TypeScript: **77 cases, 23,710
+speeds, 1,554 direct `segAccel` cases.** Suite total 206,741 assertions.
+
+More importantly, this is the first stage the C++ has **contract tests** for:
+13 test cases ported from `web/test/toolpath/plan.test.ts`, covering purity,
+boundedness, endpoints-at-rest, the feasibility contract of both sweeps,
+profile shape, monotonicity, `segAccel`, `subpathRanges`, P1 and P2.
+
+#### The order changed, and the change paid immediately
+
+Stages 4 and 5 were ported as *stage, then bit-parity vectors, then commit* —
+no contract tests at all. That was a hole, not a deferral: **bit-parity proves
+agreement, never correctness**, and it cannot survive an optimisation, because
+an optimisation is precisely a change that is allowed to move the bits. A
+verification strategy that has to be deleted the moment optimisation starts is
+not a verification strategy for a port whose stated purpose is to be optimised.
+
+New order, per stage:
+
+1. port the stage,
+2. port its contract tests, and get them passing,
+3. *then* generate the bit-parity vectors.
+
+Evidence from this stage: the contract tests found one real error (a wrong
+closed form in a ported test), and once they passed, **the differential passed
+on its first run.** Compare stage 4, where the first differential run failed on
+a 1-ULP `theta` divergence that took nine steps to localise, because a numeric
+question and a semantic question look identical in a bit comparison.
+
+Contract tests fail with a sentence. Dropping plan's backward sweep produces
+`32 violation(s): straight_line: decel jump at 14, ...`. The same mutation
+against the differential alone produces two different hex strings.
+
+#### Mutation validation
+
+10 mutants against `plan`, **9 killed by the contract tests alone** — the
+differential was not needed to catch any of them:
+
+| mutation | result |
+|---|---|
+| drop the backward sweep | killed — 32 named feasibility violations |
+| drop the P1 headroom block | killed |
+| `segAccel`: `aMax` fallback -> 0 | killed |
+| `segAccel`: degenerate segment returns 0, not `aMax` | killed |
+| `segAccel`: `jsMax(kappa)` -> `jsMin` | killed |
+| `segAccel`: drop the `pathAccel` term | killed |
+| drop the P2 bracket validation | killed |
+| P1: `aMax^2 - ac^2` -> `+` | killed |
+| sweeps: `2*a*ds` -> `a*ds` | killed |
+| drop the endpoint re-pin after the sweeps | survived — **dead code** |
+
+Two of the mutants in the first run were malformed (a `sed` that edited only a
+comment, and one that could not match across lines). Both were re-run properly
+rather than filed as survivors — the mutation script's no-op checksum caught
+one, and the other was caught by disbelieving the result. See the stage 5
+section: a check that has never been seen to fail is not evidence.
+
+#### FINDING P6: plan's final endpoint re-pin is unreachable
+
+`plan.ts` ends each subpath with
+
+```ts
+// endpoints stay pinned (forward pass may have lifted hi off 0)
+v[lo] = 0;
+v[hi] = 0;
+```
+
+Removing it changes nothing on any fixture, and not for want of coverage —
+**it cannot change anything.** Both sweeps assign only through
+`if (reachable < v[i]) v[i] = reachable`, and `reachable` is a `sqrt`, so it is
+never negative. A value already pinned to 0 can therefore only stay 0. The
+forward pass cannot lift `hi` off 0, and the comment asserting it might is
+wrong.
+
+Kept in the port anyway, because the port is a bug-for-bug transcription and
+this is not a bug — it is three dead statements per subpath. Worth recording
+because the comment reads as documentation of a real hazard, and a future
+reader hardening the sweeps would reasonably believe it.
+
+This is the third piece of load-bearing-looking code the port has found to be
+inert, after `dtAt`'s two guards in flatten and constrain's two — see the stage
+5 section. The pattern is consistent: **defensive code written against a
+hazard nobody measured.**
+
+---
+
 ## Findings
 
 | # | Stage | Severity | Summary | Status |
