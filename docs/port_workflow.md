@@ -34,18 +34,20 @@ with a known end date; the contract suite is what survives it. Keeping them apar
 means the contract suite can be run alone, without the `*_ref.txt` vectors
 present — which is exactly the state the port will be in once bit-parity retires.
 
-**`test/data/` is generated and gitignored.** The generators
+**`test/data/*_ref.txt` is generated and gitignored.** The generators
 (`web/test/port/cppRef*.test.ts`) are the tracked definition; the outputs are
-10+ MB and would be re-committed on every fixture change. One command builds all
+17 MB and would be re-committed on every fixture change. One command builds all
 of them, and every test that reads one fails with that command in its message:
 
 ```bash
 cd web && GEN_CPP_REF=1 npx vitest run test/port
 ```
 
-The contract suite needs exactly one of these files — `svg_fixtures.txt`, which
-is INPUT geometry rather than expected output (see step 5). So "runs without the
-reference vectors" means without the answers, not without the artwork.
+`svg_fixtures.txt` is the exception and stays tracked: 496 bytes of INPUT
+geometry rather than expected output (see step 5), and the only generated file
+the CONTRACT suite reads. Tracking it is what keeps "the contract suite runs
+alone" true on a fresh clone — otherwise the suite that is supposed to outlive
+bit-parity would depend on bit-parity's own tooling to start.
 
 Anything shared goes in `test/support/`. `quality.h` duplicates
 `web/src/config/defaults.ts` by hand ON PURPOSE: a generated copy would track the

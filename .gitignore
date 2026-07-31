@@ -22,5 +22,10 @@ pipeline/**/__pycache__/
 #
 # Every test that reads one fails with that command in its message if it is
 # missing, so an ungenerated checkout says so rather than passing over no data.
+#
+# test/data/svg_fixtures.txt is deliberately NOT ignored. It is 496 bytes of
+# INPUT geometry, not answers, and it is the one generated file the CONTRACT
+# suite reads — so tracking it keeps that suite runnable on a fresh clone with
+# no generator run, which is the state the port lands in once bit-parity
+# retires.
 test/data/*_ref.txt
-test/data/svg_fixtures.txt

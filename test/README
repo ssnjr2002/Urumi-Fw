@@ -16,9 +16,9 @@ date; the contract suite is what survives it.
 Generated reference data — NOT in git
 -------------------------------------
 
-test/data/*.txt is generated and gitignored. The GENERATORS are tracked, under
-web/test/port/cppRef*.test.ts, and are the only definition of these files. They
-are large (discretize_ref.txt alone is 10 MB), fully reproducible, and would
+test/data/*_ref.txt is generated and gitignored. The GENERATORS are tracked,
+under web/test/port/cppRef*.test.ts, and are the only definition of these files.
+They are large (discretize_ref.txt alone is 10 MB), fully reproducible, and would
 otherwise be re-committed on every fixture change.
 
 Generate all of them:
@@ -33,12 +33,15 @@ regenerate it, so an ungenerated checkout says so rather than passing over no
 data. Two kinds:
 
     *_ref.txt          inputs AND expected outputs. Only the parity suite reads
-                       these.
+                       these. Generated, gitignored.
     svg_fixtures.txt   real artwork geometry, INPUT ONLY — the repaired subpaths
                        from the SVG parser and enforceC1, neither of which is in
                        the port's scope. The C++ flattens and constrains them
-                       itself. Read by the CONTRACT suite, so that suite needs
-                       one generator run too on a fresh checkout.
+                       itself. TRACKED, not ignored: it is 496 bytes, it is the
+                       only generated file the CONTRACT suite reads, and tracking
+                       it keeps that suite runnable on a fresh clone with no
+                       generator run. Its generator is cppRefFixtures.test.ts;
+                       regenerate it when the artwork or enforceC1 changes.
 
 Check these files with is_open(), never good(): a default-constructed
 std::ifstream has no error flags set, so good() returns true for a stream that
