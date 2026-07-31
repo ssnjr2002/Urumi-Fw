@@ -200,17 +200,24 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 
 // ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
 // Normal command word : (CMD << 8) | node          — top 16 bits zero
-// Debug step word      : (FIFO_STEP_DEBUG << 24) | (slot << 16) | (count & 0xFFFF)
-//   slot 0..3 (Core 0 resolves the target bus node → slot via the axis map)
-//   count is signed-magnitude: bit15 of the low word = direction (1 = negative)
+// Debug step: TWO words, pushed back to back —
+//   word 0: (FIFO_STEP_DEBUG << 24) | (slot << 16) | (sps & 0xFFFF)
+//           slot 0..3 (Core 0 resolves target bus node → slot via the axis map)
+//   word 1: int32 step count, plain two's complement — sign IS the direction
+//
+// Both parameters ride the request rather than sitting in shared globals. That
+// is not just tidiness: `step` is fire-and-forget (Core 0 pushes and returns
+// immediately), so a second `step` issued before Core 1 picked up the first
+// would have overwritten a shared rate and run burst #1 at burst #2's speed.
+// Queued in the FIFO, each burst carries its own parameters. It also retires the
+// old signed-magnitude packing — a plain int32 needs no sign-bit hack.
 #define FIFO_STEP_DEBUG  0xF0
-#define STEP_DEBUG_SPS       1000   // default emit rate for debug stepping (steps/sec)
-#define STEP_DEBUG_SPS_MAX  40000   // ceiling — one stream byte per step, and the
-                                    // bus tops out near 92k bytes/s at 921.6 kbaud
-// Emit rate for the NEXT debug-step burst. Core 0 writes it just before pushing
-// the FIFO word (the FIFO word itself is full: tag | slot | signed count), Core 1
-// reads it once at the top of the burst. Single writer, so no locking needed.
-extern volatile uint32_t debugStepSps;
+#define STEP_DEBUG_SPS       1000        // default emit rate (steps/sec)
+#define STEP_DEBUG_SPS_MAX  60000        // must fit the 16-bit field; also stays
+                                         // under the ~92k bytes/s the bus can do
+                                         // at 921.6 kbaud (one byte per step)
+#define STEP_DEBUG_MAX  100000000L       // ~28 min at the max rate — a ceiling on
+                                         // typos, not on anything useful
 #define MSEG_NACK_CRC    0x01
 #define MSEG_NACK_FULL   0x02
 #define MSEG_NACK_MAGIC  0x03

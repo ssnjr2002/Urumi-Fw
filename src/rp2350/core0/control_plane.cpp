@@ -825,11 +825,20 @@ bool handleCommand(const String& input) {
     }
 
     // ── step <node> <count> [sps] — debug stepping (bring-up only) ─────────────
-    // <node> is a BUS id; we resolve it to its ENGAGE-bound stream slot via the
-    // axis map, so the node must be in a committed axis_map first (err not_engaged
-    // otherwise). count sign = direction. [sps] is the emit rate, defaulting to
-    // STEP_DEBUG_SPS and clamped to STEP_DEBUG_SPS_MAX. Emits into that slot on
-    // Core 1, which reads debugStepSps as it starts the burst.
+    // <node> is a BUS id resolved to its ENGAGE-bound stream slot via the axis map,
+    // so the node must be in a committed axis_map first. count is a full int32, its
+    // sign the direction, clamped to STEP_DEBUG_MAX. [sps] defaults to
+    // STEP_DEBUG_SPS and is clamped to STEP_DEBUG_SPS_MAX.
+    //
+    // The datum SURVIVES a debug burst. The node is engaged, so it counts these
+    // bytes into its own position exactly as during a job, and Core 1 adds the
+    // same steps to machinePos — both frames stay consistent. This used to clear
+    // axes_homed, which made sense only while position was slot-framed.
+    //
+    // Hence the enabled requirement: a node counts stream bytes whether or not its
+    // motor is energised, so stepping a de-energised axis would advance both
+    // counters while the shaft stayed put — the one case where the two agree and
+    // are both wrong. Refuse it rather than record a fiction.
     if (input.startsWith("step")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
@@ -839,22 +848,22 @@ bool handleCommand(const String& input) {
         uint8_t node = (uint8_t)strtoul(p, &endPtr, 10);
         long count = strtol(endPtr, &endPtr, 10);
         if (count == 0) { Serial.println("err usage"); return true; }
+        if (labs(count) > STEP_DEBUG_MAX) { Serial.println("err too_many"); return true; }
         uint32_t sps = strtoul(endPtr, &endPtr, 10);   // optional — 0 if absent
         if (sps == 0) sps = STEP_DEBUG_SPS;
         if (sps > STEP_DEBUG_SPS_MAX) sps = STEP_DEBUG_SPS_MAX;
         uint8_t slot = nodeSlot(node);
         if (slot == SLOT_NONE) { Serial.println("err not_engaged"); return true; }
-        // Core 1 clears axes_homed for this burst; mirror it in the node frame so
-        // a later axis_map cannot restore the pre-step datum. (The node DOES count
-        // these steps, so this invalidation is conservative rather than necessary
-        // — see docs/node_session_and_datum.md §2.)
-        nodeHomed &= ~(1u << node);
-        uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
-        if (count < 0) mag |= 0x8000;
-        debugStepSps = sps;                            // read by Core 1 on pickup
-        uint32_t word = ((uint32_t)FIFO_STEP_DEBUG << 24) | ((uint32_t)slot << 16) | mag;
-        multicore_fifo_push_blocking(word);
-        Serial.printf("ok %lu sps\n", (unsigned long)sps);
+        if (!(axes_enabled & (1 << slot))) {
+            Serial.println("err not_enabled"); return true;
+        }
+        // Two words: tag|slot|sps, then the plain int32 count (sign = direction).
+        // Both parameters ride the request so back-to-back `step`s cannot steal
+        // each other's rate — see the FIFO encoding note in shared.h.
+        multicore_fifo_push_blocking(((uint32_t)FIFO_STEP_DEBUG << 24) |
+                                     ((uint32_t)slot << 16) | (sps & 0xFFFF));
+        multicore_fifo_push_blocking((uint32_t)(int32_t)count);
+        Serial.printf("ok %ld steps %lu sps\n", count, (unsigned long)sps);
         return true;
     }
 
