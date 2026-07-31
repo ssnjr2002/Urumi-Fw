@@ -829,7 +829,7 @@ promises a non-zero junction speed. Recorded as a knob whose value is a choice.
 | P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
 | D1 | discretize | **defect** | Empty segment (all deltas 0) emitted with `interval = fCpu` — a full second. Reachable at a corner AND at every `PATH_END` | **resolved** (skipped; `PATH_END` re-homed) |
 | D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | **resolved** (`sqrt` interpolation) |
-| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline (`cusp` 1.101×, `near_cusp` 1.867×) | open, **test red**. The filed cause ("plan overdrives the A rate ceiling by 16.8×") NO LONGER HOLDS — measured within the ceiling on every fixture, worst 1.01×. Re-derive before fixing |
+| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline (`cusp` 1.101×, `near_cusp` 1.867×) | open, **test red**. **Cause re-derived:** the plan is legal (peak A 0.91× the ceiling on `near_cusp`); `discretize` picks `k` from the XY speed budget alone and then spreads A evenly by sub-step INDEX while sub-step DURATIONS are unequal, spiking the A rate. 100% attributable to the A axis. Fix belongs in `discretize`, not upstream |
 | D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | **resolved with F2** |
 | D5 | discretize | gap | `DEFAULTS.tool.liftHeight = 0`, so the Z lift/lower path was dead *under test*. The deployed config sets `knife.liftHeight = 2.0`, so production did lift | **resolved** (tests) |
 | D6 | discretize **tests** | gap | "no segment spans more than `dvMax`" re-derived `k` with its own `ceil`, so it audited the rule's arithmetic while blind to whether the stage used it; a `ceil`→`floor` mutant survived | **resolved** (second test measures emitted segment speeds firmware-style); same shape as C3 |
@@ -1548,9 +1548,11 @@ binds, the executed timeline is slower than the planned one, and everything
 derived from the plan's timeline is wrong with it — including the window stage 9
 schedules the knife's enable-line resets against (`tool_duty_limits.md` §5).
 
-The root-cause chain, measured rather than assumed:
+**The cause has been re-derived. The chain below is the ORIGINAL one and it is
+false now — kept only so the correction is legible.**
 
 ```
+[SUPERSEDED]
 flatten's tangent cap overshoots (F7)
     → actual sample-to-sample turn exceeds kappa*ds   (1.64x on near_cusp, 8.17x on cusp)
 constrain's A-slew cap is computed from kappa
@@ -1559,8 +1561,72 @@ plan's timeline asks A for up to 16.8x its rate ceiling
 interval silently rescues it by stretching the segment
 ```
 
-This is the second finding in this audit (with P1) whose cause lives in one stage
-and whose symptom appears in another. Both were invisible to per-stage review.
+The last two links no longer hold. The upstream fixes (F7's measure-and-halve,
+C1, P1) took the plan back inside the A ceiling: measured per sample pair, the
+peak A rate the plan asks for is **90.6 deg/s on `near_cusp` (0.91x the 100
+ceiling)** and 100.8 deg/s on `cusp` (1.01x). The plan is legal. The symptom
+survived anyway.
+
+Attribution probe, per emitted cutting segment, asking which of `interval`'s
+terms the `jsMax` picked and how much time the floor added:
+
+| fixture | segments stretched | axis | share of the overrun |
+|---|---|---|---|
+| `cusp` | 60 / 168 | **A**, all of them | — (baseline optimistic; see below) |
+| `near_cusp` | 100 / 384 | **A**, all of them | 98% |
+
+X appears in a naive version of this probe and is an artefact: X's ceiling is
+80 mm/s and the cut feed is also 80, so an axis-aligned segment at feed *ties*
+with the floor without being stretched by it. Distinguishing a tie from a
+stretch removes X entirely. (The `cusp` share exceeds 100% because the
+counterfactual baseline — XY distance at full feed — is faster than what the
+plan actually asked for there; the attribution is exact, the magnitude is an
+upper bound. `near_cusp` is the clean case.)
+
+**The A demand is redistributed, not inflated.** On `near_cusp` the plan turns
+A by 180.00 deg and the emitted stream turns it by 180.00 deg — 1.000x, no
+rounding drift in the tangent tracker. So nothing creates extra rotation; the
+same rotation is packed into sub-segments that individually demand more than
+100 deg/s.
+
+The corrected chain, which lives entirely inside `discretize`:
+
+```
+k is chosen from the XY speed budget ALONE
+    → k = ceil(|b.v - a.v| / dvMax)                      (discretize.ts:167)
+    → the A axis has no vote in how a pair is subdivided
+A is then distributed LINEARLY IN THE PARAMETER
+    → thF = theta + dtheta * (j/k)                       (discretize.ts:181)
+    → equal turn per sub-step
+but sub-step DURATIONS are not equal
+    → speed ramps across the pair, so the fast sub-steps are short
+    → equal turn / unequal time = an A rate spike in the shortest sub-step
+interval's floor stretches those sub-steps back to 100 deg/s
+```
+
+That is why it is confined to `cusp` and `near_cusp`: they are the fixtures
+where `v` swings hardest across a pair, so the sub-step durations are most
+unequal. A cruise pair has `k = 1` and cannot exhibit it at all.
+
+**This relocates the fix.** Feeding the per-axis ceilings upstream into
+`constrain`/`plan` does *not* address it — the plan already respects them. The
+defect is created between the plan and the wire. Two candidate fixes, both local
+to `discretize`:
+
+- distribute `theta` in proportion to each sub-step's TIME rather than its
+  index, so equal-time sub-steps get equal turn; or
+- give A a vote in `k`, i.e. `k = max(ceil(dv/dvMax), ceil(turnRate/aRate))`,
+  so a pair that would overdrive A is cut finely enough that no sub-step does.
+
+The first is more precise and does not increase segment count; the second is a
+smaller change and composes with the existing budget. Neither has been
+implemented, and the D3 test stays red until one is.
+
+This is still the second finding in this audit (with P1) whose cause and symptom
+live in different places — but the distance is shorter than filed. The lesson
+that survives is the one about re-measuring: a root-cause chain is only true as
+of the code that was measured, and three of D3's four links were repaired by
+fixes aimed at other findings without anyone noticing D3 had moved.
 
 ### D4 — the corner rule is ungated, unlike constrain's
 
