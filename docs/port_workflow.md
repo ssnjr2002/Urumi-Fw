@@ -1,12 +1,13 @@
 # Porting a planner stage to C++ — the actual workflow
 
-**Last updated:** 2026-07-31 (after stage 6, and a reorder)
+**Last updated:** 2026-07-31 (after stage 7)
 
 This is reconstructed from the session transcript, not from memory. Where it
 says a step cost N calls, that is a count. Where it says a step was wasted,
 that is a step that actually happened.
 
-Remaining stages: `discretize`, `choreograph`.
+Remaining stages: `choreograph` (its own 61 contract tests; the module
+itself is ported, as stage 7's dependency).
 
 ---
 
@@ -47,6 +48,7 @@ implementation is not a contract.
 | 4 — `flatten` | 51 | **failed** (1 ULP on theta, 9 steps to localise) | 32 cases bit-exact |
 | 5 — `constrain` | 50 | **passed** | 75 cases bit-exact |
 | 6 — `plan` | ~35 | **passed** (contract tests ran first) | 77 cases bit-exact + 13 contract cases |
+| 7 — `discretize` | ~40 | **passed** | 194 cases / 75,797 segments bit-exact + 14 contract cases |
 
 `constrain` is a third the complexity of `flatten`, ported cleanly, and passed
 on the first run — **and cost the same.** That is the single most useful thing
@@ -238,6 +240,54 @@ That is worth noting for the remaining stages: **"tightening never raises" is a
 one-sided property and cannot detect a cap that is too tight.** The TypeScript
 suite has the same hole, and it is the first defect this port has found in the
 tests rather than in the code.
+
+**And it recurred in stage 7, in a different disguise.** `discretize`'s test for
+"no segment spans a speed change greater than dvMax" re-derived the subdivision
+count `k` with its own `ceil` and checked the result against `dvMax` — so it
+audited the ARITHMETIC of the rule while being blind to whether the stage used
+that rule. Swapping the stage's `ceil` for `floor` left it green. The general
+statement, which now covers both C3 and D6:
+
+> **A test that re-derives the quantity it is auditing agrees with the
+> implementation by construction.** It does not matter whether it looks like a
+> monotonicity claim (C3) or like a direct check (D6). The tell is that the test
+> recomputes something the stage also computes, instead of measuring what the
+> stage emitted.
+
+The fix is the same both times: measure the OUTPUT, in the units the next
+consumer sees. For C3 that was re-deriving `|k'|` from the public sample stream;
+for D6 it was deriving each segment's speed the way the firmware will execute it.
+Budget for one such test per cap, and expect to need a noise floor — a derived
+speed is quantised to ~1/major, so short segments must be excluded, and the
+exclusion needs its own "did anything survive the filter?" assertion.
+
+#### What stage 7 added
+
+**A stage can depend on a later stage.** `discretize` calls `choreograph` at
+every transition, so stage 7 could not land without porting stage 8's module.
+Do not treat the stage numbering as a dependency order — check the imports
+before estimating.
+
+**The config layer does not have to cross.** `discretize` is the one stage whose
+TypeScript signature takes config objects rather than a flat options struct, and
+it resolves them itself. The port takes the RESULT of that resolution
+(`DiscretizeOptions`), so schema/loader/validator/tool-catalogue stayed in
+TypeScript. State the cost in the header: the port cannot reproduce a defect that
+lives in the fallback chain, only one in what the chain produces.
+
+**Reference vectors have a size budget nobody set.** The first generator emitted
+20 MB, because every fixture repeated its full input sample list beside each of a
+dozen option variants. Two fixes, in this order: emit the inputs once and
+reference them by name (`samples` / `use`), and run the full option sweep only on
+the SMALL fixtures — every branch is reachable on a 4 mm line and an elbow, and
+the option knobs do not care how long the path is. 20 MB → 10 MB with no coverage
+lost. Check the breakdown before cutting: the second half of the reduction was
+flat across ~190 cases, so there was nothing left to cut without losing coverage.
+
+**Integer outputs make a differential easier to satisfy and easier to be
+complacent about.** Stage 7 emits step counts; most of them agree for reasons
+unrelated to the arithmetic. The `interval` and `rampChunks` records exist
+because that is where the actual doubles are.
 
 ### 7. Mutation-validate — and validate the validator (6-12 calls)
 

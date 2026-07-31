@@ -27,6 +27,8 @@ constexpr double DT_MIN = 1e-6;
 constexpr int MAX_REFINE = 8;
 constexpr double JUNCTION_DEVIATION = 0.05;
 constexpr double V_MIN = 0.5;
+/** Largest speed change discretize permits inside one MicroSegment (mm/s). */
+constexpr double DV_MAX = 3.0;
 constexpr double ANGLE_TOL = 5.0;
 constexpr double GAP_TOL = 0.01;
 

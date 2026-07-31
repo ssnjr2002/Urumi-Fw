@@ -642,6 +642,90 @@ code, and the TypeScript suite has it too. Worth carrying into `discretize` and
 `choreograph`: wherever a cap is verified only by monotonicity, it is verified
 only against being too loose.
 
+### Stage 7 (`discretize`) ported — and C3's shape recurred immediately
+
+`discretize` is the first stage that is not pure geometry: it turns mm into
+steps, so it is the first that has to know a machine exists. Three things came
+out of porting it.
+
+**The config layer did not cross, and did not need to.** The TypeScript's
+`discretize(samples, machine, profile, quality, overrides)` resolves inside
+itself — `resolvedAxes`, `resolveTargets`, and the `overrides ?? profile ??
+machine` chain. The port takes a flat `DiscretizeOptions` holding what that
+chain produces, so schema, loader, validator and tool catalogue all stay in
+TypeScript. The honest cost: the port cannot reproduce a defect that lives IN
+the chain, only one that lives in what the chain produces. The chain is `??`
+operators over config and has its own tests.
+
+**`choreograph` came along as a dependency, not as stage 8.** `discretize`
+calls `travelJog`, `preOrient`, `pivot`, `zMove` and `zStepCount` at every
+transition, so stage 7 could not be verified without them. `rampChunks` — the
+trapezoidal generator every one of those wraps — is now ported and pinned
+directly, both as a contract and by 409 differential cases. Stage 8's own 61
+contract tests remain owed.
+
+**No new transcendental, the first time that has happened.** The stage uses
+`sqrt`, `hypot`, `round`, `ceil`, `trunc`, `min`, `max`, `abs`. `sqrt` is
+correctly rounded by IEEE-754 and `hypot` is already owned as `jsHypot`
+(V8's algorithm, not the platform's). Measured before writing code, per the
+workflow, and it cost three tool calls to establish rather than nine to
+diagnose.
+
+Mutation, 30 mutants across `discretize.cpp`, `choreograph.cpp` and
+`microsegment.cpp`, run against the CONTRACT suite alone:
+
+| outcome | n | notes |
+|---|---|---|
+| killed by contract tests | 27 | including every `interval` mutant, the H1 chunk-duration rule, the unwind branch, and the D1 skip guard |
+| measure-zero | 1 | `>= cornerAngle` → `>`; survived parity too |
+| **genuine gap, now closed** | 1 | `ceil` → `floor` on the subdivision count (D6) |
+| argued not closable by a property | 1 | the 256 subdivision clamp (D7) |
+
+The `ceil` → `floor` survivor is **C3's shape exactly**, in a different stage.
+The test asserting "no cutting segment spans a speed change greater than dvMax"
+re-derived `k` with its own `ceil` and compared the result against `dvMax` — so
+it audited the arithmetic of the rule while being blind to whether the stage
+used that rule at all. Swapping the stage's `ceil` for `floor` left it green.
+Closed by adding a second test that derives each emitted segment's speed the way
+the FIRMWARE will (XY distance over `interval × major / fCpu`) and bounds the
+step-to-step change, with no reference to `k`, to `dvMax`, or to anything
+`discretize` computed. That kills the mutant.
+
+Two lessons, and the second is the general one:
+
+- The quantised reading needs a floor. Derived speed is quantised to ~1/major,
+  so segments under ~10 steps read as 6 mm/s "jumps" that are an artefact of the
+  integer interval — the ends of every path, where the tool leaves and returns
+  to rest one step at a time. Filtered on step count, with an explicit
+  "did anything survive the filter?" assertion, because a filter that quietly
+  excludes everything is the failure mode a filter invites.
+- **A test that re-derives the quantity it is auditing agrees with the
+  implementation by construction.** C3 was this, in a form that looked like
+  monotonicity. This was this, in a form that looked like a direct check. Both
+  survived a mutation that changed the machine's behaviour. The tell is the same
+  in both: the test recomputes something the stage also computes, instead of
+  measuring what the stage emitted.
+
+The 256 clamp is filed rather than closed, with the numeric argument. Any `k` at
+or above `ceil(dv/dvMax)` produces a stream that honours the speed budget, so no
+contract-level property distinguishes 256 from 1e9 — the clamp bounds *work*,
+not output validity. Its observable effect is real but semantic-free: a different
+`k` moves the sub-step positions `j/k`, so the same net motion is distributed
+across segments differently, which is why the differential kills it and no
+property test can. What IS assertable, and now is, is that the emitted count
+saturates as `dvMax` falls (609 segments at the shipped 3.0, 22,426 at 1e-3,
+23,099 at 1e-4 — a 10x tightening buying 3%), because a pair spans at most
+`dsMax` of arc and `dthetaMax` of turn and so has at most ~80 XY steps and ~104
+A steps to give, whatever `k` is.
+
+**D3's stated cause no longer holds.** The finding was filed as a chain ending
+"plan asks A for up to 16.8x its rate ceiling". Measured now, in both languages,
+the plan is within the A ceiling on every fixture (worst 1.01x on `cusp`), and
+that half of the TypeScript's D3 test passes. The stretch is still real and still
+confined to `cusp` (1.101x) and `near_cusp` (1.867x) — the port reproduces both
+numbers to within 0.01 — but its cause needs re-deriving rather than re-quoting.
+Recorded in the table below.
+
 ---
 
 ## Findings
@@ -665,9 +749,11 @@ only against being too loose.
 | P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
 | D1 | discretize | **defect** | Empty segment (all deltas 0) emitted with `interval = fCpu` — a full second. Reachable at a corner AND at every `PATH_END` | **resolved** (skipped; `PATH_END` re-homed) |
 | D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | **resolved** (`sqrt` interpolation) |
-| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline | open, **test red** — cause has MOVED, see below |
+| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline (`cusp` 1.101×, `near_cusp` 1.867×) | open, **test red**. The filed cause ("plan overdrives the A rate ceiling by 16.8×") NO LONGER HOLDS — measured within the ceiling on every fixture, worst 1.01×. Re-derive before fixing |
 | D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | **resolved with F2** |
 | D5 | discretize | gap | `DEFAULTS.tool.liftHeight = 0`, so the Z lift/lower path was dead *under test*. The deployed config sets `knife.liftHeight = 2.0`, so production did lift | **resolved** (tests) |
+| D6 | discretize **tests** | gap | "no segment spans more than `dvMax`" re-derived `k` with its own `ceil`, so it audited the rule's arithmetic while blind to whether the stage used it; a `ceil`→`floor` mutant survived | **resolved** (second test measures emitted segment speeds firmware-style); same shape as C3 |
+| D7 | discretize | note | The 256 subdivision clamp bounds work, not output validity — no contract-level property distinguishes it from uncapped | filed, not closable by a property test; saturation of the emitted count is asserted instead |
 | H1 | choreograph | **defect** | `aMove`'s decel ramp exceeds the A accel limit by 1.26–1.65× and never reaches rest — stops dead from up to 39 deg/s. Chunk-start rate sampling is conservative going up, anti-conservative coming down | **resolved** (`rampChunks`) |
 | H2 | choreograph | **defect** | `travelJog` / `headOffsetJog` emit one segment at full feed — 0→80 mm/s in zero distance, ignoring `x.maxAccel` entirely | **resolved** (same generator) |
 | H3 | choreograph | known | `zMove` is likewise unramped (0→24000 steps/s); acknowledged by the module TODO, and `z.maxAccel` is 0 so there is no limit to check against | open, **test red** |
