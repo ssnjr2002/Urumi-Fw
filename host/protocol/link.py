@@ -307,7 +307,10 @@ class SimBackend:
                     f"homed=0x{S.axes_homed:02x} "
                     f"alarm={int(S.alarm)} running={int(S.running)}")
         if cmd == "getpos":
-            return "pos " + " ".join(str(p) for p in S.pos)
+            # Trailing validity mask, as the firmware does — the counts are always
+            # plain numbers, never a sentinel.
+            return ("pos " + " ".join(str(p) for p in S.pos)
+                    + f" homed=0x{S.axes_homed:02x}")
         if cmd == "stop":                       # always available; de-energises
             S.state, S.alarm = MS.ALARM, AlarmReason.ESTOP
             S.axes_homed = S.axes_enabled = 0

@@ -18,7 +18,7 @@ Usage:
     python node_console.py --port COM7 raw 05 14 00      # arbitrary frame (no CRC)
 
     # interactive REPL (no command given):
-    python node_console.py --port COM7
+    python node_console.py --port COM7 --id 7
     node5> ping
     node5> servo 3 45
     node5> switch
@@ -39,10 +39,15 @@ CMD = {
     "type":    0x06,
     "enable":  0x04,
     "disable": 0x05,
+    # getpos / engage / nodestat all answer with the SAME status payload —
+    # [type][flags][pos int32 BE][slot] for a stepper — from one serializer on the
+    # node (buildNodeStatus). engage therefore reports position and enabled state
+    # on the same transaction that does the bind.
     "getpos":  0x03,   # stepper only
     "engage":  0x20,   # stepper: slot(0..3), 255=disengage
     "laser":   0x21,   # stepper (laser node only): state(0/1)
-    "nodestat":0x22,   # stepper: reply [pos int32][slot]
+    "nodestat":0x22,   # any type; tail varies by type
+    "datum":   0x23,   # arm the continuity witness (flags bit1); reply = status
     "servo":   0x10,   # vacuum: idx(0=all,1..N) angle(0..180)
     "ssr":     0x11,   # vacuum: state(0/1)
     "switch":  0x14,   # vacuum: read NC switch level

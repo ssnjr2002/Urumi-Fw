@@ -224,19 +224,23 @@ exists; it only speaks the granular `CMD_ENGAGE` verb. This is the clean split:
 
 `slotNode[4]` — the node id currently engaged to each slot (or `SLOT_NONE`) — is
 **local to Core 0**; nothing is shared across cores. `axis_map <x> <y> <z> <a>`
-is a *desired* map; applying it is a diff Core 0 runs directly:
+is a *desired* map; applying it is deliberately **not a diff** — it always
+re-sends every engage:
 
 ```
-for slot i in 0..3:
-    if desired[i] == slotNode[i]:      continue          # unchanged, no packet
-    if slotNode[i] != NONE:            ENGAGE(slotNode[i], SLOT_NONE)   # drop old
-    if desired[i] != NONE:             ENGAGE(desired[i], i)           # bind new
-    collect ACK
-commit slotNode = desired  iff every ENGAGE ACKed
+for slot i in 0..3:  if slotNode[i] != NONE: ENGAGE(slotNode[i], SLOT_NONE)  # clear old (best-effort)
+for slot i in 0..3:  if desired[i]  != NONE: ENGAGE(desired[i], i)           # bind every desired slot
+commit slotNode = desired  iff every desired ENGAGE ACKed
 ```
 
-So a head switch (`axis_map` changing only slots 2,3) emits exactly the two
-disengage + two engage packets; X,Y are untouched.
+**Why not a diff.** A skip-if-unchanged diff was tried and removed: because the
+Pico's `slotNode` persists while nodes can independently reset/reflash, a re-issued
+identical `axis_map` diffed to *nothing* and sent no engage — so a node that had
+silently dropped to `SLOT_NONE` stayed disengaged while the map claimed it was
+bound, and motion streamed into a slot nobody listened to (confirmed on the
+bench). Always re-sending every engage makes `axis_map` self-correcting: the node
+state can never drift from what the map claims. It costs a few extra cold-path
+round-trips (connect / head-switch), which do not matter.
 
 **Each `ENGAGE` is an ordinary single-node command over the existing FIFO** —
 Core 0 pushes it, Core 1 relays it and pushes back the ACK, identical to how

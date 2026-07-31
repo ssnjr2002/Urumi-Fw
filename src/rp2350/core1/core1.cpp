@@ -366,6 +366,35 @@ static void emitDebugSteps(uint32_t req) {
     axes_homed = 0;
 }
 
+// ─── Status-reply relay ───────────────────────────────────────────────────────
+// Send `pkt` and forward a variable-length status payload to Core 0. The node
+// answers [type][flags][type-specific tail…], so the length is not known here.
+// Push a status word carrying the payload length (0 = timeout / too short), then
+// the payload packed 4 bytes per word, MSB first. Core 0 unpacks and decodes by
+// type.
+//
+// Shared by CMD_NODE_STATUS and CMD_ENGAGE because they now answer with the same
+// bytes — the node has one serializer (buildNodeStatus), so the relay is one
+// function rather than a shape per command. CMD_GET_POS used to be a third,
+// special-cased variant that pushed a bare int32 in a second word; that oddity is
+// gone, and Core 0 reads positions out of this payload instead.
+static void relayStatusReply(uint8_t node, uint8_t cmd,
+                             uint8_t* pkt, uint8_t pktLen) {
+    sendPacket(pkt, pktLen);
+    uint8_t buf[32];                                  // max node reply payload
+    uint8_t rxLen = receivePacket(node, cmd, buf, RESPONSE_TIMEOUT_MS);
+    bool ok = (rxLen != 0xFF && rxLen >= 2);          // at least [type][flags]
+    multicore_fifo_push_blocking(((uint32_t)cmd << 24) | ((uint32_t)node << 16) |
+                                 (ok ? rxLen : 0u));
+    if (!ok) return;
+    for (uint8_t i = 0; i < rxLen; i += 4) {
+        uint32_t w = 0;
+        for (uint8_t j = 0; j < 4 && (i + j) < rxLen; j++)
+            w |= (uint32_t)buf[i + j] << (24 - j * 8);
+        multicore_fifo_push_blocking(w);
+    }
+}
+
 // ─── Whole-bus safe-off ──────────────────────────────────────────────────────
 // CMD_DISABLE to every address, replies consumed and discarded.
 //
@@ -458,38 +487,17 @@ void processBus() {
                 multicore_fifo_push_blocking((CMD_PING << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
                 break;
             }
-            case CMD_GET_POS: {
-                uint8_t pkt[4] = {node, CMD_GET_POS, 0, 0};
-                sendPacket(pkt, 4);
-                uint8_t payload[4];
-                uint8_t rxLen = receivePacket(node, CMD_GET_POS, payload, RESPONSE_TIMEOUT_MS);
-                multicore_fifo_push_blocking((CMD_GET_POS << 24) | (node << 16) | (rxLen == 4 ? 1u : 0u));
-                if (rxLen == 4) {
-                    int32_t pos = ((int32_t)payload[0] << 24) | ((int32_t)payload[1] << 16) |
-                                  ((int32_t)payload[2] <<  8) |  (int32_t)payload[3];
-                    multicore_fifo_push_blocking((uint32_t)pos);
-                }
+            case CMD_NODE_STATUS: {
+                uint8_t pkt[4] = {node, CMD_NODE_STATUS, 0, 0};
+                relayStatusReply(node, CMD_NODE_STATUS, pkt, 4);
                 break;
             }
-            case CMD_NODE_STATUS: {
-                // Generic status read — reply payload is [type][flags][tail…],
-                // variable length by type. Push a status word carrying the payload
-                // length (0 = timeout), then the payload packed 4 bytes/word (MSB
-                // first). Core 0 unpacks and decodes by type.
-                uint8_t pkt[4] = {node, CMD_NODE_STATUS, 0, 0};
-                sendPacket(pkt, 4);
-                uint8_t buf[32];           // max node reply payload
-                uint8_t rxLen = receivePacket(node, CMD_NODE_STATUS, buf, RESPONSE_TIMEOUT_MS);
-                bool ok = (rxLen != 0xFF && rxLen >= 2);   // at least [type][flags]
-                multicore_fifo_push_blocking((CMD_NODE_STATUS << 24) | (node << 16) | (ok ? rxLen : 0u));
-                if (ok) {
-                    for (uint8_t i = 0; i < rxLen; i += 4) {
-                        uint32_t w = 0;
-                        for (uint8_t j = 0; j < 4 && (i + j) < rxLen; j++)
-                            w |= (uint32_t)buf[i + j] << (24 - j * 8);
-                        multicore_fifo_push_blocking(w);
-                    }
-                }
+            // Arm the node's datum witness and read back the counter it refers
+            // to — one transaction, so Core 0's origin and the node's witness
+            // describe the same instant.
+            case CMD_DATUM_SET: {
+                uint8_t pkt[4] = {node, CMD_DATUM_SET, 0, 0};
+                relayStatusReply(node, CMD_DATUM_SET, pkt, 4);
                 break;
             }
             case CMD_ENABLE: {
@@ -507,14 +515,17 @@ void processBus() {
                 break;
             }
             // Stepper ENGAGE — bind/unbind the node's stream slot. Dumb relay:
-            // Core 0 owns the axis map and the diff; here we just carry one
-            // [node][CMD_ENGAGE][1][slot] packet and ACK back (payload = slot,
-            // 0..3 or 0xFF = disengage). See docs/engage_and_axis_map.md §5.
+            // Core 0 owns the axis map; here we just carry one
+            // [node][CMD_ENGAGE][1][slot] packet (payload = slot, 0..3 or 0xFF =
+            // disengage). See docs/engage_and_axis_map.md §5.
+            //
+            // The ACK is a full status payload, not a bare ok, so Core 0 learns
+            // position AND enabled state on the same round trip that does the
+            // bind — no second transaction, and no window between them for the
+            // node to reboot in (docs/node_session_and_datum.md §2).
             case CMD_ENGAGE: {
                 uint8_t pkt[5] = {node, CMD_ENGAGE, 1, payload, 0};
-                sendPacket(pkt, 5);
-                uint8_t rxLen = receivePacket(node, CMD_ENGAGE, nullptr, RESPONSE_TIMEOUT_MS);
-                multicore_fifo_push_blocking((CMD_ENGAGE << 24) | (node << 16) | (rxLen != 0xFF ? 1u : 0u));
+                relayStatusReply(node, CMD_ENGAGE, pkt, 5);
                 break;
             }
             // Vacuum-node commands. payload carries the args (packed by Core 0):

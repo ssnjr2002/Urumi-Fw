@@ -19,8 +19,17 @@ static void replyAck(uint8_t cmd, uint8_t* reply, uint8_t* replyLen) {
 // Generic node state the core tracks itself, so CMD_NODE_STATUS can report it
 // uniformly across all types. Bit 0 = enabled (CMD_ENABLE/DISABLE); more generic
 // flags can join here without touching any node type. Boots disabled.
-#define NODE_FLAG_ENABLED 0x01
+// NODE_FLAG_* live in common.h (shared with the master). Boots 0: not energised,
+// and no datum witness — a freshly booted node never claims continuity.
 static uint8_t g_nodeFlags = 0;
+
+// The single serializer for this node's whole state — see node_hooks.h. Callers:
+// the generic CMD_NODE_STATUS below, and the stepper's CMD_ENGAGE / CMD_GET_POS.
+uint8_t buildNodeStatus(uint8_t* buf) {
+    buf[0] = node_type();
+    buf[1] = g_nodeFlags;
+    return 2 + node_status(&buf[2]);
+}
 
 // Returns true iff this was a generic command (reply staged in `reply`).
 static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
@@ -39,26 +48,41 @@ static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
 
         case CMD_ENABLE:
             node_set_enabled(true);
+            // Sets ENABLED only. Deliberately does NOT set the datum witness:
+            // re-energising does not restore knowledge of where the shaft is.
             g_nodeFlags |= NODE_FLAG_ENABLED;
             replyAck(CMD_ENABLE, reply, replyLen);
             return true;
 
         case CMD_DISABLE:
             node_set_enabled(false);
-            g_nodeFlags &= ~NODE_FLAG_ENABLED;
+            // De-energised → back-drivable with no counter change → the datum is
+            // gone. Clear both; only CMD_DATUM_SET can restore the witness.
+            g_nodeFlags &= ~(NODE_FLAG_ENABLED | NODE_FLAG_DATUM);
             replyAck(CMD_DISABLE, reply, replyLen);
             return true;
 
+        case CMD_DATUM_SET: {
+            // The master is datuming this node right now. Arm the witness and
+            // report the counter it refers to in the same transaction, so the
+            // master's origin and the node's witness describe one instant.
+            g_nodeFlags |= NODE_FLAG_DATUM;
+            reply[0] = NODE_ID;
+            reply[1] = CMD_DATUM_SET;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;
+            *replyLen = 3 + n + 1;
+            return true;
+        }
+
         case CMD_NODE_STATUS: {
-            // Uniform status: generic head [node_type][flags] + a type-specific
-            // tail from node_status(). One command reports any node's whole state.
+            // Uniform status via the shared serializer. One command reports any
+            // node's whole state; the same bytes back other commands' ACKs.
             reply[0] = NODE_ID;
             reply[1] = CMD_NODE_STATUS;
-            reply[3] = node_type();
-            reply[4] = g_nodeFlags;
-            uint8_t tail = node_status(&reply[5]);
-            reply[2] = 2 + tail;                 // payload length
-            *replyLen = 3 + (2 + tail) + 1;      // header + payload + CRC slot
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;                        // payload length
+            *replyLen = 3 + n + 1;               // header + payload + CRC slot
             return true;
         }
 

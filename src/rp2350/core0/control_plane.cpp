@@ -55,12 +55,123 @@ void axisMapReset() {
     for (int i = 0; i < 4; i++) slotNode[i] = SLOT_NONE;
 }
 
+static uint8_t popStatusPayload(uint8_t* buf, uint8_t cap);   // defined below
+
 // Relay one CMD_ENGAGE to Core 1 (slot in the payload byte, like vac_servo packs
-// its idx). Returns true if the node ACKed. slot 0..3 binds, SLOT_NONE unbinds.
-static bool relayEngage(uint8_t node, uint8_t slot) {
+// its idx). slot 0..3 binds, SLOT_NONE unbinds. The ack is a full status payload,
+// so this both performs the bind and reports the resulting node state in one
+// transaction; `st` receives it and *stLen its length (0 = node timed out).
+// Returns true if the node answered.
+static bool relayEngage(uint8_t node, uint8_t slot, uint8_t* st, uint8_t* stLen) {
     multicore_fifo_push_blocking(((uint32_t)slot << 16) |
                                  ((uint32_t)CMD_ENGAGE << 8) | node);
-    return (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+    *stLen = popStatusPayload(st, 32);
+    return *stLen != 0;
+}
+
+// ─── Position datum, in the NODE frame (docs/node_session_and_datum.md §2) ────
+// machinePos[] is indexed by SLOT, so it goes stale the moment axis_map rebinds
+// a slot to a different node. The datum therefore lives with the NODE instead:
+// nodeOrigin[id] is that node's own step counter at the instant it was datumed,
+// and machinePos[slot] = <node counter now> - nodeOrigin[node]. A parked node
+// can neither move nor count (its RX ISR returns on slot == SLOT_NONE), so the
+// offset stays valid across an arbitrary number of swaps.
+//
+// axes_homed (per SLOT) is now DERIVED from nodeHomed (per BUS ID) every time a
+// slot is bound — see the axis_map handler.
+static int32_t  nodeOrigin[BUS_ADDR_MAX + 1] = {0};
+static uint16_t nodeHomed = 0;               // bit n = nodeOrigin[n] is valid
+
+// Frozen-while-parked check. parkPos[n] is node n's counter as reported by the
+// ack of the CMD_ENGAGE that DISENGAGED it; parkSeen marks which entries are
+// live. A parked node can neither move nor count, so when it is engaged again
+// its counter must read exactly the same — any difference means a reboot or lost
+// steps. Free: it rides acks we already pay for.
+//
+// These MUST outlive one axis_map invocation: a park lasts until some later
+// command re-engages the node, which is the entire point. As locals they only
+// ever checked nodes that stayed bound across a single command — i.e. the ones
+// that were never really parked. Every axis_map disengages all bound nodes before
+// engaging any, so an entry is always refreshed before it is used.
+static int32_t  parkPos[BUS_ADDR_MAX + 1] = {0};
+static uint16_t parkSeen = 0;
+
+// ─── Node status payload ──────────────────────────────────────────────────────
+// Every command that reports node state answers with the SAME bytes, produced by
+// one serializer on the node (buildNodeStatus): [type][flags][type tail…], where
+// the stepper tail is [pos int32 BE][slot]. CMD_NODE_STATUS, CMD_GET_POS and the
+// CMD_ENGAGE ack all use it, so there is one parser here rather than one per
+// command. Field offsets:
+#define NS_TYPE        0
+#define NS_FLAGS       1
+#define NS_STEP_POS    2   // …5, int32 big-endian
+#define NS_STEP_SLOT   6
+#define NS_STEP_LEN    7   // full stepper payload length
+// Flag bits are NODE_FLAG_* from common.h — shared with the node, not redefined.
+
+// Drain a status payload Core 1 pushed (length word, then 4 bytes per word).
+// Returns the payload length, 0 = timeout. Always drains what was pushed.
+static uint8_t popStatusPayload(uint8_t* buf, uint8_t cap) {
+    uint8_t plen = multicore_fifo_pop_blocking() & 0xFF;
+    if (plen == 0) return 0;
+    for (uint8_t i = 0; i < plen; i += 4) {
+        uint32_t w = multicore_fifo_pop_blocking();
+        for (uint8_t j = 0; j < 4 && (i + j) < plen; j++)
+            if (i + j < cap) buf[i + j] = (w >> (24 - j * 8)) & 0xFF;
+    }
+    return plen;
+}
+
+// One CMD_NODE_STATUS round trip. 0 = node timed out.
+static uint8_t nodeStatusRead(uint8_t node, uint8_t* buf, uint8_t cap) {
+    multicore_fifo_push_blocking(((uint32_t)CMD_NODE_STATUS << 8) | node);
+    return popStatusPayload(buf, cap);
+}
+
+static inline int32_t nsPos(const uint8_t* p) {
+    return ((int32_t)p[NS_STEP_POS]     << 24) | ((int32_t)p[NS_STEP_POS + 1] << 16) |
+           ((int32_t)p[NS_STEP_POS + 2] <<  8) |  (int32_t)p[NS_STEP_POS + 3];
+}
+
+// Position only, for callers that do not need the rest. false = timeout.
+static bool readNodePos(uint8_t node, int32_t* out) {
+    uint8_t buf[32];
+    if (nodeStatusRead(node, buf, sizeof buf) < NS_STEP_LEN) return false;
+    *out = nsPos(buf);
+    return true;
+}
+
+// Rebuild slot `s`'s position and enabled bit from the status payload the node
+// returned with its ENGAGE ack — no second transaction, and no window in which
+// the node could have rebooted between binding and reporting.
+//
+// `st` is the ack payload (NS_STEP_LEN bytes for a stepper), or nullptr if the
+// node did not answer. Both flags are taken from the NODE's own report rather
+// than from what Core 0 last assumed it commanded — that is the point: the slot
+// view becomes derived from node truth at every bind.
+//
+// Validity is a CONJUNCTION of two things neither side can know alone:
+//   nodeHomed[n]     — Core 0: "I took a datum for this node"
+//   NODE_FLAG_DATUM  — the node: "nothing since has interrupted it"
+// The node's half covers events Core 0 never observes (brownout, watchdog reset,
+// a de-energise it did not issue). Core 0's half covers the case of a node that
+// has simply never been datumed in this machine's frame.
+static void slotAdoptStatus(uint8_t s, uint8_t n, const uint8_t* st, uint8_t stLen) {
+    bool haveTail = (st != nullptr && stLen >= NS_STEP_LEN);
+    uint8_t flags = haveTail ? st[NS_FLAGS] : 0;
+
+    if (flags & NODE_FLAG_ENABLED) axes_enabled |=  (1 << s);
+    else                           axes_enabled &= ~(1 << s);
+
+    if (!(flags & NODE_FLAG_DATUM)) nodeHomed &= ~(1u << n);   // witness broken
+
+    if (haveTail && (nodeHomed & (1u << n))) {
+        machinePos[s] = nsPos(st) - nodeOrigin[n];
+        axes_homed   |= (1 << s);
+    } else {
+        machinePos[s] = 0;
+        axes_homed   &= ~(1 << s);
+    }
 }
 
 // Map an axes string ("xyza", "xy", …) to a bitmask. Empty/absent → all axes.
@@ -121,6 +232,13 @@ static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
 // contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
 bool handleCommand(const String& input) {
 
+    // Core 1 clears axes_homed on estop (core1.cpp), but nodeOrigin[] is Core-0
+    // data it cannot reach — and a stale origin would let the next axis_map
+    // resurrect a datum the estop correctly destroyed. Catch every estop path
+    // (text `stop`, or any Core-1-originated one) here instead: by the time any
+    // command runs, the flag is visible. Cheap, and no cross-core write.
+    if (machineState == STATE_ESTOP || alarmReason == ALARM_ESTOP) nodeHomed = 0;
+
     // ── always available ──────────────────────────────────────────────────────
     if (input == "ping") { Serial.println("pong"); return true; }
 
@@ -139,10 +257,22 @@ bool handleCommand(const String& input) {
         Serial.println();
         return true;
     }
+    // Position AND its validity, in one reply. The four counts are always plain
+    // numbers — never a sentinel. An in-band "invalid" value cannot survive this
+    // system: Core 1 dead-reckons with `machinePos[slot] += steps`, so a magic
+    // number would be silently incremented into an ordinary-looking coordinate.
+    // Validity has to travel out of band, hence the trailing mask.
+    //
+    // A cleared bit means the count is untrustworthy, NOT that it is zero — most
+    // invalidation paths (estop, soft limit, disable, debug step) deliberately
+    // retain the last known value because it is approximately right for that same
+    // axis. Only a rebind to an un-datumed node zeroes, because there the leftover
+    // number describes the slot's PREVIOUS occupant — a different physical motor.
+    // Callers must gate on the mask; the number alone never says it is stale.
     if (input == "getpos") {
-        Serial.printf("pos %ld %ld %ld %ld\n",
+        Serial.printf("pos %ld %ld %ld %ld homed=0x%02x\n",
                       (long)machinePos[0], (long)machinePos[1],
-                      (long)machinePos[2], (long)machinePos[3]);
+                      (long)machinePos[2], (long)machinePos[3], axes_homed);
         return true;
     }
     // A node's OWN step counter, read over RS485 — the independent check on
@@ -168,13 +298,12 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 7);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
-        multicore_fifo_push_blocking(((uint32_t)CMD_GET_POS << 8) | node);
-        if ((multicore_fifo_pop_blocking() & 0xFFFF) == 0) {
+        int32_t pos;
+        if (!readNodePos(node, &pos)) {
             Serial.printf("node %d timeout\n", node);
             return true;
         }
-        Serial.printf("node %d pos %ld\n", node,
-                      (long)(int32_t)multicore_fifo_pop_blocking());
+        Serial.printf("node %d pos %ld\n", node, (long)pos);
         return true;
     }
     // ── nodestat <node> — any node's generic + type-specific state ────────────
@@ -188,27 +317,19 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 8);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
-        multicore_fifo_push_blocking(((uint32_t)CMD_NODE_STATUS << 8) | node);
-        uint8_t plen = multicore_fifo_pop_blocking() & 0xFF;
+        uint8_t buf[32] = {0};             // max node reply payload
+        uint8_t plen = nodeStatusRead(node, buf, sizeof buf);
         if (plen == 0) { Serial.printf("node %d timeout\n", node); return true; }
 
-        uint8_t buf[32] = {0};             // max node reply payload
-        for (uint8_t i = 0; i < plen; i += 4) {
-            uint32_t w = multicore_fifo_pop_blocking();
-            for (uint8_t j = 0; j < 4 && (i + j) < plen; j++)
-                buf[i + j] = (w >> (24 - j * 8)) & 0xFF;
-        }
-
-        uint8_t type = buf[0];
-        uint8_t flags = buf[1];             // bit0 = enabled
-        Serial.printf("node %d type %d en %d", node, type, flags & 0x01);
+        uint8_t type = buf[NS_TYPE];
+        Serial.printf("node %d type %d en %d datum %d", node, type,
+                      (buf[NS_FLAGS] & NODE_FLAG_ENABLED) ? 1 : 0,
+                      (buf[NS_FLAGS] & NODE_FLAG_DATUM)   ? 1 : 0);
         switch (type) {
             case NODE_TYPE_STEPPER: {
-                int32_t pos = ((int32_t)buf[2] << 24) | ((int32_t)buf[3] << 16) |
-                              ((int32_t)buf[4] <<  8) |  (int32_t)buf[5];
-                uint8_t slot = buf[6];
-                if (slot == 0xFF) Serial.printf(" pos %ld slot none", (long)pos);
-                else              Serial.printf(" pos %ld slot %d", (long)pos, slot);
+                uint8_t slot = buf[NS_STEP_SLOT];
+                if (slot == 0xFF) Serial.printf(" pos %ld slot none", (long)nsPos(buf));
+                else              Serial.printf(" pos %ld slot %d", (long)nsPos(buf), slot);
                 break;
             }
             case NODE_TYPE_VACUUM:
@@ -330,10 +451,17 @@ bool handleCommand(const String& input) {
                 if (slotNode[i] != SLOT_NONE) relayNode(CMD_DISABLE, slotNode[i]);
             axes_enabled = 0;
             axes_homed   = 0;          // de-energised → datum lost on every axis
+            nodeHomed    = 0;          // …and in the node frame too, or the next
+                                       // axis_map would resurrect it
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
             if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
             relayNode(CMD_DISABLE, node);
+            // Unconditional: a de-energised node is back-drivable whether or not
+            // it currently holds a slot, so its origin is void either way. This
+            // is exactly the case slot-indexed bookkeeping could not express —
+            // a PARKED head losing holding torque and sagging under gravity.
+            nodeHomed &= ~(1u << node);
             uint8_t s = nodeSlot(node);
             if (s != SLOT_NONE) {
                 axes_enabled &= ~(1 << s);
@@ -558,16 +686,51 @@ bool handleCommand(const String& input) {
         // engage, so a node that silently lost its slot (reflash / power blip /
         // fresh Pico map) is always re-bound — the node state can never drift from
         // what the map claims, which a skip-if-unchanged diff allowed.
-        for (int i = 0; i < 4; i++)
-            if (slotNode[i] != SLOT_NONE) relayEngage(slotNode[i], SLOT_NONE);
+        // Park every bound node, recording the counter each reports (see parkPos).
+        for (int i = 0; i < 4; i++) {
+            uint8_t n = slotNode[i];
+            if (n == SLOT_NONE) continue;
+            uint8_t st[32], stLen;
+            if (relayEngage(n, SLOT_NONE, st, &stLen) && stLen >= NS_STEP_LEN) {
+                parkPos[n] = nsPos(st);
+                parkSeen  |= (1u << n);
+            } else {
+                // No answer — we do not know where it stopped. Drop any earlier
+                // entry rather than let a stale one produce a false match later.
+                parkSeen &= ~(1u << n);
+            }
+        }
+
+        // Engage, and adopt each slot's state straight out of the ack — position
+        // and enabled bit in the same transaction as the bind. This is the whole
+        // point of the node-frame datum: a head parked through several rebinds
+        // comes back with its position intact, and a slot that changed hands never
+        // inherits the previous occupant's count.
         for (int i = 0; i < 4; i++) {
             if (desired[i] == SLOT_NONE) continue;
-            if (!relayEngage(desired[i], (uint8_t)i)) {
+            uint8_t st[32], stLen;
+            if (!relayEngage(desired[i], (uint8_t)i, st, &stLen)) {
                 Serial.printf("err node %d timeout\n", desired[i]);
                 return true;              // leave the map as-is; a retry redoes all
             }
+            // Frozen-while-parked check (see parkPos above). Silent by design: the
+            // wire contract is exactly one line per command, so this cannot print.
+            // Clearing the node's origin is the report — the axis comes back
+            // un-homed, which getpos's mask and getstate both surface.
+            if ((parkSeen & (1u << desired[i])) && stLen >= NS_STEP_LEN &&
+                nsPos(st) != parkPos[desired[i]])
+                nodeHomed &= ~(1u << desired[i]);   // moved while parked → datum void
+            slotNode[i] = desired[i];
+            slotAdoptStatus((uint8_t)i, desired[i], st, stLen);
         }
-        for (int i = 0; i < 4; i++) slotNode[i] = desired[i];
+        // Slots left unbound hold no node, so they hold no position either.
+        for (int i = 0; i < 4; i++) {
+            if (desired[i] != SLOT_NONE) continue;
+            slotNode[i]   = SLOT_NONE;
+            machinePos[i] = 0;
+            axes_homed   &= ~(1 << i);
+            axes_enabled &= ~(1 << i);
+        }
 
         // Committed — clear the config gate if that is what was holding us.
         if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
@@ -584,8 +747,33 @@ bool handleCommand(const String& input) {
             Serial.println("err bad_state"); return true;
         }
         uint8_t m = axisMask(argAfter(input, 9));
-        for (int i = 0; i < 4; i++) if (m & (1 << i)) machinePos[i] = 0;
-        axes_homed |= m;
+        // The datum is recorded in the NODE's frame: nodeOrigin[id] captures that
+        // node's own counter here, so machinePos is a derived offset from now on
+        // and survives any later rebinding. A masked slot with no node bound
+        // cannot be datumed — there is nothing to record against — so it is
+        // skipped and left un-homed rather than silently claiming an origin.
+        for (int i = 0; i < 4; i++) {
+            if (!(m & (1 << i))) continue;
+            uint8_t n = slotNode[i];
+            if (n == SLOT_NONE) { axes_homed &= ~(1 << i); continue; }
+
+            // CMD_DATUM_SET arms the node's continuity witness AND returns the
+            // counter it refers to. One transaction, so the origin recorded here
+            // and the witness armed there describe the same instant — a separate
+            // read could straddle a reset and pair a witness with a stale count.
+            uint8_t st[32], stLen;
+            multicore_fifo_push_blocking(((uint32_t)CMD_DATUM_SET << 8) | n);
+            stLen = popStatusPayload(st, sizeof st);
+            if (stLen < NS_STEP_LEN || !(st[NS_FLAGS] & NODE_FLAG_DATUM)) {
+                nodeHomed  &= ~(1u << n);      // no answer, or witness not armed
+                axes_homed &= ~(1 << i);
+                continue;
+            }
+            nodeOrigin[n]  = nsPos(st);
+            nodeHomed     |= (1u << n);
+            machinePos[i]  = 0;
+            axes_homed    |= (1 << i);
+        }
         // setorigin recovers from an ESTOP-alarm, but NOT the config gate — only a
         // committed axis_map clears ALARM_CONFIG (docs/engage_and_axis_map.md §6.1).
         if (machineState == STATE_ALARM && alarmReason != ALARM_CONFIG) {
@@ -656,6 +844,11 @@ bool handleCommand(const String& input) {
         if (sps > STEP_DEBUG_SPS_MAX) sps = STEP_DEBUG_SPS_MAX;
         uint8_t slot = nodeSlot(node);
         if (slot == SLOT_NONE) { Serial.println("err not_engaged"); return true; }
+        // Core 1 clears axes_homed for this burst; mirror it in the node frame so
+        // a later axis_map cannot restore the pre-step datum. (The node DOES count
+        // these steps, so this invalidation is conservative rather than necessary
+        // — see docs/node_session_and_datum.md §2.)
+        nodeHomed &= ~(1u << node);
         uint16_t mag = (uint16_t)labs(count) & 0x7FFF;
         if (count < 0) mag |= 0x8000;
         debugStepSps = sps;                            // read by Core 1 on pickup

@@ -494,7 +494,12 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                     `alarm=${S.alarm} running=${S.running}`
                 );
             case "getpos":
-                return "pos " + S.pos.join(" ");
+                // Trailing validity mask, as the firmware does — the counts are
+                // always plain numbers, never a sentinel.
+                return (
+                    "pos " + S.pos.join(" ") +
+                    ` homed=0x${S.axesHomed.toString(16).padStart(2, "0")}`
+                );
             case "stop": // always available; de-energises
                 S.state = MachineState.ALARM;
                 S.alarm = AlarmReason.ESTOP;

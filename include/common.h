@@ -14,10 +14,35 @@
 #define CMD_GET_TYPE 0x06   // reply payload: [NODE_TYPE_*]
 // Type-specific (0x20+): only one type is compiled per node, so values may
 // overlap between types. Stepper:
-#define CMD_GET_POS  0x03   // stepper: reply payload: int32 absolute position (BE)
-#define CMD_ENGAGE   0x20   // stepper: payload [slot]; 0..3 = stream slot, 0xFF = disengage
+// Node status flags (the [flags] byte of the status payload below).
+#define NODE_FLAG_ENABLED 0x01  // energised now (CMD_ENABLE / CMD_DISABLE)
+#define NODE_FLAG_DATUM   0x02  // CONTINUITY WITNESS — see CMD_DATUM_SET
+// The witness answers one question the master cannot answer for itself: "has this
+// node been energised and counting, without interruption, since I datumed it?"
+// Dead reckoning is only sound while that holds. It is deliberately NOT the same
+// thing as NODE_FLAG_ENABLED: a node that was disabled and re-enabled is enabled
+// again but its datum is gone, because a de-energised motor can be back-driven
+// with no change to its step counter.
+//
+// Only CMD_DATUM_SET sets it. The node NEVER sets it on its own — in particular
+// CMD_ENABLE must not, or a reset followed by a re-enable would silently re-arm
+// a witness for a datum that no longer exists. The node only ever CLEARS it: at
+// boot (RAM init) and on CMD_DISABLE. So a brownout, a watchdog reset or a local
+// de-energise all invalidate it without the master needing to observe the event.
+#define CMD_DATUM_SET 0x23  // no payload; sets NODE_FLAG_DATUM, replies status payload
+
+// Status payload — ONE shape, from one serializer on the node (buildNodeStatus):
+//     [node_type][flags][type-specific tail…]        flags: NODE_FLAG_*
+//     stepper tail: [pos int32 BE][slot]             slot 0xFF = disengaged
+// CMD_NODE_STATUS, CMD_GET_POS and the CMD_ENGAGE ack all reply with it, so the
+// host has one parser and there is one place to extend. Notably the ENGAGE ack
+// makes a bind a single atomic observation of (bound, position, enabled): a
+// follow-up read could straddle a node reboot and describe a slot the node no
+// longer holds. See docs/node_session_and_datum.md.
+#define CMD_GET_POS  0x03   // stepper: reply = status payload (above)
+#define CMD_ENGAGE   0x20   // stepper: payload [slot] 0..3, 0xFF = disengage; ack = status payload
 #define CMD_LASER    0x21   // stepper (-DNODE_HAS_LASER only): payload [state 0/1]; NAK elsewhere
-#define CMD_NODE_STATUS 0x22 // stepper: no payload; reply [pos int32 BE][slot] (slot 0xFF = disengaged)
+#define CMD_NODE_STATUS 0x22 // any type; no payload; reply = status payload (above)
 // Vacuum:
 #define CMD_SERVO_SET 0x10  // payload: [idx(0=all,1..N)][angle(0..180)]; ACK echoes cmd
 // Host-side on/off shorthand: the Pico expands "on" to this angle before it hits

@@ -39,3 +39,14 @@ bool    node_handle_command(const uint8_t* pkt, uint8_t len,
 //   knife:   [osc on][blower duty]  a type with no extra state returns 0.
 // buf has room for at least MAX_PACKET_LEN-5 bytes.
 uint8_t node_status(uint8_t* buf);
+
+// ─── Provided BY the core, FOR the types (opposite direction to the hooks) ────
+// The one serializer for "everything this node knows about itself":
+//   [node_type][flags][node_status() tail…]
+// Writes it into buf and returns the length. Used by the generic CMD_NODE_STATUS
+// and by any type that wants to answer a command with full state instead of a
+// bare ACK — the stepper's CMD_ENGAGE and CMD_GET_POS both do, which is what
+// makes an engage a single atomic observation of (bound, position, enabled)
+// rather than a bind followed by a separate read that could straddle a reboot.
+// One place to extend when new generic state (e.g. a session token) arrives.
+uint8_t buildNodeStatus(uint8_t* buf);

@@ -123,10 +123,17 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
                 return false;              // out-of-range slot → NAK, keep state
             }
             slot = s;
+            // ACK carries slot, pos and energised state which currently happens 
+            // to be exactly the same as the full state: [type][flags][pos][slot],
+            // sampled after the bind. That makes an engage one atomic observation
+            // of (bound, position, enabled) — a separate follow-up read could
+            // straddle a node reboot and report a position for a slot the node no
+            // longer holds. The echoed slot also self-verifies the bind.
             reply[0] = NODE_ID;
             reply[1] = CMD_ENGAGE;
-            reply[2] = 0;
-            *replyLen = 4;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;
+            *replyLen = 3 + n + 1;
             return true;
         }
 #ifdef NODE_HAS_LASER
@@ -143,15 +150,15 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
         }
 #endif
         case CMD_GET_POS: {
-            int32_t pos = readPositionAtomic();
+            // Same payload as CMD_NODE_STATUS / the ENGAGE ack — position never
+            // travels in a shape of its own, so there is one parser on the host
+            // side and one place to extend. Kept as a distinct verb only because
+            // the direct UPDI debug console asks for it by name.
             reply[0] = NODE_ID;
             reply[1] = CMD_GET_POS;
-            reply[2] = 4;
-            reply[3] = (pos >> 24) & 0xFF;
-            reply[4] = (pos >> 16) & 0xFF;
-            reply[5] = (pos >> 8)  & 0xFF;
-            reply[6] =  pos        & 0xFF;
-            *replyLen = 8;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;
+            *replyLen = 3 + n + 1;
             return true;
         }
         default:
