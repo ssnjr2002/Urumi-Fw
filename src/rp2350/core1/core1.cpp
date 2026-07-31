@@ -272,8 +272,10 @@ static void __time_critical_func(processMicroSegments)() {
             __dmb();
 
             if (r == EMIT_SOFT_LIMIT) {            // harness — not raised yet
+                // Signal only. Core 0 folds ALARM_SOFT_LIMIT into axes_homed and
+                // the node-frame origins (reconcileValidity) — Core 1 no longer
+                // writes validity bitmasks it does not own.
                 alarmReason  = ALARM_SOFT_LIMIT;
-                axes_homed   = 0;
                 jobActive    = false;
                 __dmb();
                 machineState = STATE_ALARM;
@@ -433,7 +435,6 @@ void processBus() {
         queuedUsOut  = queuedUsIn;     // flushed segments are never retired (§4.6)
         pauseRequested = abortRequested = false;  // estop outranks a pending ramp
         runningReason  = RUNNING_JOB;
-        axes_homed   = 0;              // datum lost
         jobActive    = false;          // any suspended job is unrecoverable
         alarmReason  = ALARM_ESTOP;    // set reason before the ALARM transition
 
@@ -443,8 +444,11 @@ void processBus() {
         // machine disarmed. The sweep runs BEFORE the ALARM transition so the
         // invariant the host can rely on is: once you observe ALARM, everything
         // on the bus is already parked.
+        //
+        // Core 0 clears axes_enabled, keyed on exactly that transition (ALARM +
+        // ALARM_ESTOP), so the invariant is unchanged while the mask keeps a
+        // single writer. Clearing it here raced Core 0's read-modify-writes.
         busDisableAll();
-        axes_enabled = 0;              // de-energised — now true
 
         __dmb();
         machineState = STATE_ALARM;

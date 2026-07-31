@@ -125,6 +125,10 @@ void loop() {
     Serial.printf("RS485 MicroSegment Host Drive (%d baud)\n", RS485_BAUD);
 
     while (!soft_reset_requested) {
+        // Fold Core 1's ALARM signals into the validity masks BEFORE serving the
+        // host. Core 1 no longer writes axes_homed/axes_enabled itself (that
+        // raced Core 0's read-modify-writes); it signals, and Core 0 owns them.
+        reconcileValidity();
         processSerial();
         dataPlaneTick();   // abort a stalled CFG_SET transfer (inter-byte timeout)
         // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO

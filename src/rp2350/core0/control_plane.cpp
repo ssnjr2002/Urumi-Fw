@@ -174,6 +174,39 @@ static void slotAdoptStatus(uint8_t s, uint8_t n, const uint8_t* st, uint8_t stL
     }
 }
 
+// ─── Validity reconciliation — Core 0 is the sole writer ──────────────────────
+// axes_homed / axes_enabled are bitmasks Core 0 read-modify-writes (|= and &=).
+// Core 1 used to whole-byte-write them on estop and soft limit, which raced those
+// RMWs: Core 0 reading a mask, Core 1 zeroing it, Core 0 writing back its stale
+// value — an axis left claiming a datum the estop had just destroyed. There is no
+// atomic here and no critical section; instead Core 1 only ever SIGNALS, by
+// entering ALARM with a reason, and this folds the signal into the masks.
+//
+// Level-triggered rather than edge-triggered: it re-asserts every pass, so it is
+// idempotent and cannot miss a transition. It also reaches nodeOrigin/nodeHomed,
+// which are Core-0 statics Core 1 could never have cleared — without that, the
+// next axis_map would happily resurrect a datum an estop had destroyed.
+//
+// Called from Core 0's loop before anything the host can observe. Both the text
+// plane and STATUS_RSP are answered from that loop, so the documented invariant
+// still holds: once ALARM is visible, the datum is already gone and the bus is
+// already parked.
+void reconcileValidity() {
+    uint8_t st = machineState, ar = alarmReason;
+
+    // Datum dies the instant motion stops abruptly — before the bus sweep.
+    if (st == STATE_ESTOP || ar == ALARM_ESTOP || ar == ALARM_SOFT_LIMIT) {
+        axes_homed = 0;
+        nodeHomed  = 0;
+    }
+    // Energisation, however, is only false once Core 1's busDisableAll() has
+    // actually run. Core 1 sets ALARM_ESTOP *before* the sweep and STATE_ALARM
+    // *after* it, so the conjunction is precisely "the sweep has completed".
+    // Keying on STATE_ESTOP instead would report the machine disarmed while
+    // every EN pin was still asserted.
+    if (st == STATE_ALARM && ar == ALARM_ESTOP) axes_enabled = 0;
+}
+
 // Map an axes string ("xyza", "xy", …) to a bitmask. Empty/absent → all axes.
 static uint8_t axisMask(const char* s) {
     if (!s || !*s) return 0x0F;
@@ -231,13 +264,6 @@ static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
 // Handle one control-plane text line. Replies with exactly one line per the wire
 // contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
 bool handleCommand(const String& input) {
-
-    // Core 1 clears axes_homed on estop (core1.cpp), but nodeOrigin[] is Core-0
-    // data it cannot reach — and a stale origin would let the next axis_map
-    // resurrect a datum the estop correctly destroyed. Catch every estop path
-    // (text `stop`, or any Core-1-originated one) here instead: by the time any
-    // command runs, the flag is visible. Cheap, and no cross-core write.
-    if (machineState == STATE_ESTOP || alarmReason == ALARM_ESTOP) nodeHomed = 0;
 
     // ── always available ──────────────────────────────────────────────────────
     if (input == "ping") { Serial.println("pong"); return true; }
@@ -747,6 +773,13 @@ bool handleCommand(const String& input) {
             Serial.println("err bad_state"); return true;
         }
         uint8_t m = axisMask(argAfter(input, 9));
+        // setorigin does bus I/O below — up to four round trips, so it can be in
+        // flight for tens of milliseconds. An estop landing inside that window
+        // would otherwise be ERASED by the alarm-clearing block at the end, which
+        // cannot tell "the fault I was invoked to recover from" apart from "a
+        // fault that arrived while I was working". Snapshot the reason on entry
+        // and only clear what we came in with.
+        uint8_t alarmAtEntry = alarmReason;
         // The datum is recorded in the NODE's frame: nodeOrigin[id] captures that
         // node's own counter here, so machinePos is a derived offset from now on
         // and survives any later rebinding. A masked slot with no node bound
@@ -773,6 +806,13 @@ bool handleCommand(const String& input) {
             nodeHomed     |= (1u << n);
             machinePos[i]  = 0;
             axes_homed    |= (1 << i);
+        }
+        // A fault that arrived while we were on the bus outranks this command. The
+        // datum we just recorded describes a machine that has since stopped hard,
+        // so refuse rather than clear it — reconcileValidity() drops the masks on
+        // the next pass, and the operator retries after unalarm.
+        if (alarmReason != alarmAtEntry || machineState == STATE_ESTOP) {
+            Serial.println("err estop"); return true;
         }
         // setorigin recovers from an ESTOP-alarm, but NOT the config gate — only a
         // committed axis_map clears ALARM_CONFIG (docs/engage_and_axis_map.md §6.1).
