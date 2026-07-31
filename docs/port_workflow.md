@@ -1,13 +1,16 @@
 # Porting a planner stage to C++ — the actual workflow
 
-**Last updated:** 2026-07-31 (after stage 7)
+**Last updated:** 2026-07-31 (after stage 8)
 
 This is reconstructed from the session transcript, not from memory. Where it
 says a step cost N calls, that is a count. Where it says a step was wasted,
 that is a step that actually happened.
 
-Remaining stages: `choreograph` (its own 61 contract tests; the module
-itself is ported, as stage 7's dependency).
+**The port is complete.** Every stage in scope — `geometry`, `flatten`,
+`constrain`, `plan`, `discretize`, `choreograph`, `microsegment` — has a C++
+implementation, a contract suite and a differential suite. What remains is the
+optimisation phase the contract suites were built to survive, and retiring
+bit-parity when it starts costing more than it catches.
 
 ---
 
@@ -64,6 +67,7 @@ implementation is not a contract.
 | 5 — `constrain` | 50 | **passed** | 75 cases bit-exact |
 | 6 — `plan` | ~35 | **passed** (contract tests ran first) | 77 cases bit-exact + 13 contract cases |
 | 7 — `discretize` | ~40 | **passed** | 194 cases / 75,797 segments bit-exact + 14 contract cases |
+| 8 — `choreograph` + `microsegment` | ~20 | n/a (already bit-exact as stage 7's dependency) | 14 contract cases; 4 defects found in the TESTS, none in the code |
 
 `constrain` is a third the complexity of `flatten`, ported cleanly, and passed
 on the first run — **and cost the same.** That is the single most useful thing
@@ -269,6 +273,24 @@ statement, which now covers both C3 and D6:
 > recomputes something the stage also computes, instead of measuring what the
 > stage emitted.
 
+**And a third time in stage 8, which forced the general statement wider.**
+`preOrient`'s rotation direction is verified by nothing, because every
+non-unwind assertion in the TypeScript reads `Math.abs(newAPhys)` — so swapping
+`angleDelta`'s two arguments, which negates the rotation, survived all 61 tests.
+That is not a re-derivation at all; nothing is recomputed. The common factor
+across all three is one step earlier:
+
+> **The audited quantity must survive the measurement.** C3 destroyed it by
+> taking a ratio (a constant factor cancels), D6 by re-deriving the rule (the
+> test and the code agree by construction), H6 by taking an absolute value (sign
+> is gone). Before trusting an assertion, name the operation standing between
+> the emitted value and the claim, and ask whether the defect could pass through
+> it unchanged.
+
+The one-sided-bound family is the same thing again: `≤ 33` segments cannot see a
+ramp that got coarser, and "tightening never raises" cannot see a cap that is
+too tight. If a bound is one-sided, say out loud which side is unguarded.
+
 The fix is the same both times: measure the OUTPUT, in the units the next
 consumer sees. For C3 that was re-deriving `|k'|` from the public sample stream;
 for D6 it was deriving each segment's speed the way the firmware will execute it.
@@ -303,6 +325,32 @@ flat across ~190 cases, so there was nothing left to cut without losing coverage
 complacent about.** Stage 7 emits step counts; most of them agree for reasons
 unrelated to the arithmetic. The `interval` and `rampChunks` records exist
 because that is where the actual doubles are.
+
+#### What stage 8 added
+
+**A module with no caller is held by its contract tests alone.** `aMoveTo` and
+`headOffsetJog` are reached only from `orchestrate`, which is host stack, so
+nothing in the C++ calls them and the reference vectors never touch them. For
+every other symbol in the port a surviving mutant might still be caught by the
+differential; for these two it cannot. Check the call graph before deciding how
+hard to test something — "the differential has my back" is a claim about
+reachability, not about coverage.
+
+**Porting contract tests can find defects in the tests.** Stage 8 found four,
+and none in the code: a rotation direction verified by nothing, two fixtures
+that never varied one axis, and an overload never called below its floor. That
+is a better yield per call than any stage's implementation port, and it happened
+because the mutation run asks a question the original suite never had to answer.
+Expect the same on any suite ported wholesale.
+
+**A test that crashes reports nothing at all.** One mutant made an emitter
+return an empty vector; the test called `CHECK(sl.size() > 1)` and then
+`sl.front()`. doctest's `CHECK` does not abort, so the runner segfaulted and
+the harness got no verdict line for ANY of the 69 cases — correctly classified
+`HARNESS-BROKE` rather than guessed at, which is the third time that branch has
+earned its place. Use `REQUIRE` for any emptiness guard standing in front of a
+`front()`/`back()`, and inside an aggregating probe return the failure string
+instead.
 
 ### 7. Mutation-validate — and validate the validator (6-12 calls)
 

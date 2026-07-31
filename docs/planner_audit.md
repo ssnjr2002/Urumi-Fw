@@ -728,6 +728,86 @@ Recorded in the table below.
 
 ---
 
+### Stage 8 (`choreograph`) and `microsegment` tests ported — the port is complete
+
+The last debt. Both modules were already ported and bit-parity verified as stage
+7's dependency; what was owed was the contract suite, the layer that outlives
+bit-parity. 61 tests from `choreograph.test.ts` and 12 of the 16 from
+`microsegment.test.ts` (the other four test the 26-byte wire serialiser, which
+is firmware-side and not in the port), plus 8 added here, in 14 new cases.
+
+**Two functions had no caller at all.** `aMoveTo` and `headOffsetJog` are
+reached from `orchestrate` in the TypeScript, which is host stack — so on the
+C++ side nothing calls them, the reference vectors never exercise them, and
+these contract tests are the only thing holding them. That is worth stating
+plainly because it inverts the usual reassurance: for the rest of the port a
+surviving mutant might still be caught by the differential, and for these two it
+cannot be.
+
+Mutation, 43 mutants across `choreograph.cpp` and `microsegment.cpp`, run
+against the CONTRACT suite alone:
+
+| outcome | n | notes |
+|---|---|---|
+| killed by contract tests | 34 | including every `rampChunks` boundary rule, both invert branches, the H4 refusal, and 8 of 11 `interval` mutants |
+| algebraically equivalent | 4 | `N<=0`→`N<0` (at N=0 the marks set collapses to `{0}` and the chunk loop never runs); `n<=dAcc`→`n<dAcc` (both branches return `peak` at the boundary); `liftHeight<=0`→`<0`; the per-axis rate floor skipping idle axes (an idle axis contributes `0` to a `max`) |
+| provably unreachable guard | 3 | the decel-branch `jsMax(v0², …)`, which can only bind for `n > N` and `vAt` is never called there; and the two `interval ≥ 1` clamps — the fastest rate any axis is commanded is 12800 steps/s against a 150 MHz clock, so the smallest interval reachable is 11718 |
+| below the contract's resolution | 1 | `jsRound`→`std::trunc` on a chunk interval: a sub-cycle bias in ~10⁴, against timing tolerances of 0.1–5%. The differential kills it instantly; no property stated in seconds can |
+| **genuine gap, now closed** | 4 | below |
+| fidelity gap, now closed | 1 | `RAMP_CHUNKS` 16→8 |
+
+**The C3/D6 shape recurred a third time, and this one would have cut wrong.**
+`preOrient`'s non-unwind branch computes `angleDelta(currentTheta, entryTheta)`.
+Swapping those two arguments negates the result — `angleDelta(a,b)` is the
+rotation *from a to b* — so a crease tool would pre-orient the wrong way on
+every path. It survived all 61 ported tests. The cause is that every non-unwind
+assertion in the TypeScript reads `Math.abs(r.newAPhys)`: the shortest-delta
+test, the never-more-than-180 test, and the ignores-accumulated-aPhys test all
+measure magnitude, and the quantity the mutation changes is sign. Closed with a
+test that asserts the signed value on both the wrapping case (170 → −170 is +20,
+not −20) and the ordinary one.
+
+This is the same failure as C3 and D6 wearing a third disguise. C3 destroyed the
+information by taking a ratio, D6 by re-deriving the rule, this one by taking an
+absolute value. The general statement holds for all three and is the one to
+carry forward: **the audited quantity must survive the measurement.** Ask what
+operation stands between the emitted value and the assertion, and whether the
+defect could pass through it unchanged.
+
+The other three genuine gaps were all fixtures that never varied one thing:
+
+- **`headOffsetJog` was never tested on a single-axis offset change.** Both
+  TypeScript fixtures move X *and* Y, so narrowing the "nothing to do" guard
+  from `&&` to `||` — discarding every pure-X and pure-Y offset — passed. A
+  revolver whose heads differ only in X would silently not compensate.
+- **`zMove` was never tested at a non-positive feed.** The `1e-9` floor on the Z
+  step rate is invisible at `zFeed == 0` (the divide gives `+inf`, which clamps
+  to `fCpu` either way) and decisive at a negative one, where the unfloored form
+  yields a negative cycle count that clamps to `interval == 1` — the *fastest*
+  move the wire can express, from a feed that asked for the opposite.
+- **`interval`'s three-argument overload was never called below `vMin`.** The
+  one test of the legacy path uses full feed, so dropping its `vMin` floor
+  changed nothing observable — though at `v = 0` it is the difference between a
+  2-second segment and a one-second stall that has nothing to do with the
+  requested motion.
+
+**Ramp fidelity was pinned by nothing.** `RAMP_CHUNKS` 16 → 8 survived
+everything. The accel property cannot see it — the midpoint convention is
+scale-invariant, since a chunk twice as long carries twice the speed change over
+twice the time — and the segment-count bound is one-sided (`≤ 33`), so a coarser
+ramp passes it comfortably. That is C3's shape once more, in the mildest form:
+a one-sided bound on a quantity whose defect is on the other side. Closed with a
+lower bound on a full-trapezoid move. The knob is a bandwidth-versus-smoothness
+choice rather than a correctness one; the point of pinning it is that changing
+it has to be deliberate.
+
+**`JUNCTION_V` 50 → 0 survives and is not a defect.** Starting and ending a
+standalone move from true standstill is strictly more conservative than starting
+at 50 steps/s, every emitted profile stays legal, and nothing in the contract
+promises a non-zero junction speed. Recorded as a knob whose value is a choice.
+
+---
+
 ## Findings
 
 | # | Stage | Severity | Summary | Status |
@@ -759,6 +839,10 @@ Recorded in the table below.
 | H3 | choreograph | known | `zMove` is likewise unramped (0→24000 steps/s); acknowledged by the module TODO, and `z.maxAccel` is 0 so there is no limit to check against | open, **test red** |
 | H4 | choreograph | **contract** | `aMove` silently invented 180 deg/s + 2000 deg/s² when the A ceilings are 0 — `load.ts` refuses to invent calibration, this invented limits | **resolved** (throws) |
 | H5 | choreograph | cleanup | Three redundant guards all defend `v ≥ v0`; each is an equivalent mutant | **resolved** — two vanished with the batch C rewrite; the `[1, fCpu]` interval clamp survives in `rampChunks` |
+| H6 | choreograph **tests** | gap | `preOrient`'s non-unwind rotation DIRECTION verified by nothing — every assertion takes `Math.abs`, so swapping `angleDelta`'s arguments (which negates it) survived all 61 tests. A crease tool would pre-orient the wrong way on every path | **resolved** in C++ (signed assertions); the TypeScript suite still has it |
+| H7 | choreograph **tests** | gap | Two fixtures that never vary one thing: `headOffsetJog` is only ever given a two-axis offset change (so a `&&`→`\|\|` guard discarding single-axis changes passes), and `zMove` is never given a non-positive feed (where the unfloored Z rate yields `interval == 1`, the fastest move the wire can express) | **resolved** in C++; the TypeScript suite still has both |
+| H8 | choreograph **tests** | gap | Ramp fidelity pinned by nothing — `RAMP_CHUNKS` 16→8 survives, because the accel property is scale-invariant and the segment-count bound is one-sided | **resolved** in C++ (lower bound added); a knob, not a defect |
+| H9 | microsegment **tests** | gap | `interval`'s three-argument overload only ever called at full feed, so its `vMin` floor is untested — at `v = 0` the difference is a 2-second segment versus a one-second stall | **resolved** in C++; the TypeScript suite still has it |
 
 ---
 
@@ -2075,7 +2159,7 @@ Confirmed while doing this, from `web/demo/config.json` (the deployed machine):
 | 3 `repair` (`enforceC1`) | **out of scope** — host-side (`production/compileBlock.ts`); the Pico receives `SplineTile` Bezier packets, so the ported pipeline is flatten → constrain → plan → discretize plus `choreograph` |
 | 6 `plan` | **audited** — P1–P5 above |
 | 8 `discretize` | **audited** — D1–D5 above |
-| — `choreograph` | **audited** — H1–H5 above. Not a stage; audited because `discretize` could only see it through one caller |
+| — `choreograph` | **audited** — H1–H9 above. Not a stage; audited because `discretize` could only see it through one caller. H6–H9 are defects in the TESTS, found by porting them |
 | 9 `dutyBreaks` | **out of scope** — host-side, same reason. One follow-up that is *not* an audit: batches B and C change the timeline it schedules knife enable-line resets against (`tool_duty_limits.md` §5), so re-check it once those land |
 
 When auditing a later stage, consider adding `CUSP` to that stage's fixtures
