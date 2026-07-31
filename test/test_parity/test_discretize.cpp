@@ -68,8 +68,8 @@ struct RefRamp {
 
 TEST_CASE("discretize is bit-identical to the TypeScript reference") {
     std::ifstream f = testbits::openRef("discretize_ref.txt");
-    REQUIRE_MESSAGE(f.good(),
-                    "discretize_ref.txt not found — regenerate with "
+    REQUIRE_MESSAGE(f.is_open(),
+                    "discretize_ref.txt not tracked in git; generate it with "
                     "`cd web && GEN_CPP_REF=1 npx vitest run test/port/cppRefDiscretize`");
 
     std::map<std::string, std::vector<PlannedSample>> sampleSets;

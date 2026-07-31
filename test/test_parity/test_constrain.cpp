@@ -46,8 +46,8 @@ double nextHex(std::istringstream& ls) {
 
 TEST_CASE("constrain is bit-identical to the TypeScript reference") {
     std::ifstream f = testbits::openRef("constrain_ref.txt");
-    REQUIRE_MESSAGE(f.good(),
-                    "constrain_ref.txt not found — regenerate with "
+    REQUIRE_MESSAGE(f.is_open(),
+                    "constrain_ref.txt not tracked in git; generate it with "
                     "`cd web && GEN_CPP_REF=1 npx vitest run test/port/cppRefConstrain`");
 
     std::vector<RefCase> cases;

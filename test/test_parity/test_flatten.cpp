@@ -44,8 +44,8 @@ double nextHex(std::istringstream& ls) {
 
 TEST_CASE("flatten is bit-identical to the TypeScript reference") {
     std::ifstream f = testbits::openRef("flatten_ref.txt");
-    REQUIRE_MESSAGE(f.good(),
-                    "flatten_ref.txt not found — regenerate with "
+    REQUIRE_MESSAGE(f.is_open(),
+                    "flatten_ref.txt not tracked in git; generate it with "
                     "`cd web && GEN_CPP_REF=1 npx vitest run test/port/cppRefFlatten`");
 
     std::vector<RefCase> cases;

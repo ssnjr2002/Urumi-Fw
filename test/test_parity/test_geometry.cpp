@@ -111,8 +111,8 @@ std::string describe(const Case& c) {
 
 TEST_CASE("geometry is bit-identical to the TypeScript reference") {
     std::ifstream f = testbits::openRef("geometry_ref.txt");
-    REQUIRE_MESSAGE(f.good(),
-                    "geometry_ref.txt not found — regenerate with "
+    REQUIRE_MESSAGE(f.is_open(),
+                    "geometry_ref.txt not tracked in git; generate it with "
                     "`cd web && GEN_CPP_REF=1 npx vitest run test/port/cppRef`");
 
     std::string line;

@@ -31,8 +31,21 @@ pio test -e native -f test_contract
 Split because the two answer different questions and have different lifespans.
 The parity suite fails on any optimisation, correct or not, so it is scaffolding
 with a known end date; the contract suite is what survives it. Keeping them apart
-means the contract suite can be run alone, without the reference vectors present
-— which is exactly the state the port will be in once bit-parity retires.
+means the contract suite can be run alone, without the `*_ref.txt` vectors
+present — which is exactly the state the port will be in once bit-parity retires.
+
+**`test/data/` is generated and gitignored.** The generators
+(`web/test/port/cppRef*.test.ts`) are the tracked definition; the outputs are
+10+ MB and would be re-committed on every fixture change. One command builds all
+of them, and every test that reads one fails with that command in its message:
+
+```bash
+cd web && GEN_CPP_REF=1 npx vitest run test/port
+```
+
+The contract suite needs exactly one of these files — `svg_fixtures.txt`, which
+is INPUT geometry rather than expected output (see step 5). So "runs without the
+reference vectors" means without the answers, not without the artwork.
 
 Anything shared goes in `test/support/`. `quality.h` duplicates
 `web/src/config/defaults.ts` by hand ON PURPOSE: a generated copy would track the

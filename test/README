@@ -1,11 +1,63 @@
+C++ tests for the planner port
+==============================
 
-This directory is intended for PlatformIO Test Runner and project tests.
+Two suites, run separately by PlatformIO (see platformio.ini):
 
-Unit Testing is a software testing method by which individual units of
-source code, sets of one or more MCU program modules together with associated
-control data, usage procedures, and operating procedures, are tested to
-determine whether they are fit for use. Unit testing finds problems early
-in the development cycle.
+    pio test -e native                    both
+    pio test -e native -f test_contract   properties, invariants, scaling laws
+    pio test -e native -f test_parity     bit-equality against the TypeScript
 
-More information about PlatformIO Unit Testing:
-- https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+    ./.pio/build/native/program.exe -s    assertion counts; pio hides them
+
+They answer different questions and have different lifespans. The parity suite
+fails on any optimisation, correct or not, so it is scaffolding with a known end
+date; the contract suite is what survives it.
+
+Generated reference data — NOT in git
+-------------------------------------
+
+test/data/*.txt is generated and gitignored. The GENERATORS are tracked, under
+web/test/port/cppRef*.test.ts, and are the only definition of these files. They
+are large (discretize_ref.txt alone is 10 MB), fully reproducible, and would
+otherwise be re-committed on every fixture change.
+
+Generate all of them:
+
+    cd web && GEN_CPP_REF=1 npx vitest run test/port
+
+Without GEN_CPP_REF=1 the generators skip, so they cost nothing in a normal
+vitest run.
+
+Every test that reads one of these files fails with the exact command to
+regenerate it, so an ungenerated checkout says so rather than passing over no
+data. Two kinds:
+
+    *_ref.txt          inputs AND expected outputs. Only the parity suite reads
+                       these.
+    svg_fixtures.txt   real artwork geometry, INPUT ONLY — the repaired subpaths
+                       from the SVG parser and enforceC1, neither of which is in
+                       the port's scope. The C++ flattens and constrains them
+                       itself. Read by the CONTRACT suite, so that suite needs
+                       one generator run too on a fresh checkout.
+
+Check these files with is_open(), never good(): a default-constructed
+std::ifstream has no error flags set, so good() returns true for a stream that
+was never opened. testbits::openRef now sets failbit on a miss so both work, but
+the habit is what matters — every caller here used to check good(), and deleting
+test/data produced five confusing assertion failures about case counts and not
+one about a missing file.
+
+Layout
+------
+
+    main.cpp           doctest runner. In the test_dir ROOT, which PlatformIO
+                       shares into every suite.
+    support/           bits.h (hex + openRef), curves.h (curve fixtures),
+                       quality.h + machine.h (the shipped config, duplicated by
+                       hand on purpose — see their headers), svgfix.h
+    data/              generated; see above
+    test_contract/     one file per stage
+    test_parity/       one file per stage
+
+docs/port_workflow.md is the procedure these were built with, and
+docs/planner_audit.md is what they found.

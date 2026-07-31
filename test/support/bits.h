@@ -50,15 +50,33 @@ inline bool sameBits(double a, double b) {
  *
  * PlatformIO's native test runner does not contract a working directory, so
  * walk up from wherever it started rather than assuming one.
+ *
+ * The reference vectors are NOT tracked in git (see .gitignore) — the
+ * generators under web/test/port are. So "absent" is the normal state of a
+ * fresh checkout and every caller must say so loudly rather than run on no
+ * data. **Test with is_open(), never good():** a default-constructed ifstream
+ * has no error flags set, so `good()` returns TRUE for a stream that was never
+ * opened, and every caller here used to check exactly that. Deleting test/data
+ * produced five REQUIRE failures about case counts and not one about a missing
+ * file — the check had never been seen to fail, and it did not work.
+ *
+ * The failbit below makes the returned stream honest either way, so a caller
+ * that reaches for good() out of habit still gets false.
  */
 inline std::ifstream openRef(const std::string& name) {
     static const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
     for (const char* p : prefixes) {
         std::ifstream f(std::string(p) + "test/data/" + name);
-        if (f.good()) return f;
+        if (f.is_open()) return f;
     }
-    return std::ifstream();
+    std::ifstream dead;
+    dead.setstate(std::ios::failbit);
+    return dead;
 }
+
+/** The one command that regenerates every reference file. */
+inline const char* REGEN_ALL =
+    "cd web && GEN_CPP_REF=1 npx vitest run test/port";
 
 } // namespace testbits
 

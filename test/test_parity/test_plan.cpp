@@ -52,8 +52,8 @@ double nextHex(std::istringstream& ls) {
 
 TEST_CASE("plan is bit-identical to the TypeScript reference") {
     std::ifstream f = testbits::openRef("plan_ref.txt");
-    REQUIRE_MESSAGE(f.good(),
-                    "plan_ref.txt not found — regenerate with "
+    REQUIRE_MESSAGE(f.is_open(),
+                    "plan_ref.txt not tracked in git; generate it with "
                     "`cd web && GEN_CPP_REF=1 npx vitest run test/port/cppRefPlan`");
 
     std::vector<RefCase> cases;

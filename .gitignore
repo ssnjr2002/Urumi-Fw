@@ -11,3 +11,16 @@ pipeline/**/__pycache__/
 # Python virtual environments
 .venv/
 **/.venv/
+
+# Generated reference vectors for the C++ planner port (docs/port_workflow.md).
+# The GENERATORS are tracked — web/test/port/cppRef*.test.ts — and are the only
+# definition of these files. The outputs are large (discretize_ref.txt alone is
+# 10 MB), fully reproducible, and would otherwise be re-committed on every
+# fixture change, so they are built on demand instead:
+#
+#     cd web && GEN_CPP_REF=1 npx vitest run test/port
+#
+# Every test that reads one fails with that command in its message if it is
+# missing, so an ungenerated checkout says so rather than passing over no data.
+test/data/*_ref.txt
+test/data/svg_fixtures.txt

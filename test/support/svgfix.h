@@ -36,7 +36,7 @@ inline const Subpaths& load(const std::string& name) {
 
     Subpaths out;
     std::ifstream f = testbits::openRef("svg_fixtures.txt");
-    if (f.good()) {
+    if (f.is_open()) {
         std::string line;
         bool inFixture = false;
         while (std::getline(f, line)) {
