@@ -20,7 +20,7 @@
 #include "motion/geometry.h"
 #include "motion/jsmath.h"
 
-#include "bits.h"
+#include "support/bits.h"
 
 #include <cstdint>
 #include <cstdio>

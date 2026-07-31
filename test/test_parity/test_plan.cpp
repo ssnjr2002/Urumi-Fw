@@ -22,7 +22,7 @@
 
 #include "motion/plan.h"
 
-#include "bits.h"
+#include "support/bits.h"
 
 #include <sstream>
 #include <string>

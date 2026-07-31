@@ -49,7 +49,7 @@ import {
 
 const OUT = join(
     dirname(fileURLToPath(import.meta.url)),
-    "../../../test/test_motion/data/geometry_ref.txt",
+    "../../../test/data/geometry_ref.txt",
 );
 
 /** A double as its exact 16-hex-digit IEEE-754 bit pattern. */

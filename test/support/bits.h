@@ -46,7 +46,7 @@ inline bool sameBits(double a, double b) {
 }
 
 /**
- * Open a reference file by name from test/test_motion/data.
+ * Open a reference file by name from test/data.
  *
  * PlatformIO's native test runner does not contract a working directory, so
  * walk up from wherever it started rather than assuming one.
@@ -54,7 +54,7 @@ inline bool sameBits(double a, double b) {
 inline std::ifstream openRef(const std::string& name) {
     static const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
     for (const char* p : prefixes) {
-        std::ifstream f(std::string(p) + "test/test_motion/data/" + name);
+        std::ifstream f(std::string(p) + "test/data/" + name);
         if (f.good()) return f;
     }
     return std::ifstream();

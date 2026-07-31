@@ -34,7 +34,7 @@
 #include "motion/flatten.h"
 #include "motion/plan.h"
 
-#include "curves.h"
+#include "support/curves.h"
 
 #include <cmath>
 #include <functional>

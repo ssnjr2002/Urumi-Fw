@@ -583,6 +583,67 @@ hazard nobody measured.**
 
 ---
 
+### The contract-test debt paid — and a hole in the TypeScript's own tests
+
+Stages 4 and 5 shipped with bit-parity only, because the reorder that put
+contract tests first arrived at stage 6. That left 94 tests owed: `geometry` 28,
+`flatten` 25, `constrain` 41. All 94 are now ported, and the C++ tree is split
+into two suites — `test/test_contract` and `test/test_parity` — so the properties
+can be run without the reference vectors present, which is the state the port
+will be in once bit-parity retires.
+
+Two things came out of the work that were not visible from the TypeScript.
+
+**The real-artwork fixtures had to be carried across, and they earn their keep.**
+Five of the ported tests assert the caps against `test_snake.svg`, and the C++
+has neither an SVG parser nor `enforceC1` — both are host stack, outside the
+port's scope. `web/test/port/cppRefFixtures.test.ts` therefore exports the
+repaired Bezier subpaths and **no expected outputs**; the C++ flattens and
+constrains them itself. This is not a convenience: every cap failure in this
+document (F1, F7) was found on real geometry, which accelerates across a step
+far harder than any synthetic fixture. When `flatten`'s refinement was mutated
+away, the SVG tests failed alongside the synthetic ones — the evidence that the
+fixture is load-bearing rather than decorative.
+
+**FINDING C3 — monotonicity is one-sided, and the curvature-gradient cap was
+unprotected because of it.**
+
+`constrain.test.ts` declines to check the A angular-accel cap directly, on the
+stated grounds that `kappaPrime` is internal, and asserts monotonicity plus a
+scaling law instead. Mutation testing against the ported suite showed that
+leaves a hole big enough to drive two defects through. Both of these survived all
+94 tests:
+
+| mutant | effect on a machine |
+|---|---|
+| `span = ds[i]` instead of `ds[i-1] + ds[i]` | `\|k'\|` doubles, so every curvature-varying move is slowed by √2 for nothing |
+| drop the `KAPPA_BREAK` guard | a finite difference straddles a curve join, where `kappa` is genuinely discontinuous, and divides a large step by a near-zero span — a near-zero ceiling at **every curve join in every job** |
+
+Neither is subtle, and neither is detectable by what was there:
+
+- **Monotonicity cannot see them by construction.** Both mutants only ever
+  LOWER a ceiling, and "tightening a limit never raises a ceiling" is satisfied
+  by a cap that is far too tight. A one-sided property cannot detect a
+  one-sided error in the same direction.
+- **The scaling law cancels them exactly.** It is a ratio of two ceilings, so
+  any constant factor on `|k'|` divides out.
+
+Closed with two tests that are two-sided and still need none of constrain's
+internals: one asserts the cap binds at exactly `sqrt(alpha/|k'|)` where it is
+the *active* constraint (an equality, so a ceiling that is too low fails as
+readily as one that is too high, with a guard that it binds at >10 samples so it
+cannot go vacuous); the other asserts that enabling the cap changes **nothing**
+at a sample whose difference span straddles a `kappa` break, which states the
+guard as physics — a representation artefact where two curves meet is not a
+rotation the A axis performs.
+
+This is the first defect the port has found in the *tests* rather than in the
+code, and the TypeScript suite has it too. Worth carrying into `discretize` and
+`choreograph`: wherever a cap is verified only by monotonicity, it is verified
+only against being too loose.
+
+---
+
 ## Findings
 
 | # | Stage | Severity | Summary | Status |
@@ -596,6 +657,7 @@ hazard nobody measured.**
 | F7 | flatten | **contract** | All three caps are PREDICTORS, not bounds — `dsMax` soft by up to 8% | **resolved** (measure-and-halve; +50% samples) |
 | C1 | constrain | **defect** | No lower bound on `vCeiling` — a cusp yields 3.2e-3 mm/s, 166× under `vMin` | **resolved** (sub-`vMin` ceiling → stop) |
 | C2 | constrain | ok | All four caps hold as per-sample properties on every fixture | verified |
+| C3 | constrain **tests** | gap | A-accel cap verified only by monotonicity + a ratio — both blind to a cap that is too TIGHT; two `kappaPrime` mutants survived all 94 ported tests | **resolved** (two two-sided tests); the TypeScript suite still has it |
 | P1 | constrain + plan | **defect** | Axis accel budget spent twice: centripetal and tangential each capped at `aMax`, nothing owns the sum (→ √2·aMax) | **resolved** (shared budget in `plan`) |
 | P2 | plan | **contract** | A stream without `PATH_START`/`PATH_END` was silently unplanned — `v = vCeiling`, no error | **resolved** (throws) |
 | P3 | plan | consequence of C1 | Carries unexecutable ceilings through; ~⅕ of the below-`vMin` span is self-inflicted by the sweeps | **resolved with C1** — residual is a ramp out of a stop, i.e. arithmetic |

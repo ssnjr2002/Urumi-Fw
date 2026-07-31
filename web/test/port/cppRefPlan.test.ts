@@ -37,7 +37,7 @@ import type { Sample } from "../../src/toolpath/sample.js";
 import { hex } from "./refFormat.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, "../../../test/test_motion/data/plan_ref.txt");
+const OUT = join(HERE, "../../../test/data/plan_ref.txt");
 const SVG = join(HERE, "../production/data");
 
 const X_ACCEL = 1000, Y_ACCEL = 1000, A_ACCEL = 2000, A_MAX = 1000, FEED = 80;

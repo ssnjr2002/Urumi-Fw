@@ -32,7 +32,7 @@ import { KAPPA, type CubicBezier } from "../../src/toolpath/geometry.js";
 import { hex } from "./refFormat.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, "../../../test/test_motion/data/flatten_ref.txt");
+const OUT = join(HERE, "../../../test/data/flatten_ref.txt");
 const SVG = join(HERE, "../production/data");
 
 interface Opts {

@@ -46,7 +46,7 @@ import {
 import { hex } from "./refFormat.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, "../../../test/test_motion/data/constrain_ref.txt");
+const OUT = join(HERE, "../../../test/data/constrain_ref.txt");
 const SVG = join(HERE, "../production/data");
 
 it("generates the C++ constrain reference", (ctx) => {

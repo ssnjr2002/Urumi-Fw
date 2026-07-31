@@ -6,8 +6,37 @@ This is reconstructed from the session transcript, not from memory. Where it
 says a step cost N calls, that is a count. Where it says a step was wasted,
 that is a step that actually happened.
 
-Remaining stages: `discretize`, `choreograph`. Plus the contract-test
-debt owed by stages 4 and 5 (see step 5).
+Remaining stages: `discretize`, `choreograph`.
+
+---
+
+## The test tree
+
+The two kinds of test live in two suites, and PlatformIO runs them separately:
+
+```
+test/
+  main.cpp              doctest runner — test_dir root, shared into both suites
+  support/              bits.h  curves.h  quality.h  svgfix.h
+  data/                 generated reference vectors + SVG fixture geometry
+  test_contract/        properties, invariants, scaling laws
+  test_parity/          bit-equality, no epsilon
+```
+
+```bash
+pio test -e native -f test_contract
+```
+
+Split because the two answer different questions and have different lifespans.
+The parity suite fails on any optimisation, correct or not, so it is scaffolding
+with a known end date; the contract suite is what survives it. Keeping them apart
+means the contract suite can be run alone, without the reference vectors present
+— which is exactly the state the port will be in once bit-parity retires.
+
+Anything shared goes in `test/support/`. `quality.h` duplicates
+`web/src/config/defaults.ts` by hand ON PURPOSE: a generated copy would track the
+code under test silently, and a contract test whose thresholds move with the
+implementation is not a contract.
 
 ---
 
@@ -171,8 +200,44 @@ from a semantic one. Contract tests fail with a sentence
 (`32 violation(s): straight_line: decel jump at 14`); differentials fail with
 two hex strings.
 
-Outstanding debt: stages 4 and 5 still have **zero** contract tests —
-`geometry` 28, `flatten` 25 and `constrain` 41, so 94 tests are owed.
+**The debt is paid.** Stages 4 and 5 owed 94 contract tests (`geometry` 28,
+`flatten` 25, `constrain` 41); all 94 are ported, plus 2 more that the mutation
+run forced (see below), for 96. Every stage in the port now has both suites.
+
+#### What paying the debt actually taught
+
+Porting the 94 owed tests cost ~20 calls, far less than porting a stage, because
+the TypeScript originals are already written as properties and the fixtures
+already existed. Two things came out of it that were not visible before:
+
+**Real artwork is not optional.** Three of flatten's tests and two of
+constrain's assert the caps against `test_snake.svg`, and the C++ has no SVG
+parser or `enforceC1` — both are host stack, outside the port. Skipping them
+would have dropped the only fixtures that ever caught anything: every cap failure
+in the audit (F1, F7) was on real geometry, which accelerates across a step far
+harder than a hand-built curve. Solved with
+`web/test/port/cppRefFixtures.test.ts`, which exports the repaired Bezier
+subpaths and **no expected outputs** — the C++ flattens and constrains them
+itself. When the caps were mutated, those SVG tests failed alongside the
+synthetic ones, which is the evidence the fixture is load-bearing rather than
+decorative.
+
+**Monotonicity has a blind spot, and mutation found it.** The TypeScript declines
+to check the curvature-gradient cap directly, because `kappaPrime` is internal,
+and asserts monotonicity plus a scaling law instead. Two mutants of `kappaPrime`
+survived all 94 ported tests: halving the arc-length span, and dropping the guard
+that stops a finite difference straddling a curve boundary. Both are invisible by
+construction — they only ever LOWER a ceiling, so monotonicity cannot see them,
+and the scaling law is a ratio, so a constant factor on `|k'|` cancels exactly.
+The fix was two tests that are two-sided: one asserting the cap binds at exactly
+`sqrt(alpha/|k'|)` where it is the active constraint, one asserting the cap
+changes nothing at a sample whose difference span straddles a kappa break. Both
+are stated in physics terms and neither needs `kappaPrime`.
+
+That is worth noting for the remaining stages: **"tightening never raises" is a
+one-sided property and cannot detect a cap that is too tight.** The TypeScript
+suite has the same hole, and it is the first defect this port has found in the
+tests rather than in the code.
 
 ### 7. Mutation-validate — and validate the validator (6-12 calls)
 
@@ -192,6 +257,14 @@ Non-negotiable properties, all three learned from a failure:
    appears.** Stage 5's first script grepped for a pattern that never matched,
    so silence read as "survived" and all 25 mutants passed. Counts are not
    evidence; names are.
+4. **Verify the mutation landed in CODE, not in a comment.** A checksum proves
+   the FILE changed, which is not the same claim. A first-occurrence
+   string replacement of `3 * ` in `geometry.cpp` hit the doc comment on line 5
+   that quotes the expression, and was filed as a survivor — a false finding
+   that would have read as "nothing tests bezierDeriv1". Target a line number
+   and assert the line is not a comment; re-run properly rather than filing it.
+   Three mutants have now been malformed in three different ways, so treat a
+   surprising survivor as a suspect harness first and a finding second.
 
 Mutate the stage AND any transcendental it introduced. Roughly 25 mutants:
 every epsilon guard, every comparison operator boundary, every gate, every
