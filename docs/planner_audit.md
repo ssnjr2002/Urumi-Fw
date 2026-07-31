@@ -836,7 +836,7 @@ promises a non-zero junction speed. Recorded as a knob whose value is a choice.
 | D7 | discretize | note | The 256 subdivision clamp bounds work, not output validity — no contract-level property distinguishes it from uncapped | filed, not closable by a property test; saturation of the emitted count is asserted instead |
 | H1 | choreograph | **defect** | `aMove`'s decel ramp exceeds the A accel limit by 1.26–1.65× and never reaches rest — stops dead from up to 39 deg/s. Chunk-start rate sampling is conservative going up, anti-conservative coming down | **resolved** (`rampChunks`) |
 | H2 | choreograph | **defect** | `travelJog` / `headOffsetJog` emit one segment at full feed — 0→80 mm/s in zero distance, ignoring `x.maxAccel` entirely | **resolved** (same generator) |
-| H3 | choreograph | known | `zMove` is likewise unramped (0→24000 steps/s); acknowledged by the module TODO, and `z.maxAccel` is 0 so there is no limit to check against | open, **test red** |
+| H3 | choreograph | **defect** | `zMove` was likewise unramped (0→24000 steps/s), and the 20 mm/s engage feed was itself 2× the axis's declared 10 mm/s ceiling — `zMove` never consulted it, and not going through `interval()` meant the per-axis rate floor never saw it either | **resolved** — ramped via `rampChunks`; feed and accel CLAMPED to the axis. `z.maxAccel` is now a declared 300 mm/s², **provisional and unmeasured** |
 | H4 | choreograph | **contract** | `aMove` silently invented 180 deg/s + 2000 deg/s² when the A ceilings are 0 — `load.ts` refuses to invent calibration, this invented limits | **resolved** (throws) |
 | H5 | choreograph | cleanup | Three redundant guards all defend `v ≥ v0`; each is an equivalent mutant | **resolved** — two vanished with the batch C rewrite; the `[1, fCpu]` interval clamp survives in `rampChunks` |
 | H6 | choreograph **tests** | gap | `preOrient`'s non-unwind rotation DIRECTION verified by nothing — every assertion takes `Math.abs`, so swapping `angleDelta`'s arguments (which negates it) survived all 61 tests. A crease tool would pre-orient the wrong way on every path | **resolved** in C++ (signed assertions); the TypeScript suite still has it |
@@ -1812,7 +1812,52 @@ which runs at every tool change.
 Unlike H3 there is no TODO acknowledging this, and unlike H3 the limit it
 violates is a real configured number rather than an uncharacterized 0.
 
-### H3 — `zMove` is unramped too (known)
+### H3 — `zMove` was unramped too — RESOLVED
+
+Two defects in one line, and the second was not in the original filing.
+
+**Unramped.** `zMove` emitted a single constant-velocity segment: 0 → 24000
+steps/s in zero distance, the same thing H2 fixed for travel jogs and H1 for A.
+It was last because the module refused to invent an accel (H4) and `z.maxAccel`
+was a 0 placeholder. `rampChunks` — extracted for A, and exactly the "generic
+`trapezoidalMove()` helper" the module TODO asked for — is now used for Z too.
+
+**Over its own ceiling.** The shipped config carries two Z numbers that
+disagree: `machine.z.feed = 20` (the engage feed `zMove` uses) against
+`z.maxFeed = 10` (the axis ceiling). `zMove` computed `zFeed * stepsPerUnit`
+directly and never consulted the axis, and because it does not go through
+`interval()`, the per-axis rate floor that governs X/Y/A never saw it either.
+`validate.ts` did warn — `exceeds axis ceiling 10 (clamped)` — and nothing
+clamped. The one guard that fired reported a mitigation that did not exist.
+
+Both targets are now clamped at the point of use. The policy split is
+deliberate and worth stating, because it is not H4's:
+
+- an **absent** limit is REFUSED (H4) — a trapezoid cannot be built from
+  "uncapped", and guessing calibration is how you crash a machine;
+- a limit that is **present and exceeded** is CLAMPED — the machine's own number
+  is the answer, and using it is strictly safer than honouring the request.
+
+`z.maxAccel` is now a declared 300 mm/s². **It is provisional and has not been
+measured.** It was chosen as the smallest round value that lets a 2 mm lift at
+10 mm/s reach cruise (ramp distance v²/2a = 0.17 mm per side, so 0.33 mm of a
+2 mm move) and it is ~3% of g in torque terms — for a vertical leadscrew, a
+rounding error on top of the static hold the motor already carries at rest. The
+binding constraint on such an axis is stiction at breakaway, not inertia, which
+is why no accel in this range is obviously wrong and why none of them is
+obviously right either. Measure it: drive N up/down cycles at a candidate value
+and read `CMD_GET_POS` for drift, bisecting on accel, with the real tool weight
+and at both ends of travel. Test the DOWN move — down-decel and up-accel are the
+tied-worst cases, both `m·(g+a)`.
+
+One measurement fell out of the fix. `rampChunks` documents itself as "exact at
+every chunk BOUNDARY regardless of RAMP_CHUNKS"; that is approximate, because
+chunk boundaries are rounded to integer steps. Measured worst accel demand is
+**1.0025× for Z and 1.0001× for A** — Z's ramp is only ~200 steps long, so
+integer marks are coarser relative to it. Immaterial (300 vs 300.75 mm/s²) but
+the contract tests state a measured tolerance rather than pretending to 1.000.
+
+### H3 — the original filing (superseded)
 
 One segment, 0 → 24000 steps/s instantly. Already acknowledged by the TODO at
 the top of the module. Recorded as a red test so it is *counted* rather than

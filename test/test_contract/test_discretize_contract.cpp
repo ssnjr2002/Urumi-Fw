@@ -53,6 +53,30 @@ namespace {
 
 using Subpaths = std::vector<std::vector<CubicBezier>>;
 
+/**
+ * Maximal runs of consecutive Z-moving segments, with each run's signed total.
+ *
+ * A lift is a RAMP now (H3), not one segment, so "the lower before the stroke"
+ * is a contiguous group rather than a single index. Grouping keeps these tests
+ * stating the property — down, then up, matched — instead of counting emitter
+ * internals that the ramp granularity is free to change.
+ */
+struct ZRun { size_t from = 0, to = 0; double dz = 0; };
+
+std::vector<ZRun> zRuns(const std::vector<MicroSegment>& segs) {
+    std::vector<ZRun> runs;
+    for (size_t i = 0; i < segs.size(); i++) {
+        if (segs[i].dz == 0) continue;
+        ZRun r;
+        r.from = i;
+        while (i < segs.size() && segs[i].dz != 0) r.dz += segs[i++].dz;
+        r.to = i - 1;
+        runs.push_back(r);
+    }
+    return runs;
+}
+
+
 CubicBezier line(double x0, double y0, double x1, double y1) {
     return motion::lineToCubic(Pt{x0, y0}, Pt{x1, y1});
 }
@@ -523,17 +547,11 @@ TEST_CASE("discretize: Z lift choreography") {
 
     SUBCASE("lowers before the stroke and raises after it, by the same step count") {
         const std::vector<MicroSegment> segs = lifted({curves::straightLine()}, machine::knife());
-        std::vector<MicroSegment> zMoves;
-        for (const MicroSegment& s : segs) {
-            if (s.dz != 0) zMoves.push_back(s);
-        }
-        REQUIRE(zMoves.size() >= 2);
-        double sum = 0;
-        for (const MicroSegment& s : zMoves) sum += s.dz;
-        CHECK(sum == 0); // returns to travel height
-        CHECK(std::fabs(zMoves.front().dz) ==
-              motion::jsRound(LIFT * machine::axes().z.stepsPerUnit));
-        CHECK(zMoves.front().dz == -zMoves.back().dz); // down first, up last
+        const std::vector<ZRun> runs = zRuns(segs);
+        REQUIRE(runs.size() == 2);
+        CHECK(runs[0].dz + runs[1].dz == 0); // returns to travel height
+        CHECK(std::fabs(runs[0].dz) == motion::jsRound(LIFT * machine::axes().z.stepsPerUnit));
+        CHECK(runs[0].dz == -runs[1].dz);    // down first, up last
     }
 
     SUBCASE("net Z is zero over many subpaths — every lower is matched by a raise") {
@@ -546,18 +564,17 @@ TEST_CASE("discretize: Z lift choreography") {
     SUBCASE("a corner pivot lifts, turns, and lowers again") {
         const Subpaths corner = {{line(0, 0, 20, 0), line(20, 0, 20, 20)}};
         const std::vector<MicroSegment> segs = lifted(corner, machine::knife());
-        std::vector<size_t> zIdx;
-        for (size_t i = 0; i < segs.size(); i++) {
-            if (segs[i].dz != 0) zIdx.push_back(i);
-        }
-        // The pivot's Z pair is interior: strip the leading lower and trailing raise.
-        REQUIRE(zIdx.size() > 2);
-        const std::vector<size_t> interior(zIdx.begin() + 1, zIdx.end() - 1);
-        CHECK(interior.size() == 2u);
+        const std::vector<ZRun> runs = zRuns(segs);
+        // four runs: lower to cut, the pivot's lift and lower, raise after
+        REQUIRE(runs.size() == 4);
+        CHECK(runs[1].dz == -runs[2].dz); // the pivot's pair cancels
         // and a pure-A rotation happens between the lift and the lower
         bool rotated = false;
-        for (size_t i = interior.front(); i < interior.back(); i++) {
-            if (segs[i].da != 0 && segs[i].dx == 0 && segs[i].dy == 0) rotated = true;
+        for (size_t i = runs[1].to + 1; i < runs[2].from; i++) {
+            CHECK(segs[i].dx == 0);
+            CHECK(segs[i].dy == 0);
+            CHECK(segs[i].dz == 0);
+            if (segs[i].da != 0) rotated = true;
         }
         CHECK(rotated);
     }

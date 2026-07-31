@@ -39,6 +39,8 @@ constexpr double FEED = 80.0;
 constexpr double A_MAX = 1000.0;
 /** Z engage feed (mm/s) — DEFAULTS.machine.z.feed. */
 constexpr double Z_FEED = 20.0;
+/** Z engage accel (mm/s^2) — the axis ceiling; zMove clamps the feed to 10. */
+constexpr double Z_ACCEL = 300.0;
 
 inline const motion::ResolvedAxes& axes() {
     static const motion::ResolvedAxes v = [] {
@@ -47,7 +49,9 @@ inline const motion::ResolvedAxes& axes() {
         r.y = motion::AxisConfig{160.0, 80.0, 1000.0, false};
         // Z declares no accel — the shipped config's placeholder, and the
         // reason zMove is unramped (H3). A must declare both or aMove refuses.
-        r.z = motion::AxisConfig{1200.0, 10.0, 0.0, true};
+        // Z declares 300 mm/s^2 — PROVISIONAL, see planner_audit H3. It used
+        // to be a 0 placeholder, which is why zMove was unramped.
+        r.z = motion::AxisConfig{1200.0, 10.0, 300.0, true};
         r.a = motion::AxisConfig{51.667, 100.0, 2000.0, true};
         r.fCpu = 150000000.0;
         return r;
@@ -74,6 +78,7 @@ inline motion::DiscretizeOptions knife() {
     o.jogFeed = FEED;
     o.liftHeight = 0.0;
     o.zFeed = Z_FEED;
+    o.zAccel = Z_ACCEL;
     o.slew = noSlew();
     return o;
 }

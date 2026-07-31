@@ -70,7 +70,15 @@ export function uniformMachine(
  */
 export function defaultMachine(): MachineConfig {
     const head = toolHead(
-        axisConfig(busNode(3), 1200.0, { maxFeed: 10.0, invert: true }),
+        // maxAccel 300 mm/s^2 is PROVISIONAL — see docs/planner_audit.md H3.
+        // Not measured on the bench yet; chosen as the smallest round value
+        // that lets a 2 mm lift at 10 mm/s actually reach cruise (the ramp
+        // needs v^2/2a = 0.17 mm per side, so 2d = 0.33 mm of a 2 mm move) and
+        // that is ~3% of g in torque terms, which for a vertical leadscrew is
+        // a rounding error on top of the static hold the motor already carries.
+        // Replace it with a measured number: drive N up/down cycles and read
+        // CMD_GET_POS for drift, bisecting on accel.
+        axisConfig(busNode(3), 1200.0, { maxFeed: 10.0, maxAccel: 300.0, invert: true }),
         axisConfig(busNode(4), 51.667, {
             maxFeed: 100.0,
             maxAccel: 2000.0,

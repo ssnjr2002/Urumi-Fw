@@ -12,6 +12,15 @@ namespace motion {
 
 namespace {
 
+/** Append one emission onto the running output. Z and A are both ramps now. */
+void appendAll(std::vector<MicroSegment>& out, const std::vector<MicroSegment>& v) {
+    out.insert(out.end(), v.begin(), v.end());
+}
+
+} // namespace
+
+namespace {
+
 /**
  * Speed a fraction `f` of the way along a sub-segment, under the constant
  * acceleration `plan` actually produces: v^2 is linear in distance, v is not.
@@ -83,7 +92,7 @@ std::vector<MicroSegment> discretize(const std::vector<PlannedSample>& samples,
         aAccum = aPhys;
         started = true;
 
-        if (lift) out.push_back(zMove(-zSteps, axes, options.zFeed)); // lower to cut
+        if (lift) appendAll(out, zMove(-zSteps, axes, options.zFeed, options.zAccel)); // lower to cut
 
         // Index of the last segment that may carry this subpath's PATH_END. It
         // tracks the last CUTTING segment; if the subpath's final sub-step turns
@@ -180,7 +189,8 @@ std::vector<MicroSegment> discretize(const std::vector<PlannedSample>& samples,
                 const double daTrue = jsRound(dtheta * aSpd);
                 if (daTrue != 0) {
                     const std::vector<MicroSegment> p =
-                        pivot(daTrue, lift, zSteps, axes, options.zFeed, options.slew);
+                        pivot(daTrue, lift, zSteps, axes, options.zFeed, options.zAccel,
+                              options.slew);
                     out.insert(out.end(), p.begin(), p.end());
                     aPhys += daTrue;
                 }
@@ -202,7 +212,7 @@ std::vector<MicroSegment> discretize(const std::vector<PlannedSample>& samples,
             out[static_cast<size_t>(endIdx)].flags |= MICRO_PATH_END;
         }
 
-        if (lift) out.push_back(zMove(+zSteps, axes, options.zFeed)); // raise after the stroke
+        if (lift) appendAll(out, zMove(+zSteps, axes, options.zFeed, options.zAccel)); // raise after the stroke
     }
 
     return out;

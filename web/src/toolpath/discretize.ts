@@ -59,6 +59,7 @@ export interface DiscretizeOverrides {
     readonly jogFeed?: number;
     readonly liftHeight?: number;
     readonly zFeed?: number;
+    readonly zAccel?: number;
 }
 
 /**
@@ -99,6 +100,7 @@ export function discretize(
     const jogFeed = overrides?.jogFeed ?? targets.rapid.feed;
     const liftHeight = overrides?.liftHeight ?? profile.liftHeight;
     const zFeed = overrides?.zFeed ?? targets.z.feed;
+    const zAccel = overrides?.zAccel ?? targets.z.accel ?? axes.z.maxAccel;
     const slew = targets.slew;
 
     const xSpu = axes.x.stepsPerUnit;
@@ -139,7 +141,7 @@ export function discretize(
         aAccum = aPhys;
         started = true;
 
-        if (lift) out.push(zMove(-zSteps, axes, zFeed)); // lower to cut
+        if (lift) out.push(...zMove(-zSteps, axes, zFeed, zAccel)); // lower to cut
 
         // Index of the last segment that may carry this subpath's PATH_END. It
         // tracks the last CUTTING segment; if the subpath's final sub-step turns
@@ -234,7 +236,7 @@ export function discretize(
             if (isCorner) {
                 const daTrue = Math.round(dtheta * aSpd);
                 if (daTrue !== 0) {
-                    out.push(...pivot(daTrue, lift, zSteps, axes, zFeed, slew));
+                    out.push(...pivot(daTrue, lift, zSteps, axes, zFeed, zAccel, slew));
                     aPhys += daTrue;
                 }
                 aAccum = aPhys;
@@ -256,7 +258,7 @@ export function discretize(
             out[endIdx] = { ...out[endIdx]!, flags: out[endIdx]!.flags | MICRO_PATH_END };
         }
 
-        if (lift) out.push(zMove(+zSteps, axes, zFeed)); // raise after the stroke
+        if (lift) out.push(...zMove(+zSteps, axes, zFeed, zAccel)); // raise after the stroke
     }
 
     return out;

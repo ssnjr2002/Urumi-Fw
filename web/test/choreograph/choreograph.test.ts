@@ -48,6 +48,20 @@ const axes = resolvedAxes(defaultConfig().machine);
 const A_ACCEL = axes.a.maxAccel * axes.a.stepsPerUnit;
 /** The A feed ceiling, in steps/s. */
 const A_CRUISE = axes.a.maxFeed * axes.a.stepsPerUnit;
+/** Z engage feed and accel (mm/s, mm/s^2) — the machine's own ceilings. */
+const Z_FEED = axes.z.maxFeed;
+const Z_ACCEL = axes.z.maxAccel;
+
+/**
+ * Z's accel bound is looser than A's 1.001, and the slack is measured, not
+ * guessed: rampChunks rounds every chunk boundary to an integer step, which
+ * perturbs the exact-by-construction accel at each boundary. Measured worst is
+ * 1.0025 for Z across 120..24000 steps and 1.0001 for A — Z's ramp is only ~200
+ * steps long, so integer marks are coarser relative to it. 1.005 keeps the
+ * bound meaningful: the defect class it guards against (H1, H2) missed by
+ * 26-65%, not by a quarter of a percent.
+ */
+const Z_ACCEL_TOL = 1.005;
 
 // ── executed-motion reconstruction (firmware's view, not the emitter's) ───────
 
@@ -179,9 +193,9 @@ describe("choreograph INVARIANTS: purity and determinism", () => {
     it("emitters do not mutate the axes they are given", () => {
         const before = JSON.stringify(axes);
         aMove(1000, axes);
-        zMove(100, axes, 20);
+        zMove(100, axes, Z_FEED, Z_ACCEL);
         travelJog(0, 0, 500, 500, axes, 0.5, 80);
-        pivot(500, true, 2400, axes, 20);
+        pivot(500, true, 2400, axes, Z_FEED, Z_ACCEL);
         preOrient(90, 0, 0, axes, KNIFE);
         aMoveTo(90, 0, axes);
         expect(JSON.stringify(axes)).toBe(before);
@@ -229,7 +243,7 @@ describe("choreograph INVARIANTS: step conservation", () => {
     });
 
     it("pivot conserves Z: the lift and the lower cancel exactly", () => {
-        const segs = pivot(1000, true, 2400, axes, 20);
+        const segs = pivot(1000, true, 2400, axes, Z_FEED, Z_ACCEL);
         expect(segs.reduce((s, x) => s + x.dz, 0)).toBe(0);
     });
 });
@@ -239,8 +253,8 @@ describe("choreograph INVARIANTS: wire encoding", () => {
         const all = [
             ...aMove(18600, axes),
             ...aMove(1, axes),
-            ...pivot(1000, true, 2400, axes, 20),
-            zMove(2400, axes, 20),
+            ...pivot(1000, true, 2400, axes, Z_FEED, Z_ACCEL),
+            ...zMove(2400, axes, Z_FEED, Z_ACCEL),
             ...travelJog(0, 0, 32000, 16000, axes, 0.5, 80),
         ];
         for (const s of all) {
@@ -252,7 +266,7 @@ describe("choreograph INVARIANTS: wire encoding", () => {
     it("all deltas are integers", () => {
         const all = [
             ...aMove(1234, axes),
-            ...pivot(567, true, 2400, axes, 20),
+            ...pivot(567, true, 2400, axes, Z_FEED, Z_ACCEL),
             ...travelJog(0.4, 0.6, 321.7, 89.2, axes, 0.5, 80),
         ];
         for (const s of all) {
@@ -272,9 +286,12 @@ describe("choreograph INVARIANTS: wire encoding", () => {
     });
 
     it("zMove emits pure Z motion tagged MICRO_LIFT", () => {
-        const m = zMove(2400, axes, 20);
-        expect(m.flags).toBe(MICRO_LIFT);
-        expect([m.dx, m.dy, m.da]).toEqual([0, 0, 0]);
+        const segs = zMove(2400, axes, Z_FEED, Z_ACCEL);
+        expect(segs.length).toBeGreaterThan(1); // ramped, not one slam (H3)
+        for (const m of segs) {
+            expect(m.flags).toBe(MICRO_LIFT);
+            expect([m.dx, m.dy, m.da]).toEqual([0, 0, 0]);
+        }
     });
 
     it("travelJog emits pure XY motion tagged MICRO_JOG", () => {
@@ -299,10 +316,13 @@ describe("choreograph INVARIANTS: axis inversion", () => {
     }
 
     it("flipping z.invert negates every emitted dz and changes nothing else", () => {
-        const a = zMove(2400, axes, 20);
-        const b = zMove(2400, withInvert({ z: !axes.z.invert }), 20);
-        expect(b.dz).toBe(-a.dz);
-        expect(b.interval).toBe(a.interval);
+        const a = zMove(2400, axes, Z_FEED, Z_ACCEL);
+        const b = zMove(2400, withInvert({ z: !axes.z.invert }), Z_FEED, Z_ACCEL);
+        expect(b.length).toBe(a.length);
+        for (let i = 0; i < a.length; i++) {
+            expect(b[i]!.dz).toBe(-a[i]!.dz);
+            expect(b[i]!.interval).toBe(a[i]!.interval);
+        }
     });
 
     it("flipping a.invert negates every emitted da and changes nothing else", () => {
@@ -427,27 +447,36 @@ describe("choreograph CONTRACT: preOrient's two modes", () => {
 
 describe("choreograph CONTRACT: pivot ordering", () => {
     it("lift happens before the rotation and lower after it", () => {
-        const segs = pivot(1000, true, 2400, axes, 20);
+        const segs = pivot(1000, true, 2400, axes, Z_FEED, Z_ACCEL);
         const zIdx = segs.map((s, i) => (s.dz !== 0 ? i : -1)).filter((i) => i >= 0);
         const aIdx = segs.map((s, i) => (s.da !== 0 ? i : -1)).filter((i) => i >= 0);
-        expect(zIdx.length).toBe(2);
-        expect(zIdx[0]).toBeLessThan(Math.min(...aIdx));
-        expect(zIdx[1]).toBeGreaterThan(Math.max(...aIdx));
+        // Z is a ramp now, so "the lift" is many segments, not one. What the
+        // caller relies on is the ORDER: all Z before the turn, all Z after it,
+        // and none interleaved.
+        expect(zIdx.length).toBeGreaterThanOrEqual(2);
+        const firstA = Math.min(...aIdx);
+        const lastA = Math.max(...aIdx);
+        expect(zIdx.filter((i) => i > firstA && i < lastA)).toEqual([]);
+        expect(Math.min(...zIdx)).toBeLessThan(firstA);
+        expect(Math.max(...zIdx)).toBeGreaterThan(lastA);
     });
 
     it("no Z motion is emitted when lift is false", () => {
-        for (const s of pivot(1000, false, 0, axes, 20)) expect(s.dz).toBe(0);
+        for (const s of pivot(1000, false, 0, axes, Z_FEED, Z_ACCEL)) expect(s.dz).toBe(0);
     });
 
     it("pivot's A motion is exactly aMove's", () => {
-        const p = pivot(1000, true, 2400, axes, 20).filter((s) => s.da !== 0);
+        const p = pivot(1000, true, 2400, axes, Z_FEED, Z_ACCEL).filter((s) => s.da !== 0);
         expect(p).toEqual(aMove(1000, axes));
     });
 
     it("a zero-rotation pivot with lift still lifts and lowers (and nothing else)", () => {
-        const segs = pivot(0, true, 2400, axes, 20);
-        expect(segs.length).toBe(2);
-        expect(segs[0]!.dz).toBe(-segs[1]!.dz);
+        const segs = pivot(0, true, 2400, axes, Z_FEED, Z_ACCEL);
+        expect(segs.every((s) => s.da === 0)).toBe(true);
+        // the lift and the lower are mirror ramps: equal step counts, opposite
+        // sign, and they cancel
+        expect(segs.reduce((t, s) => t + s.dz, 0)).toBe(0);
+        expect(segs.reduce((t, s) => t + Math.abs(s.dz), 0)).toBe(2 * 2400);
     });
 });
 
@@ -501,13 +530,32 @@ describe("choreograph CONTRACT: travelJog and headOffsetJog geometry", () => {
 });
 
 describe("choreograph CONTRACT: emitted timing matches the requested feed", () => {
-    it("zMove takes liftHeight / zFeed seconds", () => {
-        for (const [mm, feed] of [[2, 20], [5, 20], [2, 10]]) {
+    it("zMove takes at least liftHeight / zFeed seconds, plus its ramps", () => {
+        // Was an equality against the constant-velocity ideal. Z ramps now
+        // (H3), so the ideal is a floor rather than a target: the move cannot
+        // be FASTER than running the whole distance at feed, and the ramp
+        // overhead is a fixed time cost that shrinks as a fraction of a longer
+        // lift. Same shape as the travelJog timing test, for the same reason.
+        for (const [mm, feed, tol] of [[2, 10, 0.5], [5, 10, 0.25], [20, 10, 0.07]]) {
             const steps = zStepCount(mm!, axes);
-            const m = zMove(steps, axes, feed!);
-            const seconds = (steps * m.interval) / axes.fCpu;
-            expect(seconds).toBeCloseTo(mm! / feed!, 3);
+            const sl = slices(zMove(steps, axes, feed!, Z_ACCEL));
+            const seconds = sl.reduce((t, x) => t + x.dt, 0);
+            const ideal = mm! / feed!;
+            expect(seconds).toBeGreaterThanOrEqual(ideal * 0.999);
+            expect(seconds / ideal - 1).toBeLessThan(tol!);
         }
+    });
+
+    it("zMove ramps against the Z accel ceiling and comes back to rest", () => {
+        // H3's actual content, now that it is fixed: the same two properties
+        // H1a and H1b pin for A, asked of Z.
+        const sl = slices(zMove(zStepCount(5, axes), axes, Z_FEED, Z_ACCEL));
+        expect(sl.length).toBeGreaterThan(1);
+        const limit = Z_ACCEL * axes.z.stepsPerUnit;
+        expect(worstAccelRatio(sl, limit)).toBeLessThanOrEqual(Z_ACCEL_TOL);
+        expect(sl[sl.length - 1]!.v).toBeCloseTo(sl[0]!.v, 0); // symmetric
+        const last = sl[sl.length - 1]!;
+        expect(last.v / last.dt / limit).toBeLessThanOrEqual(1.0); // can stop
     });
 
     it("travelJog takes distance / jogFeed seconds, plus its ramps", () => {
@@ -530,9 +578,47 @@ describe("choreograph CONTRACT: emitted timing matches the requested feed", () =
         expect(zStepCount(1.7005, axes)).toBe(Math.round(1.7005 * 1200)); // 2041, not 2040
     });
 
-    it("zMove's interval stays in range at absurd feeds", () => {
-        expect(zMove(100, axes, 1e9).interval).toBe(1);              // would trunc to 0
-        expect(zMove(100, axes, 1e-9).interval).toBe(axes.fCpu);     // would exceed fCpu
+    it("zMove CLAMPS an over-ceiling feed instead of honouring it", () => {
+        // The config ships machine.z.feed = 20 against a z.maxFeed of 10, and
+        // validate.ts has always warned that the excess is "(clamped)" — which
+        // was not true until now: zMove divided by whatever it was handed and
+        // never consulted the axis. Unlike the cutting path, it does not go
+        // through interval(), so the per-axis rate floor never saw it either.
+        const atCeiling = slices(zMove(1200, axes, Z_FEED, Z_ACCEL));
+        const asked = slices(zMove(1200, axes, 1e9, Z_ACCEL));
+        const peak = (sl: readonly Slice[]) => Math.max(...sl.map((x) => x.v));
+        expect(peak(asked)).toBeCloseTo(peak(atCeiling), 6);
+        expect(peak(asked) / axes.z.stepsPerUnit).toBeLessThanOrEqual(Z_FEED * 1.001);
+        // And the accel ceiling is clamped by the same rule. Stated as an
+        // EQUALITY against the at-ceiling emission, not as an accel bound:
+        // an unclamped 1e9 mm/s^2 collapses the ramp to a single chunk, and
+        // worstAccelRatio over one segment has no boundaries to measure, so it
+        // returns 0 and passes any bound vacuously. That is the same
+        // empty-measurement trap the stage-7 subdivision test hit.
+        const fast = zMove(1200, axes, Z_FEED, 1e9);
+        const atAccel = zMove(1200, axes, Z_FEED, Z_ACCEL);
+        expect(fast.length).toBe(atAccel.length);
+        expect(fast.length).toBeGreaterThan(1);
+        for (let i = 0; i < fast.length; i++) {
+            expect(fast[i]!.dz).toBe(atAccel[i]!.dz);
+            expect(fast[i]!.interval).toBe(atAccel[i]!.interval);
+        }
+    });
+
+    it("zMove rounds toward zero: |dz| < 1 emits nothing", () => {
+        // Mirrors aMove's guard. Without it a fractional dz would produce a
+        // ramp of zero steps; with it the caller gets an honest no-op.
+        expect(zMove(0.7, axes, Z_FEED, Z_ACCEL)).toEqual([]);
+        expect(zMove(-0.7, axes, Z_FEED, Z_ACCEL)).toEqual([]);
+        expect(zMove(0, axes, Z_FEED, Z_ACCEL)).toEqual([]);
+    });
+
+    it("zMove refuses an undeclared accel rather than inventing one", () => {
+        // Same policy as aMove (H4): a limit that is ABSENT is refused, a limit
+        // that is present and exceeded is clamped. The two are different
+        // questions and the difference is whether the machine supplied a number.
+        expect(() => zMove(1200, remap({ z: { maxAccel: 0 } }), Z_FEED, 0))
+            .toThrow(/no accel limit/);
     });
 
     it("a long aMove actually reaches the A feed ceiling", () => {
@@ -749,16 +835,19 @@ describe("choreograph CONTRACT: acceleration limits (FINDINGS)", () => {
         expect(worstAccelRatio(sl, axes.x.maxAccel * axes.x.stepsPerUnit)).toBeLessThanOrEqual(1.001);
     });
 
-    it("H3: zMove ramps instead of slamming to zFeed", () => {
-        // Acknowledged by the TODO at the top of choreograph.ts. Recorded as a
-        // test so it is counted, not just commented. z.maxAccel is 0
-        // (uncharacterized), so there is no ceiling to measure against yet.
-        const m = zMove(zStepCount(2, axes), axes, 20);
-        const v = axes.fCpu / m.interval;
-        expect(
-            `one segment opening at ${v.toFixed(0)} steps/s,` +
-            ` z.maxAccel=${axes.z.maxAccel} (uncharacterized)`,
-        ).toBe("a ramped Z move against a known z.maxAccel");
+    it("H3 (FIXED): zMove ramps instead of slamming to zFeed", () => {
+        // Was: one segment opening at 24000 steps/s — 0 to 20 mm/s in zero
+        // distance, and 20 mm/s was itself twice the axis's declared 10 mm/s
+        // ceiling. The same defect H2 fixed for travel jogs and H1 for A; Z was
+        // last because z.maxAccel was a 0 placeholder and the module refused to
+        // invent one. It is now a declared (provisional) 300 mm/s^2.
+        //
+        // Asserted the way H2 is: it must open well below feed, not at it.
+        const segs = zMove(zStepCount(2, axes), axes, Z_FEED, Z_ACCEL);
+        expect(segs.length).toBeGreaterThan(1);
+        const sl = slices(segs);
+        expect(sl[0]!.v / axes.z.stepsPerUnit).toBeLessThan(Z_FEED / 2);
+        expect(worstAccelRatio(sl, Z_ACCEL * axes.z.stepsPerUnit)).toBeLessThanOrEqual(Z_ACCEL_TOL);
     });
 });
 

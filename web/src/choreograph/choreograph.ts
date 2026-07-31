@@ -45,6 +45,15 @@ export interface RampChunk {
 const RAMP_CHUNKS = 16;
 
 /**
+ * Junction speed for a standalone move: slow, not standstill (steps/s).
+ *
+ * Was a bare 50 duplicated at each ramped emitter. Value unchanged — the C++
+ * port named it `JUNCTION_V` and having one name on both sides is what lets the
+ * differential mean anything when it moves.
+ */
+const JUNCTION_V = 50;
+
+/**
  * Cut a pure single-axis move of `N` steps into a trapezoidal speed profile:
  * accelerate v0 → peak, cruise, decelerate peak → v0, never exceeding `accel`.
  *
@@ -113,22 +122,64 @@ export function rampChunks(
     return out;
 }
 
-// ── Z lift move (pure Z, constant velocity) ───────────────────────────────────
-// TODO: Z moves are currently single-segment constant-velocity (matching the
-// Python). A future refinement should ramp Z trapezoidally like aMove —
-// extract a generic trapezoidalMove() helper and use it for both A and Z, so
-// Z lift/lower doesn't slam at full zFeed. Needs z.accel characterized
-// (currently 0 placeholder in defaultConfig).
+// ── Z lift move (pure Z, ramped) ──────────────────────────────────────────────
 
 /**
- * Emit a single Z-axis move at constant velocity (zFeed mm/s).
- * dz is in STEPS (signed). Invert is applied to the emitted dz.
+ * Emit a ramped Z move (trapezoidal, via the same `rampChunks` generator A
+ * uses). `dz` is in STEPS (signed); invert is applied to the emitted values.
+ * Returns [] for dz = 0.
+ *
+ * This closes audit H3. Z used to be a single constant-velocity segment — it
+ * asked the axis for its whole feed in zero distance, the same defect H2 fixed
+ * for travel jogs and H1 for A. The TODO this replaces asked for "a generic
+ * trapezoidalMove() helper used for both A and Z"; `rampChunks` is that helper,
+ * and it was already extracted for A.
+ *
+ * **Both targets are CLAMPED to the axis ceilings, not refused.** aMove refuses
+ * an absent limit (H4) because a trapezoid cannot be built from "uncapped" and
+ * guessing calibration is how you crash a machine. That reasoning does not
+ * extend to a limit that is present and merely exceeded: there the machine's
+ * own number is the answer, and using it is strictly safer than honouring the
+ * request. `validate.ts` already warns that an over-ceiling z.feed is
+ * "(clamped)" — before this it was not, and the warning was the only thing
+ * standing between a 2x-over-ceiling engage feed and the metal.
+ *
+ * An absent accel IS still refused, for H4's original reason.
  */
-export function zMove(dz: number, axes: ResolvedAxes, zFeed: number): MicroSegment {
-    const zRate = Math.max(zFeed * axes.z.stepsPerUnit, 1e-9);
-    const zInterval = Math.max(1, Math.min(Math.trunc(axes.fCpu / zRate), axes.fCpu));
-    const emittedDz = axes.z.invert ? -dz : dz;
-    return microSegment(0, 0, emittedDz, 0, zInterval, MICRO_LIFT);
+export function zMove(
+    dz: number,
+    axes: ResolvedAxes,
+    zFeed: number,
+    zAccel: number,
+): MicroSegment[] {
+    const N = Math.abs(Math.trunc(dz));
+    if (N === 0) return [];
+
+    const spu = axes.z.stepsPerUnit;
+    // Clamp to the axis, never above it. A 0 ceiling means "undeclared", which
+    // is not a licence to exceed — it is the absence of a number to clamp to.
+    const feed = axes.z.maxFeed > 0 ? Math.min(zFeed, axes.z.maxFeed) : zFeed;
+    const accel = axes.z.maxAccel > 0 ? Math.min(zAccel, axes.z.maxAccel) : zAccel;
+    if (!(feed > 0) || !(accel > 0)) {
+        const missing = !(feed > 0)
+            ? !(accel > 0)
+                ? "feed and accel"
+                : "feed"
+            : "accel";
+        throw new Error(
+            `zMove: cannot move Z by ${N} steps — no ${missing} limit. ` +
+                `Set machine.z.feed / machine.heads[].z.maxAccel, or pass an explicit target.`,
+        );
+    }
+
+    const cruise = Math.max(feed * spu, 1);
+    const rate = Math.max(accel * spu, 1);
+    const v0 = Math.min(cruise, JUNCTION_V);
+    const sign = (dz > 0 ? 1 : -1) * (axes.z.invert ? -1 : 1);
+
+    return rampChunks(N, v0, cruise, rate, axes.fCpu).map((c) =>
+        microSegment(0, 0, sign * c.steps, 0, c.interval, MICRO_LIFT),
+    );
 }
 
 /** Compute the Z step count for a lift of `liftHeight` mm. 0 if no lift. */
@@ -175,7 +226,7 @@ export function aMove(da: number, axes: ResolvedAxes, slew?: OpTarget): MicroSeg
     }
     const cruise = Math.max(feed * aSpd, 1);
     const accel = Math.max(rate * aSpd, 1);
-    const v0 = Math.min(cruise, 50);
+    const v0 = Math.min(cruise, JUNCTION_V);
 
     const sign = (da > 0 ? 1 : -1) * (axes.a.invert ? -1 : 1);
 
@@ -197,12 +248,13 @@ export function pivot(
     zSteps: number,
     axes: ResolvedAxes,
     zFeed: number,
+    zAccel: number,
     slew?: OpTarget,
 ): MicroSegment[] {
     const out: MicroSegment[] = [];
-    if (lift) out.push(zMove(+zSteps, axes, zFeed));
+    if (lift) out.push(...zMove(+zSteps, axes, zFeed, zAccel));
     out.push(...aMove(daTrue, axes, slew));
-    if (lift) out.push(zMove(-zSteps, axes, zFeed));
+    if (lift) out.push(...zMove(-zSteps, axes, zFeed, zAccel));
     return out;
 }
 
@@ -254,7 +306,7 @@ function xyJog(
 
     // Junction speed: the same standstill-ish entry/exit aMove uses, so a jog
     // starts and ends slow instead of at feed.
-    const v0 = Math.min(cruise, 50);
+    const v0 = Math.min(cruise, JUNCTION_V);
 
     const chunks = rampChunks(major, v0, cruise, accel, axes.fCpu);
     const out: MicroSegment[] = [];

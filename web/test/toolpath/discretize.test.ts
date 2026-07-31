@@ -429,11 +429,11 @@ describe("stage 8: Z lift choreography", () => {
 
     it("lowers before the stroke and raises after it, by the same step count", () => {
         const segs = lifted([CASES.straight_line!.curves], KNIFE);
-        const zMoves = segs.filter((s) => s.dz !== 0);
-        expect(zMoves.length).toBeGreaterThanOrEqual(2);
-        expect(zMoves.reduce((a, s) => a + s.dz, 0)).toBe(0); // returns to travel height
-        expect(Math.abs(zMoves[0]!.dz)).toBe(Math.round(LIFT * AXES.z.stepsPerUnit));
-        expect(zMoves[0]!.dz).toBe(-zMoves[zMoves.length - 1]!.dz); // down first, up last
+        const runs = zRuns(segs);
+        expect(runs.length).toBe(2);
+        expect(runs[0]!.dz + runs[1]!.dz).toBe(0); // returns to travel height
+        expect(Math.abs(runs[0]!.dz)).toBe(Math.round(LIFT * AXES.z.stepsPerUnit));
+        expect(runs[0]!.dz).toBe(-runs[1]!.dz); // down first, up last
     });
 
     it("net Z is zero over many subpaths — every lower is matched by a raise", () => {
@@ -448,13 +448,16 @@ describe("stage 8: Z lift choreography", () => {
         const corner = [line({ x: 0, y: 0 }, { x: 20, y: 0 }), line({ x: 20, y: 0 }, { x: 20, y: 20 })];
         const segs = lifted([corner], KNIFE);
         // The pivot's Z pair is interior: strip the leading lower and trailing raise.
-        const zIdx = segs.map((s, i) => (s.dz !== 0 ? i : -1)).filter((i) => i >= 0);
-        expect(zIdx.length).toBeGreaterThan(2);
-        const interior = zIdx.slice(1, -1);
-        expect(interior.length).toBe(2);
+        const runs = zRuns(segs);
+        // four runs: lower to cut, the pivot's lift and lower, raise after
+        expect(runs.length).toBe(4);
+        const [lift, lower] = [runs[1]!, runs[2]!];
+        expect(lift.dz).toBe(-lower.dz); // the pivot's pair cancels
         // and a pure-A rotation happens between the lift and the lower
-        const between = segs.slice(interior[0]!, interior[1]!);
-        expect(between.some((s) => s.da !== 0 && s.dx === 0 && s.dy === 0)).toBe(true);
+        const between = segs.slice(lift.to + 1, lower.from);
+        expect(between.length).toBeGreaterThan(0);
+        expect(between.every((s) => s.dx === 0 && s.dy === 0 && s.dz === 0)).toBe(true);
+        expect(between.some((s) => s.da !== 0)).toBe(true);
     });
 
     it("XY conservation is unaffected by lifting", () => {
@@ -462,6 +465,26 @@ describe("stage 8: Z lift choreography", () => {
         expect([nx, ny]).toEqual(expectedXY([CASES.s_curve!.curves]));
     });
 });
+
+/**
+ * Maximal runs of consecutive Z-moving segments, with each run's signed total.
+ *
+ * A lift is a RAMP now (H3), not one segment, so "the lower before the stroke"
+ * is a contiguous group rather than a single index. Grouping is what keeps
+ * these tests stating the property — down, then up, matched — instead of
+ * counting emitter internals that the ramp granularity is free to change.
+ */
+function zRuns(segs: readonly MicroSegment[]): { from: number; to: number; dz: number }[] {
+    const runs: { from: number; to: number; dz: number }[] = [];
+    for (let i = 0; i < segs.length; i++) {
+        if (segs[i]!.dz === 0) continue;
+        const from = i;
+        let dz = 0;
+        while (i < segs.length && segs[i]!.dz !== 0) dz += segs[i++]!.dz;
+        runs.push({ from, to: i - 1, dz });
+    }
+    return runs;
+}
 
 describe("stage 8: velocity-aware subdivision", () => {
     it("skips interior sub-steps that move nothing", () => {

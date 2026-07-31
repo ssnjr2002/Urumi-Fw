@@ -29,7 +29,7 @@
  *     axes <xSpu xFeed xAccel> <ySpu yFeed yAccel> <zSpu zFeed zAccel> <aSpu aFeed aAccel> <fCpu>
  *     inv <xInvert> <yInvert> <zInvert> <aInvert>
  *     tool <tangential> <unwind> <cornerAngleDeg> <offsetMm>
- *     trav <dvMax> <vMin> <jogFeed> <liftHeight> <zFeed>
+ *     trav <dvMax> <vMin> <jogFeed> <liftHeight> <zFeed> <zAccel>
  *     slew <hasFeed> <feed> <hasAccel> <accel>
  *     n <count>
  *     i <x> <y> <theta> <kappa> <ds> <flags:int> <vCeiling> <v>
@@ -208,7 +208,8 @@ it("generates the C++ discretize reference", (ctx) => {
 
     const emitCase = (name: string, key: string, input: PlannedSample[],
                       mach: MachineConfig, profile: ToolProfile, qual: QualityConfig,
-                      overrides?: { jogFeed?: number; liftHeight?: number; zFeed?: number }): void => {
+                      overrides?: { jogFeed?: number; liftHeight?: number; zFeed?: number;
+                                    zAccel?: number }): void => {
         const got = discretize(input, mach, profile, qual, overrides);
         const ax = resolvedAxes(mach);
         const targets = { rapid: mach.rapid, z: mach.z, slew: mach.slew };
@@ -225,7 +226,9 @@ it("generates the C++ discretize reference", (ctx) => {
         lines.push("trav " + [qual.dvMax, qual.vMin,
                               overrides?.jogFeed ?? targets.rapid.feed,
                               overrides?.liftHeight ?? profile.liftHeight,
-                              overrides?.zFeed ?? (profile.z?.feed ?? targets.z.feed)]
+                              overrides?.zFeed ?? (profile.z?.feed ?? targets.z.feed),
+                              overrides?.zAccel ??
+                                  (profile.z?.accel ?? targets.z.accel ?? ax.z.maxAccel)]
                                  .map(hex).join(" "));
         lines.push(`slew ${+(targets.slew.feed !== undefined)} ` +
                    `${hex(targets.slew.feed ?? 0)} ` +

@@ -54,15 +54,22 @@ std::vector<RampChunk> rampChunks(double N, double v0, double cruise,
                                   double accel, double fCpu);
 
 /**
- * A single Z move at constant velocity (zFeed mm/s). `dz` is in STEPS, signed;
- * invert is applied to the emitted value.
+ * A ramped Z move (trapezoidal, via `rampChunks`). `dz` is in STEPS, signed;
+ * invert is applied to the emitted values. Empty for dz = 0.
  *
- * Constant-velocity rather than ramped is a known gap (H3): Z slams to zFeed.
- * It stays that way here because the port's job is to reproduce the
- * TypeScript, and fixing it needs `z.maxAccel` measured on the bench, which is
- * still a 0 placeholder in the shipped config.
+ * Closes H3. Z used to be one constant-velocity segment, asking the axis for
+ * its whole feed in zero distance — the defect H2 fixed for travel jogs and H1
+ * for A.
+ *
+ * **Both targets are CLAMPED to the axis ceilings, not refused.** aMove refuses
+ * an ABSENT limit (H4): a trapezoid cannot be built from "uncapped", and
+ * guessing calibration is how you crash a machine. That does not extend to a
+ * limit that is present and merely exceeded — there the machine's own number is
+ * the answer, and using it is strictly safer than honouring the request. An
+ * absent accel is still refused, for H4's original reason.
  */
-MicroSegment zMove(double dz, const ResolvedAxes& axes, double zFeed);
+std::vector<MicroSegment> zMove(double dz, const ResolvedAxes& axes, double zFeed,
+                                double zAccel);
 
 /** Z step count for a lift of `liftHeight` mm. 0 when the tool does not lift. */
 double zStepCount(double liftHeight, const ResolvedAxes& axes);
@@ -84,7 +91,7 @@ std::vector<MicroSegment> aMove(double da, const ResolvedAxes& axes,
 /** Lift-pivot-lower: raise Z -> rotate A by `daTrue` steps -> lower Z. */
 std::vector<MicroSegment> pivot(double daTrue, bool lift, double zSteps,
                                 const ResolvedAxes& axes, double zFeed,
-                                const OpTarget& slew);
+                                double zAccel, const OpTarget& slew);
 
 /**
  * A ramped travel jog from (fromX, fromY) to (toX, toY), all in STEPS. Empty

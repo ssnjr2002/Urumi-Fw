@@ -201,6 +201,7 @@ TEST_CASE("discretize is bit-identical to the TypeScript reference") {
             o.jogFeed = nextHex(ls);
             o.liftHeight = nextHex(ls);
             o.zFeed = nextHex(ls);
+            o.zAccel = nextHex(ls);
         } else if (kind == "slew") {
             OpTarget& s = cases.back().opts.slew;
             int hf = 0, ha = 0;

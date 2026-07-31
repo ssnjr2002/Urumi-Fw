@@ -72,6 +72,7 @@ struct DiscretizeOptions {
     double jogFeed = 0;
     double liftHeight = 0;
     double zFeed = 0;
+    double zAccel = 0;
     OpTarget slew;
 };
 

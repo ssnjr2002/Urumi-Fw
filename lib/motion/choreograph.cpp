@@ -87,11 +87,36 @@ std::vector<RampChunk> rampChunks(double N, double v0, double cruise,
     return out;
 }
 
-MicroSegment zMove(double dz, const ResolvedAxes& axes, double zFeed) {
-    const double zRate = jsMax(zFeed * axes.z.stepsPerUnit, 1e-9);
-    const double zInterval = jsMax(1, jsMin(std::trunc(axes.fCpu / zRate), axes.fCpu));
-    const double emittedDz = axes.z.invert ? -dz : dz;
-    return microSegment(0, 0, emittedDz, 0, zInterval, MICRO_LIFT);
+std::vector<MicroSegment> zMove(double dz, const ResolvedAxes& axes, double zFeed,
+                                double zAccel) {
+    const double N = std::fabs(std::trunc(dz));
+    if (N == 0) return {};
+
+    const double spu = axes.z.stepsPerUnit;
+    // Clamp to the axis, never above it. A 0 ceiling means "undeclared", which
+    // is not a licence to exceed — it is the absence of a number to clamp to.
+    const double feed = axes.z.maxFeed > 0 ? jsMin(zFeed, axes.z.maxFeed) : zFeed;
+    const double accel = axes.z.maxAccel > 0 ? jsMin(zAccel, axes.z.maxAccel) : zAccel;
+    if (!(feed > 0) || !(accel > 0)) {
+        std::string missing;
+        if (!(feed > 0)) missing = "feed";
+        if (!(accel > 0)) missing += missing.empty() ? "accel" : " and accel";
+        throw std::runtime_error(
+            "zMove: cannot move Z by " + std::to_string(static_cast<long long>(N)) +
+            " steps — no " + missing +
+            " limit. Set machine.z.feed / machine.heads[].z.maxAccel, or pass an explicit target.");
+    }
+
+    const double cruise = jsMax(feed * spu, 1);
+    const double rate = jsMax(accel * spu, 1);
+    const double v0 = jsMin(cruise, JUNCTION_V);
+    const double sign = (dz > 0 ? 1 : -1) * (axes.z.invert ? -1 : 1);
+
+    std::vector<MicroSegment> out;
+    for (const RampChunk& c : rampChunks(N, v0, cruise, rate, axes.fCpu)) {
+        out.push_back(microSegment(0, 0, sign * c.steps, 0, c.interval, MICRO_LIFT));
+    }
+    return out;
 }
 
 double zStepCount(double liftHeight, const ResolvedAxes& axes) {
@@ -133,12 +158,14 @@ std::vector<MicroSegment> aMove(double da, const ResolvedAxes& axes,
 
 std::vector<MicroSegment> pivot(double daTrue, bool lift, double zSteps,
                                 const ResolvedAxes& axes, double zFeed,
-                                const OpTarget& slew) {
+                                double zAccel, const OpTarget& slew) {
     std::vector<MicroSegment> out;
-    if (lift) out.push_back(zMove(+zSteps, axes, zFeed));
-    const std::vector<MicroSegment> rot = aMove(daTrue, axes, slew);
-    out.insert(out.end(), rot.begin(), rot.end());
-    if (lift) out.push_back(zMove(-zSteps, axes, zFeed));
+    const auto append = [&out](const std::vector<MicroSegment>& v) {
+        out.insert(out.end(), v.begin(), v.end());
+    };
+    if (lift) append(zMove(+zSteps, axes, zFeed, zAccel));
+    append(aMove(daTrue, axes, slew));
+    if (lift) append(zMove(-zSteps, axes, zFeed, zAccel));
     return out;
 }
 

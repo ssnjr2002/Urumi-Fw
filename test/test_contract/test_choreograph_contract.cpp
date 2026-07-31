@@ -22,9 +22,8 @@
  *     reaches neither, so the reference vectors exercise neither, and these
  *     tests are the only thing holding them. They are written to the same
  *     standard as the reachable ones rather than as smoke tests.
- *   - H3 is RED in the TypeScript (an intentional failure that names the
- *     finding). Here it is a two-sided pin on the CURRENT unramped behaviour,
- *     so the suite stays green and the test still goes red the day Z is ramped.
+ *   - Z is ramped here (H3, fixed) and its accel bound is looser than A's; the
+ *     slack is measured rather than guessed. See Z_ACCEL_TOL.
  */
 
 #include "doctest.h"
@@ -66,6 +65,19 @@ const OpTarget NO_SLEW = machine::noSlew();
 double aAccel() { return machine::axes().a.maxAccel * machine::axes().a.stepsPerUnit; }
 /** The A feed ceiling, in steps/s. */
 double aCruise() { return machine::axes().a.maxFeed * machine::axes().a.stepsPerUnit; }
+/** Z engage feed and accel (mm/s, mm/s^2) — the machine's own ceilings. */
+double zFeed() { return machine::axes().z.maxFeed; }
+double zAccel() { return machine::axes().z.maxAccel; }
+
+/**
+ * Z's accel bound is looser than A's 1.001, and the slack is measured, not
+ * guessed: rampChunks rounds every chunk boundary to an integer step, which
+ * perturbs the exact-by-construction accel there. Measured worst is 1.0025 for
+ * Z across 120..24000 steps and 1.0001 for A — Z's ramp is only ~200 steps
+ * long, so integer marks are coarser relative to it. 1.005 keeps the bound
+ * meaningful: the defects it guards (H1, H2) missed by 26-65%, not 0.25%.
+ */
+constexpr double Z_ACCEL_TOL = 1.005;
 
 std::string fmt(double v, int prec = 2) {
     std::ostringstream os;
@@ -250,9 +262,9 @@ TEST_CASE("choreograph INVARIANT: purity and determinism") {
         // signature that drops the const would otherwise pass silently.
         const ResolvedAxes before = machine::axes();
         aMove(1000, machine::axes(), NO_SLEW);
-        zMove(100, machine::axes(), 20);
+        zMove(100, machine::axes(), zFeed(), zAccel());
         travelJog(0, 0, 500, 500, machine::axes(), 0.5, 80);
-        pivot(500, true, 2400, machine::axes(), 20, NO_SLEW);
+        pivot(500, true, 2400, machine::axes(), zFeed(), zAccel(), NO_SLEW);
         preOrient(90, 0, 0, machine::axes(), KNIFE_TAN, KNIFE_UNWIND, NO_SLEW);
         aMoveTo(90, 0, machine::axes(), NO_SLEW);
         const ResolvedAxes& after = machine::axes();
@@ -310,7 +322,7 @@ TEST_CASE("choreograph INVARIANT: step conservation") {
     }
 
     SUBCASE("pivot conserves Z: the lift and the lower cancel exactly") {
-        CHECK(sum(pivot(1000, true, 2400, machine::axes(), 20, NO_SLEW)).dz == 0);
+        CHECK(sum(pivot(1000, true, 2400, machine::axes(), zFeed(), zAccel(), NO_SLEW)).dz == 0);
     }
 }
 
@@ -320,8 +332,8 @@ TEST_CASE("choreograph INVARIANT: wire encoding") {
     SUBCASE("every emitted interval is in [1, fCpu]") {
         Segs all;
         for (const Segs& g : {aMove(18600, ax, NO_SLEW), aMove(1, ax, NO_SLEW),
-                              pivot(1000, true, 2400, ax, 20, NO_SLEW),
-                              Segs{zMove(2400, ax, 20)},
+                              pivot(1000, true, 2400, ax, zFeed(), zAccel(), NO_SLEW),
+                              zMove(2400, ax, zFeed(), zAccel()),
                               travelJog(0, 0, 32000, 16000, ax, 0.5, 80)}) {
             all.insert(all.end(), g.begin(), g.end());
         }
@@ -335,7 +347,7 @@ TEST_CASE("choreograph INVARIANT: wire encoding") {
     SUBCASE("all deltas are integers") {
         Segs all;
         for (const Segs& g : {aMove(1234, ax, NO_SLEW),
-                              pivot(567, true, 2400, ax, 20, NO_SLEW),
+                              pivot(567, true, 2400, ax, zFeed(), zAccel(), NO_SLEW),
                               travelJog(0.4, 0.6, 321.7, 89.2, ax, 0.5, 80)}) {
             all.insert(all.end(), g.begin(), g.end());
         }
@@ -359,11 +371,14 @@ TEST_CASE("choreograph INVARIANT: wire encoding") {
     }
 
     SUBCASE("zMove emits pure Z motion tagged MICRO_LIFT") {
-        const MicroSegment m = zMove(2400, ax, 20);
-        CHECK(m.flags == motion::MICRO_LIFT);
-        CHECK(m.dx == 0);
-        CHECK(m.dy == 0);
-        CHECK(m.da == 0);
+        const Segs segs = zMove(2400, ax, zFeed(), zAccel());
+        CHECK(segs.size() > 1); // ramped, not one slam (H3)
+        for (const MicroSegment& m : segs) {
+            CHECK(m.flags == motion::MICRO_LIFT);
+            CHECK(m.dx == 0);
+            CHECK(m.dy == 0);
+            CHECK(m.da == 0);
+        }
     }
 
     SUBCASE("travelJog emits pure XY motion tagged MICRO_JOG") {
@@ -385,10 +400,13 @@ TEST_CASE("choreograph INVARIANT: axis inversion") {
     const ResolvedAxes flipY = patched([](ResolvedAxes& a) { a.y.invert = !a.y.invert; });
 
     SUBCASE("flipping z.invert negates every emitted dz and changes nothing else") {
-        const MicroSegment a = zMove(2400, ax, 20);
-        const MicroSegment b = zMove(2400, flipZ, 20);
-        CHECK(b.dz == -a.dz);
-        CHECK(b.interval == a.interval);
+        const Segs a = zMove(2400, ax, zFeed(), zAccel());
+        const Segs b = zMove(2400, flipZ, zFeed(), zAccel());
+        REQUIRE(b.size() == a.size());
+        for (size_t i = 0; i < a.size(); i++) {
+            CHECK(b[i].dz == -a[i].dz);
+            CHECK(b[i].interval == a[i].interval);
+        }
     }
 
     SUBCASE("flipping a.invert negates every emitted da and changes nothing else") {
@@ -539,25 +557,31 @@ TEST_CASE("choreograph CONTRACT: pivot ordering") {
     const ResolvedAxes& ax = machine::axes();
 
     SUBCASE("lift happens before the rotation and lower after it") {
-        const Segs segs = pivot(1000, true, 2400, ax, 20, NO_SLEW);
+        const Segs segs = pivot(1000, true, 2400, ax, zFeed(), zAccel(), NO_SLEW);
         std::vector<size_t> zIdx, aIdx;
         for (size_t i = 0; i < segs.size(); i++) {
             if (segs[i].dz != 0) zIdx.push_back(i);
             if (segs[i].da != 0) aIdx.push_back(i);
         }
-        REQUIRE(zIdx.size() == 2);
+        // Z is a ramp now, so "the lift" is many segments, not one. What the
+        // caller relies on is the ORDER: all Z before the turn, all Z after it,
+        // and none interleaved.
+        REQUIRE(zIdx.size() >= 2);
         REQUIRE(aIdx.size() > 0);
-        CHECK(zIdx[0] < aIdx.front());
-        CHECK(zIdx[1] > aIdx.back());
+        CHECK(zIdx.front() < aIdx.front());
+        CHECK(zIdx.back() > aIdx.back());
+        for (size_t i : zIdx) CHECK((i < aIdx.front() || i > aIdx.back()));
     }
 
     SUBCASE("no Z motion is emitted when lift is false") {
-        for (const MicroSegment& s : pivot(1000, false, 0, ax, 20, NO_SLEW)) CHECK(s.dz == 0);
+        for (const MicroSegment& s : pivot(1000, false, 0, ax, zFeed(), zAccel(), NO_SLEW)) {
+            CHECK(s.dz == 0);
+        }
     }
 
     SUBCASE("pivot's A motion is exactly aMove's") {
         Segs p;
-        for (const MicroSegment& s : pivot(1000, true, 2400, ax, 20, NO_SLEW)) {
+        for (const MicroSegment& s : pivot(1000, true, 2400, ax, zFeed(), zAccel(), NO_SLEW)) {
             if (s.da != 0) p.push_back(s);
         }
         const Segs a = aMove(1000, ax, NO_SLEW);
@@ -570,9 +594,15 @@ TEST_CASE("choreograph CONTRACT: pivot ordering") {
     }
 
     SUBCASE("a zero-rotation pivot with lift still lifts and lowers (and nothing else)") {
-        const Segs segs = pivot(0, true, 2400, ax, 20, NO_SLEW);
-        REQUIRE(segs.size() == 2);
-        CHECK(segs[0].dz == -segs[1].dz);
+        const Segs segs = pivot(0, true, 2400, ax, zFeed(), zAccel(), NO_SLEW);
+        REQUIRE(segs.size() >= 2);
+        for (const MicroSegment& s : segs) CHECK(s.da == 0);
+        // the lift and the lower are mirror ramps: they cancel, and together
+        // they move exactly twice the lift height
+        CHECK(sum(segs).dz == 0);
+        double absZ = 0;
+        for (const MicroSegment& s : segs) absZ += std::fabs(s.dz);
+        CHECK(absZ == 2 * 2400);
     }
 }
 
@@ -635,14 +665,29 @@ TEST_CASE("choreograph CONTRACT: travelJog and headOffsetJog geometry") {
 TEST_CASE("choreograph CONTRACT: emitted timing matches the requested feed") {
     const ResolvedAxes& ax = machine::axes();
 
-    SUBCASE("zMove takes liftHeight / zFeed seconds") {
-        const double cases[][2] = {{2, 20}, {5, 20}, {2, 10}};
+    SUBCASE("zMove takes at least liftHeight / zFeed seconds, plus its ramps") {
+        // Was an equality against the constant-velocity ideal. Z ramps now
+        // (H3), so the ideal is a FLOOR rather than a target: the move cannot
+        // be faster than running the whole distance at feed, and the ramp
+        // overhead is a fixed cost that shrinks as a fraction of a longer lift.
+        const double cases[][3] = {{2, 10, 0.5}, {5, 10, 0.25}, {20, 10, 0.07}};
         for (const auto& c : cases) {
             const double steps = zStepCount(c[0], ax);
-            const MicroSegment m = zMove(steps, ax, c[1]);
-            const double seconds = (steps * m.interval) / ax.fCpu;
-            CHECK(closeTo(seconds, c[0] / c[1], 3));
+            const double seconds = totalSeconds(slices(zMove(steps, ax, c[1], zAccel())));
+            const double ideal = c[0] / c[1];
+            CHECK(seconds >= ideal * 0.999);
+            CHECK(seconds / ideal - 1 < c[2]);
         }
+    }
+
+    SUBCASE("zMove ramps against the Z accel ceiling and comes back to rest") {
+        // H3's actual content now that it is fixed: H1a and H1b, asked of Z.
+        const std::vector<Slice> sl = slices(zMove(zStepCount(5, ax), ax, zFeed(), zAccel()));
+        REQUIRE(sl.size() > 1);
+        const double limit = zAccel() * ax.z.stepsPerUnit;
+        CHECK(worstAccelRatio(sl, limit) <= Z_ACCEL_TOL);
+        CHECK(closeTo(sl.back().v, sl.front().v, 0));      // symmetric
+        CHECK(sl.back().v / sl.back().dt / limit <= 1.0);  // can stop in its last chunk
     }
 
     SUBCASE("travelJog takes distance / jogFeed seconds, plus its ramps") {
@@ -666,22 +711,66 @@ TEST_CASE("choreograph CONTRACT: emitted timing matches the requested feed") {
     }
 
     SUBCASE("zMove's interval stays in range at absurd feeds") {
-        CHECK(zMove(100, ax, 1e9).interval == 1);        // would trunc to 0
-        CHECK(zMove(100, ax, 1e-9).interval == ax.fCpu); // would exceed fCpu
+        // Both extremes still have to land inside the wire's expressible range.
+        // The high end is now also clamped to the axis (below), but the range
+        // property is what the SERIALISER depends on and it is worth stating
+        // separately from the clamp — a future uncapped axis would skip the
+        // clamp and must still not emit interval 0 or fCpu+1.
+        for (double feed : {1e9, 1e-9, 0.5, 10.0}) {
+            for (const MicroSegment& m : zMove(100, ax, feed, zAccel())) {
+                CHECK(m.interval >= 1);
+                CHECK(m.interval <= ax.fCpu);
+            }
+        }
     }
 
-    SUBCASE("a non-positive zFeed yields the slowest interval, not the fastest") {
-        // Not in the TypeScript. zMove floors the Z step rate at 1e-9 before
-        // dividing; removing that floor is invisible at zFeed == 0 (the divide
-        // gives +inf, which clamps to fCpu either way) and NOT invisible at a
-        // negative one, where the unfloored form produces a negative cycle
-        // count that clamps to interval == 1 — the FASTEST move the wire can
-        // express, from a feed that asked for the opposite.
-        //
-        // A negative feed is a config error, not a motion request. Either
-        // answer is arguably wrong; only one of them is wrong safely.
-        CHECK(zMove(100, ax, 0).interval == ax.fCpu);
-        CHECK(zMove(100, ax, -20).interval == ax.fCpu);
+    SUBCASE("zMove CLAMPS an over-ceiling feed instead of honouring it") {
+        // The config ships machine.z.feed = 20 against a z.maxFeed of 10, and
+        // validate.ts has always warned that the excess is "(clamped)" — which
+        // was not true until now: zMove divided by whatever it was handed and
+        // never consulted the axis. Unlike the cutting path it does not go
+        // through interval(), so the per-axis rate floor never saw it either.
+        const std::vector<Slice> atCeiling = slices(zMove(1200, ax, zFeed(), zAccel()));
+        const std::vector<Slice> asked = slices(zMove(1200, ax, 1e9, zAccel()));
+        REQUIRE(!asked.empty());
+        CHECK(closeTo(peakV(asked), peakV(atCeiling), 6));
+        CHECK(peakV(asked) / ax.z.stepsPerUnit <= zFeed() * 1.001);
+        // And the accel ceiling is clamped by the same rule. Stated as an
+        // EQUALITY against the at-ceiling emission, not as an accel bound: an
+        // unclamped 1e9 mm/s^2 collapses the ramp to a single chunk, and
+        // worstAccelRatio over one segment has no boundaries to measure, so it
+        // returns 0 and passes any bound vacuously — the same empty-measurement
+        // trap the stage-7 subdivision test hit.
+        const Segs fast = zMove(1200, ax, zFeed(), 1e9);
+        const Segs atAccel = zMove(1200, ax, zFeed(), zAccel());
+        REQUIRE(fast.size() == atAccel.size());
+        REQUIRE(fast.size() > 1);
+        for (size_t i = 0; i < fast.size(); i++) {
+            CHECK(fast[i].dz == atAccel[i].dz);
+            CHECK(fast[i].interval == atAccel[i].interval);
+        }
+    }
+
+    SUBCASE("zMove rounds toward zero: |dz| < 1 emits nothing") {
+        // Mirrors aMove's guard. Without it a fractional dz would produce a
+        // ramp of zero steps; with it the caller gets an honest no-op.
+        CHECK(zMove(0.7, ax, zFeed(), zAccel()).empty());
+        CHECK(zMove(-0.7, ax, zFeed(), zAccel()).empty());
+        CHECK(zMove(0, ax, zFeed(), zAccel()).empty());
+    }
+
+    SUBCASE("zMove refuses an undeclared accel rather than inventing one") {
+        // Same policy as aMove (H4): a limit that is ABSENT is refused, one that
+        // is present and exceeded is clamped. The two are different questions,
+        // and the difference is whether the machine supplied a number at all.
+        const ResolvedAxes noAccel = patched([](ResolvedAxes& a) { a.z.maxAccel = 0; });
+        std::string msg;
+        try {
+            zMove(1200, noAccel, zFeed(), 0);
+        } catch (const std::exception& e) {
+            msg = e.what();
+        }
+        CHECK(msg.find("no accel limit") != std::string::npos);
     }
 
     SUBCASE("a long aMove actually reaches the A feed ceiling") {
@@ -922,30 +1011,19 @@ TEST_CASE("choreograph CONTRACT: acceleration limits (FINDINGS)") {
         CHECK(worstAccelRatio(sl, ax.x.maxAccel * ax.x.stepsPerUnit) <= 1.001);
     }
 
-    SUBCASE("H3 (OPEN): zMove slams to zFeed instead of ramping") {
-        // The TypeScript states this as an intentionally FAILING test, so the
-        // finding is counted rather than merely commented. That does not port:
-        // a red case in this suite would make `pio test` red forever and the
-        // next real regression would land in a suite nobody trusts.
+    SUBCASE("H3 (FIXED): zMove ramps instead of slamming to zFeed") {
+        // Was: one segment opening at 24000 steps/s — 0 to 20 mm/s in zero
+        // distance, and 20 mm/s was itself twice the axis's declared 10 mm/s
+        // ceiling. The same defect H2 fixed for travel jogs and H1 for A; Z was
+        // last because z.maxAccel was a 0 placeholder and the module refused to
+        // invent one (H4). It is now a declared, provisional 300 mm/s^2.
         //
-        // So it is a two-sided pin on the behaviour as it stands. Z is one
-        // segment opening at full feed — the value a ramp would never produce,
-        // because a ramp's first chunk is slower than its cruise. The day zMove
-        // ramps, `segs.size() == 1` fails and this test names H3 as the reason.
-        // It is not evidence that slamming is correct; it is evidence about
-        // which behaviour is currently shipped.
-        const double steps = zStepCount(2, ax);
-        const MicroSegment m = zMove(steps, ax, 20);
-        const double v = ax.fCpu / m.interval;
-        // opens AT the commanded feed, to within the interval's integer rounding
-        CHECK(v / ax.z.stepsPerUnit > 20 * 0.999);
-        CHECK(v / ax.z.stepsPerUnit < 20 * 1.001);
-        // and there is no second chunk to have ramped through
-        CHECK(steps > 1);
-        // z.maxAccel is still 0 (uncharacterized), so there is no ceiling to
-        // measure the slam against — which is what blocks the fix, not the fix
-        // itself. Pinned so that characterising the axis is what unblocks it.
-        CHECK(ax.z.maxAccel == 0);
+        // Asserted the way H2 is: it must open well below feed, not at it.
+        const Segs segs = zMove(zStepCount(2, ax), ax, zFeed(), zAccel());
+        REQUIRE(segs.size() > 1);
+        const std::vector<Slice> sl = slices(segs);
+        CHECK(sl.front().v / ax.z.stepsPerUnit < zFeed() / 2);
+        CHECK(worstAccelRatio(sl, zAccel() * ax.z.stepsPerUnit) <= Z_ACCEL_TOL);
     }
 }
 
