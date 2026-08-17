@@ -808,6 +808,120 @@ promises a non-zero junction speed. Recorded as a knob whose value is a choice.
 
 ---
 
+## Where the pipeline quantises, and where to measure
+
+Written after D3 cost six probes, four of which measured a quantity that could
+not survive the measurement. This section is the general form of that lesson;
+D3's individual mechanisms are in its own section.
+
+Five quantisation layers exist in the host pipeline, none at the wire, more at
+the machine:
+
+```
+GEOMETRY (continuous, exact)
+ │
+ ├─ flatten ─────────────────────────── Q1: curve → samples
+ │    grid: dsMax 0.5 mm, dthetaMax
+ │    ✔ safe to measure: arc length, κ         (sums / point values)
+ │    ✘ F7: caps evaluated at step start, realised step
+ │           overshoots by up to 7.9% (cusp)
+ │
+ ├─ constrain ───────────────────────── Q2: vMin floor (0.5 mm/s)
+ │    not a grid — a one-way valve. "slower than this" becomes
+ │    unrepresentable on BOTH sides (plan and execution). D3b.
+ │    ✔ per-sample vCeiling: exact, checkable
+ │
+ ├─ plan ────────────────────────────── no new quantisation
+ │    still continuous mm and mm/s
+ │    ✔ ACCELERATION LIVES HERE — the only place it is measurable
+ │      against un-rounded velocities
+ │
+ ├─ discretize ──────────────────────── Q3: k = ceil(dv/dvMax), integer, ≤256
+ │                                      Q4: position → integer steps (±½ step)
+ │                                      Q5: duration → integer cycles (trunc)
+ │    ✔ safe: net position, total time          (sums — errors bound/cancel)
+ │    ✘ unsafe: velocity, acceleration          (differences — see below)
+ │
+ ├─ wire (26 B) ─────────────────────── int32 steps, uint32 interval
+ │    LOSSLESS — no quantisation added here
+ │
+ └─ firmware ────────────────────────── step pulse 3 µs, node timer, RS485
+      ✘ starvation and bus latency are invisible to BOTH host clocks
+```
+
+### The sixth layer is the measurement
+
+Reading a quantity out of the emitted stream is not free. **Differencing
+amplifies Q4/Q5; summing suppresses them.** Each differencing step divides by
+`dt`, and `dt` is milliseconds, so each one multiplies the relative error by
+roughly 600×:
+
+| derived quantity | operation | error at dt ≈ 1.7 ms, 160 steps/mm |
+|---|---|---|
+| position | sum of steps | ±0.003 mm — negligible |
+| total time | sum of intervals | bounded, non-accumulating — negligible |
+| velocity | 1st difference | ±3.7 mm/s → **5–9%** at cutting speed |
+| acceleration | 2nd difference | ±2100 mm/s² → **210% of the limit** |
+
+Worked: X is 160 steps/mm, so one step is 0.00625 mm. Over a 1.71 ms segment a
+**single step of rounding** is a 3.65 mm/s velocity difference and an implied
+2137 mm/s² — 2.14× the machine's 1000 mm/s² limit. At dt = 1.48 ms it is 2.85×.
+
+This produced a phantom finding. An emitted-stream acceleration probe reported
+`cusp` at 2.88× the limit at full cutting speed, with a PEN control at 1.06×
+that appeared to attribute it cleanly to the A axis. Measured per axis, PEN and
+KNIFE were **identical (3.58×)**, every curved fixture including the calmest
+control exceeded, and the observed jumps were 1.3–2.2 steps. The entire signal
+was rounding; the vector measure had merely hidden it in one profile and not the
+other. There is no acceleration defect, and the "control" proved nothing.
+
+> **Measure sums downstream, measure differences upstream.**
+
+Position and time are sums, so the emitted stream is the right place for them —
+which is why `dutyBreaks` is correct to use `segmentSeconds`. Velocity and
+acceleration are differences and must be checked in `plan`, before Q4/Q5 exist.
+Checking them downstream does not merely lose precision: it manufactures a
+signal out of rounding.
+
+This is C3/D6/H6 again from a further angle. There the measurement destroyed the
+quantity by re-deriving it, ratioing it, or taking its absolute value. Here the
+destructive operator is *differencing itself*.
+
+### Is the ordering optimal?
+
+Largely yes, and it should not be reworked. Q4/Q5 sit at the very end, so the
+commitment to integers happens once, immediately before a lossless wire. `vMin`
+is a Q5 consequence already hoisted upstream into `constrain`, where it is
+honestly converted into a stop — the "make downstream quantisation visible to
+the planner" move, already implemented for one limit.
+
+Two seams are genuinely suboptimal, recorded so nobody re-derives them:
+
+- **Q1 and Q4 are independent grids on the same axis.** Geometry is sampled at
+  0.5 mm; position commits at 1/160 mm; neither knows the other exists. D3c is
+  born in that gap. Aligning sampling to integer step multiples would eliminate
+  it rather than tolerate it — at the cost of `flatten` ceasing to be pure
+  geometry and becoming machine-dependent.
+- **Q3 exists only because two spacing criteria live in different stages.**
+  `flatten` spaces on geometry, `discretize` needs spacing on velocity, which is
+  not known until later. Feeding refinement back into sampling would remove Q3,
+  but that is adaptive refinement — an iteration, not a reordering.
+
+The alternative architecture is to **plan in steps rather than millimetres**
+(grbl's choice): quantise at the front and every downstream stage is exact
+integer arithmetic with no discretisation gap at the end. The cost is noisy
+curvature and tangent angles on a step grid, which matters far more for a
+tangential knife than for a 3-axis mill. Going the other way was the right call
+for this machine.
+
+**No reordering is recommended.** Every defect this layout has produced —
+D3a/b/c — turned out to have no production consumer, and the one that looked
+like it touched metal evaporated under a better measurement. The map's value is
+as a measurement discipline, not a redesign plan: it says which stage to ask
+each question in.
+
+---
+
 ## Findings
 
 | # | Stage | Severity | Summary | Status |
@@ -829,7 +943,7 @@ promises a non-zero junction speed. Recorded as a knob whose value is a choice.
 | P5 | plan | ok | Two O(n) sweeps, no convergence loop; feasibility, monotonicity and endpoint pinning all hold | verified |
 | D1 | discretize | **defect** | Empty segment (all deltas 0) emitted with `interval = fCpu` — a full second. Reachable at a corner AND at every `PATH_END` | **resolved** (skipped; `PATH_END` re-homed) |
 | D2 | discretize | **defect** | Sub-segment speed interpolated linearly in *distance*, not `sqrt(v0²+2as)` — timing error up to 1.51×, worse the finer it subdivides | **resolved** (`sqrt` interpolation) |
-| D3 | discretize | **contract** | `interval`'s per-axis rate floor is a second, unmodelled speed governor; executed ≠ planned timeline (`cusp` 1.101×, `near_cusp` 1.867×) | open, **test red**. **Cause re-derived:** the plan is legal (peak A 0.91× the ceiling on `near_cusp`); `discretize` picks `k` from the XY speed budget alone and then spreads A evenly by sub-step INDEX while sub-step DURATIONS are unequal, spiking the A rate. 100% attributable to the A axis. Fix belongs in `discretize`, not upstream |
+| D3 | discretize | **doc** | The plan's timeline is not a clock: executed ≠ planned (`cusp` 1.088×, `near_cusp` 1.861×) | **closed (option C)**, test still red pending rewrite. Decomposed into D3a zero-length rotation (89% of `near_cusp`'s excess), D3b `vMin` clamp, D3c XY step quantisation (0.579× distance shrink). **No production code consumes plan time** — `dutyBreaks` measures emitted segments. Velocity caps eliminated as a fix class *by implementation*. An apparent emitted-accel violation (2.88×) was **retracted** — second differences are unmeasurable past Q4/Q5; one step of rounding is 2.14× the limit at dt≈1.7 ms |
 | D4 | discretize | **inconsistency** | Corner rule ungated on `CURVE_BOUNDARY` unlike constrain's — this is F2, now measured | **resolved with F2** |
 | D5 | discretize | gap | `DEFAULTS.tool.liftHeight = 0`, so the Z lift/lower path was dead *under test*. The deployed config sets `knife.liftHeight = 2.0`, so production did lift | **resolved** (tests) |
 | D6 | discretize **tests** | gap | "no segment spans more than `dvMax`" re-derived `k` with its own `ceil`, so it audited the rule's arithmetic while blind to whether the stage used it; a `ceil`→`floor` mutant survived | **resolved** (second test measures emitted segment speeds firmware-style); same shape as C3 |
@@ -1539,17 +1653,141 @@ So the marker that ends every path can itself be the empty segment. Whether the
 firmware stalls a second on a zero-step segment or discards it is a wire-contract
 question this stage should not be leaving open.
 
-### D3 — `interval`'s rate floor is a second speed governor
+### D3 — the plan's timeline is not a clock
+
+**Status: RESOLVED as a documentation defect (option C). No code fix. The
+symptom is real, measured, and confined; the thing it was believed to endanger
+does not consume the quantity involved.**
 
 `interval` floors each segment's duration so no axis exceeds
-`maxFeed × stepsPerUnit`. The floor is correct and necessary. The problem is that
-it is applied **after** planning and nothing upstream knows it fired: where it
-binds, the executed timeline is slower than the planned one, and everything
-derived from the plan's timeline is wrong with it — including the window stage 9
-schedules the knife's enable-line resets against (`tool_duty_limits.md` §5).
+`maxFeed × stepsPerUnit`. The floor is correct and necessary. Where it binds, the
+executed timeline is slower than the planned one and nothing upstream knows it
+fired. Measured on the two worst fixtures, emitted ÷ planned cut time is
+**1.861× (`near_cusp`)** and **1.088× (`cusp`)**; every other fixture is 1.000×.
 
-**The cause has been re-derived. The chain below is the ORIGINAL one and it is
-false now — kept only so the correction is legible.**
+#### The stake was overstated
+
+This finding was filed claiming stage 9's duty windows are scheduled against
+planned durations (`tool_duty_limits.md` §5), making the gap a knife that
+overruns its budget. **That is false.** `dutyBreaks.ts:49` measures wall time
+with `segmentSeconds` — `major × interval / fCpu`, over the *emitted*
+MicroSegments. Grepping `web/src`, **no production code consumes the plan's
+timeline as time at all.** The red test compares two numbers nothing requires to
+agree.
+
+Nor does anything plausibly want to. Real-time execution has no plan — the
+RP2350 clocks intervals. Tier-1 duty breaks are a pure post-pass over baked
+segments. Tier 2 is explicitly designed to be single-pass via a **worst-case
+reserve** rather than an accurate prediction (see the `dutyBreaks.ts` header),
+and a bound is safe at any clock accuracy. That reserve is ~0.5–1 s against a
+40 s budget, so a truthful plan clock would recover a couple of percent — the
+entire payoff of the expensive option.
+
+#### There is no acceleration defect — the probe that found one was measuring itself
+
+An emitted-stream acceleration probe (vector XY speed against
+`min(x,y).maxAccel`) reported `cusp` at **2.88×** the limit with a PEN control
+at 1.06×, which looked like a clean attribution to the A-axis floor stretch, at
+41–76 mm/s — i.e. full cutting speed, not a near-stationary artefact.
+
+**All of it was rounding.** Re-measured per axis — the correct comparison, since
+a diagonal legitimately reaches 1.41× on the vector measure — PEN and KNIFE are
+**identical at 3.58×**, every curved fixture exceeds including `long_gentle_arc`
+(the calmest control), and the observed velocity jumps are 1.3–2.2 steps. At
+dt ≈ 1.7 ms one step of rounding *is* 2.14× the acceleration limit. See "Where
+the pipeline quantises, and where to measure" for the arithmetic.
+
+Two conclusions drawn from that probe were wrong and are retracted: that there
+was a real acceleration violation at cutting speed, and that the PEN control
+isolated the A axis. The vector measure had merely hidden the same noise in one
+profile and not the other; a coincidence was read as a mechanism.
+
+**Consequence for option C:** the planned `T1` — an emitted acceleration bound —
+**cannot be written at all.** Acceleration is a second difference, so it is
+unmeasurable downstream of Q4/Q5 at this segment length regardless of threshold
+or tolerance. Acceleration limits are enforced in `plan` and are checkable there
+against un-rounded velocities; a downstream duplicate would give false
+confidence and periodic mystery failures.
+
+#### Three mechanisms, not one
+
+`cusp` and `near_cusp` have shared this finding since it was filed. They do not
+share a cause. Decomposed by instrumenting `interval` at the `max()`:
+
+| | `near_cusp` | `cusp` |
+|---|---|---|
+| **D3a** zero-length rotation | 86 segs, 1.117 s — **41% of cut time, 89% of the excess** | 2 segs, 0.039 s |
+| **D3b** `vMin`-clamped | 11 of 14 floor-won segs at `vMin` | 7 of 58 |
+| **D3c** XY step quantisation | — | dominant; median v 5.12 mm/s |
+
+**D3a — rotation that takes time but covers no distance.** At a sub-corner the
+tool swivels while XY rounds to zero steps. `discretize` emits these from its own
+cutting loop (they are *not* choreography — `aMove` flags its output `MICRO_JOG`,
+so pivots are correctly excluded). The plan scores them at `ds / v` with `ds ≈ 0`,
+i.e. free. They are not free.
+
+**D3b — the machine has a floor.** Honouring the A rate needs `v` below
+`quality.vMin`; `interval` clamps `vv = max(v, vMin)` and `plannedSeconds` floors
+its divisor the same way. Both sides lose the same information, so no velocity
+the planner picks changes the outcome.
+
+**D3c — quantisation inflates turn-per-mm.** `dx, dy` round to integer steps
+while `da` accumulates in float and keeps the full turn. Emitted distance shrinks
+to **0.579× the intended sub-span on `cusp`** (0.627× on `near_cusp`), so
+executed turn-per-mm exceeds planned by p95 1.24× / max 1.80× on `cusp`
+(max 18.38× on `near_cusp`). High ratio alone is harmless — `long_gentle_arc`
+reaches 8.10× and inflates not at all — it costs time only where it also pushes
+the A demand past 100 deg/s.
+
+All three are one sentence: **the plan reasons in continuous millimetres, the
+machine executes in whole steps, and nothing reconciles the two.**
+
+#### Fix classes eliminated by measurement
+
+Four root-cause chains were proposed for D3 and four were wrong. Recording what
+is *closed* is the useful residue:
+
+- **Velocity caps on plan geometry — closed, by implementation.** The cap
+  `v ≤ ds·aRate/|Δθ|` (the actual sample-to-sample turn, not `kappa·ds`) was
+  written into `constrain` and measured: **1.861 → 1.862 and 1.088 → 1.087**,
+  with the other 202 toolpath tests green. Inert, and reverted. It cannot work:
+  it bounds a ratio computed on true `ds`, while the constraint binds on the
+  *rounded* distance (D3c). The two are measured against different distances.
+- **`refTheta` injecting turn — closed.** `discretize.ts:186` special-cases
+  `j === 1` only because `thPrev` initialises to 0; the increment is `dtheta/k`
+  for every sub-step, and turn is conserved exactly over the pair.
+- **Step quantisation of `da` — closed.** 0% of the added time comes from
+  `|da| = 1` on any fixture; the rotations are 25–103 steps (0.5–2°).
+- **Giving A a vote in `k` — closed by argument, and the argument is now
+  qualified.** Rate is scale-invariant under exact subdivision. It is *not*
+  invariant under rounding, which is D3c — but D3c is XY rounding, which finer
+  subdivision makes worse, not better.
+
+This is unrelated to F7. F7's overshoot is real and separately filed; D3 survives
+the A demand being legal.
+
+#### What option C is
+
+Three options were weighed: (A) declare the plan a velocity schedule and
+document it; (B) make plan time truthful with a rotation term and quantisation
+headroom, across `constrain`/`plan`/`discretize`, both language ports and every
+golden; (C) A plus contract tests bounding emitted-vs-intended time and emitted
+acceleration. **C was chosen** — B buys a number with no consumer, at the cost of
+the two-language port's entire golden set.
+
+The plan's timeline is hereby **a velocity schedule, not a clock.** Time is
+measured only from emitted segments. `PlannedSample` should never grow a time
+API; anything wanting duration reads `segmentSeconds`.
+
+Note that neither clock is wall time: both assume the firmware never starves. If
+duty limits ever need true elapsed time, it has to come from the node, not from
+the host. Both host numbers *under*estimate, which is the unsafe direction for a
+budget.
+
+---
+
+**The chain below is the ORIGINAL one and is false — kept only so the correction
+is legible.**
 
 ```
 [SUPERSEDED]
@@ -1608,25 +1846,33 @@ That is why it is confined to `cusp` and `near_cusp`: they are the fixtures
 where `v` swings hardest across a pair, so the sub-step durations are most
 unequal. A cruise pair has `k = 1` and cannot exhibit it at all.
 
-**This relocates the fix.** Feeding the per-axis ceilings upstream into
-`constrain`/`plan` does *not* address it — the plan already respects them. The
-defect is created between the plan and the wire. Two candidate fixes, both local
-to `discretize`:
+**This relocates the fix.** [SUPERSEDED — see the head of this section.] Feeding
+the per-axis ceilings upstream into `constrain`/`plan` does *not* address it —
+the plan already respects them. The defect is created between the plan and the
+wire. Two candidate fixes, both local to `discretize`:
 
 - distribute `theta` in proportion to each sub-step's TIME rather than its
   index, so equal-time sub-steps get equal turn; or
 - give A a vote in `k`, i.e. `k = max(ceil(dv/dvMax), ceil(turnRate/aRate))`,
   so a pair that would overdrive A is cut finely enough that no sub-step does.
 
-The first is more precise and does not increase segment count; the second is a
-smaller change and composes with the existing budget. Neither has been
-implemented, and the D3 test stays red until one is.
+Both were later shown wrong. The first breaks tangency: XY sits at arc-fraction
+`f` along the chord, so the tangent a tangential knife must point along *is*
+`theta + dtheta·f` — redistributing it trades a timing error for aiming the blade
+wrong. The second is scale-invariant under exact arithmetic and, under rounding,
+pushes the wrong way (finer subdivision shortens sub-spans, which worsens D3c).
 
-This is still the second finding in this audit (with P1) whose cause and symptom
-live in different places — but the distance is shorter than filed. The lesson
-that survives is the one about re-measuring: a root-cause chain is only true as
-of the code that was measured, and three of D3's four links were repaired by
-fixes aimed at other findings without anyone noticing D3 had moved.
+The lesson that survives is the one about re-measuring, now with a much sharper
+edge. D3 accumulated **four** successive root-cause chains, each measured, each
+superseded — the plan overdriving A; sub-step redistribution; a pair-average
+versus instantaneous cap; `refTheta` injecting turn. Every one was proposed from
+a plausible mechanism *before* measuring which mechanism dominated, and every one
+cost a cycle to retract. The chain that finally held came from instrumenting the
+`max()` itself and reading which term won, rather than inferring history from its
+output — because `max()` is destructive, and no downstream measurement can
+recover whether the floor rescued a violation or merely agreed with a legal plan.
+That is the same principle as C3/D6/H6, arrived at from a fourth direction: **the
+audited quantity must survive the measurement.**
 
 ### D4 — the corner rule is ungated, unlike constrain's
 
@@ -1953,17 +2199,26 @@ Two process notes, both repeats of lessons from earlier stages:
 | `test/toolpath/plan` | 52 | 0 | — |
 | `test/toolpath/discretize` | 38 | 1 | D3 |
 | `test/toolpath/geometry` | 28 | 0 | — |
-| `test/choreograph` | 62 | 1 | H3 |
+| `test/choreograph` | 63 | 0 | — (H3 resolved) |
 
-Full suite: **709 passing, 2 red**, 4 skipped; `tsc --noEmit` clean. Both red are
-intentional and each names its finding:
+Full suite: **715 passing, 1 red**, 10 skipped; `tsc --noEmit` clean. The single
+red is intentional and names its finding:
 
-- **H3** — `zMove` is unramped, and `z.maxAccel` is absent from the fixture AND
-  from the deployed `web/demo/config.json`. Blocked on characterizing the Z axis
-  on hardware; there is no ceiling to ramp against until then.
-- **D3** — `interval`'s floor still stretches `near_cusp` by 1.87×, but the cause
-  has moved from an upstream A overdrive to sub-segment `da` distribution (see
-  batch D). Wants its own measurement rather than a fix.
+- **D3** — `interval`'s floor stretches `near_cusp` by 1.86× and `cusp` by 1.09×.
+  The cause is now fully decomposed into three mechanisms (D3a/D3b/D3c) and the
+  finding is **closed as a documentation defect under option C**: no production
+  code consumes the plan's timeline as time, so the two quantities this test
+  compares were never required to agree.
+
+  **Pending (the code half of option C, not yet written):** replace this test
+  with two contract tests — **T2** pinning the time divergence so it cannot grow
+  (≤ 1.02 everywhere, with `cusp` and `near_cusp` a named exempt set), and **T3**
+  asserting the floor is A-attributable. A third test bounding emitted
+  acceleration was designed and then **abandoned**: acceleration is a second
+  difference and is unmeasurable downstream of Q4/Q5 at this segment length.
+  Both surviving tests must be mutation-validated before they are trusted, and
+  T3 checked that it is not itself measuring quantisation. Until that lands the
+  suite keeps one red test pinning a finding that is understood but not restated.
 
 `CUSP` is now imported directly by the `flatten`, `constrain`, `plan` and
 `discretize` tests. All four stages that consume it have been audited, so it can
@@ -1987,7 +2242,9 @@ diffs, not simply the fewest batches.
 
 `D3` and `P3` are deliberately absent as work items: both are downstream of
 causes in batch D (the F1/F7 cap chain and C1 respectively), so they get
-re-measured after D rather than fixed on their own.
+re-measured after D rather than fixed on their own. That re-measurement has since
+happened for D3, and it closed the finding without a code fix — see option C in
+the D3 section. What remains is a test rewrite, not a planner change.
 
 ### Batch B — done (one re-golden, fully attributable)
 
@@ -2126,14 +2383,20 @@ so that is the one which must be at rest. Corrected — and the finding was wors
 than filed: at the cusp the approach sample read 4.84e-3 mm/s and the sample that
 actually pivots read **2.14e-2**, 4.4× higher.
 
-**D3's cause has moved.** The plan-level check is now green — `plan` no longer
-asks the A axis for more than its rate ceiling — yet the emitted cut time on
-`near_cusp` is still 1.87× the planned one, with A and X both sitting at exactly
-1.000 of their ceilings. So `interval`'s floor is no longer rescuing a gross
-upstream violation; it is binding at the SUB-SEGMENT level, where subdivision
-distributes `da` unevenly across a pair and one sub-segment demands more than the
-pair average. That is a different defect wearing D3's name and it wants its own
-measurement.
+**D3's cause has moved.** [SUPERSEDED — the sub-segment attribution below is
+wrong; see the D3 section for the three measured mechanisms and the option-C
+resolution.] The plan-level check is now green — `plan` no longer asks the A axis
+for more than its rate ceiling — yet the emitted cut time on `near_cusp` is still
+1.87× the planned one, with A and X both sitting at exactly 1.000 of their
+ceilings. So `interval`'s floor is no longer rescuing a gross upstream violation;
+it is binding at the SUB-SEGMENT level, where subdivision distributes `da`
+unevenly across a pair and one sub-segment demands more than the pair average.
+That is a different defect wearing D3's name and it wants its own measurement.
+
+That last sentence was right, and acting on it took four more chains. The "A and
+X both at exactly 1.000" reading is itself the trap: those are *ties*, not
+stretches — X's ceiling equals the cut feed (80 mm/s), and a plan that respects
+the A cap sits exactly on it by design.
 
 **P3 dissolved into arithmetic.** Its instrument had to change with C1: the old
 bound was `vMin²/2a` with `a` the NOMINAL acceleration, which assumes a ramp out

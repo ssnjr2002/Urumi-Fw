@@ -732,23 +732,36 @@ describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", 
     });
 });
 
-describe("stage 8 FINDING D3: interval's rate floor is a second speed governor", () => {
+describe("stage 8 D3 (RESOLVED, doc): the plan is a velocity schedule, not a clock", () => {
     // interval() floors each segment's duration so no axis exceeds
-    // maxFeed * stepsPerUnit. The floor itself is correct and necessary — but
-    // it is applied AFTER planning, and nothing upstream knows it fired. Where
-    // it binds, the executed timeline is slower than the planned one and every
-    // quantity derived from the plan's timeline is wrong with it.
+    // maxFeed * stepsPerUnit. The floor is correct and necessary, and it is
+    // applied AFTER planning, so the executed timeline is slower than the
+    // planned one wherever it binds. That divergence is REAL and is not going
+    // to be fixed: see docs/planner_audit.md D3. It is accepted rather than
+    // repaired because nothing consumes plan time. Stage 9's duty windows were
+    // the claimed stake and they do not — dutyBreaks.ts:49 measures EMITTED
+    // segments. The plan is consumed as a velocity schedule; only the emitted
+    // stream is consumed as a clock.
     //
-    // That matters most for stage 9: docs/tool_duty_limits.md §5 schedules the
-    // knife's enable-line resets against planned durations. An error in the
-    // window is a knife that runs past its budget.
+    // Four candidate root causes were proposed and eliminated (audit doc D3):
+    // constrain's A-slew cap (inert when implemented), flatten's refTheta (turn
+    // is conserved exactly), |da| quantisation, and trunc bias in interval
+    // (0.006% at worst — the interval LSB is 6.7ns against intervals of
+    // thousands of cycles). Three mechanisms DO account for it, quantified as
+    // D3a/D3b/D3c in the doc. None is a defect in isolation.
     //
-    // Root cause chain, measured rather than assumed:
-    //   flatten's tangent cap overshoots (F7), so the actual sample-to-sample
-    //   turn exceeds kappa*ds -- by 1.64x on near_cusp and 8.17x on cusp;
-    //   constrain's A-slew cap is computed from kappa, so it under-caps v;
-    //   plan's timeline then asks A for up to 16.8x its rate ceiling;
-    //   interval silently rescues it by stretching the segment.
+    // So the tests below pin the divergence instead of demanding it vanish:
+    // T2 bounds it per fixture, T3 asserts the invariant interval() actually
+    // owes us. Both were mutation-tested (6 mutants, all killed) before being
+    // trusted; the exercise found two defects in the tests themselves.
+    //
+    // Do NOT relax a T2 bound to make a change pass. A bound that moves is a
+    // behaviour change and belongs in the audit doc with a measurement.
+
+    // The plan's own A rate. This passes today — which is itself the retraction
+    // of the original D3 root-cause chain, which claimed the plan overdrives
+    // the A ceiling by 16.8x. It does not; the A-rate story was a red herring
+    // (audit doc, superseded chain #1). Kept as a forward invariant.
     it("the plan never asks the A axis for more than its rate ceiling", () => {
         forEachFixture((name, curves) => {
             const p = planFor([curves], KNIFE);
@@ -768,21 +781,83 @@ describe("stage 8 FINDING D3: interval's rate floor is a second speed governor",
         });
     });
 
-    it("emitted cut time matches the plan on the fixtures D2's fix left behind", () => {
-        // D2's fix took every other fixture to 1.000x. These two moved barely
-        // at all (cusp 1.132 -> 1.088, near_cusp 1.909 -> 1.861), and they are
-        // precisely the two whose plan overdrives the A rate ceiling. That
-        // localises the remainder: not the sub-segment speed model, but
-        // interval() stretching segments the plan does not know it stretched.
-        // Goes green when D3 does, not before.
+    // T2 — bound the divergence per fixture. Every fixture where none of
+    // D3a/D3b/D3c can fire executes its plan's timeline to within 0.71%; the
+    // two where they do are exempted at their MEASURED value plus headroom.
+    // Those two numbers are the acknowledgement: this is how far apart the
+    // schedule and the clock are, and we know why for each.
+    const T2_BOUND: Record<string, number> = {
+        cusp: 1.12,      // measured 1.088 — D3c (XY step quantisation) dominant
+        near_cusp: 1.90, // measured 1.861 — D3a (zero-length rotation) is 89% of it
+    };
+
+    it("plan-vs-emitted time divergence stays inside its measured bound", () => {
         forEachFixture((name, curves) => {
-            if (!(name === "cusp" || name === "near_cusp")) return [];
             const p = planFor([curves], KNIFE);
             const ratio = emittedSeconds(cutting(prep([curves], KNIFE))) / plannedSeconds(p);
-            return ratio > 1.02
-                ? [`${name}: emitted ${ratio.toFixed(3)}x the planned cut time`]
+            const bound = T2_BOUND[name] ?? 1.02;
+            return ratio > bound
+                ? [`${name}: emitted ${ratio.toFixed(3)}x planned, bound ${bound}`]
                 : [];
         });
+    });
+
+    // T3 — the invariant interval() exists to guarantee. Computed from emitted
+    // integers only: a BOUND on a ratio, never a difference, so Q4/Q5
+    // quantisation cannot amplify into it (audit doc, "where to measure").
+    it("no axis is clocked faster than maxFeed * stepsPerUnit", () => {
+        forEachFixture((name, curves) => {
+            const bad: string[] = [];
+            for (const s of cutting(prep([curves], KNIFE))) {
+                const m = major(s);
+                if (m === 0) continue;
+                const dt = (s.interval * m) / MACH.fCpu;
+                // interval() truncs, so the emitted duration may fall short of
+                // the exact requirement by up to one clock tick per major step.
+                const slack = 1 + 1 / s.interval;
+                for (const [d, ax, nm] of [
+                    [s.dx, AXES.x, "x"], [s.dy, AXES.y, "y"],
+                    [s.dz, AXES.z, "z"], [s.da, AXES.a, "a"],
+                ] as const) {
+                    const ceiling = ax.maxFeed * ax.stepsPerUnit;
+                    if (ceiling <= 0 || d === 0) continue;
+                    const rate = Math.abs(d) / dt;
+                    if (rate > ceiling * slack) {
+                        bad.push(`${name} ${nm}: ${rate.toFixed(0)} > ${ceiling.toFixed(0)} st/s`);
+                    }
+                }
+            }
+            return bad.slice(0, 3);
+        });
+    });
+
+    it("T3 is not vacuous: the ceiling is actually approached", () => {
+        // T3 is one-sided (the C3/H6 shape): a change that makes everything
+        // slower passes it comfortably. This asserts the bound has something to
+        // bound.
+        //
+        // Feed-governed segments ONLY. interval()'s pure-rotation branch returns
+        // tRate exactly, so those sit on the ceiling BY CONSTRUCTION and would
+        // satisfy this guard no matter how badly the feed path degrades. That is
+        // not hypothetical: with every feed segment mutated 2x slow this read
+        // 1.000 including them and 0.500 excluding them. Excluding them is what
+        // makes this test do its job.
+        let closest = 0;
+        for (const curves of Object.values(GEOMETRY_CASES)) {
+            for (const s of cutting(prep([curves], KNIFE))) {
+                const m = major(s);
+                if (m === 0 || (s.dx === 0 && s.dy === 0)) continue;
+                const dt = (s.interval * m) / MACH.fCpu;
+                for (const [d, ax] of [
+                    [s.dx, AXES.x], [s.dy, AXES.y], [s.da, AXES.a],
+                ] as const) {
+                    const ceiling = ax.maxFeed * ax.stepsPerUnit;
+                    if (ceiling <= 0 || d === 0) continue;
+                    closest = Math.max(closest, Math.abs(d) / dt / ceiling);
+                }
+            }
+        }
+        expect(closest).toBeGreaterThan(0.95);
     });
 
     it("documents the root cause: actual turn exceeds what kappa predicts", () => {
