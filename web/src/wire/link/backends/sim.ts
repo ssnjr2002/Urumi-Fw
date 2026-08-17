@@ -512,35 +512,39 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             // and the axis bookkeeping applies only when that id is in the axis
             // map. The bit index is the id's SLOT, never `id - 1` — an axis node
             // can be any bus address now.
+            // axes_enable targets the MAP — bound slots only, never peripherals.
+            case "axes_enable":
+                if (isIdlePausedAlarm(S.state)) {
+                    if (args.length === 0) return "err usage";
+                    const on = args[0] === "1" || args[0]!.toLowerCase() === "on";
+                    for (let i = 0; i < MOTION_SLOTS; i++) {
+                        if (S.slotNode[i] === null) continue;
+                        if (on) S.axesEnabled |= 1 << i;
+                        else {
+                            S.axesEnabled &= ~(1 << i);
+                            S.axesHomed &= ~(1 << i); // de-energise -> datum lost
+                        }
+                    }
+                    return "ok";
+                }
+                return "err bad_state";
             case "enable":
                 if (isIdlePausedAlarm(S.state)) {
-                    if (args.length === 0 || args[0] === "all") {
-                        // `all` targets the map — bound slots only.
-                        for (let i = 0; i < MOTION_SLOTS; i++) {
-                            if (S.slotNode[i] !== null) S.axesEnabled |= 1 << i;
-                        }
-                    } else {
-                        const node = parseInt(args[0]!, 10);
-                        if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
-                        const slot = S._nodeSlot(node);
-                        if (slot !== null) S.axesEnabled |= 1 << slot;
-                    }
+                    const node = parseInt(args[0] ?? "", 10);
+                    if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
+                    const slot = S._nodeSlot(node);
+                    if (slot !== null) S.axesEnabled |= 1 << slot;
                     return "ok";
                 }
                 return "err bad_state";
             case "disable":
                 if (isIdlePausedAlarm(S.state)) {
-                    if (args.length === 0 || args[0] === "all") {
-                        S.axesHomed = 0; // de-energise -> datum lost
-                        S.axesEnabled = 0;
-                    } else {
-                        const node = parseInt(args[0]!, 10);
-                        if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
-                        const slot = S._nodeSlot(node);
-                        if (slot !== null) {
-                            S.axesEnabled &= ~(1 << slot);
-                            S.axesHomed &= ~(1 << slot);
-                        }
+                    const node = parseInt(args[0] ?? "", 10);
+                    if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
+                    const slot = S._nodeSlot(node);
+                    if (slot !== null) {
+                        S.axesEnabled &= ~(1 << slot);
+                        S.axesHomed &= ~(1 << slot);
                     }
                     return "ok";
                 }

@@ -96,7 +96,7 @@ describe("wire/link/commands: liveness + state", () => {
 });
 
 describe("wire/link/commands: enable / disable / setorigin / unalarm", () => {
-    it("enable all → true; disable all → true; setorigin → true", async () => {
+    it("axes_enable on → true; axes_enable off → true; setorigin → true", async () => {
         await withLink(async (link) => {
             expect(await enable(link)).toBe(true);
             expect(await disable(link)).toBe(true);

@@ -73,9 +73,9 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("enable energises all axes; setorigin homes + zeros pos + recovers from ALARM", async () => {
+    it("axes_enable energises all axes; setorigin homes + zeros pos + recovers from ALARM", async () => {
         await withLink(async (link) => {
-            expect(await link.command("enable")).toBe("ok");
+            expect(await link.command("axes_enable on")).toBe("ok");
             expect(await link.command("getstate")).toBe(
                 "state=0 enabled=0x0f homed=0x00 alarm=0 running=0",
             );
@@ -93,10 +93,10 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("enable is rejected while RUNNING (bad_state)", async () => {
+    it("axes_enable is rejected while RUNNING (bad_state)", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
-            expect(await link.command("enable")).toBe("err bad_state");
+            expect(await link.command("axes_enable on")).toBe("err bad_state");
         });
     });
 

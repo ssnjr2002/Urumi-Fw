@@ -131,16 +131,23 @@ export function knifeBlower(link: Link, nodeId: number, dutyPct: number): Promis
     return _nodeOk(link, `knife_blower ${nodeId} ${duty}`);
 }
 
-// ── enable / disable (per node or all) ────────────────────────────────────────
+// ── enable / disable ──────────────────────────────────────────────────────────
+// Per node (any bus id, type-blind relay) or, with no id, across the axis map.
+// The map form is `axes_enable on|off`: peripherals hold no motion slot, so they
+// are reachable only by an explicit id.
 
 export function enable(link: Link, nodeId?: number): Promise<boolean> {
-    const cmd = nodeId !== undefined ? `enable ${nodeId}` : "enable";
+    const cmd = nodeId !== undefined ? `enable ${nodeId}` : "axes_enable on";
     return _ok(link, cmd);
 }
 
 export function disable(link: Link, nodeId?: number): Promise<boolean> {
-    const cmd = nodeId !== undefined ? `disable ${nodeId}` : "disable";
+    const cmd = nodeId !== undefined ? `disable ${nodeId}` : "axes_enable off";
     return _ok(link, cmd);
+}
+
+export function axesEnable(link: Link, on: boolean): Promise<boolean> {
+    return _ok(link, `axes_enable ${on ? "on" : "off"}`);
 }
 
 // ── motion control ────────────────────────────────────────────────────────────
