@@ -14,7 +14,7 @@ import {
     ToolType,
     type ToolProfile,
     type MachineConfig,
-} from "../../src/config/config.js";
+} from "../../src/machine/index.js";
 
 function plan(...profiles: ToolProfile[]): Plan {
     return { blocks: profiles.map((profile) => ({ profile, segments: [], startSteps: { x: 0, y: 0 } })) };

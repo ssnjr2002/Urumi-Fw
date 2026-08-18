@@ -26,7 +26,7 @@
  *   every tool maps to head 0 (the default when omitted).
  */
 
-import type { MachineConfig, ResolvedAxes, ToolType } from "../config/config.js";
+import type { MachineConfig, ResolvedAxes, ToolType } from "../machine/index.js";
 import type { Plan } from "../plan/plan.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 import type { Schedule, MountSet } from "./schedule.js";

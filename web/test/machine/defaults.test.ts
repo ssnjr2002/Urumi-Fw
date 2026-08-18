@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { DEFAULTS } from "../../src/config/defaults.js";
+import { DEFAULTS } from "../../src/machine/defaults.js";
 import {
     axisConfig,
     busNode,
@@ -17,9 +17,9 @@ import {
     qualityConfig,
     toolHead,
     toolProfile,
-} from "../../src/config/config.js";
-import { parseConfig } from "../../src/config/load.js";
-import { resolveTargets } from "../../src/config/resolve.js";
+} from "../../src/machine/index.js";
+import { parseConfig } from "../../src/machine/json/load.js";
+import { resolveTargets } from "../../src/machine/resolve.js";
 
 const axis = () => axisConfig(busNode(1), 160);
 const head = () => toolHead(axisConfig(busNode(3), 300), axisConfig(busNode(4), 45));

@@ -19,10 +19,10 @@ import {
     toolProfile,
     type MachineConfig,
     type PipelineConfig,
-} from "../../src/config/schema.js";
-import { KNIFE } from "../../src/config/tools.js";
-import { validateConfig } from "../../src/config/validate.js";
-import { loadConfig, parseConfig } from "../../src/config/load.js";
+} from "../../../src/machine/schema.js";
+import { KNIFE } from "../../../src/machine/tools.js";
+import { validateConfig } from "../../../src/machine/json/validate.js";
+import { loadConfig, parseConfig } from "../../../src/machine/json/load.js";
 
 /** A sane baseline: capped X/Y, distinct node ids, one head. */
 function cfg(machine?: Partial<Parameters<typeof machineConfig>[3]>): PipelineConfig {

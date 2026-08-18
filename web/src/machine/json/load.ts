@@ -56,10 +56,10 @@ import {
     type ToolProfile,
     type QualityConfig,
     type PipelineConfig,
-} from "./schema.js";
-import { TOOL_PROFILES } from "./tools.js";
+} from "../schema.js";
+import { TOOL_PROFILES } from "../tools.js";
 import { validateConfig } from "./validate.js";
-import { DEFAULTS } from "./defaults.js";
+import { DEFAULTS } from "../defaults.js";
 
 // ── JSON schema types (what the JSON looks like) ─────────────────────────────
 

@@ -26,7 +26,7 @@
  */
 
 import type { Plan } from "../plan/plan.js";
-import type { ToolType } from "../config/config.js";
+import type { ToolType } from "../machine/index.js";
 
 /** A set of tool types mounted at once. Distinct, length ≤ headCount. */
 export type MountSet = readonly ToolType[];

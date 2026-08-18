@@ -67,8 +67,8 @@ import {
     type QualityConfig,
     type ResolvedAxes,
     type ToolProfile,
-} from "../../src/config/config.js";
-import { defaultConfig } from "../../src/config/fixtures.js";
+} from "../../src/machine/index.js";
+import { defaultConfig } from "../machines.js";
 import { lineToCubic, type CubicBezier } from "../../src/toolpath/geometry.js";
 import { hex } from "./refFormat.js";
 

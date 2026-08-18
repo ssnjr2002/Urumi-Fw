@@ -8,7 +8,7 @@ single source of truth for the ENGAGE / axis-map work ("Workstream A").
 Continues [node_type_architecture.md](node_type_architecture.md) §7, which
 sketched `CMD_ENGAGE` and left it as an open decision. Cross-links:
 [wire_protocol.md](wire_protocol.md) (host↔Pico framing),
-[../web/src/config/config.ts](../web/src/config/config.ts) (host-side node model),
+[../web/src/machine/index.ts](../web/src/machine/index.ts) (host-side node model),
 [../src/rp2350/core1/core1.cpp](../src/rp2350/core1/core1.cpp) (stream packer),
 [../src/node/types/stepper/stepper.cpp](../src/node/types/stepper/stepper.cpp)
 (stepper RX ISR + hooks).

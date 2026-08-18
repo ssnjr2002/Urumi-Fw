@@ -12,7 +12,7 @@ import {
     REVOLVER_PEN,
     ToolType,
     type ToolProfile,
-} from "../../src/config/config.js";
+} from "../../src/machine/index.js";
 
 /** Build a plan from a tool sequence; slot tags a revolver block. */
 function plan(...tools: (ToolProfile | [ToolProfile, number])[]): Plan {

@@ -19,7 +19,7 @@ import {
 } from "../../src/toolpath/geometry.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { CASES } from "./repair.cases.js";
-import { qualityConfig } from "../../src/config/config.js";
+import { qualityConfig } from "../../src/machine/index.js";
 import { loadSvgMm } from "../../src/svg/ingest.js";
 
 

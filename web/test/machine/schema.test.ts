@@ -21,12 +21,12 @@ import {
     toolHead,
     machineConfig,
     qualityConfig,
-} from "../../src/config/config.js";
+} from "../../src/machine/index.js";
 import {
     uniformMachine,
     defaultConfig,
     pipelineConfig,
-} from "../../src/config/fixtures.js";
+} from "../machines.js";
 
 describe("config: BusNode", () => {
     it("defaults type=STEPPER, present=true", () => {

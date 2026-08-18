@@ -32,8 +32,8 @@ import {
 } from "../../src/wire/format/microsegment.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { CASES, CUSP } from "./curves.cases.js";
-import { resolvedAxes, qualityConfig, KNIFE, PEN } from "../../src/config/config.js";
-import { defaultConfig } from "../../src/config/fixtures.js";
+import { resolvedAxes, qualityConfig, KNIFE, PEN } from "../../src/machine/index.js";
+import { defaultConfig } from "../machines.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
 
 const CFG = defaultConfig();

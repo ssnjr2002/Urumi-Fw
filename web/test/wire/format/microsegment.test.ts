@@ -14,10 +14,10 @@ import {
 import {
     resolvedAxes,
     qualityConfig,
-} from "../../../src/config/config.js";
+} from "../../../src/machine/index.js";
 import {
     defaultConfig,
-} from "../../../src/config/fixtures.js";
+} from "../../machines.js";
 
 const axes = resolvedAxes(defaultConfig().machine);
 const q = qualityConfig();

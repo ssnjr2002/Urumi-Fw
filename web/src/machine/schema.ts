@@ -1,7 +1,7 @@
 /**
  * schema.ts — the config TYPES and their factories. Nothing else.
  *
- * No tool presets (tools.ts), no hardcoded machines (fixtures.ts), no default
+ * No tool presets (tools.ts), no hardcoded machines (test/machines.ts), no default
  * VALUES (defaults.ts), no resolution policy (resolve.ts). Every factory here
  * fills absent fields from DEFAULTS and is otherwise pure shape.
  *

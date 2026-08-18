@@ -37,8 +37,8 @@ import {
 } from "../../src/toolpath/plan.js";
 import { CURVE_BOUNDARY, PATH_START, PATH_END, type Sample } from "../../src/toolpath/sample.js";
 import { CASES, CUSP } from "./curves.cases.js";
-import { qualityConfig } from "../../src/config/config.js";
-import { defaultConfig } from "../../src/config/fixtures.js";
+import { qualityConfig } from "../../src/machine/index.js";
+import { defaultConfig } from "../machines.js";
 
 const q = qualityConfig();
 const CFG = defaultConfig();

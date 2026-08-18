@@ -33,7 +33,7 @@ import { flatten } from "../../src/toolpath/flatten.js";
 import { constrain, junctionCap, type ConstrainOptions } from "../../src/toolpath/constrain.js";
 import { CURVE_BOUNDARY, PATH_START, PATH_END, type Sample } from "../../src/toolpath/sample.js";
 import { CASES, CUSP } from "./curves.cases.js";
-import { qualityConfig } from "../../src/config/config.js";
+import { qualityConfig } from "../../src/machine/index.js";
 import { readFixture } from "../helpers.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";

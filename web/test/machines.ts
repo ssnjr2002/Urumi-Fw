@@ -1,16 +1,20 @@
 /**
- * fixtures.ts — hardcoded machines for tests and demos. NOT the production path.
+ * test/machines.ts — hardcoded machines for tests. NOT the production path.
  *
  * Everything here bakes in calibration (stepsPerUnit, node ids, invert) that a
  * real machine must state in its config.json. Loading a real machine goes
- * through load.ts; if production code imports this file, a miscalibrated
- * machine will run silently and cut wrong.
+ * through machine/json/load.ts; if production code imports this file, a
+ * miscalibrated machine will run silently and cut wrong.
  *
  * That is exactly why these moved out of schema.ts: `pipelineConfig()` used to
  * default `machine` to defaultMachine(), so anyone calling `defaultConfig()` in
  * a production path got the 160/1200/51.667 test machine with no error. The
  * loader no longer touches this file at all — it builds its PipelineConfig
  * directly — so that path is now impossible to take by accident.
+ *
+ * It sits under test/ rather than src/ for the same reason, made structural:
+ * a file outside the shipped tree cannot be imported by a shipped path at all,
+ * and it no longer lands in dist/ for a consumer to find.
  */
 
 import {
@@ -22,9 +26,9 @@ import {
     type MachineConfig,
     type PipelineConfig,
     type ToolProfile,
-} from "./schema.js";
-import { KNIFE, TOOL_PROFILES } from "./tools.js";
-import { DEFAULTS } from "./defaults.js";
+} from "../src/machine/schema.js";
+import { KNIFE, TOOL_PROFILES } from "../src/machine/tools.js";
+import { DEFAULTS } from "../src/machine/defaults.js";
 
 /**
  * Build an equal-XY (single belt/pulley) single-head machine using the

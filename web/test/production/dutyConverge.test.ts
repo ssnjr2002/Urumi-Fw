@@ -28,8 +28,8 @@ import { flatten } from "../../src/toolpath/flatten.js";
 import { constrain, type ConstrainedSample } from "../../src/toolpath/constrain.js";
 import type { Sample } from "../../src/toolpath/sample.js";
 import { plan, type PlannedSample } from "../../src/toolpath/plan.js";
-import { qualityConfig } from "../../src/config/config.js";
-import { defaultConfig } from "../../src/config/fixtures.js";
+import { qualityConfig } from "../../src/machine/index.js";
+import { defaultConfig } from "../machines.js";
 
 const CFG = defaultConfig();
 const MACH = CFG.machine;

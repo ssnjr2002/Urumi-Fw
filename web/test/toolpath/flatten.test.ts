@@ -41,7 +41,7 @@ import { flatten } from "../../src/toolpath/flatten.js";
 import { PATH_START, PATH_END, CURVE_BOUNDARY, type Sample } from "../../src/toolpath/sample.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { CASES, CUSP } from "./curves.cases.js";
-import { qualityConfig } from "../../src/config/config.js";
+import { qualityConfig } from "../../src/machine/index.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
 
 const q = qualityConfig();

@@ -21,9 +21,9 @@ import {
     MICRO_DUTY_ASSERT,
     type MicroSegment,
 } from "../../src/wire/format/microsegment.js";
-import { resolvedAxes } from "../../src/config/config.js";
-import { uniformMachine } from "../../src/config/fixtures.js";
-import type { DutyLimits } from "../../src/config/schema.js";
+import { resolvedAxes } from "../../src/machine/index.js";
+import { uniformMachine } from "../machines.js";
+import type { DutyLimits } from "../../src/machine/schema.js";
 
 const F_CPU = 1e6;
 const axes = resolvedAxes(uniformMachine(160, 45.46, { fCpu: F_CPU }));

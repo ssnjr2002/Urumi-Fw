@@ -11,7 +11,7 @@ Single source of truth for how the RS485 bus grows beyond stepper axes
 (oscillating knife, vacuum, tool-changer, …) without forking the firmware per
 node type. Cross-links:
 [wire_protocol.md](wire_protocol.md) (host↔Pico framing),
-[../web/src/config/config.ts](../web/src/config/config.ts) (host-side node/machine model).
+[../web/src/machine/index.ts](../web/src/machine/index.ts) (host-side node/machine model).
 
 ---
 

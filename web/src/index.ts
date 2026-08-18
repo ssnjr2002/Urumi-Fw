@@ -14,10 +14,10 @@
  * never pulls browser globals.
  */
 
-// ── config: machine calibration + tool model ────────────────────────────────
-// JSON → PipelineConfig is the production entry. defaultConfig()/uniformMachine()
-// are internal test fixtures — not exported; tests import them directly from
-// ./config/config.js.
+// ── machine: calibration + tool model ───────────────────────────────────────
+// The model lives in ./machine/; ./machine/json/ is the document adapter, and
+// loadConfig is the production entry. Hardcoded test machines are not part of
+// the shipped tree at all — they live in test/machines.ts.
 export {
     // loadConfig = parse ⨟ validate. Production callers want this one;
     // parseConfig proves shape only and is exposed for tests/tooling.
@@ -25,12 +25,12 @@ export {
     type LoadResult,
     parseConfig,
     type ConfigResult,
-} from "./config/load.js";
+} from "./machine/json/load.js";
 
 export {
     validateConfig,
     type ValidationResult,
-} from "./config/validate.js";
+} from "./machine/json/validate.js";
 
 export {
     // top-level config
@@ -69,7 +69,7 @@ export {
     REVOLVER_PEN,
     TOOL_PROFILES,
     TOOL_PROFILES_BY_TYPE,
-} from "./config/config.js";
+} from "./machine/index.js";
 
 export {
     toolForLayer,
@@ -77,7 +77,7 @@ export {
     canRunTool,
     resolveTargets,
     type ResolvedTargets,
-} from "./config/resolve.js";
+} from "./machine/resolve.js";
 
 // ── coordinate frames: home ↔ tool (docs/coordinate_frames_and_limits.md) ────
 export {
@@ -93,9 +93,9 @@ export {
     stepsToUnits,
     unitsToSteps,
     homePosition,
-} from "./config/frames.js";
+} from "./machine/frames.js";
 
-export { DEFAULTS } from "./config/defaults.js";
+export { DEFAULTS } from "./machine/defaults.js";
 
 // ── svg ingestion (SVG text → curves in mm) ─────────────────────────────────
 // bakePlan handles ingestion internally; these are exposed for callers who want

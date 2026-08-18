@@ -22,7 +22,7 @@
  *              filling would destroy.
  *
  * The chain (tool → machine → default) is spelled out in exactly one place:
- * resolveTargets() in helpers.ts. Stages call that, never `??`.
+ * resolveTargets() in resolve.ts. Stages call that, never `??`.
  */
 
 export const DEFAULTS = {

@@ -35,8 +35,8 @@
  * pass rather than relying on an iteration to converge.
  */
 
-import type { ResolvedAxes } from "../config/config.js";
-import type { DutyLimits } from "../config/schema.js";
+import type { ResolvedAxes } from "../machine/index.js";
+import type { DutyLimits } from "../machine/schema.js";
 import {
     MICRO_LIFT,
     MICRO_PAUSE,

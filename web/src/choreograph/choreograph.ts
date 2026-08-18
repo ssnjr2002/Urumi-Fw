@@ -17,7 +17,7 @@
  * not a toolpath stage.
  */
 
-import type { ResolvedAxes, ToolProfile, ToolHead, OpTarget } from "../config/config.js";
+import type { ResolvedAxes, ToolProfile, ToolHead, OpTarget } from "../machine/index.js";
 import { angleDelta } from "../toolpath/geometry.js";
 import {
     MICRO_JOG,

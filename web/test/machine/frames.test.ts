@@ -15,7 +15,7 @@ import {
     unitsToSteps,
     homePosition,
     type XY,
-} from "../../src/config/frames.js";
+} from "../../src/machine/frames.js";
 import {
     axisConfig,
     busNode,
@@ -24,7 +24,7 @@ import {
     toolProfile,
     type MachineConfig,
     type ToolProfile,
-} from "../../src/config/config.js";
+} from "../../src/machine/index.js";
 
 /** Dual-head machine: head 0 at the origin, head 1 offset by (dx, dy). */
 function machine(opts?: {

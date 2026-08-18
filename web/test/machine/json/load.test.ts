@@ -5,19 +5,19 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFixture } from "../helpers.js";
+import { readFixture } from "../../helpers.js";
 
-import { parseConfig } from "../../src/config/load.js";
+import { parseConfig } from "../../../src/machine/json/load.js";
 import {
     KNIFE,
     PEN,
     REVOLVER_PEN,
     qualityConfig,
-} from "../../src/config/config.js";
+} from "../../../src/machine/index.js";
 import {
     defaultConfig,
-} from "../../src/config/fixtures.js";
-import { DEFAULTS } from "../../src/config/defaults.js";
+} from "../../machines.js";
+import { DEFAULTS } from "../../../src/machine/defaults.js";
 
 
 function readJson(name: string): string {

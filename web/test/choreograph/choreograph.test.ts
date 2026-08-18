@@ -39,8 +39,8 @@ import {
     PEN,
     CREASE,
     type ResolvedAxes,
-} from "../../src/config/config.js";
-import { defaultConfig } from "../../src/config/fixtures.js";
+} from "../../src/machine/index.js";
+import { defaultConfig } from "../machines.js";
 
 const axes = resolvedAxes(defaultConfig().machine);
 

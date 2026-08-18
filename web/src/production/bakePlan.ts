@@ -15,9 +15,9 @@
  */
 
 import type { CubicBezier } from "../toolpath/geometry.js";
-import type { PipelineConfig, ToolProfile } from "../config/config.js";
-import { ToolType } from "../config/config.js";
-import { toolForLayer } from "../config/resolve.js";
+import type { PipelineConfig, ToolProfile } from "../machine/index.js";
+import { ToolType } from "../machine/index.js";
+import { toolForLayer } from "../machine/resolve.js";
 import { loadSvgMmLayers, loadSvgLayers } from "../svg/ingest.js";
 import { compileBlock } from "./compileBlock.js";
 import type { Block, Plan } from "../plan/plan.js";

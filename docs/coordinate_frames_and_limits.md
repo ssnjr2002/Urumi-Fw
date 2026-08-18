@@ -9,7 +9,7 @@ Dual-head jogging needs the operator to pick which tip is "centre". That needs
 a frame model, and the frame model is also what soft limits are built on.
 
 Cross-links:
-[../web/src/config/schema.ts](../web/src/config/schema.ts) (`ReferencePoint`,
+[../web/src/machine/schema.ts](../web/src/machine/schema.ts) (`ReferencePoint`,
 `ToolHead`, `maxTravel`),
 [../web/src/production/compileBlock.ts](../web/src/production/compileBlock.ts)
 (bake-time tool-offset shift — see §3.2),
@@ -20,12 +20,12 @@ Cross-links:
 
 ## 0. Tasklist
 
-- [x] **Stage 1** — `config/frames.ts` (§1–3). Anchor, head/tool offsets,
+- [x] **Stage 1** — `machine/frames.ts` (§1–3). Anchor, head/tool offsets,
       home↔tool, and wire↔home. Pure; no `Link`, no clock.
 - [x] **Stage 4** — demo: tip-frame selector + home/tip readout (§2). Verified
       against the sim: head 1 at +60 reads home 10.000 / tip 70.000, and a
       3.5mm tool offset moves the tip reading and nothing else.
-- [ ] **Stage 2** — `config/limits.ts` (§4–5). **PENDING.** Inert until
+- [ ] **Stage 2** — `machine/limits.ts` (§4–5). **PENDING.** Inert until
       `enforce` is set, so landing it changes no behaviour.
 - [ ] **Stage 3** — config-load report: per-head reach + shared work area
       (§5.3). **PENDING.** Offline; useful with no machine attached.
@@ -217,12 +217,12 @@ change. Sequence independently.
 
 ## 7. Modules
 
-`config/frames.ts` and `config/limits.ts` — both leaves, both pure (no `Link`,
+`machine/frames.ts` and `machine/limits.ts` — both leaves, both pure (no `Link`,
 no clock), both testable without a machine.
 
 They belong in `config/` because that is where their *dependencies* are, even
 though their consumers are the jogger, planner and orchestrator. Precedent:
-`config/resolve.ts` holds `canRunTool` / `resolveTargets`. Putting them under
+`machine/resolve.ts` holds `canRunTool` / `resolveTargets`. Putting them under
 `orchestrate` would invert the graph — `operatorJog` depends on `wire` alone
 today and would acquire the whole planner subtree.
 
@@ -235,7 +235,7 @@ Two rules:
   takes a precomputed travel bounding box; the box walk is the planner's job.
 
 ```ts
-// config/frames.ts
+// machine/frames.ts
 export interface XY { readonly x: number; readonly y: number }
 
 export function machineAnchor(m: MachineConfig): { kind: "laser" | "head"; index?: number };
@@ -245,7 +245,7 @@ export function toolToHome(target: XY, offset: XY): XY;   // jogTo's caller uses
 ```
 
 ```ts
-// config/limits.ts
+// machine/limits.ts
 export type Envelope = { readonly min: number; readonly max: number } | null;  // null = uncapped
 
 export type Violation =

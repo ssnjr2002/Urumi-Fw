@@ -13,7 +13,7 @@
  * the head's Z/A via resolvedAxes(machine) from config.ts.
  */
 
-import type { AxisConfig, ResolvedAxes } from "../../config/config.js";
+import type { AxisConfig, ResolvedAxes } from "../../machine/index.js";
 
 // ── wire event type ───────────────────────────────────────────────────────────
 

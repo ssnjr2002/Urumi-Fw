@@ -53,7 +53,7 @@ alone" true on a fresh clone — otherwise the suite that is supposed to outlive
 bit-parity would depend on bit-parity's own tooling to start.
 
 Anything shared goes in `test/support/`. `quality.h` duplicates
-`web/src/config/defaults.ts` by hand ON PURPOSE: a generated copy would track the
+`web/src/machine/defaults.ts` by hand ON PURPOSE: a generated copy would track the
 code under test silently, and a contract test whose thresholds move with the
 implementation is not a contract.
 

@@ -31,7 +31,7 @@ import { constrain, type ConstrainedSample } from "../../src/toolpath/constrain.
 import { flatten } from "../../src/toolpath/flatten.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
-import { qualityConfig } from "../../src/config/config.js";
+import { qualityConfig } from "../../src/machine/index.js";
 import { lineToCubic, type CubicBezier } from "../../src/toolpath/geometry.js";
 import type { Sample } from "../../src/toolpath/sample.js";
 import { hex } from "./refFormat.js";

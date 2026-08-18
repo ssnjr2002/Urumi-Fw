@@ -14,10 +14,10 @@ import {
     PEN,
     toolProfile,
     ToolType,
-} from "../../src/config/config.js";
+} from "../../src/machine/index.js";
 import {
     defaultConfig,
-} from "../../src/config/fixtures.js";
+} from "../machines.js";
 import { loadSvgMmSubpaths, loadSvgMmLayers } from "../../src/svg/ingest.js";
 import { savePlan, loadPlan } from "../../src/plan/planFile.js";
 

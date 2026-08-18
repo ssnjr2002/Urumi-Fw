@@ -17,8 +17,8 @@
  * packet maths, so parity with the single-tool bake is untouched.
  */
 
-import type { MachineConfig, ToolProfile, ToolType } from "../config/config.js";
-import { canRunTool } from "../config/resolve.js";
+import type { MachineConfig, ToolProfile, ToolType } from "../machine/index.js";
+import { canRunTool } from "../machine/resolve.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 
 /** One SVG layer's worth of compiled motion, tagged with its tool + slot. */

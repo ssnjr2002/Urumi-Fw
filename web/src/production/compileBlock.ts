@@ -22,9 +22,9 @@
  */
 
 import type { CubicBezier } from "../toolpath/geometry.js";
-import type { MachineConfig, ToolProfile, QualityConfig } from "../config/config.js";
-import { resolvedAxes } from "../config/config.js";
-import { resolveTargets } from "../config/resolve.js";
+import type { MachineConfig, ToolProfile, QualityConfig } from "../machine/index.js";
+import { resolvedAxes } from "../machine/index.js";
+import { resolveTargets } from "../machine/resolve.js";
 import { enforceC1 } from "../toolpath/repair.js";
 import { flatten } from "../toolpath/flatten.js";
 import { constrain } from "../toolpath/constrain.js";

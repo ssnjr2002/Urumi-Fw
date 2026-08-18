@@ -30,10 +30,10 @@ import {
 import {
     KNIFE,
     qualityConfig,
-} from "../../src/config/config.js";
+} from "../../src/machine/index.js";
 import {
     defaultConfig,
-} from "../../src/config/fixtures.js";
+} from "../machines.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA = join(__dirname, "data");

@@ -22,7 +22,7 @@ import type {
     OpTarget,
     PipelineConfig,
     ToolProfile,
-} from "./schema.js";
+} from "../schema.js";
 
 
 export interface ValidationResult {

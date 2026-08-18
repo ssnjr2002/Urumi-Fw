@@ -25,9 +25,9 @@
  * cusps collapse into ONE rule.
  */
 
-import type { MachineConfig, QualityConfig, ToolProfile } from "../config/config.js";
-import { needsOffsetComp, resolvedAxes, type ResolvedAxes } from "../config/config.js";
-import { resolveTargets } from "../config/resolve.js";
+import type { MachineConfig, QualityConfig, ToolProfile } from "../machine/index.js";
+import { needsOffsetComp, resolvedAxes, type ResolvedAxes } from "../machine/index.js";
+import { resolveTargets } from "../machine/resolve.js";
 import { angleDelta } from "./geometry.js";
 import { subpathRanges, type PlannedSample } from "./plan.js";
 import {
