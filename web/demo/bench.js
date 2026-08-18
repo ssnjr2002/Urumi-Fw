@@ -32,6 +32,8 @@ import {
     MachineState,
     getPos,
     fatalReasonName,
+    settle,
+    inState,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -302,17 +304,8 @@ stopBtn.addEventListener('click', async () => {
 
 // ── run (compile fresh, then stream) ────────────────────────────────────────
 
-async function waitFor(target) {
-    for (;;) {
-        const s = await link.getStatus();
-        stateLine.textContent = stateName(s.state);
-        if (s.state === target) return;
-        if (s.state === MachineState.ESTOP || s.state === MachineState.ALARM) {
-            throw new Error(`Machine in ${stateName(s.state)}`);
-        }
-        await new Promise(r => setTimeout(r, 150));
-    }
-}
+const waitFor = target =>
+    settle(link, inState(target), { onPoll: s => { stateLine.textContent = stateName(s.state); } });
 
 runBtn.addEventListener('click', async () => {
     if (jobRunning || !isConnected()) return;

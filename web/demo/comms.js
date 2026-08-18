@@ -63,6 +63,9 @@ import {
     homePosition,
     homeToTool,
     stepsToUnits,
+    settle,
+    waitAtRest,
+    inState,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -1098,20 +1101,8 @@ async function sendNext() {
     return ok;
 }
 
-/**
- * Poll until the machine is genuinely at rest — IDLE with an empty ring — or
- * give up. Needed before any command the firmware gates on state, since the
- * host's view of "done" runs ahead of the Pico's by the depth of its buffer.
- */
-async function waitIdle(timeoutMs = 5000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        const st = await link.getStatus();
-        if (st.state !== MachineState.RUNNING && !st.bufCount) return true;
-        await new Promise(r => setTimeout(r, 50));
-    }
-    return false;
-}
+/** Poll until the machine is genuinely at rest, or give up. See wire/link/settled.ts. */
+const waitIdle = (timeoutMs = 5000) => waitAtRest(link, timeoutMs);
 
 /** Resolve an entry's stacked targets against the live axis model. */
 function entryTargets(entry) {
@@ -1596,17 +1587,8 @@ jobStop.addEventListener('click', async () => {
 });
 
 /** Poll until the machine reaches `target`, or throw if it alarms on the way. */
-async function waitForState(target) {
-    for (;;) {
-        const st = await link.getStatus();
-        notePeripheralPark(st.state);
-        if (st.state === target) return;
-        if (st.state === MachineState.ESTOP || st.state === MachineState.ALARM) {
-            throw new Error(`machine went ${STATE_NAMES[st.state] ?? st.state}`);
-        }
-        await new Promise(r => setTimeout(r, 150));
-    }
-}
+const waitForState = target =>
+    settle(link, inState(target), { onPoll: st => notePeripheralPark(st.state) });
 
 jobRun.addEventListener('click', async () => {
     if (running || jog || goTo || !isConnected() || !config) return;

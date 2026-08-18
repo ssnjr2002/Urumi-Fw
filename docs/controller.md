@@ -24,7 +24,7 @@ inside one demo folder:
 |---|---|---|
 | `liveInitialState` | `comms.js:1543`, `bench.js:146` | byte-identical |
 | `estimateSeconds` | `comms.js:1425`, `bench.js:166` | near-identical |
-| idle/state waiting | `waitIdle` `comms.js:1106`, `waitForState` `:1599`, + 2 more | four shapes of one idea |
+| idle/state waiting | `comms.js` ×2, `bench.js` ×1, `orchestrate.js` ×2 | five copies — **fixed, stage 2** |
 | state names | `orchestrate.js:124` | positional array, drifts from the enum |
 | required axes mask | `orchestrate.js:114` | hardcoded `0x04`/`0x08` — a live question answered statically |
 
@@ -68,17 +68,31 @@ state; it does not render it. No DOM, no timers the caller cannot inject.
 
 Each stage stands alone and leaves the suite green.
 
-1. **Fixture consolidation + package boundary.**
-   Package boundary is **done** — `exports` now carries the two real-port
-   backend subpaths that `src/index.ts` told consumers to import, plus
+1. **Package boundary — DONE.** `exports` now carries the two real-port backend
+   subpaths that `src/index.ts` told consumers to import, plus
    `test/packageExports.test.ts` to keep the map from drifting.
-   Remaining: move `choreograph.test.ts`, `orchestrate/walk.test.ts`,
-   `plan/plan.test.ts` onto `test/machines.ts`. They are the only three files
-   outside the machine tests that hand-roll a machine, so this makes the blast
-   radius of every later stage exactly one file.
 
-2. **`settled` into `wire/link`.** Deletes the four copies above. Smallest real
-   change; no new concepts.
+   Fixture consolidation was paired with this and has been **dropped**, because
+   the argument for it did not survive checking. The claim was that
+   `choreograph.test.ts`, `orchestrate/walk.test.ts` and `plan/plan.test.ts`
+   hand-roll machines, so consolidating them onto `test/machines.ts` would make
+   the blast radius of later stages one file. In fact `choreograph.test.ts`
+   already imports `defaultConfig` from there and derives variants via a patch
+   helper — parameterisation, not duplication. Of the rest, only
+   `walk.test.ts:27` `singleHead()` is a genuine copy (it is `defaultMachine()`);
+   the two-head builder and `plan.test.ts`'s `aPresent` machine *vary the thing
+   under test*, so moving them changes nothing about how many files a schema
+   change must visit.
+
+   What is left worth doing, whenever something touches those files anyway:
+   point `walk.test.ts:27` at `defaultMachine()`, and add a
+   `twoHeadMachine(offsets)` to `test/machines.ts` — that shape recurs in
+   `choreograph.test.ts`, `walk.test.ts:41` and `cppRefDiscretize.test.ts:275`.
+   Not a prerequisite for anything.
+
+2. **`settled` into `wire/link` — DONE.** `src/wire/link/settled.ts`: `settle()`
+   over a `StatusSource`, with `atRest` / `inState` / `inAnyState` conditions and
+   a `waitAtRest` convenience. Replaced all five demo copies.
 
 3. **Offline description helpers.** `machine/slots.ts` (`buildAxes`,
    `desiredMap`, `headAssignment`) and `machine/names.ts` (state/alarm/reason

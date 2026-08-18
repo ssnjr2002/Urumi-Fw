@@ -299,6 +299,20 @@ export {
     type Attachable,
 } from "./wire/link/link.js";
 
+// ── wire/link: waiting for the machine (the host is acked ahead of the Pico) ──
+export {
+    settle,
+    waitAtRest,
+    atRest,
+    inState,
+    inAnyState,
+    SettleError,
+    type StatusSource,
+    type SettleCondition,
+    type SettleOptions,
+    type SettleFailure,
+} from "./wire/link/settled.js";
+
 // ── wire/link: control-plane command helpers ──────────────────────────────────
 export {
     ping,

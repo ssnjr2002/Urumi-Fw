@@ -30,6 +30,8 @@ import {
     Link,
     MachineState,
     fatalReasonName,
+    settle,
+    inState,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -363,31 +365,15 @@ resumeBtn.addEventListener('click', () => {
     if (pauseResolve) { pauseResolve('ok'); pauseResolve = null; }
 });
 
-async function waitForIdle() {
-    for (;;) {
-        const s = await link.getStatus();
-        machineState.textContent = stateName(s.state);
-        machineState.dataset.state = s.state;
-        if (s.state === MachineState.IDLE) return;
-        if (s.state === MachineState.ESTOP || s.state === MachineState.ALARM) {
-            throw new Error(`Machine in ${stateName(s.state)}`);
-        }
-        await new Promise(r => setTimeout(r, 150));
-    }
+/** Paint every sample as it arrives — the state line is the operator's only
+ *  feedback during a long wait. */
+function showState(s) {
+    machineState.textContent = stateName(s.state);
+    machineState.dataset.state = s.state;
 }
 
-async function waitForPaused() {
-    for (;;) {
-        const s = await link.getStatus();
-        machineState.textContent = stateName(s.state);
-        machineState.dataset.state = s.state;
-        if (s.state === MachineState.PAUSED) return;
-        if (s.state === MachineState.ESTOP || s.state === MachineState.ALARM) {
-            throw new Error(`Machine in ${stateName(s.state)}`);
-        }
-        await new Promise(r => setTimeout(r, 150));
-    }
-}
+const waitForIdle = () => settle(link, inState(MachineState.IDLE), { onPoll: showState });
+const waitForPaused = () => settle(link, inState(MachineState.PAUSED), { onPoll: showState });
 
 function showSwapAndWait(swapIn, swapOut) {
     const lines = [];
