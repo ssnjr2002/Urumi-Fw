@@ -57,6 +57,12 @@ import {
     TOOL_PROFILES_BY_TYPE,
     NodeType,
     ToolType,
+    machineAnchor,
+    headOffset,
+    toolFrameOffset,
+    homePosition,
+    homeToTool,
+    stepsToUnits,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -95,6 +101,8 @@ const gotoAxesEl   = $('goto-axes');
 const gotoHead     = $('goto-head');
 const gotoFeed     = $('goto-feed');
 const gotoStack    = $('goto-stack');
+const gotoText     = $('goto-text');
+const gotoBuild    = $('goto-build');
 const gotoNext     = $('goto-next');
 const gotoAll      = $('goto-all');
 const gotoAbort    = $('goto-abort');
@@ -114,6 +122,7 @@ const jobMetrics   = $('job-metrics');
 const pollOnceBtn  = $('poll-once');
 const pollAuto     = $('poll-auto');
 const pollMs       = $('poll-ms');
+const frameSel     = $('frame-sel');
 const statusBody   = $('status-table').querySelector('tbody');
 const statusBanner = $('status-banner');
 const linkBody     = $('link-table').querySelector('tbody');
@@ -132,6 +141,10 @@ let goTo = null;
 
 /** Which axis row owns the arrow keys (axis.key), or null. */
 let keyAxis = null;
+/** Which tip the readout is expressed in — a frameOptions() key, or null. */
+let frameView = null;
+/** The last status seen, so changing the frame can re-render without a poll. */
+let lastStatus = null;
 /** The map read back from the Pico, or null. Slot i → bus id (null = unbound). */
 let committedMap = null;
 /** The head whose Z/A this host last bound to slots 2/3. */
@@ -198,6 +211,7 @@ function buildAxes(cfg) {
 /** The config decides which panels exist at all — rebuild them, then re-gate. */
 function rebuildFromConfig() {
     renderHeadSel();
+    renderFrameSel();
     renderJogPanel();
     renderPeriphPanel();
     renderGotoHead();
@@ -235,12 +249,28 @@ async function loadConfigFrom(url) {
     configBanner.dataset.kind = 'ok';
     configBanner.textContent =
         `OK — ${heads} head(s), axes present: ${present || 'none'}` +
+        `\nanchor: ${anchorLabel()} — every offset is measured from it` +
         (loaded.warnings.length ? `\nwarnings:\n${loaded.warnings.join('\n')}` : '');
     for (const w of loaded.warnings) console.warn('[config]', w);
     rebuildFromConfig();
 }
 
 reloadCfgBtn.addEventListener('click', () => loadConfigFrom(configUrl.value.trim()));
+
+/**
+ * What sits at (0,0). Worth stating plainly on the page: every head offset in
+ * the config is measured from this, so it is what "the machine position" means.
+ * `none` is a legal config that puts no hardware at the origin.
+ */
+function anchorLabel() {
+    const a = machineAnchor(config.machine);
+    if (a.kind === 'laser') return 'laser';
+    if (a.kind === 'head') {
+        const h = config.machine.heads[a.index];
+        return `head ${a.index}${h?.profile ? ` (${h.profile.name})` : ''}`;
+    }
+    return 'none — no head sits at (0,0)';
+}
 
 // ── axis map ────────────────────────────────────────────────────────────────
 
@@ -504,13 +534,89 @@ async function pollStatus() {
     renderLinkStats();
 }
 
+// ── readout frames (docs/coordinate_frames_and_limits.md §1) ────────────────
+//
+// The firmware knows ONE frame: its own step counters, which are the home frame
+// once divided by stepsPerUnit. Tip frames are host-side — home plus a fixed
+// offset — so switching between them changes the number and moves nothing.
+//
+// Head centre and tool tip are offered separately because they are genuinely
+// different frames that differ by exactly the tool offset (§3.2): plan geometry
+// is baked in head-centre space, while the operator is looking at the tip. A
+// few millimetres apart, and this is where you can see it.
+
+/**
+ * The tip frames this config can report. A head's tool comes from `heads[].tool`
+ * — a SEED, not a live mount table (schema.ts): config states what the socket
+ * boots with, and nothing here tracks an operator swapping a tool by hand.
+ */
+function frameOptions() {
+    if (!config) return [];
+    const out = [];
+    config.machine.heads.forEach((h, i) => {
+        out.push({ key: `h${i}c`, label: `head ${i} · centre`, head: i, profile: null });
+        if (h.profile) {
+            out.push({
+                key: `h${i}t`,
+                label: `head ${i} · ${h.profile.name} tip`,
+                head: i,
+                profile: h.profile,
+            });
+        }
+    });
+    return out;
+}
+
+/** The selected frame plus the offset that reaches it from home. */
+function currentFrame() {
+    if (!config) return null;
+    const o = frameOptions().find(f => f.key === frameView);
+    if (!o) return null;
+    const offset = o.profile
+        ? toolFrameOffset(config.machine, o.head, o.profile)
+        : headOffset(config.machine, o.head);
+    return { ...o, offset };
+}
+
+function renderFrameSel() {
+    frameSel.innerHTML = '';
+    const opts = frameOptions();
+    for (const o of opts) {
+        const el = document.createElement('option');
+        el.value = o.key;
+        el.textContent = o.label;
+        frameSel.appendChild(el);
+    }
+    // A config reload can retire the selected frame; fall back to the first.
+    if (!opts.some(o => o.key === frameView)) frameView = opts[0]?.key ?? null;
+    if (frameView) frameSel.value = frameView;
+}
+
+frameSel.addEventListener('change', () => {
+    frameView = frameSel.value;
+    if (lastStatus) renderStatus(lastStatus);
+});
+
 function renderStatus(st) {
+    lastStatus = st;
+    // Z and A live on a head, so slot 2/3 must read the ENGAGED head's
+    // calibration — head 0's Z is 1200 st/mm and head 1's is 600, and picking
+    // the wrong one silently halves or doubles the reading. With no head bound
+    // there is no right answer, so it shows steps only.
     const mmOf = slot => {
-        const a = axes.find(x => x.slot === slot && x.present);
+        const engaged = committedHead();
+        const a = axes.find(x => x.slot === slot && x.present
+            && (x.head === undefined || x.head === engaged));
         if (!a || !st.pos) return '';
-        const inv = a.cal.invert ? -1 : 1;
-        return `  (${(inv * st.pos[slot] / a.cal.stepsPerUnit).toFixed(3)} ${a.unit})`;
+        return `  (${stepsToUnits(st.pos[slot], a.cal).toFixed(3)} ${a.unit})`;
     };
+
+    const f = currentFrame();
+    const home = st.pos && config ? homePosition(config.machine, st.pos) : null;
+    const tip = home && f ? homeToTool(home, f.offset) : null;
+    const mm = v => `${v.toFixed(3)} mm`;
+    const signed = v => `${v >= 0 ? '+' : ''}${v.toFixed(3)}`;
+
     const rows = [
         ['state',       `${STATE_NAMES[st.state] ?? st.state}`],
         ['running',     `${RUNNING_NAMES[st.running] ?? st.running}`],
@@ -524,6 +630,12 @@ function renderStatus(st) {
         ['pos y',       st.pos ? `${st.pos[1]}${mmOf(1)}` : '—'],
         ['pos z',       st.pos ? `${st.pos[2]}${mmOf(2)}` : '—'],
         ['pos a',       st.pos ? `${st.pos[3]}${mmOf(3)}` : '—'],
+        ['home x',      home ? mm(home.x) : '—'],
+        ['home y',      home ? mm(home.y) : '—'],
+        ['frame',       f ? f.label : '—'],
+        ['offset',      f ? `${signed(f.offset.x)}, ${signed(f.offset.y)} mm` : '—'],
+        ['tip x',       tip ? mm(tip.x) : '—'],
+        ['tip y',       tip ? mm(tip.y) : '—'],
     ];
     statusBody.innerHTML = '';
     for (const [k, v] of rows) statusBody.appendChild(tr(k, v));
@@ -802,7 +914,8 @@ function renderGotoAxes() {
     if (!config) return;
     for (const a of gotoAxesFor(parseInt(gotoHead.value, 10) || 0)) {
         const wrap = document.createElement('label');
-        wrap.textContent = `${a.label} `;
+        // Same argument as describeEntry: the head dropdown sits in this row.
+        wrap.textContent = `${a.letter.toUpperCase()} `;
         const inp = document.createElement('input');
         inp.type = 'number';
         inp.step = '0.1';
@@ -857,6 +970,62 @@ gotoStack.addEventListener('click', () => {
         feedMmS: Math.abs(parseFloat(gotoFeed.value)) || 1,
         state: 'pending',
     });
+    renderQueue();
+});
+
+/**
+ * Scratch text form of the stack — a temporary convenience, not a language.
+ * H and F are modal because that is what makes a column of bare `X.. Y..` lines
+ * readable; a line carrying no axis letter is a pure state change and stacks
+ * nothing. Parsing is all-or-nothing: a bad line leaves the existing queue
+ * untouched rather than half-replacing it, so a typo can never send a partial
+ * program.
+ */
+function parseGotoText(text) {
+    const out = [];
+    let head = parseInt(gotoHead.value, 10) || 0;
+    let feed = Math.abs(parseFloat(gotoFeed.value)) || 1;
+    const lines = text.split('\n');
+
+    for (let n = 0; n < lines.length; n++) {
+        const line = lines[n].replace(/;.*$/, '').trim();
+        if (!line) continue;
+        const targets = [];
+        for (const word of line.split(/\s+/)) {
+            const m = /^([HFXYZAhfxyza])(-?\d*\.?\d+)$/.exec(word);
+            if (!m) throw new Error(`line ${n + 1}: cannot read "${word}"`);
+            const letter = m[1].toLowerCase();
+            const v = parseFloat(m[2]);
+            if (letter === 'h') {
+                if (!config.machine.heads[v]) throw new Error(`line ${n + 1}: no head ${v}`);
+                head = v;
+                continue;
+            }
+            if (letter === 'f') { feed = Math.abs(v) || 1; continue; }
+            // Resolved left-to-right against the head in force at this word, so
+            // an H later in the line does not retroactively rebind axes before it.
+            const key = (letter === 'x' || letter === 'y') ? letter : `h${head}${letter}`;
+            const ax = axes.find(a => a.key === key);
+            if (!ax) throw new Error(`line ${n + 1}: no axis ${letter.toUpperCase()} on head ${head}`);
+            if (!ax.present) throw new Error(`line ${n + 1}: axis ${ax.label} is absent`);
+            targets.push({ axisKey: key, target: v });
+        }
+        if (targets.length) out.push({ id: 0, head, targets, feedMmS: feed, state: 'pending' });
+    }
+    return out;
+}
+
+gotoBuild.addEventListener('click', () => {
+    if (!config) return;
+    let parsed;
+    try {
+        parsed = parseGotoText(gotoText.value);
+    } catch (e) {
+        log(`goto: ${e.message} — stack left alone`, 'err');
+        return;
+    }
+    queue = parsed.map(e => ({ ...e, id: ++queueSeq }));
+    log(`goto: built ${queue.length} entr${queue.length === 1 ? 'y' : 'ies'} from text`, 'note');
     renderQueue();
 });
 
@@ -952,9 +1121,14 @@ function entryTargets(entry) {
 }
 
 function describeEntry(entry) {
+    // Bare letter, not `a.label`: the head is named right there in the suffix,
+    // so the Z0/A1 disambiguation the label carries is redundant here — and
+    // actively misread, since `A190` looks like a value and `A1 90` is not what
+    // the text form accepts either. Elsewhere (the jog panel) the label still
+    // earns its index, because nothing near it says which head is meant.
     const body = entry.targets.map(t => {
         const a = axes.find(x => x.key === t.axisKey);
-        return `${a ? a.label : t.axisKey}${t.target}`;
+        return `${a ? a.letter.toUpperCase() : t.axisKey}${t.target}`;
     }).join(' ');
     const usesHead = entry.targets.some(t => axes.find(x => x.key === t.axisKey)?.head !== undefined);
     return usesHead ? `${body}  (head ${entry.head})` : body;
@@ -1653,6 +1827,7 @@ function renderAll() {
     mapCommit.disabled = !on || !cfg;
 
     gotoStack.disabled = !cfg;
+    gotoBuild.disabled = !cfg;
     const hasPending = queue.some(e => e.state === 'pending');
     gotoNext.disabled  = !on || !cfg || !hasPending || busy || running;
     gotoAll.disabled   = !on || !cfg || !hasPending || busy || running;

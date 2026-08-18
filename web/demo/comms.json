@@ -32,7 +32,7 @@
       "maxFeed": 80,
       "maxAccel": 100,
       "maxTravel": 0,
-      "invert": false,
+      "invert": true,
       "rotary": false
     },
     "laser": null
@@ -47,8 +47,8 @@
           "id": 3,
           "present": true
         },
-        "stepsPerUnit": 300,
-        "maxFeed": 10,
+        "stepsPerUnit": 1200,
+        "maxFeed": 20,
         "maxAccel": 0,
         "maxTravel": 0,
         "invert": true,
@@ -76,11 +76,11 @@
           "id": 6,
           "present": true
         },
-        "stepsPerUnit": 300,
-        "maxFeed": 10,
+        "stepsPerUnit": 600,
+        "maxFeed": 20,
         "maxAccel": 0,
         "maxTravel": 0,
-        "invert": false,
+        "invert": true,
         "rotary": false
       },
       "a": {

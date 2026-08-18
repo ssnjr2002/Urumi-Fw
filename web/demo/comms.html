@@ -191,7 +191,16 @@
         <button id="goto-abort" class="danger" type="button" disabled>Abort</button>
         <button id="goto-clear" type="button">Clear</button>
       </div>
+      <div class="row">
+        <textarea id="goto-text" rows="6" cols="46" spellcheck="false"
+          placeholder="H0&#10;F20&#10;X10 Y10&#10;Z-5&#10;X0 Y0"></textarea>
+        <button id="goto-build" type="button">Build stack</button>
+      </div>
       <ol id="queue"></ol>
+      <span class="hint">The textarea is a scratch G-code-ish shorthand: one move per line,
+        <code>H</code> picks the head and <code>F</code> the feed, both modal. <code>X Y Z A</code> name
+        targets; a line with no axis letter only updates the modal state. <em>Build stack</em> replaces
+        the queue outright.</span>
       <span class="hint">Each entry reads live position via STATUS_RSP, then streams one trapezoidal jog to the point —
         all named axes start and stop together. Leave a field blank to hold that axis. An entry naming
         the other head's Z/A commits its axis_map first.</span>
@@ -233,6 +242,10 @@
         <button id="poll-once" type="button" disabled>Poll once</button>
         <label><input type="checkbox" id="poll-auto" checked> auto every</label>
         <input id="poll-ms" type="number" value="500" step="100" min="100" size="5"> ms
+      </div>
+      <div class="row">
+        <label>tip frame</label>
+        <select id="frame-sel" class="grow"></select>
       </div>
       <table class="status" id="status-table"><tbody></tbody></table>
       <div class="banner" id="status-banner" data-kind="idle">Not connected.</div>
