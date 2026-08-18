@@ -10,8 +10,14 @@
  * (individual pipeline stages like flatten/constrain/plan, geometry helpers,
  * bezier math) is internal and may change without notice. The real-port
  * Transport backends (WebSerial, Node serialport) are NOT exported from this
- * barrel — import them directly from wire/link/backends/ so a Node consumer
- * never pulls browser globals.
+ * barrel — import them from their own package subpaths so a Node consumer never
+ * pulls browser globals:
+ *
+ *   import { WebSerialTransport } from "urumi-toolpath/wire/link/backends/webserial";
+ *   import { openNodeLink }       from "urumi-toolpath/wire/link/backends/node";
+ *
+ * Those subpaths are in the `exports` map, and test/packageExports.test.ts
+ * keeps them there.
  */
 
 // ── machine: calibration + tool model ───────────────────────────────────────
