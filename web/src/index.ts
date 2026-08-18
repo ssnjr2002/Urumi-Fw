@@ -79,6 +79,22 @@ export {
     type ResolvedTargets,
 } from "./config/resolve.js";
 
+// ── coordinate frames: home ↔ tool (docs/coordinate_frames_and_limits.md) ────
+export {
+    type XY,
+    type Anchor,
+    type AxisScale,
+    machineAnchor,
+    headOffset,
+    toolFrameOffset,
+    headSeparation,
+    homeToTool,
+    toolToHome,
+    stepsToUnits,
+    unitsToSteps,
+    homePosition,
+} from "./config/frames.js";
+
 export { DEFAULTS } from "./config/defaults.js";
 
 // ── svg ingestion (SVG text → curves in mm) ─────────────────────────────────
