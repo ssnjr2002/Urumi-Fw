@@ -32,6 +32,7 @@ import {
     fatalReasonName,
     settle,
     inState,
+    stateName,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -112,22 +113,6 @@ function readBinaryFile(file) {
     });
 }
 
-/** Compute the MCFG required_axes bitmask from a Plan. */
-function requiredAxesMask(plan) {
-    let mask = 0x03; // X (bit0) + Y (bit1) always
-    for (const block of plan.blocks) {
-        const p = block.profile;
-        if (p.liftHeight > 0)              mask |= 0x04; // Z (bit2)
-        if (p.tangential || p.slotOffsets) mask |= 0x08; // A (bit3)
-    }
-    return mask;
-}
-
-const STATE_NAMES = ['IDLE', 'RUNNING', 'ESTOP', 'ALARM', 'PAUSED', 'HOMING'];
-
-function stateName(s) {
-    return STATE_NAMES[s] ?? `STATE(${s})`;
-}
 
 // ── schedule rendering ────────────────────────────────────────────────────────
 

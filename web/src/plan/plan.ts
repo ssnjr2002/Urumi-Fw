@@ -18,7 +18,8 @@
  */
 
 import type { MachineConfig, ToolProfile, ToolType } from "../machine/index.js";
-import { canRunTool } from "../machine/resolve.js";
+import { canRunTool, requiredAxes } from "../machine/resolve.js";
+import { AXIS_BITS } from "../wire/format/status.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 
 /** One SVG layer's worth of compiled motion, tagged with its tool + slot. */
@@ -52,6 +53,26 @@ export interface Plan {
  * upfront tool manifest in the .plan header (feasibility gate before
  * streaming).
  */
+/**
+ * The MCFG `required_axes` bitmask for a plan: which of X/Y/Z/A the firmware
+ * must have homed before it will accept the job.
+ *
+ * X and Y are unconditional. Z and A are asked per block via requiredAxes(),
+ * keyed on tool BEHAVIOUR rather than tool identity, so a plan of pen blocks
+ * with no lift genuinely does not require a Z node. The demos hardcoded the
+ * bits (`mask |= 0x04`) alongside a copy of the liftHeight/tangential test,
+ * which meant the rule lived in two places and the numbers in three.
+ */
+export function planRequiredAxes(plan: Plan): number {
+    let mask = AXIS_BITS.x | AXIS_BITS.y;
+    for (const block of plan.blocks) {
+        const need = requiredAxes(block.profile);
+        if (need.z) mask |= AXIS_BITS.z;
+        if (need.a) mask |= AXIS_BITS.a;
+    }
+    return mask;
+}
+
 export function planToolTypes(plan: Plan): ToolType[] {
     const seen: ToolType[] = [];
     for (const b of plan.blocks) {

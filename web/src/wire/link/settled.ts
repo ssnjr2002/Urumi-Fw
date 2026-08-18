@@ -20,6 +20,7 @@
  */
 
 import { MachineState, type MachineStatus } from "../format/status.js";
+import { stateName } from "../format/names.js";
 import type { AbortToken } from "./transport.js";
 
 /** The slice of Link that settle() needs. */
@@ -170,17 +171,3 @@ export async function waitAtRest(
     }
 }
 
-/**
- * Local, deliberately. MachineState is a const object rather than a TS enum, so
- * there is no reverse mapping and every demo hand-rolled a positional array
- * (`['IDLE','RUNNING',...]`) that silently mis-labels if the values are ever
- * reordered. This derives the names from the object itself. A shared
- * machine/names.ts is the proper home; it lands with the description helpers.
- */
-const STATE_NAMES: Record<number, string> = Object.fromEntries(
-    Object.entries(MachineState).map(([k, v]) => [v, k]),
-);
-
-function stateName(s: MachineState): string {
-    return STATE_NAMES[s] ?? String(s);
-}

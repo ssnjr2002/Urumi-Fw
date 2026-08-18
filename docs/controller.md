@@ -1,6 +1,6 @@
 # The Controller
 
-**Status:** design agreed, not implemented.
+**Status:** stages 1-4 done; the Controller itself (stage 5) is not written.
 **Prerequisite:** done — `web/src/config/` is now `web/src/machine/` + `machine/json/` (commit `ffd6546`).
 
 ## Why this exists
@@ -25,8 +25,8 @@ inside one demo folder:
 | `liveInitialState` | `comms.js:1543`, `bench.js:146` | byte-identical |
 | `estimateSeconds` | `comms.js:1425`, `bench.js:166` | near-identical |
 | idle/state waiting | `comms.js` ×2, `bench.js` ×1, `orchestrate.js` ×2 | five copies — **fixed, stage 2** |
-| state names | `orchestrate.js:124` | positional array, drifts from the enum |
-| required axes mask | `orchestrate.js:114` | hardcoded `0x04`/`0x08` — a live question answered statically |
+| state names | `orchestrate.js:124`, `bench.js:88` | positional array, drifts from the enum — **fixed, stage 3** |
+| required axes mask | `orchestrate.js:114` | hardcoded `0x04`/`0x08`, duplicating `requiredAxes()` — **fixed, stage 3** (it was dead code) |
 
 The Controller is the missing object: the one place allowed to know both the
 machine description and the live link.
@@ -94,15 +94,32 @@ Each stage stands alone and leaves the suite green.
    over a `StatusSource`, with `atRest` / `inState` / `inAnyState` conditions and
    a `waitAtRest` convenience. Replaced all five demo copies.
 
-3. **Offline description helpers.** `machine/slots.ts` (`buildAxes`,
-   `desiredMap`, `headAssignment`) and `machine/names.ts` (state/alarm/reason
-   names, `maskStr`) — these are pure functions of the machine description that
-   only ever lived in the demo because that is where they were first needed.
-   `estimateSeconds` goes to the plan/work side. Fixes `orchestrate.js:114`.
+3. **Description helpers — DONE.** `machine/slots.ts` (`axisSlots`,
+   `slotMapFor`, `headForSlotMap`, `headAssignment`),
+   `orchestrate/estimate.ts` (`walkSeconds`, `motionSegments`), and
+   `planRequiredAxes` on the Plan model.
 
-4. **`Setup`** in `machine/setup.ts` — the runtime mount table. Seeded from
-   `defaultHead` so nothing existing has to move, which also retires the
-   "seed vs. truth" apology currently written into `schema.ts`.
+   Names went to **`wire/format/names.ts`, not `machine/names.ts`** as planned.
+   A name for `MachineState` depends on `MachineState` and nothing else, and a
+   consumer holding only a Link — with no `MachineConfig` in sight — still needs
+   to print "ALARM". Placing it under `machine/` would have made printing a
+   state require a machine description.
+
+   `orchestrate.js`'s hardcoded `0x04`/`0x08` mask turned out to be **dead
+   code** — defined, never called — so removing it fixed nothing live. It had
+   still duplicated the lift/tangential rule, and `planRequiredAxes` now derives
+   it from `requiredAxes()`, which already existed.
+
+4. **`Setup` — DONE.** `machine/setup.ts`, an immutable value (`engaged` +
+   `mounted[]`) seeded by `setupFor(machine)` from `defaultHead` and the sockets'
+   seed profiles, so adopting it is a no-op until someone actually switches
+   heads — pinned by a test asserting `setupAxes(m, setupFor(m))` equals
+   `resolvedAxes(m)`. `setupAxes()` is the live answer to the question
+   `resolvedAxes()` answers statically, and `isCommitted`/`adoptCommitted`
+   reduce invariant B to functions the Controller can call.
+
+   Not yet wired into the demos: `comms.js` still tracks `activeHead` itself.
+   That swap belongs with stage 5, where the Controller owns the state.
 
 5. **`Controller`** over the top, then rewrite `comms.js` as a thin consumer.
    **The proof of the whole exercise:** `comms.js` shrinks substantially and

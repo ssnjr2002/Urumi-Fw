@@ -41,8 +41,6 @@ import {
     axisMap,
     readAxisMap,
     MachineState,
-    AlarmReason,
-    RunningReason,
     fatalReasonName,
     bakePlan,
     scheduleMounts,
@@ -63,6 +61,16 @@ import {
     homePosition,
     homeToTool,
     stepsToUnits,
+    axisSlots,
+    slotMapFor,
+    headForSlotMap,
+    headAssignment as headAssignmentOf,
+    motionSegments,
+    walkSeconds,
+    STATE_NAMES,
+    ALARM_NAMES,
+    RUNNING_NAMES,
+    maskStr,
     settle,
     waitAtRest,
     inState,
@@ -193,21 +201,17 @@ clearConsole.addEventListener('click', () => { consoleEl.textContent = ''; });
  * operator can see the config said "not present".
  */
 function buildAxes(cfg) {
-    const m = cfg.machine;
-    const out = [
-        { key: 'x', letter: 'x', slot: 0, label: 'X', group: 'Gantry', ax: m.x },
-        { key: 'y', letter: 'y', slot: 1, label: 'Y', group: 'Gantry', ax: m.y },
-    ];
-    m.heads.forEach((h, i) => {
-        const tag = `head ${i}${h.profile ? ` (${h.profile.name})` : ''}`;
-        out.push({ key: `h${i}z`, letter: 'z', slot: 2, label: `Z${i}`, group: tag, head: i, ax: h.z });
-        out.push({ key: `h${i}a`, letter: 'a', slot: 3, label: `A${i}`, group: tag, head: i, ax: h.a });
-    });
-    return out.map(a => ({
-        ...a,
-        present: !!a.ax.node.present,
-        cal: { stepsPerUnit: a.ax.stepsPerUnit, invert: !!a.ax.invert },
-        unit: a.ax.rotary ? 'deg' : 'mm',
+    // The slot model is the library's (machine/slots.ts); this adds only the
+    // optgroup label, which is presentation and stays here.
+    const groupOf = r => {
+        if (r.head === undefined) return 'Gantry';
+        const p = cfg.machine.heads[r.head]?.profile;
+        return `head ${r.head}${p ? ` (${p.name})` : ''}`;
+    };
+    return axisSlots(cfg.machine).map(r => ({
+        key: r.key, letter: r.letter, slot: r.slot, label: r.label, head: r.head,
+        ax: r.axis, present: r.present, unit: r.unit, group: groupOf(r),
+        cal: { stepsPerUnit: r.stepsPerUnit, invert: r.invert },
     }));
 }
 
@@ -283,12 +287,7 @@ function anchorLabel() {
  * both heads' nodes exist on the bus, but only one pair is engaged at a time.
  * An absent node binds as null (slot left disengaged).
  */
-function desiredMap(head) {
-    const m = config.machine;
-    const h = m.heads[head];
-    const id = ax => (ax && ax.node.present ? ax.node.id : null);
-    return [id(m.x), id(m.y), id(h?.z), id(h?.a)];
-}
+const desiredMap = head => slotMapFor(config.machine, head);
 
 /**
  * Commit the map for the selected head and report the result.
@@ -333,14 +332,7 @@ async function refreshAxisMap() {
 }
 
 /** Which head, if any, the committed map matches. null = neither/unbound. */
-function committedHead() {
-    if (!committedMap || !config) return null;
-    for (let i = 0; i < config.machine.heads.length; i++) {
-        const want = desiredMap(i);
-        if (want.every((v, k) => v === committedMap[k])) return i;
-    }
-    return null;
-}
+const committedHead = () => (config ? headForSlotMap(config.machine, committedMap) : null);
 
 function renderHeadSel() {
     headSel.innerHTML = '';
@@ -489,17 +481,8 @@ cmdInput.addEventListener('keydown', e => {
 
 // ── status poll ─────────────────────────────────────────────────────────────
 
-const STATE_NAMES   = invert(MachineState);
-const ALARM_NAMES   = invert(AlarmReason);
-const RUNNING_NAMES = invert(RunningReason);
-
-function invert(enumObj) {
-    const out = {};
-    for (const [k, v] of Object.entries(enumObj)) out[v] = k;
-    return out;
-}
-
-const maskStr = m => ['x', 'y', 'z', 'a'].filter((_, i) => m & (1 << i)).join('') || '—';
+// STATE_NAMES / ALARM_NAMES / RUNNING_NAMES / maskStr come from
+// wire/format/names.ts now — see the import block.
 
 function startPolling() {
     stopPolling();
@@ -1397,32 +1380,12 @@ function vacuumCard(node) {
 //     head's Z/A at the old head's motors.
 
 /** Which head socket holds each tool type, read off the config's head profiles. */
-function headAssignment() {
-    const m = new Map();
-    config.machine.heads.forEach((h, i) => { if (h.profile) m.set(h.profile.toolType, i); });
-    return m;
-}
+const headAssignment = () => headAssignmentOf(config.machine);
 
 /** MountSets carry ToolType numbers; operators read tool names. */
 const toolName = t => TOOL_PROFILES_BY_TYPE[t]?.name ?? `tool ${t}`;
 
-const motionSegments = events => events.filter(e => e.kind === 'motion').flatMap(e => e.segments);
 
-/**
- * Sum segment durations → seconds at fCpu, mirroring core1.cpp's
- * emitMicroSegment: a segment runs `major` steps waiting `interval` cycles
- * each, so summing interval alone would treat every segment as one step.
- */
-function estimateSeconds(events, fCpu) {
-    let cycles = 0;
-    for (const e of events) {
-        if (e.kind !== 'motion') continue;
-        for (const s of e.segments) {
-            cycles += s.interval * Math.max(Math.abs(s.dx), Math.abs(s.dy), Math.abs(s.dz), Math.abs(s.da));
-        }
-    }
-    return cycles / fCpu;
-}
 
 /**
  * Compile SVG → walk events against the loaded config.
@@ -1545,7 +1508,7 @@ function renderJobMetrics(plan, events) {
     const segs = motionSegments(events);
     const jogs = segs.filter(s => s.flags & MICRO_JOG).length;
     const lifts = segs.filter(s => s.flags & MICRO_LIFT).length;
-    const secs = estimateSeconds(events, config.machine.fCpu);
+    const secs = walkSeconds(events, config.machine.fCpu);
     // Duty breaks are baked into the segments, so they are invisible in the
     // event list — an operator compiling a knife job wants to know how many
     // resets it will stop for before they start it.

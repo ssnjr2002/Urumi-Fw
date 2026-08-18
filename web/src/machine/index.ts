@@ -9,6 +9,8 @@
  *   tools.ts      tool preset catalogue (data; changes when you build a tool)
  *   resolve.ts    resolution policy (which axes, which feed, can it run)
  *   frames.ts     home↔tool coordinate transforms (docs/coordinate_frames_and_limits.md)
+ *   slots.ts      the four wire slots and which node fills each
+ *   setup.ts      what is FITTED and ENGAGED now — the live half of the model
  *
  * The `json/` subdirectory is the ADAPTER, and only it knows a config document
  * exists:
@@ -31,6 +33,8 @@ export * from "./schema.js";
 export * from "./tools.js";
 export * from "./resolve.js";
 export * from "./frames.js";
+export * from "./slots.js";
+export * from "./setup.js";
 export { DEFAULTS } from "./defaults.js";
 export { parseConfig, loadConfig, type ConfigResult, type LoadResult } from "./json/load.js";
 export { validateConfig, type ValidationResult } from "./json/validate.js";

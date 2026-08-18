@@ -103,6 +103,33 @@ export {
 
 export { DEFAULTS } from "./machine/defaults.js";
 
+// ── slots + setup: which node fills each wire slot, and what is fitted now ───
+export {
+    SLOT,
+    axisSlots,
+    slotMapFor,
+    headForSlotMap,
+    headAssignment,
+    type AxisSlot,
+    type SlotMap,
+} from "./machine/slots.js";
+
+export {
+    type Setup,
+    setupFor,
+    engage,
+    mount,
+    engagedTool,
+    headWithTool,
+    isMounted,
+    setupAxes,
+    engagedAxis,
+    setupSlotMap,
+    isCommitted,
+    adoptCommitted,
+    sameSetup,
+} from "./machine/setup.js";
+
 // ── svg ingestion (SVG text → curves in mm) ─────────────────────────────────
 // bakePlan handles ingestion internally; these are exposed for callers who want
 // to preview/inspect geometry (e.g. render an SVG before baking).
@@ -146,6 +173,7 @@ export {
     type Plan,
     type Block,
     planToolTypes,
+    planRequiredAxes,
     feasibleOn,
 } from "./plan/plan.js";
 
@@ -165,6 +193,12 @@ export {
     type Phase,
     type MountSet,
 } from "./orchestrate/schedule.js";
+
+export {
+    walkSeconds,
+    majorSteps,
+    motionSegments,
+} from "./orchestrate/estimate.js";
 
 export {
     walkSchedule,
@@ -220,6 +254,16 @@ export {
     AXIS_BITS,
     type AxisLetter,
 } from "./wire/format/status.js";
+
+export {
+    stateName,
+    alarmName,
+    runningName,
+    maskStr,
+    STATE_NAMES,
+    ALARM_NAMES,
+    RUNNING_NAMES,
+} from "./wire/format/names.js";
 
 // ── wire format: remaining framing constants ──────────────────────────────────
 export {

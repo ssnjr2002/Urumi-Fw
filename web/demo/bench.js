@@ -34,6 +34,9 @@ import {
     fatalReasonName,
     settle,
     inState,
+    stateName,
+    walkSeconds,
+    motionSegments,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -87,8 +90,7 @@ function readFile(file) {
     });
 }
 
-const STATE_NAMES = ['IDLE', 'RUNNING', 'ESTOP', 'ALARM', 'PAUSED', 'HOMING'];
-const stateName = s => STATE_NAMES[s] ?? `STATE(${s})`;
+
 
 // ── preview tabs (SVG | Config) ─────────────────────────────────────────────
 
@@ -157,32 +159,14 @@ async function liveInitialState(config) {
     };
 }
 
-const allMotionSegments = events => events.filter(e => e.kind === 'motion').flatMap(e => e.segments);
-
-/**
- * Sum segment durations → seconds at fCpu, mirroring the firmware timing
- * (core1.cpp emitMicroSegment): a segment runs `major` steps, waiting `interval`
- * CPU cycles per step, so its duration is interval × major. Summing interval
- * alone would treat every segment as a single step and badly undercount.
- */
-function estimateSeconds(events, fCpu) {
-    let cycles = 0;
-    for (const e of events) {
-        if (e.kind !== 'motion') continue;
-        for (const s of e.segments) {
-            const major = Math.max(Math.abs(s.dx), Math.abs(s.dy), Math.abs(s.dz), Math.abs(s.da));
-            cycles += s.interval * major;
-        }
-    }
-    return cycles / fCpu;
-}
+const allMotionSegments = motionSegments;
 
 function renderMetrics(plan, events, config) {
     const segs = allMotionSegments(events);
     const jog  = segs.filter(s => s.flags & MICRO_JOG).length;
     const lift = segs.filter(s => s.flags & MICRO_LIFT).length;
     const cut  = segs.length - jog - lift;
-    const secs = estimateSeconds(events, config.machine.fCpu);
+    const secs = walkSeconds(events, config.machine.fCpu);
     const bytes = segs.length * 30;
     const blocks = plan.blocks.map((b, i) => `  block ${i + 1}: ${b.profile.name}  ${b.segments.length} segs`);
     metricsEl.textContent =
