@@ -1,6 +1,7 @@
 # The Controller
 
-**Status:** stages 1-4 done; the Controller itself (stage 5) is not written.
+**Status:** all five stages done. `web/src/controller/` exists and `comms.js`
+consumes it.
 **Prerequisite:** done — `web/src/config/` is now `web/src/machine/` + `machine/json/` (commit `ffd6546`).
 
 ## Why this exists
@@ -121,9 +122,48 @@ Each stage stands alone and leaves the suite green.
    Not yet wired into the demos: `comms.js` still tracks `activeHead` itself.
    That swap belongs with stage 5, where the Controller owns the state.
 
-5. **`Controller`** over the top, then rewrite `comms.js` as a thin consumer.
-   **The proof of the whole exercise:** `comms.js` shrinks substantially and
-   stops importing `../src/` internals.
+5. **`Controller` — DONE.** `src/controller/controller.ts` (the three
+   invariants) and `src/controller/runWalk.ts` (streaming a walk), with
+   `comms.js` rewired onto both.
+
+   **Exclusivity** came out as a lease rather than a queue: `acquire(kind)`
+   throws `BusyError` naming the holder, `withLease` releases however the work
+   ends. A queue was the alternative and is the wrong shape — a jog that fires
+   ten minutes after the job it queued behind is not what anyone pressing an
+   arrow key meant. `estop()` and `abort()` deliberately bypass the lease; an
+   estop that waits its turn is not an estop.
+
+   Text commands and status polls take **no** lease. They route on their own
+   magic into their own sinks and are safe alongside a stream by design — that
+   is the whole point of the demux, and making them queue would undo it.
+
+   `runWalk` is the demo's job loop with the demo taken out. What it kept is the
+   four rules that are about a machine existing in time (ack-ahead-of-Pico, the
+   pause barrier, the baked duty break landing mid-batch, the swap that is also
+   a slot rebind). What it did not keep is peripheral policy: which node runs
+   the knife oscillator is installation knowledge, so the hooks hand the caller
+   each boundary where the bus is free and let it decide.
+
+   **The proof:** `comms.js` is down from 1856 lines to 1714 across stages 2-5,
+   and the run loop, the poll timer, the axis-map commit/read-back pair and the
+   frame arithmetic are all gone from it. It still imports `../src/index.js`
+   directly (see the debts below) — that is the barrel, not internals.
+
+## Found while wiring stage 5
+
+- `demo/comms.json` sets `maxAccel: 0` on **both** heads' Z, so the job runner
+  on that page has never compiled — `bakePlan` refuses with "cannot move Z by
+  2400 steps — no accel limit". Pre-existing and nothing to do with the
+  Controller; the file is untouched here because inventing an acceleration
+  figure for a config is exactly the kind of silent miscalibration
+  `test/machines.ts` warns about. The end-to-end run below was verified with a
+  temporary local patch (`maxAccel: 300`, the provisional bench figure), which
+  was reverted.
+- Verified end to end against the Sim with that patch: 1020 segments, two tool
+  swaps prompted and confirmed, peripherals armed and torn down at the phase
+  boundaries, resume after each `MICRO_PAUSE`, progress to 100%. Both tools in
+  that job sit on head 0, so the **rebind** path did not fire there — it is
+  covered by `test/controller/runWalk.test.ts` instead.
 
 ## Known debts this touches
 

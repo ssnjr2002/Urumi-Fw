@@ -35,35 +35,28 @@
 import {
     loadConfig,
     Link,
+    Controller,
+    runWalk,
     SimTransport,
     ClickJogSource,
     jogToPoint,
-    axisMap,
-    readAxisMap,
     MachineState,
     fatalReasonName,
     bakePlan,
     scheduleMounts,
     walkSchedule,
-    packMicrosegment,
     getPos,
     MICRO_JOG,
     MICRO_LIFT,
-    MICRO_PAUSE,
     MICRO_DUTY_RELEASE,
-    MICRO_DUTY_ASSERT,
     TOOL_PROFILES_BY_TYPE,
     NodeType,
     ToolType,
     machineAnchor,
     headOffset,
     toolFrameOffset,
-    homePosition,
     homeToTool,
-    stepsToUnits,
     axisSlots,
-    slotMapFor,
-    headForSlotMap,
     headAssignment as headAssignmentOf,
     motionSegments,
     walkSeconds,
@@ -71,9 +64,6 @@ import {
     ALARM_NAMES,
     RUNNING_NAMES,
     maskStr,
-    settle,
-    waitAtRest,
-    inState,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -142,8 +132,20 @@ const linkBody     = $('link-table').querySelector('tbody');
 
 let config  = null;   // PipelineConfig, or null if the config did not load
 let axes    = [];     // gated axis descriptors built from the config
-let link    = null;
-let pollTimer = null;
+
+/**
+ * The Controller — the one object here holding a MachineConfig and a Link at
+ * once. It owns the Setup (which head is engaged, what is fitted), the axis-map
+ * reconciliation, the status poll and the frame conversions; this file owns the
+ * DOM and nothing else.
+ *
+ * `link` is kept beside it purely so the text console, the jog panel and the
+ * peripheral relays can keep talking to the transport directly. Those are all
+ * genuinely link-level — a text command and a jog burst do not need to know
+ * what a tool is.
+ */
+let ctl  = null;
+let link = null;
 
 /** The live click jog, if any: { src, key, label, done }. */
 let jog = null;
@@ -156,10 +158,6 @@ let keyAxis = null;
 let frameView = null;
 /** The last status seen, so changing the frame can re-render without a poll. */
 let lastStatus = null;
-/** The map read back from the Pico, or null. Slot i → bus id (null = unbound). */
-let committedMap = null;
-/** The head whose Z/A this host last bound to slots 2/3. */
-let activeHead = 0;
 
 let queue   = [];     // [{ id, head, targets: [{axisKey, target}], feedMmS, state }]
 let queueSeq = 0;
@@ -282,57 +280,34 @@ function anchorLabel() {
 // ── axis map ────────────────────────────────────────────────────────────────
 
 /**
- * The four bus ids this config wants bound to slots X/Y/Z/A, for `head`.
- * Z and A come from the selected head — that is the whole point of the map:
- * both heads' nodes exist on the bus, but only one pair is engaged at a time.
- * An absent node binds as null (slot left disengaged).
- */
-const desiredMap = head => slotMapFor(config.machine, head);
-
-/**
  * Commit the map for the selected head and report the result.
  *
- * This is the first thing to do after connecting. Until a map commits, the Pico
- * sits in ALARM/ALARM_CONFIG and NACKs every job, jog and debug-step — the map
- * is host-authored and never appears in STATUS_RSP, so the host must re-assert
- * it on every connect (docs/engage_and_axis_map.md §8). Re-issuing the same map
- * is close to a no-op on the wire but deliberately re-sends every engage, so a
- * node that lost its slot is re-bound.
+ * The Controller does the work — it computes the slot bindings from the Setup,
+ * refuses the rebind while RUNNING, sends `axis_map` and reads the map back.
+ * What is left here is the narration.
  *
- * Valid in IDLE/PAUSED/ALARM only — a head switch belongs at the PAUSED
- * tool-change boundary, never mid-RUNNING.
+ * Why it is the first thing after connecting: until a map commits, the Pico
+ * sits in ALARM/ALARM_CONFIG and NACKs every job, jog and debug-step — the map
+ * is host-authored and never appears in STATUS_RSP (docs/engage_and_axis_map.md
+ * §8).
  */
 async function commitAxisMap(head) {
-    if (!isConnected() || !config) return false;
-    const [x, y, z, a] = desiredMap(head);
-    log(`> axis_map ${[x, y, z, a].map(v => v ?? '-').join(' ')}   (head ${head})`, 'tx');
+    if (!ctl || !isConnected()) return false;
+    log(`> axis_map for head ${head}`, 'tx');
     try {
-        await axisMap(link, x, y, z, a);
-        activeHead = head;
+        await ctl.commit(head);
         log(`  ok — slots bound for head ${head}`, 'ok');
     } catch (e) {
         log(`  ${e.message}`, 'err');
+        renderAxisMap();
         return false;
     }
-    await refreshAxisMap();
     renderAll();
     return true;
 }
 
-/** Read the committed map back — the only way to observe it (§8). */
-async function refreshAxisMap() {
-    if (!isConnected()) { committedMap = null; renderAxisMap(); return; }
-    try {
-        committedMap = await readAxisMap(link);
-    } catch (e) {
-        committedMap = null;
-        log(`axis_map read failed: ${e.message}`, 'err');
-    }
-    renderAxisMap();
-}
-
 /** Which head, if any, the committed map matches. null = neither/unbound. */
-const committedHead = () => (config ? headForSlotMap(config.machine, committedMap) : null);
+const committedHead = () => (ctl && ctl.synced ? ctl.setup.engaged : null);
 
 function renderHeadSel() {
     headSel.innerHTML = '';
@@ -343,19 +318,21 @@ function renderHeadSel() {
         o.textContent = `head ${i}${h.profile ? ` — ${h.profile.name}` : ''}`;
         headSel.appendChild(o);
     });
-    headSel.value = String(Math.min(activeHead, config.machine.heads.length - 1));
+    const engaged = ctl ? ctl.setup.engaged : config.machine.defaultHead;
+    headSel.value = String(Math.min(engaged, config.machine.heads.length - 1));
 }
 
 mapCommit.addEventListener('click', () => void commitAxisMap(parseInt(headSel.value, 10)));
 headSel.addEventListener('change', renderAll);
 
 function renderAxisMap() {
-    const shown = committedMap
-        ? committedMap.map(v => (v === null ? '—' : v)).join('  ')
+    const committed = ctl?.committed ?? null;
+    const shown = committed
+        ? committed.map(v => (v === null ? '—' : v)).join('  ')
         : '— — — —';
     const h = committedHead();
     mapLine.textContent = `slots X Y Z A = ${shown}` +
-        (h !== null ? `  (head ${h})` : committedMap ? '  (no head matches)' : '');
+        (h !== null ? `  (head ${h})` : committed ? '  (no head matches)' : '');
     mapLine.dataset.kind = h !== null ? 'ok' : 'idle';
 }
 
@@ -381,14 +358,19 @@ connectBtn.addEventListener('click', async () => {
             : await WebSerialTransport.requestAndOpen(parseInt(baudInput.value, 10) || 115200);
         link = new Link(transport);
         link.verbose = verboseChk.checked;
+        ctl = new Controller(config.machine, link);
+        wireController(ctl);
         log(`connected via ${backendSel.value}`, 'ok');
         startPolling();
         // §8: the map is host-authored and absent from STATUS_RSP, so a fresh
-        // connection must re-assert it — the Pico may be holding a map from a
-        // previous host, or (on a cold boot) none at all, in which case it is
-        // sitting in ALARM_CONFIG refusing all motion.
-        await refreshAxisMap();
-        if (config) await commitAxisMap(parseInt(headSel.value, 10) || 0);
+        // connection must re-assert it. sync() reads back what the Pico is
+        // actually bound to first — the map survives across a host reload, so
+        // adopting it beats assuming defaultHead and then fighting the machine.
+        if (await ctl.sync()) {
+            log(`adopted the committed map — head ${ctl.setup.engaged}`, 'ok');
+        } else {
+            await commitAxisMap(parseInt(headSel.value, 10) || 0);
+        }
     } catch (e) {
         log(`connect failed: ${e.message}`, 'err');
     }
@@ -398,11 +380,11 @@ connectBtn.addEventListener('click', async () => {
 disconnectBtn.addEventListener('click', async () => {
     stopPolling();
     cancelJog();
-    if (link) {
-        try { await link.close(); } catch (e) { log(`close: ${e.message}`, 'err'); }
+    if (ctl) {
+        try { await ctl.close(); } catch (e) { log(`close: ${e.message}`, 'err'); }
     }
+    ctl = null;
     link = null;
-    committedMap = null;
     // Whatever the peripherals were doing, we can no longer command them and no
     // longer know. Forget, so the next job re-asserts from scratch.
     periphCommanded.clear();
@@ -484,41 +466,43 @@ cmdInput.addEventListener('keydown', e => {
 // STATE_NAMES / ALARM_NAMES / RUNNING_NAMES / maskStr come from
 // wire/format/names.ts now — see the import block.
 
-function startPolling() {
-    stopPolling();
-    if (!pollAuto.checked) return;
-    const ms = Math.max(100, parseInt(pollMs.value, 10) || 500);
-    pollTimer = setInterval(pollStatus, ms);
-}
-
-function stopPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-pollAuto.addEventListener('change', () => (isConnected() ? startPolling() : stopPolling()));
-pollMs.addEventListener('change', () => { if (isConnected()) startPolling(); });
-pollOnceBtn.addEventListener('click', pollStatus);
-
 /**
- * One STATUS_REQ → STATUS_RSP round trip. Safe to run during a stream: the
- * demux routes the reply to the status sink by magic, so it never lands in the
- * ack sink the session is awaiting, and the open jog source reads the same
- * samples for pacing.
+ * Subscribe to the Controller. Every sample the Controller takes lands here —
+ * from the background poll, from an explicit refresh, and (the part a hand-rolled
+ * `setInterval` never gets) from the settle loops inside a job run, so the panel
+ * keeps painting while a stream waits for the machine to come to rest.
  */
-async function pollStatus() {
-    if (!isConnected()) return;
-    try {
-        const st = await link.getStatus(500);
+function wireController(c) {
+    c.on('status', st => {
         notePeripheralPark(st.state);
         renderStatus(st);
         statusBanner.dataset.kind = 'ok';
         statusBanner.textContent = `last poll ${new Date().toLocaleTimeString()}`;
-    } catch (e) {
+        renderLinkStats();
+    });
+    c.on('error', e => {
         statusBanner.dataset.kind = 'error';
         statusBanner.textContent = e.message;
-    }
-    renderLinkStats();
+    });
+    c.on('committed', renderAxisMap);
+    c.on('setup', renderAll);
+    c.on('busy', renderAll);
 }
+
+function startPolling() {
+    if (!ctl) return;
+    void ctl.stopPolling();
+    if (!pollAuto.checked) return;
+    ctl.startPolling(Math.max(100, parseInt(pollMs.value, 10) || 500));
+}
+
+function stopPolling() {
+    if (ctl) void ctl.stopPolling();
+}
+
+pollAuto.addEventListener('change', () => (isConnected() ? startPolling() : stopPolling()));
+pollMs.addEventListener('change', () => { if (isConnected()) startPolling(); });
+pollOnceBtn.addEventListener('click', () => { if (ctl) void ctl.refresh().catch(() => {}); });
 
 // ── readout frames (docs/coordinate_frames_and_limits.md §1) ────────────────
 //
@@ -590,15 +574,16 @@ function renderStatus(st) {
     // the wrong one silently halves or doubles the reading. With no head bound
     // there is no right answer, so it shows steps only.
     const mmOf = slot => {
-        const engaged = committedHead();
-        const a = axes.find(x => x.slot === slot && x.present
-            && (x.head === undefined || x.head === engaged));
-        if (!a || !st.pos) return '';
-        return `  (${stepsToUnits(st.pos[slot], a.cal).toFixed(3)} ${a.unit})`;
+        // With no head bound there is no right answer for Z/A, so it shows
+        // steps only rather than a plausible number from the wrong motor.
+        if (!ctl || !st.pos || (slot >= 2 && !ctl.synced)) return '';
+        const letter = ['x', 'y', 'z', 'a'][slot];
+        const unit = ctl.axes[letter].rotary ? 'deg' : 'mm';
+        return `  (${ctl.axisUnits(letter, st).toFixed(3)} ${unit})`;
     };
 
     const f = currentFrame();
-    const home = st.pos && config ? homePosition(config.machine, st.pos) : null;
+    const home = ctl ? ctl.homeXY(st) : null;
     const tip = home && f ? homeToTool(home, f.offset) : null;
     const mm = v => `${v.toFixed(3)} mm`;
     const signed = v => `${v >= 0 ? '+' : ''}${v.toFixed(3)}`;
@@ -1085,7 +1070,7 @@ async function sendNext() {
 }
 
 /** Poll until the machine is genuinely at rest, or give up. See wire/link/settled.ts. */
-const waitIdle = (timeoutMs = 5000) => waitAtRest(link, timeoutMs);
+const waitIdle = (timeoutMs = 5000) => ctl.waitAtRest(timeoutMs);
 
 /** Resolve an entry's stacked targets against the live axis model. */
 function entryTargets(entry) {
@@ -1379,8 +1364,8 @@ function vacuumCard(node) {
 //     machine the swap IS a slot rebind — resuming without it streams the new
 //     head's Z/A at the old head's motors.
 
-/** Which head socket holds each tool type, read off the config's head profiles. */
-const headAssignment = () => headAssignmentOf(config.machine);
+/** Which head socket holds each tool type. The Controller derives it from the machine. */
+const headAssignment = () => (ctl ? ctl.headAssignment : headAssignmentOf(config.machine));
 
 /** MountSets carry ToolType numbers; operators read tool names. */
 const toolName = t => TOOL_PROFILES_BY_TYPE[t]?.name ?? `tool ${t}`;
@@ -1546,13 +1531,22 @@ jobCompile.addEventListener('click', () => {
 jobStop.addEventListener('click', async () => {
     // Fire-and-forget: estop correlates nothing and must never queue behind a
     // pending text command.
-    try { await link.send('stop'); log('job: STOP sent', 'err'); } catch { /* closing */ }
+    try { await ctl.estop(); log('job: STOP sent', 'err'); } catch { /* closing */ }
 });
 
-/** Poll until the machine reaches `target`, or throw if it alarms on the way. */
-const waitForState = target =>
-    settle(link, inState(target), { onPoll: st => notePeripheralPark(st.state) });
-
+/**
+ * Run the compiled walk.
+ *
+ * Everything about *when* to send what — batching, the MICRO_PAUSE stamp before
+ * a swap, cutting a batch at a baked duty break, waiting for the machine rather
+ * than for the writer, and rebinding the axis map when a swap changes heads —
+ * lives in `runWalk`. It is the same logic this file used to carry inline, and
+ * none of it was demo-specific.
+ *
+ * What stays here is the part that genuinely is: which node runs the knife
+ * oscillator, whether the vacuum belongs to the job, and what to put in front
+ * of the operator at a tool change.
+ */
 jobRun.addEventListener('click', async () => {
     if (running || jog || goTo || !isConnected() || !config) return;
 
@@ -1567,97 +1561,22 @@ jobRun.addEventListener('click', async () => {
         return;
     }
 
-    // Pre-flight. A non-IDLE machine NACKs every packet with BAD_STATE, which
-    // is a far more confusing failure than refusing up front.
-    const pre = await link.getStatus();
-    if (pre.state !== MachineState.IDLE && pre.state !== MachineState.PAUSED) {
-        log(`job: machine is ${STATE_NAMES[pre.state] ?? pre.state} — unalarm or commit an axis_map first`, 'err');
-        return;
-    }
-
     running = true;
     jobProgress.style.width = '0';
     renderAll();
 
-    const total = motionSegments(events).length;
-    let sent = 0;
-
     try {
-        // Before the first packet, while the machine is provably at rest: the
-        // vacuum comes up and the first phase's tool is armed. Doing it here
-        // rather than at the first pause event also covers a schedule whose
-        // first event is motion.
-        await applyPeripherals(schedule.phases[0]?.mount ?? [], 'job start');
-
-        let i = 0, machinePaused = false;
-        // Which tools are live right now — a duty break needs the profile whose
-        // dutyLimits produced it, and the segments themselves carry only timing.
-        let activeMount = schedule.phases[0]?.mount ?? [];
-        while (i < events.length) {
-            if (events[i].kind === 'pause') {
-                const ev = events[i];
-                if (!await handleSwap(ev)) throw new Error('cancelled by operator at the tool swap');
-                // After the blade is physically in and before anything moves —
-                // the machine is PAUSED here, the one window the gate allows.
-                await applyPeripherals(ev.mount, `phase: ${ev.mount.map(toolName).join(', ') || 'nothing'}`);
-                activeMount = ev.mount;
-                if (machinePaused) {
-                    const reply = await link.command('resume');
-                    log(`job: resume → ${reply}`, reply === 'ok' ? 'ok' : 'err');
-                    machinePaused = false;
-                }
-                i++;
-                continue;
-            }
-
-            const batch = [];
-            while (i < events.length && events[i].kind === 'motion') { batch.push(...events[i].segments); i++; }
-            if (!batch.length) continue;
-
-            // A duty break is baked INTO the segments (compileBlock's stage 9),
-            // not signalled by a walk event, so it can land anywhere in a batch.
-            // Streaming past it is not an option: the firmware parks in PAUSED
-            // at that segment and NACKs the remainder with NACK_PAUSED. Cut the
-            // batch there and let the next loop iteration carry on.
-            const brk = batch.findIndex(s => s.flags & (MICRO_DUTY_RELEASE | MICRO_DUTY_ASSERT));
-            let dutyAt = -1;
-            if (brk >= 0 && brk < batch.length - 1) {
-                events.splice(i, 0, { kind: 'motion', segments: batch.slice(brk + 1) });
-                batch.length = brk + 1;
-            }
-            if (brk >= 0) { dutyAt = brk; machinePaused = true; }
-
-            // The last segment before a swap carries MICRO_PAUSE, so the machine
-            // parks itself in PAUSED rather than running on into the swap.
-            const nextIsPause = dutyAt < 0 && i < events.length && events[i].kind === 'pause';
-            if (nextIsPause) {
-                const last = batch[batch.length - 1];
-                batch[batch.length - 1] = { ...last, flags: last.flags | MICRO_PAUSE };
-                machinePaused = true;
-            }
-
-            log(`job: streaming ${batch.length} segments`, 'tx');
-            const result = await link.stream(batch.map((s, n) => packMicrosegment(s, n & 0xff)), 16);
-            if (!result.ok) {
-                const why = result.fatalReason !== undefined ? fatalReasonName(result.fatalReason) : 'unknown';
-                throw new Error(`stream failed: ${why} — emitted ${result.emitted} acked ${result.acked} nacks ${result.nacks}`);
-            }
-
-            sent += batch.length;
-            jobProgress.style.width = `${(sent / total * 100).toFixed(1)}%`;
-            await waitForState(
-                nextIsPause || dutyAt >= 0 ? MachineState.PAUSED : MachineState.IDLE,
-            );
-
-            if (dutyAt >= 0) {
-                await handleDutyBreak(activeMount);
-                const reply = await link.command('resume');
-                log(`job: resume → ${reply}`, reply === 'ok' ? 'ok' : 'err');
-                machinePaused = false;
-            }
-        }
+        await runWalk(ctl, events, {
+            initialMount: schedule.phases[0]?.mount ?? [],
+            onPhase: (mount, why) => applyPeripherals(mount, why),
+            onDutyBreak: handleDutyBreak,
+            confirmSwap: confirmSwap,
+            onProgress: (sent, total) => {
+                jobProgress.style.width = `${(sent / total * 100).toFixed(1)}%`;
+            },
+            onLog: (m, kind) => log(`job: ${m}`, kind),
+        });
         jobProgress.style.width = '100%';
-        log(`job: done — ${sent} segments streamed`, 'ok');
     } catch (e) {
         log(`job: ${e.message}`, 'err');
     } finally {
@@ -1712,25 +1631,19 @@ async function handleDutyBreak(mount) {
 }
 
 /**
- * A tool swap. On a dual-head machine this is also a slot rebind: the walk has
- * switched to the head holding the incoming tool, so the map must follow before
- * any more motion streams — otherwise the new head's Z/A land on the old head's
- * motors. Returns false if the operator cancels.
+ * Put the swap in front of the operator. By the time this runs the slots have
+ * already been rebound to `req.head` if the swap changed heads — so the machine
+ * is bound to the head they are about to fit a tool into, not the one they just
+ * emptied.
  */
-async function handleSwap(ev) {
-    const swapIn = ev.swapIn.map(toolName).join(', ') || 'nothing';
-    const swapOut = ev.swapOut.map(toolName).join(', ') || 'nothing';
+function confirmSwap(req) {
+    const swapIn = req.swapIn.map(toolName).join(', ') || 'nothing';
+    const swapOut = req.swapOut.map(toolName).join(', ') || 'nothing';
     log(`job: tool swap — mount ${swapIn}, remove ${swapOut}`, 'note');
-
-    const assign = headAssignment();
-    const wantHead = ev.swapIn.map(t => assign.get(t)).find(h => h !== undefined);
-    if (wantHead !== undefined && committedHead() !== wantHead) {
-        if (!await waitIdle()) { log('  job: machine did not come to rest for the rebind', 'err'); return false; }
-        log(`  job: rebinding slots to head ${wantHead}`, 'note');
-        if (!await commitAxisMap(wantHead)) return false;
-    }
-
-    return window.confirm(`Tool swap\n\nmount: ${swapIn}\nremove: ${swapOut}\n\nOK when the head is ready.`);
+    if (req.head !== null) log(`  slots rebound to head ${req.head}`, 'note');
+    return window.confirm(
+        `Tool swap\n\nmount: ${swapIn}\nremove: ${swapOut}\n\nOK when the head is ready.`,
+    );
 }
 
 // ── render gating ───────────────────────────────────────────────────────────

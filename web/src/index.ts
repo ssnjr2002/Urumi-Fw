@@ -387,6 +387,19 @@ export {
 // ── wire/link backends: Sim (env-agnostic; real ports import from the subpath) ─
 export { SimTransport } from "./wire/link/backends/sim.js";
 
+// ── controller: the one object that holds a MachineConfig and a Link at once ──
+export {
+    Controller,
+    BusyError,
+    runWalk,
+    type Lease,
+    type ControllerOptions,
+    type ControllerEvents,
+    type RunWalkHooks,
+    type RunWalkResult,
+    type SwapRequest,
+} from "./controller/index.js";
+
 // ── operatorJog ──────────────────────────────────────────────────────────────
 export {
     makeJog,
