@@ -316,23 +316,42 @@ class SimBackend:
             S.axes_homed = S.axes_enabled = 0
             S._motion.clear(); S._executing = False
             return "ok"
-        if cmd == "enable":
+        if cmd == "axes_enable":                # bound axis slots only, never peripherals
             if S.state in idle_paused_alarm:
-                if not args or args[0] == "all":
+                if not args:
+                    return "err usage"
+                on = args[0] in ("1", "on", "On", "ON")
+                if on:
                     S.axes_enabled = axis_mask("xyza")   # energise all present axes
                 else:
-                    node = int(args[0])
-                    S.axes_enabled |= (1 << (node - 1))
+                    S.axes_homed = S.axes_enabled = 0    # de-energise -> position invalid
+                return "ok"
+            return "err bad_state"
+        if cmd == "bus_enable":                 # whole-bus broadcast, unacknowledged
+            if S.state in idle_paused_alarm:
+                if not args:
+                    return "err usage"
+                # `on` deliberately arms nothing: nobody ACKs a broadcast, so the
+                # master may not conclude a node is energised. Mirrors firmware.
+                if args[0] not in ("1", "on", "On", "ON"):
+                    S.axes_homed = S.axes_enabled = 0
+                return "ok"
+            return "err bad_state"
+        if cmd == "enable":
+            if S.state in idle_paused_alarm:
+                if not args:
+                    return "err bad_node"
+                node = int(args[0])
+                S.axes_enabled |= (1 << (node - 1))
                 return "ok"
             return "err bad_state"
         if cmd == "disable":
             if S.state in idle_paused_alarm:
-                if not args or args[0] == "all":
-                    S.axes_homed = S.axes_enabled = 0    # de-energise -> position invalid
-                else:
-                    node = int(args[0])
-                    S.axes_enabled &= ~(1 << (node - 1))
-                    S.axes_homed   &= ~(1 << (node - 1))
+                if not args:
+                    return "err bad_node"
+                node = int(args[0])
+                S.axes_enabled &= ~(1 << (node - 1))
+                S.axes_homed   &= ~(1 << (node - 1))
                 return "ok"
             return "err bad_state"
         if cmd == "setorigin":

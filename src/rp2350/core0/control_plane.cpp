@@ -33,10 +33,14 @@ static inline bool alarmDeniesOn(bool turningOn) {
     return false;
 }
 
-// Relay a single-node command to Core 1 (which owns the RS485 bus) and block for
-// its result, so the control-plane reply is synchronous. Returns true if the node
-// responded (PONG/ACK) within the timeout. Not used for GET_POS (Core 1 pushes an
-// extra word for that — host getpos reads machinePos directly instead).
+// Relay a command to Core 1 (which owns the RS485 bus) and block for its result,
+// so the control-plane reply is synchronous. Returns true if the node responded
+// (PONG/ACK) within the timeout. Not used for GET_POS (Core 1 pushes an extra
+// word for that — host getpos reads machinePos directly instead).
+//
+// `node` may be BUS_ADDR_BROADCAST, in which case nothing answers and the return
+// value degrades to "the frame was sent" — never "a node acted on it". Callers
+// must not treat a broadcast's true as evidence of node state.
 static bool relayNode(uint8_t cmd, uint8_t node) {
     multicore_fifo_push_blocking(((uint32_t)cmd << 8) | node);
     uint32_t resp = multicore_fifo_pop_blocking();
@@ -464,31 +468,87 @@ bool handleCommand(const String& input) {
         return true;
     }
 
-    // ── enable / disable [all|<id>] (IDLE/PAUSED/ALARM) ───────────────────────
-    // `all` targets the axes only (energizing a peripheral pump via "all" is not
-    // wanted). An explicit <id> relays to any bus node — the generic CMD_ENABLE
-    // effect is delegated per type (motor energize / pump on …); the axis
-    // bookkeeping applies only when the id is an axis node (docs/engage_and_axis_map.md §9).
+    // ── axes_enable <on|off> (IDLE/PAUSED/ALARM) ──────────────────────────────
+    // Targets the axis map: every node currently bound to a motion slot, and no
+    // one else. This replaces the old `enable all` / `disable all`, whose name
+    // read bus-wide while the code always walked slotNode[] — a distinction that
+    // stopped being academic once vacuum and knife nodes joined the bus.
+    // Peripherals hold no slot, so they are addressed only by `enable <id>`.
+    if (input.startsWith("axes_enable")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* a = argAfter(input, 11);
+        if (*a == '\0') { Serial.println("err usage"); return true; }
+        // Deliberately NOT gated by alarmDeniesOn: ALARM is where axis recovery
+        // happens. Boot sits in ALARM_CONFIG, and the post-estop flow is
+        // axes_enable on → setorigin → unalarm. `enable <id>` is ungated for the
+        // same reason. The peripheral commands gate because energising a pump
+        // under alarm has no such recovery role.
+        bool on = parseState(a);          // accepts "1"/"on" and "0"/"off"
+        for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
+            if (slotNode[i] == SLOT_NONE) continue;
+            relayNode(on ? CMD_ENABLE : CMD_DISABLE, slotNode[i]);
+            if (on) axes_enabled |=  (1 << i);
+            else    axes_enabled &= ~(1 << i);
+        }
+        // De-energised → back-drivable → every bound origin is void. Keyed on the
+        // node, not the slot, so a node that loses holding torque while PARKED
+        // still loses its origin (see originInvalidate).
+        if (!on)
+            for (uint8_t i = 0; i < MOTION_SLOTS; i++)
+                if (slotNode[i] != SLOT_NONE) originInvalidate(slotNode[i]);
+        Serial.println("ok");
+        return true;
+    }
+
+    // ── bus_enable <on|off> (IDLE/PAUSED/ALARM) ───────────────────────────────
+    // Whole-bus broadcast: ONE unacknowledged frame reaches every node at once,
+    // peripherals included. This is the genuinely bus-wide verb that the old
+    // `enable all` only claimed to be; `axes_enable` remains the axis-map form.
+    //
+    // Nobody answers a broadcast, so this cannot learn what actually happened.
+    // The bookkeeping is therefore deliberately ASYMMETRIC, in the direction that
+    // is safe to be wrong in:
+    //   off → clear axes_enabled and void every origin. If a node missed the
+    //         frame we under-claim (think it's off when it's live) — the operator
+    //         is told less is armed than is, and position is invalid regardless.
+    //   on  → touch NOTHING. Motion gates on axes_enabled, so believing a node
+    //         armed when it never heard us is the direction that moves a machine
+    //         that isn't ready. Use `axes_enable on` to actually arm the map; it
+    //         relays per node and gets an ACK for each.
+    // TODO(verify): once the CMD_NODE_STATUS poll lands, `on` can set the bits
+    // from what the nodes report rather than staying silent.
+    if (input.startsWith("bus_enable")) {
+        if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+            Serial.println("err bad_state"); return true;
+        }
+        const char* a = argAfter(input, 10);
+        if (*a == '\0') { Serial.println("err usage"); return true; }
+        bool on = parseState(a);
+        relayNode(on ? CMD_ENABLE : CMD_DISABLE, BUS_ADDR_BROADCAST);
+        if (!on) {
+            axes_enabled = 0;
+            originInvalidateAll();
+        }
+        Serial.println("ok");
+        return true;
+    }
+
+    // ── enable / disable <id> (IDLE/PAUSED/ALARM) ─────────────────────────────
+    // Relays to any bus node — the generic CMD_ENABLE effect is delegated per type
+    // (motor energize / pump on …); the axis bookkeeping applies only when the id
+    // is an axis node (docs/engage_and_axis_map.md §9).
     if (input.startsWith("enable")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
         }
         const char* a = argAfter(input, 6);
-        if (*a == '\0' || strcmp(a, "all") == 0) {
-            // "all" targets the axis map — energize every bound axis node, and set
-            // its per-slot enabled bit. Unbound slots stay clear.
-            for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
-                if (slotNode[i] == SLOT_NONE) continue;
-                relayNode(CMD_ENABLE, slotNode[i]);
-                axes_enabled |= (1 << i);
-            }
-        } else {
-            uint8_t node = (uint8_t)strtoul(a, NULL, 10);
-            if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
-            relayNode(CMD_ENABLE, node);
-            uint8_t s = nodeSlot(node);      // axis bookkeeping keyed on the slot
-            if (s != SLOT_NONE) axes_enabled |= (1 << s);
-        }
+        uint8_t node = (uint8_t)strtoul(a, NULL, 10);
+        if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
+        relayNode(CMD_ENABLE, node);
+        uint8_t s = nodeSlot(node);      // axis bookkeeping keyed on the slot
+        if (s != SLOT_NONE) axes_enabled |= (1 << s);
         Serial.println("ok");
         return true;
     }
@@ -497,23 +557,16 @@ bool handleCommand(const String& input) {
             Serial.println("err bad_state"); return true;
         }
         const char* a = argAfter(input, 7);
-        if (*a == '\0' || strcmp(a, "all") == 0) {
-            for (uint8_t i = 0; i < MOTION_SLOTS; i++)
-                if (slotNode[i] != SLOT_NONE) relayNode(CMD_DISABLE, slotNode[i]);
-            axes_enabled = 0;
-            originInvalidateAll();     // de-energised → position lost everywhere
-        } else {
-            uint8_t node = (uint8_t)strtoul(a, NULL, 10);
-            if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
-            relayNode(CMD_DISABLE, node);
-            // Unconditional: a de-energised node is back-drivable whether or not
-            // it currently holds a slot, so its origin is void either way. This
-            // is exactly the case slot-indexed bookkeeping could not express —
-            // a PARKED head losing holding torque and sagging under gravity.
-            originInvalidate(node);
-            uint8_t s = nodeSlot(node);
-            if (s != SLOT_NONE) axes_enabled &= ~(1 << s);
-        }
+        uint8_t node = (uint8_t)strtoul(a, NULL, 10);
+        if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
+        relayNode(CMD_DISABLE, node);
+        // Unconditional: a de-energised node is back-drivable whether or not
+        // it currently holds a slot, so its origin is void either way. This
+        // is exactly the case slot-indexed bookkeeping could not express —
+        // a PARKED head losing holding torque and sagging under gravity.
+        originInvalidate(node);
+        uint8_t s = nodeSlot(node);
+        if (s != SLOT_NONE) axes_enabled &= ~(1 << s);
         Serial.println("ok");
         return true;
     }

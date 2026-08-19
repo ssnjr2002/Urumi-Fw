@@ -10,7 +10,7 @@
 #include "rs485/rs485.h"
 
 // Defined in dispatch.cpp.
-void dispatchCommand(const uint8_t* pkt, uint8_t len);
+void dispatchCommand(const uint8_t* pkt, uint8_t len, bool broadcast);
 
 #ifdef NODE_DEBUG_CONSOLE
 // Optional USART0 bench console (debug_console.cpp) — bypasses RS485 entirely.
@@ -51,11 +51,12 @@ void loop() {
     CommandPacket* pkt = &cmdQueue[cmdTail];
     uint8_t len = pkt->length;
 
-    bool validNode = (pkt->data[0] == NODE_ID || pkt->data[0] == 0xFF);
+    bool broadcast = (pkt->data[0] == BUS_ADDR_BROADCAST);
+    bool validNode = (pkt->data[0] == NODE_ID || broadcast);
     bool validCrc  = (pkt->data[len - 1] == crc8(pkt->data, len - 1));
 
     if (validNode && validCrc)
-        dispatchCommand(pkt->data, len);
+        dispatchCommand(pkt->data, len, broadcast);
 
     cmdTail = (cmdTail + 1) % MAX_COMMANDS;
 }

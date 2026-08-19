@@ -87,8 +87,13 @@ def _ok(link, cmd: str):
     return False, r
 
 
-def enable(link, node=None):   return _ok(link, f"enable {node}" if node is not None else "enable")
-def disable(link, node=None):  return _ok(link, f"disable {node}" if node is not None else "disable")
+def enable(link, node=None):   return _ok(link, f"enable {node}" if node is not None else "axes_enable on")
+def disable(link, node=None):  return _ok(link, f"disable {node}" if node is not None else "axes_enable off")
+def axes_enable(link, on):     return _ok(link, f"axes_enable {'on' if on else 'off'}")
+# Whole-bus broadcast, peripherals included. Unacknowledged: `on` arms nothing in
+# the Pico's bookkeeping (see bus_enable in control_plane.cpp). Use axes_enable
+# to actually arm the axis map.
+def bus_enable(link, on):      return _ok(link, f"bus_enable {'on' if on else 'off'}")
 def setorigin(link, axes=""):  return _ok(link, f"setorigin {axes}".strip())
 def pause(link):               return _ok(link, "pause")
 def resume(link):              return _ok(link, "resume")

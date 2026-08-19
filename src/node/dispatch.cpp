@@ -104,12 +104,20 @@ uint8_t routeCommand(const uint8_t* pkt, uint8_t len, uint8_t* reply) {
     return handled ? replyLen : 0;
 }
 //  1x 2y 3a 4z
-// Called by loop() once node-id + CRC have passed.
-void dispatchCommand(const uint8_t* pkt, uint8_t len) {
+// Called by loop() once node-id + CRC have passed. `broadcast` is true when the
+// frame was addressed to BUS_ADDR_BROADCAST rather than to this node's NODE_ID.
+void dispatchCommand(const uint8_t* pkt, uint8_t len, bool broadcast) {
+    // Deny-by-default: an unlisted command addressed to the wildcard is dropped
+    // without acting. Checked before routing, so a command that is not cleared
+    // for broadcast can never take effect via one.
+    if (broadcast && !cmdAllowsBroadcast(pkt[1])) return;
+
     uint8_t reply[MAX_PACKET_LEN];
     uint8_t replyLen = routeCommand(pkt, len, reply);
 
-    if (replyLen)
+    // Never answer a broadcast: every node would transmit at once, and the
+    // collision would take out the confirm pass that follows it.
+    if (replyLen && !broadcast)
         sendCommandPacket(reply, replyLen);
     // Unknown command → silently dropped (same as a bad-CRC packet).
 }

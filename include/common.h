@@ -5,6 +5,19 @@
 // ─── Bus ───────────────────────────────────────────────────────────────────────
 #define RS485_BAUD          921600
 #define RESPONSE_TIMEOUT_MS    20
+
+// ─── Broadcast address ────────────────────────────────────────────────────────
+// A command frame addressed here is acted on by EVERY node and answered by NONE.
+// The no-reply part is structural, not per-command: N nodes replying at once is a
+// bus collision, so the node suppresses TX whenever it was addressed by wildcard.
+//
+// 0xFF rather than 0x00 because a broadcast must be asked for, never arrived at.
+// Zero is what a memset, a zeroed packet buffer or an uninitialised node variable
+// produces, so a software bug would broadcast by accident; all-ones has to be
+// written deliberately. (Idle RS485 floats high, so line noise reads as 0xFF —
+// but a stray address byte still needs a valid cmd, length and CRC8 behind it.)
+// It also matches the house sentinel already in use: slot 0xFF = disengaged.
+#define BUS_ADDR_BROADCAST 0xFF
 // ─── Node Commands ────────────────────────────────────────────────────────────────
 // Generic (0x01–0x1F): every node type honours these; handled by the node core.
 #define CMD_PING     0x01
@@ -53,6 +66,31 @@
 // Knife (oscillating drag knife):
 #define CMD_KNIFE_OSC    0x12  // payload: [state(0=off, 1=on)]; ACK echoes cmd
 #define CMD_KNIFE_BLOWER 0x13  // payload: [duty(0..100 %)]; ACK echoes cmd
+
+// ─── Broadcast allowlist ──────────────────────────────────────────────────────
+// Deny by default: a command is broadcastable only if it is named here. A command
+// that becomes broadcastable because nobody thought about it is exactly the
+// failure worth designing out, so the opt-in is explicit and lives in one place
+// shared by both sides — the master refuses to send it, the node refuses to act.
+//
+// To qualify, a command must be (a) idempotent, since it cannot be retried
+// per-node, and (b) useful without an answer, since none comes back.
+//
+// Only generic commands (0x01–0x1F) are eligible. Type-specific opcodes (0x20+)
+// deliberately overlap between node types, so one broadcast value would mean
+// different things to different nodes — unaddressable by construction.
+static inline bool cmdAllowsBroadcast(uint8_t cmd) {
+    // CMD_DISABLE = "park yourself", each type's own safe state. The estop path
+    // broadcasts it so every node starts stopping in parallel, then confirms
+    // serially per node. See src/rp2350/core1/core1.cpp.
+    //
+    // CMD_ENABLE is the symmetric arm-everything verb. Note the asymmetry in what
+    // the master may CONCLUDE from each: an unacknowledged disable can only leave
+    // it believing less is energised than really is (safe), while an unacknow-
+    // ledged enable must never be taken as proof anything armed. Core 0 encodes
+    // that — see bus_enable in control_plane.cpp.
+    return cmd == CMD_DISABLE || cmd == CMD_ENABLE;
+}
 
 // ─── Node types (CMD_GET_TYPE) ───────────────────────────────────────────────
 // Canonical registry, mirrored on the host (web/src/config NodeType).

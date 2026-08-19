@@ -419,6 +419,27 @@ static void relayStatusReply(uint8_t node, uint8_t cmd,
 // microseconds), so a sparsely-populated bus makes this the slowest thing on
 // the estop path. That is acceptable: motion has already stopped by flushing
 // the queue, and this is the cleanup behind it.
+// One unacknowledged frame that starts every node parking at once, ~50us on the
+// wire. The serial sweep below still runs and still gates the ALARM transition —
+// this only changes WHEN each node begins stopping, from "at its turn in an
+// 8-address walk, most of it spent timing out on empty addresses" to "now".
+//
+// Nodes dispatch from cmdQueue in loop(), not in the RX ISR, so the honest claim
+// is that every node starts within one loop() of every other — not that the stop
+// is instantaneous. The serial sweep pays that same per-node latency anyway, plus
+// the round trips.
+// Send one broadcast command. Refuses anything outside the allowlist, so the
+// deny-by-default rule is enforced at both ends rather than trusted at one: the
+// node would drop it anyway, but a silent no-op on the wire is a worse bug to
+// find than a call that never compiles into an effect.
+static bool sendBroadcast(uint8_t cmd) {
+    if (!cmdAllowsBroadcast(cmd)) return false;
+    uint8_t pkt[4] = {BUS_ADDR_BROADCAST, cmd, 0, 0};
+    sendPacket(pkt, 4);
+    // No receivePacket: a broadcast is answered by nobody (see common.h).
+    return true;
+}
+
 static void busDisableAll() {
     for (uint8_t node = 1; node <= BUS_ADDR_MAX; node++) {
         uint8_t pkt[4] = {node, CMD_DISABLE, 0, 0};
@@ -448,6 +469,13 @@ void processBus() {
         // Core 0 clears axes_enabled, keyed on exactly that transition (ALARM +
         // ALARM_ESTOP), so the invariant is unchanged while the mask keeps a
         // single writer. Clearing it here raced Core 0's read-modify-writes.
+        //
+        // Broadcast first so the stop is parallel, then confirm it serially. Both
+        // run before the ALARM transition, so the invariant above is unchanged:
+        // the sweep, not the broadcast, is what makes it true. The broadcast is
+        // one extra frame that buys every node an earlier start; if it is missed,
+        // the sweep behind it still parks that node before ALARM is published.
+        sendBroadcast(CMD_DISABLE);
         busDisableAll();
 
         __dmb();
@@ -490,6 +518,22 @@ void processBus() {
         while (!rs485.txEmpty());
         rs485.flushRX();
         rs485.writeStream(0); // NOP stream byte to reset slave parsers
+
+        // Broadcast: one frame to every node, answered by none. Core 0 still
+        // blocks on a reply word, so push one — but it means "the frame went out",
+        // NOT "the nodes acted". Nothing on this path can know the latter.
+        //
+        // TODO(verify): follow with a per-node CMD_NODE_STATUS poll and check
+        // NODE_FLAG_ENABLED to turn this into a real result. What to do about a
+        // node that answers with the wrong state — retry, fault mask, alarm — is
+        // still undecided, so today the broadcast is fire-and-forget and the
+        // estop path keeps its serial CMD_DISABLE sweep as the actual guarantee.
+        if (node == BUS_ADDR_BROADCAST) {
+            bool sent = sendBroadcast(cmd);
+            multicore_fifo_push_blocking(((uint32_t)cmd << 24) |
+                                         ((uint32_t)node << 16) | (sent ? 1u : 0u));
+            return;
+        }
 
         switch (cmd) {
             case CMD_PING: {
