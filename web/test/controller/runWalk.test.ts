@@ -93,12 +93,20 @@ const motion = (n: number, flags = 0): WalkEvent => ({
     ),
 });
 
-const pause = (swapIn: ToolType[], swapOut: ToolType[] = []): WalkEvent => ({
-    kind: "pause",
-    swapIn,
-    swapOut,
-    mounts: swapIn,
-});
+/**
+ * `mounts` is HEAD-INDEXED and full length — it is what the phase expects to
+ * find screwed into each socket, not the swap list. It defaults to what
+ * `bench()` is actually fitted with, because since stage 5 the runner checks
+ * it against the live Setup after every swap and a short or shuffled array is
+ * a mis-mount, which is the whole thing that check exists to catch.
+ */
+const FITTED: Mounts = [KNIFE.toolType, PEN.toolType];
+
+const pause = (
+    swapIn: ToolType[],
+    swapOut: ToolType[] = [],
+    mounts: Mounts = FITTED,
+): WalkEvent => ({ kind: "pause", swapIn, swapOut, mounts });
 
 /** Every MicroSegment the sim was actually sent, in order. */
 function segmentsSeen(sim: RecordingSim): ReturnType<typeof unpackMicrosegment>[] {
@@ -237,30 +245,24 @@ describe("duty breaks", () => {
                 seen.push([...mounts]);
             },
         });
-        expect(seen).toEqual([[PEN.toolType]]);
+        expect(seen).toEqual([[...FITTED]]);
     });
 });
 
 describe("head rebinding", () => {
-    it("rebinds the slots to the incoming tool's head before the prompt", async () => {
-        // Rule 4: the walk has already switched heads; if the map does not
-        // follow, the next block drives the new head's Z/A through the old
-        // head's motors.
+    it("does not rebind at a pause the walk did not ask to rebind", async () => {
+        // Since stage 5 the runner does not reconstruct a head from the tools
+        // being swapped in. A pause is a pause; the head comes from the walk's
+        // own `rebind` event, which is the only thing that knows which head the
+        // upcoming blocks were compiled against.
         const { controller, sim } = await bench();
-        let mapAtPrompt: readonly (number | null)[] = [];
 
         await runWalk(controller, [motion(2), pause([PEN.toolType], [KNIFE.toolType]), motion(2)], {
-            confirmSwap: (req) => {
-                mapAtPrompt = [...sim.slotNode];
-                expect(req.head).toBe(1);
-                return true;
-            },
+            confirmSwap: () => true,
         });
 
-        // Head 1's Z/A are nodes 5 and 6 — bound before the operator was asked.
-        expect(mapAtPrompt).toEqual([1, 2, 5, 6]);
-        expect(controller.setup.engaged).toBe(1);
-        expect(controller.synced).toBe(true);
+        expect(sim.slotNode).toEqual([1, 2, 3, 4]);
+        expect(controller.setup.engaged).toBe(0);
     });
 
     it("acts on a rebind event with no operator involved", async () => {
@@ -289,13 +291,45 @@ describe("head rebinding", () => {
 
     it("leaves the map alone when the swap does not change heads", async () => {
         const { controller, sim } = await bench();
-        await runWalk(controller, [pause([KNIFE.toolType])], {
-            confirmSwap: (req) => {
-                expect(req.head).toBeNull();
-                return true;
-            },
-        });
+        await runWalk(controller, [pause([KNIFE.toolType])], { confirmSwap: () => true });
         expect(sim.slotNode).toEqual([1, 2, 3, 4]);
+    });
+});
+
+// ── rule 5: the operator is checked, not believed ────────────────────────────
+
+describe("mount verification", () => {
+    /** A block shaped just enough for verifyMounts — it reads three fields. */
+    const block = (profile: typeof KNIFE, head: number) =>
+        ({ profile, head, segments: [], startSteps: { x: 0, y: 0 } });
+
+    it("refuses to start when a block's tool is in the wrong socket", async () => {
+        // bench() is fitted knife-on-0, pen-on-1. A knife block compiled for
+        // head 1 would run head 1's 600 steps/mm Z through a 1200 steps/mm
+        // calibration: exactly half the depth, no error, ruined material.
+        const { controller } = await bench();
+        await expect(
+            runWalk(controller, [motion(2)], { blocks: [block(KNIFE, 1)] }),
+        ).rejects.toThrow(/needs .* on head 1, but head 1 holds pen/i);
+    });
+
+    it("starts when every block's tool is where the block expects it", async () => {
+        const { controller } = await bench();
+        const r = await runWalk(controller, [motion(2)], {
+            blocks: [block(KNIFE, 0), block(PEN, 1)],
+        });
+        expect(r.segmentsSent).toBe(2);
+    });
+
+    it("re-checks after the operator says the swap is done", async () => {
+        // confirmSwap returning true is a human claim. Here the operator
+        // "fits" nothing, and the phase wants the pen in head 0.
+        const { controller } = await bench();
+        await expect(
+            runWalk(controller, [pause([PEN.toolType], [], [PEN.toolType, null])], {
+                confirmSwap: () => true,
+            }),
+        ).rejects.toThrow(/head 0 holds knife/i);
     });
 });
 

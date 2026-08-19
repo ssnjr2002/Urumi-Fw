@@ -1,11 +1,6 @@
 # Binding the head at the bake
 
-**Status:** stages 1–3 landed; 4–6 outstanding. The acceptance test
-(`test/production/headResolve.test.ts`) is unskipped and green — a block's Z now
-resolves against the head that holds its tool. What remains is removing the
-reconstruction paths that stage 3 made redundant: the walk and the Controller
-still derive a head from a `headAssignment` map instead of reading `block.head`,
-`plan/` still exists, and `demo/` is knowingly broken and patched at the end.
+**Status:** stages 1–5 landed; 6 outstanding. Nothing reconstructs a head from a tool any more — the walk reads `block.head` and the runner acts on the walk's `rebind` event. What remains is deleting `plan/` and its consumers, and patching `demo/`, which is knowingly broken until the end.
 
 ## The bug, stated once
 

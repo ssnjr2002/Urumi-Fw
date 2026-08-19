@@ -55,8 +55,7 @@ function dualHeadMachine(): MachineConfig {
 /**
  * Compiled blocks with empty segment lists — the walk only reads `profile`,
  * `slot` and `startSteps`, and the inter-block motion is what these tests are
- * about. `head` is 0 throughout: the walk still takes its head from the
- * caller's headAssignment map, and reading block.head instead is stage 4.
+ * about. `head` defaults to 0; `onHeads` re-tags them for the dual-head cases.
  */
 function plan(...tools: (ToolProfile | [ToolProfile, number])[]): CompiledBlock[] {
     return tools.map((t, i) => {
@@ -66,6 +65,16 @@ function plan(...tools: (ToolProfile | [ToolProfile, number])[]): CompiledBlock[
             ? { profile, head: 0, segments: [], startSteps }
             : { profile, slot, head: 0, segments: [], startSteps };
     });
+}
+
+/**
+ * Re-tag blocks with the heads they were compiled against. Since stage 4 this
+ * is the ONLY thing that tells the walk which head a block runs on — there is
+ * no tool→head map any more, because a block's segments are only valid for the
+ * head their Z was resolved against.
+ */
+function onHeads(blocks: CompiledBlock[], ...heads: number[]): CompiledBlock[] {
+    return blocks.map((b, i) => ({ ...b, head: heads[i] ?? 0 }));
 }
 
 /**
@@ -235,10 +244,9 @@ describe("walkSchedule: pause and swap events", () => {
 describe("walkSchedule: head-offset jog on head switch", () => {
     it("emits a jog when the active head changes between blocks", () => {
         const machine = dualHeadMachine();
-        const p = plan(KNIFE, PEN);
+        const p = onHeads(plan(KNIFE, PEN), 0, 1);
         const s = sched(p, dualHeadMachine(), [ToolType.KNIFE, ToolType.PEN]);
-        const headMap = new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 1]]);
-        const events = walkSchedule(s, p, machine, { headAssignment: headMap });
+        const events = walkSchedule(s, p, machine);
         // When we switch from head 0 to head 1, a JOG for the offset diff fires.
         const jogs = motionEvents(events)
             .flatMap((e) => (e.kind === "motion" ? e.segments : []))
@@ -250,13 +258,12 @@ describe("walkSchedule: head-offset jog on head switch", () => {
         // Both heads' Z/A contend for slots 2/3, so the map has to follow the
         // switch. Without this event the runner cannot know it happened.
         const machine = dualHeadMachine();
-        const p = plan(KNIFE, PEN);
+        const p = onHeads(plan(KNIFE, PEN), 0, 1);
         const s = sched(p, dualHeadMachine(), [ToolType.KNIFE, ToolType.PEN]);
-        const events = walkSchedule(s, p, machine, {
-            headAssignment: new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 1]]),
-        });
+        const events = walkSchedule(s, p, machine);
 
-        const at = events.findIndex((e) => e.kind === "rebind");
+        // [0] is the opening rebind onto head 0; the switch is the one after it.
+        const at = events.findIndex((e, i) => e.kind === "rebind" && i > 0);
         expect(at).toBeGreaterThanOrEqual(0);
         expect(events[at]).toEqual({ kind: "rebind", head: 1 });
 
@@ -268,13 +275,16 @@ describe("walkSchedule: head-offset jog on head switch", () => {
         expect(after.length).toBeGreaterThan(0);
     });
 
-    it("emits no rebind when every tool sits on the same head", () => {
-        const p = plan(KNIFE, PEN);
+    it("emits only the opening rebind when every block runs on the same head", () => {
+        // The leading rebind is unconditional — the walk is pure and cannot see
+        // what the firmware is bound to, so it states the head it needs rather
+        // than assuming one. What it must NOT do is emit a second one when
+        // nothing switched.
+        const p = onHeads(plan(KNIFE, PEN), 0, 0);
         const s = sched(p, dualHeadMachine(), [ToolType.KNIFE, ToolType.PEN]);
-        const events = walkSchedule(s, p, dualHeadMachine(), {
-            headAssignment: new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 0]]),
-        });
-        expect(events.some((e) => e.kind === "rebind")).toBe(false);
+        const events = walkSchedule(s, p, dualHeadMachine());
+        const rebinds = events.filter((e) => e.kind === "rebind");
+        expect(rebinds).toEqual([{ kind: "rebind", head: 0 }]);
     });
 });
 
@@ -283,13 +293,14 @@ describe("walkSchedule: event ordering", () => {
         const p = plan(KNIFE, PEN);
         const s = sched(p, singleHeadMachine());
         const events = walkSchedule(s, p, singleHeadMachine());
-        let lastPauseIdx = -1;
-        let firstMotionAfterPause = -1;
-        for (let i = 0; i < events.length; i++) {
-            if (events[i]!.kind === "pause") lastPauseIdx = i;
-            else if (lastPauseIdx >= 0 && firstMotionAfterPause < 0) firstMotionAfterPause = i;
+        // Every pause guards the phase AFTER it, so each one must be followed
+        // by motion and none may trail the last of it. (The old form of this
+        // test compared the FIRST motion after the first pause against the LAST
+        // pause's index, and only passed by arithmetic accident.)
+        const pauses = events.flatMap((e, i) => (e.kind === "pause" ? [i] : []));
+        expect(pauses.length).toBeGreaterThan(0);
+        for (const at of pauses) {
+            expect(events.slice(at + 1).some((e) => e.kind === "motion")).toBe(true);
         }
-        expect(lastPauseIdx).toBeGreaterThanOrEqual(0);
-        expect(firstMotionAfterPause).toBeGreaterThan(lastPauseIdx);
     });
 });

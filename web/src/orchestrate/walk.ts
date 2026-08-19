@@ -6,7 +6,7 @@
  * slot selection, head-offset jogs on head switches, and pause markers where
  * the operator must swap tools.
  *
- * The walk is stateful (it tracks posX/posY/aPhys/headIndex) but side-effect
+ * The walk is stateful (it tracks posX/posY/aPhys) but side-effect
  * free: it returns a WalkEvent[] rather than streaming to hardware. The caller
  * feeds motion events to the RS485 streamer and acts on pause events (prompting
  * the operator, updating the physical mount table, then resuming).
@@ -19,19 +19,23 @@
  *   revolver block (the revolver then jogs to the target slot from 0).
  *   This guarantees block segments play back correctly regardless of history.
  *
- * Head assignment:
- *   Which physical head socket holds a given tool is runtime state — it is NOT
- *   encoded in the Schedule (which only knows tool types). The caller provides
- *   a `headAssignment` map (ToolType → headIndex). For a single-head machine
- *   every tool maps to head 0 (the default when omitted).
+ * Heads:
+ *   The walk does not decide, look up, or guess a head. Each CompiledBlock
+ *   carries the head its segments were discretised against (docs/head_binding.md),
+ *   and this function reads it. A switch — `blocks[i].head` differing from its
+ *   predecessor's — emits a `rebind` event so the axis map can follow, plus the
+ *   head-offset jog between the two sockets. Without the rebind the next block
+ *   would drive the new head's Z/A through the old head's motors.
  *
- *   Because that map is constant for the walk, the head is a pure function of
- *   the tool type and every switch is known here. A switch emits a `rebind`
- *   event so the axis map can follow it — without one the next block would
- *   drive the new head's Z/A through the old head's motors.
+ *   The first block's rebind is unconditional. The walk has no way to know what
+ *   the firmware is bound to when it starts — that is live machine state and
+ *   this function is pure — so it states the head it needs rather than assuming
+ *   a default. The controller's commit is idempotent when the map already
+ *   agrees.
  */
 
 import type { MachineConfig, ResolvedAxes, ToolType } from "../machine/index.js";
+import { axesForHead } from "../machine/index.js";
 import type { CompiledBlock } from "../production/compileBlock.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 import type { SwapPhase, Mounts } from "../production/schedule.js";
@@ -81,16 +85,9 @@ export interface WalkState {
     posY: number;
     /** Physical A position in TRUE steps from the last A-home (0 = homed). */
     aPhys: number;
-    /** Index into machine.heads of the currently active head. */
-    headIndex: number;
 }
 
 export interface WalkOptions {
-    /**
-     * Maps each ToolType in the plan to the head index that holds it.
-     * Absent entries default to head 0. For a single-head machine, omit.
-     */
-    readonly headAssignment?: ReadonlyMap<ToolType, number>;
     /**
      * Minimum feed velocity (mm/s) for travel jog interval clamping.
      * Default 0.5 (matches default QualityConfig.vMin).
@@ -98,16 +95,11 @@ export interface WalkOptions {
     readonly vMin?: number;
     /** Override jog feed (mm/s). Defaults to machine.rapid.feed. */
     readonly jogFeed?: number;
-    /** Initial machine state. Defaults to origin, A=0, head 0. */
+    /** Initial machine state. Defaults to origin, A=0. */
     readonly initialState?: Partial<WalkState>;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-function axesForHead(machine: MachineConfig, headIndex: number): ResolvedAxes {
-    const head = machine.heads[Math.min(headIndex, machine.heads.length - 1)]!;
-    return { x: machine.x, y: machine.y, z: head.z, a: head.a, fCpu: machine.fCpu };
-}
 
 /**
  * Accumulate the net XY and A displacement of a segment list (un-applying
@@ -142,18 +134,20 @@ export function walkSchedule(
     machine: MachineConfig,
     opts: WalkOptions = {},
 ): WalkEvent[] {
-    const {
-        headAssignment = new Map(),
-        vMin = 0.5,
-    } = opts;
+    const { vMin = 0.5 } = opts;
 
     const state: WalkState = {
         posX: 0,
         posY: 0,
         aPhys: 0,
-        headIndex: 0,
         ...opts.initialState,
     };
+
+    // The head the segments emitted so far belong to. `null` until the first
+    // block names one — the walk starts knowing nothing about the binding,
+    // which is why the first block's rebind is unconditional.
+    let curHead: number | null = null;
+    const curAxes = (): ResolvedAxes => axesForHead(machine, curHead ?? machine.defaultHead);
 
     const events: WalkEvent[] = [];
     const slew = machine.slew;
@@ -172,8 +166,7 @@ export function walkSchedule(
     for (const phase of phases) {
         // ── phase boundary: A-home then pause if there's a swap ──────────────
         if (phase.swapIn.length > 0 || phase.swapOut.length > 0) {
-            const axes = axesForHead(machine, state.headIndex);
-            aHome(axes);
+            aHome(curAxes());
             events.push({
                 kind: "pause",
                 swapIn: phase.swapIn,
@@ -185,15 +178,17 @@ export function walkSchedule(
         // ── execute blocks in this phase ──────────────────────────────────────
         for (const blockIdx of phase.blockIndices) {
             const block = blocks[blockIdx]!;
-            const targetHead = headAssignment.get(block.profile.toolType) ?? 0;
-            const prevAxes = axesForHead(machine, state.headIndex);
+            // The head is READ, not derived: these segments were discretised
+            // against it and mean nothing anywhere else.
+            const targetHead = block.head;
+            const prevAxes = curAxes();
             const axes = axesForHead(machine, targetHead);
             const jogFeed = opts.jogFeed ?? machine.rapid.feed;
 
             const interBlock: MicroSegment[] = [];
 
             // ── head switch ───────────────────────────────────────────────────
-            if (targetHead !== state.headIndex) {
+            if (targetHead !== curHead) {
                 // home A on the old head before switching
                 if (state.aPhys !== 0) {
                     const { segments, newAPhys } = aMoveTo(0, state.aPhys, prevAxes, slew);
@@ -204,19 +199,28 @@ export function walkSchedule(
                 // 3 = its motor); everything below needs the incoming head's.
                 // The offset jog is XY only, so it is indifferent and sits on
                 // the far side where the axes are already the new head's.
-                push(interBlock);
-                interBlock.length = 0;
+                // splice, not push-then-clear: `push` stores the array it is
+                // given, so emptying it afterwards empties the event too. That
+                // was invisible while this branch only ran on a real switch
+                // with A off-home; the unconditional opening rebind runs it on
+                // every job.
+                push(interBlock.splice(0));
                 events.push({ kind: "rebind", head: targetHead });
 
-                const jog = headOffsetJog(
-                    machine.heads[state.headIndex]!,
-                    machine.heads[targetHead]!,
-                    axes,
-                    vMin,
-                    jogFeed,
-                );
-                interBlock.push(...jog);
-                state.headIndex = targetHead;
+                // No jog on the opening rebind: there is no socket to travel
+                // FROM. The first block's start is reached by the ordinary
+                // travel jog below, in the new head's frame.
+                if (curHead !== null) {
+                    const jog = headOffsetJog(
+                        machine.heads[curHead]!,
+                        machine.heads[targetHead]!,
+                        axes,
+                        vMin,
+                        jogFeed,
+                    );
+                    interBlock.push(...jog);
+                }
+                curHead = targetHead;
             }
 
             // ── A management ──────────────────────────────────────────────────

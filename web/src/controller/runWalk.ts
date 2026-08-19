@@ -21,10 +21,15 @@
  *      Streaming past it is not an option — the firmware parks at that segment
  *      and NACKs the whole remainder with NACK_PAUSED.
  *
- *   4. On a dual-head machine a tool swap is also a SLOT REBIND. The walk has
- *      switched to the head holding the incoming tool; if the axis map does not
+ *   4. On a dual-head machine the axis map has to follow the walk. The walk
+ *      says WHERE with a `rebind` event carrying the head; if the map does not
  *      follow, the next block drives the new head's Z/A through the old head's
- *      motors.
+ *      motors. Nothing here reconstructs that head from the tools — the head a
+ *      block was compiled against is the only one its segments are valid for.
+ *
+ *   5. An operator saying "done" is not evidence. What is actually fitted is
+ *      checked before the first segment and again after every swap, because a
+ *      tool in the wrong socket is a silent 2x Z error, not a failure.
  *
  * Peripheral policy is deliberately NOT here. Which node runs the knife
  * oscillator, and whether the vacuum belongs to the job or the shop, is
@@ -49,6 +54,8 @@ import { MachineState } from "../wire/format/status.js";
 import { stateName } from "../wire/format/names.js";
 import type { AbortToken } from "../wire/link/transport.js";
 import type { Controller } from "./controller.js";
+import { verifyMounts, verifyPhaseMounts } from "./controller.js";
+import type { CompiledBlock } from "../production/compileBlock.js";
 
 /** A pause event, as handed to `confirmSwap`. */
 export interface SwapRequest {
@@ -56,17 +63,23 @@ export interface SwapRequest {
     readonly swapOut: readonly ToolType[];
     /** The full tool set in force for the phase this pause opens. */
     readonly mounts: Mounts;
-    /** Head the map was rebound to for this phase, or null if no rebind was needed. */
-    readonly head: number | null;
 }
 
 export interface RunWalkHooks {
     /**
+     * The blocks these events walk, for the pre-flight mount check.
+     *
+     * Data, not a callback — it lives here so the `(controller, events)` call
+     * shape survives. Omit it and the pre-flight is skipped, which is what a
+     * caller streaming hand-built events wants; a real job should pass them.
+     */
+    blocks?: readonly CompiledBlock[];
+    /**
      * Ask the operator to make the swap. Return false to abandon the run.
      *
-     * Called AFTER the axis map has been rebound, so by the time the prompt is
-     * on screen the machine is already bound to the head the operator is about
-     * to fit a tool into.
+     * What the operator did is CHECKED when this returns: `true` is a human
+     * claim, and the whole point of stage 5 is that a mis-mount becomes a
+     * refusal rather than a wrong cut.
      */
     confirmSwap?(req: SwapRequest): Promise<boolean> | boolean;
     /**
@@ -137,6 +150,9 @@ export async function runWalk(
             `machine is ${stateName(pre.state)} — unalarm or commit an axis map first`,
         );
     }
+    // Rule 5, before any material moves: every block's tool must be in the
+    // socket that block was compiled for.
+    if (hooks.blocks) verifyMounts(hooks.blocks, controller.setup);
 
     return controller.withLease("job", async () => {
         // A local copy: the duty-break split re-inserts the tail of a batch as a
@@ -166,14 +182,15 @@ export async function runWalk(
 
             if (ev.kind === "pause") {
                 pauses++;
-                const head = await rebindForSwap(controller, ev.swapIn, log);
                 const ok = await hooks.confirmSwap?.({
                     swapIn: ev.swapIn,
                     swapOut: ev.swapOut,
                     mounts: ev.mounts,
-                    head,
                 });
                 if (ok === false) throw new Error("cancelled by the operator at the tool swap");
+
+                // Rule 5. The machine just changed under us; re-check it.
+                verifyPhaseMounts(ev.mounts, controller.setup);
 
                 // After the tool is physically in and before anything moves —
                 // the machine is PAUSED here, the one window the gate allows.
@@ -266,44 +283,6 @@ export async function runWalk(
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Rule 4. If the incoming tools live on a head the firmware is not bound to,
- * rebind before anything else moves. Returns the head rebound to, or null when
- * the map was already right.
- *
- * The wait matters: `commit` refuses while RUNNING, and after a MICRO_PAUSE the
- * machine may still be ramping down when this runs.
- */
-async function rebindForSwap(
-    controller: Controller,
-    swapIn: readonly ToolType[],
-    log: (m: string, k?: "note" | "tx" | "ok" | "err") => void,
-): Promise<number | null> {
-    const assign = controller.headAssignment;
-    let want: number | undefined;
-    for (const t of swapIn) {
-        const h = assign.get(t);
-        if (h !== undefined) {
-            want = h;
-            break;
-        }
-    }
-    const head = want ?? controller.setup.engaged;
-
-    // No head change AND the firmware already agrees: nothing owed. The second
-    // half is not redundant — a map can drift out of sync without any head
-    // switch (another host, a Pico reboot mid-job), and streaming the next block
-    // against a stale map is the failure this rebind exists to prevent.
-    if (head === controller.setup.engaged && controller.synced) return null;
-
-    if (!(await controller.waitAtRest())) {
-        throw new Error("machine did not come to rest for the slot rebind");
-    }
-    log(`rebinding slots to head ${head}`, "note");
-    await controller.commit(head);
-    return head;
-}
 
 async function resume(
     controller: Controller,

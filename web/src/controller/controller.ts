@@ -48,6 +48,7 @@ import {
     type Setup,
 } from "../machine/setup.js";
 import type { SlotMap } from "../machine/slots.js";
+import type { CompiledBlock } from "../production/compileBlock.js";
 import {
     homePosition,
     headOffset,
@@ -194,24 +195,6 @@ export class Controller {
     /** The tool in the engaged head, or null if that socket is empty. */
     get tool(): ToolProfile | null {
         return engagedTool(this._setup);
-    }
-
-    /**
-     * tool type → head socket, for handing to `walkSchedule`.
-     *
-     * DYING. Compiled blocks will carry their own head (docs/head_binding.md
-     * stage 4), which removes both this getter and walkSchedule's option. Until
-     * then it reads the LIVE setup rather than the config — config no longer
-     * claims to know where a tool sits, and where it sits right now is the only
-     * answer a runtime rebind can act on. A tool fitted nowhere is absent, and
-     * the caller's `?? 0` covers it exactly as before.
-     */
-    get headAssignment(): ReadonlyMap<ToolType, number> {
-        const m = new Map<ToolType, number>();
-        this._setup.mounts.forEach((p, i) => {
-            if (p && !m.has(p.toolType)) m.set(p.toolType, i);
-        });
-        return m;
     }
 
     // -- events ---------------------------------------------------------------
@@ -542,4 +525,49 @@ export class Controller {
             /* already gone */
         }
     }
+}
+
+// ── mount verification ───────────────────────────────────────────────────────
+
+/**
+ * Refuse to run a plan the machine is not physically set up for.
+ *
+ * Compare, do not derive. A CompiledBlock's `head` is not a preference — its
+ * segments were discretised against that head's Z/A calibration and mean
+ * nothing anywhere else, so a block whose tool is fitted to a DIFFERENT socket
+ * cannot be salvaged by rebinding. On this bench machine head 0's Z is 1200
+ * steps/mm and head 1's is 600: running it anyway is a clean 2x error with no
+ * exception and no wrong-looking number. Throwing is the whole point.
+ */
+export function verifyMounts(blocks: readonly CompiledBlock[], setup: Setup): void {
+    for (const b of blocks) {
+        const fitted = setup.mounts[b.head];
+        if (fitted?.toolType !== b.profile.toolType) {
+            throw new Error(
+                `block needs ${b.profile.name} on head ${b.head}, but head ${b.head} ` +
+                    `holds ${fitted?.name ?? "nothing"}`,
+            );
+        }
+    }
+}
+
+/**
+ * The same check against a phase's mount set rather than its blocks — what a
+ * runner has in hand at a pause, where the events carry `mounts` and not the
+ * blocks behind them.
+ *
+ * `null` entries are "this socket is deliberately empty for this phase" and are
+ * not checked: a phase that needs nothing in head 1 does not care what is in it.
+ */
+export function verifyPhaseMounts(mounts: readonly (ToolType | null)[], setup: Setup): void {
+    mounts.forEach((want, head) => {
+        if (want === null) return;
+        const fitted = setup.mounts[head];
+        if (fitted?.toolType !== want) {
+            throw new Error(
+                `this phase needs ${want} on head ${head}, but head ${head} ` +
+                    `holds ${fitted?.name ?? "nothing"}`,
+            );
+        }
+    });
 }

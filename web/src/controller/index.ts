@@ -15,6 +15,8 @@ export {
     type Lease,
     type ControllerOptions,
     type ControllerEvents,
+    verifyMounts,
+    verifyPhaseMounts,
 } from "./controller.js";
 
 export {

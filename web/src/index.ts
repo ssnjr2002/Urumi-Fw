@@ -394,6 +394,8 @@ export {
     Controller,
     BusyError,
     runWalk,
+    verifyMounts,
+    verifyPhaseMounts,
     type Lease,
     type ControllerOptions,
     type ControllerEvents,
