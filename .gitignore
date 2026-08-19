@@ -12,6 +12,11 @@ pipeline/**/__pycache__/
 .venv/
 **/.venv/
 
+# Node dependencies. web/ has its own copy of this rule; this one catches the
+# stray root node_modules/ that npm creates when a command is run from the
+# repo root instead of web/.
+node_modules/
+
 # Generated reference vectors for the C++ planner port (docs/port_workflow.md).
 # The GENERATORS are tracked — web/test/port/cppRef*.test.ts — and are the only
 # definition of these files. The outputs are large (discretize_ref.txt alone is
