@@ -1385,20 +1385,11 @@ function compileJob(initialState) {
     if (!svgText) throw new Error('select an SVG first');
     const { plan } = bakePlan(config, svgText, { defaultTool: jobTool.value.trim() || undefined });
 
-    // ONE tool per phase, even on a dual-head machine — deliberately not
-    // `heads.length`.
-    //
-    // With both heads mounted, the walk switches heads at a BLOCK boundary
-    // inside a single phase, and a WalkEvent of kind "motion" does not say
-    // which head its segments belong to. The axis map therefore cannot follow
-    // the switch, and the second block's Z/A would drive the first head's
-    // motors. Scheduling one tool at a time forces every head change to become
-    // a pause, which is a boundary this demo CAN rebind at (see handleSwap).
-    //
-    // The cost is real: a dual-head machine gives up its whole advantage and
-    // swaps as often as a single-head one. Lifting it means teaching WalkEvent
-    // to carry the head index, at which point this becomes heads.length.
-    const schedule = scheduleMounts(plan, 1);
+    // One tool per socket. The scheduler never reorders blocks, so a plan that
+    // alternates tools produces the same number of phase boundaries either way
+    // — with one head each is an operator swap, with two the walk emits a
+    // `rebind` event and runWalk does it in under a second.
+    const schedule = scheduleMounts(plan, config.machine.heads.length);
     const events = walkSchedule(schedule, plan, config.machine, {
         headAssignment: headAssignment(),
         ...(initialState ? { initialState } : {}),

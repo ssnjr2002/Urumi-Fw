@@ -20,6 +20,7 @@ import {
     type ToolProfile,
 } from "../../src/machine/index.js";
 import { MICRO_JOG } from "../../src/wire/format/microsegment.js";
+import { twoHeadMachine } from "../machines.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -37,20 +38,17 @@ function singleHeadMachine(): MachineConfig {
     );
 }
 
+/**
+ * twoHeadMachine() with heads DELIBERATELY DIFFERENT (1200 vs 600 steps/mm on
+ * Z) — see its doc comment in test/machines.ts. A shared axisConfig here would
+ * make every test in this file pass whether or not walkSchedule resolved the
+ * correct head's calibration.
+ */
 function dualHeadMachine(): MachineConfig {
-    const z = axisConfig(busNode(3), 1200, { invert: true });
-    const a = axisConfig(busNode(4), 51.667, { rotary: true, invert: true });
-    return machineConfig(
-        // maxAccel is not optional decoration: travel jogs are ramped against
-        // it, and a machine that declares none is refused rather than slammed.
-        axisConfig(busNode(1), 160, { invert: true, maxFeed: 80, maxAccel: 1000 }),
-        axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
-        [
-            toolHead(z, a, { xOffset: -50, yOffset: 0 }),
-            toolHead(z, a, { xOffset:  50, yOffset: 0 }),
-        ],
-        { fCpu: 150_000_000, rapid: { feed: 80 } },
-    );
+    return twoHeadMachine([
+        { xOffset: -50, yOffset: 0 },
+        { xOffset: 50, yOffset: 0 },
+    ]);
 }
 
 function plan(...tools: (ToolProfile | [ToolProfile, number])[]): Plan {
@@ -234,6 +232,37 @@ describe("walkSchedule: head-offset jog on head switch", () => {
             .flatMap((e) => (e.kind === "motion" ? e.segments : []))
             .filter((seg) => seg.flags === MICRO_JOG && (seg.dx !== 0 || seg.dy !== 0));
         expect(jogs.length).toBeGreaterThan(0);
+    });
+
+    it("emits a rebind naming the incoming head, before that head's offset jog", () => {
+        // Both heads' Z/A contend for slots 2/3, so the map has to follow the
+        // switch. Without this event the runner cannot know it happened.
+        const machine = dualHeadMachine();
+        const p = plan(KNIFE, PEN);
+        const s = scheduleMounts(p, 2, [ToolType.KNIFE, ToolType.PEN]);
+        const events = walkSchedule(s, p, machine, {
+            headAssignment: new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 1]]),
+        });
+
+        const at = events.findIndex((e) => e.kind === "rebind");
+        expect(at).toBeGreaterThanOrEqual(0);
+        expect(events[at]).toEqual({ kind: "rebind", head: 1 });
+
+        // The +100mm offset jog belongs to the incoming head and must land
+        // after the rebind — it is the first thing the new binding governs.
+        const after = events.slice(at + 1)
+            .flatMap((e) => (e.kind === "motion" ? e.segments : []))
+            .filter((seg) => seg.flags === MICRO_JOG && seg.dx !== 0);
+        expect(after.length).toBeGreaterThan(0);
+    });
+
+    it("emits no rebind when every tool sits on the same head", () => {
+        const p = plan(KNIFE, PEN);
+        const s = scheduleMounts(p, 2, [ToolType.KNIFE, ToolType.PEN]);
+        const events = walkSchedule(s, p, dualHeadMachine(), {
+            headAssignment: new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 0]]),
+        });
+        expect(events.some((e) => e.kind === "rebind")).toBe(false);
     });
 });
 

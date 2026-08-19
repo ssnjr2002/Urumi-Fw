@@ -24,6 +24,11 @@
  *   encoded in the Schedule (which only knows tool types). The caller provides
  *   a `headAssignment` map (ToolType → headIndex). For a single-head machine
  *   every tool maps to head 0 (the default when omitted).
+ *
+ *   Because that map is constant for the walk, the head is a pure function of
+ *   the tool type and every switch is known here. A switch emits a `rebind`
+ *   event so the axis map can follow it — without one the next block would
+ *   drive the new head's Z/A through the old head's motors.
  */
 
 import type { MachineConfig, ResolvedAxes, ToolType } from "../machine/index.js";
@@ -53,6 +58,21 @@ export type WalkEvent =
            * oscillator, blower, vacuum) for the phase ahead.
            */
           readonly mount: MountSet;
+      }
+    | {
+          /**
+           * Bind the wire's Z/A slots to `head` before anything after this
+           * point moves. Emitted at a head switch, between the outgoing head's
+           * last A move and the incoming head's first one.
+           *
+           * X/Y are fixed at slots 0/1, but both heads' Z/A contend for slots
+           * 2/3 — so the segments either side of this event need DIFFERENT
+           * bindings, and no single motion event can carry both. The firmware
+           * refuses to rebind while RUNNING, so the runner stamps MICRO_PAUSE
+           * on the batch before it and waits for rest.
+           */
+          readonly kind: "rebind";
+          readonly head: number;
       };
 
 /** Mutable state the walk maintains across blocks. All positions in TRUE steps (pre-invert). */
@@ -180,6 +200,14 @@ export function walkSchedule(
                     interBlock.push(...segments);
                     state.aPhys = newAPhys;
                 }
+                // Cut here. Everything above drove the OUTGOING head's A (slot
+                // 3 = its motor); everything below needs the incoming head's.
+                // The offset jog is XY only, so it is indifferent and sits on
+                // the far side where the axes are already the new head's.
+                push(interBlock);
+                interBlock.length = 0;
+                events.push({ kind: "rebind", head: targetHead });
+
                 const jog = headOffsetJog(
                     machine.heads[state.headIndex]!,
                     machine.heads[targetHead]!,

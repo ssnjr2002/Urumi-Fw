@@ -27,7 +27,7 @@ import {
     type PipelineConfig,
     type ToolProfile,
 } from "../src/machine/schema.js";
-import { KNIFE, TOOL_PROFILES } from "../src/machine/tools.js";
+import { KNIFE, PEN, TOOL_PROFILES } from "../src/machine/tools.js";
 import { DEFAULTS } from "../src/machine/defaults.js";
 
 /**
@@ -95,6 +95,40 @@ export function defaultMachine(): MachineConfig {
         axisConfig(busNode(1), 160.0, { maxFeed: 80.0, maxAccel: 1000.0, invert: true }),
         axisConfig(busNode(2), 160.0, { maxFeed: 80.0, maxAccel: 1000.0 }),
         [head],
+    );
+}
+
+/**
+ * Two heads with DELIBERATELY DIFFERENT Z calibration — 1200 vs 600
+ * steps/mm, the bench machine's actual ratio. A dual-head fixture that shares
+ * one axisConfig between heads cannot fail on the bug this shape exists to
+ * catch: resolving Z/A against the wrong head is silently a 2x error, and a
+ * test built on identical heads passes whether or not the resolve is correct.
+ *
+ * Head 0 seeds KNIFE (node 3 Z, node 4 A), head 1 seeds PEN (node 5 Z, node 6
+ * A) — distinct nodes too, so a wire-level test can tell which head a command
+ * actually bound.
+ */
+export function twoHeadMachine(offsets: { xOffset: number; yOffset: number }[] = [
+    { xOffset: 0, yOffset: 0 },
+    { xOffset: 50, yOffset: 0 },
+]): MachineConfig {
+    return machineConfig(
+        axisConfig(busNode(1), 160, { invert: true, maxFeed: 80, maxAccel: 1000 }),
+        axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
+        [
+            toolHead(
+                axisConfig(busNode(3), 1200, { invert: true, maxFeed: 10, maxAccel: 300 }),
+                axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxFeed: 100, maxAccel: 2000 }),
+                { profile: KNIFE, ...offsets[0] },
+            ),
+            toolHead(
+                axisConfig(busNode(5), 600, { maxFeed: 10, maxAccel: 300 }),
+                axisConfig(busNode(6), 51.667, { rotary: true, maxFeed: 100, maxAccel: 2000 }),
+                { profile: PEN, ...offsets[1] },
+            ),
+        ],
+        { fCpu: DEFAULTS.machine.fCpu, rapid: { feed: 80 } },
     );
 }
 

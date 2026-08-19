@@ -19,7 +19,7 @@ The Offline tab acts as a linear setup wizard. Each step exposes specific UI fee
 | :--- | :--- | :--- | :--- |
 | **Master** | COM Port | *Single button encapsulates control & state* | *Single button encapsulates control & state* |
 | | State & Reason | Display the current state and reason | State Machine Controls: ESTOP, Alarm, Unalarm etc |
-| | Master Enable | Display the state (all present axes Homed & Enabled) | Button to enable all, disable all |
+| | Master Enable | Display the state (all present axes Homed & Enabled) | Button pair mapping to `axes_enable on` / `axes_enable off` |
 | | Master Global Command | Master Global Last Command Ack Nack Display | Global Machine Controls: SetOrigin, other commands etc |
 | **Bus Nodes** | BusNode: id, role, present | If present, monitor last ping and last enabled status | If present, separate enable button and disable button. Also ping button (if present) |
 | **Axis Nodes** | Axis Setup & Info *(per present axis)* | Display axis, node id, monitor Homed state, Position (mm) | SetOrigin for this axis |

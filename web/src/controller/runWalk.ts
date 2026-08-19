@@ -187,6 +187,21 @@ export async function runWalk(
                 continue;
             }
 
+            if (ev.kind === "rebind") {
+                // A swap minus the operator: the walk changed heads mid-phase
+                // and the map must follow before the next segment drives a Z or
+                // an A. No MICRO_PAUSE is needed to get here — the batch before
+                // a rebind is not followed by a pause, so it already settled to
+                // IDLE, and IDLE is at rest.
+                if (!(await controller.waitAtRest())) {
+                    throw new Error("machine did not come to rest for the slot rebind");
+                }
+                log(`rebinding slots to head ${ev.head}`, "note");
+                await controller.commit(ev.head);
+                i++;
+                continue;
+            }
+
             // Coalesce consecutive motion events into one stream.
             const batch: MicroSegment[] = [];
             while (i < queue.length && queue[i]!.kind === "motion") {

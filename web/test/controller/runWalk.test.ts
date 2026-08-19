@@ -262,6 +262,30 @@ describe("head rebinding", () => {
         expect(controller.synced).toBe(true);
     });
 
+    it("acts on a rebind event with no operator involved", async () => {
+        // The mid-phase case: the walk changed heads between blocks, so there
+        // is no pause to hang the rebind off. Head 1's Z/A are nodes 5 and 6.
+        const { controller, sim } = await bench();
+        const mapDuring: (number | null)[][] = [];
+
+        await runWalk(controller, [
+            motion(2),
+            { kind: "rebind", head: 1 },
+            motion(2),
+        ], {
+            confirmSwap: () => {
+                throw new Error("a rebind must not prompt the operator");
+            },
+            onProgress: () => mapDuring.push([...sim.slotNode]),
+        });
+
+        expect(sim.slotNode).toEqual([1, 2, 5, 6]);
+        expect(controller.setup.engaged).toBe(1);
+        expect(controller.synced).toBe(true);
+        // Bound between the two batches, not before both of them.
+        expect(mapDuring).toEqual([[1, 2, 3, 4], [1, 2, 5, 6]]);
+    });
+
     it("leaves the map alone when the swap does not change heads", async () => {
         const { controller, sim } = await bench();
         await runWalk(controller, [pause([KNIFE.toolType])], {
