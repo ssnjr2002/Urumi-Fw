@@ -34,7 +34,8 @@
  */
 
 import type { WalkEvent } from "../orchestrate/walk.js";
-import type { MountSet } from "../orchestrate/schedule.js";
+import type { Mounts } from "../production/schedule.js";
+import type { ToolType } from "../machine/index.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 import {
     MICRO_PAUSE,
@@ -51,10 +52,10 @@ import type { Controller } from "./controller.js";
 
 /** A pause event, as handed to `confirmSwap`. */
 export interface SwapRequest {
-    readonly swapIn: MountSet;
-    readonly swapOut: MountSet;
+    readonly swapIn: readonly ToolType[];
+    readonly swapOut: readonly ToolType[];
     /** The full tool set in force for the phase this pause opens. */
-    readonly mount: MountSet;
+    readonly mounts: Mounts;
     /** Head the map was rebound to for this phase, or null if no rebind was needed. */
     readonly head: number | null;
 }
@@ -73,13 +74,13 @@ export interface RunWalkHooks {
      * The one window where a peripheral relay is accepted. `mount` is the tool
      * set about to cut; `null` means teardown.
      */
-    onPhase?(mount: MountSet | null, why: string): Promise<void> | void;
+    onPhase?(mounts: Mounts | null, why: string): Promise<void> | void;
     /**
      * A baked duty break: the machine is PAUSED at a lift, the blade is clear.
      * The caller releases, waits out the dwell, re-asserts. Throwing here aborts
      * the run, which is correct — resuming would plunge a dead tool.
      */
-    onDutyBreak?(mount: MountSet): Promise<void> | void;
+    onDutyBreak?(mounts: Mounts): Promise<void> | void;
     /** Segments confirmed so far, out of the total. For a progress bar. */
     onProgress?(sent: number, total: number): void;
     /** Narration. `kind` mirrors the demo console's classes. */
@@ -96,7 +97,7 @@ export interface RunWalkHooks {
      * announce what it is cutting with. Without this the opening `onPhase` would
      * arm nothing and the first blade would drag cold.
      */
-    initialMount?: MountSet;
+    initialMount?: Mounts;
 }
 
 export interface RunWalkResult {
@@ -149,7 +150,7 @@ export async function runWalk(
 
         // Which tools are live right now. A duty break needs the profile whose
         // dutyLimits produced it, and the segments themselves carry only timing.
-        let activeMount: MountSet = hooks.initialMount ?? firstMount(queue);
+        let activeMount: Mounts = hooks.initialMount ?? firstMount(queue);
         await hooks.onPhase?.(activeMount, "job start");
 
         let i = 0;
@@ -169,15 +170,15 @@ export async function runWalk(
                 const ok = await hooks.confirmSwap?.({
                     swapIn: ev.swapIn,
                     swapOut: ev.swapOut,
-                    mount: ev.mount,
+                    mounts: ev.mounts,
                     head,
                 });
                 if (ok === false) throw new Error("cancelled by the operator at the tool swap");
 
                 // After the tool is physically in and before anything moves —
                 // the machine is PAUSED here, the one window the gate allows.
-                await hooks.onPhase?.(ev.mount, "phase change");
-                activeMount = ev.mount;
+                await hooks.onPhase?.(ev.mounts, "phase change");
+                activeMount = ev.mounts;
 
                 if (machinePaused) {
                     await resume(controller, log);
@@ -276,7 +277,7 @@ export async function runWalk(
  */
 async function rebindForSwap(
     controller: Controller,
-    swapIn: MountSet,
+    swapIn: readonly ToolType[],
     log: (m: string, k?: "note" | "tx" | "ok" | "err") => void,
 ): Promise<number | null> {
     const assign = controller.headAssignment;
@@ -319,7 +320,7 @@ function countSegments(events: readonly WalkEvent[]): number {
     return n;
 }
 
-function firstMount(events: readonly WalkEvent[]): MountSet {
-    for (const e of events) if (e.kind === "pause") return e.mount;
+function firstMount(events: readonly WalkEvent[]): Mounts {
+    for (const e of events) if (e.kind === "pause") return e.mounts;
     return [];
 }

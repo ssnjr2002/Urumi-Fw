@@ -34,7 +34,7 @@
 import type { MachineConfig, ResolvedAxes, ToolType } from "../machine/index.js";
 import type { Plan } from "../plan/plan.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
-import type { Schedule, MountSet } from "./schedule.js";
+import type { SwapPhase, Mounts } from "../production/schedule.js";
 import {
     aMoveTo,
     travelJog,
@@ -48,8 +48,8 @@ export type WalkEvent =
     | { readonly kind: "motion"; readonly segments: readonly MicroSegment[] }
     | {
           readonly kind: "pause";
-          readonly swapIn: MountSet;
-          readonly swapOut: MountSet;
+          readonly swapIn: readonly ToolType[];
+          readonly swapOut: readonly ToolType[];
           /**
            * The full mount set in force for the phase this pause opens — not
            * just the diff. swapIn/swapOut tell the operator what to change;
@@ -57,7 +57,7 @@ export type WalkEvent =
            * which is what a host needs to decide peripheral state (knife
            * oscillator, blower, vacuum) for the phase ahead.
            */
-          readonly mount: MountSet;
+          readonly mounts: Mounts;
       }
     | {
           /**
@@ -129,7 +129,7 @@ function netDisplacement(
 // ── walk ──────────────────────────────────────────────────────────────────────
 
 /**
- * Walk a Schedule, emitting WalkEvents in execution order.
+ * Walk the phases, emitting WalkEvents in execution order.
  *
  * Each motion event is a flat MicroSegment[] ready to stream. Each pause event
  * tells the caller which tools to swap before continuing. The caller drives
@@ -137,7 +137,7 @@ function netDisplacement(
  * (or buffer the full output and advance accordingly).
  */
 export function walkSchedule(
-    schedule: Schedule,
+    phases: readonly SwapPhase[],
     plan: Plan,
     machine: MachineConfig,
     opts: WalkOptions = {},
@@ -169,7 +169,7 @@ export function walkSchedule(
         state.aPhys = newAPhys;
     }
 
-    for (const phase of schedule.phases) {
+    for (const phase of phases) {
         // ── phase boundary: A-home then pause if there's a swap ──────────────
         if (phase.swapIn.length > 0 || phase.swapOut.length > 0) {
             const axes = axesForHead(machine, state.headIndex);
@@ -178,7 +178,7 @@ export function walkSchedule(
                 kind: "pause",
                 swapIn: phase.swapIn,
                 swapOut: phase.swapOut,
-                mount: phase.mount,
+                mounts: phase.mounts,
             });
         }
 

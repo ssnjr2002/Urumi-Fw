@@ -33,6 +33,21 @@ import { discretize } from "../toolpath/discretize.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 import { scheduleDutyBreaks } from "./dutyBreaks.js";
 
+/**
+ * One layer's work, before compiling: a tool, the geometry it cuts, and for a
+ * revolver the slot that geometry belongs to.
+ *
+ * Lives here, next to the function that consumes it, because "a block" only
+ * means anything in relation to the compile. `slot` stays out of compileBlock's
+ * arguments — the compiler never reads it, so threading it through just to have
+ * it echoed back would be ceremony.
+ */
+export interface Block {
+    readonly profile: ToolProfile;
+    readonly slot?: number;
+    readonly subpaths: readonly (readonly CubicBezier[])[];
+}
+
 export interface CompileBlockResult {
     /** Compiled wire events in execution order. */
     readonly segments: MicroSegment[];

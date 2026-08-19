@@ -48,7 +48,8 @@ describe("bakePlan: single-tool equivalence", () => {
         // plan reproduces the file. (segment equality would trip over -0 vs 0,
         // which the int32 wire encoding collapses — same bytes either way.)
         const config = defaultConfig();
-        const { bytes } = bakePlan(config, svg("test_circle.svg"), { defaultTool: "knife" });
+        const { plan } = bakePlan(config, svg("test_circle.svg"), { defaultTool: "knife" });
+        const bytes = savePlan(plan);
         expect(savePlan(loadPlan(bytes))).toEqual(bytes);
     });
 });
@@ -79,8 +80,8 @@ describe("bakePlan: revolver slots", () => {
     it("round-trips slots through the .plan file", () => {
         const config = defaultConfig();
         const text = wrap(`<g id="revolver_pen"><g id="slot2">${tri(10, 10)}</g></g>`);
-        const { bytes } = bakePlan(config, text);
-        expect(loadPlan(bytes).blocks[0]!.slot).toBe(1);
+        const { plan } = bakePlan(config, text);
+        expect(loadPlan(savePlan(plan)).blocks[0]!.slot).toBe(1);
     });
 });
 

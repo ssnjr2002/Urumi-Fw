@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { walkSchedule, type WalkEvent } from "../../src/orchestrate/walk.js";
-import { scheduleMounts } from "../../src/orchestrate/schedule.js";
+import { scheduleMounts, type Mounts } from "../../src/production/schedule.js";
 import type { Plan } from "../../src/plan/plan.js";
 import {
     PEN,
@@ -32,6 +32,7 @@ function singleHeadMachine(): MachineConfig {
             toolHead(
                 axisConfig(busNode(3), 1200, { invert: true }),
                 axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxFeed: 100, maxAccel: 2000 }),
+                { accepts: [ToolType.PEN, ToolType.KNIFE, ToolType.CREASE, ToolType.REVOLVER_PEN] },
             ),
         ],
         { fCpu: 150_000_000, rapid: { feed: 80 } },
@@ -63,6 +64,19 @@ function plan(...tools: (ToolProfile | [ToolProfile, number])[]): Plan {
     };
 }
 
+/**
+ * Schedule a plan the way bakePlan does. The scheduler needs the machine now
+ * (it decides heads from `accepts`), so the head count is no longer something a
+ * test states — it follows from the machine the walk runs on.
+ */
+function sched(p: Plan, machine: MachineConfig, mounts?: Mounts) {
+    return scheduleMounts(
+        machine,
+        p.blocks.map((b) => b.profile.toolType),
+        mounts ?? machine.heads.map(() => null),
+    );
+}
+
 function motionEvents(events: WalkEvent[]): WalkEvent[] {
     return events.filter((e) => e.kind === "motion");
 }
@@ -75,7 +89,7 @@ function pauseEvents(events: WalkEvent[]): WalkEvent[] {
 
 describe("walkSchedule: empty plan", () => {
     it("produces no events", () => {
-        const s = scheduleMounts({ blocks: [] }, 1);
+        const s = sched({ blocks: [] }, singleHeadMachine());
         expect(walkSchedule(s, { blocks: [] }, singleHeadMachine())).toEqual([]);
     });
 });
@@ -85,7 +99,7 @@ describe("walkSchedule: single phase, no swap needed", () => {
         // seedMounted=[] → first phase has swapIn=[KNIFE] but that IS the bare-start fill.
         // Pause fires because swapIn is non-empty (operator must load the tool).
         const p = plan(PEN);
-        const s = scheduleMounts(p, 1);
+        const s = sched(p, singleHeadMachine());
         const events = walkSchedule(s, p, singleHeadMachine());
         const pauses = pauseEvents(events);
         expect(pauses).toHaveLength(1); // must load PEN before start
@@ -94,7 +108,7 @@ describe("walkSchedule: single phase, no swap needed", () => {
 
     it("no pause when the seed already has the right tool", () => {
         const p = plan(PEN);
-        const s = scheduleMounts(p, 1, [ToolType.PEN]);
+        const s = sched(p, singleHeadMachine(), [ToolType.PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         expect(pauseEvents(events)).toHaveLength(0);
     });
@@ -104,7 +118,7 @@ describe("walkSchedule: travel jog between blocks", () => {
     it("emits a travel jog between staggered blocks", () => {
         // Two pen blocks at x=0 and x=1000; should get a JOG segment between them.
         const p = plan(PEN, PEN);
-        const s = scheduleMounts(p, 1, [ToolType.PEN]);
+        const s = sched(p, singleHeadMachine(), [ToolType.PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         const motions = motionEvents(events);
         // Find any motion event containing a JOG
@@ -121,7 +135,7 @@ describe("walkSchedule: travel jog between blocks", () => {
                 { profile: PEN, segments: [], startSteps: { x: 0, y: 0 } },
             ],
         };
-        const s = scheduleMounts(p, 1, [ToolType.PEN]);
+        const s = sched(p, singleHeadMachine(), [ToolType.PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         const anyJog = motionEvents(events).some(
             (e) => e.kind === "motion" && e.segments.some((seg) => seg.flags === MICRO_JOG),
@@ -133,7 +147,7 @@ describe("walkSchedule: travel jog between blocks", () => {
 describe("walkSchedule: A-home before tangential blocks", () => {
     it("emits an A move before a knife block when aPhys != 0", () => {
         const p = plan(KNIFE);
-        const s = scheduleMounts(p, 1, [ToolType.KNIFE]);
+        const s = sched(p, singleHeadMachine(), [ToolType.KNIFE]);
         // Start with aPhys at some non-zero position.
         const events = walkSchedule(s, p, singleHeadMachine(), {
             initialState: { aPhys: 500 },
@@ -148,7 +162,7 @@ describe("walkSchedule: A-home before tangential blocks", () => {
 
     it("does not emit A-home when aPhys is already 0", () => {
         const p = plan(KNIFE);
-        const s = scheduleMounts(p, 1, [ToolType.KNIFE]);
+        const s = sched(p, singleHeadMachine(), [ToolType.KNIFE]);
         const events = walkSchedule(s, p, singleHeadMachine(), {
             initialState: { aPhys: 0 },
         });
@@ -165,7 +179,7 @@ describe("walkSchedule: revolver slot selection", () => {
         const p: Plan = {
             blocks: [{ profile: REVOLVER_PEN, slot: 1, segments: [], startSteps: { x: 0, y: 0 } }],
         };
-        const s = scheduleMounts(p, 1, [ToolType.REVOLVER_PEN]);
+        const s = sched(p, singleHeadMachine(), [ToolType.REVOLVER_PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         const aSegs = motionEvents(events)
             .flatMap((e) => (e.kind === "motion" ? e.segments : []))
@@ -177,7 +191,7 @@ describe("walkSchedule: revolver slot selection", () => {
         const p: Plan = {
             blocks: [{ profile: REVOLVER_PEN, slot: 0, segments: [], startSteps: { x: 0, y: 0 } }],
         };
-        const s = scheduleMounts(p, 1, [ToolType.REVOLVER_PEN]);
+        const s = sched(p, singleHeadMachine(), [ToolType.REVOLVER_PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         const anyA = motionEvents(events)
             .flatMap((e) => (e.kind === "motion" ? e.segments : []))
@@ -190,7 +204,7 @@ describe("walkSchedule: pause and swap events", () => {
     it("emits pause events at phase boundaries with correct diff", () => {
         // knife → pen → crease on a 2-head machine: phases [knife,pen] then [crease,knife]
         const p = plan(KNIFE, PEN, CREASE, KNIFE);
-        const s = scheduleMounts(p, 2);
+        const s = sched(p, dualHeadMachine());
         const events = walkSchedule(s, p, singleHeadMachine());
         const pauses = pauseEvents(events);
         // Phase 0: load KNIFE+PEN. Phase 1: swap PEN→CREASE (KNIFE stays).
@@ -202,7 +216,7 @@ describe("walkSchedule: pause and swap events", () => {
 
     it("A-home is emitted before the pause at a phase boundary", () => {
         const p = plan(KNIFE, CREASE);
-        const s = scheduleMounts(p, 1);
+        const s = sched(p, singleHeadMachine());
         // Start with aPhys non-zero so A-home fires
         const events = walkSchedule(s, p, singleHeadMachine(), {
             initialState: { aPhys: 1000 },
@@ -224,7 +238,7 @@ describe("walkSchedule: head-offset jog on head switch", () => {
     it("emits a jog when the active head changes between blocks", () => {
         const machine = dualHeadMachine();
         const p = plan(KNIFE, PEN);
-        const s = scheduleMounts(p, 2, [ToolType.KNIFE, ToolType.PEN]);
+        const s = sched(p, dualHeadMachine(), [ToolType.KNIFE, ToolType.PEN]);
         const headMap = new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 1]]);
         const events = walkSchedule(s, p, machine, { headAssignment: headMap });
         // When we switch from head 0 to head 1, a JOG for the offset diff fires.
@@ -239,7 +253,7 @@ describe("walkSchedule: head-offset jog on head switch", () => {
         // switch. Without this event the runner cannot know it happened.
         const machine = dualHeadMachine();
         const p = plan(KNIFE, PEN);
-        const s = scheduleMounts(p, 2, [ToolType.KNIFE, ToolType.PEN]);
+        const s = sched(p, dualHeadMachine(), [ToolType.KNIFE, ToolType.PEN]);
         const events = walkSchedule(s, p, machine, {
             headAssignment: new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 1]]),
         });
@@ -258,7 +272,7 @@ describe("walkSchedule: head-offset jog on head switch", () => {
 
     it("emits no rebind when every tool sits on the same head", () => {
         const p = plan(KNIFE, PEN);
-        const s = scheduleMounts(p, 2, [ToolType.KNIFE, ToolType.PEN]);
+        const s = sched(p, dualHeadMachine(), [ToolType.KNIFE, ToolType.PEN]);
         const events = walkSchedule(s, p, dualHeadMachine(), {
             headAssignment: new Map([[ToolType.KNIFE, 0], [ToolType.PEN, 0]]),
         });
@@ -269,7 +283,7 @@ describe("walkSchedule: head-offset jog on head switch", () => {
 describe("walkSchedule: event ordering", () => {
     it("pause always precedes the motion for the phase it guards", () => {
         const p = plan(KNIFE, PEN);
-        const s = scheduleMounts(p, 1);
+        const s = sched(p, singleHeadMachine());
         const events = walkSchedule(s, p, singleHeadMachine());
         let lastPauseIdx = -1;
         let firstMotionAfterPause = -1;

@@ -1,5 +1,5 @@
 /**
- * bakePlan.ts — config + SVG text → a Plan (and its .plan bytes).
+ * bakePlan.ts — config + SVG text → compiled blocks + the phases that run them.
  *
  * The clean top-level bake: no orchestrate/planner layers (unlike Python).
  * We just walk the SVG's layers in document order and assemble one Block per
@@ -7,7 +7,13 @@
  * nested case — its slot sub-layers ("revolver_pen/slot3") each become a Block
  * tagged with the slot index.
  *
- *   loadSvgMmLayers → assembleBlocks → compileBlock per block → Plan → savePlan
+ *   loadSvgMmLayers → assembleBlocks → orderBlocks → scheduleMounts
+ *                   → compileBlock per block → Plan + SwapPhase[]
+ *
+ * Ordering and scheduling sit BEFORE the compile because the head decides step
+ * counts (docs/head_binding.md): Z/A stepsPerUnit, invert and the feed/accel
+ * ceilings are all per-head, and they shape the trajectory rather than scaling
+ * it, so mm cannot become steps until the head is known.
  *
  * All machine/tool/quality options come from the parsed PipelineConfig (the
  * config.json path via loadConfig). The only genuinely job-level choice is a
@@ -19,21 +25,23 @@ import type { PipelineConfig, ToolProfile } from "../machine/index.js";
 import { ToolType } from "../machine/index.js";
 import { toolForLayer } from "../machine/resolve.js";
 import { loadSvgMmLayers, loadSvgLayers } from "../svg/ingest.js";
-import { compileBlock } from "./compileBlock.js";
-import type { Block, Plan } from "../plan/plan.js";
-import { savePlan } from "../plan/planFile.js";
+import { compileBlock, type Block } from "./compileBlock.js";
+import { orderBlocks } from "./order.js";
+import { scheduleMounts, type Mounts, type SwapPhase } from "./schedule.js";
+import { setupFor, mountedTypes } from "../machine/setup.js";
+import type { Block as CompiledPlanBlock, Plan } from "../plan/plan.js";
 
 export interface BakePlanOptions {
     /** Fallback tool name for an unlayered SVG (the '' layer). */
     readonly defaultTool?: string;
     readonly skipNormalisation?: boolean;
-}
-
-/** One layer resolved to its tool + slot, still as geometry (pre-compile). */
-interface LayerBlock {
-    readonly profile: ToolProfile;
-    readonly slot?: number;
-    readonly subpaths: readonly (readonly CubicBezier[])[];
+    /**
+     * What is in the sockets NOW, for the scheduler to start from. Defaults to
+     * the config's own preferred arrangement (`setupFor`), which makes a bake
+     * reproducible from the config alone. Pass a live `mountedTypes(setup)` to
+     * bake for the fewest operator swaps instead — see production/schedule.ts.
+     */
+    readonly mounts?: Mounts;
 }
 
 const SLOT_RE = /^slot(\d+)$/i;
@@ -70,9 +78,9 @@ export function assembleBlocks(
     layers: Map<string, CubicBezier[][]>,
     config: PipelineConfig,
     opts: BakePlanOptions = {},
-): LayerBlock[] {
+): Block[] {
     const profiles = config.toolProfiles;
-    const blocks: LayerBlock[] = [];
+    const blocks: Block[] = [];
 
     for (const [key, subpaths] of layers) {
         const parts = key.split("/");
@@ -115,31 +123,42 @@ export function assembleBlocks(
 }
 
 /**
- * SVG text + config → a Plan and its serialised .plan bytes.
+ * SVG text + config → compiled blocks and the phases that run them.
  *
- * Walks the SVG's layers, compiles each block through the tool-aware pipeline
- * (compileBlock), and serialises the result. `bytes` is a ready-to-write
- * .plan file; `plan` is the in-memory model (for inspection or streaming).
+ * Order and scheduling now happen HERE, before anything is compiled, because
+ * the head decides step counts and only the scheduler knows the head. The
+ * phases come back alongside the plan rather than being recomputed downstream:
+ * a walk that re-derived them could disagree with what was baked.
+ *
+ * `bytes` is gone. A serialised .plan encodes step counts resolved against one
+ * head arrangement, so a file baked under one `accepts` config is silently
+ * wrong under another — see docs/head_binding.md. Callers that still want a
+ * file call savePlan() themselves, for as long as that survives.
  */
 export function bakePlan(
     config: PipelineConfig,
     svgText: string,
     opts: BakePlanOptions = {},
-): { plan: Plan; bytes: Uint8Array } {
+): { plan: Plan; phases: readonly SwapPhase[] } {
     const layers = opts.skipNormalisation
         ? loadSvgLayers(svgText)
         : loadSvgMmLayers(svgText).layers;
-    const layerBlocks = assembleBlocks(layers, config, opts);
 
-    const blocks: Block[] = layerBlocks.map((lb) => {
+    const ordered = orderBlocks(assembleBlocks(layers, config, opts), config.machine);
+    const phases = scheduleMounts(
+        config.machine,
+        ordered.map((b) => b.profile.toolType),
+        opts.mounts ?? mountedTypes(setupFor(config.machine)),
+    );
+
+    const blocks: CompiledPlanBlock[] = ordered.map((b) => {
         const { segments, startSteps } = compileBlock(
-            lb.subpaths, config.machine, config.quality, lb.profile,
+            b.subpaths, config.machine, config.quality, b.profile,
         );
-        return lb.slot === undefined
-            ? { profile: lb.profile, segments, startSteps }
-            : { profile: lb.profile, slot: lb.slot, segments, startSteps };
+        return b.slot === undefined
+            ? { profile: b.profile, segments, startSteps }
+            : { profile: b.profile, slot: b.slot, segments, startSteps };
     });
 
-    const plan: Plan = { blocks };
-    return { plan, bytes: savePlan(plan) };
+    return { plan: { blocks }, phases };
 }

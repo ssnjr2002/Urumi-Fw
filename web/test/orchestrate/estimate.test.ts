@@ -41,7 +41,7 @@ describe("walkSeconds", () => {
 
     it("charges nothing for a pause — it lasts as long as the operator does", () => {
         const events: WalkEvent[] = [
-            { kind: "pause", swapIn: [], swapOut: [], mount: [] },
+            { kind: "pause", swapIn: [], swapOut: [], mounts: [] },
             motion(microSegment(10, 0, 0, 0, 100)),
         ];
         expect(walkSeconds(events, FCPU)).toBeCloseTo(1000 / FCPU, 12);
@@ -68,7 +68,7 @@ describe("motionSegments", () => {
     it("flattens motion events in order and drops pauses", () => {
         const events: WalkEvent[] = [
             motion(microSegment(1, 0, 0, 0, 10)),
-            { kind: "pause", swapIn: [], swapOut: [], mount: [] },
+            { kind: "pause", swapIn: [], swapOut: [], mounts: [] },
             motion(microSegment(2, 0, 0, 0, 10), microSegment(3, 0, 0, 0, 10)),
         ];
         expect(motionSegments(events).map((s) => s.dx)).toEqual([1, 2, 3]);

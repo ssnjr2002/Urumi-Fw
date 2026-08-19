@@ -185,32 +185,43 @@ naming, not something to silently work around.
 
 ### The fill rule
 
-Carry `mounts` forward across phases. A tool already sitting in an acceptable
-socket stays there — that is what avoids moving a tool for no reason when the
-next job's tool set overlaps the last one's.
+Two separable questions, and conflating them is where greedy placement goes
+wrong: **which** tools share a phase, and **where** each one sits.
 
-Fill by **head occupancy**, not distinct-tool count. When a tool's head is taken,
-`continue` rather than `break`; a later block may still find a free head. This is
-the `A→0, B→1, C→0` fix: counting distinct tools returns the physically
-impossible mount `[A, C]` (both head 0), while counting occupancy returns
-`[A, B]`, runs both, then swaps A out for C.
+**Which** grows in first-use order, stopping at the first tool that will not fit
+alongside the ones already chosen. First-use order is right here even though
+placement must not depend on it — execution stops at the first block whose tool
+is missing, so a tool first needed after that point cannot run this phase however
+well it would have fitted.
 
-Place **most-constrained-first** within a fill — collect the tools the upcoming
-run needs, then place the ones with fewest accepting heads before the ones with
-many. Without this the result depends on document order:
+**Where** is a bipartite matching over the resulting set (Kuhn's algorithm), not
+a greedy placement. It has to be: a tool that fits several heads can take the
+only socket another tool has, and greedy cannot give it back. Matching can — when
+a head is taken it asks the occupant to move, recursively.
 
 ```
 head0.accepts = [knife, crease]      head1.accepts = [pen, crease]
 
-tools [knife, crease] → knife takes head 0 (its only option), crease takes head 1.
-                        One phase, no swap.
-tools [crease, knife] → crease grabs head 0 first, knife has nowhere to go.
-                        Spurious phase boundary.
+tools [knife, crease] → knife takes head 0 (its only option), crease head 1.
+tools [crease, knife] → greedy: crease grabs head 0, knife has nowhere to go,
+                        and the job gains a swap it never needed.
+                        matching: crease moves aside. Same arrangement.
 ```
 
-Most-constrained-first makes the two identical, so the same tool set produces the
-same arrangement whichever layer the SVG happens to list first. Test it directly
-rather than leaving it as an emergent property.
+Ordering the placements most-constrained-first fixes this *example* and is still
+wrong in general; matching is exact, order-invariant by construction, and about
+the same amount of code. The sets hold at most one tool per head, so the cost is
+irrelevant. Test order-invariance directly rather than trusting it emerges.
+
+Carry `mounts` forward by trying each tool's **current socket first** during the
+matching. This steers without constraining: an arrangement needing no operator
+work is the one found, so a tool stays put across phases — and across jobs, when
+the caller passes the live table — unless something genuinely has to move.
+
+Filling is by socket **occupancy**, which the matching gives for free: a tool
+whose heads are all taken does not stop the fill, it simply fails to join this
+phase. Counting distinct tools instead returns the physically impossible mount
+`[A, C]` when both want head 0.
 
 ### Known limits
 

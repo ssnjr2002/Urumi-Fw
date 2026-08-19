@@ -186,14 +186,15 @@ export {
     SLOT_NONE,
 } from "./plan/planFile.js";
 
-// ── orchestrate: mount scheduling + runtime walk ────────────────────────────
+// ── production: ordering + mount scheduling, both ahead of the bake ─────────
+export { orderBlocks } from "./production/order.js";
 export {
     scheduleMounts,
     mountDiff,
-    type Schedule,
-    type Phase,
-    type MountSet,
-} from "./orchestrate/schedule.js";
+    validateMounts,
+    type SwapPhase,
+    type Mounts,
+} from "./production/schedule.js";
 
 export {
     walkSeconds,

@@ -36,6 +36,7 @@ import { KNIFE, PEN } from "../../src/machine/tools.js";
 import { MachineState } from "../../src/wire/format/status.js";
 import { AbortFlag } from "../../src/wire/link/transport.js";
 import type { WalkEvent } from "../../src/orchestrate/walk.js";
+import type { Mounts } from "../../src/production/schedule.js";
 
 function dualHead() {
     return machineConfig(
@@ -96,7 +97,7 @@ const pause = (swapIn: ToolType[], swapOut: ToolType[] = []): WalkEvent => ({
     kind: "pause",
     swapIn,
     swapOut,
-    mount: swapIn,
+    mounts: swapIn,
 });
 
 /** Every MicroSegment the sim was actually sent, in order. */
@@ -229,11 +230,11 @@ describe("duty breaks", () => {
         // dutyLimits is config, not preset — the runner cannot resolve the
         // peripheral itself, so it hands over what is cutting right now.
         const { controller } = await bench();
-        const seen: ToolType[][] = [];
+        const seen: (ToolType | null)[][] = [];
         await runWalk(controller, [pause([PEN.toolType]), broken()], {
             confirmSwap: () => true,
-            onDutyBreak: (mount) => {
-                seen.push([...mount]);
+            onDutyBreak: (mounts) => {
+                seen.push([...mounts]);
             },
         });
         expect(seen).toEqual([[PEN.toolType]]);
@@ -304,11 +305,11 @@ describe("phases and abort", () => {
         // whose first phase needs no swap would otherwise start cutting with
         // nothing armed.
         const { controller } = await bench();
-        const phases: (readonly ToolType[] | null)[] = [];
+        const phases: (Mounts | null)[] = [];
         await runWalk(controller, [motion(3)], {
             initialMount: [KNIFE.toolType],
-            onPhase: (mount) => {
-                phases.push(mount);
+            onPhase: (mounts) => {
+                phases.push(mounts);
             },
         });
         expect(phases).toEqual([[KNIFE.toolType]]);
