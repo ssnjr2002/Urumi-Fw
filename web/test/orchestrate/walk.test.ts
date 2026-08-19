@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { walkSchedule, type WalkEvent } from "../../src/orchestrate/walk.js";
 import { scheduleMounts, type Mounts } from "../../src/production/schedule.js";
-import type { Plan } from "../../src/plan/plan.js";
+import type { CompiledBlock } from "../../src/production/compileBlock.js";
 import {
     PEN,
     KNIFE,
@@ -52,16 +52,20 @@ function dualHeadMachine(): MachineConfig {
     ]);
 }
 
-function plan(...tools: (ToolProfile | [ToolProfile, number])[]): Plan {
-    return {
-        blocks: tools.map((t, i) => {
-            const [profile, slot] = Array.isArray(t) ? t : [t, undefined];
-            const startSteps = { x: i * 1000, y: 0 }; // stagger blocks so travel is visible
-            return slot === undefined
-                ? { profile, segments: [], startSteps }
-                : { profile, slot, segments: [], startSteps };
-        }),
-    };
+/**
+ * Compiled blocks with empty segment lists — the walk only reads `profile`,
+ * `slot` and `startSteps`, and the inter-block motion is what these tests are
+ * about. `head` is 0 throughout: the walk still takes its head from the
+ * caller's headAssignment map, and reading block.head instead is stage 4.
+ */
+function plan(...tools: (ToolProfile | [ToolProfile, number])[]): CompiledBlock[] {
+    return tools.map((t, i) => {
+        const [profile, slot] = Array.isArray(t) ? t : [t, undefined];
+        const startSteps = { x: i * 1000, y: 0 }; // stagger blocks so travel is visible
+        return slot === undefined
+            ? { profile, head: 0, segments: [], startSteps }
+            : { profile, slot, head: 0, segments: [], startSteps };
+    });
 }
 
 /**
@@ -69,10 +73,10 @@ function plan(...tools: (ToolProfile | [ToolProfile, number])[]): Plan {
  * (it decides heads from `accepts`), so the head count is no longer something a
  * test states — it follows from the machine the walk runs on.
  */
-function sched(p: Plan, machine: MachineConfig, mounts?: Mounts) {
+function sched(p: readonly CompiledBlock[], machine: MachineConfig, mounts?: Mounts) {
     return scheduleMounts(
         machine,
-        p.blocks.map((b) => b.profile.toolType),
+        p.map((b) => b.profile.toolType),
         mounts ?? machine.heads.map(() => null),
     );
 }
@@ -89,8 +93,8 @@ function pauseEvents(events: WalkEvent[]): WalkEvent[] {
 
 describe("walkSchedule: empty plan", () => {
     it("produces no events", () => {
-        const s = sched({ blocks: [] }, singleHeadMachine());
-        expect(walkSchedule(s, { blocks: [] }, singleHeadMachine())).toEqual([]);
+        const s = sched([], singleHeadMachine());
+        expect(walkSchedule(s, [], singleHeadMachine())).toEqual([]);
     });
 });
 
@@ -129,12 +133,10 @@ describe("walkSchedule: travel jog between blocks", () => {
     });
 
     it("emits no travel for coincident block starts", () => {
-        const p: Plan = {
-            blocks: [
-                { profile: PEN, segments: [], startSteps: { x: 0, y: 0 } },
-                { profile: PEN, segments: [], startSteps: { x: 0, y: 0 } },
-            ],
-        };
+        const p: CompiledBlock[] = [
+                { profile: PEN, head: 0, segments: [], startSteps: { x: 0, y: 0 } },
+                { profile: PEN, head: 0, segments: [], startSteps: { x: 0, y: 0 } },
+        ];
         const s = sched(p, singleHeadMachine(), [ToolType.PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         const anyJog = motionEvents(events).some(
@@ -176,9 +178,7 @@ describe("walkSchedule: A-home before tangential blocks", () => {
 describe("walkSchedule: revolver slot selection", () => {
     it("emits an A rotation to the correct slot before a revolver block", () => {
         // slot 0 = 0°, slot 1 = 360/7 ≈ 51.43° — use slot 1 so it's non-zero
-        const p: Plan = {
-            blocks: [{ profile: REVOLVER_PEN, slot: 1, segments: [], startSteps: { x: 0, y: 0 } }],
-        };
+        const p: CompiledBlock[] = [{ profile: REVOLVER_PEN, slot: 1, head: 0, segments: [], startSteps: { x: 0, y: 0 } }];
         const s = sched(p, singleHeadMachine(), [ToolType.REVOLVER_PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         const aSegs = motionEvents(events)
@@ -188,9 +188,7 @@ describe("walkSchedule: revolver slot selection", () => {
     });
 
     it("no A rotation for slot 0 (offset = 0°)", () => {
-        const p: Plan = {
-            blocks: [{ profile: REVOLVER_PEN, slot: 0, segments: [], startSteps: { x: 0, y: 0 } }],
-        };
+        const p: CompiledBlock[] = [{ profile: REVOLVER_PEN, slot: 0, head: 0, segments: [], startSteps: { x: 0, y: 0 } }];
         const s = sched(p, singleHeadMachine(), [ToolType.REVOLVER_PEN]);
         const events = walkSchedule(s, p, singleHeadMachine());
         const anyA = motionEvents(events)

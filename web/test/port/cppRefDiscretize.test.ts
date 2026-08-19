@@ -210,7 +210,7 @@ it("generates the C++ discretize reference", (ctx) => {
                       mach: MachineConfig, profile: ToolProfile, qual: QualityConfig,
                       overrides?: { jogFeed?: number; liftHeight?: number; zFeed?: number;
                                     zAccel?: number }): void => {
-        const got = discretize(input, mach, profile, qual, overrides);
+        const got = discretize(input, mach, resolvedAxesDefault(mach), profile, qual, overrides);
         const ax = resolvedAxesDefault(mach);
         const targets = { rapid: mach.rapid, z: mach.z, slew: mach.slew };
         lines.push(`case ${name}`);

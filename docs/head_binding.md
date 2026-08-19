@@ -1,8 +1,11 @@
 # Binding the head at the bake
 
-**Status:** planned. This doc is the spec; no code has moved yet. The acceptance
-test exists and is red: `test/production/headResolve.test.ts` — unskipping its
-second `describe` block is the definition of done.
+**Status:** stages 1–3 landed; 4–6 outstanding. The acceptance test
+(`test/production/headResolve.test.ts`) is unskipped and green — a block's Z now
+resolves against the head that holds its tool. What remains is removing the
+reconstruction paths that stage 3 made redundant: the walk and the Controller
+still derive a head from a `headAssignment` map instead of reading `block.head`,
+`plan/` still exists, and `demo/` is knowingly broken and patched at the end.
 
 ## The bug, stated once
 

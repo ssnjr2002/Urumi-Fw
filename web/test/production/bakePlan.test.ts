@@ -35,12 +35,12 @@ describe("bakePlan: single-tool equivalence", () => {
         const config = defaultConfig();
         const text = svg("test_circle.svg");
         const { subpaths } = loadSvgMmSubpaths(text);
-        const { segments: ref } = compileBlock(subpaths, config.machine, config.quality, KNIFE);
+        const { segments: ref } = compileBlock(subpaths, config.machine, config.quality, KNIFE, 0);
 
-        const { plan } = bakePlan(config, text, { defaultTool: "knife" });
-        expect(plan.blocks.length).toBe(1);
-        expect(plan.blocks[0]!.profile.name).toBe("knife");
-        expect(plan.blocks[0]!.segments).toEqual(ref);
+        const { blocks } = bakePlan(config, text, { defaultTool: "knife" });
+        expect(blocks.length).toBe(1);
+        expect(blocks[0]!.profile.name).toBe("knife");
+        expect(blocks[0]!.segments).toEqual(ref);
     });
 
     it("the baked .plan bytes survive a load→save round-trip unchanged", () => {
@@ -48,8 +48,8 @@ describe("bakePlan: single-tool equivalence", () => {
         // plan reproduces the file. (segment equality would trip over -0 vs 0,
         // which the int32 wire encoding collapses — same bytes either way.)
         const config = defaultConfig();
-        const { plan } = bakePlan(config, svg("test_circle.svg"), { defaultTool: "knife" });
-        const bytes = savePlan(plan);
+        const { blocks } = bakePlan(config, svg("test_circle.svg"), { defaultTool: "knife" });
+        const bytes = savePlan({ blocks });
         expect(savePlan(loadPlan(bytes))).toEqual(bytes);
     });
 });
@@ -80,8 +80,8 @@ describe("bakePlan: revolver slots", () => {
     it("round-trips slots through the .plan file", () => {
         const config = defaultConfig();
         const text = wrap(`<g id="revolver_pen"><g id="slot2">${tri(10, 10)}</g></g>`);
-        const { plan } = bakePlan(config, text);
-        expect(loadPlan(savePlan(plan)).blocks[0]!.slot).toBe(1);
+        const { blocks } = bakePlan(config, text);
+        expect(loadPlan(savePlan({ blocks })).blocks[0]!.slot).toBe(1);
     });
 });
 
@@ -104,11 +104,11 @@ describe("bakePlan: toolOffset shift (Option A)", () => {
     };
 
     it("startSteps is in head-center coordinates (shifted by -toolOffset)", () => {
-        const { plan: planNoOffset } = bakePlan(config, text);
-        const { plan: planWithOffset } = bakePlan(configWithOffset, text);
+        const { blocks: planNoOffset } = bakePlan(config, text);
+        const { blocks: planWithOffset } = bakePlan(configWithOffset, text);
 
-        const startNoOffset = planNoOffset.blocks[0]!.startSteps!;
-        const startWithOffset = planWithOffset.blocks[0]!.startSteps!;
+        const startNoOffset = planNoOffset[0]!.startSteps!;
+        const startWithOffset = planWithOffset[0]!.startSteps!;
 
         // The shifted block starts at (path_start - toolOffset) * stepsPerUnit.
         const spu = config.machine.x.stepsPerUnit; // 160 steps/mm, square machine
@@ -121,19 +121,19 @@ describe("bakePlan: toolOffset shift (Option A)", () => {
         // The offset shifts the ENTIRE path, so the net XY of the first
         // cutting move from the block start changes by stepsPerUnit * offset.
         // We verify the first cutting segment's dx differs by the shift.
-        const { plan: planNone } = bakePlan(config, text);
-        const { plan: planShifted } = bakePlan(configWithOffset, text);
+        const { blocks: planNone } = bakePlan(config, text);
+        const { blocks: planShifted } = bakePlan(configWithOffset, text);
 
         // The net XY sum of all segments encodes the full path travel.
         // With a constant offset applied to all points, the NET displacement
         // (end minus start) is unchanged — but startSteps changes. So we
         // check that (startSteps.x + netDx) is consistent: shifted and
         // unshifted paths should end up at positions offset by the same delta.
-        const netDx = (segs: typeof planNone.blocks[0]["segments"]) =>
+        const netDx = (segs: readonly { dx: number }[]) =>
             segs.reduce((s, seg) => s + seg.dx, 0);
 
-        const endXNone    = planNone.blocks[0]!.startSteps!.x    + netDx(planNone.blocks[0]!.segments);
-        const endXShifted = planShifted.blocks[0]!.startSteps!.x + netDx(planShifted.blocks[0]!.segments);
+        const endXNone    = planNone[0]!.startSteps!.x    + netDx(planNone[0]!.segments);
+        const endXShifted = planShifted[0]!.startSteps!.x + netDx(planShifted[0]!.segments);
 
         const spu = config.machine.x.stepsPerUnit;
         // Both paths trace the same shape — their endpoints differ only by the offset.

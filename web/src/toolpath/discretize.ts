@@ -26,7 +26,7 @@
  */
 
 import type { MachineConfig, QualityConfig, ToolProfile } from "../machine/index.js";
-import { needsOffsetComp, resolvedAxesDefault, type ResolvedAxes } from "../machine/index.js";
+import { needsOffsetComp, type ResolvedAxes } from "../machine/index.js";
 import { resolveTargets } from "../machine/resolve.js";
 import { angleDelta } from "./geometry.js";
 import { subpathRanges, type PlannedSample } from "./plan.js";
@@ -66,7 +66,12 @@ export interface DiscretizeOverrides {
  * Walk the planned Sample stream and emit a flat MicroSegment[].
  *
  * samples — PlannedSample[] with v resolved (after Constrain + Plan).
- * machine — MachineConfig (all 4 axes' calibration, fCpu, travel defaults).
+ * machine — MachineConfig (fCpu, travel defaults, the tool→machine target chain).
+ * axes    — the four axes to convert against, Z/A belonging to the head this
+ *           block runs on. PASSED IN, not resolved here: Z/A stepsPerUnit,
+ *           invert and the feed/accel ceilings are per-head, and they shape the
+ *           segment stream rather than scaling it, so this function cannot pick
+ *           a head without deciding one. Its caller already knows which.
  * profile — ToolProfile (PEN/KNIFE/CREASE). Selects tangent tracking, corner
  *           threshold, unwind, lift.
  * quality — QualityConfig (dvMax, vMin for subdivision + interval).
@@ -76,6 +81,7 @@ export interface DiscretizeOverrides {
 export function discretize(
     samples: readonly PlannedSample[],
     machine: MachineConfig,
+    axes: ResolvedAxes,
     profile: ToolProfile,
     quality: QualityConfig,
     overrides?: DiscretizeOverrides,
@@ -88,7 +94,6 @@ export function discretize(
         );
     }
 
-    const axes: ResolvedAxes = resolvedAxesDefault(machine);
     const tangential = profile.tangential;
     const cornerAngle = profile.cornerAngleDeg;
 

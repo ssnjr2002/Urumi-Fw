@@ -23,7 +23,7 @@
 
 import type { CubicBezier } from "../toolpath/geometry.js";
 import type { MachineConfig, ToolProfile, QualityConfig } from "../machine/index.js";
-import { resolvedAxesDefault } from "../machine/index.js";
+import { axesForHead } from "../machine/index.js";
 import { resolveTargets } from "../machine/resolve.js";
 import { enforceC1 } from "../toolpath/repair.js";
 import { flatten } from "../toolpath/flatten.js";
@@ -53,8 +53,26 @@ export interface CompileBlockResult {
     readonly segments: MicroSegment[];
     /**
      * XY start position in TRUE machine steps (pre-invert), after the
-     * toolOffset shift. Ready for use as Block.startSteps.
+     * toolOffset shift. Ready for use as CompiledBlock.startSteps.
      */
+    readonly startSteps: { readonly x: number; readonly y: number };
+}
+
+/**
+ * A block compiled against a specific head.
+ *
+ * Separate from `Block` rather than a `Block` with optional fields, so the type
+ * system polices the boundary this redesign exists to enforce: an uncompiled
+ * block cannot reach the walk, and a compiled one cannot be re-headed. `head`
+ * is not advice — the segments were discretised against that head's Z/A
+ * calibration and mean nothing anywhere else.
+ */
+export interface CompiledBlock {
+    readonly profile: ToolProfile;
+    readonly slot?: number;
+    /** Index into machine.heads. The head these segments were resolved for. */
+    readonly head: number;
+    readonly segments: readonly MicroSegment[];
     readonly startSteps: { readonly x: number; readonly y: number };
 }
 
@@ -79,13 +97,25 @@ function shiftSubpaths(
     );
 }
 
+/**
+ * Compile one block's geometry against ONE head.
+ *
+ * `head` is required, not defaulted. mm becomes steps here, and Z/A
+ * stepsPerUnit, invert, maxFeed and maxAccel are all per-head — the trajectory
+ * is shaped by all four, so this is not a scale factor that could be applied at
+ * the wire afterwards. Defaulting it would put the old bug back: on the bench
+ * machine head 0's Z is 1200 steps/mm and head 1's is 600, so a block compiled
+ * against the wrong head is a clean 2x error with no exception and no
+ * wrong-looking number.
+ */
 export function compileBlock(
     subpathsMm: readonly (readonly CubicBezier[])[],
     machine: MachineConfig,
     quality: QualityConfig,
     profile: ToolProfile,
+    head: number,
 ): CompileBlockResult {
-    const axes = resolvedAxesDefault(machine);
+    const axes = axesForHead(machine, head);
 
     // Shift paths by -toolOffset so all baked coordinates are in head-center
     // space. Zero offset is a fast-path no-op (returns the original array).
@@ -96,6 +126,9 @@ export function compileBlock(
     );
 
     const p0 = shifted[0]?.[0]?.p0 ?? { x: 0, y: 0 };
+    // X/Y are the shared gantry and identical on every head, which is why the
+    // head only ever changes Z and A. The head-to-head XY offset is a jog the
+    // orchestrator emits, not something baked into a block's coordinates.
     const startSteps = {
         x: Math.round(p0.x * machine.x.stepsPerUnit),
         y: Math.round(p0.y * machine.y.stepsPerUnit),
@@ -173,7 +206,7 @@ export function compileBlock(
     });
 
     // Stage 8: discretize — Sample[] → MicroSegment[], choreograph at transitions
-    const segments = discretize(planned, machine, profile, quality);
+    const segments = discretize(planned, machine, axes, profile, quality);
 
     // Stage 9: duty breaks — mark enable-line resets for a duty-limited tool.
     // A pure post-pass that ORs flags onto lifts already in the stream, so a

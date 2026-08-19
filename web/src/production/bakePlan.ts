@@ -8,7 +8,7 @@
  * tagged with the slot index.
  *
  *   loadSvgMmLayers → assembleBlocks → orderBlocks → scheduleMounts
- *                   → compileBlock per block → Plan + SwapPhase[]
+ *                   → compileBlock per block → CompiledBlock[] + SwapPhase[]
  *
  * Ordering and scheduling sit BEFORE the compile because the head decides step
  * counts (docs/head_binding.md): Z/A stepsPerUnit, invert and the feed/accel
@@ -25,11 +25,10 @@ import type { PipelineConfig, ToolProfile } from "../machine/index.js";
 import { ToolType } from "../machine/index.js";
 import { toolForLayer } from "../machine/resolve.js";
 import { loadSvgMmLayers, loadSvgLayers } from "../svg/ingest.js";
-import { compileBlock, type Block } from "./compileBlock.js";
+import { compileBlock, type Block, type CompiledBlock } from "./compileBlock.js";
 import { orderBlocks } from "./order.js";
 import { scheduleMounts, type Mounts, type SwapPhase } from "./schedule.js";
 import { setupFor, mountedTypes } from "../machine/setup.js";
-import type { Block as CompiledPlanBlock, Plan } from "../plan/plan.js";
 
 export interface BakePlanOptions {
     /** Fallback tool name for an unlayered SVG (the '' layer). */
@@ -139,7 +138,7 @@ export function bakePlan(
     config: PipelineConfig,
     svgText: string,
     opts: BakePlanOptions = {},
-): { plan: Plan; phases: readonly SwapPhase[] } {
+): { blocks: readonly CompiledBlock[]; phases: readonly SwapPhase[] } {
     const layers = opts.skipNormalisation
         ? loadSvgLayers(svgText)
         : loadSvgMmLayers(svgText).layers;
@@ -151,14 +150,24 @@ export function bakePlan(
         opts.mounts ?? mountedTypes(setupFor(config.machine)),
     );
 
-    const blocks: CompiledPlanBlock[] = ordered.map((b) => {
+    // The scheduler's answer, read back per block: a block's head is the socket
+    // its phase seats its tool in. Nothing re-derives this downstream.
+    const headOf: number[] = [];
+    for (const phase of phases) {
+        for (const i of phase.blockIndices) {
+            headOf[i] = phase.mounts.indexOf(ordered[i]!.profile.toolType);
+        }
+    }
+
+    const blocks: CompiledBlock[] = ordered.map((b, i) => {
+        const head = headOf[i]!;
         const { segments, startSteps } = compileBlock(
-            b.subpaths, config.machine, config.quality, b.profile,
+            b.subpaths, config.machine, config.quality, b.profile, head,
         );
         return b.slot === undefined
-            ? { profile: b.profile, segments, startSteps }
-            : { profile: b.profile, slot: b.slot, segments, startSteps };
+            ? { profile: b.profile, head, segments, startSteps }
+            : { profile: b.profile, slot: b.slot, head, segments, startSteps };
     });
 
-    return { plan: { blocks }, phases };
+    return { blocks, phases };
 }

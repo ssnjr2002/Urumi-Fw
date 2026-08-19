@@ -32,7 +32,7 @@
  */
 
 import type { MachineConfig, ResolvedAxes, ToolType } from "../machine/index.js";
-import type { Plan } from "../plan/plan.js";
+import type { CompiledBlock } from "../production/compileBlock.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 import type { SwapPhase, Mounts } from "../production/schedule.js";
 import {
@@ -138,7 +138,7 @@ function netDisplacement(
  */
 export function walkSchedule(
     phases: readonly SwapPhase[],
-    plan: Plan,
+    blocks: readonly CompiledBlock[],
     machine: MachineConfig,
     opts: WalkOptions = {},
 ): WalkEvent[] {
@@ -184,7 +184,7 @@ export function walkSchedule(
 
         // ── execute blocks in this phase ──────────────────────────────────────
         for (const blockIdx of phase.blockIndices) {
-            const block = plan.blocks[blockIdx]!;
+            const block = blocks[blockIdx]!;
             const targetHead = headAssignment.get(block.profile.toolType) ?? 0;
             const prevAxes = axesForHead(machine, state.headIndex);
             const axes = axesForHead(machine, targetHead);

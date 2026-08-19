@@ -87,7 +87,7 @@ function prep(
     subpaths: readonly (readonly CubicBezier[])[],
     profile: Profile,
 ): MicroSegment[] {
-    return discretize(planFor(subpaths, profile), MACH, profile, q);
+    return discretize(planFor(subpaths, profile), MACH, AXES, profile, q);
 }
 
 function forEachFixture(
@@ -186,13 +186,13 @@ describe("stage 8 INVARIANT: purity and determinism", () => {
     it("does not mutate its input", () => {
         const p = planFor([CASES.s_curve!.curves], KNIFE);
         const before = JSON.stringify(p);
-        discretize(p, MACH, KNIFE, q);
+        discretize(p, MACH, AXES, KNIFE, q);
         expect(JSON.stringify(p)).toBe(before);
     });
 
     it("is deterministic", () => {
         const p = planFor([CASES.full_circle_r30!.curves], KNIFE);
-        expect(discretize(p, MACH, KNIFE, q)).toEqual(discretize(p, MACH, KNIFE, q));
+        expect(discretize(p, MACH, AXES, KNIFE, q)).toEqual(discretize(p, MACH, AXES, KNIFE, q));
     });
 });
 
@@ -396,8 +396,8 @@ describe("stage 8: per-axis invert is applied to every emitted delta", () => {
 
     it("flipping x.invert negates every dx and nothing else", () => {
         const p = planFor([CASES.s_curve!.curves], PEN);
-        const a = discretize(p, withInvert("x", false), PEN, q);
-        const b = discretize(p, withInvert("x", true), PEN, q);
+        const a = discretize(p, withInvert("x", false), resolvedAxesDefault(withInvert("x", false)), PEN, q);
+        const b = discretize(p, withInvert("x", true), resolvedAxesDefault(withInvert("x", true)), PEN, q);
         expect(a.length).toBe(b.length);
         for (let i = 0; i < a.length; i++) {
             expect(b[i]!.dx).toBe(-a[i]!.dx);
@@ -407,8 +407,8 @@ describe("stage 8: per-axis invert is applied to every emitted delta", () => {
 
     it("flipping y.invert negates every dy and nothing else", () => {
         const p = planFor([CASES.s_curve!.curves], PEN);
-        const a = discretize(p, withInvert("y", false), PEN, q);
-        const b = discretize(p, withInvert("y", true), PEN, q);
+        const a = discretize(p, withInvert("y", false), resolvedAxesDefault(withInvert("y", false)), PEN, q);
+        const b = discretize(p, withInvert("y", true), resolvedAxesDefault(withInvert("y", true)), PEN, q);
         expect(a.length).toBe(b.length);
         for (let i = 0; i < a.length; i++) {
             expect(b[i]!.dy).toBe(-a[i]!.dy);
@@ -425,7 +425,7 @@ describe("stage 8: Z lift choreography", () => {
     // These drive it through the documented liftHeight override.
     const LIFT = 2.0;
     const lifted = (subpaths: readonly (readonly CubicBezier[])[], profile: Profile) =>
-        discretize(planFor(subpaths, profile), MACH, profile, q, { liftHeight: LIFT });
+        discretize(planFor(subpaths, profile), MACH, AXES, profile, q, { liftHeight: LIFT });
 
     it("lowers before the stroke and raises after it, by the same step count", () => {
         const segs = lifted([CASES.straight_line!.curves], KNIFE);
@@ -491,7 +491,7 @@ describe("stage 8: velocity-aware subdivision", () => {
         // The interior-skip guard (discretize.ts:177) working as intended.
         // Interior only — the guard's two exemptions are D1's subject.
         const p = planFor([CASES.long_gentle_arc!.curves], PEN);
-        const dense = discretize(p, MACH, PEN, { ...q, dvMax: 0.05 });
+        const dense = discretize(p, MACH, AXES, PEN, { ...q, dvMax: 0.05 });
         const zeros = dense.map((s, i) => [s, i] as const).filter(([s]) => major(s) === 0);
         for (const [s] of zeros) {
             expect(s.flags & MICRO_PATH_END).toBeTruthy(); // only the exempted final one
@@ -579,7 +579,7 @@ describe("stage 8 D1 (FIXED): no empty segment carrying a one-second interval", 
     it("reaches the PATH_END marker on ordinary geometry, not just a cusp", () => {
         // The exemption that matters most: this is a pen on a gentle arc.
         const p = planFor([CASES.long_gentle_arc!.curves], PEN);
-        const dense = discretize(p, MACH, PEN, { ...q, dvMax: 0.05 });
+        const dense = discretize(p, MACH, AXES, PEN, { ...q, dvMax: 0.05 });
         const empty = dense.filter((s) => major(s) === 0);
         expect(empty.length).toBe(0);
     });
@@ -634,7 +634,7 @@ describe("stage 8 D1 (FIXED): no empty segment carrying a one-second interval", 
         // where the last sub-step rounds to no motion. The marker must be on the
         // segment before it, and that segment must be a real move.
         const p = planFor([CASES.long_gentle_arc!.curves], PEN);
-        const dense = cutting(discretize(p, MACH, PEN, { ...q, dvMax: 0.05 }));
+        const dense = cutting(discretize(p, MACH, AXES, PEN, { ...q, dvMax: 0.05 }));
         const last = dense[dense.length - 1]!;
         expect(last.flags & MICRO_PATH_END).toBe(MICRO_PATH_END);
         expect(major(last)).toBeGreaterThan(0);
@@ -698,7 +698,7 @@ describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", 
         const p = planFor([[line({ x: 0, y: 0 }, { x: 10, y: 0 })]], PEN);
         const exact = plannedSeconds(p);
         const ratioAt = (dvMax: number) =>
-            emittedSeconds(discretize(p, MACH, PEN, { ...q, dvMax })) / exact;
+            emittedSeconds(discretize(p, MACH, AXES, PEN, { ...q, dvMax })) / exact;
 
         expect(ratioAt(1e9)).toBeCloseTo(1.0, 3); // k=1 everywhere
         expect(ratioAt(6)).toBeCloseTo(1.0, 2);   // was 1.268
@@ -712,7 +712,7 @@ describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", 
         // never showed D2 and a 10mm line did. It must no longer exist.
         const ratioFor = (L: number) => {
             const p = planFor([[line({ x: 0, y: 0 }, { x: L, y: 0 })]], PEN);
-            return emittedSeconds(discretize(p, MACH, PEN, q)) / plannedSeconds(p);
+            return emittedSeconds(discretize(p, MACH, AXES, PEN, q)) / plannedSeconds(p);
         };
         expect(ratioFor(10)).toBeCloseTo(1.0, 2);  // was 1.361
         expect(ratioFor(500)).toBeCloseTo(1.0, 2);
@@ -727,7 +727,7 @@ describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", 
         // must barely move the emitted time.
         const p = planFor([[line({ x: 0, y: 0 }, { x: 10, y: 0 })]], PEN);
         const at = (vMin: number) =>
-            emittedSeconds(discretize(p, MACH, PEN, { ...q, vMin }));
+            emittedSeconds(discretize(p, MACH, AXES, PEN, { ...q, vMin }));
         expect(at(q.vMin / 1000) / at(q.vMin)).toBeCloseTo(1.0, 2);
     });
 });
