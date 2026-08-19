@@ -2,7 +2,8 @@
  * resolve.ts — resolution POLICY over the config data.
  *
  * Everything that answers "given this config, what actually applies?":
- *   - resolvedAxes  — which 4 axes are live (Z/A come from the default head)
+ *   - axesForHead / resolvedAxesDefault — the 4 live axes, Z/A per head
+ *   - headsAccepting — which sockets a tool's fixture fits
  *   - resolveTargets — the tool→machine feed/accel override chain
  *   - toolForLayer  — SVG layer name → tool
  *   - requiredAxes / canRunTool — bake-time feasibility
@@ -18,13 +19,15 @@ import type {
     MachineTarget,
     OpTarget,
     ToolProfile,
+    ToolType,
 } from "./schema.js";
 import { TOOL_PROFILES } from "./tools.js";
 
 /**
  * Resolved axes: the 4 AxisConfig (x, y, z, a) + fCpu as a flat slice.
- * Z and A resolve to the default head. Used by wire/choreograph/discretize
- * which need the 4 axes but don't want to re-resolve the head on every call.
+ * X/Y are the shared gantry; Z and A belong to ONE head, named by whoever
+ * resolved them. Used by wire/choreograph/discretize, which need the 4 axes
+ * but must not re-resolve the head on every call.
  */
 export interface ResolvedAxes {
     readonly x: AxisConfig;
@@ -34,10 +37,48 @@ export interface ResolvedAxes {
     readonly fCpu: number;
 }
 
-/** Resolve the 4 axes from a MachineConfig (Z/A from the default head). */
-export function resolvedAxes(machine: MachineConfig): ResolvedAxes {
-    const head = machine.heads[machine.defaultHead]!;
-    return { x: machine.x, y: machine.y, z: head.z, a: head.a, fCpu: machine.fCpu };
+/**
+ * The 4 axes with Z/A taken from `head`. The shared primitive: anything that
+ * converts mm to steps on a Z or an A must go through here, naming the head it
+ * means, because stepsPerUnit/invert/maxFeed/maxAccel are all per-head and a
+ * trajectory is shaped by all four.
+ *
+ * Throws on a head the machine does not have rather than clamping — a caller
+ * asking for head 2 of a two-head machine has a bug, and silently handing it
+ * head 1's calibration is exactly the wrong-cut-no-exception failure this
+ * function exists to prevent.
+ */
+export function axesForHead(machine: MachineConfig, head: number): ResolvedAxes {
+    const h = machine.heads[head];
+    if (!h) throw new RangeError(`no head ${head} (machine has ${machine.heads.length})`);
+    return { x: machine.x, y: machine.y, z: h.z, a: h.a, fCpu: machine.fCpu };
+}
+
+/**
+ * The 4 axes resolved against `defaultHead`.
+ *
+ * Named for what it does, because what it does is usually not what a caller
+ * wants: on a dual-head machine it answers with one head's calibration no
+ * matter which head the work is destined for. Legitimate uses are the ones
+ * genuinely indifferent to the head (fCpu, X/Y) or genuinely about the initial
+ * binding. Anything per-block wants `axesForHead`.
+ */
+export function resolvedAxesDefault(machine: MachineConfig): ResolvedAxes {
+    return axesForHead(machine, machine.defaultHead);
+}
+
+/**
+ * Head indices whose fixture accepts `tool`, in machine order.
+ *
+ * Empty means no head can hold it — a config-level impossibility worth naming
+ * at the boundary, not a scheduling failure to work around.
+ */
+export function headsAccepting(machine: MachineConfig, tool: ToolType): number[] {
+    const out: number[] = [];
+    machine.heads.forEach((h, i) => {
+        if (h.accepts.includes(tool)) out.push(i);
+    });
+    return out;
 }
 
 /**

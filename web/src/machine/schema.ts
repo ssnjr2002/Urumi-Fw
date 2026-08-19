@@ -18,11 +18,11 @@
  *             maxFeed/maxAccel ceilings, invert, rotary). MachineConfig: the
  *             per-machine definition — X/Y shared gantry, one or more ToolHeads,
  *             bus peripherals, operation targets (path/rapid/z/slew), and fCpu.
- *   head    — ToolHead: a co-mounted Z + A pair plus the tool mounted on it
+ *   head    — ToolHead: a co-mounted Z + A pair, the tools its fixture accepts,
  *             and its X mounting offset. A machine has one or more heads;
- *             only one is live at a time. The default head is declared
- *             statically via defaultHead — runtime head selection is NOT a
- *             config concern.
+ *             only one is live at a time. Which head runs a given block is
+ *             decided at the bake from `accepts`; defaultHead says only which
+ *             head is engaged before anything has chosen.
  *   tool    — ToolProfile: per-tool kinematic behaviour (tangential tracking,
  *             lift, corner handling, cut feed). Presets keyed by ToolType
  *             (PEN / KNIFE / CREASE). A new tool is a new preset, never a code
@@ -243,8 +243,8 @@ export function toolProfile(
 // ── head tier ────────────────────────────────────────────────────────────────
 
 /**
- * One physical tool head: a co-mounted Z + A pair, the tool mounted on
- * it, and its XY mounting offset from the machine reference.
+ * One physical tool head: a co-mounted Z + A pair, the tools its fixture
+ * accepts, and its XY mounting offset from the machine reference.
  *
  * A machine has one or more heads. On the current machine there is a
  * single centred head (offset 0, 0). A dual-head machine fixes two
@@ -257,26 +257,38 @@ export function toolProfile(
  * XY move must be corrected by this offset — applied by the orchestrator as
  * a head-switch jog, not consumed by the bake pipeline.
  *
- * `profile?` is a SEED mount only — which tool the socket boots with. It is
- * NOT authoritative at runtime: an operator can swap tools without editing
- * config, so the orchestrator tracks the live head→tool assignment in a
- * mutable mount table (seeded from this field). Bake never reads it — bake
- * feasibility is a node-presence check (see canRunTool), not a mount check.
- * Absent = an empty socket at boot.
+ * `accepts` declares what this socket's fixture can physically hold, and is
+ * the only head→tool fact config carries. It is a CAPABILITY, not a mount:
+ * it says the knife FITS here, never that the knife IS here. What is screwed
+ * in this morning is live state (setup.ts); which head a given job will use is
+ * decided at the bake by the scheduler, reading this list.
+ *
+ * The list is ordered, and the order is preference: `["knife", "crease"]` means
+ * both fit and the knife is what this head would rather hold. An empty list is
+ * legal and means a socket nothing can mount on — declared, unusable.
+ *
+ * This replaces the old `profile?` seed field. A seed could not say what else
+ * fit, so every consumer that needed the real answer reconstructed it; the
+ * capability list answers both questions and is checked at load.
  */
 export interface ToolHead extends ReferencePoint {
     readonly z: AxisConfig;
     readonly a: AxisConfig;
-    /** Seed mount (boot-time tool); absent = empty socket. See interface doc. */
-    readonly profile?: ToolProfile;
+    /** Tools whose fixture this socket takes, preference-ordered. See interface doc. */
+    readonly accepts: readonly ToolType[];
 }
 
+/**
+ * `accepts` defaults to empty — a socket accepts nothing until something says
+ * otherwise. Defaulting it to "every tool" would make an unconfigured head look
+ * universally capable, which is the failure mode the seed field had.
+ */
 export function toolHead(
     z: AxisConfig,
     a: AxisConfig,
     overrides?: Partial<Omit<ToolHead, "z" | "a">>,
 ): ToolHead {
-    return { z, a, xOffset: 0, yOffset: 0, ...overrides };
+    return { z, a, xOffset: 0, yOffset: 0, accepts: [], ...overrides };
 }
 
 // ── machine tier (config) ────────────────────────────────────────────────────
@@ -297,6 +309,11 @@ export interface MachineConfig {
     readonly x: AxisConfig;
     readonly y: AxisConfig;
     readonly heads: readonly ToolHead[];
+    /**
+     * Head engaged before anything has chosen one — the initial wire binding
+     * at connect, and nothing more. It is NOT a preference the bake consults:
+     * which head cuts a block comes from the scheduler reading `accepts`.
+     */
     readonly defaultHead: number;
     readonly fCpu: number;
     /** Cut target baseline (engage; tools override). */

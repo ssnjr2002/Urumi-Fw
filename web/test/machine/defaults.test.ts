@@ -71,7 +71,7 @@ const MINIMAL = JSON.stringify({
     },
     heads: [
         {
-            tool: "knife",
+            accepts: ["knife"],
             z: { node: { id: 3 }, stepsPerUnit: 300 },
             a: { node: { id: 4 }, stepsPerUnit: 45 },
         },
@@ -110,7 +110,7 @@ describe("fill-at-load", () => {
             },
             heads: [
                 {
-                    tool: "knife",
+                    accepts: ["knife"],
                     xOffset: 0,
                     yOffset: 0,
                     z: { node: { id: 3 }, stepsPerUnit: 300, ...DEFAULTS.axis },

@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import {
     setupFor,
+    mountedTypes,
     engage,
     mount,
     engagedTool,
@@ -22,12 +23,14 @@ import {
     adoptCommitted,
     sameSetup,
 } from "../../src/machine/setup.js";
-import { resolvedAxes } from "../../src/machine/resolve.js";
+import { resolvedAxesDefault } from "../../src/machine/resolve.js";
 import {
     axisConfig,
     busNode,
     machineConfig,
     toolHead,
+    ToolType,
+    type ToolProfile,
 } from "../../src/machine/schema.js";
 import { KNIFE, PEN, CREASE } from "../../src/machine/tools.js";
 
@@ -38,10 +41,10 @@ function dualHead(defaultHead = 0) {
         axisConfig(busNode(2), 160),
         [
             toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667, { rotary: true }), {
-                profile: KNIFE,
+                accepts: [ToolType.KNIFE],
             }),
             toolHead(axisConfig(busNode(5), 600), axisConfig(busNode(6), 51.667, { rotary: true }), {
-                profile: PEN,
+                accepts: [ToolType.PEN],
             }),
         ],
         { defaultHead },
@@ -49,24 +52,44 @@ function dualHead(defaultHead = 0) {
 }
 
 describe("setupFor", () => {
-    it("seeds from defaultHead and the sockets' seed profiles", () => {
+    it("seeds from defaultHead and each socket's preferred acceptable tool", () => {
         const s = setupFor(dualHead(1));
         expect(s.engaged).toBe(1);
-        expect(s.mounted.map((p) => p?.toolType)).toEqual([KNIFE.toolType, PEN.toolType]);
+        expect(s.mounts.map((p: ToolProfile | null) => p?.toolType)).toEqual([KNIFE.toolType, PEN.toolType]);
     });
 
     it("represents an empty socket as null, not as a missing entry", () => {
         const m = machineConfig(axisConfig(busNode(1), 160), axisConfig(busNode(2), 160), [
             toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667)),
         ]);
-        expect(setupFor(m).mounted).toEqual([null]);
+        expect(setupFor(m).mounts).toEqual([null]);
+    });
+
+    // accepts is preference-ordered, so the seed follows the order, not the
+    // set. A head listing [crease, knife] boots with the crease even though the
+    // knife is the more specialised tool.
+    it("seeds accepts[0], so reordering accepts changes the seed", () => {
+        const mk = (accepts: ToolType[]) =>
+            machineConfig(axisConfig(busNode(1), 160), axisConfig(busNode(2), 160), [
+                toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667), { accepts }),
+            ]);
+        expect(setupFor(mk([ToolType.KNIFE, ToolType.CREASE])).mounts[0]?.toolType)
+            .toBe(ToolType.KNIFE);
+        expect(setupFor(mk([ToolType.CREASE, ToolType.KNIFE])).mounts[0]?.toolType)
+            .toBe(ToolType.CREASE);
+    });
+
+    it("mountedTypes drops to the tool types a scheduler takes", () => {
+        const m = dualHead();
+        expect(mountedTypes(setupFor(m))).toEqual([ToolType.KNIFE, ToolType.PEN]);
+        expect(mountedTypes(mount(m, setupFor(m), 1, null))).toEqual([ToolType.KNIFE, null]);
     });
 
     it("agrees with the old static behaviour on a freshly seeded setup", () => {
         // Adopting Setup must be a no-op until someone actually switches heads,
         // or every existing caller changes meaning silently.
         const m = dualHead(0);
-        expect(setupAxes(m, setupFor(m))).toEqual(resolvedAxes(m));
+        expect(setupAxes(m, setupFor(m))).toEqual(resolvedAxesDefault(m));
     });
 });
 
@@ -94,9 +117,9 @@ describe("engage / mount", () => {
     it("mounts and empties a socket without touching the other", () => {
         const m = dualHead();
         const s = mount(m, setupFor(m), 0, CREASE);
-        expect(s.mounted[0]).toBe(CREASE);
-        expect(s.mounted[1]?.toolType).toBe(PEN.toolType);
-        expect(mount(m, s, 1, null).mounted[1]).toBeNull();
+        expect(s.mounts[0]).toBe(CREASE);
+        expect(s.mounts[1]?.toolType).toBe(PEN.toolType);
+        expect(mount(m, s, 1, null).mounts[1]).toBeNull();
     });
 });
 
@@ -131,12 +154,12 @@ describe("setupAxes", () => {
         expect(setupAxes(m, switched).z.node.id).toBe(5);
     });
 
-    it("differs from resolvedAxes() exactly when the engaged head is not the default", () => {
-        // The bug, stated as a test: resolvedAxes keeps answering with the
+    it("differs from resolvedAxesDefault() exactly when the engaged head is not the default", () => {
+        // The bug, stated as a test: resolvedAxesDefault keeps answering with the
         // default head's calibration, a clean 2x error on this machine.
         const m = dualHead(0);
         const switched = engage(m, setupFor(m), 1);
-        expect(resolvedAxes(m).z.stepsPerUnit).toBe(1200);
+        expect(resolvedAxesDefault(m).z.stepsPerUnit).toBe(1200);
         expect(setupAxes(m, switched).z.stepsPerUnit).toBe(600);
     });
 
@@ -150,7 +173,7 @@ describe("setupAxes", () => {
 
     it("throws on a setup engaging a head that does not exist", () => {
         const m = dualHead();
-        expect(() => setupAxes(m, { engaged: 9, mounted: [] })).toThrow(RangeError);
+        expect(() => setupAxes(m, { engaged: 9, mounts: [] })).toThrow(RangeError);
     });
 
     it("engagedAxis picks one letter out", () => {

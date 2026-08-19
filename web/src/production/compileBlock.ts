@@ -23,7 +23,7 @@
 
 import type { CubicBezier } from "../toolpath/geometry.js";
 import type { MachineConfig, ToolProfile, QualityConfig } from "../machine/index.js";
-import { resolvedAxes } from "../machine/index.js";
+import { resolvedAxesDefault } from "../machine/index.js";
 import { resolveTargets } from "../machine/resolve.js";
 import { enforceC1 } from "../toolpath/repair.js";
 import { flatten } from "../toolpath/flatten.js";
@@ -70,7 +70,7 @@ export function compileBlock(
     quality: QualityConfig,
     profile: ToolProfile,
 ): CompileBlockResult {
-    const axes = resolvedAxes(machine);
+    const axes = resolvedAxesDefault(machine);
 
     // Shift paths by -toolOffset so all baked coordinates are in head-center
     // space. Zero offset is a fast-path no-op (returns the original array).

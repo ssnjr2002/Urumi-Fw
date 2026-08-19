@@ -54,7 +54,8 @@ export {
     busNode,
     NodeType,
     type ResolvedAxes,
-    resolvedAxes,
+    resolvedAxesDefault,
+    axesForHead,
     // heads + geometry references
     type ToolHead,
     toolHead,
@@ -80,6 +81,7 @@ export {
 export {
     toolForLayer,
     requiredAxes,
+    headsAccepting,
     canRunTool,
     resolveTargets,
     type ResolvedTargets,
@@ -109,7 +111,6 @@ export {
     axisSlots,
     slotMapFor,
     headForSlotMap,
-    headAssignment,
     type AxisSlot,
     type SlotMap,
 } from "./machine/slots.js";

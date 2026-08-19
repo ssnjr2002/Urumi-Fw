@@ -59,7 +59,7 @@ import { flatten } from "../../src/toolpath/flatten.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
 import {
-    resolvedAxes,
+    resolvedAxesDefault,
     qualityConfig,
     KNIFE,
     PEN,
@@ -86,7 +86,7 @@ it("generates the C++ discretize reference", (ctx) => {
 
     const CFG = defaultConfig();
     const MACH = CFG.machine;
-    const AXES = resolvedAxes(MACH);
+    const AXES = resolvedAxesDefault(MACH);
     const HEAD = MACH.heads[MACH.defaultHead]!;
     const q = qualityConfig();
 
@@ -211,7 +211,7 @@ it("generates the C++ discretize reference", (ctx) => {
                       overrides?: { jogFeed?: number; liftHeight?: number; zFeed?: number;
                                     zAccel?: number }): void => {
         const got = discretize(input, mach, profile, qual, overrides);
-        const ax = resolvedAxes(mach);
+        const ax = resolvedAxesDefault(mach);
         const targets = { rapid: mach.rapid, z: mach.z, slew: mach.slew };
         lines.push(`case ${name}`);
         lines.push(`use ${emitSamples(key, input)}`);

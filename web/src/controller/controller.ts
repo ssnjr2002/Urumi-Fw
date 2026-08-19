@@ -47,7 +47,6 @@ import {
     sameSetup,
     type Setup,
 } from "../machine/setup.js";
-import { headAssignment } from "../machine/slots.js";
 import type { SlotMap } from "../machine/slots.js";
 import {
     homePosition,
@@ -197,9 +196,22 @@ export class Controller {
         return engagedTool(this._setup);
     }
 
-    /** tool type → head socket, for handing to `walkSchedule`. */
+    /**
+     * tool type → head socket, for handing to `walkSchedule`.
+     *
+     * DYING. Compiled blocks will carry their own head (docs/head_binding.md
+     * stage 4), which removes both this getter and walkSchedule's option. Until
+     * then it reads the LIVE setup rather than the config — config no longer
+     * claims to know where a tool sits, and where it sits right now is the only
+     * answer a runtime rebind can act on. A tool fitted nowhere is absent, and
+     * the caller's `?? 0` covers it exactly as before.
+     */
     get headAssignment(): ReadonlyMap<ToolType, number> {
-        return headAssignment(this.machine);
+        const m = new Map<ToolType, number>();
+        this._setup.mounts.forEach((p, i) => {
+            if (p && !m.has(p.toolType)) m.set(p.toolType, i);
+        });
+        return m;
     }
 
     // -- events ---------------------------------------------------------------

@@ -21,12 +21,12 @@ import {
     MICRO_DUTY_ASSERT,
     type MicroSegment,
 } from "../../src/wire/format/microsegment.js";
-import { resolvedAxes } from "../../src/machine/index.js";
+import { resolvedAxesDefault } from "../../src/machine/index.js";
 import { uniformMachine } from "../machines.js";
 import type { DutyLimits } from "../../src/machine/schema.js";
 
 const F_CPU = 1e6;
-const axes = resolvedAxes(uniformMachine(160, 45.46, { fCpu: F_CPU }));
+const axes = resolvedAxesDefault(uniformMachine(160, 45.46, { fCpu: F_CPU }));
 const duty: DutyLimits = { maxOnS: 30, minOnS: 20, dwellS: 2, settleS: 0 };
 
 /** One unbroken 60 s cut: no lift anywhere in the band. */

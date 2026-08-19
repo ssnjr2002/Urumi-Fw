@@ -23,6 +23,8 @@ import type {
     PipelineConfig,
     ToolProfile,
 } from "../schema.js";
+import { TOOL_PROFILES_BY_TYPE } from "../tools.js";
+import { requiredAxes } from "../resolve.js";
 
 
 export interface ValidationResult {
@@ -142,18 +144,52 @@ const defaultHeadInRange: Rule = ({ machine }) => {
         : [error(`defaultHead: ${i} is out of range (machine has ${n} head(s))`)];
 };
 
-/** A seeded tool that steers A on a head with no A node can never run. */
-const headsSupportSeededTools: Rule = ({ machine }) =>
+/**
+ * A head cannot accept a tool it has no axes for.
+ *
+ * `accepts` is a physical claim, and the scheduler treats it as one: a head
+ * listing the knife WILL be given knife blocks, and Z/A come from that head. A
+ * tangential tool on a head with no A node is a job that bakes cleanly and then
+ * cannot steer, so the claim has to be refused at load, not discovered later.
+ */
+const headsHaveAxesForAccepted: Rule = ({ machine }) =>
     machine.heads.flatMap((h, i) =>
-        h.profile &&
-        (h.profile.tangential || h.profile.slotOffsets !== undefined) &&
-        !h.a.node.present
-            ? [
-                  error(
-                      `heads[${i}]: seeded tool '${h.profile.name}' steers A, ` +
-                          "but that head's A node is not present",
-                  ),
-              ]
+        h.accepts.flatMap((type) => {
+            const p = TOOL_PROFILES_BY_TYPE[type];
+            if (!p) return [];
+            const req = requiredAxes(p);
+            return [
+                ...(req.a && !h.a.node.present
+                    ? [error(`heads[${i}]: accepts '${p.name}', which steers A, ` +
+                             "but that head's A node is not present")]
+                    : []),
+                ...(req.z && !h.z.node.present
+                    ? [error(`heads[${i}]: accepts '${p.name}', which lifts Z, ` +
+                             "but that head's Z node is not present")]
+                    : []),
+            ];
+        }),
+    );
+
+/**
+ * A tool no head accepts can never be scheduled — every job using it fails at
+ * the bake. A warning, not an error: a machine legitimately need not be able to
+ * hold every preset the code ships, and only the presets a job actually uses
+ * matter. Naming it here is what turns "why does this SVG refuse to bake" into
+ * one line at load.
+ */
+const everyToolHasAHead: Rule = ({ machine, toolProfiles }) => {
+    const accepted = new Set(machine.heads.flatMap((h) => [...h.accepts]));
+    return Object.entries(toolProfiles)
+        .filter(([, p]) => !accepted.has(p.toolType))
+        .map(([name]) => warn(`tools.${name}: no head accepts it — it can never be scheduled`));
+};
+
+/** A socket that accepts nothing is declared and unusable. */
+const headsAcceptSomething: Rule = ({ machine }) =>
+    machine.heads.flatMap((h, i) =>
+        h.accepts.length === 0
+            ? [warn(`heads[${i}]: accepts nothing — no job can use this head`)]
             : [],
     );
 
@@ -189,7 +225,9 @@ const RULES: readonly Rule[] = [
     targetsUnderCeilings,
     uniqueNodeIds,
     defaultHeadInRange,
-    headsSupportSeededTools,
+    headsHaveAxesForAccepted,
+    headsAcceptSomething,
+    everyToolHasAHead,
     dutyLimitsCoherent,
 ];
 

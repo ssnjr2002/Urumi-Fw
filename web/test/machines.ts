@@ -27,14 +27,20 @@ import {
     type PipelineConfig,
     type ToolProfile,
 } from "../src/machine/schema.js";
-import { KNIFE, PEN, TOOL_PROFILES } from "../src/machine/tools.js";
+import { ToolType } from "../src/machine/schema.js";
+import { TOOL_PROFILES } from "../src/machine/tools.js";
 import { DEFAULTS } from "../src/machine/defaults.js";
+
+/** Every preset — for a test head that should never be the reason a case fails. */
+const ALL_TOOLS: readonly ToolType[] = Object.values(TOOL_PROFILES).map((p) => p.toolType);
 
 /**
  * Build an equal-XY (single belt/pulley) single-head machine using the
  * conventional X=node1, Y=node2, Z=node3, A=node4 map. Convenience for the
- * common simple case. The single head is centred (x_offset = 0) and carries
- * `profile` (default KNIFE).
+ * common simple case. The single head is centred (x_offset = 0) and accepts
+ * every preset by default — one socket that takes anything is the honest shape
+ * for a single-head rig, and it keeps scheduling out of the way of tests that
+ * are about something else.
  */
 export function uniformMachine(
     stepsPerMm: number,
@@ -43,19 +49,19 @@ export function uniformMachine(
         fCpu?: number;
         maxFeed?: number;
         maxAccel?: number;
-        profile?: ToolProfile;
+        accepts?: readonly ToolType[];
     },
 ): MachineConfig {
     const {
         fCpu = DEFAULTS.machine.fCpu,
         maxFeed = 80,
         maxAccel = 1000,
-        profile = KNIFE,
+        accepts = ALL_TOOLS,
     } = options ?? {};
     const head = toolHead(
         axisConfig(busNode(3), stepsPerMm, { maxFeed, maxAccel }),
         axisConfig(busNode(4), stepsPerDeg, { maxFeed, maxAccel, rotary: true }),
-        { profile },
+        { accepts },
     );
     return machineConfig(
         axisConfig(busNode(1), stepsPerMm, { maxFeed, maxAccel }),
@@ -70,7 +76,7 @@ export function uniformMachine(
  *   X/Y : GT2 20T pulley, 40 mm/rev -> 160 steps/mm
  *   Z   : lead screw -> 1200 steps/mm
  *   A   : tangential rotary -> 51.667 steps/deg
- * Node map X=1, Y=2, Z=3, A=4. Single centred head, KNIFE mounted.
+ * Node map X=1, Y=2, Z=3, A=4. Single centred head accepting every preset.
  */
 export function defaultMachine(): MachineConfig {
     const head = toolHead(
@@ -89,7 +95,7 @@ export function defaultMachine(): MachineConfig {
             invert: true,
             rotary: true,
         }),
-        { profile: KNIFE },
+        { accepts: ALL_TOOLS },
     );
     return machineConfig(
         axisConfig(busNode(1), 160.0, { maxFeed: 80.0, maxAccel: 1000.0, invert: true }),
@@ -105,9 +111,15 @@ export function defaultMachine(): MachineConfig {
  * catch: resolving Z/A against the wrong head is silently a 2x error, and a
  * test built on identical heads passes whether or not the resolve is correct.
  *
- * Head 0 seeds KNIFE (node 3 Z, node 4 A), head 1 seeds PEN (node 5 Z, node 6
- * A) — distinct nodes too, so a wire-level test can tell which head a command
- * actually bound.
+ * Head 0 takes the knife, head 1 the pen and the revolver, and BOTH take the
+ * crease (node 3/4 vs node 5/6 — distinct nodes too, so a wire-level test can
+ * tell which head a command actually bound).
+ *
+ * The overlap is deliberate. A fixture where every tool fits exactly one head
+ * makes assignment trivial and cannot exercise the thing that is actually hard:
+ * a tool with a choice, which is where placement order starts to matter. This
+ * is the `accepts` shape docs/head_binding.md works its order-invariance
+ * example through.
  */
 export function twoHeadMachine(offsets: { xOffset: number; yOffset: number }[] = [
     { xOffset: 0, yOffset: 0 },
@@ -120,12 +132,12 @@ export function twoHeadMachine(offsets: { xOffset: number; yOffset: number }[] =
             toolHead(
                 axisConfig(busNode(3), 1200, { invert: true, maxFeed: 10, maxAccel: 300 }),
                 axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxFeed: 100, maxAccel: 2000 }),
-                { profile: KNIFE, ...offsets[0] },
+                { accepts: [ToolType.KNIFE, ToolType.CREASE], ...offsets[0] },
             ),
             toolHead(
                 axisConfig(busNode(5), 600, { maxFeed: 10, maxAccel: 300 }),
                 axisConfig(busNode(6), 51.667, { rotary: true, maxFeed: 100, maxAccel: 2000 }),
-                { profile: PEN, ...offsets[1] },
+                { accepts: [ToolType.PEN, ToolType.REVOLVER_PEN, ToolType.CREASE], ...offsets[1] },
             ),
         ],
         { fCpu: DEFAULTS.machine.fCpu, rapid: { feed: 80 } },

@@ -12,14 +12,14 @@ import {
     interval,
 } from "../../../src/wire/format/microsegment.js";
 import {
-    resolvedAxes,
+    resolvedAxesDefault,
     qualityConfig,
 } from "../../../src/machine/index.js";
 import {
     defaultConfig,
 } from "../../machines.js";
 
-const axes = resolvedAxes(defaultConfig().machine);
+const axes = resolvedAxesDefault(defaultConfig().machine);
 const q = qualityConfig();
 
 describe("wire: MicroSegment type", () => {

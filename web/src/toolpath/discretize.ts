@@ -26,7 +26,7 @@
  */
 
 import type { MachineConfig, QualityConfig, ToolProfile } from "../machine/index.js";
-import { needsOffsetComp, resolvedAxes, type ResolvedAxes } from "../machine/index.js";
+import { needsOffsetComp, resolvedAxesDefault, type ResolvedAxes } from "../machine/index.js";
 import { resolveTargets } from "../machine/resolve.js";
 import { angleDelta } from "./geometry.js";
 import { subpathRanges, type PlannedSample } from "./plan.js";
@@ -88,7 +88,7 @@ export function discretize(
         );
     }
 
-    const axes: ResolvedAxes = resolvedAxes(machine);
+    const axes: ResolvedAxes = resolvedAxesDefault(machine);
     const tangential = profile.tangential;
     const cornerAngle = profile.cornerAngleDeg;
 

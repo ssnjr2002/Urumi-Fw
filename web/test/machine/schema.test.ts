@@ -152,30 +152,37 @@ describe("config: TOOL_PROFILES registries", () => {
 });
 
 describe("config: ToolHead", () => {
-    // profile is a SEED mount, and the interface documents "absent = an empty
-    // socket at boot". It used to default to PEN, which contradicted that and
-    // meant an unconfigured head silently claimed to carry a tool. No src code
-    // reads head.profile, so the honest default is undefined.
-    it("defaults to an EMPTY socket (no profile), xOffset=0, yOffset=0", () => {
+    // `accepts` defaults to empty for the same reason the old `profile` seed
+    // defaulted to undefined: an unconfigured head must not silently claim a
+    // capability. The failure mode is worse now that the scheduler reads this
+    // — defaulting to "everything" would let an undeclared head be handed work.
+    it("defaults to accepting nothing, xOffset=0, yOffset=0", () => {
         const z = axisConfig(busNode(3), 1200);
         const a = axisConfig(busNode(4), 51.667, { rotary: true });
         const h = toolHead(z, a);
         expect(h.z).toBe(z);
         expect(h.a).toBe(a);
-        expect(h.profile).toBeUndefined();
+        expect(h.accepts).toEqual([]);
         expect(h.xOffset).toBe(0);
         expect(h.yOffset).toBe(0);
     });
 
-    it("accepts profile and XY offset overrides", () => {
+    it("accepts an accepts list and XY offset overrides", () => {
         const h = toolHead(
             axisConfig(busNode(3), 1200),
             axisConfig(busNode(4), 51.667, { rotary: true }),
-            { profile: KNIFE, xOffset: 50, yOffset: -10 },
+            { accepts: [ToolType.KNIFE, ToolType.CREASE], xOffset: 50, yOffset: -10 },
         );
-        expect(h.profile).toBe(KNIFE);
+        expect(h.accepts).toEqual([ToolType.KNIFE, ToolType.CREASE]);
         expect(h.xOffset).toBe(50);
         expect(h.yOffset).toBe(-10);
+    });
+
+    it("keeps accepts ORDERED — position is preference, not just membership", () => {
+        const mk = (accepts: ToolType[]) =>
+            toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667), { accepts });
+        expect(mk([ToolType.KNIFE, ToolType.CREASE]).accepts[0]).toBe(ToolType.KNIFE);
+        expect(mk([ToolType.CREASE, ToolType.KNIFE]).accepts[0]).toBe(ToolType.CREASE);
     });
 });
 
@@ -239,14 +246,16 @@ describe("config: uniformMachine", () => {
         expect(head.z.node.id).toBe(3);
         expect(head.a.node.id).toBe(4);
         expect(head.a.rotary).toBe(true);
-        expect(head.profile).toBe(KNIFE);
+        expect(head.accepts).toContain(ToolType.KNIFE);
     });
 
-    it("accepts maxFeed/maxAccel/profile options", () => {
-        const m = uniformMachine(160, 51.667, { maxFeed: 100, maxAccel: 2000, profile: PEN });
+    it("accepts maxFeed/maxAccel/accepts options", () => {
+        const m = uniformMachine(160, 51.667, {
+            maxFeed: 100, maxAccel: 2000, accepts: [ToolType.PEN],
+        });
         expect(m.x.maxFeed).toBe(100);
         expect(m.x.maxAccel).toBe(2000);
-        expect(m.heads[0]!.profile).toBe(PEN);
+        expect(m.heads[0]!.accepts).toEqual([ToolType.PEN]);
     });
 });
 
@@ -288,9 +297,9 @@ describe("config: defaultConfig", () => {
         expect(a.maxAccel).toBe(2000);
     });
 
-    it("single head with KNIFE profile, offset (0, 0)", () => {
+    it("single head accepting the knife, offset (0, 0)", () => {
         expect(cfg.machine.heads).toHaveLength(1);
-        expect(cfg.machine.heads[0]!.profile).toBe(KNIFE);
+        expect(cfg.machine.heads[0]!.accepts).toContain(ToolType.KNIFE);
         expect(cfg.machine.heads[0]!.xOffset).toBe(0);
         expect(cfg.machine.heads[0]!.yOffset).toBe(0);
     });

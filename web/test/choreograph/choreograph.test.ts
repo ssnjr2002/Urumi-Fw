@@ -31,7 +31,7 @@ import {
     type MicroSegment,
 } from "../../src/wire/format/microsegment.js";
 import {
-    resolvedAxes,
+    resolvedAxesDefault,
     axisConfig,
     busNode,
     toolHead,
@@ -42,7 +42,7 @@ import {
 } from "../../src/machine/index.js";
 import { defaultConfig } from "../machines.js";
 
-const axes = resolvedAxes(defaultConfig().machine);
+const axes = resolvedAxesDefault(defaultConfig().machine);
 
 /** The A accel ceiling aMove is working to, in steps/s². */
 const A_ACCEL = axes.a.maxAccel * axes.a.stepsPerUnit;
@@ -141,7 +141,7 @@ function remap(patch: Partial<Record<AxisName, AxisPatch | undefined>>): Resolve
             rotary: ax.rotary,
             ...clean(p),
         });
-    return resolvedAxes({
+    return resolvedAxesDefault({
         ...m,
         x: put(m.x, patch.x),
         y: put(m.y, patch.y),

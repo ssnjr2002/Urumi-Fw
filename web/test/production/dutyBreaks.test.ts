@@ -23,7 +23,7 @@ import {
     MICRO_DUTY_ASSERT,
     type MicroSegment,
 } from "../../src/wire/format/microsegment.js";
-import { resolvedAxes, type ResolvedAxes } from "../../src/machine/index.js";
+import { resolvedAxesDefault, type ResolvedAxes } from "../../src/machine/index.js";
 import { uniformMachine } from "../machines.js";
 import type { DutyLimits } from "../../src/machine/schema.js";
 
@@ -31,7 +31,7 @@ const F_CPU = 1e6;
 
 /** ResolvedAxes for a machine whose Z may be inverted. */
 function axesFor(zInvert: boolean): ResolvedAxes {
-    const a = resolvedAxes(uniformMachine(160, 45.46, { fCpu: F_CPU }));
+    const a = resolvedAxesDefault(uniformMachine(160, 45.46, { fCpu: F_CPU }));
     return { ...a, z: { ...a.z, invert: zInvert } };
 }
 

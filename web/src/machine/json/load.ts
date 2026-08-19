@@ -9,7 +9,7 @@
  *
  * Required vs optional:
  *   Required: machine.x, machine.y, heads[], each axis's node.id +
- *   stepsPerUnit, each head's tool. Missing → error. Note the rule: a field is
+ *   stepsPerUnit, each head's accepts. Missing → error. Note the rule: a field is
  *   required IFF it has no entry in DEFAULTS. Requiring a field that also has a
  *   default is a contradiction — the default could never be reached.
  *
@@ -54,6 +54,7 @@ import {
     type MachineTarget,
     type ToolHead,
     type ToolProfile,
+    type ToolType,
     type QualityConfig,
     type PipelineConfig,
 } from "../schema.js";
@@ -85,7 +86,10 @@ interface JsonAxis {
 }
 
 interface JsonHead {
-    readonly tool: string;
+    /** Tool preset names this socket's fixture takes, preference-ordered. */
+    readonly accepts: readonly string[];
+    /** Removed — see the heads parse step. Typed so the check can see it. */
+    readonly tool?: string;
     readonly xOffset?: number;
     readonly yOffset?: number;
     readonly z: JsonAxis;
@@ -210,10 +214,30 @@ export function parseConfig(jsonText: string): ConfigResult {
                 errors.push(`heads[${i}]: must be an object`);
                 continue;
             }
-            if (typeof h.tool !== "string") {
-                errors.push(`heads[${i}].tool: required (string)`);
-            } else if (!(h.tool in TOOL_PROFILES)) {
-                errors.push(`heads[${i}].tool: '${h.tool}' is not a known tool preset`);
+            // `tool` named the ONE seed tool a socket booted with, which could
+            // not say what else fitted. Rejecting it by name beats ignoring it
+            // under the lenient-unknown-keys rule: a config still carrying it
+            // means a head whose capability nobody has declared, and that head
+            // would then accept nothing and quietly never be scheduled.
+            if (h.tool !== undefined) {
+                errors.push(
+                    `heads[${i}].tool: removed — replace with 'accepts', the list of tool ` +
+                        `presets this head's fixture takes (e.g. "accepts": ["${h.tool}"])`,
+                );
+            }
+            if (!Array.isArray(h.accepts)) {
+                errors.push(`heads[${i}].accepts: required (array of tool preset names)`);
+            } else {
+                for (let k = 0; k < h.accepts.length; k++) {
+                    const name = h.accepts[k];
+                    if (typeof name !== "string") {
+                        errors.push(`heads[${i}].accepts[${k}]: must be a string`);
+                    } else if (!(name in TOOL_PROFILES)) {
+                        errors.push(
+                            `heads[${i}].accepts[${k}]: '${name}' is not a known tool preset`,
+                        );
+                    }
+                }
             }
             if (typeof h.z !== "object" || h.z === null) {
                 errors.push(`heads[${i}].z: required (axis object)`);
@@ -239,11 +263,8 @@ export function parseConfig(jsonText: string): ConfigResult {
         const jh = json.heads[i]!;
         const z = buildAxis(jh.z, errors, `heads[${i}].z`);
         const a = buildAxis(jh.a, errors, `heads[${i}].a`);
-        const toolName = jh.tool!;
-        const baseProfile = TOOL_PROFILES[toolName]!;
-        const patchedProfile = patchToolProfile(toolName, baseProfile, json.tools);
         heads.push(toolHead(z, a, {
-            profile: patchedProfile,
+            accepts: resolveAccepts(jh.accepts, errors, `heads[${i}].accepts`),
             xOffset: jh.xOffset ?? 0,
             yOffset: jh.yOffset ?? 0,
         }));
@@ -370,6 +391,45 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         invert: ja.invert ?? false,
         rotary: ja.rotary ?? false,
     });
+}
+
+/**
+ * Tool preset names → ToolTypes, preserving order.
+ *
+ * Assumes the names are known (the structural pass rejected the rest) and
+ * re-checks the property everything downstream depends on: that a preset name
+ * and a ToolType identify each other. Today they do by construction — the
+ * loader only ever patches one of four fixed presets and `toolType` is not a
+ * patchable key — so this check cannot fire. It is here so that loosening the
+ * loader to accept a user-defined profile trips a named error rather than
+ * quietly giving two profiles one type, which every consumer keyed on
+ * ToolType (the scheduler above all) would read as one tool. The revolver pen
+ * is why that matters: its blocks legitimately share a type across slots, so a
+ * collision is indistinguishable from a revolver slot.
+ */
+function resolveAccepts(
+    names: readonly string[],
+    errors: string[],
+    path: string,
+): ToolType[] {
+    const out: ToolType[] = [];
+    const seen = new Map<ToolType, string>();
+    names.forEach((name, k) => {
+        const type = TOOL_PROFILES[name]!.toolType;
+        const owner = seen.get(type);
+        if (owner !== undefined) {
+            errors.push(
+                owner === name
+                    ? `${path}[${k}]: '${name}' listed twice`
+                    : `${path}[${k}]: '${name}' and '${owner}' share tool type ${type} — ` +
+                      "a tool type must identify exactly one profile",
+            );
+            return;
+        }
+        seen.set(type, name);
+        out.push(type);
+    });
+    return out;
 }
 
 function patchToolProfile(

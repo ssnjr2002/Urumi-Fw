@@ -20,7 +20,7 @@
   },
   "heads": [
     {
-      "tool": "knife",
+      "accepts": ["knife", "crease"],
       "xOffset": 0,
       "yOffset": 0,
       "z": {

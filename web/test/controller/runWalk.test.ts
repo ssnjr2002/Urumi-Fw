@@ -43,10 +43,10 @@ function dualHead() {
         axisConfig(busNode(2), 160),
         [
             toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667, { rotary: true }), {
-                profile: KNIFE,
+                accepts: [ToolType.KNIFE],
             }),
             toolHead(axisConfig(busNode(5), 600), axisConfig(busNode(6), 51.667, { rotary: true }), {
-                profile: PEN,
+                accepts: [ToolType.PEN],
                 xOffset: 50,
             }),
         ],

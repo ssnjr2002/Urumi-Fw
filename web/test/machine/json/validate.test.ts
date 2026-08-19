@@ -19,6 +19,7 @@ import {
     toolProfile,
     type MachineConfig,
     type PipelineConfig,
+    ToolType,
 } from "../../../src/machine/schema.js";
 import { KNIFE } from "../../../src/machine/tools.js";
 import { validateConfig } from "../../../src/machine/json/validate.js";
@@ -33,6 +34,7 @@ function cfg(machine?: Partial<Parameters<typeof machineConfig>[3]>): PipelineCo
             toolHead(
                 axisConfig(busNode(3), 300, { maxFeed: 10 }),
                 axisConfig(busNode(4), 45, { maxFeed: 100, maxAccel: 500, rotary: true }),
+                { accepts: [ToolType.KNIFE] },
             ),
         ],
         machine as Partial<MachineConfig>,
@@ -176,8 +178,8 @@ describe("rule: defaultHeadInRange", () => {
     });
 });
 
-describe("rule: headsSupportSeededTools", () => {
-    it("errors when a seeded tangential tool sits on a head with no A node", () => {
+describe("rule: headsHaveAxesForAccepted", () => {
+    it("errors when an accepted tangential tool sits on a head with no A node", () => {
         const m = machineConfig(
             axisConfig(busNode(1), 160, { maxFeed: 80, maxAccel: 1000 }),
             axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
@@ -185,7 +187,7 @@ describe("rule: headsSupportSeededTools", () => {
                 toolHead(
                     axisConfig(busNode(3), 300),
                     axisConfig(busNode(4, { present: false }), 45),
-                    { profile: KNIFE },
+                    { accepts: [ToolType.KNIFE] },
                 ),
             ],
         );
@@ -193,7 +195,7 @@ describe("rule: headsSupportSeededTools", () => {
         expect(e.some((x) => x.includes("steers A"))).toBe(true);
     });
 
-    it("says nothing about an empty socket", () => {
+    it("says nothing when the head has the axes its accepted tools need", () => {
         expect(errors(cfg())).toEqual([]);
     });
 });
@@ -208,7 +210,7 @@ describe("loadConfig (parse ⨟ validate)", () => {
         },
         heads: [
             {
-                tool: "knife",
+                accepts: ["knife"],
                 z: { node: { id: 3 }, stepsPerUnit: 300, maxFeed: 10 },
                 a: { node: { id: 4 }, stepsPerUnit: 45, maxFeed: 100, maxAccel: 500 },
             },
@@ -220,11 +222,17 @@ describe("loadConfig (parse ⨟ validate)", () => {
     it("accepts a config that is both well-formed and sane", () => {
         const r = loadConfig(json());
         expect(r.ok).toBe(true);
-        // The knife overrides z.feed to 10; the OTHER presets inherit
-        // machine.z.feed (20) and so exceed this machine's Z ceiling. That is a
-        // true advisory about tools this machine could not run well, not noise.
+        // Both advisories here are about the three presets this machine does
+        // not fit: they exceed its Z ceiling (having inherited machine.z.feed
+        // 20, where the knife overrides to 10), and no head accepts them. Both
+        // are true statements about tools this machine could not run, and
+        // neither touches the knife, which is the tool it is configured for.
         if (r.ok) {
-            expect(r.warnings.every((w) => w.includes(".z.feed 20"))).toBe(true);
+            expect(
+                r.warnings.every(
+                    (w) => w.includes(".z.feed 20") || w.includes("no head accepts it"),
+                ),
+            ).toBe(true);
             expect(r.warnings.some((w) => w.includes("tools.knife"))).toBe(false);
         }
     });

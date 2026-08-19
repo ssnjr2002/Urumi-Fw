@@ -11,16 +11,17 @@ import {
     axisSlots,
     slotMapFor,
     headForSlotMap,
-    headAssignment,
 } from "../../src/machine/slots.js";
 import {
     axisConfig,
     busNode,
     machineConfig,
     toolHead,
+    ToolType,
 } from "../../src/machine/schema.js";
 import { KNIFE, PEN } from "../../src/machine/tools.js";
-import { defaultMachine } from "../machines.js";
+import { defaultMachine, twoHeadMachine } from "../machines.js";
+import { headsAccepting } from "../../src/machine/resolve.js";
 
 /** Two heads on distinct Z/A nodes — knife on head 0, pen on head 1. */
 function dualHead() {
@@ -29,11 +30,11 @@ function dualHead() {
         axisConfig(busNode(2), 160),
         [
             toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667, { rotary: true }), {
-                profile: KNIFE,
+                accepts: [ToolType.KNIFE],
                 xOffset: -50,
             }),
             toolHead(axisConfig(busNode(5), 1200), axisConfig(busNode(6), 51.667, { rotary: true }), {
-                profile: PEN,
+                accepts: [ToolType.PEN],
                 xOffset: 50,
             }),
         ],
@@ -126,19 +127,23 @@ describe("headForSlotMap", () => {
     });
 });
 
-describe("headAssignment", () => {
-    it("maps tool type to the head socket that seeds it", () => {
-        const a = headAssignment(dualHead());
-        expect(a.get(KNIFE.toolType)).toBe(0);
-        expect(a.get(PEN.toolType)).toBe(1);
+// headAssignment() is gone. It answered "which head seeds this tool" from
+// config, which the seed field could only guess at; where a tool COULD go is
+// now headsAccepting() (resolve.ts) and where it IS is headWithTool() (setup.ts).
+describe("headsAccepting", () => {
+    it("lists every head whose fixture takes the tool, in machine order", () => {
+        const m = twoHeadMachine();
+        expect(headsAccepting(m, ToolType.KNIFE)).toEqual([0]);
+        expect(headsAccepting(m, ToolType.PEN)).toEqual([1]);
+        expect(headsAccepting(m, ToolType.CREASE)).toEqual([0, 1]);
     });
 
-    it("omits empty sockets entirely", () => {
+    it("returns empty for a tool no head accepts", () => {
         const m = machineConfig(
             axisConfig(busNode(1), 160),
             axisConfig(busNode(2), 160),
             [toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667))],
         );
-        expect(headAssignment(m).size).toBe(0);
+        expect(headsAccepting(m, ToolType.KNIFE)).toEqual([]);
     });
 });

@@ -13,7 +13,7 @@
  * this module only says what each choice would mean.
  */
 
-import type { AxisConfig, MachineConfig, ToolHead, ToolType } from "./schema.js";
+import type { AxisConfig, MachineConfig, ToolHead } from "./schema.js";
 
 /** Slot index on the wire. X and Y are fixed; Z and A follow the engaged head. */
 export const SLOT = { X: 0, Y: 1, Z: 2, A: 3 } as const;
@@ -102,21 +102,4 @@ export function headForSlotMap(
         if (slotMapFor(machine, i).every((v, k) => v === committed[k])) return i;
     }
     return null;
-}
-
-/**
- * tool type → head index, from the heads' seed profiles.
- *
- * This answers "where would this tool be fitted", which is a description-level
- * question, and is how a mount schedule is turned into head switches. It is NOT
- * the same as "what is fitted right now" — see setup.ts. Later heads win on a
- * duplicate tool type, which only arises on a machine carrying two of the same
- * tool, where either answer is as good.
- */
-export function headAssignment(machine: MachineConfig): ReadonlyMap<ToolType, number> {
-    const m = new Map<ToolType, number>();
-    machine.heads.forEach((h, i) => {
-        if (h.profile) m.set(h.profile.toolType, i);
-    });
-    return m;
 }

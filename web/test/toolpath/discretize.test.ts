@@ -32,13 +32,13 @@ import {
 } from "../../src/wire/format/microsegment.js";
 import { enforceC1 } from "../../src/toolpath/repair.js";
 import { CASES, CUSP } from "./curves.cases.js";
-import { resolvedAxes, qualityConfig, KNIFE, PEN } from "../../src/machine/index.js";
+import { resolvedAxesDefault, qualityConfig, KNIFE, PEN } from "../../src/machine/index.js";
 import { defaultConfig } from "../machines.js";
 import { loadSvgMmSubpaths } from "../../src/svg/ingest.js";
 
 const CFG = defaultConfig();
 const MACH = CFG.machine;
-const AXES = resolvedAxes(MACH);
+const AXES = resolvedAxesDefault(MACH);
 const HEAD = MACH.heads[MACH.defaultHead]!;
 const q = qualityConfig();
 const FEED = 80.0;

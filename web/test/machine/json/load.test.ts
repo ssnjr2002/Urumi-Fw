@@ -12,6 +12,7 @@ import {
     KNIFE,
     PEN,
     REVOLVER_PEN,
+    ToolType,
     qualityConfig,
 } from "../../../src/machine/index.js";
 import {
@@ -82,10 +83,10 @@ describe("load: valid config", () => {
         expect(a.maxAccel).toBe(2000);
     });
 
-    it("head has KNIFE profile (resolved from tool name)", () => {
+    it("head accepts resolve from preset names to ToolTypes, in order", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
-        expect(r.config.machine.heads[0]!.profile).toBe(KNIFE);
+        expect(r.config.machine.heads[0]!.accepts).toEqual([ToolType.KNIFE, ToolType.CREASE]);
     });
 
     it("matches defaultConfig().machine (same calibration values)", () => {
@@ -263,14 +264,14 @@ describe("load: dual-head + laser", () => {
         },
         "heads": [
             {
-                "tool": "knife",
+                "accepts": ["knife"],
                 "xOffset": -50,
                 "yOffset": 0,
                 "z": { "node": { "id": 3 }, "stepsPerUnit": 1200 },
                 "a": { "node": { "id": 4 }, "stepsPerUnit": 51.667, "rotary": true }
             },
             {
-                "tool": "pen",
+                "accepts": ["pen"],
                 "xOffset": 50,
                 "yOffset": 0,
                 "z": { "node": { "id": 5 }, "stepsPerUnit": 1200 },
@@ -285,9 +286,9 @@ describe("load: dual-head + laser", () => {
         expect(r.ok).toBe(true);
         if (!r.ok) return;
         expect(r.config.machine.heads).toHaveLength(2);
-        expect(r.config.machine.heads[0]!.profile).toBe(KNIFE);
+        expect(r.config.machine.heads[0]!.accepts).toEqual([ToolType.KNIFE]);
         expect(r.config.machine.heads[0]!.xOffset).toBe(-50);
-        expect(r.config.machine.heads[1]!.profile).toBe(PEN);
+        expect(r.config.machine.heads[1]!.accepts).toEqual([ToolType.PEN]);
         expect(r.config.machine.heads[1]!.xOffset).toBe(50);
     });
 
@@ -348,6 +349,57 @@ describe("load: peripherals", () => {
 });
 
 // ── error cases ───────────────────────────────────────────────────────────────
+
+describe("load: heads[].accepts", () => {
+    const head = (h: object) => JSON.stringify({
+        machine: {
+            x: { node: { id: 1 }, stepsPerUnit: 160 },
+            y: { node: { id: 2 }, stepsPerUnit: 160 },
+        },
+        heads: [{
+            z: { node: { id: 3 }, stepsPerUnit: 300 },
+            a: { node: { id: 4 }, stepsPerUnit: 45 },
+            ...h,
+        }],
+    });
+
+    // Not silently ignored under the lenient-unknown-keys rule: a config still
+    // carrying `tool` describes a head whose capability nobody declared, which
+    // would parse into a head accepting nothing and never being scheduled.
+    it("rejects the removed `tool` key by name, and says what replaced it", () => {
+        const r = parseConfig(head({ tool: "knife" }));
+        expect(r.ok).toBe(false);
+        if (!r.ok) {
+            const e = r.errors.find((x) => x.includes("heads[0].tool"))!;
+            expect(e).toContain("removed");
+            expect(e).toContain('"accepts": ["knife"]');
+        }
+    });
+
+    it("requires accepts", () => {
+        const r = parseConfig(head({}));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors.some((e) => e.includes("heads[0].accepts"))).toBe(true);
+    });
+
+    it("rejects an unknown preset name, naming the entry", () => {
+        const r = parseConfig(head({ accepts: ["knife", "laser"] }));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors.some((e) => e.includes("heads[0].accepts[1]"))).toBe(true);
+    });
+
+    it("rejects the same tool listed twice", () => {
+        const r = parseConfig(head({ accepts: ["knife", "knife"] }));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors.some((e) => e.includes("listed twice"))).toBe(true);
+    });
+
+    it("accepts an empty list — a declared socket nothing fits", () => {
+        const r = parseConfig(head({ accepts: [] }));
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(r.config.machine.heads[0]!.accepts).toEqual([]);
+    });
+});
 
 describe("load: error cases", () => {
     it("rejects invalid JSON", () => {

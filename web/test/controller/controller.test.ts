@@ -18,9 +18,10 @@ import {
     busNode,
     machineConfig,
     toolHead,
+    ToolType,
 } from "../../src/machine/schema.js";
 import { KNIFE, PEN } from "../../src/machine/tools.js";
-import { resolvedAxes } from "../../src/machine/resolve.js";
+import { resolvedAxesDefault } from "../../src/machine/resolve.js";
 import { MachineState } from "../../src/wire/format/status.js";
 
 /** Head 0: knife, Z at 1200 steps/mm on node 3. Head 1: pen, Z at 600 on node 5. */
@@ -30,11 +31,11 @@ function dualHead(defaultHead = 0) {
         axisConfig(busNode(2), 160),
         [
             toolHead(axisConfig(busNode(3), 1200), axisConfig(busNode(4), 51.667, { rotary: true }), {
-                profile: KNIFE,
+                accepts: [ToolType.KNIFE],
                 xOffset: 0,
             }),
             toolHead(axisConfig(busNode(5), 600), axisConfig(busNode(6), 51.667, { rotary: true }), {
-                profile: PEN,
+                accepts: [ToolType.PEN],
                 xOffset: 50,
                 yOffset: 10,
             }),
@@ -190,7 +191,7 @@ describe("live position", () => {
         expect(controller.axisUnits("z")).toBeCloseTo(2.0, 9);
 
         // The bug this prevents, stated: the static answer never moves.
-        expect(resolvedAxes(controller.machine).z.stepsPerUnit).toBe(1200);
+        expect(resolvedAxesDefault(controller.machine).z.stepsPerUnit).toBe(1200);
     });
 
     it("separates head centre from tool tip", async () => {
