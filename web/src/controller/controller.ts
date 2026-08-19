@@ -34,6 +34,7 @@
  */
 
 import type { MachineConfig, ToolProfile, ToolType } from "../machine/schema.js";
+import { TOOL_PROFILES_BY_TYPE } from "../machine/tools.js";
 import type { ResolvedAxes } from "../machine/resolve.js";
 import {
     setupFor,
@@ -565,8 +566,8 @@ export function verifyPhaseMounts(mounts: readonly (ToolType | null)[], setup: S
         const fitted = setup.mounts[head];
         if (fitted?.toolType !== want) {
             throw new Error(
-                `this phase needs ${want} on head ${head}, but head ${head} ` +
-                    `holds ${fitted?.name ?? "nothing"}`,
+                `this phase needs ${TOOL_PROFILES_BY_TYPE[want]?.name ?? want} on head ` +
+                    `${head}, but head ${head} holds ${fitted?.name ?? "nothing"}`,
             );
         }
     });

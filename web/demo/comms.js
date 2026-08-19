@@ -43,13 +43,13 @@ import {
     MachineState,
     fatalReasonName,
     bakePlan,
-    scheduleMounts,
     walkSchedule,
     getPos,
     MICRO_JOG,
     MICRO_LIFT,
     MICRO_DUTY_RELEASE,
     TOOL_PROFILES_BY_TYPE,
+    mountedTypes,
     NodeType,
     ToolType,
     machineAnchor,
@@ -57,7 +57,6 @@ import {
     toolFrameOffset,
     homeToTool,
     axisSlots,
-    headAssignment as headAssignmentOf,
     motionSegments,
     walkSeconds,
     STATE_NAMES,
@@ -198,12 +197,33 @@ clearConsole.addEventListener('click', () => { consoleEl.textContent = ''; });
  * Rows for absent nodes are rendered disabled rather than dropped, so the
  * operator can see the config said "not present".
  */
+
+/**
+ * What is fitted to head `i`, or null.
+ *
+ * `heads[].profile` is gone (docs/head_binding.md stage 1): config no longer
+ * claims to know what is in a socket, only which tools the socket ACCEPTS.
+ * Live truth is the Controller's mount table; without one, the best available
+ * answer is the head's first-choice tool, which is what `setupFor` would fit.
+ */
+function headTool(i, cfg = config) {
+    if (ctl) return ctl.setup.mounts[i] ?? null;
+    const accepts = cfg?.machine.heads[i]?.accepts ?? [];
+    return accepts.length ? TOOL_PROFILES_BY_TYPE[accepts[0]] ?? null : null;
+}
+
+/** `head 2 (knife)` / `head 2` — the shared label for a socket. */
+function headLabel(i, sep = ' ') {
+    const p = headTool(i);
+    return `head ${i}${p ? `${sep}(${p.name})` : ''}`;
+}
+
 function buildAxes(cfg) {
     // The slot model is the library's (machine/slots.ts); this adds only the
     // optgroup label, which is presentation and stays here.
     const groupOf = r => {
         if (r.head === undefined) return 'Gantry';
-        const p = cfg.machine.heads[r.head]?.profile;
+        const p = headTool(r.head, cfg);
         return `head ${r.head}${p ? ` (${p.name})` : ''}`;
     };
     return axisSlots(cfg.machine).map(r => ({
@@ -271,8 +291,7 @@ function anchorLabel() {
     const a = machineAnchor(config.machine);
     if (a.kind === 'laser') return 'laser';
     if (a.kind === 'head') {
-        const h = config.machine.heads[a.index];
-        return `head ${a.index}${h?.profile ? ` (${h.profile.name})` : ''}`;
+        return headLabel(a.index);
     }
     return 'none — no head sits at (0,0)';
 }
@@ -315,7 +334,7 @@ function renderHeadSel() {
     config.machine.heads.forEach((h, i) => {
         const o = document.createElement('option');
         o.value = String(i);
-        o.textContent = `head ${i}${h.profile ? ` — ${h.profile.name}` : ''}`;
+        o.textContent = headLabel(i, ' — ').replace(/[()]/g, '');
         headSel.appendChild(o);
     });
     const engaged = ctl ? ctl.setup.engaged : config.machine.defaultHead;
@@ -516,22 +535,22 @@ pollOnceBtn.addEventListener('click', () => { if (ctl) void ctl.refresh().catch(
 // few millimetres apart, and this is where you can see it.
 
 /**
- * The tip frames this config can report. A head's tool comes from `heads[].tool`
- * — a SEED, not a live mount table (schema.ts): config states what the socket
- * boots with, and nothing here tracks an operator swapping a tool by hand.
+ * The tip frames this config can report.
+ *
+ * A tip frame needs a TOOL, and which tool is in a socket is now live state,
+ * not config — `heads[].accepts` says what fits, not what is fitted. So this
+ * follows the Controller's mount table when there is one, and falls back to the
+ * head's first-choice tool when there is not. Swapping a tool changes the tip
+ * offsets, which is exactly what the operator is looking at here.
  */
 function frameOptions() {
     if (!config) return [];
     const out = [];
-    config.machine.heads.forEach((h, i) => {
+    config.machine.heads.forEach((_, i) => {
         out.push({ key: `h${i}c`, label: `head ${i} · centre`, head: i, profile: null });
-        if (h.profile) {
-            out.push({
-                key: `h${i}t`,
-                label: `head ${i} · ${h.profile.name} tip`,
-                head: i,
-                profile: h.profile,
-            });
+        const profile = headTool(i);
+        if (profile) {
+            out.push({ key: `h${i}t`, label: `head ${i} · ${profile.name} tip`, head: i, profile });
         }
     });
     return out;
@@ -914,7 +933,7 @@ function renderGotoHead() {
     config.machine.heads.forEach((h, i) => {
         const o = document.createElement('option');
         o.value = String(i);
-        o.textContent = `head ${i}${h.profile ? ` — ${h.profile.name}` : ''}`;
+        o.textContent = headLabel(i, ' — ').replace(/[()]/g, '');
         gotoHead.appendChild(o);
     });
     if (prev && [...gotoHead.options].some(o => o.value === prev)) gotoHead.value = prev;
@@ -1364,10 +1383,7 @@ function vacuumCard(node) {
 //     machine the swap IS a slot rebind — resuming without it streams the new
 //     head's Z/A at the old head's motors.
 
-/** Which head socket holds each tool type. The Controller derives it from the machine. */
-const headAssignment = () => (ctl ? ctl.headAssignment : headAssignmentOf(config.machine));
-
-/** MountSets carry ToolType numbers; operators read tool names. */
+/** Mounts carry ToolType numbers; operators read tool names. */
 const toolName = t => TOOL_PROFILES_BY_TYPE[t]?.name ?? `tool ${t}`;
 
 
@@ -1383,18 +1399,24 @@ const toolName = t => TOOL_PROFILES_BY_TYPE[t]?.name ?? `tool ${t}`;
 function compileJob(initialState) {
     if (!config) throw new Error('no config loaded');
     if (!svgText) throw new Error('select an SVG first');
-    const { plan } = bakePlan(config, svgText, { defaultTool: jobTool.value.trim() || undefined });
-
-    // One tool per socket. The scheduler never reorders blocks, so a plan that
-    // alternates tools produces the same number of phase boundaries either way
-    // — with one head each is an operator swap, with two the walk emits a
-    // `rebind` event and runWalk does it in under a second.
-    const schedule = scheduleMounts(plan, config.machine.heads.length);
-    const events = walkSchedule(schedule, plan, config.machine, {
-        headAssignment: headAssignment(),
-        ...(initialState ? { initialState } : {}),
+    // The mounts we bake AGAINST are what is screwed in right now, so the
+    // scheduler minimises operator swaps rather than reproducing the config's
+    // preferred arrangement. bakePlan schedules before it compiles — the head
+    // decides step counts, so mm cannot become steps until each block's socket
+    // is known — and hands back the phases it used, so nothing downstream
+    // recomputes them and disagrees.
+    const { blocks, phases } = bakePlan(config, svgText, {
+        defaultTool: jobTool.value.trim() || undefined,
+        mounts: ctl ? mountedTypes(ctl.setup) : undefined,
     });
-    return { plan, schedule, events };
+
+    // The scheduler never reorders blocks, so a job that alternates tools
+    // produces the same number of phase boundaries either way — with one head
+    // each is an operator swap, with two the walk emits a `rebind` event and
+    // runWalk does it in under a second.
+    const events = walkSchedule(phases, blocks, config.machine,
+        initialState ? { initialState } : {});
+    return { blocks, phases, events };
 }
 
 // ── peripheral orchestration ────────────────────────────────────────────────
@@ -1480,7 +1502,7 @@ async function liveInitialState() {
     };
 }
 
-function renderJobMetrics(plan, events) {
+function renderJobMetrics(blocks, events) {
     const segs = motionSegments(events);
     const jogs = segs.filter(s => s.flags & MICRO_JOG).length;
     const lifts = segs.filter(s => s.flags & MICRO_LIFT).length;
@@ -1490,12 +1512,12 @@ function renderJobMetrics(plan, events) {
     // resets it will stop for before they start it.
     const duty = segs.filter(s => s.flags & MICRO_DUTY_RELEASE).length;
     jobMetrics.textContent =
-        `${plan.blocks.length} block(s)  ${segs.length.toLocaleString()} segments\n` +
+        `${blocks.length} block(s)  ${segs.length.toLocaleString()} segments\n` +
         `cut ${segs.length - jogs - lifts}  jog ${jogs}  lift ${lifts}  ` +
         `pauses ${events.filter(e => e.kind === 'pause').length}` +
         (duty ? `  duty breaks ${duty}` : '') + '\n' +
         `est run ${secs.toFixed(2)} s\n` +
-        plan.blocks.map((b, i) => `  block ${i + 1}: ${b.profile.name}  ${b.segments.length} segs`).join('\n');
+        blocks.map((b, i) => `  block ${i + 1}: ${b.profile.name} on head ${b.head}  ${b.segments.length} segs`).join('\n');
 }
 
 jobSvg.addEventListener('change', async () => {
@@ -1509,8 +1531,8 @@ jobSvg.addEventListener('change', async () => {
 
 jobCompile.addEventListener('click', () => {
     try {
-        const { plan, events } = compileJob();
-        renderJobMetrics(plan, events);
+        const { blocks, events } = compileJob();
+        renderJobMetrics(blocks, events);
         log(`job: compiled ${motionSegments(events).length} segments from ${svgName}.svg`, 'ok');
     } catch (e) {
         jobMetrics.textContent = e.message;
@@ -1541,12 +1563,12 @@ jobStop.addEventListener('click', async () => {
 jobRun.addEventListener('click', async () => {
     if (running || jog || goTo || !isConnected() || !config) return;
 
-    let plan, schedule, events;
+    let blocks, phases, events;
     try {
         const initial = await liveInitialState();
         log(`job: head at x${initial.posX} y${initial.posY} steps — compiling`, 'note');
-        ({ plan, schedule, events } = compileJob(initial));
-        renderJobMetrics(plan, events);
+        ({ blocks, phases, events } = compileJob(initial));
+        renderJobMetrics(blocks, events);
     } catch (e) {
         log(`job compile failed: ${e.message}`, 'err');
         return;
@@ -1558,7 +1580,7 @@ jobRun.addEventListener('click', async () => {
 
     try {
         await runWalk(ctl, events, {
-            initialMount: schedule.phases[0]?.mount ?? [],
+            initialMount: phases[0]?.mounts ?? [],
             onPhase: (mount, why) => applyPeripherals(mount, why),
             onDutyBreak: handleDutyBreak,
             confirmSwap: confirmSwap,
@@ -1622,19 +1644,31 @@ async function handleDutyBreak(mount) {
 }
 
 /**
- * Put the swap in front of the operator. By the time this runs the slots have
- * already been rebound to `req.head` if the swap changed heads — so the machine
- * is bound to the head they are about to fit a tool into, not the one they just
- * emptied.
+ * Put the swap in front of the operator.
+ *
+ * Returning true is a claim, not evidence: runWalk re-checks the mount table
+ * against the phase the moment this resolves and throws if the tool went into
+ * the wrong socket. The handler must actually UPDATE the mount table — saying
+ * OK is no longer enough.
  */
 function confirmSwap(req) {
     const swapIn = req.swapIn.map(toolName).join(', ') || 'nothing';
     const swapOut = req.swapOut.map(toolName).join(', ') || 'nothing';
     log(`job: tool swap — mount ${swapIn}, remove ${swapOut}`, 'note');
-    if (req.head !== null) log(`  slots rebound to head ${req.head}`, 'note');
-    return window.confirm(
+    log(`  phase wants ${req.mounts.map((t, h) => `head ${h}: ${t === null ? 'empty' : toolName(t)}`).join(', ')}`, 'note');
+    const ok = window.confirm(
         `Tool swap\n\nmount: ${swapIn}\nremove: ${swapOut}\n\nOK when the head is ready.`,
     );
+    if (!ok) return false;
+
+    // Record what the operator just did. runWalk re-checks the mount table the
+    // moment this returns, so a handler that only said "OK" gets refused — and
+    // rightly: nothing else in the system would know a tool had moved.
+    req.mounts.forEach((t, head) => {
+        ctl.mount(head, t === null ? null : TOOL_PROFILES_BY_TYPE[t] ?? null);
+    });
+    renderAll();
+    return true;
 }
 
 // ── render gating ───────────────────────────────────────────────────────────

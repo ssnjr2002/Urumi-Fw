@@ -1,12 +1,21 @@
 {
   "machine": {
     "fCpu": 150000000,
-    "path":  { "feed": 80 },
-    "rapid": { "feed": 80 },
-    "z":     { "feed": 10 },
-    "slew":  {},
+    "path": {
+      "feed": 80
+    },
+    "rapid": {
+      "feed": 80
+    },
+    "z": {
+      "feed": 10
+    },
+    "slew": {},
     "x": {
-      "node": { "id": 1, "present": true },
+      "node": {
+        "id": 1,
+        "present": true
+      },
       "stepsPerUnit": 160,
       "maxFeed": 80,
       "maxAccel": 1000,
@@ -15,7 +24,10 @@
       "rotary": false
     },
     "y": {
-      "node": { "id": 2, "present": true },
+      "node": {
+        "id": 2,
+        "present": true
+      },
       "stepsPerUnit": 160,
       "maxFeed": 80,
       "maxAccel": 1000,
@@ -27,20 +39,30 @@
   },
   "heads": [
     {
-      "tool": "knife",
+      "accepts": [
+        "knife",
+        "crease",
+        "pen"
+      ],
       "xOffset": 0,
       "yOffset": 0,
       "z": {
-        "node": { "id": 3, "present": true },
+        "node": {
+          "id": 3,
+          "present": true
+        },
         "stepsPerUnit": 300,
         "maxFeed": 10,
-        "maxAccel": 0,
+        "maxAccel": 500,
         "maxTravel": 0,
         "invert": false,
         "rotary": false
       },
       "a": {
-        "node": { "id": 4, "present": true },
+        "node": {
+          "id": 4,
+          "present": true
+        },
         "stepsPerUnit": 45.46,
         "maxFeed": 100,
         "maxAccel": 500,
@@ -59,10 +81,17 @@
       "offsetMm": 0,
       "cornerAngleDeg": 20,
       "minRadiusMm": 0,
-      "path": { "feed": 40 },
-      "z": { "feed": 10 },
+      "path": {
+        "feed": 40
+      },
+      "z": {
+        "feed": 10
+      },
       "liftHeight": 2.0,
-      "toolOffset": { "xOffset": 0, "yOffset": 0 }
+      "toolOffset": {
+        "xOffset": 0,
+        "yOffset": 0
+      }
     },
     "pen": {
       "tangential": false,
@@ -70,10 +99,17 @@
       "offsetMm": 0,
       "cornerAngleDeg": 20,
       "minRadiusMm": 0,
-      "path": { "feed": 80 },
-      "z": { "feed": 10 },
+      "path": {
+        "feed": 80
+      },
+      "z": {
+        "feed": 10
+      },
       "liftHeight": 0,
-      "toolOffset": { "xOffset": 0, "yOffset": 0 }
+      "toolOffset": {
+        "xOffset": 0,
+        "yOffset": 0
+      }
     },
     "crease": {
       "tangential": true,
@@ -81,10 +117,17 @@
       "offsetMm": 0,
       "cornerAngleDeg": 30,
       "minRadiusMm": 0,
-      "path": { "feed": 80 },
-      "z": { "feed": 10 },
+      "path": {
+        "feed": 80
+      },
+      "z": {
+        "feed": 10
+      },
       "liftHeight": 0,
-      "toolOffset": { "xOffset": 0, "yOffset": 0 }
+      "toolOffset": {
+        "xOffset": 0,
+        "yOffset": 0
+      }
     },
     "revolver_pen": {
       "tangential": false,
@@ -92,11 +135,26 @@
       "offsetMm": 0,
       "cornerAngleDeg": 30,
       "minRadiusMm": 0,
-      "path": { "feed": 80 },
-      "z": { "feed": 10 },
+      "path": {
+        "feed": 80
+      },
+      "z": {
+        "feed": 10
+      },
       "liftHeight": 0,
-      "toolOffset": { "xOffset": 0, "yOffset": 0 },
-      "slotOffsets": [0, 51.428571, 102.857143, 154.285714, 205.714286, 257.142857, 308.571429]
+      "toolOffset": {
+        "xOffset": 0,
+        "yOffset": 0
+      },
+      "slotOffsets": [
+        0,
+        51.428571,
+        102.857143,
+        154.285714,
+        205.714286,
+        257.142857,
+        308.571429
+      ]
     }
   },
   "quality": {
@@ -104,7 +162,7 @@
     "dvMax": 3.0,
     "vMin": 0.5,
     "dtMax": 0.05,
-    "dtMin": 0.000001,
+    "dtMin": 1e-06,
     "angleTol": 5.0,
     "gapTol": 0.01,
     "nKappa": 20,

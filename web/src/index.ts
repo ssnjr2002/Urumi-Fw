@@ -1,7 +1,7 @@
 /**
  * Public API for the CNC toolpath library.
  *
- * SVG + machine config → .plan → schedule → wire packets.
+ * SVG + machine config → compiled blocks → schedule → wire packets.
  *
  * Plus the comms layer (wire/link) — the real-time RS485 transport
  * abstraction, and operatorJog for manual tap/click jogging with blend.
@@ -120,6 +120,7 @@ export {
     setupFor,
     engage,
     mount,
+    mountedTypes,
     engagedTool,
     headWithTool,
     isMounted,
@@ -156,8 +157,8 @@ export {
     type CubicBezier,
 } from "./toolpath/geometry.js";
 
-// ── production bake: SVG + config → Plan + .plan bytes ───────────────────────
-// The primary entry point most consumers want (demo/main.js).
+// ── production bake: SVG + config → CompiledBlock[] + SwapPhase[] ───────────
+// The primary entry point most consumers want (demo/comms.js, demo/bench.js).
 export {
     bakePlan,
     type BakePlanOptions,
@@ -166,25 +167,22 @@ export {
 
 export {
     compileBlock,
+    type Block,
+    type CompiledBlock,
     type CompileBlockResult,
 } from "./production/compileBlock.js";
 
-// ── plan model + .plan file codec ───────────────────────────────────────────
-export {
-    type Plan,
-    type Block,
-    planToolTypes,
-    planRequiredAxes,
-    feasibleOn,
-} from "./plan/plan.js";
-
-export {
-    savePlan,
-    loadPlan,
-    PLAN_MAGIC,
-    PLAN_VERSION,
-    SLOT_NONE,
-} from "./plan/planFile.js";
+// The `Plan` wrapper and the `.plan` file codec used to sit here. Both are GONE
+// (docs/head_binding.md stage 6): a serialised plan encodes step counts already
+// resolved against one head arrangement and records nothing about which, so a
+// file baked under one `accepts` config is silently wrong under another — and
+// silently is the whole problem. The codec stays in git history.
+//
+// planToolTypes / planRequiredAxes / feasibleOn went with it. They existed to
+// serve the .plan header and the demos' homing mask, neither of which survives,
+// and nothing called them. Each was a short fold over machine/resolve.ts's
+// canRunTool / requiredAxes, both still exported above, so a caller that ever
+// needs one writes it where the naming can fit its actual use.
 
 // ── production: ordering + mount scheduling, both ahead of the bake ─────────
 export { orderBlocks } from "./production/order.js";

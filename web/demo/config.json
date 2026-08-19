@@ -1,36 +1,94 @@
 {
   "machine": {
     "fCpu": 150000000,
-    "path": { "feed": 80 },
-    "rapid": { "feed": 80 },
-    "z": { "feed": 10 },
-    "x": { "node": { "id": 1 }, "stepsPerUnit": 160, "maxFeed": 80, "maxAccel": 1000, "invert": true },
-    "y": { "node": { "id": 2 }, "stepsPerUnit": 160, "maxFeed": 80, "maxAccel": 1000 }
+    "path": {
+      "feed": 80
+    },
+    "rapid": {
+      "feed": 80
+    },
+    "z": {
+      "feed": 10
+    },
+    "x": {
+      "node": {
+        "id": 1
+      },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 1000,
+      "invert": true
+    },
+    "y": {
+      "node": {
+        "id": 2
+      },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 1000
+    }
   },
   "heads": [
     {
-      "tool": "knife",
-      "z": { "node": { "id": 3 }, "stepsPerUnit": 300, "maxFeed": 10, "invert": false },
-      "a": { "node": { "id": 4 }, "stepsPerUnit": 45.46, "maxFeed": 100, "maxAccel": 500, "invert": true, "rotary": true }
+      "accepts": [
+        "knife",
+        "crease",
+        "pen"
+      ],
+      "z": {
+        "node": {
+          "id": 3
+        },
+        "stepsPerUnit": 300,
+        "maxFeed": 10,
+        "invert": false,
+        "maxAccel": 500
+      },
+      "a": {
+        "node": {
+          "id": 4
+        },
+        "stepsPerUnit": 45.46,
+        "maxFeed": 100,
+        "maxAccel": 500,
+        "invert": true,
+        "rotary": true
+      }
     }
   ],
   "tools": {
     "knife": {
-      "path": { "feed": 40 },
-      "z": { "feed": 10 },
+      "path": {
+        "feed": 40
+      },
+      "z": {
+        "feed": 10
+      },
       "liftHeight": 2.0
     },
     "pen": {
-      "path": { "feed": 80 },
-      "z": { "feed": 10 }
+      "path": {
+        "feed": 80
+      },
+      "z": {
+        "feed": 10
+      }
     },
     "crease": {
-      "path": { "feed": 80 },
-      "z": { "feed": 10 }
+      "path": {
+        "feed": 80
+      },
+      "z": {
+        "feed": 10
+      }
     },
     "revolver_pen": {
-      "path": { "feed": 80 },
-      "z": { "feed": 10 }
+      "path": {
+        "feed": 80
+      },
+      "z": {
+        "feed": 10
+      }
     }
   }
 }

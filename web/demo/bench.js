@@ -21,7 +21,6 @@
 import {
     loadConfig,
     bakePlan,
-    scheduleMounts,
     walkSchedule,
     packMicrosegment,
     writeStream,
@@ -69,7 +68,7 @@ let seedText   = '';     // the pristine bench.json text (for Revert)
 let svgText    = null;
 let svgName    = 'bench';
 let lastEvents = null;
-let lastPlan    = null;
+let lastBlocks    = null;
 
 let link = null;               // Link over the open WebSerialTransport
 let pollTimer    = null;
@@ -125,7 +124,7 @@ function buildConfig() {
 // ── compile ─────────────────────────────────────────────────────────────────
 
 /**
- * Compile SVG → plan → walk events using the current editor config.
+ * Compile SVG → compiled blocks + walk events using the current editor config.
  *
  * `initialState` seeds the walk's starting XY/A (TRUE steps). Omitted → the
  * walk starts from the origin (0,0), which is the canonical dry-run plan. The
@@ -136,11 +135,13 @@ function compile(initialState) {
     if (!svgText) throw new Error('Select an SVG file first.');
     const config = buildConfig();
     const tool = defaultTool.value.trim() || undefined;
-    const { plan } = bakePlan(config, svgText, { defaultTool: tool });
-
-    const schedule = scheduleMounts(plan, config.machine.heads.length);
-    const events   = walkSchedule(schedule, plan, config.machine, initialState ? { initialState } : {});
-    return { plan, events, config };
+    // bakePlan now schedules the mounts itself, before it compiles anything —
+    // the head decides step counts, so mm cannot become steps until the
+    // scheduler has said which socket each block's tool sits in. It hands back
+    // the phases it used rather than letting us recompute them and disagree.
+    const { blocks, phases } = bakePlan(config, svgText, { defaultTool: tool });
+    const events = walkSchedule(phases, blocks, config.machine, initialState ? { initialState } : {});
+    return { blocks, phases, events, config };
 }
 
 /**
@@ -161,27 +162,31 @@ async function liveInitialState(config) {
 
 const allMotionSegments = motionSegments;
 
-function renderMetrics(plan, events, config) {
+function renderMetrics(blocks, events, config) {
     const segs = allMotionSegments(events);
     const jog  = segs.filter(s => s.flags & MICRO_JOG).length;
     const lift = segs.filter(s => s.flags & MICRO_LIFT).length;
     const cut  = segs.length - jog - lift;
     const secs = walkSeconds(events, config.machine.fCpu);
     const bytes = segs.length * 30;
-    const blocks = plan.blocks.map((b, i) => `  block ${i + 1}: ${b.profile.name}  ${b.segments.length} segs`);
+    // The head is worth showing: it is what the block's Z steps were resolved
+    // against, and on this bench machine the two heads differ 2:1.
+    const lines = blocks.map(
+        (b, i) => `  block ${i + 1}: ${b.profile.name} on head ${b.head}  ${b.segments.length} segs`,
+    );
     metricsEl.textContent =
-        `${plan.blocks.length} block(s)  ${segs.length.toLocaleString()} segments\n` +
+        `${blocks.length} block(s)  ${segs.length.toLocaleString()} segments\n` +
         `cut ${cut}  jog ${jog}  lift ${lift}\n` +
         `est run ${secs.toFixed(2)} s  (~${(bytes / 1024).toFixed(0)} KB stream)\n` +
-        blocks.join('\n');
+        lines.join('\n');
 }
 
 compileBtn.addEventListener('click', () => {
     try {
         setStatus('Compiling…', 'working');
-        const { plan, events, config } = compile();
-        lastPlan = plan; lastEvents = events;
-        renderMetrics(plan, events, config);
+        const { blocks, events, config } = compile();
+        lastBlocks = blocks; lastEvents = events;
+        renderMetrics(blocks, events, config);
         dumpBtn.disabled = false;
         setStatus(`Compiled ${allMotionSegments(events).length.toLocaleString()} segments.`, 'ok');
     } catch (e) {
@@ -293,7 +298,7 @@ const waitFor = target =>
 
 runBtn.addEventListener('click', async () => {
     if (jobRunning || !isConnected()) return;
-    let plan, events, config;
+    let blocks, events, config;
     try {
         // Seed the walk with the machine's live position so the lead-in jog
         // moves from where the head actually is — not from an assumed origin.
@@ -303,9 +308,9 @@ runBtn.addEventListener('click', async () => {
         const cfg = buildConfig();
         const initial = await liveInitialState(cfg);
         setStatus(`Head at X${initial.posX} Y${initial.posY} steps — compiling…`, 'working');
-        ({ plan, events, config } = compile(initial));
-        lastPlan = plan; lastEvents = events;
-        renderMetrics(plan, events, config);
+        ({ blocks, events, config } = compile(initial));
+        lastBlocks = blocks; lastEvents = events;
+        renderMetrics(blocks, events, config);
     } catch (e) {
         setStatus(e.message, 'error');
         return;

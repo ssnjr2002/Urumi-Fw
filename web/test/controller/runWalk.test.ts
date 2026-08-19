@@ -299,24 +299,30 @@ describe("head rebinding", () => {
 // ── rule 5: the operator is checked, not believed ────────────────────────────
 
 describe("mount verification", () => {
-    /** A block shaped just enough for verifyMounts — it reads three fields. */
-    const block = (profile: typeof KNIFE, head: number) =>
-        ({ profile, head, segments: [], startSteps: { x: 0, y: 0 } });
-
-    it("refuses to start when a block's tool is in the wrong socket", async () => {
-        // bench() is fitted knife-on-0, pen-on-1. A knife block compiled for
-        // head 1 would run head 1's 600 steps/mm Z through a 1200 steps/mm
-        // calibration: exactly half the depth, no error, ruined material.
+    it("refuses to start when the opening phase wants a tool in the wrong socket", async () => {
+        // bench() is fitted knife-on-0, pen-on-1. Running a phase that expects
+        // the pen in head 0 would drive head 0's 1200 steps/mm Z with segments
+        // discretised for head 1's 600: exactly double the depth, no error,
+        // ruined material.
         const { controller } = await bench();
         await expect(
-            runWalk(controller, [motion(2)], { blocks: [block(KNIFE, 1)] }),
-        ).rejects.toThrow(/needs .* on head 1, but head 1 holds pen/i);
+            runWalk(controller, [motion(2)], { initialMount: [PEN.toolType, KNIFE.toolType] }),
+        ).rejects.toThrow(/head 0 holds knife/i);
     });
 
-    it("starts when every block's tool is where the block expects it", async () => {
+    it("starts when the opening phase matches what is fitted", async () => {
+        const { controller } = await bench();
+        const r = await runWalk(controller, [motion(2)], { initialMount: FITTED });
+        expect(r.segmentsSent).toBe(2);
+    });
+
+    it("is per PHASE, not per job — a socket the phase leaves empty is not checked", async () => {
+        // The whole point: on a single-head machine a two-tool job's second
+        // tool is NOT fitted at job start, and must not be, or every swap job
+        // would refuse to begin. `null` says "this phase does not care".
         const { controller } = await bench();
         const r = await runWalk(controller, [motion(2)], {
-            blocks: [block(KNIFE, 0), block(PEN, 1)],
+            initialMount: [KNIFE.toolType, null],
         });
         expect(r.segmentsSent).toBe(2);
     });

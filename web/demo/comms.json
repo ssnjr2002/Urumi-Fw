@@ -39,7 +39,10 @@
   },
   "heads": [
     {
-      "tool": "knife",
+      "accepts": [
+        "knife",
+        "crease"
+      ],
       "xOffset": 0,
       "yOffset": 0,
       "z": {
@@ -49,7 +52,7 @@
         },
         "stepsPerUnit": 1200,
         "maxFeed": 20,
-        "maxAccel": 0,
+        "maxAccel": 500,
         "maxTravel": 0,
         "invert": true,
         "rotary": false
@@ -68,7 +71,9 @@
       }
     },
     {
-      "tool": "pen",
+      "accepts": [
+        "pen"
+      ],
       "xOffset": 60,
       "yOffset": 0,
       "z": {
@@ -78,7 +83,7 @@
         },
         "stepsPerUnit": 600,
         "maxFeed": 20,
-        "maxAccel": 0,
+        "maxAccel": 500,
         "maxTravel": 0,
         "invert": true,
         "rotary": false

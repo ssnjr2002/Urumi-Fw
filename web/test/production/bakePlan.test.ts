@@ -19,7 +19,6 @@ import {
     defaultConfig,
 } from "../machines.js";
 import { loadSvgMmSubpaths, loadSvgMmLayers } from "../../src/svg/ingest.js";
-import { savePlan, loadPlan } from "../../src/plan/planFile.js";
 
 const svg = (name: string) => readFixture(name);
 
@@ -43,15 +42,11 @@ describe("bakePlan: single-tool equivalence", () => {
         expect(blocks[0]!.segments).toEqual(ref);
     });
 
-    it("the baked .plan bytes survive a load→save round-trip unchanged", () => {
-        // byte-stability is the round-trip invariant: re-serialising a loaded
-        // plan reproduces the file. (segment equality would trip over -0 vs 0,
-        // which the int32 wire encoding collapses — same bytes either way.)
-        const config = defaultConfig();
-        const { blocks } = bakePlan(config, svg("test_circle.svg"), { defaultTool: "knife" });
-        const bytes = savePlan({ blocks });
-        expect(savePlan(loadPlan(bytes))).toEqual(bytes);
-    });
+    // The .plan byte round-trip test lived here. It went with the codec in
+    // stage 6: a serialised plan encodes step counts resolved against one head
+    // arrangement, so the file it round-tripped was only ever valid for the
+    // config that baked it. Byte-stability of the compile is still pinned, by
+    // test/production/snapshot.test.ts.
 });
 
 describe("bakePlan: multi-layer", () => {
@@ -77,11 +72,11 @@ describe("bakePlan: revolver slots", () => {
         expect(blocks.map((b) => b.slot)).toEqual([0, 2]);
     });
 
-    it("round-trips slots through the .plan file", () => {
+    it("carries the slot through the full bake, not just assembleBlocks", () => {
         const config = defaultConfig();
         const text = wrap(`<g id="revolver_pen"><g id="slot2">${tri(10, 10)}</g></g>`);
         const { blocks } = bakePlan(config, text);
-        expect(loadPlan(savePlan({ blocks })).blocks[0]!.slot).toBe(1);
+        expect(blocks[0]!.slot).toBe(1);
     });
 });
 

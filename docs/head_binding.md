@@ -1,6 +1,6 @@
 # Binding the head at the bake
 
-**Status:** stages 1–5 landed; 6 outstanding. Nothing reconstructs a head from a tool any more — the walk reads `block.head` and the runner acts on the walk's `rebind` event. What remains is deleting `plan/` and its consumers, and patching `demo/`, which is knowingly broken until the end.
+**Status:** landed, all six stages, demos patched. Two things differ from the plan below, both noted in place: the fill rule is bipartite matching rather than greedy most-constrained-first, and stage 5's pre-flight is per PHASE rather than per job — verifying every block up front refuses every multi-tool job on a single-head machine, since a later phase's tool is *supposed* to be unfitted at the start.
 
 ## The bug, stated once
 

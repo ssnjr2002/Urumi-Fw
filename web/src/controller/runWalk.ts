@@ -54,8 +54,7 @@ import { MachineState } from "../wire/format/status.js";
 import { stateName } from "../wire/format/names.js";
 import type { AbortToken } from "../wire/link/transport.js";
 import type { Controller } from "./controller.js";
-import { verifyMounts, verifyPhaseMounts } from "./controller.js";
-import type { CompiledBlock } from "../production/compileBlock.js";
+import { verifyPhaseMounts } from "./controller.js";
 
 /** A pause event, as handed to `confirmSwap`. */
 export interface SwapRequest {
@@ -66,14 +65,6 @@ export interface SwapRequest {
 }
 
 export interface RunWalkHooks {
-    /**
-     * The blocks these events walk, for the pre-flight mount check.
-     *
-     * Data, not a callback — it lives here so the `(controller, events)` call
-     * shape survives. Omit it and the pre-flight is skipped, which is what a
-     * caller streaming hand-built events wants; a real job should pass them.
-     */
-    blocks?: readonly CompiledBlock[];
     /**
      * Ask the operator to make the swap. Return false to abandon the run.
      *
@@ -150,9 +141,6 @@ export async function runWalk(
             `machine is ${stateName(pre.state)} — unalarm or commit an axis map first`,
         );
     }
-    // Rule 5, before any material moves: every block's tool must be in the
-    // socket that block was compiled for.
-    if (hooks.blocks) verifyMounts(hooks.blocks, controller.setup);
 
     return controller.withLease("job", async () => {
         // A local copy: the duty-break split re-inserts the tail of a batch as a
@@ -167,6 +155,15 @@ export async function runWalk(
         // Which tools are live right now. A duty break needs the profile whose
         // dutyLimits produced it, and the segments themselves carry only timing.
         let activeMount: Mounts = hooks.initialMount ?? firstMount(queue);
+
+        // Rule 5, before any material moves. The check is per PHASE, not per
+        // job: a swap job's later blocks are SUPPOSED to be unmounted right now
+        // — that is what the pause is for — so verifying every block up front
+        // would refuse every multi-tool job on a single-head machine. Each
+        // phase is checked as it opens, here for the first and after every
+        // confirmSwap for the rest, which covers the same ground at the moment
+        // each claim can actually be true.
+        verifyPhaseMounts(activeMount, controller.setup);
         await hooks.onPhase?.(activeMount, "job start");
 
         let i = 0;
