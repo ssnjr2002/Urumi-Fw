@@ -730,10 +730,20 @@ point.
 
 | node | axis | seek `dir` | `LIMIT_ACTIVE_HIGH` |
 |---|---|---|---|
-| 1 | X | 1 | yes — switch reads inverted from the active-low default |
-| 2 | Y | — (not recorded; only polarity was flagged) | yes |
+| 1 | X | 0 | yes — switch reads inverted from the active-low default |
+| 2 | Y | 0 | yes |
 | 3 | Z0 | 0 | no — default active-low is correct, unconfirmed against a mismatch report |
 | 6 | Z1 | not yet probed | not yet probed |
+
+**Nodes 1 and 2 (X, Y) four-leg sequence**, confirmed working on hardware —
+the same numbers were used for both axes:
+
+```
+home <n> 0 2500 500  400 88000    # fast seek
+home <n> 1 1000 1000 0   320      # retract
+home <n> 0 8000 8000 0   800      # slow latch seek
+home <n> 1 1000 1000 0   800      # final backoff
+```
 
 **Node 3 (Z0) four-leg sequence**, confirmed working on hardware:
 
@@ -761,6 +771,10 @@ The corrections worth remembering for the next axis:
   practical**, even though it's not wrong in principle. `8000/8000` µs (125 sps,
   0.10 mm/s at 1200 spu) took ~40 s to cross the retract distance on Z0; `3000/3000`
   µs (333 sps, 0.28 mm/s) cut that to ~12 s while staying well below seek speed.
+  This is a distance problem, not a universal verdict on `8000/8000` — X and Y use
+  that same interval for their slow leg and it's fine there, because their retract
+  distance (320–800 steps at 160 spu ≈ 2–5 mm) is much shorter than Z0's
+  (5000 steps at 1200 spu ≈ 4.2 mm, crossed at 7.5× finer resolution per mm).
 - **This firmware's structure — seek / fixed-distance retract / slow re-seek /
   fixed-distance retract — matches the standard approach used by GRBL, Marlin, and
   FluidNC.** None of those stop the retract on switch-release either; the release
