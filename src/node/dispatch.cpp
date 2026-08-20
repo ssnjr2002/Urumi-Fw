@@ -25,6 +25,16 @@ static uint8_t g_nodeFlags = 0;
 
 // The single serializer for this node's whole state — see node_hooks.h. Callers:
 // the generic CMD_NODE_STATUS below, and the stepper's CMD_ENGAGE / CMD_GET_POS.
+// Let a type own one flag bit without owning the byte. g_nodeFlags is a
+// read-modify-write shared with the generic ENABLE/DISABLE/DATUM handlers, so
+// this must be called from loop context only — never from an ISR, or an
+// interrupted RMW would drop a bit. The stepper drives NODE_FLAG_LIMIT from
+// node_loop() for exactly this reason.
+void node_set_flag(uint8_t bit, bool on) {
+    if (on) g_nodeFlags |=  bit;
+    else    g_nodeFlags &= ~bit;
+}
+
 uint8_t buildNodeStatus(uint8_t* buf) {
     buf[0] = node_type();
     buf[1] = g_nodeFlags;

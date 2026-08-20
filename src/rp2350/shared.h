@@ -211,6 +211,19 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 // would have overwritten a shared rate and run burst #1 at burst #2's speed.
 // Queued in the FIFO, each burst carries its own parameters. It also retires the
 // old signed-magnitude packing — a plain int32 needs no sign-bit hack.
+// Home: FOUR words, pushed back to back. CMD_HOME's payload is 11 bytes, which
+// does not fit the normal command word's single spare byte, so it gets its own
+// opcode and rides the same multi-word pattern as FIFO_STEP_DEBUG.
+//   word 0: (FIFO_HOME << 24) | (dir << 16) | node
+//   word 1: (start_interval_us << 16) | floor_interval_us
+//   word 2: (ramp_steps << 16)                      — low half unused
+//   word 3: max_steps (u32)
+// Core 1 answers exactly like CMD_NODE_STATUS: a header word then the status
+// payload packed 4 bytes/word, so Core 0 reuses popStatusPayload() unchanged.
+// A NAK from the node (bad parameters) arrives as a zero-length payload, which
+// is the same shape as a timeout — see the `home` command in control_plane.cpp.
+#define FIFO_HOME        0xF1
+
 #define FIFO_STEP_DEBUG  0xF0
 #define STEP_DEBUG_SPS       1000        // default emit rate (steps/sec)
 #define STEP_DEBUG_SPS_MAX  60000        // must fit the 16-bit field; also stays

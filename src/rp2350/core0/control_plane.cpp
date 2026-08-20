@@ -365,6 +365,51 @@ bool handleCommand(const String& input) {
     // One round-trip (CMD_NODE_STATUS). Core 1 pushes a status word (payload len,
     // 0 = timeout) then the payload packed 4 bytes/word. Payload is
     // [type][flags][type-specific tail]; we decode the tail by type.
+    // home <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+    //
+    // Bench bring-up only. Deliberately raw and positional: no mm, no
+    // steps/mm, no config lookup, no `invert`, and NO seek/retract argument.
+    // Composing those belongs to the host (docs/homing.md 3), and a temporary
+    // Pico-side version of them is exactly how they end up living here
+    // permanently. The Pico relays; it does not plan.
+    //
+    // No state gate either, on purpose — this has to be usable from ALARM while
+    // the machine is being commissioned, which is when homing matters most.
+    // The real `home` (2.2) will gate; this one is a bench tool.
+    if (input.startsWith("home")) {
+        const char* a = argAfter(input, 4);
+        char* end;
+        unsigned long v[6];
+        for (int i = 0; i < 6; i++) {
+            v[i] = strtoul(a, &end, 10);
+            if (end == a) { Serial.println("err usage"); return true; }
+            a = end;
+        }
+        const uint8_t node = (uint8_t)v[0];
+        if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
+        if (v[1] > 1 || v[2] > 0xFFFF || v[3] > 0xFFFF || v[4] > 0xFFFF) {
+            Serial.println("err range"); return true;
+        }
+
+        multicore_fifo_push_blocking(((uint32_t)FIFO_HOME << 24) |
+                                     ((uint32_t)(v[1] & 1) << 16) | node);
+        multicore_fifo_push_blocking(((uint32_t)v[2] << 16) | (uint32_t)v[3]);
+        multicore_fifo_push_blocking( (uint32_t)v[4] << 16);
+        multicore_fifo_push_blocking( (uint32_t)v[5]);
+
+        uint8_t buf[32] = {0};
+        uint8_t plen = popStatusPayload(buf, sizeof buf);
+        // A node that NAKs (bad parameters) simply does not answer, which on
+        // this bus is indistinguishable from a node that is not there. Both mean
+        // the same thing to the operator, though: nothing armed.
+        if (plen == 0) { Serial.printf("node %d nak_or_timeout\n", node); return true; }
+        Serial.printf("node %d armed limit %d homing %d pos %ld\n", node,
+                      (buf[NS_FLAGS] & NODE_FLAG_LIMIT)  ? 1 : 0,
+                      (buf[NS_FLAGS] & NODE_FLAG_HOMING) ? 1 : 0,
+                      (long)nsPos(buf));
+        return true;
+    }
+
     if (input.startsWith("nodestat")) {
         if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
             Serial.println("err bad_state"); return true;
@@ -377,9 +422,15 @@ bool handleCommand(const String& input) {
         if (plen == 0) { Serial.printf("node %d timeout\n", node); return true; }
 
         uint8_t type = buf[NS_TYPE];
-        Serial.printf("node %d type %d en %d datum %d", node, type,
+        // limit/homing are the whole homing diagnostic: with no supervisor yet,
+        // this print IS how a bench run is observed. limit is "pin asserted OR
+        // gate latched" and homing is "the node's pulser is running" — see
+        // docs/homing.md 1.5 for how the pair reads after each kind of move.
+        Serial.printf("node %d type %d en %d datum %d limit %d homing %d", node, type,
                       (buf[NS_FLAGS] & NODE_FLAG_ENABLED) ? 1 : 0,
-                      (buf[NS_FLAGS] & NODE_FLAG_DATUM)   ? 1 : 0);
+                      (buf[NS_FLAGS] & NODE_FLAG_DATUM)   ? 1 : 0,
+                      (buf[NS_FLAGS] & NODE_FLAG_LIMIT)   ? 1 : 0,
+                      (buf[NS_FLAGS] & NODE_FLAG_HOMING)  ? 1 : 0);
         switch (type) {
             case NODE_TYPE_STEPPER: {
                 uint8_t slot = buf[NS_STEP_SLOT];

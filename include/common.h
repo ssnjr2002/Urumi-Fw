@@ -44,6 +44,25 @@
 // de-energise all invalidate it without the master needing to observe the event.
 #define CMD_DATUM_SET 0x23  // no payload; sets NODE_FLAG_DATUM, replies status payload
 
+// NODE_FLAG_LIMIT — this node is refusing stream steps because its limit switch
+// is asserted, or was asserted long enough to latch (see docs/homing.md §1.1).
+// Reserved for EVERY node type and board, not only the ones with a switch wired:
+// the flags byte has one meaning across the bus, so the master can decode a
+// status reply without first knowing which board answered. A node with no switch
+// simply never sets it — same contract as NODE_FLAG_DATUM on a vacuum node.
+#define NODE_FLAG_LIMIT   0x04
+
+// NODE_FLAG_HOMING — the local step pulser is running (CMD_HOME). Set when the
+// command is accepted, cleared when the pulser stops for any reason. The master
+// learns a home finished by polling this off; a node never announces it.
+//
+// LIMIT and HOMING together are the whole terminal-state report, and they read
+// OPPOSITELY for the two kinds of move — after a seek, LIMIT set means found and
+// clear means the budget ran out; after a retract it is the other way round. The
+// node does not know which kind it ran (see docs/homing.md 1.2) and does not need
+// to: the master sent the move, so the master does the interpreting.
+#define NODE_FLAG_HOMING  0x08
+
 // Status payload — ONE shape, from one serializer on the node (buildNodeStatus):
 //     [node_type][flags][type-specific tail…]        flags: NODE_FLAG_*
 //     stepper tail: [pos int32 BE][slot]             slot 0xFF = disengaged
@@ -56,6 +75,30 @@
 #define CMD_ENGAGE   0x20   // stepper: payload [slot] 0..3, 0xFF = disengage; ack = status payload
 #define CMD_LASER    0x21   // stepper (-DNODE_HAS_LASER only): payload [state 0/1]; NAK elsewhere
 #define CMD_NODE_STATUS 0x22 // any type; no payload; reply = status payload (above)
+
+// CMD_HOME — run the node's own step pulser. Only nodes with a limit switch
+// wired accept it; every other stepper NAKs. See docs/homing.md 1.4.
+//
+//   payload (11 bytes, big-endian, matching the status tail's convention):
+//     [0]    dir            wire dir bit: which way THIS move goes
+//     [1..2] start_interval microseconds, pull-in rate
+//     [3..4] floor_interval microseconds, cruise rate
+//     [5..6] ramp_steps     steps from start to floor; 0 = no ramp
+//     [7..10] max_steps     runaway budget
+//   ack: the status payload, sampled after arming (same shape as CMD_ENGAGE).
+//
+// There is NO seek/retract field. The node samples its limit pin when the
+// command is accepted and that single read picks the mode: pin clear means seek
+// (run until the switch asserts), pin asserted means retract (ignore the switch,
+// run the budget out). Deciding from the pin rather than from a flag or from
+// retained state is what lets a node that booted with its axis already parked on
+// the switch retract correctly on the FIRST command.
+//
+// Intervals are MICROSECONDS, not timer ticks: the node converts on receipt, so
+// the 20MHz/24MHz difference between board families never reaches the master or
+// the config schema.
+#define CMD_HOME     0x24
+#define CMD_HOME_PAYLOAD_LEN 11
 // Vacuum:
 #define CMD_SERVO_SET 0x10  // payload: [idx(0=all,1..N)][angle(0..180)]; ACK echoes cmd
 // Host-side on/off shorthand: the Pico expands "on" to this angle before it hits

@@ -50,3 +50,10 @@ uint8_t node_status(uint8_t* buf);
 // rather than a bind followed by a separate read that could straddle a reboot.
 // One place to extend when new generic state (e.g. a session token) arrives.
 uint8_t buildNodeStatus(uint8_t* buf);
+
+// Set or clear one bit of the generic flags byte from a type. LOOP CONTEXT ONLY
+// — it read-modify-writes a byte the core also touches, so an ISR caller could
+// drop a bit written underneath it. A type whose flag is produced in an ISR must
+// therefore latch it in a volatile of its own and mirror it here from
+// node_loop(); the stepper does that with NODE_FLAG_LIMIT.
+void    node_set_flag(uint8_t bit, bool on);

@@ -69,7 +69,28 @@ void drivers_disable();
 #endif
 
 // ─── Optional peripherals ───────────────────────────────────────────────────
+// Limit switch. Direct port symbols as well as the pin: the step path reads it
+// inside the RX ISR on every step, so it must compile to a single IN, not a
+// digitalRead(). Wired switch-to-ground against the internal pull-up, so the
+// asserted level is LOW — which also makes a severed wire read as asserted
+// (fail-safe) rather than as clear. See docs/homing.md §1.1.
 #define HAL_LIMIT_SWITCH_PIN PIN_PD1
+#define HAL_LIMIT_PORT       PORTD
+#define HAL_LIMIT_BM         PIN1_bm
+#define HAL_LIMIT_PINCTRL    PORTD.PIN1CTRL
+
+// Polarity is a per-node build flag (-DLIMIT_ACTIVE_HIGH), not something the
+// pin read hardcodes, because it depends on how THAT node's switch is wired —
+// normally-closed to ground (asserted = LOW, the default) vs normally-open to
+// the pull-up (asserted = HIGH). Getting this wrong doesn't fail loudly: the
+// gate still runs, just backwards, refusing the safe direction and permitting
+// the one that runs into the stop. See docs/homing.md 6 for the bench symptom
+// that flags it (limit reads 1 released, 0 triggered).
+#ifdef LIMIT_ACTIVE_HIGH
+#define HAL_LIMIT_ASSERTED() ((HAL_LIMIT_PORT.IN & HAL_LIMIT_BM) != 0)
+#else
+#define HAL_LIMIT_ASSERTED() ((HAL_LIMIT_PORT.IN & HAL_LIMIT_BM) == 0)
+#endif
 #define HAL_HAS_LIMIT_SWITCH
 
 // PD2 is the thermistor ADC input by default, OR — on the single stepper node

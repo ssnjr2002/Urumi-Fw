@@ -511,6 +511,39 @@ void processBus() {
             return;
         }
 
+        // Home — four words (shared.h). Core 1 only marshals: it does not know
+        // seek from retract, does not interpret the reply, and runs no
+        // supervision. The node decides the mode from its own limit pin, and
+        // Core 0 polls for the outcome.
+        if ((req >> 24) == FIFO_HOME) {
+            const uint32_t w1 = multicore_fifo_pop_blocking();
+            const uint32_t w2 = multicore_fifo_pop_blocking();
+            const uint32_t w3 = multicore_fifo_pop_blocking();
+
+            const uint8_t  hNode = req & 0xFF;
+            uint8_t pkt[3 + CMD_HOME_PAYLOAD_LEN + 1];
+            pkt[0]  = hNode;
+            pkt[1]  = CMD_HOME;
+            pkt[2]  = CMD_HOME_PAYLOAD_LEN;
+            pkt[3]  = (req >> 16) & 0x01;          // dir
+            pkt[4]  = (w1 >> 24) & 0xFF;           // start_interval_us
+            pkt[5]  = (w1 >> 16) & 0xFF;
+            pkt[6]  = (w1 >>  8) & 0xFF;           // floor_interval_us
+            pkt[7]  =  w1        & 0xFF;
+            pkt[8]  = (w2 >> 24) & 0xFF;           // ramp_steps
+            pkt[9]  = (w2 >> 16) & 0xFF;
+            pkt[10] = (w3 >> 24) & 0xFF;           // max_steps
+            pkt[11] = (w3 >> 16) & 0xFF;
+            pkt[12] = (w3 >>  8) & 0xFF;
+            pkt[13] =  w3        & 0xFF;
+
+            while (!rs485.txEmpty());
+            rs485.flushRX();
+            rs485.writeStream(0);   // NOP stream byte to reset slave parsers
+            relayStatusReply(hNode, CMD_HOME, pkt, sizeof pkt);
+            return;
+        }
+
         uint8_t  cmd     = (req >> 8)  & 0xFF;
         uint8_t  node    =  req        & 0xFF;
         uint8_t  payload = (req >> 16) & 0xFF;  // bits[23:16], 0 for payloadless cmds

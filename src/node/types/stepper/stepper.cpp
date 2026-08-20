@@ -42,6 +42,85 @@ static volatile uint8_t stepBitMask      = 0;
 static volatile uint8_t dirBitMask       = 0;
 static bool             currentDir       = false;
 
+#ifdef HAL_HAS_LIMIT_SWITCH
+// ─── Limit gate ──────────────────────────────────────────────────
+// Compiled only on boards that actually have a switch wired. The gate is
+// unconditional and stateless with respect to direction: while the switch reads
+// asserted, this node refuses EVERY stream step, both ways. It is not a homing
+// feature and does not care whether a homing move is in progress — a machine
+// that has run onto a hard stop must stop, whatever put it there.
+//
+// Refusing both directions means the stream can never drive off the switch
+// again. That is deliberate: recovery is a homing RETRACT (docs/homing.md §1),
+// which is supervised and step-budgeted, rather than a stream the Pico is
+// emitting open-loop with no idea the axis is pinned.
+//
+// The coupling with the pulser runs one way only. The pulser NEVER reads these
+// — it samples the pin directly when a CMD_HOME arrives, and that one read
+// picks its mode: clear → seek (stop when the level asserts), asserted →
+// retract (ignore the switch, run the step budget out). Deciding from the pin
+// rather than from the latch is what makes a boot with the axis already parked
+// on its switch retract correctly on the FIRST command, with no sentinel and no
+// wasted move. The pulser only ever WRITES here, and only in one case: clearing
+// limitLatched after a retract that both ran its budget and left the pin clear.
+//
+// TIME BASE. The accumulator counts stream BYTES, not steps, because the byte
+// rate is fixed by the baud rate and the step rate is not: a stream byte is 11
+// bit-times (start + 9 data + stop) at RS485_BAUD, so each one is a known,
+// constant tick with no timer read inside the ISR. Steps would have measured
+// distance, not time, and a slow axis would take minutes to reach a threshold a
+// fast one crossed in half a second.
+#define LIMIT_STREAM_BYTES_PER_SEC ((uint32_t)RS485_BAUD / 11u)
+#define LIMIT_LATCH_MS             500u
+#define LIMIT_LATCH_BYTES          (LIMIT_STREAM_BYTES_PER_SEC * LIMIT_LATCH_MS / 1000u)
+
+// Monotonic — counts every stream byte ever seen while asserted, and is NEVER
+// reset. It is the lifetime diagnostic: a switch that keeps chattering racks up
+// a total even though no single run ever latched, which is exactly the
+// intermittent fault that is otherwise invisible from the bus. The current run
+// is (total − base), with base snapshotted each time the switch releases, so
+// the run comparison costs the diagnostic nothing.
+static volatile uint32_t limitBytesAsserted = 0;
+static volatile uint32_t limitRunBase       = 0;
+static volatile bool     limitLatched       = false;
+
+// ─── Homing pulser state (CMD_HOME) ─────────────────────────────────────────
+// Written once at arm time in loop context, then owned by the pulser ISR until
+// it stops. `active` is the handshake between the two: loop context must not
+// touch the rest while it is set.
+//
+// `retract` is decided by ONE read of the limit pin at arm time and never
+// revisited (docs/homing.md 1.2). It is not carried in the payload and is not
+// remembered across commands.
+struct HomingState {
+    uint16_t interval;    // current step interval, TCA0 ticks
+    uint16_t floorTicks;  // fastest interval this move is allowed to reach
+    uint16_t rampStep;    // ticks shaved per step until floorTicks; 0 = no ramp
+    uint32_t remaining;   // runaway budget, in steps
+    bool     dir;         // wire dir bit for the whole move
+    bool     retract;     // true = ignore the switch; false = stop when it asserts
+};
+static volatile HomingState homing  = {0, 0, 0, 0, false, false};
+static volatile bool        homingActive = false;
+
+// TCA0 ticks per microsecond, from the board's own F_CPU with the div8
+// prescaler: 3 on the 24MHz DB32, 2 (truncated from 2.5) on a 20MHz ATtiny.
+// This is why CMD_HOME carries microseconds — the difference dies here and never
+// reaches the master or the config schema.
+#define HOMING_TICKS_PER_US ((F_CPU / 1000000UL) / 8UL)
+
+// Set by the pulser ISR when it stops, consumed once by node_loop(). The ISR
+// cannot do the finishing itself: clearing the latch and publishing the flags
+// both go through node_set_flag(), which read-modify-writes a byte the core also
+// owns and is therefore loop-context only.
+static volatile bool homingFinished = false;
+
+static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
+                      uint16_t rampSteps, uint32_t maxSteps);
+static void homingHalt(void);
+static void homingFinish(void);
+#endif
+
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 // Guard against an env that compiles this type dir with the wrong identity flag.
 #ifdef NODE_TYPE
@@ -55,6 +134,12 @@ void node_setup(void) {
     pinMode(HAL_STEP_PIN, OUTPUT); digitalWrite(HAL_STEP_PIN, LOW);
     pinMode(HAL_DIR_PIN,  OUTPUT); digitalWrite(HAL_DIR_PIN,  LOW);
     pinMode(HAL_EN_PIN,   OUTPUT);
+
+#ifdef HAL_HAS_LIMIT_SWITCH
+    // Input with pull-up: the switch pulls to ground, so asserted reads LOW and
+    // a broken wire reads asserted too — the safe way round.
+    pinMode(HAL_LIMIT_SWITCH_PIN, INPUT_PULLUP);
+#endif
 
     // Init driver (brings up SPI for TMC2660) BEFORE the first HAL_MOTOR_DISABLE,
     // which for TMC issues a toff() over SPI.
@@ -80,12 +165,190 @@ void node_setup(void) {
 // a parked dual-head axis is ENABLED (holds Z height) but DISENGAGED (ignores
 // the stream). See docs/engage_and_axis_map.md §4.3.
 void node_set_enabled(bool on) {
-    if (on) HAL_MOTOR_ENABLE();
-    else    HAL_MOTOR_DISABLE();
+    if (on) {
+        HAL_MOTOR_ENABLE();
+    } else {
+#ifdef HAL_HAS_LIMIT_SWITCH
+        // De-energising mid-home must kill the pulser, or TCA0 would keep
+        // counting steps into a position the motor is no longer holding. This is
+        // what makes the existing broadcast estop stop a home too, with no new
+        // mechanism: CMD_DISABLE is already on the broadcast allowlist.
+        homingHalt();
+#endif
+        HAL_MOTOR_DISABLE();
+    }
 }
 
-// Stepper does all its work in the RX ISR — nothing to tick each loop.
-void node_loop(void) {}
+// Stepper does all its work in the RX ISR. The one thing left for loop context
+// is publishing the limit state into the shared flags byte: node_set_flag()
+// read-modify-writes a byte the core also owns, so it must not be called from
+// the ISR that produces the state. The ISR latches into its own volatiles and
+// this mirrors them out.
+void node_loop(void) {
+#ifdef HAL_HAS_LIMIT_SWITCH
+    // Finish before publishing: homingFinish() can clear the latch, and the
+    // flags below must describe the state the master will act on, not the one
+    // that existed a microsecond before the move ended.
+    if (homingFinished) homingFinish();
+    node_set_flag(NODE_FLAG_HOMING, homingActive);
+    // Live pin OR latch — the master needs to see the flag while the axis is
+    // sitting on the switch AND after a latch that a bounce-free release has
+    // since cleared from the pin but not from the gate.
+    node_set_flag(NODE_FLAG_LIMIT, HAL_LIMIT_ASSERTED() || limitLatched);
+#endif
+}
+
+#ifdef HAL_HAS_LIMIT_SWITCH
+// ─── Arming a homing move (§1.4) ────────────────────────────────────────────
+// Validates, converts to ticks, and hands the move to the pulser. Returns false
+// to NAK — the master then knows the move never started, which is a different
+// thing from a move that started and failed.
+//
+// Rejecting rather than clamping is deliberate. Every one of these is a config
+// or arithmetic mistake on the host side, and a clamped homing move would run at
+// a rate nobody asked for, into a hard stop, while reporting success.
+static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
+                      uint16_t rampSteps, uint32_t maxSteps) {
+    if (homingActive)              return false;  // one move at a time
+    if (startUs == 0 || floorUs == 0) return false;
+    if (floorUs > startUs)         return false;  // floor is the FASTER rate
+    if (maxSteps == 0)             return false;  // no budget = no runaway guard
+
+    const uint32_t startTicks = (uint32_t)startUs * HOMING_TICKS_PER_US;
+    const uint32_t floorTicks = (uint32_t)floorUs * HOMING_TICKS_PER_US;
+    if (startTicks > 0xFFFF || startTicks == 0) return false;  // TCA0 is 16-bit
+    if (floorTicks == 0)                        return false;
+
+    HomingState h;
+    h.dir        = dir;
+    h.retract    = retract;
+    h.floorTicks = (uint16_t)floorTicks;
+    h.remaining  = maxSteps;
+    // ramp_steps == 0 means no ramp: start at the cruise rate rather than
+    // ramping over zero steps, which would be a divide by zero.
+    h.interval   = rampSteps ? (uint16_t)startTicks : (uint16_t)floorTicks;
+    h.rampStep   = rampSteps ? (uint16_t)((startTicks - floorTicks) / rampSteps) : 0;
+
+    cli();
+    homing       = h;
+    homingActive = true;
+    sei();
+
+    // DIR is set here, once, in loop context — so the pulser ISR never pays the
+    // DM542 setup guard the stream path pays with delayMicroseconds(5).
+    if (dir) HAL_DIR_PORT.OUTSET = HAL_DIR_BM;
+    else     HAL_DIR_PORT.OUTCLR = HAL_DIR_BM;
+    currentDir = dir;
+    delayMicroseconds(5);
+
+    node_set_flag(NODE_FLAG_HOMING, true);
+
+    // Start TCA0. Normal mode, 16-bit, overflow interrupt only: PER is the step
+    // interval and the ISR rewrites it as the ramp decays. TCB0 stays the
+    // pulse-width one-shot for both this path and the stream path, so a step is
+    // shaped identically however it was requested.
+    //
+    // TCA0 is otherwise unused on a stepper node. It backs analogWrite() PWM in
+    // the core, which nothing here calls; millis() is on a TCB (DxCore default),
+    // so taking TCA0 does not disturb timekeeping.
+    //
+    // CTRLD.SPLITM must be cleared to leave split mode. DxCore's init_TCA0()
+    // runs before setup() and unconditionally leaves TCA0 in SPLIT mode,
+    // RUNNING, for analogWrite() — TCA_SPLIT_SPLITM_bm | DIV64 | ENABLE at this
+    // clock. In split mode PER is not one 16-bit register: it is two
+    // independent 8-bit registers (LPER/HPER) at the same addresses. Writing a
+    // 16-bit interval through the SINGLE view without leaving split mode first
+    // does not error — it silently splits into two ~30-tick periods, so every
+    // move ran at roughly 250x the requested rate regardless of what interval
+    // was asked for. That was the actual cause of every leg looking "jerky"
+    // and the slow latch seek not being slow at all: the ramp math was never
+    // reached by the bug, the base rate was already wrong before the ramp
+    // began.
+    //
+    // CTRLD IS ENABLE-LOCKED — the datasheet's own words, and Microchip's
+    // DxCore takeover guide confirms it (docs/homing.md links it): a write to
+    // CTRLD while CTRLA.ENABLE is still set is silently DROPPED. DxCore leaves
+    // TCA0 enabled from boot, so CTRLA must be cleared FIRST — disabling it —
+    // before CTRLD is written, or the "fix" changes nothing and split mode
+    // stays active with no error to show for it.
+    TCA0.SINGLE.CTRLA   = 0;                       // disable — unlocks CTRLD
+    TCA0.SPLIT.CTRLD    = 0;                       // now this actually lands: exit split mode
+    TCA0.SINGLE.CTRLB   = 0;                       // NORMAL (single 16-bit)
+    TCA0.SINGLE.CNT     = 0;
+    TCA0.SINGLE.PER     = h.interval - 1;          // PER+1 ticks per overflow
+    TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm;      // discard any stale flag
+    TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;
+    TCA0.SINGLE.CTRLA   = TCA_SINGLE_CLKSEL_DIV8_gc | TCA_SINGLE_ENABLE_bm;
+    return true;
+}
+
+// Stop the pulser. Safe from either context and idempotent — the ISR calls it to
+// end a move normally, CMD_DISABLE calls it to abort one.
+//
+// Deliberately leaves TCA0 in SINGLE mode rather than restoring DxCore's SPLIT
+// startup state: nothing on a stepper build calls analogWrite() (only the knife
+// type does, and build_src_filter compiles one type per binary), so there is
+// nothing to hand the timer back to, and re-deriving DxCore's own PWM_TIMER_PERIOD
+// / prescaler pairing here would be new surface for no reachable benefit.
+static void homingHalt(void) {
+    TCA0.SINGLE.CTRLA   = 0;
+    TCA0.SINGLE.INTCTRL = 0;
+    homingActive   = false;
+    homingFinished = true;
+}
+
+// The loop-context half of stopping, run once per completed move.
+static void homingFinish(void) {
+    homingFinished = false;
+    // Clearing the latch is the retract's ONLY write to the gate, and only when
+    // it verifiably got clear of the switch: a retract that spent its whole
+    // budget and is still asserted did not escape (under-budgeted, wrong
+    // direction, or a stuck switch), and the latch must survive that. A seek is
+    // never eligible — it ends sitting ON the switch by definition.
+    if (homing.retract && !HAL_LIMIT_ASSERTED()) {
+        limitLatched   = false;
+        limitRunBase   = limitBytesAsserted;   // the next run starts from here
+    }
+}
+
+// ─── The pulser (§1.3) ──────────────────────────────────────────────────────
+// One step per overflow. Deliberately lean: no floating point, no
+// delayMicroseconds, no bus work. DIR was set once at arm time, so unlike the
+// stream path there is no setup guard to spin on here.
+ISR(TCA0_OVF_vect) {
+    TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm;
+    if (!homingActive) return;
+
+    // Both stop conditions are checked BEFORE the step, so the move never takes
+    // one more step past the thing that ended it. On a seek that matters
+    // physically: the switch is the target, and overshooting it is travel into
+    // the hard stop.
+    //
+    // A retract ignores the switch entirely — it starts on an asserted one, so
+    // testing the level would stop it before it ever moved. Its only terminator
+    // is the budget, which is therefore a distance, not a guard.
+    if (!homing.retract && HAL_LIMIT_ASSERTED()) { homingHalt(); return; }
+    if (homing.remaining == 0)                   { homingHalt(); return; }
+
+    HAL_STEP_PORT.OUTSET = HAL_STEP_BM;
+    absolutePosition += (homing.dir ? 1 : -1);   // one counter, one meaning (§4)
+    HAL_STEP_TIMER_INST.CCMP  = HAL_STEP_PULSE_CCMP;
+    HAL_STEP_TIMER_INST.CNT   = 0;
+    HAL_STEP_TIMER_INST.CTRLA = HAL_STEP_TIMER_CLKSEL | HAL_STEP_TIMER_ENABLE_bm;
+
+    homing.remaining--;
+
+    // Linear decay of the interval toward the floor. Not constant acceleration
+    // (that falls as ~1/sqrt(n)), but gentler early, which is the direction that
+    // matters for not stalling on pull-in.
+    if (homing.rampStep && homing.interval > homing.floorTicks) {
+        uint16_t next = homing.interval - homing.rampStep;
+        if (next < homing.floorTicks) next = homing.floorTicks;  // never overshoot
+        homing.interval = next;
+        TCA0.SINGLE.PER = next - 1;
+    }
+}
+#endif
 
 static int32_t readPositionAtomic() {
     cli();
@@ -149,6 +412,42 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             return true;
         }
 #endif
+#ifdef HAL_HAS_LIMIT_SWITCH
+        case CMD_HOME: {
+            // [id][cmd][len][11 payload][crc]. Compiled only where a switch is
+            // wired: a node that cannot see a limit has no way to terminate a
+            // seek, so it NAKs rather than running open-loop into the stop.
+            if (len < 3 + CMD_HOME_PAYLOAD_LEN + 1) return false;
+
+            const uint8_t* p = &pkt[3];
+            const bool     dir       = p[0] != 0;
+            const uint16_t startUs   = ((uint16_t)p[1] << 8) | p[2];
+            const uint16_t floorUs   = ((uint16_t)p[3] << 8) | p[4];
+            const uint16_t rampSteps = ((uint16_t)p[5] << 8) | p[6];
+            const uint32_t maxSteps  = ((uint32_t)p[7]  << 24) |
+                                       ((uint32_t)p[8]  << 16) |
+                                       ((uint32_t)p[9]  <<  8) |
+                                        (uint32_t)p[10];
+
+            // THE mode decision, and the only place it is made: one pin read,
+            // now. Sitting on the switch means the only useful move is off it.
+            const bool retract = HAL_LIMIT_ASSERTED();
+
+            if (!homingArm(dir, retract, startUs, floorUs, rampSteps, maxSteps))
+                return false;
+
+            // Ack with full status, like CMD_ENGAGE: one atomic observation of
+            // (homing, limit, position) taken after the arm, so the supervisor
+            // never has to infer the starting point from a separate read that
+            // could straddle the first steps.
+            reply[0] = NODE_ID;
+            reply[1] = CMD_HOME;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;
+            *replyLen = 3 + n + 1;
+            return true;
+        }
+#endif
         case CMD_GET_POS: {
             // Same payload as CMD_NODE_STATUS / the ENGAGE ack — position never
             // travels in a shape of its own, so there is one parser on the host
@@ -178,6 +477,27 @@ ISR(HAL_USART_RXC_vect) {
 
     frame_stream_reset();           // 9th bit = 0 → stream byte
     if (slot == SLOT_NONE) return;  // disengaged → ignore stream, freeze position
+
+#ifdef HAL_HAS_LIMIT_SWITCH
+    // One port read, no debounce, no branch on direction. Refusal is IMMEDIATE:
+    // a real trip stops on the very next step, because waiting out the latch
+    // window before refusing would let the axis run ~500 ms further into the
+    // hard stop — thousands of steps. The accumulator below decides only whether
+    // the refusal becomes STICKY, not whether it happens.
+    const bool limAsserted = HAL_LIMIT_ASSERTED();
+    if (limAsserted) {
+        if (++limitBytesAsserted - limitRunBase >= LIMIT_LATCH_BYTES)
+            limitLatched = true;    // sustained → a genuine trip, hold the gate
+    } else {
+        limitRunBase = limitBytesAsserted;   // released → start a new run
+    }
+    // A run that ends under the threshold was a glitch: the gate opens again by
+    // itself on release, the job carries on having lost a few steps, and the
+    // lifetime total records that it happened. A run that latched stays shut
+    // until a successful RETRACT clears it — nothing in the stream path can, and
+    // neither can a seek, which by definition ends sitting ON the switch.
+    if (limAsserted || limitLatched) return;   // refuse the step
+#endif
 
     bool stepReq = (b & stepBitMask) != 0;
     bool newDir  = (b & dirBitMask)  != 0;
