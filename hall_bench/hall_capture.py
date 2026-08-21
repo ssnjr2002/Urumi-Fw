@@ -9,15 +9,32 @@ with it once an index estimator has been chosen.
   python hall_capture.py --port COM15 --interval  400 --steps 128000 --dir 0
 
 Sweep enough revolutions to get many laps of the same physical index: the whole
-point is lap-to-lap scatter, which needs laps. Measured on this machine the
-output shaft is 16491.5 steps/rev = 45.810 steps/deg. The board is strapped to
-1/16 microstepping in solder, so the motor takes 3200 steps/rev and the belt
-ratio is 5.154.
+point is lap-to-lap scatter, which needs laps. The board is strapped to 1/16
+microstepping in solder, so the motor takes 3200 steps/rev.
 
-Nine revolutions is the sweet spot for a steps/rev measurement, and NOT because
-of averaging: the lap-to-lap error is dominated by a periodic term of about 8.8
-laps, so a baseline of one full period cancels it. Nine laps beats thirteen.
-See hall_revs.py.
+Steps per revolution at the output shaft is ~16497.7 (45.827 steps/deg, belt
+ratio 5.156), but read the uncertainty carefully. Over 15 laps, three different
+reductions of the SAME four captures give:
+
+    endpoint over the full 14-lap baseline    16491.4
+    least-squares slope through all 15 dips   16495.3
+    mean over 9-lap baselines                 16497.7
+
+Each has an internal repeatability under 1 step, and they disagree by 6. That
+spread is the ~8.8-lap periodic error biasing each reduction differently, and
+it means internal precision here badly overstates accuracy: the honest figure
+is 16497.7 +-3 steps (+-0.07 deg), not the sub-step number any single reduction
+reports.
+
+The 9-lap figure is the one to use, on two grounds: a 9-lap baseline is one
+full period of the error, so the periodic term cancels by construction; and it
+is the only reduction under which the forward and reverse runs agree (0.34
+steps apart, against 2.75 for the full baseline). Since a revolution must
+return to the same physical angle, direction agreement is a correctness check,
+not a coincidence.
+
+Settling this properly wants ~30 revolutions, i.e. two full periods. See
+hall_revs.py.
 
 Vary two things across runs, because they answer different questions:
 
@@ -57,7 +74,7 @@ def main():
                     help="microseconds per step (sweep speed)")
     ap.add_argument("--steps", type=int, help="total steps; or use --revs")
     ap.add_argument("--revs", type=float, help="revolutions (needs --steps-per-rev)")
-    ap.add_argument("--steps-per-rev", type=int, default=16491,
+    ap.add_argument("--steps-per-rev", type=int, default=16498,
                     help="output-shaft steps per revolution, for --revs "
                          "(measured on node 4 at 1/16 microstepping)")
     ap.add_argument("--dir", type=int, default=0, choices=(0, 1))

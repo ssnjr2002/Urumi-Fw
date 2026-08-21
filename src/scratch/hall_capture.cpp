@@ -89,6 +89,19 @@
 static uint8_t g_dir = 0;
 static bool    g_enabled = false;
 
+// Absolute step counter since reset. Every step in this file goes through
+// stepOnce(), so this is the one place position is tracked and the homing
+// result can be reported in a frame that survives across trials — which is
+// what makes repeatability measurable at all.
+static int32_t g_pos = 0;
+
+static inline void stepOnce() {
+    STEP_HIGH();
+    delayMicroseconds(STEP_PULSE_US);
+    STEP_LOW();
+    g_pos += g_dir ? -1 : 1;
+}
+
 // ─── Driver plumbing ────────────────────────────────────────────────────────
 
 // No setMicrostepping() here on purpose. M0/M1/M2 are strapped in solder and
@@ -148,18 +161,14 @@ static void runCapture(uint32_t intervalUs, uint32_t steps, uint32_t preroll) {
     // than exclude it — but then start the axis away from the magnet, or the
     // settling is superimposed on a dip and cannot be read.
     for (uint32_t i = 0; i < preroll; i++) {
-        STEP_HIGH();
-        delayMicroseconds(STEP_PULSE_US);
-        STEP_LOW();
+        stepOnce();
         (void)analogReadEnh(HALL_PIN, CAP_ADC_BITS);   // keep ADC cadence identical
         next += intervalUs;
         while ((int32_t)(micros() - next) < 0) { /* pace */ }
     }
 
     for (uint32_t i = 0; i < steps; i++) {
-        STEP_HIGH();
-        delayMicroseconds(STEP_PULSE_US);
-        STEP_LOW();
+        stepOnce();
 
         const int32_t v = analogReadEnh(HALL_PIN, CAP_ADC_BITS);
 
@@ -175,6 +184,199 @@ static void runCapture(uint32_t intervalUs, uint32_t steps, uint32_t preroll) {
 
     CAP_SERIAL.print(F("# END n="));
     CAP_SERIAL.println(steps);
+}
+
+// ─── Homing ─────────────────────────────────────────────────────────────────
+//
+// This is the part that is NOT throwaway in spirit, even though the file is:
+// whatever runs here is what has to run on the node, so it is written under
+// node constraints — fixed point, one bounded buffer, no second pass over the
+// sweep — rather than as a transcription of the Python.
+//
+// est_mirror won the bake-off (hall_analyze.py): it locates the dip's axis of
+// symmetry by correlating the dip against its own reverse, and the
+// autoconvolution of a bump centred at c peaks at 2c. It assumes symmetry and
+// nothing else — no template, no shape model, no depth calibration — which is
+// why it beat the matched filter on real data, where the dip width wanders
+// 704-735 samples lap to lap and no single template fits every lap.
+//
+// Decimated 4:1. The dip is ~730 steps wide, so 4:1 still leaves ~180 points
+// across it, and it cuts the O(n^2) autoconvolution 16x. The bottom is flat
+// within noise for +-100 steps anyway — all the position information is in the
+// flanks, and decimation does not touch those.
+#define HOME_DECIM      4
+// 400 decimated = 1600 steps of room. The dip runs ~900 steps wide measured at
+// the HOME_EXIT threshold (much wider than the 730 quoted at 40% depth, since
+// 300 counts is only 14% of the way down), and pre and post add 40 each, so a
+// 320-sample buffer overflowed and truncated the tail instead of letting the
+// symmetric-tail rule end the window. Harmless as it happened -- the cut was
+// out on the flat shoulder -- but it meant the overflow guard was doing the
+// job the exit logic was written to do, which is the kind of silent fallback
+// that stops being harmless the moment the dip shape changes.
+#define HOME_WIN      400
+#define HOME_PRE       40     // decimated samples of pre-trigger context
+#define HOME_ENTER    400     // counts below baseline to call it a dip. Noise
+                              // is ~23 counts and the dip is ~2069 deep, so
+                              // this sits ~17 sigma clear of one and well
+                              // inside the other.
+#define HOME_EXIT     300     // hysteresis, so noise on the flank cannot
+                              // re-trigger the exit test
+
+static int16_t g_win[HOME_WIN];
+static int16_t g_g[HOME_WIN];
+
+// Symmetry axis of the buffered dip, in decimated-sample units. Fixed point
+// throughout except the final vertex interpolation.
+static float mirrorCentre(uint16_t n, int32_t baseline) {
+    // g = depth below baseline, clipped at zero so the flat shoulders
+    // contribute nothing, and scaled down so the autoconvolution stays inside
+    // int32: worst case n * (2069>>2)^2 is about 7e7, against a 2.1e9 ceiling.
+    for (uint16_t i = 0; i < n; i++) {
+        int32_t d = baseline - g_win[i];
+        if (d < 0) d = 0;
+        g_g[i] = (int16_t)(d >> 2);
+    }
+
+    // AC[k] = sum_i g[i]*g[k-i]. Keep a 3-deep history so the peak and both
+    // its neighbours are available for the vertex fit without a second pass.
+    int32_t h0 = 0, h1 = 0;
+    int32_t best = -1, ba = 0, bb = 0, bc = 0;
+    uint16_t bk = 0;
+    const uint16_t kmax = (uint16_t)(2 * n - 1);
+
+    for (uint16_t k = 0; k < kmax; k++) {
+        const uint16_t lo = (k >= n) ? (uint16_t)(k - n + 1) : 0;
+        const uint16_t hi = (k < n) ? k : (uint16_t)(n - 1);
+        int32_t acc = 0;
+        for (uint16_t i = lo; i <= hi; i++) acc += (int32_t)g_g[i] * g_g[k - i];
+
+        if (k >= 2 && h1 > best) { best = h1; bk = (uint16_t)(k - 1); ba = h0; bb = h1; bc = acc; }
+        h0 = h1; h1 = acc;
+    }
+    if (best <= 0) return -1.0f;
+
+    const int32_t den = ba - 2 * bb + bc;
+    const float delta = den ? (0.5f * (float)(ba - bc) / (float)den) : 0.0f;
+    return ((float)bk + delta) * 0.5f;   // peak at 2c
+}
+
+// Sweep until one COMPLETE dip has passed, then report where its centre was.
+//
+// Note the shape of this: it cannot stop when it detects the index, because an
+// analog dip's centre is only knowable after passing it. That is the structural
+// difference from limit-switch homing, where the switch edge IS the position.
+static bool runHome(uint32_t intervalUs, uint32_t maxSteps, bool emitWindow) {
+    if (!g_enabled) { CAP_SERIAL.println(F("# ERR driver disabled — 'e 1' first")); return false; }
+
+    digitalWrite(DIR_PIN, g_dir ? HIGH : LOW);
+    delayMicroseconds(5);
+    const int32_t sign = g_dir ? -1 : 1;
+
+    // Baseline as a running maximum. The feature is a DIP, so the largest field
+    // seen is the away-from-magnet level, and taking a max means the sweep may
+    // START on the magnet without poisoning the reference — which a leading
+    // average would do. It biases high by a couple of counts of noise, but that
+    // bias is the same every lap, so it cancels out of repeatability entirely.
+    int32_t baseline = 0;
+
+    int16_t  ring[HOME_PRE];
+    uint16_t rn = 0, rhead = 0;
+    uint16_t nwin = 0, preN = 0, post = 0;
+    int32_t  winStart = 0;
+    bool     inDip = false, exiting = false, done = false, overflow = false;
+
+    uint32_t next = micros();
+    uint32_t i = 0;
+    for (; i < maxSteps && !done; i++) {
+        stepOnce();
+        const int32_t v = analogReadEnh(HALL_PIN, CAP_ADC_BITS);
+        if (v > baseline) baseline = v;
+
+        if ((i % HOME_DECIM) == 0) {
+            if (!inDip) {
+                if (baseline - v > HOME_ENTER) {
+                    inDip = true;
+                    preN = rn;
+                    winStart = g_pos - (int32_t)rn * HOME_DECIM * sign;
+                    for (uint16_t k = 0; k < rn; k++)
+                        g_win[nwin++] = ring[(uint16_t)((rhead + HOME_PRE - rn + k) % HOME_PRE)];
+                } else {
+                    ring[rhead] = (int16_t)v;
+                    rhead = (uint16_t)((rhead + 1) % HOME_PRE);
+                    if (rn < HOME_PRE) rn++;
+                }
+            }
+            if (inDip) {
+                if (nwin < HOME_WIN) { g_win[nwin++] = (int16_t)v; }
+                else { done = true; overflow = true; }   // dip wider than the buffer
+                if (!exiting) {
+                    if (baseline - v < HOME_EXIT) { exiting = true; post = 0; }
+                } else if (++post >= preN) {
+                    done = true;                      // as much tail as head
+                }
+            }
+        }
+
+        next += intervalUs;
+        while ((int32_t)(micros() - next) < 0) { /* pace */ }
+    }
+
+    if (!inDip || !exiting) {
+        CAP_SERIAL.print(F("# HOME found=0 swept=")); CAP_SERIAL.println(i);
+        return false;
+    }
+
+    const float c = mirrorCentre(nwin, baseline);
+    if (c < 0) { CAP_SERIAL.println(F("# HOME found=0 reason=degenerate")); return false; }
+
+    // Back to absolute step coordinates. Decimated sample j sits at
+    // winStart + j*HOME_DECIM*sign, so a fractional j interpolates the same way.
+    const float idxf = (float)winStart + c * (float)(HOME_DECIM * sign);
+    const int32_t idx = (int32_t)lroundf(idxf);
+
+    CAP_SERIAL.print(F("# HOME found=1 index="));   CAP_SERIAL.print(idx);
+    CAP_SERIAL.print(F(" centre="));                CAP_SERIAL.print(idxf, 2);
+    CAP_SERIAL.print(F(" baseline="));              CAP_SERIAL.print(baseline);
+    CAP_SERIAL.print(F(" win="));                   CAP_SERIAL.print(nwin);
+    CAP_SERIAL.print(F(" pre="));                   CAP_SERIAL.print(preN);
+    CAP_SERIAL.print(F(" ovf="));                   CAP_SERIAL.print(overflow ? 1 : 0);
+    CAP_SERIAL.print(F(" swept="));                 CAP_SERIAL.print(i);
+    CAP_SERIAL.print(F(" pos="));                   CAP_SERIAL.println(g_pos);
+
+    // Emitting the same window the node just reduced is the point of doing this
+    // on the scratch rig: the PC can run the float est_mirror over identical
+    // samples, so any disagreement is purely the fixed-point/decimated
+    // implementation and not the mechanism.
+    if (emitWindow) {
+        CAP_SERIAL.print(F("# WIN start=")); CAP_SERIAL.print(winStart);
+        CAP_SERIAL.print(F(" decim="));      CAP_SERIAL.print(HOME_DECIM);
+        CAP_SERIAL.print(F(" sign="));       CAP_SERIAL.print(sign);
+        CAP_SERIAL.print(F(" n="));          CAP_SERIAL.println(nwin);
+        for (uint16_t k = 0; k < nwin; k++) CAP_SERIAL.println(g_win[k]);
+        CAP_SERIAL.println(F("# WIN end"));
+    }
+    return true;
+}
+
+// Relative move, for putting the axis at a known offset before a homing trial
+// and for commanded-angle tests. Signed: negative moves the other way.
+static void runMove(int32_t steps, uint32_t intervalUs) {
+    if (!g_enabled) { CAP_SERIAL.println(F("# ERR driver disabled — 'e 1' first")); return; }
+
+    const uint8_t saved = g_dir;
+    g_dir = (steps < 0) ? 1 : 0;
+    digitalWrite(DIR_PIN, g_dir ? HIGH : LOW);
+    delayMicroseconds(5);
+
+    uint32_t n = (uint32_t)((steps < 0) ? -steps : steps);
+    uint32_t next = micros();
+    while (n--) {
+        stepOnce();
+        next += intervalUs;
+        while ((int32_t)(micros() - next) < 0) { /* pace */ }
+    }
+    g_dir = saved;
+    CAP_SERIAL.print(F("# MOVE pos=")); CAP_SERIAL.println(g_pos);
 }
 
 // ─── Command line ───────────────────────────────────────────────────────────
@@ -200,6 +402,34 @@ static void handleLine(char* s) {
             runCapture(iv, n, (end == s) ? 0 : pre);
             break;
         }
+        case 'h': {
+            char* end;
+            const uint32_t iv = strtoul(s, &end, 10);
+            if (end == s) { CAP_SERIAL.println(F("# ERR usage: h <interval_us> <max_steps> [emit_window]")); return; }
+            s = end;
+            const uint32_t n = strtoul(s, &end, 10);
+            if (end == s || iv == 0 || n == 0) {
+                CAP_SERIAL.println(F("# ERR usage: h <interval_us> <max_steps> [emit_window]")); return;
+            }
+            s = end;
+            const uint32_t emit = strtoul(s, &end, 10);
+            runHome(iv, n, (end != s) && emit);
+            break;
+        }
+        case 'm': {
+            char* end;
+            const int32_t n = strtol(s, &end, 10);
+            if (end == s) { CAP_SERIAL.println(F("# ERR usage: m <steps> <interval_us>")); return; }
+            s = end;
+            const uint32_t iv = strtoul(s, &end, 10);
+            if (end == s || iv == 0) { CAP_SERIAL.println(F("# ERR usage: m <steps> <interval_us>")); return; }
+            runMove(n, iv);
+            break;
+        }
+        case 'z':
+            g_pos = 0;
+            CAP_SERIAL.print(F("# pos=")); CAP_SERIAL.println(g_pos);
+            break;
         case 'd':
             g_dir = (strtoul(s, nullptr, 10) != 0) ? 1 : 0;
             CAP_SERIAL.print(F("# dir=")); CAP_SERIAL.println(g_dir);
@@ -211,10 +441,13 @@ static void handleLine(char* s) {
         case '?':
             CAP_SERIAL.print(F("# dir=")); CAP_SERIAL.print(g_dir);
             CAP_SERIAL.print(F(" en=")); CAP_SERIAL.print(g_enabled ? 1 : 0);
+            CAP_SERIAL.print(F(" pos=")); CAP_SERIAL.print(g_pos);
             CAP_SERIAL.print(F(" hall=")); CAP_SERIAL.println(analogReadEnh(HALL_PIN, CAP_ADC_BITS));
             break;
         default:
-            CAP_SERIAL.println(F("# ERR cmds: r <interval_us> <steps> [preroll] | d <0|1> | e <0|1> | ?"));
+            CAP_SERIAL.println(F("# ERR cmds: r <interval_us> <steps> [preroll] | "
+                                 "h <interval_us> <max_steps> [emit_window] | "
+                                 "m <steps> <interval_us> | z | d <0|1> | e <0|1> | ?"));
             break;
     }
 }
