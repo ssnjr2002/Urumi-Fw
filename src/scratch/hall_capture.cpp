@@ -24,7 +24,8 @@
 // Wiring assumptions (db_node4, AVR128DB32, DRV8825):
 //   PD1  A1324 Hall analog output  (AIN1)
 //   PD4  STEP   PD5 DIR   PD6 ENABLE (active LOW)
-//   PA4/PA6/PA7  DRV8825 M0/M1/M2 microstep select
+//   PA4/PA6/PA7  DRV8825 M0/M1/M2 — NOT connected on this board; the microstep
+//                mode is strapped in solder (1/16), so these are left alone
 //   PD2  laser gate on this board (-DNODE_HAS_LASER) — held LOW here, see below
 //
 // Serial protocol (fixed-width ASCII so per-sample cost is constant — variable
@@ -36,7 +37,7 @@
 //   > e <0|1>                   driver enable/disable
 //   > ?                         status
 // Output:
-//   # BEGIN interval_us=1000 steps=128000 dir=0 micro=32 accbits=13
+//   # BEGIN interval_us=1000 steps=128000 dir=0 micro=16 accbits=13
 //   000000,04091
 //   000001,04088
 //   # END n=128000
@@ -49,10 +50,15 @@
 #define CAP_BAUD 500000
 #endif
 
-// Microstepping. Defaults to 32 to match db_node4's DRV_MICROSTEPPING, so step
-// counts captured here are directly comparable to what the real firmware emits.
+// Microstepping. NOT software-selectable on this board: DRV8825 M0/M1/M2 are
+// strapped in solder and are not routed to the MCU, so nothing here can change
+// the mode. This is a declaration of what the hardware is set to, carried into
+// the capture header purely so a CSV records the conditions it was taken under.
+//
+// The board is strapped to 1/16. Note that db_node4's DRV_MICROSTEPPING still
+// defaults to 32, which does not match the hardware — see stepper.h.
 #ifndef CAP_MICROSTEPPING
-#define CAP_MICROSTEPPING 32
+#define CAP_MICROSTEPPING 16
 #endif
 
 // ADC accumulation. DxCore's analogReadEnh() oversamples in hardware (the Dx
@@ -70,9 +76,6 @@
 #define STEP_PIN   PIN_PD4
 #define DIR_PIN    PIN_PD5
 #define EN_PIN     PIN_PD6
-#define M0_PIN     PIN_PA4
-#define M1_PIN     PIN_PA6
-#define M2_PIN     PIN_PA7
 
 // Direct port access for the step pulse — the pin toggle wants to be two stores,
 // not two digitalWrite() calls, so the pulse width is what it says it is.
@@ -88,22 +91,10 @@ static bool    g_enabled = false;
 
 // ─── Driver plumbing ────────────────────────────────────────────────────────
 
-// DRV8825 microstep truth table (M2,M1,M0). Note 1/32 has three encodings;
-// 101 is the canonical one.
-static void setMicrostepping(uint8_t micro) {
-    uint8_t m;
-    switch (micro) {
-        case 1:  m = 0b000; break;
-        case 2:  m = 0b001; break;
-        case 4:  m = 0b010; break;
-        case 8:  m = 0b011; break;
-        case 16: m = 0b100; break;
-        default: m = 0b101; break;   // 32
-    }
-    digitalWrite(M0_PIN, (m >> 0) & 1);
-    digitalWrite(M1_PIN, (m >> 1) & 1);
-    digitalWrite(M2_PIN, (m >> 2) & 1);
-}
+// No setMicrostepping() here on purpose. M0/M1/M2 are strapped in solder and
+// are not wired to the MCU, so driving PA4/PA6/PA7 would change nothing about
+// the driver while asserting three pins whose actual net is unknown to this
+// build. Leaving them untouched is both honest and safer.
 
 static void driverEnable(bool on) {
     // DRV8825 enable is active LOW (matches HAL_MOTOR_ENABLE in stepper.h).
@@ -234,9 +225,6 @@ void setup() {
     pinMode(STEP_PIN, OUTPUT);  STEP_LOW();
     pinMode(DIR_PIN,  OUTPUT);  digitalWrite(DIR_PIN, LOW);
     pinMode(EN_PIN,   OUTPUT);
-    pinMode(M0_PIN,   OUTPUT);
-    pinMode(M1_PIN,   OUTPUT);
-    pinMode(M2_PIN,   OUTPUT);
 
     // db_node4 is the laser-carrying board (-DNODE_HAS_LASER reclaims PD2 as a
     // digital laser gate). This scratch build has no laser logic at all, so pin
@@ -245,7 +233,6 @@ void setup() {
     pinMode(PIN_PD2, OUTPUT);
     digitalWrite(PIN_PD2, LOW);
 
-    setMicrostepping(CAP_MICROSTEPPING);
     driverEnable(false);
 
     // Reference the ADC to VDD, not the internal reference. The A1324 is

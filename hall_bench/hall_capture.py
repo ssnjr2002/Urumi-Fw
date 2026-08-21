@@ -10,8 +10,14 @@ with it once an index estimator has been chosen.
 
 Sweep enough revolutions to get many laps of the same physical index: the whole
 point is lap-to-lap scatter, which needs laps. Measured on this machine the
-output shaft is ~16500 steps/rev (belt ratio ~2.58 against the motor's 6400), so
-128000 steps is about 7.75 revolutions.
+output shaft is 16491.5 steps/rev = 45.810 steps/deg. The board is strapped to
+1/16 microstepping in solder, so the motor takes 3200 steps/rev and the belt
+ratio is 5.154.
+
+Nine revolutions is the sweet spot for a steps/rev measurement, and NOT because
+of averaging: the lap-to-lap error is dominated by a periodic term of about 8.8
+laps, so a baseline of one full period cancels it. Nine laps beats thirteen.
+See hall_revs.py.
 
 Vary two things across runs, because they answer different questions:
 
@@ -25,6 +31,7 @@ Vary two things across runs, because they answer different questions:
               ways during a job anyway, so the estimator has to work both ways.
 """
 import argparse
+import pathlib
 import sys
 import time
 
@@ -50,8 +57,9 @@ def main():
                     help="microseconds per step (sweep speed)")
     ap.add_argument("--steps", type=int, help="total steps; or use --revs")
     ap.add_argument("--revs", type=float, help="revolutions (needs --steps-per-rev)")
-    ap.add_argument("--steps-per-rev", type=int, default=6400,
-                    help="output-shaft steps per revolution, for --revs")
+    ap.add_argument("--steps-per-rev", type=int, default=16491,
+                    help="output-shaft steps per revolution, for --revs "
+                         "(measured on node 4 at 1/16 microstepping)")
     ap.add_argument("--dir", type=int, default=0, choices=(0, 1))
     ap.add_argument("--preroll", type=int, default=2000,
                     help="steps taken but not emitted, so the capture starts at "
@@ -67,7 +75,10 @@ def main():
             raise SystemExit("need --steps or --revs")
         args.steps = int(round(args.revs * args.steps_per_rev))
 
-    out = args.out or f"hall_i{args.interval}_d{args.dir}_n{args.steps}.csv"
+    # Captures land next to this script, not in whatever directory it was run
+    # from, so a session's runs stay together for the analyzer.
+    out = args.out or str(pathlib.Path(__file__).resolve().parent /
+                          f"hall_i{args.interval}_d{args.dir}_n{args.steps}.csv")
     port = pick_port(args.port)
 
     # The firmware paces off micros() deadlines, so a run takes very close to

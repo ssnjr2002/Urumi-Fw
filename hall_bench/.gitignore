@@ -1,0 +1,6 @@
+# Captures are throwaway by default — a bench session produces a lot of them and
+# none are worth keeping unless a conclusion rests on them. The three committed
+# runs are force-added (git add -f) because the measured constants in
+# hall_capture.py's docstring were derived from exactly those files.
+*.csv
+*.png
