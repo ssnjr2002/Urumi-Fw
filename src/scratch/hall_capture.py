@@ -4,13 +4,25 @@
 Throwaway bench tool, paired with the firmware of the same name. Deleted along
 with it once an index estimator has been chosen.
 
-  python hall_capture.py --port COM12 --interval 1000 --revs 20 --steps-per-rev 6400
-  python hall_capture.py --port COM12 --interval 1000 --steps 128000 -o run_fast.csv
+  python hall_capture.py --port COM15 --interval 1000 --steps 128000 --dir 0
+  python hall_capture.py --port COM15 --interval 1000 --steps 128000 --dir 1
+  python hall_capture.py --port COM15 --interval  400 --steps 128000 --dir 0
 
 Sweep enough revolutions to get many laps of the same physical index: the whole
-point is lap-to-lap scatter, which needs laps. Run the same sweep at two or
-three different intervals as well — scatter measures precision, but only a
-speed change exposes a speed-dependent bias.
+point is lap-to-lap scatter, which needs laps. Measured on this machine the
+output shaft is ~16500 steps/rev (belt ratio ~2.58 against the motor's 6400), so
+128000 steps is about 7.75 revolutions.
+
+Vary two things across runs, because they answer different questions:
+
+  --interval  scatter measures PRECISION, but only a speed change exposes a
+              speed-dependent BIAS, which scatter is blind to.
+
+  --dir       reversing flips the SPATIAL axis but not any TIME lag, so the two
+              separate: the mean of the forward and reverse index positions is
+              the true spatial centre with lag cancelled, and half their
+              difference is the lag and backlash combined. The A axis turns both
+              ways during a job anyway, so the estimator has to work both ways.
 """
 import argparse
 import sys
@@ -41,6 +53,12 @@ def main():
     ap.add_argument("--steps-per-rev", type=int, default=6400,
                     help="output-shaft steps per revolution, for --revs")
     ap.add_argument("--dir", type=int, default=0, choices=(0, 1))
+    ap.add_argument("--preroll", type=int, default=2000,
+                    help="steps taken but not emitted, so the capture starts at "
+                         "settled speed instead of from standstill. Set 0 to "
+                         "measure the belt start-up transient instead — but then "
+                         "park the axis AWAY from the magnet first, or the "
+                         "transient sits on top of a dip and cannot be read.")
     ap.add_argument("-o", "--out", default=None)
     args = ap.parse_args()
 
@@ -54,7 +72,7 @@ def main():
 
     # The firmware paces off micros() deadlines, so a run takes very close to
     # interval*steps. Allow generous slack on top before giving up.
-    expect_s = args.interval * args.steps / 1e6
+    expect_s = args.interval * (args.steps + args.preroll) / 1e6
     print(f"# {port} @ {args.baud} | {args.steps} steps @ {args.interval}us "
           f"= ~{expect_s:.1f}s -> {out}", file=sys.stderr)
 
@@ -67,7 +85,7 @@ def main():
             time.sleep(0.2)
         ser.reset_input_buffer()
 
-        ser.write(f"r {args.interval} {args.steps}\n".encode())
+        ser.write(f"r {args.interval} {args.steps} {args.preroll}\n".encode())
 
         n, started, deadline = 0, False, time.time() + expect_s + 30
         try:

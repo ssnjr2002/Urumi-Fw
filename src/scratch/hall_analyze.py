@@ -63,7 +63,11 @@ def find_dips(v, frac=0.4, pad=1.5, min_width=4):
     """Coarse segmentation only. This commits to no estimator — it just decides
     which samples belong to which dip; the estimators run on the windows."""
     baseline = float(np.median(v))
-    depth = baseline - float(np.min(v))
+    # Depth off a low percentile rather than the outright minimum: a single bad
+    # sample (a settling artifact, a glitch) would otherwise set the depth and
+    # drag every fraction-of-depth threshold with it. Valid while the dips
+    # occupy well over 0.05% of the capture, i.e. any sweep of >=3 revolutions.
+    depth = baseline - float(np.percentile(v, 0.05))
     if depth <= 0:
         return baseline, 0.0, []
 
@@ -76,15 +80,24 @@ def find_dips(v, frac=0.4, pad=1.5, min_width=4):
     if below[-1]:
         ends.append(len(v))
 
-    spans = []
+    spans, raw, dropped = [], [], 0
     for a, b in zip(starts, ends):
         if b - a < min_width:
             continue
         w = b - a
-        lo = max(0, int(a - pad * w))
-        hi = min(len(v), int(b + pad * w))
+        lo, hi = int(a - pad * w), int(b + pad * w)
+        # Drop dips whose window would be clipped by the start or end of the
+        # capture. A truncated window is asymmetric, and every estimator that
+        # integrates over the window (centroid, gaussian, mirror, matched) is
+        # pulled by that asymmetry — it would show up as one wild lap rather
+        # than as the missing data it actually is. Seen for real on the first
+        # capture, where the axis happened to be parked on the magnet at t=0.
+        if lo < 0 or hi > len(v):
+            dropped += 1
+            continue
         spans.append((lo, hi))
-    return baseline, depth, spans
+        raw.append(w)          # width at the detection fraction, not padded
+    return baseline, depth, spans, raw, dropped
 
 
 # ─── estimators (all return a position in ORIGINAL sample index units) ──────
@@ -237,7 +250,7 @@ def analyze(path, skip, plot=False):
         print(f"{path}: too few samples ({len(v)})", file=sys.stderr)
         return
 
-    baseline, depth, spans = find_dips(v)
+    baseline, depth, spans, raw_w, dropped = find_dips(v)
     noise = float(np.std(v[v > baseline - 0.1 * depth])) if depth > 0 else float("nan")
 
     print(f"\n=== {path} ===")
@@ -245,12 +258,19 @@ def analyze(path, skip, plot=False):
         print(f"  {meta}")
     print(f"  samples {len(v)}  baseline {baseline:.1f}  depth {depth:.1f}  "
           f"noise(sd) {noise:.2f}  SNR {depth / noise if noise else float('nan'):.0f}")
-    print(f"  dips found: {len(spans)}")
+    print(f"  dips usable: {len(spans)}"
+          + (f"  ({dropped} dropped: window clipped by capture edge)" if dropped else ""))
     if len(spans) < 3:
         print("  need >=3 dips (sweep more revolutions) to rank estimators")
         return
-    widths = [b - a for a, b in spans]
-    print(f"  dip window width: min {min(widths)} max {max(widths)} samples")
+
+    mids = np.array([(a + b) / 2 for a, b in spans])
+    spacing = np.diff(mids)
+    spr = float(np.mean(spacing))
+    print(f"  dip width at 40% depth: {min(raw_w)}-{max(raw_w)} samples "
+          f"({min(raw_w) / spr * 360:.1f}-{max(raw_w) / spr * 360:.1f} deg)")
+    print(f"  dip spacing (steps/rev at the OUTPUT shaft): mean {spr:.0f}  "
+          f"sd {np.std(spacing):.0f}  range {int(spacing.min())}-{int(spacing.max())}")
 
     results = {}
     for est in ESTIMATORS:
@@ -319,7 +339,7 @@ def analyze(path, skip, plot=False):
         for a, b in spans:
             ax[0].axvspan(x[a], x[b - 1], color="C1", alpha=0.15)
         ax[0].set_title(f"{path} — raw sweep"); ax[0].set_xlabel("step")
-        for sd, name, _ in rows[:4]:
+        for _dev, sd, name, _slope in rows[:4]:
             if np.isnan(sd):
                 continue
             p = results[name]
@@ -336,8 +356,11 @@ def analyze(path, skip, plot=False):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("csv", nargs="+")
-    ap.add_argument("--skip", type=int, default=0,
-                    help="drop N leading samples (startup transient / ramp)")
+    ap.add_argument("--skip", type=int, default=1,
+                    help="drop N leading samples. Defaults to 1: the sweep starts "
+                         "from standstill and firmware before the settling fix "
+                         "emitted one unsettled ADC reading as sample 0. Raise it "
+                         "to also exclude the belt's start-up transient.")
     ap.add_argument("--plot", action="store_true")
     args = ap.parse_args()
     for p in args.csv:

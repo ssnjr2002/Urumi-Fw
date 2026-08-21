@@ -29,7 +29,9 @@
 //
 // Serial protocol (fixed-width ASCII so per-sample cost is constant — variable
 // width would jitter the step interval and smear the speed tests):
-//   > r <interval_us> <steps>   run: stream one sample per step
+//   > r <interval_us> <steps> [preroll]   stream one sample per step; `preroll`
+//                                         steps are taken but not emitted, so
+//                                         the capture starts at settled speed
 //   > d <0|1>                   set direction for subsequent runs
 //   > e <0|1>                   driver enable/disable
 //   > ?                         status
@@ -120,7 +122,7 @@ static void driverEnable(bool on) {
 // The loop paces off an absolute micros() deadline rather than delaying by a
 // fixed amount, so the time spent converting and printing is absorbed instead
 // of accumulating into a drifting, slowly-decreasing sweep speed.
-static void runCapture(uint32_t intervalUs, uint32_t steps) {
+static void runCapture(uint32_t intervalUs, uint32_t steps, uint32_t preroll) {
     if (!g_enabled) {
         CAP_SERIAL.println(F("# ERR driver disabled — 'e 1' first"));
         return;
@@ -138,10 +140,30 @@ static void runCapture(uint32_t intervalUs, uint32_t steps) {
     CAP_SERIAL.print(F(" micro="));
     CAP_SERIAL.print(CAP_MICROSTEPPING);
     CAP_SERIAL.print(F(" accbits="));
-    CAP_SERIAL.println(CAP_ADC_BITS);
+    CAP_SERIAL.print(CAP_ADC_BITS);
+    CAP_SERIAL.print(F(" preroll="));
+    CAP_SERIAL.println(preroll);
 
     char line[16];
     uint32_t next = micros();
+
+    // Pre-roll: step at the capture rate but emit nothing. The sweep otherwise
+    // starts from standstill, so the opening samples carry the belt's start-up
+    // transient — and the magnet sits on the LOAD side of that belt, which is
+    // precisely the compliance the transient lives in. Pre-rolling means every
+    // emitted sample is at settled constant speed.
+    //
+    // Set it to 0 deliberately when the goal is to MEASURE the transient rather
+    // than exclude it — but then start the axis away from the magnet, or the
+    // settling is superimposed on a dip and cannot be read.
+    for (uint32_t i = 0; i < preroll; i++) {
+        STEP_HIGH();
+        delayMicroseconds(STEP_PULSE_US);
+        STEP_LOW();
+        (void)analogReadEnh(HALL_PIN, CAP_ADC_BITS);   // keep ADC cadence identical
+        next += intervalUs;
+        while ((int32_t)(micros() - next) < 0) { /* pace */ }
+    }
 
     for (uint32_t i = 0; i < steps; i++) {
         STEP_HIGH();
@@ -176,13 +198,15 @@ static void handleLine(char* s) {
         case 'r': {
             char* end;
             const uint32_t iv = strtoul(s, &end, 10);
-            if (end == s) { CAP_SERIAL.println(F("# ERR usage: r <interval_us> <steps>")); return; }
+            if (end == s) { CAP_SERIAL.println(F("# ERR usage: r <interval_us> <steps> [preroll]")); return; }
             s = end;
             const uint32_t n = strtoul(s, &end, 10);
             if (end == s || iv == 0 || n == 0) {
-                CAP_SERIAL.println(F("# ERR usage: r <interval_us> <steps>")); return;
+                CAP_SERIAL.println(F("# ERR usage: r <interval_us> <steps> [preroll]")); return;
             }
-            runCapture(iv, n);
+            s = end;
+            const uint32_t pre = strtoul(s, &end, 10);   // optional; 0 if absent
+            runCapture(iv, n, (end == s) ? 0 : pre);
             break;
         }
         case 'd':
@@ -199,7 +223,7 @@ static void handleLine(char* s) {
             CAP_SERIAL.print(F(" hall=")); CAP_SERIAL.println(analogReadEnh(HALL_PIN, CAP_ADC_BITS));
             break;
         default:
-            CAP_SERIAL.println(F("# ERR cmds: r <interval_us> <steps> | d <0|1> | e <0|1> | ?"));
+            CAP_SERIAL.println(F("# ERR cmds: r <interval_us> <steps> [preroll] | d <0|1> | e <0|1> | ?"));
             break;
     }
 }
@@ -233,6 +257,13 @@ void setup() {
     // the reading — on a rail shared with stepper drivers. See docs/homing.md.
     analogReference(VDD);
     pinMode(HALL_PIN, INPUT);
+
+    // Throw away the first conversions. The first read after a reference change
+    // is taken before the reference has settled and comes back low — it showed
+    // up in the first capture as a single sample ~90 counts BELOW the true
+    // minimum of a real dip, which is exactly the sort of outlier that poisons a
+    // global depth estimate and every fraction-of-depth threshold derived from it.
+    for (uint8_t i = 0; i < 4; i++) (void)analogReadEnh(HALL_PIN, CAP_ADC_BITS);
 
     CAP_SERIAL.println();
     CAP_SERIAL.println(F("# hall_capture ready — r <interval_us> <steps> | d <0|1> | e <0|1> | ?"));
