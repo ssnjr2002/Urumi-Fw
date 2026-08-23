@@ -12,29 +12,59 @@ Sweep enough revolutions to get many laps of the same physical index: the whole
 point is lap-to-lap scatter, which needs laps. The board is strapped to 1/16
 microstepping in solder, so the motor takes 3200 steps/rev.
 
-Steps per revolution at the output shaft is ~16497.7 (45.827 steps/deg, belt
-ratio 5.156), but read the uncertainty carefully. Over 15 laps, three different
-reductions of the SAME four captures give:
+Steps per revolution at the output shaft is 16497.9 +-0.3 (45.8275 steps/deg,
+belt ratio 5.15559). Getting to that number took an estimator change, not more
+data, and the story is worth keeping because it is a general trap.
+
+Three obvious reductions of the SAME four captures disagreed by 6 steps:
 
     endpoint over the full 14-lap baseline    16491.4
     least-squares slope through all 15 dips   16495.3
     mean over 9-lap baselines                 16497.7
 
-Each has an internal repeatability under 1 step, and they disagree by 6. That
-spread is the ~8.8-lap periodic error biasing each reduction differently, and
-it means internal precision here badly overstates accuracy: the honest figure
-is 16497.7 +-3 steps (+-0.07 deg), not the sub-step number any single reduction
-reports.
+Each repeated internally to under a step, which made all three look precise and
+one of them wrong. In fact all three were biased, by the ~8.8-lap periodic belt
+error riding on the dip positions. A sinusoid spanning a non-integer number of
+periods has non-zero correlation with a ramp, so ANY slope taken through those
+points inherits some of it -- and each reduction inherits a different amount,
+which is exactly the 6-step spread.
 
-The 9-lap figure is the one to use, on two grounds: a 9-lap baseline is one
-full period of the error, so the periodic term cancels by construction; and it
-is the only reduction under which the forward and reverse runs agree (0.34
-steps apart, against 2.75 for the full baseline). Since a revolution must
-return to the same physical angle, direction agreement is a correctness check,
-not a coincidence.
+The fix is to stop treating the belt term as noise to be averaged away and fit
+it alongside the slope:
 
-Settling this properly wants ~30 revolutions, i.e. two full periods. See
-hall_revs.py.
+    pos[k] = a + b*k + c*cos(2 pi k/P) + d*sin(2 pi k/P)
+
+scanning P. Then b is the slope with the belt term projected out rather than
+smeared into it. Across all four captures -- two speeds crossed with two
+directions, so four largely independent measurements -- that gives
+
+    16497.73  16498.09  16497.57  16498.08     mean 16497.87, sd 0.26
+
+which is a tenfold improvement over the +-3 the three-way disagreement forced,
+from the same bytes on disk. It also predicts the old biases correctly (-6.2
+for the endpoint, -2.6 for the plain slope), which is the check that says the
+model is right rather than merely tighter.
+
+The same fit pins the belt period at 8.814 +-0.052 laps, amplitude ~46.6 steps
+forward and ~29 reverse, and leaves 5-9 steps of residual.
+
+Two things this DISPROVED, recorded so they do not get re-proposed:
+
+  * There is no exact tooth ratio to find. 5.15559 is not a low-denominator
+    rational; the closest is 232/45 = 5.155556, needing a 45T motor pulley and
+    a 232T output, and nothing simpler lands within 4 sems. Under a single
+    2 mm-pitch stage no integer tooth set reproduces the ratio AND the belt
+    period AND leaves room for the pulleys not to intersect. That is what a
+    deliberately compliant printed belt should look like: engagement is not a
+    clean kinematic constraint, so the ratio is a real number, not a fraction.
+    16497.9 +-0.3 IS the answer; do not go hunting for a nicer one.
+
+  * There is no motor-rotor signature. Adding a term at the period a rotor
+    error would alias to buys an amplitude no larger than the same term at
+    control periods with no physical meaning -- i.e. it is fitting noise.
+
+More revolutions would still help the belt period, which is the weakest number
+here. See hall_revs.py.
 
 Vary two things across runs, because they answer different questions:
 
