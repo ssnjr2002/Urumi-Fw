@@ -128,7 +128,12 @@ def test_repeat(node, args):
     node.cmd(f"d {args.dir}", terminator="# dir")
     rows = []
     for k in range(args.repeat):
-        off = random.randint(0, STEPS_PER_REV - 1)
+        # The offset must move the SAME way the sweep will run. Move against
+        # the sweep and homing simply turns around and re-finds the dip it just
+        # left, so the axis oscillates over a few degrees and every trial
+        # measures the same lap -- which holds belt phase constant and hides
+        # the belt error instead of sampling it.
+        off = random.randint(0, STEPS_PER_REV - 1) * (-1 if args.dir else 1)
         node.cmd(f"m {off} {args.interval}", terminator="# MOVE")
         res, _ = home(node, args.interval, args.budget)
         if not res or not res.get("_ok"):
@@ -166,8 +171,8 @@ def test_crosscheck(node, args):
     node.cmd(f"d {args.dir}", terminator="# dir")
     diffs = []
     for k in range(args.crosscheck):
-        node.cmd(f"m {random.randint(0, STEPS_PER_REV - 1)} {args.interval}",
-                 terminator="# MOVE")
+        off = random.randint(0, STEPS_PER_REV - 1) * (-1 if args.dir else 1)
+        node.cmd(f"m {off} {args.interval}", terminator="# MOVE")
         res, win = home(node, args.interval, args.budget, emit=True)
         if not res or not res.get("_ok") or not win:
             print(f"    {k:5d}   NOT FOUND")
@@ -191,6 +196,56 @@ def test_crosscheck(node, args):
               f"max |diff| {max(abs(d) for d in diffs):.2f} steps "
               f"({max(abs(d) for d in diffs) * 360 / STEPS_PER_REV:.4f} deg)")
         print("    A bias here is the decimation or the fixed point, not the axis.")
+
+
+def test_multi(node, args):
+    """Does the belt-cancelling multi-lap home actually beat the single-lap one?
+
+    Both numbers come out of the SAME sweep -- 'raw' is the first lap's index,
+    'ref' is that index with the periodic term removed -- so this is a paired
+    comparison with no run-to-run mechanical difference between the two arms.
+    """
+    laps = args.multi_laps
+    print(f"\n=== multi-lap home: {args.multi} trials x {laps} laps ===")
+    print("    raw = first lap alone; ref = belt term cancelled over one period")
+    print("    both from the same sweep, so this is a paired comparison\n")
+    print("    trial          raw            ref         spr    resid sd")
+
+    node.cmd(f"d {args.dir}", terminator="# dir")
+    raws, refs, sprs = [], [], []
+    for k in range(args.multi):
+        off = random.randint(0, STEPS_PER_REV - 1) * (-1 if args.dir else 1)
+        node.cmd(f"m {off} {args.interval}", terminator="# MOVE")
+        lines = node.cmd(f"H {args.interval} {laps} {args.budget}",
+                         terminator="# LAP", timeout=60 + laps * 30)
+        hit = [t for t in lines if t.startswith("# HOMEN")]
+        if not hit or "found=1" not in hit[0]:
+            print(f"    {k:5d}   FAILED")
+            continue
+        d = parse_kv(hit[0])
+        raws.append(d["raw"]); refs.append(d["ref"]); sprs.append(d["spr"])
+        print(f"    {k:5d}   {d['raw']:12.1f}   {d['ref']:12.1f}   "
+              f"{d['spr']:9.1f}   {d['residsd']:9.2f}")
+
+    if len(raws) < 2:
+        print("\n    too few successful runs to score")
+        return
+
+    def scatter(vals):
+        m = [v % STEPS_PER_REV for v in vals]
+        if max(m) - min(m) > STEPS_PER_REV / 2:
+            m = [x if x < STEPS_PER_REV / 2 else x - STEPS_PER_REV for x in m]
+        return statistics.stdev(m)
+
+    sr, sf = scatter(raws), scatter(refs)
+    deg = 360.0 / STEPS_PER_REV
+    print(f"\n    n = {len(raws)}")
+    print(f"    raw  sd {sr:7.2f} steps ({sr * deg:.4f} deg)")
+    print(f"    ref  sd {sf:7.2f} steps ({sf * deg:.4f} deg)")
+    if sf > 0:
+        print(f"    improvement {sr / sf:.1f}x")
+    print(f"    steps/rev  mean {statistics.mean(sprs):.1f}"
+          + (f"  sd {statistics.stdev(sprs):.1f}" if len(sprs) > 1 else ""))
 
 
 def test_angle(node, args):
@@ -241,6 +296,12 @@ def main():
     ap.add_argument("--dir", type=int, default=0, choices=(0, 1))
     ap.add_argument("--repeat", type=int, default=0)
     ap.add_argument("--crosscheck", type=int, default=0)
+    ap.add_argument("--multi", type=int, default=0,
+                    help="trials of the belt-cancelling multi-lap home")
+    ap.add_argument("--multi-laps", type=int, default=9,
+                    help="laps per multi-lap home. One full period of the belt "
+                         "error, measured at 8.8-9.1 laps, so 9 is the value "
+                         "that cancels it")
     ap.add_argument("--angle", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -248,8 +309,9 @@ def main():
 
     if args.seed is not None:
         random.seed(args.seed)
-    if not (args.repeat or args.crosscheck or args.angle is not None):
-        raise SystemExit("pick at least one of --repeat, --crosscheck, --angle")
+    if not (args.repeat or args.crosscheck or args.multi or args.angle is not None):
+        raise SystemExit("pick at least one of --repeat, --crosscheck, "
+                         "--multi, --angle")
 
     node = Node(args.port, args.baud, args.verbose)
     try:
@@ -258,6 +320,8 @@ def main():
             test_crosscheck(node, args)
         if args.repeat:
             test_repeat(node, args)
+        if args.multi:
+            test_multi(node, args)
         if args.angle is not None:
             test_angle(node, args)
     finally:
