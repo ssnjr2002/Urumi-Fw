@@ -17,12 +17,22 @@ enum EmitResult : uint8_t {
     EMIT_SOFT_LIMIT,  // ramp overshoot crossed a bound (harness — not yet raised)
 };
 
+// ─── MicroSegment emitter ────────────────────────────────────────
+// Drains the MicroSegment ring, emitting each segment at its planned interval,
+// and owns every state transition that motion itself can cause: RUNNING on
+// entry, and PAUSED / IDLE / ALARM on the way out. Returns when the ring is
+// empty, when a ramp has brought motion to rest, or on estop.
+//
+// Caller must check mBufHead != mBufTail first -- an empty ring here would
+// still publish the RUNNING transition.
+void processMicroSegments(void);
+
 // ─── Debug step burst ─────────────────────────────────────────────────────────
 // Emits `count` raw stream bytes into one stream SLOT at debugStepSps steps/sec.
 // Bypasses the MicroSegment path entirely — used to verify the Pico→node stream
 // path in isolation. Only the node ENGAGE-bound to this slot moves, and it must
 // also be enabled (CMD_ENABLE). Core 0 resolves the target bus node → slot (via
-// the axis map) before pushing the FIFO word, so here the arg is already a slot.
+// the axis map) before posting the request, so here the arg is already a slot.
 //
 // slot is already resolved: Core 0 maps the target bus node to a stream slot via
 // the axis map before posting. `steps` is signed -- the sign IS the direction.
