@@ -5,6 +5,7 @@
 #include "../ipc/shared_state.h"
 #include "../ipc/core1_rpc.h"
 #include "control_plane.h"
+#include "position.h"
 #include "data_plane.h"   // dataPlaneResetSeq (seqreset)
 #include "status.h"       // getBufCount (status alias)
 #include "../config/config_store.h"  // g_cfg (status cfg)
@@ -32,147 +33,6 @@ static inline bool alarmDeniesOn(bool turningOn) {
         return true;
     }
     return false;
-}
-
-// ─── Axis map (Core-0-local; docs/engage_and_axis_map.md §5) ─────────────────
-// slotNode[i] = the bus id currently ENGAGE-bound to stream slot i (X/Y/Z/A), or
-// SLOT_NONE if that slot is unbound. Core 0 owns this map and the abstraction;
-// Core 1 only ever sees granular per-node CMD_ENGAGE. Boots all-unbound → the
-// machine sits in ALARM_CONFIG until axis_map commits a binding.
-#define SLOT_NONE 0xFF
-static uint8_t slotNode[4] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
-
-void axisMapReset() {
-    for (int i = 0; i < 4; i++) slotNode[i] = SLOT_NONE;
-}
-
-// The stream byte has this many motion slots (X/Y/Z/A); axes_enabled/homed are
-// one bit PER SLOT. Which bus id occupies each slot is the runtime axis map
-// (slotNode[], §5), so "is this id an axis, and which slot" is a map lookup —
-// no longer the id==slot+1 assumption. An axis node can now be any bus id.
-#define MOTION_SLOTS 4
-static uint8_t nodeSlot(uint8_t n) {
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++) if (slotNode[i] == n) return i;
-    return SLOT_NONE;
-}
-static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
-
-// ─── Position datum, in the NODE frame (docs/node_session_and_datum.md §2) ────
-// machinePos[] is indexed by SLOT, so it goes stale the moment axis_map rebinds
-// a slot to a different node. The datum therefore lives with the NODE instead:
-// nodeOrigin[id] is that node's own step counter at the instant it was datumed,
-// and machinePos[slot] = <node counter now> - nodeOrigin[node]. A parked node
-// can neither move nor count (its RX ISR returns on slot == SLOT_NONE), so the
-// offset stays valid across an arbitrary number of swaps.
-//
-// axes_homed (per SLOT) is now DERIVED from nodeHomed (per BUS ID) every time a
-// slot is bound — see the axis_map handler.
-static int32_t  nodeOrigin[BUS_ADDR_MAX + 1] = {0};
-static uint16_t nodeHomed = 0;               // bit n = nodeOrigin[n] is valid
-
-// Frozen-while-parked check. parkPos[n] is node n's counter as reported by the
-// ack of the CMD_ENGAGE that DISENGAGED it; parkSeen marks which entries are
-// live. A parked node can neither move nor count, so when it is engaged again
-// its counter must read exactly the same — any difference means a reboot or lost
-// steps. Free: it rides acks we already pay for.
-//
-// These MUST outlive one axis_map invocation: a park lasts until some later
-// command re-engages the node, which is the entire point. As locals they only
-// ever checked nodes that stayed bound across a single command — i.e. the ones
-// that were never really parked. Every axis_map disengages all bound nodes before
-// engaging any, so an entry is always refreshed before it is used.
-static int32_t  parkPos[BUS_ADDR_MAX + 1] = {0};
-static uint16_t parkSeen = 0;
-
-// ─── The one place a position reference dies ──────────────────────────────────
-// Every path that destroys a position went through its own open-coded pair of
-// bit clears, and the recurring bug was updating one frame and forgetting the
-// other: clear axes_homed but leave nodeOrigin, and the next axis_map cheerfully
-// resurrects the datum. Both frames die together, here, or the two disagree.
-//
-// NAMING: this is the ORIGIN — Core 0's stored reference for a node, the thing
-// machinePos is measured from. It is NOT the node-side datum (NODE_FLAG_DATUM /
-// CMD_DATUM_SET), which is the node's own continuity witness. Core 0 never writes
-// that; only the node sets or clears it. Two different facts, deliberately
-// separate, and validity is the conjunction of them (see slotAdoptStatus).
-static void originInvalidate(uint8_t node) {
-    nodeHomed &= ~(1u << node);
-    parkSeen  &= ~(1u << node);        // its parked counter means nothing now
-    uint8_t s = nodeSlot(node);
-    if (s != SLOT_NONE) axes_homed &= ~(1 << s);
-}
-
-// Whole-machine version — estop, soft limit, disable-all.
-static void originInvalidateAll() {
-    nodeHomed  = 0;
-    parkSeen   = 0;
-    axes_homed = 0;
-}
-
-// Rebuild slot `s`'s position and enabled bit from the status payload the node
-// returned with its ENGAGE ack — no second transaction, and no window in which
-// the node could have rebooted between binding and reporting.
-//
-// `st` is the ack payload (NS_STEP_LEN bytes for a stepper), or nullptr if the
-// node did not answer. Both flags are taken from the NODE's own report rather
-// than from what Core 0 last assumed it commanded — that is the point: the slot
-// view becomes derived from node truth at every bind.
-//
-// Validity is a CONJUNCTION of two things neither side can know alone:
-//   nodeHomed[n]     — Core 0: "I took a datum for this node"
-//   NODE_FLAG_DATUM  — the node: "nothing since has interrupted it"
-// The node's half covers events Core 0 never observes (brownout, watchdog reset,
-// a de-energise it did not issue). Core 0's half covers the case of a node that
-// has simply never been datumed in this machine's frame.
-static void slotAdoptStatus(uint8_t s, uint8_t n, const NodeStatus* st) {
-    const bool    haveTail = (st != nullptr && st->hasStepperTail);
-    const uint8_t flags    = (st != nullptr) ? st->flags : 0;
-
-    if (flags & NODE_FLAG_ENABLED) axes_enabled |=  (1 << s);
-    else                           axes_enabled &= ~(1 << s);
-
-    // The node's continuity witness is broken (reset, or de-energised at some
-    // point) — whatever origin we hold for it no longer refers to anything.
-    if (!(flags & NODE_FLAG_DATUM)) originInvalidate(n);
-
-    if (haveTail && (nodeHomed & (1u << n))) {
-        machinePos[s] = st->pos - nodeOrigin[n];
-        axes_homed   |= (1 << s);
-    } else {
-        machinePos[s] = 0;
-        axes_homed   &= ~(1 << s);
-    }
-}
-
-// ─── Validity reconciliation — Core 0 is the sole writer ──────────────────────
-// axes_homed / axes_enabled are bitmasks Core 0 read-modify-writes (|= and &=).
-// Core 1 used to whole-byte-write them on estop and soft limit, which raced those
-// RMWs: Core 0 reading a mask, Core 1 zeroing it, Core 0 writing back its stale
-// value — an axis left claiming a datum the estop had just destroyed. There is no
-// atomic here and no critical section; instead Core 1 only ever SIGNALS, by
-// entering ALARM with a reason, and this folds the signal into the masks.
-//
-// Level-triggered rather than edge-triggered: it re-asserts every pass, so it is
-// idempotent and cannot miss a transition. It also reaches nodeOrigin/nodeHomed,
-// which are Core-0 statics Core 1 could never have cleared — without that, the
-// next axis_map would happily resurrect a datum an estop had destroyed.
-//
-// Called from Core 0's loop before anything the host can observe. Both the text
-// plane and STATUS_RSP are answered from that loop, so the documented invariant
-// still holds: once ALARM is visible, the datum is already gone and the bus is
-// already parked.
-void reconcileValidity() {
-    uint8_t st = machineState, ar = alarmReason;
-
-    // Position dies the instant motion stops abruptly — before the bus sweep.
-    if (st == STATE_ESTOP || ar == ALARM_ESTOP || ar == ALARM_SOFT_LIMIT)
-        originInvalidateAll();
-    // Energisation, however, is only false once Core 1's busDisableAll() has
-    // actually run. Core 1 sets ALARM_ESTOP *before* the sweep and STATE_ALARM
-    // *after* it, so the conjunction is precisely "the sweep has completed".
-    // Keying on STATE_ESTOP instead would report the machine disarmed while
-    // every EN pin was still asserted.
-    if (st == STATE_ALARM && ar == ALARM_ESTOP) axes_enabled = 0;
 }
 
 // Map an axes string ("xyza", "xy", …) to a bitmask. Empty/absent → all axes.
@@ -449,7 +309,7 @@ bool handleCommand(const String& input) {
     // ── axes_enable <on|off> (IDLE/PAUSED/ALARM) ──────────────────────────────
     // Targets the axis map: every node currently bound to a motion slot, and no
     // one else. This replaces the old `enable all` / `disable all`, whose name
-    // read bus-wide while the code always walked slotNode[] — a distinction that
+    // read bus-wide while the code always walked the axis map — a distinction that
     // stopped being academic once vacuum and knife nodes joined the bus.
     // Peripherals hold no slot, so they are addressed only by `enable <id>`.
     if (input.startsWith("axes_enable")) {
@@ -465,8 +325,9 @@ bool handleCommand(const String& input) {
         // under alarm has no such recovery role.
         bool on = parseState(a);          // accepts "1"/"on" and "0"/"off"
         for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
-            if (slotNode[i] == SLOT_NONE) continue;
-            rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, slotNode[i], 0);
+            uint8_t n = slotNodeAt(i);
+            if (n == SLOT_NONE) continue;
+            rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, n, 0);
             if (on) axes_enabled |=  (1 << i);
             else    axes_enabled &= ~(1 << i);
         }
@@ -475,7 +336,7 @@ bool handleCommand(const String& input) {
         // still loses its origin (see originInvalidate).
         if (!on)
             for (uint8_t i = 0; i < MOTION_SLOTS; i++)
-                if (slotNode[i] != SLOT_NONE) originInvalidate(slotNode[i]);
+                if (slotNodeAt(i) != SLOT_NONE) originInvalidate(slotNodeAt(i));
         Serial.println("ok");
         return true;
     }
@@ -712,8 +573,8 @@ bool handleCommand(const String& input) {
         if (*a == '\0') {                          // read-back form
             Serial.print("axis_map");
             for (int i = 0; i < 4; i++) {
-                if (slotNode[i] == SLOT_NONE) Serial.print(" -");
-                else                          Serial.printf(" %d", slotNode[i]);
+                if (slotNodeAt(i) == SLOT_NONE) Serial.print(" -");
+                else                            Serial.printf(" %d", slotNodeAt(i));
             }
             Serial.println();
             return true;
@@ -752,20 +613,19 @@ bool handleCommand(const String& input) {
         // engage, so a node that silently lost its slot (reflash / power blip /
         // fresh Pico map) is always re-bound — the node state can never drift from
         // what the map claims, which a skip-if-unchanged diff allowed.
-        // Park every bound node, recording the counter each reports (see parkPos).
+        // Park every bound node, recording the counter each reports (position.h,
+        // the frozen-while-parked check).
         for (int i = 0; i < 4; i++) {
-            uint8_t n = slotNode[i];
+            uint8_t n = slotNodeAt(i);
             if (n == SLOT_NONE) continue;
             NodeStatus st;
             if (rpcNodeStatus(CMD_ENGAGE, n, SLOT_NONE, &st) == RPC_OK &&
-                st.hasStepperTail) {
-                parkPos[n] = st.pos;
-                parkSeen  |= (1u << n);
-            } else {
+                st.hasStepperTail)
+                parkRecord(n, st.pos);
+            else
                 // No answer — we do not know where it stopped. Drop any earlier
                 // entry rather than let a stale one produce a false match later.
-                parkSeen &= ~(1u << n);
-            }
+                parkForget(n);
         }
 
         // Engage, and adopt each slot's state straight out of the ack — position
@@ -780,23 +640,18 @@ bool handleCommand(const String& input) {
                 Serial.printf("err node %d timeout\n", desired[i]);
                 return true;              // leave the map as-is; a retry redoes all
             }
-            // Frozen-while-parked check (see parkPos above). Silent by design: the
+            // Frozen-while-parked check (position.h). Silent by design: the
             // wire contract is exactly one line per command, so this cannot print.
             // Clearing the node's origin is the report — the axis comes back
             // un-homed, which getpos's mask and getstate both surface.
-            if ((parkSeen & (1u << desired[i])) && st.hasStepperTail &&
-                st.pos != parkPos[desired[i]])
+            if (st.hasStepperTail && parkMoved(desired[i], st.pos))
                 originInvalidate(desired[i]);       // moved while parked
-            slotNode[i] = desired[i];
-            slotAdoptStatus((uint8_t)i, desired[i], &st);
+            slotBind((uint8_t)i, desired[i], &st);
         }
         // Slots left unbound hold no node, so they hold no position either.
         for (int i = 0; i < 4; i++) {
             if (desired[i] != SLOT_NONE) continue;
-            slotNode[i]   = SLOT_NONE;
-            machinePos[i] = 0;
-            axes_homed   &= ~(1 << i);
-            axes_enabled &= ~(1 << i);
+            slotUnbind((uint8_t)i);
         }
 
         // Committed — clear the config gate if that is what was holding us.
@@ -821,14 +676,14 @@ bool handleCommand(const String& input) {
         // fault that arrived while I was working". Snapshot the reason on entry
         // and only clear what we came in with.
         uint8_t alarmAtEntry = alarmReason;
-        // The datum is recorded in the NODE's frame: nodeOrigin[id] captures that
+        // The datum is recorded in the NODE's frame: originRecord captures that
         // node's own counter here, so machinePos is a derived offset from now on
         // and survives any later rebinding. A masked slot with no node bound
         // cannot be datumed — there is nothing to record against — so it is
         // skipped and left un-homed rather than silently claiming an origin.
         for (int i = 0; i < 4; i++) {
             if (!(m & (1 << i))) continue;
-            uint8_t n = slotNode[i];
+            uint8_t n = slotNodeAt(i);
             if (n == SLOT_NONE) { axes_homed &= ~(1 << i); continue; }
 
             // CMD_DATUM_SET arms the node's continuity witness AND returns the
@@ -841,10 +696,7 @@ bool handleCommand(const String& input) {
                 originInvalidate(n);           // no answer, or witness not armed
                 continue;
             }
-            nodeOrigin[n]  = st.pos;
-            nodeHomed     |= (1u << n);
-            machinePos[i]  = 0;
-            axes_homed    |= (1 << i);
+            originRecord(n, st.pos);
         }
         // A fault that arrived while we were on the bus outranks this command. The
         // datum we just recorded describes a machine that has since stopped hard,
