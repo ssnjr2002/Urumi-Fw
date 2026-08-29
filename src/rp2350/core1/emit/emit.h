@@ -16,3 +16,14 @@ enum EmitResult : uint8_t {
     EMIT_ESTOP,       // hard cut; position forfeited by choice, not necessity
     EMIT_SOFT_LIMIT,  // ramp overshoot crossed a bound (harness — not yet raised)
 };
+
+// ─── Debug step burst ─────────────────────────────────────────────────────────
+// Emits `count` raw stream bytes into one stream SLOT at debugStepSps steps/sec.
+// Bypasses the MicroSegment path entirely — used to verify the Pico→node stream
+// path in isolation. Only the node ENGAGE-bound to this slot moves, and it must
+// also be enabled (CMD_ENABLE). Core 0 resolves the target bus node → slot (via
+// the axis map) before pushing the FIFO word, so here the arg is already a slot.
+//
+// slot is already resolved: Core 0 maps the target bus node to a stream slot via
+// the axis map before posting. `steps` is signed -- the sign IS the direction.
+void emitDebugSteps(uint8_t slot, uint16_t sps, int32_t steps);

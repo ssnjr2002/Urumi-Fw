@@ -79,6 +79,12 @@ typedef enum {
     RPC_OK = 0,      // node answered as expected
     RPC_TIMEOUT,     // no answer within RESPONSE_TIMEOUT_MS
     RPC_NAK,         // node refused — see nakReason (§8.1)
+    RPC_BAD_REPLY,   // node answered, but not with something we can read:
+                     // payload too short, or a shape this decoder does not know.
+                     // Distinct from RPC_TIMEOUT on purpose — folding the two is
+                     // exactly the nak_or_timeout conflation this module exists
+                     // to remove, and "it is there but talking nonsense" wants a
+                     // different response from "it is not there".
 } RpcResult;
 
 typedef struct {
@@ -109,6 +115,13 @@ typedef struct {
     int32_t  pos;                  // stepper tail
     uint8_t  slot;                 // stepper tail
     bool     hasStepperTail;       // false when the payload stopped at [flags]
+
+    // The type-specific tail, verbatim, already offset past the generic head.
+    // Decoding it means knowing what a vacuum node or a knife node puts there,
+    // which is not this module's business -- so it hands the bytes on instead of
+    // growing a case per node type.
+    uint8_t  tail[RPC_PAYLOAD_MAX];
+    uint8_t  tailLen;
 } NodeStatus;
 
 bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out);
@@ -116,6 +129,11 @@ bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out);
 // ─── Transport ────────────────────────────────────────────────────────────────
 // Call once from setup(), before Core 1 launches.
 void rpcInit(void);
+
+// Discard every queued request and reply, and clear the in-flight claim.
+// For the soft-reset path only, which parks Core 1 first -- there is no
+// locking here, and none is needed while the far side cannot run.
+void rpcReset(void);
 
 // Post a request without waiting. Returns false if a transaction is already in
 // flight or the queue is full; *idOut receives the request id.
@@ -164,7 +182,19 @@ RpcResult rpcHome(uint8_t node, uint8_t dir, uint16_t startIntervalUs,
                   uint16_t floorIntervalUs, uint16_t rampSteps,
                   uint32_t maxSteps, NodeStatus* out);
 
-// Debug step burst — fire-and-forget, no reply.
+// ─── Server side (Core 1) ─────────────────────────────────────────────────────
+// core1/rpc_server.cpp implements these; nothing on Core 0 calls them.
+
+// Service at most one pending request: take it, run the bus transaction, post
+// the reply. Returns false if there was nothing to do. Call from Core 1's loop
+// AFTER the segment queue is drained -- a request must never delay a step.
+bool rpcServerPoll(void);
+
+// Queue accessors, so the server does not need the queue_t handles themselves.
+bool rpcServerTake(RpcRequest* out);
+bool rpcServerReply(const RpcReply* rep);
+
+// ─── Debug step burst — fire-and-forget, no reply ─────────────────────────────
 //
 // Both parameters ride the request rather than sitting in shared globals, and
 // that is not tidiness: a second burst issued before Core 1 picked up the first
@@ -172,37 +202,10 @@ RpcResult rpcHome(uint8_t node, uint8_t dir, uint16_t startIntervalUs,
 // speed. Queued, each burst carries its own.
 bool rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps);
 
-// ─── LEGACY: hardware-FIFO word encoding ─────────────────────────────────────
-// The protocol this module replaces. Kept only so the call sites that have not
-// yet been converted still compile; deleted with the last of them, along with
-// the FIFO_* namespace that shadows CMD_*. Nothing new is written against it.
-// ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
-// Normal command word : (CMD << 8) | node          — top 16 bits zero
-// Debug step: TWO words, pushed back to back —
-//   word 0: (FIFO_STEP_DEBUG << 24) | (slot << 16) | (sps & 0xFFFF)
-//           slot 0..3 (Core 0 resolves target bus node → slot via the axis map)
-//   word 1: int32 step count, plain two's complement — sign IS the direction
-//
-// Both parameters ride the request rather than sitting in shared globals. That
-// is not just tidiness: `step` is fire-and-forget (Core 0 pushes and returns
-// immediately), so a second `step` issued before Core 1 picked up the first
-// would have overwritten a shared rate and run burst #1 at burst #2's speed.
-// Queued in the FIFO, each burst carries its own parameters. It also retires the
-// old signed-magnitude packing — a plain int32 needs no sign-bit hack.
-// Home: FOUR words, pushed back to back. CMD_HOME's payload is 11 bytes, which
-// does not fit the normal command word's single spare byte, so it gets its own
-// opcode and rides the same multi-word pattern as FIFO_STEP_DEBUG.
-//   word 0: (FIFO_HOME << 24) | (dir << 16) | node
-//   word 1: (start_interval_us << 16) | floor_interval_us
-//   word 2: (ramp_steps << 16)                      — low half unused
-//   word 3: max_steps (u32)
-// Core 1 answers exactly like CMD_NODE_STATUS: a header word then the status
-// payload packed 4 bytes/word, so Core 0 reuses popStatusPayload() unchanged.
-// A NAK from the node (bad parameters) arrives as a zero-length payload, which
-// is the same shape as a timeout — see the `home` command in control_plane.cpp.
-#define FIFO_HOME        0xF1
-
-#define FIFO_STEP_DEBUG  0xF0
+// ─── Debug-step limits ───────────────────────────────────────────────────────
+// Argument bounds for RPC_OP_STEP_DEBUG. Core 0 validates against these before
+// posting and core1/emit/debug_step.cpp applies the default, so they are part
+// of the channel-1 contract rather than either side's private business.
 #define STEP_DEBUG_SPS       1000        // default emit rate (steps/sec)
 #define STEP_DEBUG_SPS_MAX  60000        // must fit the 16-bit field; also stays
                                          // under the ~92k bytes/s the bus can do

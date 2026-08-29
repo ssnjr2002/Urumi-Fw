@@ -34,20 +34,6 @@ static inline bool alarmDeniesOn(bool turningOn) {
     return false;
 }
 
-// Relay a command to Core 1 (which owns the RS485 bus) and block for its result,
-// so the control-plane reply is synchronous. Returns true if the node responded
-// (PONG/ACK) within the timeout. Not used for GET_POS (Core 1 pushes an extra
-// word for that — host getpos reads machinePos directly instead).
-//
-// `node` may be BUS_ADDR_BROADCAST, in which case nothing answers and the return
-// value degrades to "the frame was sent" — never "a node acted on it". Callers
-// must not treat a broadcast's true as evidence of node state.
-static bool relayNode(uint8_t cmd, uint8_t node) {
-    multicore_fifo_push_blocking(((uint32_t)cmd << 8) | node);
-    uint32_t resp = multicore_fifo_pop_blocking();
-    return (resp & 0xFFFF) != 0;
-}
-
 // ─── Axis map (Core-0-local; docs/engage_and_axis_map.md §5) ─────────────────
 // slotNode[i] = the bus id currently ENGAGE-bound to stream slot i (X/Y/Z/A), or
 // SLOT_NONE if that slot is unbound. Core 0 owns this map and the abstraction;
@@ -70,20 +56,6 @@ static uint8_t nodeSlot(uint8_t n) {
     return SLOT_NONE;
 }
 static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
-
-static uint8_t popStatusPayload(uint8_t* buf, uint8_t cap);   // defined below
-
-// Relay one CMD_ENGAGE to Core 1 (slot in the payload byte, like vac_servo packs
-// its idx). slot 0..3 binds, SLOT_NONE unbinds. The ack is a full status payload,
-// so this both performs the bind and reports the resulting node state in one
-// transaction; `st` receives it and *stLen its length (0 = node timed out).
-// Returns true if the node answered.
-static bool relayEngage(uint8_t node, uint8_t slot, uint8_t* st, uint8_t* stLen) {
-    multicore_fifo_push_blocking(((uint32_t)slot << 16) |
-                                 ((uint32_t)CMD_ENGAGE << 8) | node);
-    *stLen = popStatusPayload(st, 32);
-    return *stLen != 0;
-}
 
 // ─── Position datum, in the NODE frame (docs/node_session_and_datum.md §2) ────
 // machinePos[] is indexed by SLOT, so it goes stale the moment axis_map rebinds
@@ -137,51 +109,6 @@ static void originInvalidateAll() {
     axes_homed = 0;
 }
 
-// ─── Node status payload ──────────────────────────────────────────────────────
-// Every command that reports node state answers with the SAME bytes, produced by
-// one serializer on the node (buildNodeStatus): [type][flags][type tail…], where
-// the stepper tail is [pos int32 BE][slot]. CMD_NODE_STATUS, CMD_GET_POS and the
-// CMD_ENGAGE ack all use it, so there is one parser here rather than one per
-// command. Field offsets:
-#define NS_TYPE        0
-#define NS_FLAGS       1
-#define NS_STEP_POS    2   // …5, int32 big-endian
-#define NS_STEP_SLOT   6
-#define NS_STEP_LEN    7   // full stepper payload length
-// Flag bits are NODE_FLAG_* from common.h — shared with the node, not redefined.
-
-// Drain a status payload Core 1 pushed (length word, then 4 bytes per word).
-// Returns the payload length, 0 = timeout. Always drains what was pushed.
-static uint8_t popStatusPayload(uint8_t* buf, uint8_t cap) {
-    uint8_t plen = multicore_fifo_pop_blocking() & 0xFF;
-    if (plen == 0) return 0;
-    for (uint8_t i = 0; i < plen; i += 4) {
-        uint32_t w = multicore_fifo_pop_blocking();
-        for (uint8_t j = 0; j < 4 && (i + j) < plen; j++)
-            if (i + j < cap) buf[i + j] = (w >> (24 - j * 8)) & 0xFF;
-    }
-    return plen;
-}
-
-// One CMD_NODE_STATUS round trip. 0 = node timed out.
-static uint8_t nodeStatusRead(uint8_t node, uint8_t* buf, uint8_t cap) {
-    multicore_fifo_push_blocking(((uint32_t)CMD_NODE_STATUS << 8) | node);
-    return popStatusPayload(buf, cap);
-}
-
-static inline int32_t nsPos(const uint8_t* p) {
-    return ((int32_t)p[NS_STEP_POS]     << 24) | ((int32_t)p[NS_STEP_POS + 1] << 16) |
-           ((int32_t)p[NS_STEP_POS + 2] <<  8) |  (int32_t)p[NS_STEP_POS + 3];
-}
-
-// Position only, for callers that do not need the rest. false = timeout.
-static bool readNodePos(uint8_t node, int32_t* out) {
-    uint8_t buf[32];
-    if (nodeStatusRead(node, buf, sizeof buf) < NS_STEP_LEN) return false;
-    *out = nsPos(buf);
-    return true;
-}
-
 // Rebuild slot `s`'s position and enabled bit from the status payload the node
 // returned with its ENGAGE ack — no second transaction, and no window in which
 // the node could have rebooted between binding and reporting.
@@ -197,9 +124,9 @@ static bool readNodePos(uint8_t node, int32_t* out) {
 // The node's half covers events Core 0 never observes (brownout, watchdog reset,
 // a de-energise it did not issue). Core 0's half covers the case of a node that
 // has simply never been datumed in this machine's frame.
-static void slotAdoptStatus(uint8_t s, uint8_t n, const uint8_t* st, uint8_t stLen) {
-    bool haveTail = (st != nullptr && stLen >= NS_STEP_LEN);
-    uint8_t flags = haveTail ? st[NS_FLAGS] : 0;
+static void slotAdoptStatus(uint8_t s, uint8_t n, const NodeStatus* st) {
+    const bool    haveTail = (st != nullptr && st->hasStepperTail);
+    const uint8_t flags    = (st != nullptr) ? st->flags : 0;
 
     if (flags & NODE_FLAG_ENABLED) axes_enabled |=  (1 << s);
     else                           axes_enabled &= ~(1 << s);
@@ -209,7 +136,7 @@ static void slotAdoptStatus(uint8_t s, uint8_t n, const uint8_t* st, uint8_t stL
     if (!(flags & NODE_FLAG_DATUM)) originInvalidate(n);
 
     if (haveTail && (nodeHomed & (1u << n))) {
-        machinePos[s] = nsPos(st) - nodeOrigin[n];
+        machinePos[s] = st->pos - nodeOrigin[n];
         axes_homed   |= (1 << s);
     } else {
         machinePos[s] = 0;
@@ -354,12 +281,13 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 7);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
-        int32_t pos;
-        if (!readNodePos(node, &pos)) {
+        NodeStatus st;
+        if (rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st) != RPC_OK ||
+            !st.hasStepperTail) {
             Serial.printf("node %d timeout\n", node);
             return true;
         }
-        Serial.printf("node %d pos %ld\n", node, (long)pos);
+        Serial.printf("node %d pos %ld\n", node, (long)st.pos);
         return true;
     }
     // ── nodestat <node> — any node's generic + type-specific state ────────────
@@ -392,22 +320,18 @@ bool handleCommand(const String& input) {
             Serial.println("err range"); return true;
         }
 
-        multicore_fifo_push_blocking(((uint32_t)FIFO_HOME << 24) |
-                                     ((uint32_t)(v[1] & 1) << 16) | node);
-        multicore_fifo_push_blocking(((uint32_t)v[2] << 16) | (uint32_t)v[3]);
-        multicore_fifo_push_blocking( (uint32_t)v[4] << 16);
-        multicore_fifo_push_blocking( (uint32_t)v[5]);
-
-        uint8_t buf[32] = {0};
-        uint8_t plen = popStatusPayload(buf, sizeof buf);
-        // A node that NAKs (bad parameters) simply does not answer, which on
-        // this bus is indistinguishable from a node that is not there. Both mean
-        // the same thing to the operator, though: nothing armed.
-        if (plen == 0) { Serial.printf("node %d nak_or_timeout\n", node); return true; }
+        NodeStatus st;
+        // A node that NAKs (bad parameters) still simply does not answer -- it has
+        // no NAK opcode yet (plan section 8.1) -- so RPC_TIMEOUT still covers both.
+        // The string keeps saying so rather than claiming a certainty we lack.
+        if (rpcHome(node, (uint8_t)(v[1] & 1), (uint16_t)v[2], (uint16_t)v[3],
+                    (uint16_t)v[4], (uint32_t)v[5], &st) != RPC_OK) {
+            Serial.printf("node %d nak_or_timeout\n", node); return true;
+        }
         Serial.printf("node %d armed limit %d homing %d pos %ld\n", node,
-                      (buf[NS_FLAGS] & NODE_FLAG_LIMIT)  ? 1 : 0,
-                      (buf[NS_FLAGS] & NODE_FLAG_HOMING) ? 1 : 0,
-                      (long)nsPos(buf));
+                      (st.flags & NODE_FLAG_LIMIT)  ? 1 : 0,
+                      (st.flags & NODE_FLAG_HOMING) ? 1 : 0,
+                      (long)st.pos);
         return true;
     }
 
@@ -418,36 +342,36 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 8);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
-        uint8_t buf[32] = {0};             // max node reply payload
-        uint8_t plen = nodeStatusRead(node, buf, sizeof buf);
-        if (plen == 0) { Serial.printf("node %d timeout\n", node); return true; }
+        NodeStatus st;
+        if (rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st) != RPC_OK) {
+            Serial.printf("node %d timeout\n", node); return true;
+        }
 
-        uint8_t type = buf[NS_TYPE];
+        uint8_t type = st.type;
         // limit/homing are the whole homing diagnostic: with no supervisor yet,
         // this print IS how a bench run is observed. limit is "pin asserted OR
         // gate latched" and homing is "the node's pulser is running" — see
         // docs/homing.md 1.5 for how the pair reads after each kind of move.
         Serial.printf("node %d type %d en %d datum %d limit %d homing %d", node, type,
-                      (buf[NS_FLAGS] & NODE_FLAG_ENABLED) ? 1 : 0,
-                      (buf[NS_FLAGS] & NODE_FLAG_DATUM)   ? 1 : 0,
-                      (buf[NS_FLAGS] & NODE_FLAG_LIMIT)   ? 1 : 0,
-                      (buf[NS_FLAGS] & NODE_FLAG_HOMING)  ? 1 : 0);
+                      (st.flags & NODE_FLAG_ENABLED) ? 1 : 0,
+                      (st.flags & NODE_FLAG_DATUM)   ? 1 : 0,
+                      (st.flags & NODE_FLAG_LIMIT)   ? 1 : 0,
+                      (st.flags & NODE_FLAG_HOMING)  ? 1 : 0);
         switch (type) {
             case NODE_TYPE_STEPPER: {
-                uint8_t slot = buf[NS_STEP_SLOT];
-                if (slot == 0xFF) Serial.printf(" pos %ld slot none", (long)nsPos(buf));
-                else              Serial.printf(" pos %ld slot %d", (long)nsPos(buf), slot);
+                if (st.slot == 0xFF) Serial.printf(" pos %ld slot none", (long)st.pos);
+                else              Serial.printf(" pos %ld slot %d", (long)st.pos, st.slot);
                 break;
             }
             case NODE_TYPE_VACUUM:
-                Serial.printf(" servos 0x%02X ssr %d", buf[2], buf[3]);
+                Serial.printf(" servos 0x%02X ssr %d", st.tail[0], st.tail[1]);
                 break;
             case NODE_TYPE_KNIFE_OSC:
-                Serial.printf(" osc %d blower %d", buf[2], buf[3]);
+                Serial.printf(" osc %d blower %d", st.tail[0], st.tail[1]);
                 break;
             default:                         // unknown type — dump the raw tail
                 Serial.print(" tail");
-                for (uint8_t i = 2; i < plen; i++) Serial.printf(" %02X", buf[i]);
+                for (uint8_t i = 0; i < st.tailLen; i++) Serial.printf(" %02X", st.tail[i]);
                 break;
         }
         Serial.println();
@@ -510,12 +434,14 @@ bool handleCommand(const String& input) {
             // `pingnode` desynced the control plane for the rest of the session.
             Serial.print("nodes");
             for (uint8_t n = 1; n <= BUS_ADDR_MAX; n++)
-                Serial.printf(" %d=%s", n, relayNode(CMD_PING, n) ? "ok" : "timeout");
+                Serial.printf(" %d=%s", n,
+                              rpcNodeCmd(CMD_PING, n, 0) == RPC_OK ? "ok" : "timeout");
             Serial.println();
         } else {
             uint8_t node = (uint8_t)strtoul(a, NULL, 10);
             if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
-            Serial.printf("node %d %s\n", node, relayNode(CMD_PING, node) ? "ok" : "timeout");
+            Serial.printf("node %d %s\n", node,
+                          rpcNodeCmd(CMD_PING, node, 0) == RPC_OK ? "ok" : "timeout");
         }
         return true;
     }
@@ -540,7 +466,7 @@ bool handleCommand(const String& input) {
         bool on = parseState(a);          // accepts "1"/"on" and "0"/"off"
         for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
             if (slotNode[i] == SLOT_NONE) continue;
-            relayNode(on ? CMD_ENABLE : CMD_DISABLE, slotNode[i]);
+            rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, slotNode[i], 0);
             if (on) axes_enabled |=  (1 << i);
             else    axes_enabled &= ~(1 << i);
         }
@@ -578,7 +504,7 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 10);
         if (*a == '\0') { Serial.println("err usage"); return true; }
         bool on = parseState(a);
-        relayNode(on ? CMD_ENABLE : CMD_DISABLE, BUS_ADDR_BROADCAST);
+        rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, BUS_ADDR_BROADCAST, 0);
         if (!on) {
             axes_enabled = 0;
             originInvalidateAll();
@@ -598,7 +524,7 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 6);
         uint8_t node = (uint8_t)strtoul(a, NULL, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
-        relayNode(CMD_ENABLE, node);
+        rpcNodeCmd(CMD_ENABLE, node, 0);
         uint8_t s = nodeSlot(node);      // axis bookkeeping keyed on the slot
         if (s != SLOT_NONE) axes_enabled |= (1 << s);
         Serial.println("ok");
@@ -611,7 +537,7 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 7);
         uint8_t node = (uint8_t)strtoul(a, NULL, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err bad_node"); return true; }
-        relayNode(CMD_DISABLE, node);
+        rpcNodeCmd(CMD_DISABLE, node, 0);
         // Unconditional: a de-energised node is back-drivable whether or not
         // it currently holds a slot, so its origin is void either way. This
         // is exactly the case slot-indexed bookkeeping could not express —
@@ -647,9 +573,7 @@ bool handleCommand(const String& input) {
         bool on = parseState(endPtr);
         if (alarmDeniesOn(on)) return true;
         uint8_t payload = (uint8_t)((idx << 4) | (on ? 1u : 0u));
-        multicore_fifo_push_blocking(((uint32_t)payload << 16) |
-                                     ((uint32_t)CMD_SERVO_SET << 8) | node);
-        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        bool ok = rpcNodeCmd(CMD_SERVO_SET, node, (uint8_t)payload) == RPC_OK;
         Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
         return true;
     }
@@ -673,9 +597,7 @@ bool handleCommand(const String& input) {
         }
         uint8_t state = parseState(endPtr) ? 1u : 0u;
         if (alarmDeniesOn(state != 0)) return true;
-        multicore_fifo_push_blocking(((uint32_t)state << 16) |
-                                     ((uint32_t)CMD_SSR_SET << 8) | node);
-        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        bool ok = rpcNodeCmd(CMD_SSR_SET, node, (uint8_t)state) == RPC_OK;
         Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
         return true;
     }
@@ -701,9 +623,7 @@ bool handleCommand(const String& input) {
         }
         uint8_t state = parseState(endPtr) ? 1u : 0u;
         if (alarmDeniesOn(state != 0)) return true;
-        multicore_fifo_push_blocking(((uint32_t)state << 16) |
-                                     ((uint32_t)CMD_KNIFE_OSC << 8) | node);
-        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        bool ok = rpcNodeCmd(CMD_KNIFE_OSC, node, (uint8_t)state) == RPC_OK;
         Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
         return true;
     }
@@ -724,9 +644,7 @@ bool handleCommand(const String& input) {
         }
         uint8_t state = parseState(endPtr) ? 1u : 0u;
         if (alarmDeniesOn(state != 0)) return true;
-        multicore_fifo_push_blocking(((uint32_t)state << 16) |
-                                     ((uint32_t)CMD_LASER << 8) | node);
-        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        bool ok = rpcNodeCmd(CMD_LASER, node, (uint8_t)state) == RPC_OK;
         Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
         return true;
     }
@@ -751,9 +669,7 @@ bool handleCommand(const String& input) {
             Serial.println("err usage"); return true;
         }
         if (alarmDeniesOn(duty > 0)) return true;
-        multicore_fifo_push_blocking(((uint32_t)(uint8_t)duty << 16) |
-                                     ((uint32_t)CMD_KNIFE_BLOWER << 8) | node);
-        bool ok = (multicore_fifo_pop_blocking() & 0xFFFF) != 0;
+        bool ok = rpcNodeCmd(CMD_KNIFE_BLOWER, node, (uint8_t)(uint8_t)duty) == RPC_OK;
         Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
         return true;
     }
@@ -774,12 +690,11 @@ bool handleCommand(const String& input) {
         const char* a = argAfter(input, 10);
         uint8_t node = (uint8_t)strtoul(a, nullptr, 10);
         if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
-        multicore_fifo_push_blocking(((uint32_t)CMD_SWITCH_GET << 8) | node);
-        if ((multicore_fifo_pop_blocking() & 0xFFFF) == 0) {
+        uint8_t level;
+        if (rpcSwitchGet(node, &level) != RPC_OK) {
             Serial.printf("node %d timeout\n", node);
             return true;
         }
-        uint8_t level = (uint8_t)multicore_fifo_pop_blocking();
         Serial.printf("node %d switch %s (level=%d)\n",
                       node, level ? "open" : "closed", level);
         return true;
@@ -841,9 +756,10 @@ bool handleCommand(const String& input) {
         for (int i = 0; i < 4; i++) {
             uint8_t n = slotNode[i];
             if (n == SLOT_NONE) continue;
-            uint8_t st[32], stLen;
-            if (relayEngage(n, SLOT_NONE, st, &stLen) && stLen >= NS_STEP_LEN) {
-                parkPos[n] = nsPos(st);
+            NodeStatus st;
+            if (rpcNodeStatus(CMD_ENGAGE, n, SLOT_NONE, &st) == RPC_OK &&
+                st.hasStepperTail) {
+                parkPos[n] = st.pos;
                 parkSeen  |= (1u << n);
             } else {
                 // No answer — we do not know where it stopped. Drop any earlier
@@ -859,8 +775,8 @@ bool handleCommand(const String& input) {
         // inherits the previous occupant's count.
         for (int i = 0; i < 4; i++) {
             if (desired[i] == SLOT_NONE) continue;
-            uint8_t st[32], stLen;
-            if (!relayEngage(desired[i], (uint8_t)i, st, &stLen)) {
+            NodeStatus st;
+            if (rpcNodeStatus(CMD_ENGAGE, desired[i], (uint8_t)i, &st) != RPC_OK) {
                 Serial.printf("err node %d timeout\n", desired[i]);
                 return true;              // leave the map as-is; a retry redoes all
             }
@@ -868,11 +784,11 @@ bool handleCommand(const String& input) {
             // wire contract is exactly one line per command, so this cannot print.
             // Clearing the node's origin is the report — the axis comes back
             // un-homed, which getpos's mask and getstate both surface.
-            if ((parkSeen & (1u << desired[i])) && stLen >= NS_STEP_LEN &&
-                nsPos(st) != parkPos[desired[i]])
+            if ((parkSeen & (1u << desired[i])) && st.hasStepperTail &&
+                st.pos != parkPos[desired[i]])
                 originInvalidate(desired[i]);       // moved while parked
             slotNode[i] = desired[i];
-            slotAdoptStatus((uint8_t)i, desired[i], st, stLen);
+            slotAdoptStatus((uint8_t)i, desired[i], &st);
         }
         // Slots left unbound hold no node, so they hold no position either.
         for (int i = 0; i < 4; i++) {
@@ -919,14 +835,13 @@ bool handleCommand(const String& input) {
             // counter it refers to. One transaction, so the origin recorded here
             // and the witness armed there describe the same instant — a separate
             // read could straddle a reset and pair a witness with a stale count.
-            uint8_t st[32], stLen;
-            multicore_fifo_push_blocking(((uint32_t)CMD_DATUM_SET << 8) | n);
-            stLen = popStatusPayload(st, sizeof st);
-            if (stLen < NS_STEP_LEN || !(st[NS_FLAGS] & NODE_FLAG_DATUM)) {
+            NodeStatus st;
+            if (rpcNodeStatus(CMD_DATUM_SET, n, 0, &st) != RPC_OK ||
+                !st.hasStepperTail || !(st.flags & NODE_FLAG_DATUM)) {
                 originInvalidate(n);           // no answer, or witness not armed
                 continue;
             }
-            nodeOrigin[n]  = nsPos(st);
+            nodeOrigin[n]  = st.pos;
             nodeHomed     |= (1u << n);
             machinePos[i]  = 0;
             axes_homed    |= (1 << i);
@@ -1021,12 +936,9 @@ bool handleCommand(const String& input) {
         if (!(axes_enabled & (1 << slot))) {
             Serial.println("err not_enabled"); return true;
         }
-        // Two words: tag|slot|sps, then the plain int32 count (sign = direction).
         // Both parameters ride the request so back-to-back `step`s cannot steal
-        // each other's rate — see the FIFO encoding note in shared.h.
-        multicore_fifo_push_blocking(((uint32_t)FIFO_STEP_DEBUG << 24) |
-                                     ((uint32_t)slot << 16) | (sps & 0xFFFF));
-        multicore_fifo_push_blocking((uint32_t)(int32_t)count);
+        // each other's rate — see ipc/core1_rpc.h.
+        rpcStepDebug(slot, (uint16_t)sps, (int32_t)count);
         Serial.printf("ok %ld steps %lu sps\n", count, (unsigned long)sps);
         return true;
     }
