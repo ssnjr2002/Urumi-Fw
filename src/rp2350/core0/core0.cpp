@@ -8,7 +8,7 @@
 // This file only routes bytes to them and manages Core 0's setup()/loop().
 
 #include <Arduino.h>
-#include "../shared.h"
+#include "../ipc/shared_state.h"
 #include "hardware/sync.h"
 #include "control_plane.h"
 #include "data_plane.h"

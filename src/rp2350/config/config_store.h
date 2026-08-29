@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
-#include "../shared.h"   // CFG_MAX_BYTES, CFG_NACK_*, quiesce flags
+#include "../ipc/shared_state.h"    // flash-quiesce handshake flags
+#include "../core0/usb_protocol.h"  // CFG_MAX_BYTES, CFG_NACK_*
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config blob store — flash-backed storage for one opaque msgpack blob.

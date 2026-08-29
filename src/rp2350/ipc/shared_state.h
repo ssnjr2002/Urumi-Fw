@@ -1,15 +1,22 @@
 #pragma once
-#ifndef SHARED_H
-#define SHARED_H
-
 #include <Arduino.h>
 #include <stdint.h>
 #include "common.h"
 
-// ─── Pins ──────────────────────────────────────────────────────────────────────
-#define RS485_TX_PIN  4
-#define RS485_RX_PIN  5
-#define RS485_EN_PIN  6
+// shared_state.h — channels 2 and 3 of the core boundary.
+//
+//   Channel 2  state + flags   shared volatile globals, bidirectional, async
+//   Channel 3  motion data     the MicroSegment ring, Core 0 -> Core 1
+//
+// Channel 1 (command/reply RPC) is ipc/core1_rpc.h.
+//
+// Core 1 cannot open a transaction on channel 1, so everything it must report
+// -- estop, soft-limit trip, position advance -- leaves as a level signal that
+// Core 0 polls. That is why reconcileValidity() runs every loop pass.
+//
+// Split out of shared.h, which had become the file everything included: it also
+// held the USB wire contract (core0 only), the pin map and motion limits (core1
+// only), and the FIFO word encoding (now ipc/core1_rpc.h).
 
 // ─── Buffer config ────────────────────────────────────────────────────────────
 #define MASTER_BUF_SIZE          512
@@ -75,93 +82,6 @@ struct MicroSegment {
     uint8_t  pad[3];    // Alignment padding — total struct size = 24 bytes
 };
 
-// ─── USB Wire Packet ──────────────────────────────────────────────────────────
-// Binary packet framing for MicroSegments sent from host PC over USB CDC.
-//
-// Layout (26 bytes total):
-//   [0]      magic  = 0xAB
-//   [1..24]  MicroSegment (24 bytes, little-endian)
-//   [25]     CRC8 over bytes [0..24]
-
-#define MSEG_MAGIC       0xAB   // host production  — pre-computed step events
-#define JOG_MAGIC        0xAE   // host-driven jog burst (same 26-byte layout as MSEG)
-#define TILE_MAGIC       0xAD   // local production — SplineTile geometry packets
-#define TOOL_MAGIC       0xAC   // local production — ToolConfig packets
-#define MSEG_PACKET_SIZE 26     // magic(1) + MicroSegment(24) + CRC8(1)
-
-// Inter-byte timeout for a half-received fixed-26 packet. A whole packet
-// arrives in microseconds over USB CDC, so a gap this long means the host
-// died or desynced mid-frame — orders of magnitude below CFG_RX_TIMEOUT_MS,
-// which covers a multi-kilobyte transfer.
-#define FIXED26_RX_TIMEOUT_MS 50u
-
-// ACK/NACK responses (Pico → Host, 3 bytes each):
-//   ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
-//   NACK: [0xBB] [reason] [0x00]
-//     reason 0x01 = CRC error
-//     reason 0x02 = buffer full (backpressure)
-//     reason 0x03 = bad magic
-
-#define MSEG_ACK         0xAA
-#define MSEG_NACK        0xBB
-
-// ACKs are coalesced: because the ACK is cumulative, one frame can confirm a
-// run of packets, and USB CDC charges per transaction rather than per byte.
-// Pending ACKs are flushed when the input drains, when this many accumulate,
-// and always before a NACK or a duplicate ACK. See docs/comms_architecture.md §4.1.
-#define ACK_COALESCE_MAX 8      // ≈ half a typical host window
-
-// Binary status request/response (mirrors the text `getstate` command).
-// docs/comms_architecture.md §4.2 + §4.6.
-//
-//   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
-//   STATUS_RSP:  [0xA7]                                    (30 bytes)
-//     [0]      magic 0xA7
-//     [1]      machineState
-//     [2]      axes_enabled
-//     [3]      axes_homed
-//     [4]      alarmReason
-//     [5]      runningReason
-//     [6..7]   bufCount   u16 LE   — segments queued in masterBuf
-//     [8..23]  pos[4]     i32 LE   — machinePos, x/y/z/a
-//     [24]     expectedSeq         — next wire seq the data plane will execute
-//     [25..28] queuedUs   u32 LE   — motion time queued, microseconds
-//     [29]     CRC8 over [0..28]
-//
-// One frame, one coherent sample. Position used to need a separate `getpos` on
-// the text plane, so state and position could disagree by tens of ms; per §1
-// the extra bytes are free because cost is per-transaction, not per-byte.
-//
-// bufCount counts segments — including the one Core 1 is mid-executing — but
-// segments have wildly different durations, so queuedUs is what a jog source
-// actually paces against. Whole-segment granularity: the executing segment is
-// counted in full, without subtracting elapsed time. Error ≤ one segment.
-//
-// expectedSeq is INFORMATIONAL — for resynchronising after a timeout, abort or
-// reconnect. It is not flow control; ACKs remain the only advance mechanism (D9).
-//
-// The magic changed 0xA6 → 0xA7 deliberately. The reader consumes fixed-length
-// frames blind (D2), so a host expecting the 9-byte v1 frame must fail on an
-// unknown byte (D5) rather than silently mis-parse 30 bytes as 9 and desync.
-#define STATUS_REQ       0xA5
-#define STATUS_RSP_V1    0xA6   // retired 9-byte frame — never emit; reserved so
-                                // the value is not reused for something else
-#define STATUS_RSP       0xA7
-#define STATUS_RSP_SIZE  30
-
-// Binary `seqreset` (§4.3): one byte, zeroes expectedSeq, replies ACK(0).
-// The text command sits on the critical path of every stream start — the one
-// text round-trip a session cannot avoid — dragging a pure data-plane session
-// through the one-outstanding text plane. Replying with an ACK is exact ("I
-// expect seq 0 next") and keeps the session on a single sink. The text alias
-// stays for bring-up.
-#define SEQRESET_MAGIC   0xA8
-
-// Soft abort (§4.5): one byte, no reply. Core 1 ramps to rest, flushes the ring
-// and lands IDLE with position intact. Confirmation arrives on the status sink
-// as the state settles — like `stop`, it correlates nothing, so it needs no ACK.
-#define ABORT_MAGIC      0xA9
-
 // Duration of a MicroSegment in microseconds: the major axis takes one step per
 // `interval` cycles, so the segment lasts maxSteps × interval cycles. 64-bit
 // intermediate — interval × maxSteps overflows u32 readily (a 1 s segment is
@@ -176,72 +96,6 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
     }
     return (uint32_t)(((uint64_t)interval * maxSteps) / (F_CPU / 1000000u));
 }
-
-// ─── Config Blob Store (docs/config_storage.md) ───────────────────────────────
-// USB opcodes for the opaque msgpack config blob. Host→Pico magics have bit 7
-// set, disjoint from lowercase-ASCII control-plane text. CFG_SET is a two-phase
-// transfer: host sends the header, Pico replies CFG_RDY (or CFG_NACK), then host
-// streams the payload; see docs/config_storage.md §5 for the full framing.
-#define CFG_SET_MAGIC     0xB0  // Host→Pico: config write — header, then (on RDY) payload
-#define CFG_GET_MAGIC     0xB1  // Host→Pico: request the active blob
-#define CFG_RDY           0xB2  // Pico→Host: header accepted — send payload
-#define CFG_ACK           0xB3  // Pico→Host: blob committed
-#define CFG_NACK          0xB4  // Pico→Host: rejected — next byte is the reason
-#define CFG_DATA          0xB5  // Pico→Host: CFG_GET response header
-
-#define CFG_MAX_BYTES     32768u // hard ceiling on a stored blob (8 flash sectors)
-#define CFG_RX_TIMEOUT_MS 2000u  // inter-byte timeout during a CFG_SET transfer
-
-#define CFG_NACK_CRC       0x01 // CRC32 mismatch on the staged blob
-#define CFG_NACK_TOO_BIG   0x02 // length 0 or > CFG_MAX_BYTES
-#define CFG_NACK_BAD_STATE 0x03 // write rejected — machine not IDLE/ALARM
-#define CFG_NACK_FLASH     0x04 // flash readback verify failed (or region too small)
-#define CFG_NACK_TIMEOUT   0x05 // transfer stalled — no byte within CFG_RX_TIMEOUT_MS
-
-// ─── Core0 → Core1 FIFO encoding ──────────────────────────────────────────────
-// Normal command word : (CMD << 8) | node          — top 16 bits zero
-// Debug step: TWO words, pushed back to back —
-//   word 0: (FIFO_STEP_DEBUG << 24) | (slot << 16) | (sps & 0xFFFF)
-//           slot 0..3 (Core 0 resolves target bus node → slot via the axis map)
-//   word 1: int32 step count, plain two's complement — sign IS the direction
-//
-// Both parameters ride the request rather than sitting in shared globals. That
-// is not just tidiness: `step` is fire-and-forget (Core 0 pushes and returns
-// immediately), so a second `step` issued before Core 1 picked up the first
-// would have overwritten a shared rate and run burst #1 at burst #2's speed.
-// Queued in the FIFO, each burst carries its own parameters. It also retires the
-// old signed-magnitude packing — a plain int32 needs no sign-bit hack.
-// Home: FOUR words, pushed back to back. CMD_HOME's payload is 11 bytes, which
-// does not fit the normal command word's single spare byte, so it gets its own
-// opcode and rides the same multi-word pattern as FIFO_STEP_DEBUG.
-//   word 0: (FIFO_HOME << 24) | (dir << 16) | node
-//   word 1: (start_interval_us << 16) | floor_interval_us
-//   word 2: (ramp_steps << 16)                      — low half unused
-//   word 3: max_steps (u32)
-// Core 1 answers exactly like CMD_NODE_STATUS: a header word then the status
-// payload packed 4 bytes/word, so Core 0 reuses popStatusPayload() unchanged.
-// A NAK from the node (bad parameters) arrives as a zero-length payload, which
-// is the same shape as a timeout — see the `home` command in control_plane.cpp.
-#define FIFO_HOME        0xF1
-
-#define FIFO_STEP_DEBUG  0xF0
-#define STEP_DEBUG_SPS       1000        // default emit rate (steps/sec)
-#define STEP_DEBUG_SPS_MAX  60000        // must fit the 16-bit field; also stays
-                                         // under the ~92k bytes/s the bus can do
-                                         // at 921.6 kbaud (one byte per step)
-#define STEP_DEBUG_MAX  100000000L       // ~28 min at the max rate — a ceiling on
-                                         // typos, not on anything useful
-#define MSEG_NACK_CRC    0x01
-#define MSEG_NACK_FULL   0x02
-#define MSEG_NACK_MAGIC  0x03
-#define MSEG_NACK_PAUSED 0x04   // job stream rejected — machine is PAUSED
-#define MSEG_NACK_BAD_STATE 0x06 // stream/jog rejected — wrong machine state
-// Abort is a BARRIER: everything sent before it is discarded, everything after
-// waits for IDLE. Distinct from BAD_STATE so the host can treat it as "retry
-// shortly" rather than surfacing an error — accepting these would mean blending
-// into a deceleration and ramping back up from an arbitrary velocity, at which
-// point abort stops meaning anything definite.
-#define MSEG_NACK_ABORTING  0x07
 
 // ─── Machine State ──────────────────────────────────────────────────────────
 // Single authoritative state for the controller, owned across both cores.
@@ -289,61 +143,6 @@ enum RunningReason : uint8_t {
     // untouched, and an un-updated host reads it as plain RUNNING — which is true.
     RUNNING_ABORT_DECEL = 2,
 };
-
-// ─── Soft abort (§4.5) ────────────────────────────────────────────────────────
-// How a segment ended. The emitter reports what it actually emitted in out[4]
-// on EVERY path, including estop — the caller decides whether to keep it.
-enum EmitResult : uint8_t {
-    EMIT_DONE,        // ran to completion as planned; out[] == the ms deltas
-    EMIT_RAMPED,      // decelerated to rest mid-flight — motion has ended
-    EMIT_ESTOP,       // hard cut; position forfeited by choice, not necessity
-    EMIT_SOFT_LIMIT,  // ramp overshoot crossed a bound (harness — not yet raised)
-};
-
-// Velocity at or below which a stop needs no ramp — start/stop speed.
-#define V_REST_SPS   50.0f
-
-// TEMPORARY — per-axis decel rate for the soft-abort ramp, steps/s².
-//
-// These belong in the config blob alongside the accel limits they are derived
-// from, not in a header. They are #defines only because Core 1 has no
-// config-read path yet — the same gap that keeps rampStepInBounds() a stub.
-// Fix both together and delete this block.
-//
-// Seeded from web/demo/config.json as maxAccel (mm/s²) × stepsPerUnit
-// (steps/mm), which is the same conversion the host planner does:
-//   X  1000 × 160    = 160000
-//   Y  1000 × 160    = 160000
-//   A   500 ×  45.46 =  22730
-// Z has NO maxAccel in that config — 150000 is a placeholder chosen to be
-// unremarkable next to X/Y, not a measured limit. Treat it as unverified.
-//
-// Note the spread: stopping distance is v²/2a, so at 160000 steps/s² a
-// 20 kHz move stops in ~1250 steps while the A axis takes ~8800. One global
-// value could not have served both, which is the concrete argument for these
-// being per-axis config rather than a constant.
-#define DECEL_SPS2_X  160000.0f
-#define DECEL_SPS2_Y  160000.0f
-#define DECEL_SPS2_Z  150000.0f   // placeholder — no maxAccel in config
-#define DECEL_SPS2_A   22730.0f
-
-// A zero or negative rate makes the ramp loop non-terminating. Keep an
-// equivalent runtime guard when these move into config.
-static_assert(DECEL_SPS2_X > 0.0f && DECEL_SPS2_Y > 0.0f &&
-              DECEL_SPS2_Z > 0.0f && DECEL_SPS2_A > 0.0f,
-              "decel must be positive or the ramp never ends");
-
-// The ramp paces the MAJOR axis — that is the axis `interval` describes, and the
-// one the Bresenham accumulators are measured against — so the rate is selected
-// by major-axis index, not by whichever axis is most constrained.
-static inline float decelForAxis(int axis) {
-    switch (axis) {
-        case 0:  return DECEL_SPS2_X;
-        case 1:  return DECEL_SPS2_Y;
-        case 2:  return DECEL_SPS2_Z;
-        default: return DECEL_SPS2_A;
-    }
-}
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
@@ -452,4 +251,3 @@ extern volatile uint32_t jobMeasuredUs;
 extern volatile uint32_t jobWallUs;
 #endif
 
-#endif // SHARED_H

@@ -2,7 +2,8 @@
 
 #include <Arduino.h>
 #include <string.h>
-#include "../shared.h"
+#include "../ipc/shared_state.h"
+#include "usb_protocol.h"
 #include "status.h"
 #include "data_plane.h"
 

@@ -10,7 +10,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 #include <Arduino.h>
-#include "shared.h"
+#include "ipc/shared_state.h"
 
 // ─── Cross-Core Global Variables (Memory Allocation) ──────────────────────────
 
