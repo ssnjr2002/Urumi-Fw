@@ -42,7 +42,7 @@ static volatile uint8_t stepBitMask      = 0;
 static volatile uint8_t dirBitMask       = 0;
 static bool             currentDir       = false;
 
-#ifdef HAL_HAS_LIMIT_SWITCH
+#ifdef HAS_LIMIT_SWITCH
 // ─── Limit gate ──────────────────────────────────────────────────
 // Compiled only on boards that actually have a switch wired. The gate is
 // unconditional and stateless with respect to direction: while the switch reads
@@ -135,7 +135,7 @@ void node_setup(void) {
     pinMode(HAL_DIR_PIN,  OUTPUT); digitalWrite(HAL_DIR_PIN,  LOW);
     pinMode(HAL_EN_PIN,   OUTPUT);
 
-#ifdef HAL_HAS_LIMIT_SWITCH
+#ifdef HAS_LIMIT_SWITCH
     // Input with pull-up: the switch pulls to ground, so asserted reads LOW and
     // a broken wire reads asserted too — the safe way round.
     pinMode(HAL_LIMIT_SWITCH_PIN, INPUT_PULLUP);
@@ -168,7 +168,7 @@ void node_set_enabled(bool on) {
     if (on) {
         HAL_MOTOR_ENABLE();
     } else {
-#ifdef HAL_HAS_LIMIT_SWITCH
+#ifdef HAS_LIMIT_SWITCH
         // De-energising mid-home must kill the pulser, or TCA0 would keep
         // counting steps into a position the motor is no longer holding. This is
         // what makes the existing broadcast estop stop a home too, with no new
@@ -185,7 +185,7 @@ void node_set_enabled(bool on) {
 // the ISR that produces the state. The ISR latches into its own volatiles and
 // this mirrors them out.
 void node_loop(void) {
-#ifdef HAL_HAS_LIMIT_SWITCH
+#ifdef HAS_LIMIT_SWITCH
     // Finish before publishing: homingFinish() can clear the latch, and the
     // flags below must describe the state the master will act on, not the one
     // that existed a microsecond before the move ended.
@@ -198,7 +198,7 @@ void node_loop(void) {
 #endif
 }
 
-#ifdef HAL_HAS_LIMIT_SWITCH
+#ifdef HAS_LIMIT_SWITCH
 // ─── Arming a homing move (§1.4) ────────────────────────────────────────────
 // Validates, converts to ticks, and hands the move to the pulser. Returns false
 // to NAK — the master then knows the move never started, which is a different
@@ -412,7 +412,7 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             return true;
         }
 #endif
-#ifdef HAL_HAS_LIMIT_SWITCH
+#ifdef HAS_LIMIT_SWITCH
         case CMD_HOME: {
             // [id][cmd][len][11 payload][crc]. Compiled only where a switch is
             // wired: a node that cannot see a limit has no way to terminate a
@@ -478,7 +478,7 @@ ISR(HAL_USART_RXC_vect) {
     frame_stream_reset();           // 9th bit = 0 → stream byte
     if (slot == SLOT_NONE) return;  // disengaged → ignore stream, freeze position
 
-#ifdef HAL_HAS_LIMIT_SWITCH
+#ifdef HAS_LIMIT_SWITCH
     // One port read, no debounce, no branch on direction. Refusal is IMMEDIATE:
     // a real trip stops on the very next step, because waiting out the latch
     // window before refusing would let the axis run ~500 ms further into the
