@@ -8,6 +8,14 @@
 // which is why emitMicroSegment and processMicroSegments are both
 // __time_critical_func: they must execute from RAM, not from XIP flash.
 //
+// CAVEAT FOR ANYONE MOVING CODE OUT OF HERE. The __time_critical_func and
+// __not_in_flash_func attributes must travel WITH their function across a
+// translation-unit boundary, and every helper the step loop calls -- here
+// rampRequested, rampStepInBounds, and decelForAxis (motion_limits.h) -- has to
+// stay `static inline` in a header or become RAM-resident itself. Dropping one
+// into a plain .cpp compiles, links, and runs; it just adds an XIP fetch inside
+// the step budget. That is invisible until someone measures jitter.
+//
 // Stream byte format (9th bit = 0):
 //   Bits 1-0 : Node 1 (dir | step)
 //   Bits 3-2 : Node 2

@@ -12,6 +12,7 @@
 #include "../ipc/core1_rpc.h"
 #include "hardware/sync.h"
 #include "control_plane.h"
+#include "position.h"
 #include "data_plane.h"
 #include "status.h"
 #include "../config/config_store.h"
