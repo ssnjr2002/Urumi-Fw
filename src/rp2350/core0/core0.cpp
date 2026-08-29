@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include "../ipc/shared_state.h"
+#include "../ipc/core1_rpc.h"
 #include "hardware/sync.h"
 #include "control_plane.h"
 #include "data_plane.h"
@@ -59,6 +60,7 @@ void processSerial() {
 
 void setup() {
     Serial.begin(115200);
+    rpcInit();           // channel-1 queues, before Core 1 can service them
     while (!Serial && millis() < 10000) {}
     configStoreInit();   // cold-boot scan: populate g_cfg from flash (pure reads)
 }
