@@ -20,6 +20,14 @@ void rpcInit(void) {
 
 bool rpcBusy(void) { return s_inFlight; }
 
+void rpcReset(void) {
+    RpcRequest req;
+    RpcReply   rep;
+    while (queue_try_remove(&s_reqQ, &req)) {}
+    while (queue_try_remove(&s_repQ, &rep)) {}
+    s_inFlight = false;
+}
+
 bool rpcPost(const RpcRequest* req, uint16_t* idOut) {
     const bool wantsReply = (req->id != 0);
     if (wantsReply && s_inFlight) return false;
@@ -31,6 +39,9 @@ bool rpcPost(const RpcRequest* req, uint16_t* idOut) {
     if (idOut) *idOut = r.id;
     return true;
 }
+
+bool rpcServerTake(RpcRequest* out)   { return queue_try_remove(&s_reqQ, out); }
+bool rpcServerReply(const RpcReply* rep) { return queue_try_add(&s_repQ, rep); }
 
 bool rpcPoll(RpcReply* out) {
     if (!queue_try_remove(&s_repQ, out)) return false;
@@ -63,9 +74,9 @@ RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs) {
             // check it: a mismatch means the two sides disagree about what is on
             // the wire, which is a bug, not a bus condition.
             if (out->id != r.id || out->cmd != r.cmd || out->node != r.node) {
-                out->result = RPC_TIMEOUT;
+                out->result = RPC_BAD_REPLY;
                 out->len = 0;
-                return RPC_TIMEOUT;
+                return RPC_BAD_REPLY;
             }
             return out->result;
         }
@@ -101,6 +112,9 @@ bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out) {
 
     out->type  = buf[NS_TYPE];
     out->flags = buf[NS_FLAGS];
+
+    out->tailLen = (uint8_t)(len - NS_HEAD_LEN);
+    if (out->tailLen) memcpy(out->tail, &buf[NS_HEAD_LEN], out->tailLen);
 
     if (len >= NS_STEP_LEN) {
         out->pos = ((int32_t)buf[NS_STEP_POS]     << 24) |
@@ -139,10 +153,7 @@ RpcResult rpcNodeStatus(uint8_t cmd, uint8_t node, uint8_t arg, NodeStatus* out)
     RpcResult r = rpcCall(&req, &rep, RPC_CALL_TIMEOUT_MS);
     if (r != RPC_OK) return r;
 
-    // The node answered, but with something this decoder cannot read. That is a
-    // protocol fault, not a bus timeout — but there is no result code for it
-    // until CMD_NAK (§8.1), so report the conservative one.
-    if (!nodeStatusDecode(rep.payload, rep.len, out)) return RPC_TIMEOUT;
+    if (!nodeStatusDecode(rep.payload, rep.len, out)) return RPC_BAD_REPLY;
     return RPC_OK;
 }
 
@@ -155,7 +166,7 @@ RpcResult rpcSwitchGet(uint8_t node, uint8_t* level) {
     RpcReply rep;
     RpcResult r = rpcCall(&req, &rep, RPC_CALL_TIMEOUT_MS);
     if (r != RPC_OK) return r;
-    if (rep.len < 1)  return RPC_TIMEOUT;
+    if (rep.len < 1)  return RPC_BAD_REPLY;
     *level = rep.payload[0];
     return RPC_OK;
 }
@@ -185,7 +196,7 @@ RpcResult rpcHome(uint8_t node, uint8_t dir, uint16_t startIntervalUs,
     RpcReply rep;
     RpcResult r = rpcCall(&req, &rep, RPC_CALL_TIMEOUT_MS);
     if (r != RPC_OK) return r;
-    if (!nodeStatusDecode(rep.payload, rep.len, out)) return RPC_TIMEOUT;
+    if (!nodeStatusDecode(rep.payload, rep.len, out)) return RPC_BAD_REPLY;
     return RPC_OK;
 }
 

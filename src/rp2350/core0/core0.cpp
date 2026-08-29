@@ -86,8 +86,14 @@ void loop() {
         Serial.read();
     }
 
-    // 4. Flush hardware FIFOs
-    multicore_fifo_drain();
+    // 4. Flush the channel-1 queues.
+    //
+    // This used to be multicore_fifo_drain(), which is now the wrong object:
+    // channel 1 moved off the hardware FIFO onto queue_t (ipc/core1_rpc.h), so
+    // draining the FIFO would leave a stale request or a stale reply sitting in
+    // the queues across a soft reset. Core 1 is parked here, so nothing can be
+    // added while we drain.
+    rpcReset();
 
     // 5. WIPE ALL GLOBAL STATE (Clean Slate!)
     mBufHead = 0;
