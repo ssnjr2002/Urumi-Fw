@@ -2,7 +2,8 @@
 // One command per line; replies with exactly one text line.
 
 #include <Arduino.h>
-#include "../shared.h"
+#include "../ipc/shared_state.h"
+#include "../ipc/core1_rpc.h"
 #include "control_plane.h"
 #include "data_plane.h"   // dataPlaneResetSeq (seqreset)
 #include "status.h"       // getBufCount (status alias)

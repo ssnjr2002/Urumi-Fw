@@ -5,7 +5,8 @@
 #include <string.h>
 #include "hardware/flash.h"
 #include "hardware/sync.h"
-#include "../shared.h"
+#include "../ipc/shared_state.h"
+#include "../core0/usb_protocol.h"
 #include "config_store.h"
 
 // Linker symbols bounding the reserved filesystem span (memmap_default.ld

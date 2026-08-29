@@ -11,7 +11,11 @@
 //   Bits 7-6 : Node 4
 
 #include <Arduino.h>
-#include "../shared.h"
+#include "../ipc/shared_state.h"
+#include "../ipc/core1_rpc.h"
+#include "../board.h"
+#include "motion_limits.h"
+#include "emit/emit.h"
 #include "bus/RS485Bus.h"
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
