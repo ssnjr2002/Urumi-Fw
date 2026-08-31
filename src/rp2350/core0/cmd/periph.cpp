@@ -37,8 +37,7 @@ static inline bool periphGateDenies() {
 
 // Every one of these answers with the same line, so the reply lives here too.
 static bool relay(uint8_t cmd, uint8_t node, uint8_t arg) {
-    bool ok = rpcNodeCmd(cmd, node, arg) == RPC_OK;
-    Serial.printf("node %d %s\n", node, ok ? "ok" : "timeout");
+    Serial.printf("node %d %s\n", node, rpcResultText(rpcNodeCmd(cmd, node, arg)));
     return true;
 }
 
@@ -89,6 +88,8 @@ bool cmdVacPump(const char* args) { return relayOnOff(args, CMD_SSR_SET); }
 bool cmdKnifeOsc(const char* args) { return relayOnOff(args, CMD_KNIFE_OSC); }
 
 // ── laser <node> <on|off> — stepper-node laser gate ─────────────────────────
-// Only a node built -DNODE_HAS_LASER handles it; others do not answer, which
-// reads as "timeout".
+// Only a node built -DNODE_HAS_LASER handles it; others now answer
+// `nak unsupported` rather than not answering at all — the clearest single case
+// of what the opcode buys, since the wrong-firmware node is otherwise
+// indistinguishable from an absent one.
 bool cmdLaser(const char* args) { return relayOnOff(args, CMD_LASER); }

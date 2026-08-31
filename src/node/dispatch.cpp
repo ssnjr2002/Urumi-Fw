@@ -16,6 +16,18 @@ static void replyAck(uint8_t cmd, uint8_t* reply, uint8_t* replyLen) {
     *replyLen = 4;
 }
 
+// A refusal. Same frame shape as any reply, but the opcode is CMD_NAK rather
+// than the command's, so the payload has to carry what was refused.
+static void replyNak(uint8_t cmd, uint8_t reason, uint8_t* reply,
+                     uint8_t* replyLen) {
+    reply[0] = NODE_ID;
+    reply[1] = CMD_NAK;
+    reply[2] = 2;
+    reply[3] = cmd;
+    reply[4] = reason;
+    *replyLen = 6;                       // header + 2 payload + CRC slot
+}
+
 // Generic node state the core tracks itself, so CMD_NODE_STATUS can report it
 // uniformly across all types. Bit 0 = enabled (CMD_ENABLE/DISABLE); more generic
 // flags can join here without touching any node type. Boots disabled.
@@ -125,9 +137,22 @@ void dispatchCommand(const uint8_t* pkt, uint8_t len, bool broadcast) {
     uint8_t reply[MAX_PACKET_LEN];
     uint8_t replyLen = routeCommand(pkt, len, reply);
 
+    // Unhandled → NAK. It used to be dropped like a bad-CRC frame, which made a
+    // node that refused indistinguishable from a node that is not there.
+    //
+    // routeCommand still returns 0 for unhandled, so debug_console.cpp keeps its
+    // existing behaviour: the NAK is a property of the WIRE, where the ambiguity
+    // lives, not of the dispatcher.
+    //
+    // CMD_NAK is excluded because it is reply-only. A node receiving one has been
+    // sent something no master sends; NAKing it back would put a refusal on the
+    // wire addressed at nobody listening.
+    if (!replyLen && !broadcast && pkt[1] != CMD_NAK)
+        replyNak(pkt[1], NAK_UNSUPPORTED, reply, &replyLen);
+
     // Never answer a broadcast: every node would transmit at once, and the
-    // collision would take out the confirm pass that follows it.
+    // collision would take out the confirm pass that follows it. That still
+    // holds for a NAK — hence the !broadcast above as well as here.
     if (replyLen && !broadcast)
         sendCommandPacket(reply, replyLen);
-    // Unknown command → silently dropped (same as a bad-CRC packet).
 }

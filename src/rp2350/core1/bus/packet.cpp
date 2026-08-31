@@ -12,7 +12,8 @@ void sendPacket(uint8_t* packet, uint8_t len) {
 }
 
 uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
-                              uint8_t* outPayload, uint32_t timeoutMs) {
+                              uint8_t* outPayload, uint32_t timeoutMs,
+                              uint8_t* outCmd) {
     uint32_t start = millis();
     uint8_t  rxBuf[32];
     int      rxIdx = 0;
@@ -30,11 +31,15 @@ uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
         int     expectedTotalLen = 3 + payloadLen + 1;
         if (rxIdx < expectedTotalLen) continue;
 
+        // A NAK answers any command (common.h), so it passes the opcode filter
+        // alongside the expected reply. The CRC check is unchanged — a refusal is
+        // not trusted any further than an ack is.
         bool ok = (rxBuf[0] == expectedNode) &&
-                  (rxBuf[1] == expectedCmd)  &&
+                  (rxBuf[1] == expectedCmd || rxBuf[1] == CMD_NAK) &&
                   (rxBuf[rxIdx - 1] == crc8(rxBuf, rxIdx - 1));
 
         if (ok) {
+            if (outCmd) *outCmd = rxBuf[1];
             if (outPayload && payloadLen > 0) memcpy(outPayload, &rxBuf[3], payloadLen);
             return payloadLen;
         }

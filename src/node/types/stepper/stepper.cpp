@@ -475,10 +475,26 @@ ISR(HAL_USART_RXC_vect) {
         return;
     }
 
-    frame_stream_reset();           // 9th bit = 0 → stream byte
+    frame_stream_reset();           // 9th bit → stream byte
     if (slot == SLOT_NONE) return;  // disengaged → ignore stream, freeze position
 
 #ifdef HAS_LIMIT_SWITCH
+    // A home owns the axis outright, and this path must not touch it. The
+    // collision is not hypothetical or rare: busQuiesce() prefaces EVERY command
+    // frame with a NOP stream byte, and a zero byte has dirBitMask clear, so it
+    // reads as "direction 0" here and drives DIR low. The supervisor polls the
+    // homing node every HOMING_POLL_MS, so the first poll after the arm would
+    // yank DIR out from under the pulser and every step after it ran the wrong
+    // way -- while absolutePosition, which the pulser derives from homing.dir,
+    // kept counting the direction that was ASKED for. The counter and the shaft
+    // disagreed, and only the counter was visible over the bus.
+    //
+    // Returning before the limit accumulator as well: during a home the pulser's
+    // own pin read is the authority on the switch, and letting NOP bytes advance
+    // limitBytesAsserted would move the baseline homingFinish() judges a retract
+    // against.
+    if (homingActive) return;
+
     // One port read, no debounce, no branch on direction. Refusal is IMMEDIATE:
     // a real trip stops on the very next step, because waiting out the latch
     // window before refusing would let the axis run ~500 ms further into the

@@ -92,13 +92,13 @@ bool cmdPingNode(const char* args) {
         Serial.print("nodes");
         for (uint8_t n = 1; n <= BUS_ADDR_MAX; n++)
             Serial.printf(" %d=%s", n,
-                          rpcNodeCmd(CMD_PING, n, 0) == RPC_OK ? "ok" : "timeout");
+                          rpcResultText(rpcNodeCmd(CMD_PING, n, 0)));
         Serial.println();
     } else {
         uint8_t node = parseNode(args, nullptr);
         if (!node) { Serial.println("err bad_node"); return true; }
         Serial.printf("node %d %s\n", node,
-                      rpcNodeCmd(CMD_PING, node, 0) == RPC_OK ? "ok" : "timeout");
+                      rpcResultText(rpcNodeCmd(CMD_PING, node, 0)));
     }
     return true;
 }
@@ -124,11 +124,11 @@ bool cmdNodePos(const char* args) {
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err usage"); return true; }
     NodeStatus st;
-    if (rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st) != RPC_OK ||
-        !st.hasStepperTail) {
-        Serial.printf("node %d timeout\n", node);
-        return true;
-    }
+    RpcResult r = rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st);
+    if (r != RPC_OK) { Serial.printf("node %d %s\n", node, rpcResultText(r)); return true; }
+    // Answered, but not with a stepper tail — a peripheral node has no position.
+    // Distinct from the transport results above: the node is present and willing.
+    if (!st.hasStepperTail) { Serial.printf("node %d bad_reply\n", node); return true; }
     Serial.printf("node %d pos %ld\n", node, (long)st.pos);
     return true;
 }
@@ -143,8 +143,9 @@ bool cmdNodeStat(const char* args) {
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err usage"); return true; }
     NodeStatus st;
-    if (rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st) != RPC_OK) {
-        Serial.printf("node %d timeout\n", node); return true;
+    RpcResult r = rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st);
+    if (r != RPC_OK) {
+        Serial.printf("node %d %s\n", node, rpcResultText(r)); return true;
     }
 
     uint8_t type = st.type;
@@ -189,8 +190,9 @@ bool cmdVacSwitch(const char* args) {
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err usage"); return true; }
     uint8_t level;
-    if (rpcSwitchGet(node, &level) != RPC_OK) {
-        Serial.printf("node %d timeout\n", node);
+    RpcResult r = rpcSwitchGet(node, &level);
+    if (r != RPC_OK) {
+        Serial.printf("node %d %s\n", node, rpcResultText(r));
         return true;
     }
     Serial.printf("node %d switch %s (level=%d)\n",

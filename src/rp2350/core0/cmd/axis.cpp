@@ -8,10 +8,13 @@
 // only through position.h's named operations.
 
 #include <Arduino.h>
+#include <string.h>            // memcpy
+#include <stdlib.h>            // strtol / strtoul
 #include "table.h"
 #include "parse.h"
 #include "gate.h"
 #include "../position.h"
+#include "../homing.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
@@ -202,8 +205,11 @@ bool cmdAxisMap(const char* args) {
     for (int i = 0; i < 4; i++) {
         if (desired[i] == SLOT_NONE) continue;
         NodeStatus st;
-        if (rpcNodeStatus(CMD_ENGAGE, desired[i], (uint8_t)i, &st) != RPC_OK) {
-            Serial.printf("err node %d timeout\n", desired[i]);
+        RpcResult r = rpcNodeStatus(CMD_ENGAGE, desired[i], (uint8_t)i, &st);
+        if (r != RPC_OK) {
+            // `nak unsupported` here means a non-stepper node was mapped to a
+            // motion slot — a config error, not a bus fault.
+            Serial.printf("err node %d %s\n", desired[i], rpcResultText(r));
             return true;              // leave the map as-is; a retry redoes all
         }
         // Frozen-while-parked check (position.h). Silent by design: the
@@ -251,10 +257,42 @@ bool cmdAxisMap(const char* args) {
     return true;
 }
 
-// ── setorigin [axes] (IDLE/PAUSED/ALARM) ─────────────────────────────────────
+// ── setorigin [axes] [pos_steps] (IDLE/PAUSED/ALARM) ─────────────────────────
+//
+// `pos_steps` is the machine position the axes are AT right now, defaulting to
+// 0. Zero is the switch-at-origin case; a far-end switch needs
+// hardTravel × stepsPerUnit, which the old zero-only form could not express
+// (docs/homing.md §2.5). It is the WIRE frame — steps, signed — because
+// machinePos is; the host owns the mm conversion.
+//
+// The datum stays here rather than folding into `home` so that `home` remains
+// purely about motion: the retract and slow re-approach passes carry no datum
+// baggage, and this inherits the estop-window handling below, which is subtle
+// enough that it should not exist twice.
 bool cmdSetOrigin(const char* args) {
     if (busGateDenies()) return true;
-    uint8_t m = axisMask(args);
+
+    // Split at the first space: axisMask() scans every character it is given,
+    // so handing it the whole line would let a stray letter in a later argument
+    // select an axis nobody named.
+    const char* p = args;
+    while (*p && *p != ' ') p++;
+    char axesTok[8];
+    size_t n = (size_t)(p - args);
+    if (n >= sizeof(axesTok)) { Serial.println("err usage"); return true; }
+    memcpy(axesTok, args, n);
+    axesTok[n] = '\0';
+
+    int32_t posSteps = 0;
+    while (*p == ' ') p++;
+    if (*p) {
+        char* end;
+        long v = strtol(p, &end, 10);
+        if (end == p) { Serial.println("err usage"); return true; }
+        posSteps = (int32_t)v;
+    }
+
+    uint8_t m = axisMask(axesTok);
     // setorigin does bus I/O below — up to four round trips, so it can be in
     // flight for tens of milliseconds. An estop landing inside that window
     // would otherwise be ERASED by the alarm-clearing block at the end, which
@@ -267,10 +305,18 @@ bool cmdSetOrigin(const char* args) {
     // and survives any later rebinding. A masked slot with no node bound
     // cannot be datumed — there is nothing to record against — so it is
     // skipped and left un-homed rather than silently claiming an origin.
+    // Named axes that resolved to a node. A mask where NOTHING resolved did no
+    // work at all, and answering `ok` to that reports a datum that was never
+    // recorded -- the operator reads back the old position and has to guess why.
+    // Counted rather than pre-checked so the per-slot skip above stays intact
+    // for a partly-bound `setorigin` with no axis token, which is the common
+    // case and is not an error.
+    uint8_t bound = 0;
     for (int i = 0; i < 4; i++) {
         if (!(m & (1 << i))) continue;
         uint8_t n = slotNodeAt(i);
         if (n == SLOT_NONE) { axes_homed &= ~(1 << i); continue; }
+        bound++;
 
         // CMD_DATUM_SET arms the node's continuity witness AND returns the
         // counter it refers to. One transaction, so the origin recorded here
@@ -282,8 +328,9 @@ bool cmdSetOrigin(const char* args) {
             originInvalidate(n);           // no answer, or witness not armed
             continue;
         }
-        originRecord(n, st.pos);
+        originRecord(n, st.pos, posSteps);
     }
+    if (bound == 0) { Serial.println("err unbound"); return true; }
     // A fault that arrived while we were on the bus outranks this command. The
     // datum we just recorded describes a machine that has since stopped hard,
     // so refuse rather than clear it — reconcileValidity() drops the masks on
@@ -301,45 +348,76 @@ bool cmdSetOrigin(const char* args) {
     return true;
 }
 
-// ── home <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps> ─────────
+// ── home <axis> <dir> <start_us> <floor_us> <ramp_steps> <max_steps> ─────────
 //
-// Bench bring-up only. Deliberately raw and positional: no mm, no steps/mm, no
-// config lookup, no `invert`, and NO seek/retract argument. Composing those
-// belongs to the host (docs/homing.md 3), and a temporary Pico-side version of
-// them is exactly how they end up living here permanently. The Pico relays; it
-// does not plan.
+// docs/homing.md §2.2. Addresses an AXIS, not a bus id: the host plans against
+// axes and should not have to know which node is bound to one. Exactly one bit,
+// because homing is one axis at a time (§3.5) -- there is no ordering policy and
+// no batch sequencer, and a mask that quietly homed two axes at once would be a
+// sequencer nobody specified.
 //
-// No state gate either, on purpose — this has to be usable from ALARM while the
-// machine is being commissioned, which is when homing matters most. The real
-// `home` (2.2) will gate; this one is a bench tool.
+// Still raw and positional in its numbers: no mm, no steps/mm, no config lookup,
+// no `invert`. Composing those belongs to the host (§3), and a temporary
+// Pico-side version of them is exactly how they end up living here permanently.
+// The Pico relays and supervises; it does not plan.
+//
+// NO <seek|retract> ARGUMENT, and §2.2's is dropped rather than unimplemented.
+// The node picks the mode from one read of its own limit pin at arm time (§1.2),
+// which reproduces §3.4's seek → retract → seek sequence on its own: after a
+// seek the switch is asserted, so the next command retracts; after the back-off
+// it is clear, so the next one seeks. A host token could only agree with the pin
+// or contradict it. What the master needs -- WHICH mode ran, to interpret the
+// terminal flags -- comes back in the arm ack; see homingBegin().
+//
+// Gated like the other bus commands, plus the config gate: an axis cannot be
+// resolved to a node without a committed axis map. ALARM otherwise stays open,
+// because commissioning is exactly when homing matters.
 bool cmdHome(const char* args) {
-    const char* a = args;
-    char* end;
-    unsigned long v[6];
-    for (int i = 0; i < 6; i++) {
-        v[i] = strtoul(a, &end, 10);
-        if (end == a) { Serial.println("err usage"); return true; }
-        a = end;
-    }
-    const uint8_t node = (uint8_t)v[0];
-    if (node < 1 || node > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
-    if (v[1] > 1 || v[2] > 0xFFFF || v[3] > 0xFFFF || v[4] > 0xFFFF) {
-        Serial.println("err range"); return true;
+    // BEFORE the bus gate, which does not admit STATE_HOMING and would answer
+    // the commonest mistake here -- a second `home` while one is in flight --
+    // with a generic `bad_state`. Same refusal either way; this one names what
+    // to wait for, and putting it second made it unreachable.
+    if (homingActive()) { Serial.println("err busy"); return true; }
+    if (busGateDenies()) return true;
+    if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
+        Serial.println("err unconfigured"); return true;
     }
 
-    NodeStatus st;
-    // A node that NAKs (bad parameters) still simply does not answer -- it has
-    // no NAK opcode yet (plan section 8.1) -- so RPC_TIMEOUT still covers both.
-    // The string keeps saying so rather than claiming a certainty we lack.
-    if (rpcHome(node, (uint8_t)(v[1] & 1), (uint16_t)v[2], (uint16_t)v[3],
-                (uint16_t)v[4], (uint32_t)v[5], &st) != RPC_OK) {
-        Serial.printf("node %d nak_or_timeout\n", node); return true;
+    const char* p = args;
+    while (*p && *p != ' ') p++;
+    char axesTok[8];
+    size_t n = (size_t)(p - args);
+    if (n == 0 || n >= sizeof(axesTok)) { Serial.println("err usage"); return true; }
+    memcpy(axesTok, args, n);
+    axesTok[n] = '\0';
+
+    const uint8_t m = axisMask(axesTok);
+    // axisMask() answers 0x0F for both "all axes" and "nothing I recognised", so
+    // a single-bit test is what rejects `home` with no axis, `home q`, and
+    // `home xy` alike -- all three are the same mistake to make.
+    if (m == 0 || (m & (m - 1)) != 0) { Serial.println("err usage"); return true; }
+
+    uint8_t slot = 0;
+    while (slot < MOTION_SLOTS && !(m & (1 << slot))) slot++;
+    const uint8_t node = slotNodeAt(slot);
+    if (node == SLOT_NONE) { Serial.println("err unbound"); return true; }
+
+    char* end;
+    unsigned long v[5];
+    for (int i = 0; i < 5; i++) {
+        v[i] = strtoul(p, &end, 10);
+        if (end == p) { Serial.println("err usage"); return true; }
+        p = end;
     }
-    Serial.printf("node %d armed limit %d homing %d pos %ld\n", node,
-                  (st.flags & NODE_FLAG_LIMIT)  ? 1 : 0,
-                  (st.flags & NODE_FLAG_HOMING) ? 1 : 0,
-                  (long)st.pos);
-    return true;
+    if (v[0] > 1 || v[1] > 0xFFFF || v[2] > 0xFFFF || v[3] > 0xFFFF) {
+        Serial.println("err range"); return true;
+    }
+    // A zero interval would divide the pulser's ramp by nothing and free-run the
+    // step pin; a zero budget is a command that cannot move and cannot fail.
+    if (v[1] == 0 || v[2] == 0 || v[4] == 0) { Serial.println("err range"); return true; }
+
+    return homingBegin(node, (uint8_t)(v[0] & 1), (uint16_t)v[1], (uint16_t)v[2],
+                       (uint16_t)v[3], (uint32_t)v[4]);
 }
 
 // ── step <node> <count> [sps] — debug stepping (bring-up only) ───────────────

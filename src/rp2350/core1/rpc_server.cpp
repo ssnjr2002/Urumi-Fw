@@ -21,12 +21,16 @@
 // each pushed their own words, and a missed push wedged Core 0 in
 // pop_blocking() forever.
 static void replyWith(const RpcRequest* req, RpcResult result,
-                      const uint8_t* payload, uint8_t len) {
+                      const uint8_t* payload, uint8_t len,
+                      uint8_t nakReason = 0) {
     RpcReply rep = {};
     rep.id     = req->id;
-    rep.cmd    = req->cmd;
+    rep.cmd    = req->cmd;                 // the REQUEST's opcode, even for a NAK:
+                                           // rpcCall asserts the echo, and the
+                                           // refusal travels in `result` instead.
     rep.node   = req->node;
     rep.result = result;
+    rep.nakReason = nakReason;
     if (payload && len) {
         if (len > RPC_PAYLOAD_MAX) len = RPC_PAYLOAD_MAX;
         memcpy(rep.payload, payload, len);
@@ -110,9 +114,20 @@ static void serveNodeCmd(const RpcRequest* req) {
     const uint8_t expect = (req->cmd == CMD_PING) ? CMD_PONG : req->cmd;
 
     uint8_t buf[RPC_PAYLOAD_MAX];
-    const uint8_t rxLen = receivePacket(req->node, expect, buf, RESPONSE_TIMEOUT_MS);
+    uint8_t gotCmd = 0;
+    const uint8_t rxLen = receivePacket(req->node, expect, buf,
+                                        RESPONSE_TIMEOUT_MS, &gotCmd);
 
     if (rxLen == 0xFF) { replyWith(req, RPC_TIMEOUT, nullptr, 0); return; }
+
+    // The node refused. Payload is [orig_cmd][reason]; a NAK too short to carry
+    // one is still a refusal, just an unattributed one, so report it as a NAK
+    // with no reason rather than downgrading it to BAD_REPLY — the fact worth
+    // having here is "it is there and it said no".
+    if (gotCmd == CMD_NAK) {
+        replyWith(req, RPC_NAK, nullptr, 0, rxLen >= 2 ? buf[1] : 0);
+        return;
+    }
 
     // A status-bearing command that came back too short to be a status is a node
     // talking a protocol we do not know — reportable now that RPC_BAD_REPLY
