@@ -36,11 +36,22 @@ static inline bool busGateDenies() {
 bool cmdAxesEnable(const char* args) {
     if (busGateDenies()) return true;
     if (*args == '\0') { Serial.println("err usage"); return true; }
-    // Deliberately NOT gated by alarmDeniesOn: ALARM is where axis recovery
-    // happens. Boot sits in ALARM_CONFIG, and the post-estop flow is
-    // axes_enable on → setorigin → unalarm. `enable <id>` is ungated for the
-    // same reason. The peripheral commands gate because energising a pump
-    // under alarm has no such recovery role.
+    // ALARM_CONFIG refuses: this command's target IS the axis map, and under the
+    // config gate there is no committed map to operate on. Before the gate became
+    // bidirectional (cmdAxisMap below) it walked zero slots and answered `ok`,
+    // which reads as "the axes are now off" on a machine that has no axes.
+    // Same string as `unalarm`, which refuses the same state for the same reason.
+    if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
+        Serial.println("err unconfigured"); return true;
+    }
+    // Still NOT gated by alarmDeniesOn, and not by ALARM generally: ALARM is
+    // where axis recovery happens, and the post-estop flow is axes_enable on →
+    // setorigin → unalarm. That path runs under ALARM_ESTOP, so the refusal
+    // above does not touch it. `enable <id>` stays ungated in every alarm —
+    // it addresses a bus node directly rather than through the map, which is how
+    // peripherals are reached and does not depend on a map existing at all. The
+    // peripheral commands gate because energising a pump under alarm has no
+    // recovery role.
     bool on = parseState(args);       // accepts "1"/"on" and "0"/"off"
     for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
         uint8_t n = slotNodeAt(i);
