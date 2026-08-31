@@ -110,12 +110,14 @@ bool cmdPingNode(const char* args) {
 // the full amount and reads perfectly correct, so `getpos` alone cannot
 // detect lost steps. A divergence localises the loss to the bus or the node.
 bool cmdNodePos(const char* args) {
-    // Same gate as pingnode/enable/disable, and for the same reason: Core 1
-    // only services channel 1 after draining the ring (processBus step 2 before
-    // step 3), so a request issued mid-stream waits out the whole queue. Core 0
-    // blocks in rpcCall meanwhile and stops reading serial entirely — which
-    // would put `stop` behind it. Measured at 4 s of queued motion before this
-    // gate existed.
+    // Same gate as pingnode/enable/disable and the peripherals, for the reason
+    // spelled out in cmd/periph.cpp: the exchange costs Core 1 up to
+    // RESPONSE_TIMEOUT_MS inside its step budget. A read is not cheaper than an
+    // actuation here -- what costs is the transaction, not the node's answer.
+    //
+    // The original reason was Core 0 blocking in pop_blocking, which put `stop`
+    // behind a relay -- measured at 4 s of queued motion. That half is gone
+    // (ipc/core1_rpc.h); the gate stays for Core 1's half.
     if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
         Serial.println("err bad_state"); return true;
     }

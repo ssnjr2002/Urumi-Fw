@@ -132,6 +132,7 @@ enum AlarmReason : uint8_t {
     ALARM_CONFIG     = 2,   // reserved — invalid config (Phase 2)
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
     ALARM_HOMING_FAIL= 4,   // reserved — auto-home failure (future)
+    ALARM_NODE_FAULT = 5,   // reserved — a node reported or failed a check
 };
 
 enum RunningReason : uint8_t {

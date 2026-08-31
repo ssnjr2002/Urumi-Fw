@@ -42,6 +42,7 @@ export const AlarmReason = {
     CONFIG: 2, // Phase 2
     SOFT_LIMIT: 3,
     HOMING_FAIL: 4,
+    NODE_FAULT: 5,
 } as const;
 export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
 const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];
