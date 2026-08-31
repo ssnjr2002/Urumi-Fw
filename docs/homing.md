@@ -1,8 +1,8 @@
 # Homing
 
-**Status:** §1 (the node: gate, pulser, `CMD_HOME`) implemented and building for
-`db_node*`; the Pico supervisor (§2) and the host schema (§3) are still design.
-Nothing has run on hardware yet — see §6.3.
+**Status:** §1 (the node) and §2 (the Pico: `home`, `setorigin <pos_steps>`, the
+supervisor in `src/rp2350/core0/homing.cpp`) implemented and confirmed on
+hardware. §3 (the host schema) is still design.
 **Cross-links:** [node_session_and_datum.md](node_session_and_datum.md) (`nodeOrigin`,
 `NODE_FLAG_DATUM`), [coordinate_frames_and_limits.md](coordinate_frames_and_limits.md)
 (the *home* frame), [wire_protocol.md](wire_protocol.md) (host↔Pico framing),
@@ -269,6 +269,22 @@ DIR is written once at arm time, in loop context, where it absorbs the 5 µs DM5
 setup guard. The pulser ISR therefore never spins on it — the one long-ISR wart
 §1.7 notes on the stream path does not reach this one.
 
+**And the stream path must not write DIR while the pulser owns the axis.** Writing
+it once is only safe if nothing else writes it afterwards, and something did:
+`busQuiesce()` prefaces EVERY command frame with a NOP stream byte, a zero byte
+has the slot's dir bit clear, and the stream handler reads that as "direction 0"
+and drives DIR low. Since the supervisor (§2.3) polls the homing node every
+`HOMING_POLL_MS`, the first poll after the arm yanked DIR out from under the
+pulser and every step after it ran the wrong way. `absolutePosition` did not
+notice — the pulser derives it from `homing.dir`, so the counter kept reporting
+the direction that was *asked for* while the shaft went the other way, and only
+the counter is visible over the bus. Both directions therefore looked identical.
+
+The RX stream path now returns immediately while `homingActive`. It returns
+before the limit accumulator too: during a home the pulser's own pin read is the
+authority on the switch, and letting NOP bytes advance `limitBytesAsserted` would
+move the baseline `homingFinish()` judges a retract against.
+
 ### 1.5 Terminal states
 
 Reported through the flags byte. `NODE_FLAG_HOMING` (0x08) is set while the pulser
@@ -339,14 +355,25 @@ plane is for high-rate windowed streams and would need new binary framing for no
 gain.
 
 ```
-home <axis> <seek|retract> <approach_dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+home <axis> <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
 ```
 
-`seek|retract` follows the existing `on`/`off` token style (`parseState`).
-`<axis>` reuses `axisMask()` but **rejects any mask with more than one bit** —
-one axis at a time (§3.5).
+**Implemented**, in `cmd/axis.cpp`, and WITHOUT the `<seek|retract>` token this
+section originally specified — dropped by design, not left unbuilt. The node
+picks the mode from one read of its own limit pin at arm time (§1.2), which
+reproduces §3.4's sequence on its own: after a seek the switch is asserted, so
+the next command retracts; after the back-off it is clear, so the next one seeks.
+A host token could only agree with the pin or contradict it. What the master
+actually needs — WHICH mode ran, since the terminal flags read oppositely for the
+two (§1.5) — comes back in the arm ack, whose LIMIT bit *is* that pin read.
 
-Replies `ok`, or `err bad_state` / `err arg` / `err node N timeout`.
+`<axis>` reuses `axisMask()` but **rejects any mask with more than one bit** —
+one axis at a time (§3.5). `axisMask()` answers `0x0F` for both "all axes" and
+"nothing I recognised", so the single-bit test is also what rejects `home` with no
+axis and `home q`.
+
+Replies `ok`, or `err busy` / `err bad_state` / `err unconfigured` /
+`err unbound` / `err usage` / `err range` / `err node N <reason>`.
 
 **It must not block.** A home takes ~13 s, and the control-plane contract is one
 reply line per command. A blocking `home` would freeze the plane for the whole
@@ -355,7 +382,7 @@ axis at a hard stop. So it returns immediately and the machine enters
 `STATE_HOMING` (already reserved in `shared.h`), exactly as a job does:
 
 - success: `STATE_HOMING` → `STATE_IDLE`
-- fault: `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOME_FAIL`
+- fault: `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOMING_FAIL`
 - abort: the existing `stop` works unchanged
 
 `STATE_HOMING` joins the data-plane allowed-state matrix, so a job stream
@@ -382,12 +409,21 @@ ramp_steps × avg_interval  +  (max_steps − ramp_steps) × floor_interval
 
 ### 2.4 Core 0 → Core 1
 
-The FIFO word is `[23:16] payload | [15:8] cmd | [7:0] node` — **one payload
-byte**, so the 12-byte `CMD_HOME` payload does not fit. Use the existing
-multi-word precedent: `FIFO_STEP_DEBUG` pushes a tagged word then a continuation.
-`FIFO_HOME` follows the same shape — tag word plus 3 continuation words.
+**Superseded.** This section described packing the payload into single FIFO
+words, which the IPC refactor removed: `RpcRequest` now carries a generic
+`args[]` buffer sized by `RPC_ARG_MAX`, which is *defined as*
+`CMD_HOME_PAYLOAD_LEN` (11) precisely because `CMD_HOME` is the largest payload.
+So no continuation words, no `FIFO_HOME` tag, and no per-command packing: the
+11 bytes are laid out once in `rpcHome()` and copied verbatim by `buildPayload()`
+(`core1/rpc_server.cpp`).
+
+The payload is **11 bytes**, not the 12 this section assumed.
 
 ### 2.5 `setorigin` needs one new argument
+
+**Implemented.** `setorigin [axes] [pos_steps]`, with `pos_steps` defaulting to 0
+and a mask that names only unbound axes answering `err unbound` rather than a
+misleading `ok`.
 
 Today `setorigin [axes]` hardcodes the datum to zero:
 
@@ -517,14 +553,24 @@ parameters.
 Worked example — X, switch at the far end, 500 mm, 160 steps/mm:
 
 ```
-home x seek    1 1000  125   2000 88000   → ok    # fast: 1000µs→125µs over 2000 steps
-                                                  (poll getstate until not HOMING)
-home x retract 1 1000  1000  0    320     → ok    # 2 mm back-off, constant rate
-                                                  (poll)
-home x seek    1 20000 20000 0    8000    → ok    # slow re-approach, no ramp
-                                                  (poll)
-setorigin x 80000                          → ok    # 500 mm × 160 steps/mm
+home x 1 1000  125   2000 88000   → ok    # fast seek: 1000µs→125µs over 2000 steps
+                                          (poll getstate until state leaves HOMING)
+home x 0 1000  1000  0    320     → ok    # 2 mm back-off — NOTE dir 0
+                                          (poll)
+home x 1 20000 20000 0    8000    → ok    # slow re-approach, no ramp
+                                          (poll)
+setorigin x 80000                 → ok    # 500 mm × 160 steps/mm
 ```
+
+**THE DIRECTION MUST ALTERNATE.** An earlier version of this example carried
+`dir 1` on all three passes, and that is a crash: the node holds no direction
+state (§1.2) and takes `dir` from the payload verbatim, so a retract sent with
+the seek's direction drives *further into* the switch — and a retract ignores the
+switch entirely (§1.3), so its budget is the only thing that stops it. Whichever
+value reaches the switch, the back-off is its complement. Above, `1` is toward the
+switch on X (bench-confirmed, §7) and the back-off is therefore `0`.
+
+The `seek`/`retract` words are gone from the command as well — see §2.2.
 
 `ramp_steps: 0` with `start == floor` is the natural spelling for "constant
 rate"; it needs no special case on the node, since the ramp loop simply never has
@@ -605,9 +651,14 @@ The `CMD_HOME` payload, the pulser and its ramp, the non-blocking `home` command
 `STATE_HOMING`, the poll loop, the timeout derivation, `setorigin <axes>
 <pos_steps>`, the `nodeOrigin` arithmetic, and the fault handling. All of it.
 
-The budget becomes ~1.1 revolutions (≈3520 steps at 8.890 steps/deg) rather than
-`hardTravel × stepsPerUnit` — a different number in the same field, not a
-different mechanism.
+The budget becomes ~1.1 revolutions rather than `hardTravel × stepsPerUnit` — a
+different number in the same field, not a different mechanism.
+
+**That number was wrong here by 5.16×.** 8.890 steps/deg is the **motor-side**
+rate; the budget has to be in the frame the axis actually turns in. At the
+calibrated output rate of 45.8272 steps/deg, 1.1 revolutions (396°) is
+**≈18,150 steps**, not 3520. A budget short by that factor reports a false
+"index never found" on every attempt.
 
 ### 5.2 What genuinely differs
 
@@ -620,8 +671,16 @@ revolution. So:
 - The **stopping position is irrelevant**; what matters is where the sensor
   asserted.
 
-The mechanisms converge more than that suggests. If the pulser samples the pin at
-the top of each step ISR and declines to step when asserted, then for a barrier
+**The index is not a pin.** This section reads throughout as though the sensor
+were a digital input like a limit switch. The A1324 is **ratiometric analog**: the
+magnet produces a dip of roughly 735 samples across its arc, against a baseline,
+and "asserted" is a threshold decision someone has to make in software. There is
+no edge to read — there is a curve to find a feature in. Everything below about
+"sampling the pin" holds only once that thresholding exists, and specifying it is
+the actual unbuilt work.
+
+The mechanisms converge more than that suggests. If the pulser samples the sensor
+at the top of each step ISR and declines to step when asserted, then for a barrier
 the counter cannot advance and *is* the trip position, and for an index the pulser
 halts at the edge and the counter *is* the index position. Both are "check the pin
 in the step path; if asserted, do not step." The differences reduce to **scope**
@@ -636,8 +695,15 @@ The retract pass survives, for a different reason: a magnet asserts over an arc
 several degrees wide, so the datum is its *leading edge*, and a home that starts
 with A already inside the arc would detect the index immediately, at the wrong
 angle. A move to escape the arc must precede the seek. The slow re-approach, by
-contrast, can be dropped — accuracy is one step (≈0.11°), set by per-step
-sampling rather than by speed.
+contrast, can be dropped — accuracy is set by per-step sampling rather than by
+speed.
+
+**But not to one step.** The ≈0.11° figure this originally quoted was one step at
+the motor-side 8.890 steps/deg, mixing frames again. Edge detection against the
+measured noise is worth about **5 steps**: the dip moves ~4.6 ADC counts per step
+against ~23 counts of noise. Five steps at the output-side 45.8272 steps/deg is
+≈0.11° — the same number, arrived at correctly, and it is a *sensor* floor rather
+than a *step* floor, so finer microstepping does not improve it.
 
 ### 5.3 Config shape
 
@@ -730,8 +796,8 @@ point.
 
 | node | axis | seek `dir` | `LIMIT_ACTIVE_HIGH` |
 |---|---|---|---|
-| 1 | X | 0 | yes — switch reads inverted from the active-low default |
-| 2 | Y | 0 | yes |
+| 1 | X | **1** (see note) | yes — switch reads inverted from the active-low default |
+| 2 | Y | 0 (see note) | yes |
 | 3 | Z0 | 0 | no — default active-low is correct, unconfirmed against a mismatch report |
 | 6 | Z1 | not yet probed | not yet probed |
 
@@ -786,3 +852,31 @@ The corrections worth remembering for the next axis:
 
 Z1 (node 6) has not yet been probed on the bench; treat the §3.4-derived starting
 values as unverified until it is.
+
+### 7.1 2026-08-31 run — supervisor bring-up
+
+The first run of the §2 supervisor (`home` with an axis token, `homingTick()`,
+`setorigin <pos_steps>`) against nodes 1 and 2. Confirmed working: both
+directions, the switch-found path, the budget-exhausted failure path
+(`STATE_ALARM` / `ALARM_HOMING_FAIL`), `err busy` on a doubled `home`, the datum,
+and alarm recovery.
+
+**Seek direction on node 1 now reads `1`, not the `0` in the table above.** A
+`home x 1 ... 88000` found the switch and resolved to IDLE. The earlier row was
+recorded with the bare bench command before the supervisor existed and has not
+been re-confirmed since; the two have not been reconciled against the physical
+wiring, so **probe direction with a small budget before trusting either** —
+`home <axis> <dir> 2000 2000 0 500` moves half a millimetre and settles it. Node
+2's row is untested since and carries the same caveat.
+
+Three master-side defects found and fixed in the same run, all of them things the
+bench command could not have exposed because it never polled the bus mid-move:
+
+- `setorigin` answered `ok` for a mask in which **nothing** was bound, reporting a
+  datum it had not recorded.
+- A successful home cleared `STATE_ALARM` but left `alarmReason` at
+  `ALARM_HOMING_FAIL`, so a recovered machine still read as broken — and the
+  reason is what the host renders.
+- `err busy` sat below the bus gate in `cmdHome`, which does not admit
+  `STATE_HOMING`, so a second `home` mid-move got a generic `err bad_state` and
+  the specific branch was unreachable.
