@@ -25,6 +25,7 @@ class AlarmReason(IntEnum):
     CONFIG      = 2   # Phase 2
     SOFT_LIMIT  = 3
     HOMING_FAIL = 4
+    NODE_FAULT  = 5
 
 
 class RunningReason(IntEnum):

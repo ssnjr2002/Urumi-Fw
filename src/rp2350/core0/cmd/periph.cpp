@@ -15,13 +15,18 @@
 #include "gate.h"
 #include "../../ipc/core1_rpc.h"
 
-// The shared gate. The relay blocks Core 0 on a Core 1 round trip (up to
-// RESPONSE_TIMEOUT_MS), which Core 1 services BETWEEN microsegments — mid-stream
-// it stretches a step interval and marks the cut. Mid-job peripheral changes
-// belong at a PAUSED boundary, which is where the host orchestrator issues them.
+// The shared gate, and the reason is Core 1's, not Core 0's. Core 0 no longer
+// blocks on a relay (ipc/core1_rpc.h), but the RS485 exchange still runs on the
+// core that owns the step budget and takes up to RESPONSE_TIMEOUT_MS -- many step
+// intervals. Core 1 services channel 1 only between segments, so issuing one
+// while a job is streaming is a dwell at a segment boundary, which leaves a mark
+// in the material. Mid-job peripheral changes belong at a PAUSED boundary, which
+// is where the host orchestrator issues them.
 //
-// This is the one gate Stage 5 deliberately keeps: it is a physical-timing
-// claim, not an artifact of how the command reaches Core 1 (§7.2).
+// KNOWN GAP (plan §7.2): machineState leaves RUNNING whenever the ring drains, so
+// an underfed job sits in IDLE between refills and this gate admits the command
+// in exactly the window it exists to close. The right predicate is "is a job in
+// flight", which nothing represents today. Recorded in plan §11, not fixed here.
 static inline bool periphGateDenies() {
     if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
         Serial.println("err bad_state");

@@ -8,6 +8,7 @@
 #include "position.h"
 #include "../ipc/shared_state.h"
 #include "usb_protocol.h"      // NODE_FLAG_*, BUS_ADDR_MAX
+#include "hardware/sync.h"     // __dmb
 
 // ─── Axis map (docs/engage_and_axis_map.md §5) ────────────────────────────────
 // slotNode[i] = the bus id currently ENGAGE-bound to stream slot i, or
@@ -165,7 +166,15 @@ void slotUnbind(uint8_t s) {
 // documented invariant holds: once ALARM is visible, the datum is already gone
 // and the bus is already parked.
 void reconcileValidity(void) {
-    uint8_t st = machineState, ar = alarmReason;
+    // Read state BEFORE reason, with a barrier between: Core 1 publishes them in
+    // the opposite order (reason, __dmb, state) so that observing the new state
+    // implies the reason is already there. Loading both without a barrier let the
+    // compiler or the core reorder these two loads, which reads the new state
+    // against the STALE reason -- e.g. STATE_ALARM paired with ALARM_NONE, which
+    // matches none of the tests below and silently skips the invalidation.
+    uint8_t st = machineState;
+    __dmb();
+    uint8_t ar = alarmReason;
 
     // Position dies the instant motion stops abruptly -- before the bus sweep.
     if (st == STATE_ESTOP || ar == ALARM_ESTOP || ar == ALARM_SOFT_LIMIT)
