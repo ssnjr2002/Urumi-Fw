@@ -481,7 +481,16 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
 
                 // The gate condition is "every slot ACK-confirmed", not "a
                 // string parsed" — reaching here means it held.
-                if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
+                //
+                // Bidirectional: `axis_map - - - -` commits an EMPTY map, and a
+                // machine with no axis bound is not configured. Re-enter the gate
+                // rather than merely fail to clear it — the previous map may have
+                // been valid. Still answers `ok`; the unconfigured result is a
+                // state fact, carried by the reason code (cmd/axis.cpp).
+                if (S.slotNode.every((n) => n === null)) {
+                    S.state = MachineState.ALARM;
+                    S.alarm = AlarmReason.CONFIG;
+                } else if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
                     S.state = MachineState.IDLE;
                     S.alarm = AlarmReason.NONE;
                 }
@@ -516,6 +525,12 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             case "axes_enable":
                 if (isIdlePausedAlarm(S.state)) {
                     if (args.length === 0) return "err usage";
+                    // No committed map means nothing to enable (cmd/axis.cpp).
+                    // The ALARM_ESTOP recovery path (axes_enable on -> setorigin
+                    // -> unalarm) is unaffected: it runs under a different reason.
+                    if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
+                        return "err unconfigured";
+                    }
                     const on = args[0] === "1" || args[0]!.toLowerCase() === "on";
                     for (let i = 0; i < MOTION_SLOTS; i++) {
                         if (S.slotNode[i] === null) continue;
