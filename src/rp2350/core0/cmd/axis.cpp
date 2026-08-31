@@ -14,6 +14,7 @@
 #include "../position.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
+#include "hardware/sync.h"     // __dmb
 
 // The gate shared by every command here that goes to the bus: Core 1 services
 // channel 1 only after draining the ring, so a request issued mid-stream waits
@@ -121,9 +122,10 @@ bool cmdDisable(const char* args) {
 
 // ── axis_map [<x> <y> <z> <a>] — bind bus nodes to stream slots ──────────────
 // No-arg: read back the committed map in setter syntax ('-' = unbound slot).
-// Four tokens (a bus id, or '-'/'0' = unbound). A successful commit clears the
-// ALARM_CONFIG boot gate. Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING
-// corrupts motion (§6.2).
+// Four tokens (a bus id, or '-'/'0' = unbound). Committing a map with at least
+// one slot bound clears the ALARM_CONFIG boot gate; committing an empty one
+// re-enters it. Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING corrupts motion
+// (§6.2).
 bool cmdAxisMap(const char* args) {
     if (*args == '\0') {                          // read-back form
         Serial.print("axis_map");
@@ -207,8 +209,30 @@ bool cmdAxisMap(const char* args) {
         slotUnbind((uint8_t)i);
     }
 
-    // Committed — clear the config gate if that is what was holding us.
-    if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
+    // Committed. The config gate tracks the map both ways.
+    //
+    // A map with nothing bound is not a configured machine, and `axis_map - - - -`
+    // is a legitimate way to reach one -- it parses, it commits, and every slot
+    // ends unbound. Clearing ALARM_CONFIG on that would leave the machine IDLE
+    // with no axis bound, and motion ingest gates on machineState alone
+    // (data_plane.cpp), so it would then accept a job and emit stream bytes that
+    // no node is listening to, advancing machinePos for axes that do not exist.
+    //
+    // So the gate is re-entered, not merely left un-cleared: the map can go from
+    // configured to unconfigured, and the state has to be able to follow it back.
+    // The command still answers `ok` -- committing an empty map is what was asked
+    // for, and it succeeded. That the result is an unconfigured machine is a state
+    // fact, and state facts travel as reason codes here, not as command errors.
+    bool anyBound = false;
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
+        if (slotNodeAt(i) != SLOT_NONE) { anyBound = true; break; }
+
+    if (!anyBound) {
+        // Reason before state, matching how Core 1 publishes the pair.
+        alarmReason  = ALARM_CONFIG;
+        __dmb();
+        machineState = STATE_ALARM;
+    } else if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
         machineState = STATE_IDLE;
         alarmReason  = ALARM_NONE;
     }

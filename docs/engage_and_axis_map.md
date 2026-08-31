@@ -282,7 +282,16 @@ boot                     → STATE_ALARM, ALARM_CONFIG      (all motion ingest r
 axis_map x y z a         → Core 0 diffs, engages nodes (via Core 1 relay), collects ACKs
    all slots ACKed       → commit slotNode; if reason==ALARM_CONFIG → STATE_IDLE
    any ACK failed        → stay ALARM_CONFIG, report the offending node
+axis_map - - - -         → commits an EMPTY map → STATE_ALARM, ALARM_CONFIG
 ```
+
+The gate is **bidirectional**. `axis_map - - - -` parses, commits, and leaves
+every slot unbound, so it must re-enter `ALARM_CONFIG` rather than merely fail to
+clear it. Otherwise the machine sits in IDLE with no axis bound, and since motion
+ingest gates on `machineState` alone it would accept a job and emit stream bytes
+nobody is listening to. The command still answers `ok`: committing an empty map
+is what was asked for and it succeeded — the resulting machine being
+unconfigured is a state fact, carried by the reason code.
 
 Why a state and not a new boolean: motion ingest already gates on `machineState`
 alone (`data_plane.cpp` — non-IDLE/RUNNING → `NACK_BAD_STATE`), so booting into
