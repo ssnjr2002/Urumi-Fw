@@ -57,6 +57,10 @@ static uint16_t rpcNextId(void) {
     return id;
 }
 
+// Reason from the last completed call. Safe as a single global because rpcPost
+// admits one reply-bearing transaction at a time.
+static uint8_t s_lastNakReason = 0;
+
 RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs) {
     RpcRequest r = *req;
     r.id = rpcNextId();
@@ -78,6 +82,7 @@ RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs) {
                 out->len = 0;
                 return RPC_BAD_REPLY;
             }
+            s_lastNakReason = (out->result == RPC_NAK) ? out->nakReason : 0;
             return out->result;
         }
         if (time_reached(deadline)) {
@@ -90,6 +95,26 @@ RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs) {
         }
         tight_loop_contents();
     }
+}
+
+const char* rpcResultText(RpcResult r) {
+    switch (r) {
+        case RPC_OK:        return "ok";
+        case RPC_TIMEOUT:   return "timeout";
+        case RPC_BAD_REPLY: return "bad_reply";
+        case RPC_NAK: break;
+    }
+    switch (s_lastNakReason) {
+        case NAK_UNSUPPORTED: return "nak unsupported";
+        case NAK_BAD_TOKEN:   return "nak bad_token";
+        case NAK_BAD_ARG:     return "nak bad_arg";
+        default: break;
+    }
+    // An unknown reason still reports as a nak. Degrading it to "timeout" would
+    // undo the whole point of the opcode on the first firmware that adds one.
+    static char buf[16];
+    snprintf(buf, sizeof buf, "nak %u", (unsigned)s_lastNakReason);
+    return buf;
 }
 
 // ─── Node status decoding ─────────────────────────────────────────────────────

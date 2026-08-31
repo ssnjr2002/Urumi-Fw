@@ -97,6 +97,16 @@ typedef struct {
     uint8_t   payload[RPC_PAYLOAD_MAX];
 } RpcReply;
 
+// The word this result prints as: "ok", "timeout", "bad_reply", or
+// "nak <reason>". One place, because eight call sites printed the literal
+// "timeout" for every non-OK result and each would otherwise have to learn the
+// new cases separately.
+//
+// Reads the reason from the LAST completed rpcCall, which is sound only because
+// one transaction is in flight at a time (see rpcPost). Call it on the result
+// you just received, before issuing another.
+const char* rpcResultText(RpcResult r);
+
 // ─── Decoded node status ──────────────────────────────────────────────────────
 // Every command that reports node state answers with the same bytes, from one
 // serializer on the node (buildNodeStatus): [type][flags][type tail…], stepper

@@ -71,12 +71,16 @@ void originInvalidateAll(void) {
     axes_homed = 0;
 }
 
-void originRecord(uint8_t n, int32_t pos) {
+void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps) {
     if (n > BUS_ADDR_MAX) return;
-    nodeOrigin[n] = pos;
+    // The stored origin is the offset, not the counter: it is what
+    // slotAdoptStatus subtracts on every rebind. Writing `nodePos` here and
+    // `machineSteps` into machinePos separately would put the datum in two
+    // places that a later bind could disagree about.
+    nodeOrigin[n] = nodePos - machineSteps;
     nodeHomed    |= (1u << n);
     uint8_t s = nodeSlot(n);
-    if (s != SLOT_NONE) { machinePos[s] = 0; axes_homed |= (1 << s); }
+    if (s != SLOT_NONE) { machinePos[s] = machineSteps; axes_homed |= (1 << s); }
 }
 
 bool originValid(uint8_t n) {

@@ -25,6 +25,30 @@
 #define CMD_ENABLE   0x04   // effect delegated per type (motor energize / pump on …)
 #define CMD_DISABLE  0x05
 #define CMD_GET_TYPE 0x06   // reply payload: [NODE_TYPE_*]
+
+// ─── CMD_NAK — the node refused ──────────────────────────────────────────────
+// REPLY-ONLY: the master never sends this opcode, and a node that receives it
+// treats it as unaddressed rather than answering (dispatch.cpp).
+//
+//     reply: [ID][CMD_NAK][len=2][orig_cmd][NAK_*][crc]
+//
+// `orig_cmd` is carried because the reply opcode is no longer the request's, so
+// it is the only thing tying the refusal back to what was asked.
+//
+// Why it exists: an unhandled command used to be dropped exactly like a bad-CRC
+// frame, so the master timed out. "Refused" and "absent" then produced the same
+// observation, which is why control_plane could only ever print nak_or_timeout.
+// One RESPONSE_TIMEOUT_MS is also spent per refusal, waiting for an answer that
+// was never coming.
+//
+// A NAK costs a node nothing to send and the master nothing to ignore, so an
+// OLD node — one flashed before this opcode existed — still simply times out.
+// That is the intended migration: the two firmwares are distinguishable on the
+// wire by exactly this, and neither confuses the other.
+#define CMD_NAK      0x07
+#define NAK_UNSUPPORTED 0x01  // this node does not implement that opcode
+#define NAK_BAD_TOKEN   0x02  // session token mismatch (plan section 8.2)
+#define NAK_BAD_ARG     0x03  // opcode known, payload rejected
 // Type-specific (0x20+): only one type is compiled per node, so values may
 // overlap between types. Stepper:
 // Node status flags (the [flags] byte of the status payload below).

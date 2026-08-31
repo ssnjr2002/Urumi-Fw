@@ -111,17 +111,21 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 //   PAUSED  → IDLE      Core 0 `resume` (Phase 1: host pre-positioned) or `cancel`
 //   any     → ESTOP     Core 0 `stop`, or MSEG_FLAG_ESTOP poison pill
 //   ESTOP   → ALARM     Core 1, after flushing the queue (position now invalid)
-//   ALARM   → IDLE      Core 0 `setorigin` (zeros position) or `unalarm`
+//   ALARM   → IDLE      Core 0 `setorigin` (sets the datum) or `unalarm`
+//   IDLE    → HOMING    Core 0 `home`, once the node acks the arm
+//   HOMING  → IDLE      Core 0 supervisor, node's pulser stopped as expected
+//   HOMING  → ALARM     Core 0 supervisor, ALARM_HOMING_FAIL (see homing.cpp)
 //
-// Enum values are the wire contract (getstate state=<n>); HOMING is reserved for
-// a future auto-home cycle and never emitted in Phase 1.
+// Enum values are the wire contract (getstate state=<n>). HOMING is entered only
+// by `home` and is a MOTION state: the data plane refuses MSEG and JOG in it for
+// free, since both admit only IDLE/RUNNING and IDLE/PAUSED respectively.
 enum MachineState : uint8_t {
     STATE_IDLE    = 0,
     STATE_RUNNING = 1,
     STATE_ESTOP   = 2,   // transient — Core 0 → Core 1 flush signal
     STATE_ALARM   = 3,
     STATE_PAUSED  = 4,
-    STATE_HOMING  = 5,   // reserved (auto-home) — not implemented in Phase 1
+    STATE_HOMING  = 5,   // a node-run home is in progress (core0/homing.cpp)
 };
 
 // Reason codes (state_redesign Layer 2): metadata on WHY we are in a state, so
@@ -131,7 +135,7 @@ enum AlarmReason : uint8_t {
     ALARM_ESTOP      = 1,   // stop command or poison pill
     ALARM_CONFIG     = 2,   // reserved — invalid config (Phase 2)
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
-    ALARM_HOMING_FAIL= 4,   // reserved — auto-home failure (future)
+    ALARM_HOMING_FAIL= 4,   // home ended wrong: no switch found, or none cleared
     ALARM_NODE_FAULT = 5,   // reserved — a node reported or failed a check
 };
 

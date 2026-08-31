@@ -16,8 +16,17 @@ void sendPacket(uint8_t* packet, uint8_t len);
 // Waits for a frame from `expectedNode` answering `expectedCmd`. Returns the
 // payload length, or 0xFF on timeout. Stream bytes seen while waiting are
 // discarded and restart the frame.
+//
+// CMD_NAK is ALSO accepted, whatever `expectedCmd` is: a refusal is an answer to
+// the command, and the frame filter is the one place that would otherwise throw
+// it away and let the caller time out — reintroducing the exact ambiguity the
+// opcode removes. `outCmd`, when given, receives the opcode that actually
+// arrived, so the caller can tell the two apart. Callers that pass nullptr get
+// the old behaviour and read a NAK as a (short, unparseable) success, so every
+// caller that can receive one must pass it.
 uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
-                      uint8_t* outPayload, uint32_t timeoutMs);
+                      uint8_t* outPayload, uint32_t timeoutMs,
+                      uint8_t* outCmd = nullptr);
 
 // Send one broadcast command. Refuses anything outside the allowlist, so the
 // deny-by-default rule is enforced at both ends rather than trusted at one: the

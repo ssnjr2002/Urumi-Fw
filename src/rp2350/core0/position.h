@@ -55,11 +55,20 @@ void slotUnbind(uint8_t s);
 
 // ─── Position datum, in the NODE frame ────────────────────────────────────────
 
-// Record node `n`'s own counter as its origin: machinePos becomes a derived
-// offset from here on and survives any later rebinding. Caller must have armed
-// the node's continuity witness in the SAME transaction that produced `pos` --
-// a separate read could straddle a reset and pair a witness with a stale count.
-void originRecord(uint8_t n, int32_t pos);
+// Record that node `n`'s own counter `nodePos` corresponds to machine position
+// `machineSteps`. machinePos becomes a derived offset from here on and survives
+// any later rebinding. Caller must have armed the node's continuity witness in
+// the SAME transaction that produced `nodePos` -- a separate read could straddle
+// a reset and pair a witness with a stale count.
+//
+// What is stored is the DIFFERENCE, so slotAdoptStatus's
+// `machinePos[s] = st->pos - nodeOrigin[n]` keeps working untouched: the datum
+// lives in exactly one form, and a non-zero one costs no second field.
+//
+// machineSteps is 0 for a switch at the origin end and hardTravel × stepsPerUnit
+// for one at the far end (docs/homing.md §2.5). The host does the conversion --
+// nodeOrigin and machinePos are both the WIRE frame, which is steps.
+void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps);
 
 // Destroy every position reference for node `n`: its origin, its parked-counter
 // entry, and the homed bit of whatever slot it occupies. Both frames die

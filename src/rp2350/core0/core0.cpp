@@ -13,6 +13,7 @@
 #include "hardware/sync.h"
 #include "control_plane.h"
 #include "position.h"
+#include "homing.h"
 #include "data_plane.h"
 #include "status.h"
 #include "../config/config_store.h"
@@ -140,6 +141,11 @@ void loop() {
         reconcileValidity();
         processSerial();
         dataPlaneTick();   // abort a stalled CFG_SET transfer (inter-byte timeout)
+        // Poll a node-run home to completion. Out here rather than inside the
+        // `home` handler because the control plane owes one reply line per
+        // command: blocking there would hold `getstate` and `stop` shut for the
+        // whole seek, on the one command that is driving an axis at a hard stop.
+        homingTick();
         // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
         // responses synchronously inside handleCommand (relayNode), so there is no
         // async response stream to drain here. Backpressure is handled by the
