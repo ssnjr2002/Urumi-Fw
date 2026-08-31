@@ -432,47 +432,65 @@ and the host in step.
 
 ---
 
-## 7. Stage 5 — Widen the gates the transport was forcing
+## 7. Stage 5 — Fix what the transport left stale
 
-**Use the existing patterns.** An earlier draft of this section proposed a `gate`
-bitmask on `struct Cmd`, promoting `ALARM_CONFIG` to `STATE_CONFIG`, and an
-`alarmEpoch` counter. All three are cut. They were solving problems the codebase
-already has answers for, and the `gate` field in particular dragged in a wire
-change and a `web/src` migration to buy tidiness. What follows is the small
-version.
+**Risk: low.** No gate moves, no gate widens, no wire change.
 
-Keep `stateIs(IDLE, PAUSED, ALARM)` exactly where it is — at the top of the
-handlers that need it. It is one line, it works, and §6's command table does not
-depend on it moving.
+An earlier draft of this section removed the gate on `pingnode`, `nodepos` and
+relayed `enable`/`disable`, on the grounds that their gate was a transport
+artifact that §3.3 had dissolved. **That was wrong, and the reasoning is worth
+keeping so nobody re-derives it.**
 
-### 7.1 Widen only the gates that were transport artifacts
+The gate had two halves. Core 0's half — blocking in `pop_blocking`, which put
+`stop` behind a relay and was measured at 4 s of queued motion — was genuinely a
+transport artifact, and Stage 1 removed it. Core 1's half was never a transport
+artifact at all: `rpcServerPoll()` runs a real RS485 exchange, up to
+`RESPONSE_TIMEOUT_MS`, on the core that owns the step budget. A `pingnode` costs
+Core 1 exactly what a `vac_pump` costs it. "Reads with no physical effect"
+confused the node's response with the transaction's cost.
 
-One syntactic gate covers two unrelated reasons. Separate them:
+So there is no split. All nine commands share one reason, and it is the physical
+one. **Every gate stays exactly where it is.**
 
-| Commands | Reason today | After |
-|---|---|---|
-| `pingnode`, `nodepos` (`:346`), relayed `enable`/`disable` | Core 0 blocks in `pop_blocking`; Core 1 services the FIFO only after draining the ring, so a mid-stream relay waits out the queue — *"measured at 4 s of queued motion"* — and Core 0 stops reading serial, putting `stop` behind it | **Remove the gate.** §3.3's `queue_try_*` + deadline removes the reason entirely. These are reads with no physical effect; there was never a policy argument for blocking them. |
-| `vac_servo`, `vac_pump`, `knife_osc`, `laser`, `knife_blower` (`:630` + three verbatim copies) | *"Core 1 services between microsegments — mid-stream it stretches a step interval and marks the cut"* | **Keep the gate.** Async transport does not fix this — see §7.2. |
+### 7.1 Fix the four stale gate comments
 
-§6.1 calls these five "same gate," which is true of the source text and false of
-the reason. Their comment describes a **mechanical** consequence: a stretched step
-interval leaves a visible mark in the material. Making Core 0 non-blocking does
-nothing about it, because the cost is on **Core 1**, inside the ~5000-cycle step
-budget, and the RS485 exchange still has to happen there.
+The peripheral handlers' gate comment cites "the relay blocks Core 0 on a Core 1
+round trip (push + pop)" — a mechanism that no longer exists. §6.1 already
+collapsed the four verbatim copies into one; correct that copy, and the matching
+text on `nodepos`, to the reason that is actually load-bearing:
 
-Everything else — `stop` (`:952`), `resume` (`:962`), `cancel` (`:971`),
-`clearalarm` (`:980`), `alarmDeniesOn` (`:29`) — is untouched. Those are real
-policy, correctly placed.
+> Core 1 services channel 1 only between segments, and the exchange takes up to
+> `RESPONSE_TIMEOUT_MS` — many step intervals. Issued while a job is streaming,
+> that is a dwell at a segment boundary, which leaves a mark in the material.
 
-### 7.2 Keep the peripheral gate; fix its comment
+This is comment-only. No behaviour changes.
 
-Do not widen it. Keep the five at `stateIs(IDLE, PAUSED, ALARM)` and **rewrite the
-comment to the real reason** — one copy, in the shared handler §6.1 collapses them
-into, not four verbatim pastes citing a blocking round trip that no longer exists.
+### 7.2 The gate does not cover the window it claims — knowingly
 
-Widening it later is a separate, motion-side change. Whether the mark is visible at
-working step rates is a **hardware measurement**, and nobody has taken it. Until
-someone does, `knife_blower` mid-cut stays behind a PAUSE. §11 carries it.
+`stateIs(IDLE, PAUSED, ALARM)` keys on `machineState`, and `machineState` has
+already left `RUNNING` by the moment the damage becomes possible.
+
+`processMicroSegments()` drains the whole ring before `processBus()` reaches step
+3, so a request is never serviced mid-segment. The exposure is the window where
+the ring transiently empties **mid-job** because the host underfed it. On that
+path the emitter's tail runs (`emit/microsegment.cpp`):
+
+```c
+if (machineState == STATE_RUNNING) machineState = returnState;   // → IDLE
+```
+
+An underfed job therefore sits in `IDLE` between refills, and the gate admits
+every one of the nine — peripherals included. The gate is not wrong so much as
+keyed on the wrong fact: `machineState` answers "is the emitter busy right now",
+where the question is "is a job in flight". Nothing represents the latter today
+(`jobActive` means *suspended*, not *streaming*).
+
+**Decision: leave it.** The firmware stays ignorant of underfed jobs for now. The
+predicate is §11's, not this stage's — inventing one here would be a motion-side
+change smuggled into a refactor, and it needs a measurement (does the ring
+actually underrun at working feed rates?) that nobody has taken. What this stage
+owes is that the hole is written down rather than papered over by a comment
+claiming coverage the code does not have.
 
 ### 7.3 One relay in flight at a time
 
@@ -485,26 +503,28 @@ is what made an earlier draft reach for an epoch counter.
 It is unnecessary if only one relay is outstanding. The RS485 bus is serial, so
 serialising relays costs no throughput, and it buys:
 
-- **`alarmAtEntry` stays sufficient.** The existing pattern (`:906` capture, `:937`
-  recheck) is only defeated by `ALARM → IDLE → ALARM` within one command's window.
-  Clearing ALARM takes an operator command, and Core 0 cannot process one while a
-  relay is in flight. So the sequence is unreachable.
+- **`alarmAtEntry` stays sufficient.** The existing pattern (`cmd/axis.cpp`,
+  `cmdSetOrigin`) is only defeated by `ALARM → IDLE → ALARM` within one command's
+  window. Clearing ALARM takes an operator command, and Core 0 cannot process one
+  while a relay is in flight. So the sequence is unreachable.
 - **Reply ordering is trivially correct** — one outstanding command, one reply.
   This closes the async-ordering question rather than answering it.
 
-**`stop` is not affected.** It is a direct write to `machineState` (`:456`), not a
-relay, so it never queues behind one. That was the only real objection.
+**`stop` is not affected.** It is a direct write to `machineState`
+(`cmd/lifecycle.cpp`), not a relay, so it never queues behind one. That was the
+only real objection.
 
 ### 7.4 Asynchronous faults use the pattern that already exists
 
 A node fault raised by Core 1 mid-command needs nothing new.
 
-**It is an `AlarmReason`, not a state:** add `ALARM_NODE_FAULT = 5`. `shared.h:273`
-already records why — reason codes exist "so no sub-states are needed" — and no
-gate reads a reason, so the machine lands in `ALARM` and every command's existing
-`ALARM` gate applies unchanged.
+**It is an `AlarmReason`, not a state:** add `ALARM_NODE_FAULT = 5`.
+`ipc/shared_state.h` already records why — reason codes exist "so no sub-states
+are needed" — and no gate reads a reason, so the machine lands in `ALARM` and
+every command's existing `ALARM` gate applies unchanged.
 
-**Raise it exactly like soft-limit** (`core1.cpp:277`), which is already correct:
+**Raise it exactly like soft-limit** (`emit/microsegment.cpp`), which is already
+correct:
 
 ```c
 alarmReason  = ALARM_NODE_FAULT;   // reason first
@@ -512,23 +532,30 @@ __dmb();                           // ordering barrier
 machineState = STATE_ALARM;        // then the state
 ```
 
-Core 1 signals only; it must not write validity masks it does not own
-(`core1.cpp:275`). Core 0's `reconcileValidity()` drops the affected `nodeOrigin[]`
-entries and `axes_homed` bits on its next pass.
+Core 1 signals only; it must not write validity masks it does not own. Core 0's
+`reconcileValidity()` drops the affected origins and `axes_homed` bits on its
+next pass.
 
-**One real bug to fix while here.** The writer orders reason-before-state, but the
-reader at `control_plane.cpp:237` loads `machineState` then `alarmReason` with no
-barrier between — the reverse order, so it can observe the new state with the stale
-reason. Add the matching `__dmb()` between the two loads.
+**One real bug to fix while here.** The writer orders reason-before-state, but
+`reconcileValidity()` (`core0/position.cpp`) loads `machineState` then
+`alarmReason` with no barrier between — the reverse order, so it can observe the
+new state with the stale reason. Add the matching `__dmb()` between the two
+loads.
 
 ### 7.5 What this stage actually buys
 
-- A wedged Core 1 can no longer hang Core 0 — the deadline is in the transport.
-- `stop` is never queued behind a relay.
-- `pingnode` / `nodepos` work mid-job, which is exactly when you want to ask a node
-  whether it is still there.
-- The peripheral family's gate is stated once, with its true reason.
-- The `machineState` / `alarmReason` read barrier is fixed.
+Less than the draft claimed, which is the point of having rewritten it.
+
+- The `machineState` / `alarmReason` read barrier is fixed. This is a real race,
+  and the only behaviour change in the stage.
+- `ALARM_NODE_FAULT` exists, so Stage 6 has somewhere to raise a node fault.
+- One-relay-in-flight is written down as a constraint, which is what keeps
+  `alarmAtEntry` sufficient and reply ordering trivial.
+- The gate comments say what is actually true, and the gap between what the gate
+  covers and what it claims to cover is recorded rather than asserted away.
+
+Already delivered by Stage 1: a wedged Core 1 can no longer hang Core 0, and
+`stop` is never queued behind a relay.
 
 No wire change. No `web/src` coordination. No new state values.
 
@@ -697,6 +724,8 @@ Do not relitigate these.
 | Promote `ALARM_CONFIG` to a state? | No. `shared.h:273` — reason codes exist so no sub-states are needed. Only needed to complete a gate table that no longer exists. | §7 |
 | New state for a node fault? | No. `ALARM_NODE_FAULT` is an `AlarmReason`; no gate reads a reason, so `ALARM`'s existing gates apply unchanged. | §7.4 |
 | Guard async commands with an `alarmEpoch`? | No. One relay in flight at a time makes the existing `alarmAtEntry` compare (`:906`/`:937`) sufficient, and makes reply ordering trivial. | §7.3 |
+| Widen the gate on `pingnode` / `nodepos` / relayed `enable`/`disable`? | No — reversed. Their gate had a Core 0 half (a transport artifact, removed by Stage 1) and a Core 1 half (an RS485 exchange inside the step budget, unchanged). All nine gated commands share the second. Every gate stays. | §7 |
+| Fix the underfed-job gate hole in Stage 5? | No. `machineState` leaves `RUNNING` when the ring drains, so the gate admits commands in exactly the window it claims to cover. The right predicate is a motion-side change and needs a measurement; the firmware stays ignorant of underfed jobs until then. | §7.2 |
 | Add `STATE_HOMING`? | Nothing to add — already allocated and parsed on both sides (`shared.h:270`, `status.ts:34`). Reserved-but-understood; costs no wire change whenever auto-home lands. | §7 |
 | Where does `fw id` live? | `SET_SESSION` ack, not the periodic status head. Pays for a 16-bit token. | §8.2 |
 
@@ -710,12 +739,21 @@ Do not relitigate these.
   writing §3.3's API, since that is what has to support it. **§7.3 closes this by
   keeping one relay in flight at a time — one outstanding command, one reply.
   Confirm that constraint holds before designing anything more elaborate.**
-- **Is the mid-cut mark real?** (§7.3) The peripheral-command gate survives Stage 5
-  on the strength of a comment nobody has measured. Scope a hardware test: toggle
-  `knife_blower` mid-cut with the gate lifted and inspect the material. If no mark
-  appears at working step rates, those five commands lose their gate and the last
-  relay gate disappears. If it does, the fix is Core-1 side — defer the relay to a
-  segment boundary — not a state gate.
+- **What predicate should the bus-command gate use?** (§7.2) `stateIs(IDLE,
+  PAUSED, ALARM)` keys on `machineState`, which drops out of `RUNNING` whenever
+  the ring drains — so an underfed job admits every gated command in precisely
+  the window the gate exists to close. The question is "is a job in flight",
+  which nothing represents: `jobActive` means *suspended*. Candidates are a
+  streaming flag Core 0 sets at ingest, or `queuedUsIn != queuedUsOut`. **First
+  measure whether the ring underruns mid-job at working feed rates** — that
+  decides whether this is a live hole or a theoretical one. Until it is answered
+  the firmware is deliberately ignorant of underfed jobs.
+- **Is the mid-cut mark real?** (§7.1) Every gate here survives on the strength
+  of a comment nobody has measured. Scope a hardware test: toggle `knife_blower`
+  mid-cut with the gate lifted and inspect the material. If no mark appears at
+  working step rates, all nine commands lose their gate and the question above
+  dissolves with them. If it does, the fix is Core-1 side — defer the exchange to
+  a segment boundary — not a state gate.
 - **Error-string normalisation** (`err usage` vs `err bad_node`) — deferred out of
   §6 deliberately; needs the host in step.
 - **Immediate or latched alarm on a refused step** — [bus_alarm.md](bus_alarm.md)
