@@ -38,7 +38,54 @@ static uint8_t  settleLeft = 0;
 static uint32_t nextPollMs = 0;
 static uint32_t deadlineMs = 0;
 
+// ─── Leg span, for travel calibration (docs/homing.md §7) ────────────────────
+// How far the last COMPLETED leg actually moved, in the node's own steps.
+//
+// Free to collect: the arm ack and the terminal poll both already carry the
+// node's counter, so this is two subtractions and no extra bus traffic. It is
+// worth collecting because the node's pulser is the only thing counting during
+// a home -- Core 1 emits nothing, so machinePos cannot answer "how far did that
+// go", and the operator measuring a frame has no other source for it.
+//
+// PER LEG, not per home. The Pico sees four unrelated `home` commands and has
+// no idea they form a sequence (cmd/axis.cpp) -- inventing one here to sum them
+// would be the planning this module deliberately does not do. The seek leg is
+// the one that spans the frame, so the host reads this after leg 1.
+//
+// SURVIVES A FAILURE, and updates on every answered poll rather than only at the
+// end. How far a leg got before it stopped is precisely what a failure leaves
+// you asking, and pairing it with homefail= is what separates "the budget really
+// did run out" from "it stopped nowhere near its limit". Reading it live during
+// a seek works for the same reason.
+static bool     spanValid = false;
+static uint8_t  spanNode  = 0;
+static int32_t  spanFrom  = 0;
+static int32_t  spanTo    = 0;
+static bool     spanSeek  = false;  // was the measured leg a seek, or a retract?
+static int32_t  legStart  = 0;      // the in-flight leg's arm-time counter
+
+// Why the last home failed. ALARM_HOMING_FAIL alone conflates three different
+// faults with three different fixes, and the host cannot tell them apart from
+// the reason byte -- so it guessed, and printed "switch never reached within
+// <max_steps>" for a leg that had died 190k steps short of that budget.
+//
+// Each of these is a distinct thing to go and look at: a switch or a travel
+// figure, a bus, or a pulser. Naming them is the difference between a
+// diagnostic and a shrug.
+static uint8_t  failWhy = HOMEFAIL_NONE;
+
 bool homingActive(void) { return claimed; }
+
+bool homingLastSpan(uint8_t* node, int32_t* from, int32_t* to, bool* wasSeek) {
+    if (!spanValid) return false;
+    if (node)    *node    = spanNode;
+    if (from)    *from    = spanFrom;
+    if (to)      *to      = spanTo;
+    if (wasSeek) *wasSeek = spanSeek;
+    return true;
+}
+
+uint8_t homingFailWhy(void) { return failWhy; }
 
 void resumeOrHold(void) {
     if (homingLatched) {
@@ -67,7 +114,11 @@ static void homingRelease(uint8_t node) {
 // failure modes: a seek that failed never reached the switch, so its bit should
 // stay clear, and a retract that failed never escaped one, so its bit should
 // stay set. Both are what the last successful leg left behind.
-static void homingFail(void) {
+static void homingFail(uint8_t why) {
+    // The span is deliberately LEFT STANDING. How far the leg got before it
+    // stopped is the whole diagnostic -- read it with homefail= to tell a budget
+    // that genuinely ran out from one that stopped nowhere near its limit.
+    failWhy = why;
     homingRelease(hNode);
     alarmReason  = ALARM_HOMING_FAIL;
     machineState = STATE_ALARM;
@@ -131,6 +182,19 @@ bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
         return true;
     }
 
+    // The ack was sampled after homingArm() started the pulser, so a handful of
+    // steps may already be counted. At the slowest leg's interval that is tens
+    // of microseconds of travel -- irrelevant against a frame measured in tens
+    // of thousands of steps, and the alternative (a second poll before arming)
+    // costs a round trip and straddles the start.
+    legStart     = st.pos;
+    spanFrom     = st.pos;          // zero-length until the first poll lands
+    spanTo       = st.pos;
+    spanNode     = node;
+    spanSeek     = !wasRetract;
+    spanValid    = true;
+    failWhy      = HOMEFAIL_NONE;   // this leg has not failed yet
+
     const uint32_t now = millis();
     claimed      = true;
     hNode        = node;
@@ -138,6 +202,20 @@ bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
     settleLeft   = HOMING_SETTLE_POLLS;
     nextPollMs   = now + HOMING_POLL_MS;
     deadlineMs   = now + homingTimeoutMs(startUs, floorUs, rampSteps, maxSteps);
+    // The alarm this home was started FROM is retired here, at the arm, so that
+    // STATE_HOMING never coexists with a reason describing a machine that is no
+    // longer stopped. `home` is admitted in ALARM precisely because homing is
+    // how an operator recovers from one (cmdHome), and the node has just
+    // accepted the leg and started pulsing -- that is the moment the old reason
+    // stops being true, not some later point.
+    //
+    // Leaving it set is what wedged the machine: the reason outlived the state
+    // it described, homingTick's exit refused to touch a state carrying an
+    // unrecognised reason, and STATE_HOMING was left with no way out. Clearing
+    // it at the boundary means anything found in this byte later is NEW, which
+    // is what makes the exit below a simple question rather than a list.
+    alarmReason  = ALARM_NONE;
+    __dmb();
     machineState = STATE_HOMING;
     Serial.println("ok");
     return true;
@@ -158,16 +236,35 @@ void homingTick(void) {
     NodeStatus st;
     if (rpcNodeStatus(CMD_NODE_STATUS, hNode, 0, &st) != RPC_OK ||
         !st.hasStepperTail) {
-        if (++misses >= HOMING_POLL_MISSES) homingFail();
+        if (++misses >= HOMING_POLL_MISSES) homingFail(HOMEFAIL_POLL);
         return;
     }
     misses = 0;
+
+    // Span is updated on EVERY answered poll, not only when the leg succeeds.
+    //
+    // It used to be recorded only on success and CLEARED on failure, on the
+    // reasoning that a failed leg's distance is just its budget. That was wrong
+    // twice over: a leg that fails part-way has travelled some OTHER distance,
+    // and that distance is the single most useful number for working out why it
+    // stopped -- which is exactly the question a failure raises. Discarding it
+    // left `switch never reached within 211200 steps` with no way to tell
+    // whether the axis had run 211200 steps or 14000.
+    //
+    // Updating per poll also makes it live: `getstate` during a seek now shows
+    // how far the axis has gone, so a leg that is about to fail can be watched
+    // rather than reconstructed afterwards.
+    spanFrom  = legStart;
+    spanTo    = st.pos;
+    spanNode  = hNode;
+    spanSeek  = !wasRetract;
+    spanValid = true;
 
     if (st.flags & NODE_FLAG_HOMING) {
         // Still pulsing. The runaway budget is the node's, but Core 0 keeps its
         // own deadline anyway: the budget cannot catch a pulser that hangs with
         // the flag set, and the node would go on answering polls forever.
-        if ((int32_t)(now - deadlineMs) >= 0) homingFail();
+        if ((int32_t)(now - deadlineMs) >= 0) homingFail(HOMEFAIL_DEADLINE);
         return;
     }
 
@@ -178,7 +275,7 @@ void homingTick(void) {
                                :  (st.flags & NODE_FLAG_LIMIT);
     if (!ok) {
         if (settleLeft) { settleLeft--; return; }   // homingFinish() may not have run
-        homingFail();
+        homingFail(HOMEFAIL_BUDGET);
         return;
     }
 
@@ -190,19 +287,20 @@ void homingTick(void) {
     nodeLatchSet(hNode, !wasRetract);
 
     homingRelease(hNode);
-    // Retire OUR OWN leftover reason, and only that one. homingFail() writes the
-    // pair (ALARM, ALARM_HOMING_FAIL), but recovering the state does not
-    // implicitly retire the reason, so a failed home followed by a good one used
-    // to report IDLE while still naming the failure -- and the reason is what
-    // the host renders, so the machine read as broken after it had recovered.
-    // Anything else in there belongs to a fault this command did not cause and
-    // is not ours to clear.
-    //
-    // resumeOrHold() then decides IDLE vs ALARM/LIMIT_LATCHED from the mask
-    // above, which is why the clear is guarded: it must not run for a reason
-    // that outranks homing, and resumeOrHold() would overwrite one.
-    if (alarmReason == ALARM_HOMING_FAIL || alarmReason == ALARM_LIMIT_LATCHED ||
-        alarmReason == ALARM_NONE) {
-        resumeOrHold();
-    }
+
+    // Did anything take the machine while this leg ran? The arm cleared the
+    // reason byte, so the question is just "is it still ours" -- and the STATE
+    // is what answers it, not the reason. The poll above does bus I/O, so `stop`
+    // has a real window to land mid-tick; when it does, Core 1 has already swept
+    // the bus and moved the state to ESTOP/ALARM. Leave that alone: the fault
+    // owns the machine, and resumeOrHold() would announce IDLE for a machine
+    // whose nodes were just de-energised.
+    if (machineState != STATE_HOMING) return;
+
+    // Still ours, so the leg's outcome IS the machine's condition, and
+    // resumeOrHold() states it: IDLE, or ALARM/LIMIT_LATCHED when the axis is
+    // standing on its switch. Unconditional, because it is the only exit from
+    // STATE_HOMING on this path -- a guard here can only wedge the state, never
+    // protect it. Anything that needed protecting already failed the check above.
+    resumeOrHold();
 }
