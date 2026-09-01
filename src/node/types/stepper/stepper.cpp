@@ -74,6 +74,24 @@ static bool             currentDir       = false;
 #define LIMIT_LATCH_MS             500u
 #define LIMIT_LATCH_BYTES          (LIMIT_STREAM_BYTES_PER_SEC * LIMIT_LATCH_MS / 1000u)
 
+// Consecutive ASSERTED pulser samples before a seek believes its switch.
+//
+// The stream path above rejects glitches and the homing pulser did not: it
+// halted on a single port read, so one transient assert -- a motor cable
+// coupling into the switch line, a drag chain flexing -- stopped a seek dead
+// with its budget barely touched. Worse, it stopped SILENTLY: nothing latched,
+// so by the time the supervisor polled 25 ms later the pin had released and the
+// leg was indistinguishable from one that never found its switch at all. It
+// reported "switch never reached within 211200 steps" for an axis that had
+// stopped at 26241 and was nowhere near anything.
+//
+// Three samples, not the stream path's 500 ms: this is a distance, and it is
+// paid on every genuine trip. At the floor interval that is three steps -- tens
+// of microns -- against a seek whose whole purpose is to arrive at this switch.
+// The stream path can afford to be slow because it is deciding whether a
+// refusal becomes STICKY, not whether to refuse.
+#define HOMING_LIMIT_SAMPLES       3
+
 // Monotonic — counts every stream byte ever seen while asserted, and is NEVER
 // reset. It is the lifetime diagnostic: a switch that keeps chattering racks up
 // a total even though no single run ever latched, which is exactly the
@@ -99,6 +117,7 @@ struct HomingState {
     uint32_t remaining;   // runaway budget, in steps
     bool     dir;         // wire dir bit for the whole move
     bool     retract;     // true = ignore the switch; false = stop when it asserts
+    uint8_t  limitRun;    // consecutive asserted samples, for the debounce above
 };
 static volatile HomingState homing  = {0, 0, 0, 0, false, false};
 static volatile bool        homingActive = false;
@@ -108,6 +127,16 @@ static volatile bool        homingActive = false;
 // This is why CMD_HOME carries microseconds — the difference dies here and never
 // reaches the master or the config schema.
 #define HOMING_TICKS_PER_US ((F_CPU / 1000000UL) / 8UL)
+
+// Set by the pulser ISR when a SEEK stopped because its switch genuinely
+// asserted (debounced), as opposed to running its budget out. homingFinish()
+// turns it into limitLatched.
+//
+// Without this a seek's success was inferred from the pin still reading
+// asserted whenever the supervisor happened to poll, which is a different
+// question -- it makes a real trip that bounces look like a leg that found
+// nothing, and there is no way to tell the two apart after the fact.
+static volatile bool homingHitLimit = false;
 
 // Set by the pulser ISR when it stops, consumed once by node_loop(). The ISR
 // cannot do the finishing itself: clearing the latch and publishing the flags
@@ -224,14 +253,16 @@ static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs
     h.retract    = retract;
     h.floorTicks = (uint16_t)floorTicks;
     h.remaining  = maxSteps;
+    h.limitRun   = 0;
     // ramp_steps == 0 means no ramp: start at the cruise rate rather than
     // ramping over zero steps, which would be a divide by zero.
     h.interval   = rampSteps ? (uint16_t)startTicks : (uint16_t)floorTicks;
     h.rampStep   = rampSteps ? (uint16_t)((startTicks - floorTicks) / rampSteps) : 0;
 
     cli();
-    homing       = h;
-    homingActive = true;
+    homing         = h;
+    homingActive   = true;
+    homingHitLimit = false;
     sei();
 
     // DIR is set here, once, in loop context — so the pulser ISR never pays the
@@ -309,6 +340,13 @@ static void homingFinish(void) {
         limitLatched   = false;
         limitRunBase   = limitBytesAsserted;   // the next run starts from here
     }
+    // A seek that stopped ON its switch latches, so the fact survives the pin
+    // bouncing before the supervisor's next poll. This is what §1.5's "after a
+    // seek, LIMIT set means found" actually rests on -- previously it rested on
+    // the pin still being asserted at poll time, which is true when the axis is
+    // parked against the switch and false the instant the trip is electrically
+    // noisy, i.e. exactly when it matters.
+    if (!homing.retract && homingHitLimit) limitLatched = true;
 }
 
 // ─── The pulser (§1.3) ──────────────────────────────────────────────────────
@@ -327,7 +365,22 @@ ISR(TCA0_OVF_vect) {
     // A retract ignores the switch entirely — it starts on an asserted one, so
     // testing the level would stop it before it ever moved. Its only terminator
     // is the budget, which is therefore a distance, not a guard.
-    if (!homing.retract && HAL_LIMIT_ASSERTED()) { homingHalt(); return; }
+    if (!homing.retract) {
+        // Debounced, unlike the single port read this used to be. A run that
+        // breaks before HOMING_LIMIT_SAMPLES was a glitch and the seek carries
+        // on; one that reaches it is the switch, and is RECORDED as such rather
+        // than left for the supervisor to re-read off a pin that may have
+        // released by the time it looks.
+        if (HAL_LIMIT_ASSERTED()) {
+            if (++homing.limitRun >= HOMING_LIMIT_SAMPLES) {
+                homingHitLimit = true;
+                homingHalt();
+                return;
+            }
+        } else {
+            homing.limitRun = 0;
+        }
+    }
     if (homing.remaining == 0)                   { homingHalt(); return; }
 
     HAL_STEP_PORT.OUTSET = HAL_STEP_BM;
