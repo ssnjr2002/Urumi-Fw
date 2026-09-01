@@ -25,6 +25,32 @@ bool cmdGetState(const char*) {
     Serial.printf("state=%d enabled=0x%02x homed=0x%02x alarm=%d running=%d latched=0x%02x",
                   machineState, axes_enabled, axes_homed, alarmReason, runningReason,
                   homingLatched);
+
+    // `span` rides getstate rather than earning a command of its own, because
+    // this is already the poll that tells the host a leg finished -- the same
+    // reply that carries `latched` for the verdict now carries how far the leg
+    // ran, for free. A `homespan` command would have been a second round trip
+    // asking about the state this one just reported.
+    //
+    // Signed, and in the node's own steps. The sign catches an approach that ran
+    // the wrong way; steps stay steps because stepsPerUnit lives in the host's
+    // config, and a Pico that converted would be authoritative about a
+    // calibration it cannot check. Absent entirely when no completed leg stands
+    // behind it (docs/homing.md §7).
+    // `spanseek` is not decoration. A retract travels exactly the max_steps it
+    // was handed, so its span echoes the command back; only a seek measures
+    // something. After a full four-leg home this field describes leg 4's park
+    // retract, and without the flag that 800 reads like a frame measurement.
+    uint8_t spanNode; int32_t from, to; bool wasSeek;
+    if (homingLastSpan(&spanNode, &from, &to, &wasSeek)) {
+        Serial.printf(" span=%ld spannode=%d spanseek=%d",
+                      (long)(to - from), spanNode, wasSeek ? 1 : 0);
+    }
+    // Only meaningful alongside ALARM_HOMING_FAIL, and omitted otherwise so it
+    // cannot be read as a live fault. See homing.h for what the codes point at.
+    if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != HOMEFAIL_NONE) {
+        Serial.printf(" homefail=%d", homingFailWhy());
+    }
 #ifdef DEBUG_TIMING
     // texp/tmeas = expected vs measured duration (us) of the last completed
     // burst, from the intervals actually commanded vs wall-clock execution

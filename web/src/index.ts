@@ -247,6 +247,7 @@ export { packJog, stampSeq, unpackMicrosegment } from "./wire/format/packet.js";
 export {
     MachineState,
     AlarmReason,
+    HomeFail,
     RunningReason,
     MachineStatus,
     parseGetstate,

@@ -61,6 +61,7 @@ import {
     walkSeconds,
     STATE_NAMES,
     ALARM_NAMES,
+    AlarmReason,
     RUNNING_NAMES,
     maskStr,
     derivePlan,
@@ -491,7 +492,31 @@ homeRunBtn.addEventListener('click', async () => {
                     setHomeLine(`${a.label} — leg ${i + 1}/${n} · ${leg.kind} · dir ${leg.dir} · ` +
                                 `${leg.maxSteps} steps · ends switch ` +
                                 `${leg.endsLatched ? 'HELD' : 'CLEAR'}`, 'idle'),
-                onLegDone: leg => log(`  ${a.letter} ${leg.kind}: ok`, 'ok'),
+                // onLegDone fires BEFORE runLeg checks the verdict, so it cannot
+                // say "ok" -- it did for a while, and printed a confident pass
+                // on the line directly above the failure that contradicted it.
+                // Report what the machine actually said and let the throw speak.
+                onLegDone: (leg, st) => {
+                    log(`  ${a.letter} ${leg.kind}: state ${STATE_NAMES[st.state] ?? st.state}` +
+                        ` latched=0x${(st.axesLatched ?? 0).toString(16)}`, 'rx');
+                    // Only the SEEK leg spans the frame, and only if the
+                    // operator started at the far end — which is why this is
+                    // reported as a measurement, not written anywhere. Turning
+                    // it into maxTravel is their call (docs/homing.md §7).
+                    // NOT on a failed leg. onLegDone fires before runLeg checks
+                    // the verdict, and the span now survives a failure (it is the
+                    // diagnostic), so without this guard a seek that stopped on a
+                    // glitch printed its 164 mm as a travel measurement on the
+                    // line directly above "switch never reached".
+                    if (leg.kind === 'seek' && st.homeSpanSteps !== undefined
+                        && st.homeSpanWasSeek !== false
+                        && st.alarm !== AlarmReason.HOMING_FAIL) {
+                        const mm = Math.abs(st.homeSpanSteps) / a.cal.stepsPerUnit;
+                        log(`  ${a.letter} travelled ${Math.abs(st.homeSpanSteps)} steps` +
+                            ` = ${mm.toFixed(2)} ${a.unit} to reach the switch` +
+                            ` — that is maxTravel ONLY if it started at the far end`, 'note');
+                    }
+                },
             });
             log(`${a.label} homed — datum ${plan.datumSteps} steps`, 'ok');
         }
