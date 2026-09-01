@@ -18,6 +18,7 @@ import { settle, SettleError } from "../wire/link/settled.js";
 import {
     MachineState,
     AlarmReason,
+    HomeFail,
     AXIS_BITS,
     type MachineStatus,
 } from "../wire/format/status.js";
@@ -100,8 +101,31 @@ async function runLeg(
     opts.onLegDone?.(leg, st);
 
     if (st.alarm === AlarmReason.HOMING_FAIL) {
+        // The budget wording is only honest for HomeFail.BUDGET. The other two
+        // causes stop the leg wherever it happens to be, and quoting maxSteps at
+        // them blames the switch for a bus dropout — which is exactly what it
+        // did, reporting "within 211200 steps" for a leg that died at ~16000.
+        if (st.homeFail === HomeFail.POLL) {
+            throw new HomingError(leg, st,
+                `${leg.axis} ${leg.kind}: node stopped answering mid-leg — the bus, ` +
+                `not the axis. The move itself may have been fine; retry, and if it ` +
+                `recurs at the same place look at wiring or termination`);
+        }
+        if (st.homeFail === HomeFail.DEADLINE) {
+            throw new HomingError(leg, st,
+                `${leg.axis} ${leg.kind}: still pulsing past the supervisor's timeout — ` +
+                `the node's own ${leg.maxSteps}-step budget should have stopped it first`);
+        }
+        // BUDGET, or firmware predating homefail= (undefined). The original
+        // wording, which is correct for this case.
+        // Quote what it ACTUALLY travelled next to the budget. "never reached
+        // within 211200 steps" reads as a switch that was driven at and missed;
+        // if the axis in fact stopped at 14000, the budget was never the story
+        // and the message was pointing at the wrong component.
+        const got = st.homeSpanSteps !== undefined
+            ? ` (travelled ${Math.abs(st.homeSpanSteps)})` : "";
         throw new HomingError(leg, st, leg.endsLatched
-            ? `${leg.axis} ${leg.kind}: switch never reached within ${leg.maxSteps} steps`
+            ? `${leg.axis} ${leg.kind}: switch never reached within ${leg.maxSteps} steps${got}`
             : `${leg.axis} ${leg.kind}: never cleared the switch in ${leg.maxSteps} steps ` +
               `— back-off is likely shorter than the switch's release hysteresis`);
     }

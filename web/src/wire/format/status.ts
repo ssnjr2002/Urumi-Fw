@@ -71,6 +71,28 @@ export const RunningReason = {
 export type RunningReason = (typeof RunningReason)[keyof typeof RunningReason];
 const RUNNING_REASON_VALUES = Object.values(RunningReason) as readonly number[];
 
+/**
+ * Which fault ended a home, alongside AlarmReason.HOMING_FAIL (core0/homing.h).
+ *
+ * These three were one value until a seek died 190k steps short of its budget
+ * and the host confidently reported "switch never reached within 211200 steps"
+ * — an accusation against a switch that had done nothing wrong. They are
+ * diagnosed in three unrelated places, so they are three values.
+ */
+export const HomeFail = {
+    /** The node stopped itself and the switch never asserted. A genuine "never
+     *  reached": bad travel figure, wrong approach direction, or a dead switch. */
+    BUDGET: 1,
+    /** The node stopped ANSWERING mid-leg (4 polls in a row). Says nothing about
+     *  the axis — the bus is the suspect, and the motion may have been fine. */
+    POLL: 2,
+    /** Still pulsing past the supervisor's own timeout. The node's own budget
+     *  should have stopped it first, so this points at the pulser. */
+    DEADLINE: 3,
+} as const;
+export type HomeFail = (typeof HomeFail)[keyof typeof HomeFail];
+const HOME_FAIL_VALUES = Object.values(HomeFail) as readonly number[];
+
 // ── axis bitmask — bit0=X bit1=Y bit2=Z bit3=A ─────────────────────────────────
 
 export type AxisLetter = "x" | "y" | "z" | "a";
@@ -141,6 +163,37 @@ export class MachineStatus {
          * ALARM) is in `alarm`, which both planes carry.
          */
         readonly axesLatched: number | undefined = undefined,
+        /**
+         * How far the last COMPLETED homing leg moved, in that node's own steps,
+         * signed in the node's direction convention. The measurement behind a
+         * max-travel calibration (docs/homing.md §7).
+         *
+         * `undefined` means no completed leg stands behind it — no home since
+         * boot, the last one failed, or a binary sample (text plane only, same
+         * rule as `axesLatched`). Never 0 for "unknown": 0 is a real reading,
+         * and it means an axis that armed on its switch and went nowhere.
+         *
+         * Per LEG, not per home. The Pico sees four unrelated `home` commands
+         * and cannot know they form a sequence, so this is whichever leg
+         * finished last — the caller is the one that knows leg 1 was the seek
+         * and that its span is the frame.
+         */
+        readonly homeSpanSteps: number | undefined = undefined,
+        /** Bus id of the node `homeSpanSteps` was measured on. */
+        readonly homeSpanNode: number | undefined = undefined,
+        /**
+         * True if the leg behind `homeSpanSteps` was a SEEK. A retract travels
+         * exactly the max_steps it was handed, so its span echoes the command
+         * back and measures nothing — after a full four-leg home this is false
+         * and the span is leg 4's park retract, not the frame.
+         */
+        readonly homeSpanWasSeek: boolean | undefined = undefined,
+        /**
+         * Which fault ended the last home, when `alarm` is HOMING_FAIL. See
+         * HomeFail — the three causes are diagnosed in completely different
+         * places, and the reason byte alone cannot tell them apart.
+         */
+        readonly homeFail: HomeFail | undefined = undefined,
     ) {}
 
     homed(axis: AxisLetter): boolean {
@@ -207,6 +260,16 @@ export function parseGetstate(line: string): MachineStatus {
         // default for that case and not a guess: such firmware has no concept of
         // a latched limit, so no axis can be in one as far as it is concerned.
         fields.latched !== undefined ? toInt(fields.latched) : 0,
+        // Absent whenever no completed leg backs it, so `undefined` here is the
+        // firmware's own "nothing to report" and not merely an old-firmware
+        // fallback -- which is why it does NOT default to 0 the way `latched`
+        // above does. Signed, so toInt must not be the hex-tolerant path.
+        fields.span !== undefined ? parseInt(fields.span, 10) : undefined,
+        fields.spannode !== undefined ? parseInt(fields.spannode, 10) : undefined,
+        fields.spanseek !== undefined ? fields.spanseek === "1" : undefined,
+        fields.homefail !== undefined
+            ? enumFromStr(HOME_FAIL_VALUES, fields.homefail, HomeFail.BUDGET)
+            : undefined,
     );
 }
 
