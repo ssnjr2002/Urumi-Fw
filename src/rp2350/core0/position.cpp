@@ -206,13 +206,40 @@ void reconcileValidity(void) {
     __dmb();
     uint8_t ar = alarmReason;
 
+    // Edge-triggered, not level-triggered. The documented ESTOP recovery flow
+    // (axes_enable on -> setorigin -> unalarm, cmd/axis.cpp's cmdAxesEnable
+    // comment) runs entirely from INSIDE the same ALARM_ESTOP condition the two
+    // clears below key on. A level trigger re-ran both clears every loop pass
+    // for as long as that condition held, which stomped the very recovery it
+    // exists to gate: `enable` answered "ok" and really energised the node, but
+    // the NEXT loop pass -- one tick later, before the host's next command --
+    // zeroed axes_enabled again, and a setorigin taken mid-recovery was erased
+    // the same way. Each clear now fires once, on the rising edge into its own
+    // condition, and re-arms only once that condition has gone false again --
+    // which for axes_enabled means the state has left STATE_ALARM/ALARM_ESTOP
+    // (i.e. `unalarm` ran, or a fresh estop cycled back through STATE_ESTOP).
+    static bool originLatched  = false;
+    static bool enabledLatched = false;
+
     // Position dies the instant motion stops abruptly -- before the bus sweep.
-    if (st == STATE_ESTOP || ar == ALARM_ESTOP || ar == ALARM_SOFT_LIMIT)
+    bool originActive = (st == STATE_ESTOP || ar == ALARM_ESTOP || ar == ALARM_SOFT_LIMIT);
+    if (originActive && !originLatched) {
         originInvalidateAll();
+        originLatched = true;
+    } else if (!originActive) {
+        originLatched = false;
+    }
+
     // Energisation, however, is only false once Core 1's busDisableAll() has
     // actually run. Core 1 sets ALARM_ESTOP *before* the sweep and STATE_ALARM
     // *after* it, so the conjunction is precisely "the sweep has completed".
     // Keying on STATE_ESTOP instead would report the machine disarmed while
     // every EN pin was still asserted.
-    if (st == STATE_ALARM && ar == ALARM_ESTOP) axes_enabled = 0;
+    bool enabledActive = (st == STATE_ALARM && ar == ALARM_ESTOP);
+    if (enabledActive && !enabledLatched) {
+        axes_enabled = 0;
+        enabledLatched = true;
+    } else if (!enabledActive) {
+        enabledLatched = false;
+    }
 }
