@@ -193,10 +193,34 @@ extern volatile int32_t machinePos[4];
 // bit0=X bit1=Y bit2=Z bit3=A. `axes_homed` replaces the old positionValid bool
 // (datum known per axis); `axes_enabled` tracks which axis nodes are energised —
 // a present-but-disabled axis silently drops steps, so pre-flight checks it.
-// setorigin sets homed bits + zeros pos; enable/disable set/clear enabled bits;
-// estop clears both.
+// setorigin sets homed bits + zeros pos; estop clears both.
+//
+// `axes_enabled` is DERIVED, not commanded: reconcileValidity() rebuilds it each
+// Core 0 loop pass by projecting `nodeEnabled` (below) through the axis map. No
+// command handler writes it. Same shape as axes_homed ← nodeHomed and
+// homingLatched ← nodeLatched (core0/position.h), which is the standing rule
+// here: the NODE frame is the truth, the SLOT frame is a view of it.
 extern volatile uint8_t axes_homed;
 extern volatile uint8_t axes_enabled;
+
+// bit n = bus node n is energised. The node-frame truth behind `axes_enabled`.
+//
+// SINGLE WRITER: Core 1, and only ever as the outcome of a bus transaction it
+// actually completed — an ack in rpc_server.cpp, or the safe-off sweep in
+// bus/packet.cpp. Core 0 reads it and never writes it.
+//
+// It lives here rather than beside its siblings in core0/position.cpp because it
+// is the one node-frame mask with an ASYNCHRONOUS writer: Core 1 sweeps the bus
+// on estop and soft reset without being asked, so Core 0 cannot own it without
+// racing its own read-modify-writes (which is what it used to do — Core 0's
+// `axes_enabled |= …` against Core 1 zeroing the byte mid-update). nodeHomed and
+// nodeLatched stay Core-0-private precisely because nothing writes them
+// unprompted.
+//
+// Node-framed, not slot-framed, for the same reason nodeLatched is
+// (core0/position.h): energisation is a fact about a motor, and it survives a
+// rebind. Unbinding a slot does not de-energise anything.
+extern volatile uint16_t nodeEnabled;
 
 // Provisional bus-address ceiling for command relays. A real node registry
 // replaces this range check when the axis-map/ENGAGE work lands

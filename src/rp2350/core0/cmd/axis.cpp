@@ -59,9 +59,10 @@ bool cmdAxesEnable(const char* args) {
     for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
         uint8_t n = slotNodeAt(i);
         if (n == SLOT_NONE) continue;
+        // No bookkeeping here: Core 1 folds each ack into nodeEnabled as it
+        // relays, and reconcileValidity projects that onto the slots before the
+        // next command is served (ipc/shared_state.h).
         rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, n, 0);
-        if (on) axes_enabled |=  (1 << i);
-        else    axes_enabled &= ~(1 << i);
     }
     // De-energised → back-drivable → every bound origin is void. Keyed on the
     // node, not the slot, so a node that loses holding torque while PARKED
@@ -78,27 +79,17 @@ bool cmdAxesEnable(const char* args) {
 // peripherals included. This is the genuinely bus-wide verb that the old
 // `enable all` only claimed to be; `axes_enable` remains the axis-map form.
 //
-// Nobody answers a broadcast, so this cannot learn what actually happened.
-// The bookkeeping is therefore deliberately ASYMMETRIC, in the direction that
-// is safe to be wrong in:
-//   off → clear axes_enabled and void every origin. If a node missed the
-//         frame we under-claim (think it's off when it's live) — the operator
-//         is told less is armed than is, and position is invalid regardless.
-//   on  → touch NOTHING. Motion gates on axes_enabled, so believing a node
-//         armed when it never heard us is the direction that moves a machine
-//         that isn't ready. Use `axes_enable on` to actually arm the map; it
-//         relays per node and gets an ACK for each.
-// TODO(verify): once the CMD_NODE_STATUS poll lands, `on` can set the bits
-// from what the nodes report rather than staying silent.
+// Nobody answers a broadcast, so this cannot learn what actually happened. The
+// energisation half of that asymmetry now lives where the frame goes out
+// (core1/rpc_server.cpp's broadcast path): off clears nodeEnabled, on touches
+// nothing. What stays here is the half Core 1 has no business in — origins are
+// Core 0's, and a de-energised bus is back-drivable, so every datum dies.
 bool cmdBusEnable(const char* args) {
     if (busGateDenies()) return true;
     if (*args == '\0') { Serial.println("err usage"); return true; }
     bool on = parseState(args);
     rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, BUS_ADDR_BROADCAST, 0);
-    if (!on) {
-        axes_enabled = 0;
-        originInvalidateAll();
-    }
+    if (!on) originInvalidateAll();
     Serial.println("ok");
     return true;
 }
@@ -111,9 +102,11 @@ bool cmdEnable(const char* args) {
     if (busGateDenies()) return true;
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err bad_node"); return true; }
+    // The axis bookkeeping this used to do by hand is gone: it keyed on the slot
+    // and set the bit unconditionally, discarding the RpcResult entirely — so a
+    // node that timed out still printed `ok` and still read as energised. Core 1
+    // now records it from the ack, and only from an ack.
     rpcNodeCmd(CMD_ENABLE, node, 0);
-    uint8_t s = nodeSlot(node);      // axis bookkeeping keyed on the slot
-    if (s != SLOT_NONE) axes_enabled |= (1 << s);
     Serial.println("ok");
     return true;
 }
@@ -127,9 +120,8 @@ bool cmdDisable(const char* args) {
     // it currently holds a slot, so its origin is void either way. This
     // is exactly the case slot-indexed bookkeeping could not express —
     // a PARKED head losing holding torque and sagging under gravity.
+    // (The energisation bit itself is Core 1's now; only the origin is ours.)
     originInvalidate(node);
-    uint8_t s = nodeSlot(node);
-    if (s != SLOT_NONE) axes_enabled &= ~(1 << s);
     Serial.println("ok");
     return true;
 }
@@ -411,6 +403,22 @@ bool cmdHome(const char* args) {
     while (slot < MOTION_SLOTS && !(m & (1 << slot))) slot++;
     const uint8_t node = slotNodeAt(slot);
     if (node == SLOT_NONE) { Serial.println("err unbound"); return true; }
+
+    // A de-energised node accepts CMD_HOME and pulses into a motor that cannot
+    // turn: the switch is never reached, so the leg burns its entire max_steps
+    // budget -- tens of seconds on a seek -- and then reports HOMING_FAIL, which
+    // reads as a broken switch rather than a motor nobody turned on.
+    //
+    // This is the gate ALARM does not provide and should not: `home` is admitted
+    // in ALARM because homing is how an operator recovers from an estop, and the
+    // estop sweep de-energises the bus on its way in. The two are separate facts
+    // -- "the machine faulted" and "this axis can move" -- and only the second
+    // one decides whether a leg is worth arming. axes_enabled is projected from
+    // node truth every pass (position.cpp), so this reads what the bus last
+    // confirmed rather than what a command hoped for.
+    if (!(axes_enabled & (1 << slot))) {
+        Serial.println("err not_enabled"); return true;
+    }
 
     char* end;
     unsigned long v[6];

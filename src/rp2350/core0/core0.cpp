@@ -112,7 +112,13 @@ void loop() {
     runningReason = RUNNING_JOB;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
     axes_homed = 0;
-    axes_enabled = 0;
+    // axes_enabled is DERIVED and deliberately not wiped here: reconcileValidity
+    // rebuilds it from nodeEnabled at the top of the loop below, before anything
+    // host-observable runs. nodeEnabled itself is Core 1's — Core 0 must not
+    // write it — and the reset path's own busDisableAll() sweep is what clears
+    // it, per node, as each one confirms (core1/core1.cpp, bus/packet.cpp).
+    // Zeroing the projection here would just assert a value one pass early, and
+    // give a derived byte a second writer.
     jobActive = false;
     resumePos[0] = resumePos[1] = resumePos[2] = resumePos[3] = 0;
     pauseRequested = false;
