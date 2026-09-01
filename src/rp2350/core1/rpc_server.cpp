@@ -80,6 +80,40 @@ static uint8_t buildPayload(const RpcRequest* req, uint8_t* out) {
     return n;
 }
 
+// Fold an energisation fact out of a CONFIRMED reply into nodeEnabled.
+//
+// Core 1 is the sole writer of that mask (ipc/shared_state.h) and this is the
+// only place a bus transaction produces one, so every path that could learn it
+// -- enable, disable, axes_enable's per-node relay, bind-time ENGAGE, a nodestat
+// poll, a homing leg -- funnels through here. Core 0 used to do this at four
+// separate call sites, each keying on the slot and each ASSUMING success:
+// cmdEnable discarded the RpcResult entirely and set the bit even on a timeout.
+//
+// Two evidence kinds, because the node answers CMD_ENABLE/CMD_DISABLE with a
+// bare ack (node/dispatch.cpp) and everything else with a status payload:
+//   ack     -> the command we sent IS the fact, since the node acked doing it
+//   status  -> read NODE_FLAG_ENABLED, the node's own live self-report
+//
+// ONLY CONFIRMED REPLIES WRITE. A timeout or a NAK leaves the mask alone rather
+// than guessing in either direction -- see busDisableAll() in bus/packet.cpp for
+// what that costs and why it is still the honest choice.
+//
+// Decoded rather than peeking buf[1]: core1_rpc.h keeps the NS_* offsets inside
+// that module, and nodeStatusDecode is a pure function either core may call.
+static void noteEnabled(const RpcRequest* req, const uint8_t* buf, uint8_t rxLen) {
+    if (req->node > BUS_ADDR_MAX) return;
+    const uint16_t bit = 1u << req->node;
+
+    if (req->cmd == CMD_ENABLE)  { nodeEnabled |=  bit; return; }
+    if (req->cmd == CMD_DISABLE) { nodeEnabled &= ~bit; return; }
+
+    if (!answersWithStatus(req->cmd)) return;
+    NodeStatus ns;
+    if (!nodeStatusDecode(buf, rxLen, &ns)) return;
+    if (ns.flags & NODE_FLAG_ENABLED) nodeEnabled |=  bit;
+    else                              nodeEnabled &= ~bit;
+}
+
 // One node transaction: build, send, wait, reply.
 static void serveNodeCmd(const RpcRequest* req) {
     // Broadcast: one frame to every node, answered by none. RPC_OK here means
@@ -94,6 +128,15 @@ static void serveNodeCmd(const RpcRequest* req) {
     if (req->node == BUS_ADDR_BROADCAST) {
         busQuiesce();
         const bool sent = sendBroadcast(req->cmd);
+        // Asymmetric on purpose, and in the direction that is safe to be wrong
+        // in -- the doctrine cmdBusEnable used to carry on Core 0, now applied
+        // where the frame actually goes out. OFF clears the whole mask: if a
+        // node missed the frame we under-claim, and the operator is told less is
+        // armed than is. ON touches NOTHING: motion gates on these bits, so
+        // believing a node armed when it never heard us is the direction that
+        // moves a machine that is not ready. `axes_enable on` relays per node
+        // and gets an ack for each; that is what actually arms the map.
+        if (sent && req->cmd == CMD_DISABLE) nodeEnabled = 0;
         replyWith(req, sent ? RPC_OK : RPC_BAD_REPLY, nullptr, 0);
         return;
     }
@@ -136,6 +179,7 @@ static void serveNodeCmd(const RpcRequest* req) {
         replyWith(req, RPC_BAD_REPLY, nullptr, 0);
         return;
     }
+    noteEnabled(req, buf, rxLen);      // confirmed — fold in what it told us
     replyWith(req, RPC_OK, buf, rxLen);
 }
 

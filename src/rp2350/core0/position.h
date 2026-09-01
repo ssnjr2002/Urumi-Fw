@@ -11,8 +11,17 @@
 // ownership domains:
 //
 //   Core-0 statics   slotNode[], nodeOrigin[], nodeHomed, parkPos[], parkSeen
-//   Cross-core       machinePos[] (Core 1 writes it), axes_homed, axes_enabled
+//   Cross-core       machinePos[] and nodeEnabled (Core 1 writes both),
+//                    axes_homed, axes_enabled
 //   Node-reported    NODE_FLAG_DATUM, the node's own step counter
+//
+// nodeEnabled is the one node-frame mask that is NOT a Core-0 static, because it
+// is the one with an asynchronous writer -- Core 1 sweeps the bus safe on estop
+// and soft reset without being asked. It is declared in ipc/shared_state.h with
+// the reasoning; reconcileValidity() projects it onto axes_enabled here, the
+// same way axes_homed and homingLatched are projections of nodeHomed and
+// nodeLatched. The rule the three share: the NODE frame is the truth, the SLOT
+// frame is a view, and a view is never written directly by a command handler.
 //
 // slotAdoptStatus() is the join of all three. Cutting between "axis map" and
 // "datum model" would put the two halves of that conjunction in different files.

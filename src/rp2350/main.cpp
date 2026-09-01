@@ -31,7 +31,8 @@ volatile uint8_t runningReason  = RUNNING_JOB;
 // Position model (Layer 4) — counts always retained; bits say the datum is known
 volatile int32_t machinePos[4]  = {0, 0, 0, 0};   // X, Y, Z, A steps
 volatile uint8_t axes_homed     = 0;              // none homed until first setorigin
-volatile uint8_t axes_enabled   = 0;              // none energised until enable
+volatile uint8_t axes_enabled   = 0;              // derived — reconcileValidity()
+volatile uint16_t nodeEnabled   = 0;              // none energised until a node acks
 
 // Paused-job context (slimmed for Phase 1 — see shared.h)
 volatile bool    jobActive      = false;
