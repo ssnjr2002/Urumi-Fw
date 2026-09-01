@@ -105,9 +105,10 @@ const char* rpcResultText(RpcResult r) {
         case RPC_NAK: break;
     }
     switch (s_lastNakReason) {
-        case NAK_UNSUPPORTED: return "nak unsupported";
-        case NAK_BAD_TOKEN:   return "nak bad_token";
-        case NAK_BAD_ARG:     return "nak bad_arg";
+        case NAK_UNSUPPORTED:      return "nak unsupported";
+        case NAK_BAD_TOKEN:        return "nak bad_token";
+        case NAK_BAD_ARG:          return "nak bad_arg";
+        case NAK_INTENT_MISMATCH:  return "nak intent_mismatch";
         default: break;
     }
     // An unknown reason still reports as a nak. Degrading it to "timeout" would
@@ -196,9 +197,9 @@ RpcResult rpcSwitchGet(uint8_t node, uint8_t* level) {
     return RPC_OK;
 }
 
-RpcResult rpcHome(uint8_t node, uint8_t dir, uint16_t startIntervalUs,
-                  uint16_t floorIntervalUs, uint16_t rampSteps,
-                  uint32_t maxSteps, NodeStatus* out) {
+RpcResult rpcHome(uint8_t node, uint8_t dir, bool intendedRetract,
+                  uint16_t startIntervalUs, uint16_t floorIntervalUs,
+                  uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out) {
     // The node's CMD_HOME payload, big-endian, laid out once here instead of
     // being smeared across four FIFO words and unpacked on the far side.
     RpcRequest req = {};
@@ -206,7 +207,8 @@ RpcResult rpcHome(uint8_t node, uint8_t dir, uint16_t startIntervalUs,
     req.cmd  = CMD_HOME;
     req.node = node;
     req.argLen = CMD_HOME_PAYLOAD_LEN;
-    req.args[0]  = dir & 0x01;
+    // bit0 = dir, bit1 = intent (include/common.h, CMD_HOME payload).
+    req.args[0]  = (dir & 0x01) | (intendedRetract ? 0x02 : 0x00);
     req.args[1]  = (uint8_t)(startIntervalUs >> 8);
     req.args[2]  = (uint8_t)(startIntervalUs);
     req.args[3]  = (uint8_t)(floorIntervalUs >> 8);

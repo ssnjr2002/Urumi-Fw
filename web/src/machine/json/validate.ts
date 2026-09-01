@@ -218,7 +218,75 @@ const dutyLimitsCoherent: Rule = (config) =>
         return out;
     });
 
+/**
+ * Homing recipes that would misbehave on the machine rather than in the parser.
+ *
+ * These are semantic checks, so they live here and not in load.ts: every one of
+ * them parses fine and only goes wrong when a motor turns. The errors are the
+ * ones with a physical consequence — a hard-stop crash, a datum in the wrong
+ * place, or a leg that reports failure on healthy hardware.
+ */
+const homingCoherent: Rule = ({ machine }) =>
+    namedAxes(machine).flatMap(([path, ax]) => {
+        const h = ax.homing;
+        if (h === undefined) return [];
+        const p = `${path}.homing`;
+        const issues: Issue[] = [];
+
+        // Every one of these is a divisor or a distance; a zero produces an
+        // infinite step interval or a zero-step leg, neither of which the
+        // firmware can act on sensibly.
+        for (const k of ["hardTravel", "pullInFeed", "seekFeed", "latchFeed",
+                         "backoffMm", "parkMm"] as const) {
+            if (h[k] <= 0) issues.push(error(`${p}.${k}: must be > 0`));
+        }
+        if (h.rampSteps < 0) issues.push(error(`${p}.rampSteps: must be >= 0`));
+
+        // The slow leg is what sets repeatability; if it is not slower than the
+        // fast one, leg 3 is not a re-approach and the whole two-pass structure
+        // buys nothing.
+        if (h.latchFeed >= h.seekFeed) {
+            issues.push(error(`${p}.latchFeed: must be < seekFeed (${h.seekFeed})`));
+        }
+        // A pull-in above the cruise makes the "ramp" a decel, so the axis hits
+        // the switch at the FASTEST point of the leg.
+        if (h.pullInFeed > h.seekFeed) {
+            issues.push(error(`${p}.pullInFeed: must be <= seekFeed (${h.seekFeed})`));
+        }
+        // The seek runs at seekFeed for nearly its whole length, so the axis
+        // ceiling applies to it exactly as it does to a job move.
+        if (ax.maxFeed > 0 && h.seekFeed > ax.maxFeed) {
+            issues.push(error(`${p}.seekFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
+        }
+        // Leg 4 retracts parkMm from the switch, so a park at or beyond the far
+        // end is not a position on this axis at all.
+        if (h.parkMm >= h.hardTravel) {
+            issues.push(error(`${p}.parkMm: must be < hardTravel (${h.hardTravel})`));
+        }
+        // Leg 3 re-approaches from the back-off point, so a back-off longer than
+        // the park means the axis is left INSIDE the region leg 3 crossed —
+        // legal, but it means leg 4 travelled less than leg 2 and the axis is
+        // closer to the switch than it started. Usually a transposed pair.
+        if (h.backoffMm > h.parkMm) {
+            issues.push(warn(
+                `${p}.backoffMm (${h.backoffMm}) > parkMm (${h.parkMm}) — ` +
+                `the axis parks closer to the switch than it backed off`,
+            ));
+        }
+        // Not an error: homing legitimately moves outside the soft envelope,
+        // since no datum exists yet to measure that envelope from. But a
+        // hardTravel under maxTravel means one of the two is simply wrong.
+        if (ax.maxTravel > 0 && h.hardTravel < ax.maxTravel) {
+            issues.push(warn(
+                `${p}.hardTravel (${h.hardTravel}) < ${path}.maxTravel ` +
+                `(${ax.maxTravel}) — the soft limit exceeds the physical frame`,
+            ));
+        }
+        return issues;
+    });
+
 const RULES: readonly Rule[] = [
+    homingCoherent,
     nonNegativeCeilings,
     nonNegativeTargets,
     xyMustBeCapped,

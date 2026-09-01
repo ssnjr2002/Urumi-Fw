@@ -63,6 +63,8 @@ import {
     ALARM_NAMES,
     RUNNING_NAMES,
     maskStr,
+    derivePlan,
+    runHoming,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -96,6 +98,12 @@ const jogFeed      = $('jog-feed');
 const jogCancelBtn = $('jog-cancel');
 const jogStateEl   = $('jog-state');
 const jogPanel     = $('jog-panel');
+
+const homeAxesEl   = $('home-axes');
+const homeDryBtn   = $('home-dry');
+const homeRunBtn   = $('home-run');
+const homeStopBtn  = $('home-stop');
+const homeLine     = $('home-line');
 
 const gotoAxesEl   = $('goto-axes');
 const gotoHead     = $('goto-head');
@@ -238,6 +246,7 @@ function rebuildFromConfig() {
     renderHeadSel();
     renderFrameSel();
     renderJogPanel();
+    renderHomePanel();
     renderPeriphPanel();
     renderGotoHead();
     renderAll();
@@ -346,14 +355,163 @@ headSel.addEventListener('change', renderAll);
 
 function renderAxisMap() {
     const committed = ctl?.committed ?? null;
+    // Homed state per BOUND slot, which is the only place it means anything —
+    // an empty slot has no datum by definition. Worth showing beside the map
+    // rather than only as the `axesHomed` mask on the right: the firmware
+    // re-derives the mask from each incoming node when a slot binds, so a head
+    // swap can change what is homed without anything moving, and this is the
+    // line an operator is already looking at when that happens.
+    const homed = lastStatus?.axesHomed ?? 0;
     const shown = committed
-        ? committed.map(v => (v === null ? '—' : v)).join('  ')
+        ? committed.map((v, s) =>
+            v === null ? '—' : `${v}${homed & (1 << s) ? '✓' : '·'}`).join('  ')
         : '— — — —';
     const h = committedHead();
     mapLine.textContent = `slots X Y Z A = ${shown}` +
         (h !== null ? `  (head ${h})` : committed ? '  (no head matches)' : '');
     mapLine.dataset.kind = h !== null ? 'ok' : 'idle';
 }
+
+// ── homing ──────────────────────────────────────────────────────────────────
+//
+// The panel drives src/homing/: derivePlan() turns an AxisConfig into four legs
+// and a datum, runHoming() arms each leg and waits. Nothing about the four-leg
+// structure or the arithmetic lives here — a demo that re-derived any of it
+// would be a second implementation to keep in step with the machine.
+
+/** The live home, if any: { abort } — abort is a flag runHoming does not read;
+ *  the Stop button estops, because mid-home there is nothing to unwind to. */
+let homing = null;
+
+/** Axis rows that CAN be homed: a homing block in the config and a node present. */
+const homeableAxes = () => axes.filter(a => a.present && a.ax.homing !== undefined);
+
+// Delegated, and attached once: renderHomePanel() replaces the checkboxes on
+// every config load, so a listener per box would stack up.
+homeAxesEl.addEventListener('change', renderAll);
+
+function renderHomePanel() {
+    homeAxesEl.innerHTML = '';
+    const rows = config ? homeableAxes() : [];
+    if (rows.length === 0) {
+        const s = document.createElement('span');
+        s.className = 'hint';
+        s.textContent = 'No axis in this config has a homing block.';
+        homeAxesEl.appendChild(s);
+        return;
+    }
+    for (const a of rows) {
+        const l = document.createElement('label');
+        l.className = 'name';
+        l.innerHTML = `<input type="checkbox" data-home="${a.key}" checked> ${a.label}` +
+                      ` <span class="tick" data-hometick="${a.key}">·</span>`;
+        homeAxesEl.appendChild(l);
+    }
+    renderHomeTicks();
+}
+
+/**
+ * The homed flag per selectable axis. Same mask the map line reads, shown a
+ * second time here because this is the panel you look at when deciding what to
+ * home -- being told "X is already done" one line away from the checkbox is the
+ * whole point.
+ *
+ * A Z/A on the head that is NOT engaged reads `—`, not `·`: its slot currently
+ * holds the other head's node, so the mask has nothing to say about it. `·`
+ * would be a claim ("not homed") the machine never made.
+ */
+function renderHomeTicks() {
+    const homed = lastStatus?.axesHomed ?? 0;
+    const engaged = committedHead();
+    for (const el of homeAxesEl.querySelectorAll('[data-hometick]')) {
+        const a = axes.find(r => r.key === el.dataset.hometick);
+        if (!a) continue;
+        const off = a.head !== undefined && a.head !== engaged;
+        el.textContent = off ? '—' : (homed & (1 << a.slot) ? '✓' : '·');
+        el.dataset.kind = off ? 'off' : (homed & (1 << a.slot) ? 'ok' : 'idle');
+    }
+}
+
+/** The checked rows, minus any belonging to a head that is not engaged. */
+function selectedHomeAxes() {
+    const engaged = committedHead();
+    return [...homeAxesEl.querySelectorAll('input[data-home]')]
+        .filter(cb => cb.checked && !cb.disabled)
+        .map(cb => axes.find(a => a.key === cb.dataset.home))
+        .filter(a => a && (a.head === undefined || a.head === engaged));
+}
+
+function setHomeLine(text, kind = 'idle') {
+    homeLine.textContent = text;
+    homeLine.dataset.kind = kind;
+}
+
+homeDryBtn.addEventListener('click', () => {
+    const rows = selectedHomeAxes();
+    if (rows.length === 0) { setHomeLine('nothing selected', 'idle'); return; }
+    for (const a of rows) {
+        let plan;
+        try {
+            plan = derivePlan(a.letter, a.ax);
+        } catch (e) {
+            log(`${a.label}: ${e.message}`, 'err');
+            continue;
+        }
+        const mm = (plan.datumSteps / a.cal.stepsPerUnit).toFixed(1);
+        log(`${a.label} — toward=dir ${plan.legs[0].dir}   ` +
+            `datum ${plan.datumSteps} steps (${mm} ${a.unit})`, 'note');
+        plan.legs.forEach((g, i) => {
+            const ramp = g.startUs === g.floorUs ? `${g.floorUs}us` : `${g.startUs}->${g.floorUs}us`;
+            // `<=` for a seek, `=` for a retract: a seek stops at the switch and
+            // its budget is only a runaway cap, while a retract ignores the
+            // switch and travels EXACTLY this far. That difference is the whole
+            // reason leg 4's distance is knowable and leg 1's is not.
+            const budget = g.endsLatched ? `<=${g.maxSteps}` : `=${g.maxSteps}`;
+            log(` ${i + 1} ${g.kind.padEnd(8)} dir ${g.dir}  ${ramp.padEnd(13)}` +
+                `ramp ${String(g.rampSteps).padEnd(5)}${budget.padEnd(9)}` +
+                `ends: switch ${g.endsLatched ? 'HELD' : 'CLEAR'}`, 'rx');
+        });
+    }
+    setHomeLine(`dry run: ${rows.length} axis(es) — see console`, 'ok');
+});
+
+homeRunBtn.addEventListener('click', async () => {
+    const rows = selectedHomeAxes();
+    if (rows.length === 0 || !ctl) return;
+    homing = {};
+    renderAll();
+    try {
+        // Sequential, and not merely for tidiness: the firmware answers
+        // `err busy` to a second `home` while one is in flight, because Core 0
+        // supervises exactly one at a time.
+        for (const a of rows) {
+            const plan = derivePlan(a.letter, a.ax);
+            await runHoming(link, plan, {
+                onLeg: (leg, i, n) =>
+                    setHomeLine(`${a.label} — leg ${i + 1}/${n} · ${leg.kind} · dir ${leg.dir} · ` +
+                                `${leg.maxSteps} steps · ends switch ` +
+                                `${leg.endsLatched ? 'HELD' : 'CLEAR'}`, 'idle'),
+                onLegDone: leg => log(`  ${a.letter} ${leg.kind}: ok`, 'ok'),
+            });
+            log(`${a.label} homed — datum ${plan.datumSteps} steps`, 'ok');
+        }
+        setHomeLine(`homed: ${rows.map(a => a.letter).join(' ')}`, 'ok');
+    } catch (e) {
+        setHomeLine(e.message, 'error');
+        log(e.message, 'err');
+    } finally {
+        homing = null;
+        // The datum landed via setorigin, so the homed mask has changed and the
+        // last poll predates it.
+        if (ctl) await ctl.refresh().catch(() => {});
+        renderAll();
+    }
+});
+
+// Stop, not "cancel". A home is four legs deep in the node's own pulser and
+// there is no partial state to unwind to — the axis is somewhere between two
+// known points and only a fresh home can say where. estop() is the honest verb.
+homeStopBtn.addEventListener('click', () => { if (ctl) void ctl.estop().catch(() => {}); });
 
 // ── connect / disconnect ────────────────────────────────────────────────────
 
@@ -495,6 +653,8 @@ function wireController(c) {
     c.on('status', st => {
         notePeripheralPark(st.state);
         renderStatus(st);
+        renderAxisMap();     // the map line carries the homed ticks
+        renderHomeTicks();   // and so does each homing checkbox
         statusBanner.dataset.kind = 'ok';
         statusBanner.textContent = `last poll ${new Date().toLocaleTimeString()}`;
         renderLinkStats();
@@ -503,7 +663,9 @@ function wireController(c) {
         statusBanner.dataset.kind = 'error';
         statusBanner.textContent = e.message;
     });
-    c.on('committed', renderAxisMap);
+    // A commit re-derives the homed mask from the incoming nodes without
+    // anything moving, so both views of it have to be repainted.
+    c.on('committed', () => { renderAxisMap(); renderHomeTicks(); });
     c.on('setup', renderAll);
     c.on('busy', renderAll);
 }
@@ -613,6 +775,13 @@ function renderStatus(st) {
         ['alarm',       `${ALARM_NAMES[st.alarm] ?? st.alarm}`],
         ['axesHomed',   `0x${st.axesHomed.toString(16)} ${maskStr(st.axesHomed)}`],
         ['axesEnabled', `0x${st.axesEnabled.toString(16)} ${maskStr(st.axesEnabled)}`],
+        // '—' here is "the poll cannot see it", not "nothing is latched". The
+        // panel is fed by the binary STATUS_RSP, which has no field for the
+        // mask; only a text `getstate` carries it. Rendering 0x0 would claim
+        // every switch is clear on the strength of a frame that never asked.
+        ['axesLatched', st.axesLatched === undefined
+            ? '—  (binary poll — run getstate)'
+            : `0x${st.axesLatched.toString(16)} ${maskStr(st.axesLatched)}`],
         ['bufCount',    fmt(st.bufCount)],
         ['expectedSeq', fmt(st.expectedSeq)],
         ['queuedUs',    st.queuedUs === undefined ? '—' : `${st.queuedUs} (${(st.queuedUs / 1000).toFixed(1)} ms)`],
@@ -1676,7 +1845,7 @@ function confirmSwap(req) {
 function renderAll() {
     const on  = isConnected();
     const cfg = config !== null;
-    const busy = jog !== null || goTo !== null;
+    const busy = jog !== null || goTo !== null || homing !== null;
 
     connectBtn.disabled    = on;
     disconnectBtn.disabled = !on;
@@ -1708,6 +1877,21 @@ function renderAll() {
         b.disabled = b.dataset.absent === '1' || wrongHead || !on || goTo !== null || running;
     }
     mapCommit.disabled = !on || !cfg;
+
+    // A row for a head that is not engaged is dead for the same reason the jog
+    // rows are: slots 2/3 are bound to the OTHER head's motors, so homing "Z"
+    // would drive the wrong one. Commit that head's map first.
+    for (const cb of homeAxesEl.querySelectorAll('input[data-home]')) {
+        const a = axes.find(x => x.key === cb.dataset.home);
+        cb.disabled = !a || (a.head !== undefined && a.head !== engaged);
+    }
+    const homeSel = cfg ? selectedHomeAxes().length : 0;
+    // Dry run works offline — it is arithmetic on the config, and checking the
+    // numbers before anything moves is most of its value.
+    homeDryBtn.disabled  = !cfg || homeSel === 0;
+    homeRunBtn.disabled  = !on || !cfg || homeSel === 0 || busy || running ||
+                           committedHead() === null;
+    homeStopBtn.disabled = homing === null;
 
     gotoStack.disabled = !cfg;
     gotoBuild.disabled = !cfg;

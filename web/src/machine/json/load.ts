@@ -50,6 +50,7 @@ import {
     NodeType,
     type BusNode,
     type AxisConfig,
+    type HomingConfig,
     type OpTarget,
     type MachineTarget,
     type ToolHead,
@@ -83,6 +84,19 @@ interface JsonAxis {
     readonly maxTravel?: number;
     readonly invert?: boolean;
     readonly rotary?: boolean;
+    readonly homing?: JsonHoming;
+}
+
+interface JsonHoming {
+    readonly kind?: string;
+    readonly hardTravel?: number;
+    readonly atOrigin?: boolean;
+    readonly pullInFeed?: number;
+    readonly seekFeed?: number;
+    readonly latchFeed?: number;
+    readonly rampSteps?: number;
+    readonly backoffMm?: number;
+    readonly parkMm?: number;
 }
 
 interface JsonHead {
@@ -384,13 +398,66 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         type: (ja.node.type ?? NodeType.STEPPER) as NodeType,
         present: ja.node.present ?? true,
     });
+    const homing = buildHoming(ja.homing, errors, path);
     return axisConfig(node, ja.stepsPerUnit, {
         maxFeed: ja.maxFeed ?? 0,
         maxAccel: ja.maxAccel ?? 0,
         maxTravel: ja.maxTravel ?? 0,
         invert: ja.invert ?? false,
         rotary: ja.rotary ?? false,
+        // Spread, not `homing`, so an axis without a switch has no key at all
+        // rather than an explicit `undefined`. `"homing" in axis` then means
+        // what it says, and the optional field stays honest under exactOptional.
+        ...(homing !== undefined ? { homing } : {}),
     });
+}
+
+/**
+ * A homing block is all-or-nothing: absent means no switch, present means every
+ * field. There is no partial form and no defaulting, because each number is a
+ * measurement of this specific machine and a filled-in guess would be acted on
+ * at seek speed against a hard stop. A block missing a field is an ERROR, not a
+ * block to complete.
+ */
+function buildHoming(
+    jh: JsonHoming | undefined,
+    errors: string[],
+    path: string,
+): HomingConfig | undefined {
+    if (jh === undefined) return undefined;
+    const p = `${path}.homing`;
+    if (typeof jh !== "object" || jh === null) {
+        errors.push(`${p}: must be an object`);
+        return undefined;
+    }
+    if (jh.kind !== undefined && jh.kind !== "linear") {
+        errors.push(`${p}.kind: only "linear" is supported`);
+        return undefined;
+    }
+    const num = (k: keyof JsonHoming): number => {
+        const v = jh[k];
+        if (typeof v !== "number" || !Number.isFinite(v)) {
+            errors.push(`${p}.${k}: required (number)`);
+            return 0;
+        }
+        return v;
+    };
+    if (typeof jh.atOrigin !== "boolean") {
+        // No default. Guessing this one puts the origin a whole hardTravel from
+        // where it belongs, and nothing downstream can detect that.
+        errors.push(`${p}.atOrigin: required (boolean) — which end the switch is at`);
+    }
+    return {
+        kind: "linear",
+        hardTravel: num("hardTravel"),
+        atOrigin: jh.atOrigin === true,
+        pullInFeed: num("pullInFeed"),
+        seekFeed: num("seekFeed"),
+        latchFeed: num("latchFeed"),
+        rampSteps: num("rampSteps"),
+        backoffMm: num("backoffMm"),
+        parkMm: num("parkMm"),
+    };
 }
 
 /**

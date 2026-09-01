@@ -9,6 +9,7 @@
 #include "parse.h"
 #include "gate.h"
 #include "../position.h"
+#include "../homing.h"
 #include "../status.h"                  // getBufCount (status alias)
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -17,8 +18,13 @@
 bool cmdPing(const char*) { Serial.println("pong"); return true; }
 
 bool cmdGetState(const char*) {
-    Serial.printf("state=%d enabled=0x%02x homed=0x%02x alarm=%d running=%d",
-                  machineState, axes_enabled, axes_homed, alarmReason, runningReason);
+    // `latched` is appended LAST, after every field an existing host parses.
+    // The reply is whitespace-delimited key=value and the host tolerates
+    // trailing tokens it does not know, so an un-updated host keeps working and
+    // simply cannot see the mask -- it still sees the ALARM the mask caused.
+    Serial.printf("state=%d enabled=0x%02x homed=0x%02x alarm=%d running=%d latched=0x%02x",
+                  machineState, axes_enabled, axes_homed, alarmReason, runningReason,
+                  homingLatched);
 #ifdef DEBUG_TIMING
     // texp/tmeas = expected vs measured duration (us) of the last completed
     // burst, from the intervals actually commanded vs wall-clock execution

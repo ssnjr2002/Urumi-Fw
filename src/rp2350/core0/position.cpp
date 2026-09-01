@@ -29,6 +29,22 @@ static uint8_t slotNode[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_
 static int32_t  nodeOrigin[BUS_ADDR_MAX + 1] = {0};
 static uint16_t nodeHomed = 0;               // bit n = nodeOrigin[n] is valid
 
+// bit n = node n is standing on its limit switch. Truth; homingLatched is the
+// slot-framed view, rebuilt on every bind (position.h).
+static uint16_t nodeLatched = 0;
+uint8_t homingLatched = 0;
+
+void nodeLatchSet(uint8_t n, bool latched) {
+    if (n > BUS_ADDR_MAX) return;
+    if (latched) nodeLatched |=  (1u << n);
+    else         nodeLatched &= ~(1u << n);
+    const uint8_t s = nodeSlot(n);
+    if (s != SLOT_NONE) {
+        if (latched) homingLatched |=  (1 << s);
+        else         homingLatched &= ~(1 << s);
+    }
+}
+
 // parkPos[n] is node n's counter as reported by the ack of the CMD_ENGAGE that
 // DISENGAGED it; parkSeen marks which entries are live.
 //
@@ -131,6 +147,12 @@ static void slotAdoptStatus(uint8_t s, uint8_t n, const NodeStatus* st) {
     // point) -- whatever origin we hold for it no longer refers to anything.
     if (!(flags & NODE_FLAG_DATUM)) originInvalidate(n);
 
+    // Adopted, not assumed. The node has been sitting on (or off) its switch
+    // the whole time it was parked, so the fact travels with the node and the
+    // incoming slot inherits it rather than the outgoing node's.
+    if (nodeLatched & (1u << n)) homingLatched |=  (1 << s);
+    else                         homingLatched &= ~(1 << s);
+
     if (haveTail && (nodeHomed & (1u << n))) {
         machinePos[s] = st->pos - nodeOrigin[n];
         axes_homed   |= (1 << s);
@@ -148,10 +170,14 @@ void slotBind(uint8_t s, uint8_t n, const NodeStatus* st) {
 
 void slotUnbind(uint8_t s) {
     if (s >= MOTION_SLOTS) return;
-    slotNode[s]   = SLOT_NONE;
-    machinePos[s] = 0;
-    axes_homed   &= ~(1 << s);
-    axes_enabled &= ~(1 << s);
+    slotNode[s]    = SLOT_NONE;
+    machinePos[s]  = 0;
+    axes_homed    &= ~(1 << s);
+    axes_enabled  &= ~(1 << s);
+    // The NODE's latch (nodeLatched) is deliberately untouched -- unbinding a
+    // slot does not move anything off a switch. Only the slot-framed view is
+    // dropped, because an empty slot cannot be latched.
+    homingLatched &= ~(1 << s);
 }
 
 // ─── Validity reconciliation — Core 0 is the sole writer ──────────────────────

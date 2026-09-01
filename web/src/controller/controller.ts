@@ -428,6 +428,18 @@ export class Controller {
             this._emit("setup", next);
         }
         await this.readCommitted();
+        // A commit is the one command that changes the machine's answer to
+        // "where am I and what is homed" WITHOUT anything moving. The firmware
+        // re-derives machinePos, axes_homed, axes_enabled and the limit-latch
+        // mask for every slot it binds, adopting each incoming node's own state
+        // (position.cpp slotAdoptStatus) — so a datum recorded before a head
+        // swap survives it, and re-homing after a rebind is not needed.
+        //
+        // But `status` here is whatever the last poll saw, which is the OUTGOING
+        // head's. Without this the UI shows the old head's homed mask until the
+        // background poll catches up — and with auto-poll off, indefinitely. The
+        // machine has the right answer; this is what makes the host ask for it.
+        await this.refresh();
     }
 
     /**

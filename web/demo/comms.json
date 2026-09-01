@@ -21,7 +21,18 @@
       "maxAccel": 100,
       "maxTravel": 0,
       "invert": false,
-      "rotary": false
+      "rotary": false,
+      "homing": {
+        "kind": "linear",
+        "hardTravel": 500,
+        "atOrigin": false,
+        "pullInFeed": 2.5,
+        "seekFeed": 12.5,
+        "latchFeed": 0.78,
+        "rampSteps": 400,
+        "backoffMm": 2,
+        "parkMm": 5
+      }
     },
     "y": {
       "node": {
@@ -33,7 +44,18 @@
       "maxAccel": 100,
       "maxTravel": 0,
       "invert": true,
-      "rotary": false
+      "rotary": false,
+      "homing": {
+        "kind": "linear",
+        "hardTravel": 500,
+        "atOrigin": false,
+        "pullInFeed": 2.5,
+        "seekFeed": 12.5,
+        "latchFeed": 0.78,
+        "rampSteps": 400,
+        "backoffMm": 2,
+        "parkMm": 5
+      }
     },
     "laser": null
   },
@@ -62,7 +84,7 @@
           "id": 4,
           "present": true
         },
-        "stepsPerUnit": 45.46,
+        "stepsPerUnit": 45.8272,
         "maxFeed": 100,
         "maxAccel": 500,
         "maxTravel": 0,
@@ -93,7 +115,7 @@
           "id": 5,
           "present": true
         },
-        "stepsPerUnit": 45.46,
+        "stepsPerUnit": 45.8272,
         "maxFeed": 100,
         "maxAccel": 500,
         "maxTravel": 0,

@@ -340,9 +340,10 @@ bool cmdSetOrigin(const char* args) {
     }
     // setorigin recovers from an ESTOP-alarm, but NOT the config gate — only a
     // committed axis_map clears ALARM_CONFIG (docs/engage_and_axis_map.md §6.1).
+    // ...and not out of a latched limit either, for the same reason unalarm
+    // cannot: recording a datum does not move the axis off the switch.
     if (machineState == STATE_ALARM && alarmReason != ALARM_CONFIG) {
-        machineState = STATE_IDLE;
-        alarmReason  = ALARM_NONE;
+        resumeOrHold();
     }
     Serial.println("ok");
     return true;
@@ -361,13 +362,22 @@ bool cmdSetOrigin(const char* args) {
 // Pico-side version of them is exactly how they end up living here permanently.
 // The Pico relays and supervises; it does not plan.
 //
-// NO <seek|retract> ARGUMENT, and §2.2's is dropped rather than unimplemented.
-// The node picks the mode from one read of its own limit pin at arm time (§1.2),
-// which reproduces §3.4's seek → retract → seek sequence on its own: after a
-// seek the switch is asserted, so the next command retracts; after the back-off
-// it is clear, so the next one seeks. A host token could only agree with the pin
-// or contradict it. What the master needs -- WHICH mode ran, to interpret the
-// terminal flags -- comes back in the arm ack; see homingBegin().
+// NO <seek|retract> ARGUMENT THAT STEERS ANYTHING. The node still picks the
+// mode from one read of its own limit pin at arm time (§1.2), which reproduces
+// §3.4's seek → retract → seek sequence on its own: after a seek the switch is
+// asserted, so the next command retracts; after the back-off it is clear, so
+// the next one seeks. What the master needs -- WHICH mode ran, to interpret the
+// terminal flags -- still comes back in the arm ack; see homingBegin().
+//
+// A sixth argument, `intent`, DOES exist, and it is exactly the token the
+// paragraph above used to say could only agree with the pin or contradict it --
+// now the node checks that instead of leaving it unheard. It carries no
+// authority: the host's own plan (§3.4) already knows whether this leg is
+// SUPPOSED to start on the switch, so it says so, and the node NAKs
+// (NAK_INTENT_MISMATCH) rather than silently running under the wrong leg's
+// budget semantics when the two disagree. The Pico is a pure relay for it —
+// this parser reads it off the wire and hands it straight to homingBegin(),
+// same as every other field here.
 //
 // Gated like the other bus commands, plus the config gate: an axis cannot be
 // resolved to a node without a committed axis map. ALARM otherwise stays open,
@@ -403,20 +413,21 @@ bool cmdHome(const char* args) {
     if (node == SLOT_NONE) { Serial.println("err unbound"); return true; }
 
     char* end;
-    unsigned long v[5];
-    for (int i = 0; i < 5; i++) {
+    unsigned long v[6];
+    for (int i = 0; i < 6; i++) {
         v[i] = strtoul(p, &end, 10);
         if (end == p) { Serial.println("err usage"); return true; }
         p = end;
     }
-    if (v[0] > 1 || v[1] > 0xFFFF || v[2] > 0xFFFF || v[3] > 0xFFFF) {
+    if (v[0] > 1 || v[1] > 0xFFFF || v[2] > 0xFFFF || v[3] > 0xFFFF || v[5] > 1) {
         Serial.println("err range"); return true;
     }
     // A zero interval would divide the pulser's ramp by nothing and free-run the
     // step pin; a zero budget is a command that cannot move and cannot fail.
     if (v[1] == 0 || v[2] == 0 || v[4] == 0) { Serial.println("err range"); return true; }
 
-    return homingBegin(node, (uint8_t)(v[0] & 1), (uint16_t)v[1], (uint16_t)v[2],
+    return homingBegin(node, (uint8_t)(v[0] & 1), v[5] != 0,
+                       (uint16_t)v[1], (uint16_t)v[2],
                        (uint16_t)v[3], (uint32_t)v[4]);
 }
 

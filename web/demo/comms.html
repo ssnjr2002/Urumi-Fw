@@ -115,6 +115,10 @@
     .banner[data-kind="error"] { color: #f87171; }
     .banner[data-kind="idle"]  { color: #6b7280; }
     .hint { font-size: 11px; color: #555; }
+    .tick { font-weight: 700; }
+    .tick[data-kind="ok"]   { color: #0a0; }
+    .tick[data-kind="idle"] { color: #999; }
+    .tick[data-kind="off"]  { color: #bbb; }
   </style>
 </head>
 <body>
@@ -165,6 +169,27 @@
         <span class="banner" id="map-line" data-kind="idle">slots X Y Z A = — — — —</span>
       </div>
       <span class="hint">Both heads' Z/A share slots 2 and 3 — switching heads re-binds them. Rejected while RUNNING.</span>
+      <span class="hint">Each slot shows its node id and whether that node is homed (<code>✓</code>) or has no
+        datum (<code>·</code>). The datum lives with the NODE, not the slot, so a head that was homed
+        earlier comes back homed after a re-bind — swapping heads does not mean re-homing.</span>
+    </section>
+
+    <section>
+      <h2>Homing <span class="hint" style="text-transform:none">— four legs per axis, then the datum</span></h2>
+      <div class="row" id="home-axes"></div>
+      <div class="row">
+        <button id="home-dry" type="button">Dry run</button>
+        <button id="home-run" class="go" type="button" disabled>Home selected</button>
+        <button id="home-stop" class="danger" type="button" disabled>Stop</button>
+        <span class="banner grow" id="home-line" data-kind="idle">idle</span>
+      </div>
+      <span class="hint">Only axes with a <code>homing</code> block in the config appear, and only the
+        engaged head's Z/A can run — the other head's motors are not bound to a slot. Legs 1 and 3 end
+        with the switch held, so the machine sits in <code>ALARM / LIMIT_LATCHED</code> between legs.
+        That is the sequence working, not a fault.</span>
+      <span class="hint"><em>Dry run</em> needs no machine: it prints the derived legs and the datum so
+        the numbers can be checked before an axis moves at seek speed. Worth doing first on a new
+        machine — <code>atOrigin</code> backwards puts the origin a full travel away.</span>
     </section>
 
     <section>

@@ -187,10 +187,12 @@ RpcResult rpcSwitchGet(uint8_t node, uint8_t* level);
 
 // CMD_HOME. Core 1 only marshals: it does not know seek from retract, does not
 // interpret the reply and runs no supervision. The node decides the mode from
-// its own limit pin; Core 0 polls for the outcome.
-RpcResult rpcHome(uint8_t node, uint8_t dir, uint16_t startIntervalUs,
-                  uint16_t floorIntervalUs, uint16_t rampSteps,
-                  uint32_t maxSteps, NodeStatus* out);
+// its own limit pin; Core 0 polls for the outcome. `intendedRetract` rides
+// along unexamined -- it is Core 0's prediction for the node to check itself
+// against, not a Core 1 concern.
+RpcResult rpcHome(uint8_t node, uint8_t dir, bool intendedRetract,
+                  uint16_t startIntervalUs, uint16_t floorIntervalUs,
+                  uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out);
 
 // ─── Server side (Core 1) ─────────────────────────────────────────────────────
 // core1/rpc_server.cpp implements these; nothing on Core 0 calls them.
