@@ -43,6 +43,18 @@ export const AlarmReason = {
     SOFT_LIMIT: 3,
     HOMING_FAIL: 4,
     NODE_FAULT: 5,
+    /**
+     * An axis is standing on a latched limit switch — where legs 1 and 3 of a
+     * home are SUPPOSED to end (docs/homing.md §2.6). Not a fault, but a real
+     * alarm: the node refuses stream steps while its limit is latched, so a job
+     * admitted here would run the other axes and silently drop this one.
+     *
+     * This member is load-bearing, not decorative. enumFromInt() coerces an
+     * unrecognised value to NONE, so a host missing this entry does not render
+     * "ALARM(6)" — it renders NO ALARM AT ALL, on a machine that is alarmed and
+     * refusing motion. It must be added in lockstep with the firmware.
+     */
+    LIMIT_LATCHED: 6,
 } as const;
 export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
 const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];
@@ -116,10 +128,32 @@ export class MachineStatus {
         readonly pos: readonly [number, number, number, number] | undefined = undefined,
         readonly expectedSeq: number | undefined = undefined,
         readonly queuedUs: number | undefined = undefined,
+        /**
+         * Axes standing on a latched limit switch. Text plane only — STATUS_RSP
+         * has no spare byte, and adding one would change a fixed-length frame
+         * whose size the demux checks.
+         *
+         * `undefined` on a binary sample, following the same rule as `pos` and
+         * `bufCount` above: a plane that cannot carry a field reports no
+         * information, never a zero. Here the distinction has teeth — 0 means
+         * "no axis is on a switch", which a UI would render as safe, and a
+         * binary poll has no basis for saying that. The consequential fact (the
+         * ALARM) is in `alarm`, which both planes carry.
+         */
+        readonly axesLatched: number | undefined = undefined,
     ) {}
 
     homed(axis: AxisLetter): boolean {
         return !!(this.axesHomed & AXIS_BITS[axis]);
+    }
+
+    /**
+     * True if `axis` is standing on its limit switch. False on a binary sample,
+     * which carries no latch information — check `axesLatched !== undefined`
+     * first if the difference between "clear" and "unknown" matters.
+     */
+    latched(axis: AxisLetter): boolean {
+        return !!((this.axesLatched ?? 0) & AXIS_BITS[axis]);
     }
 
     enabled(axis: AxisLetter): boolean {
@@ -141,7 +175,7 @@ export class MachineStatus {
 
 /**
  * Parse a `getstate` reply line:
- *     state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r>
+ *     state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r> latched=<hex>
  *
  * Key=value tokens, space-separated. Tolerant of unknown trailing tokens
  * (forward-compatible) and of out-of-range enum values. Requires at least
@@ -165,6 +199,14 @@ export function parseGetstate(line: string): MachineStatus {
         toInt(fields.enabled ?? "0"),
         enumFromStr(ALARM_REASON_VALUES, fields.alarm, AlarmReason.NONE),
         enumFromStr(RUNNING_REASON_VALUES, fields.running, RunningReason.JOB),
+        undefined, // bufCount, pos, expectedSeq, queuedUs — text cannot carry these
+        undefined,
+        undefined,
+        undefined,
+        // Absent on firmware predating docs/homing.md §2.6. 0 is the right
+        // default for that case and not a guess: such firmware has no concept of
+        // a latched limit, so no axis can be in one as far as it is concerned.
+        fields.latched !== undefined ? toInt(fields.latched) : 0,
     );
 }
 

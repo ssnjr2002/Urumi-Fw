@@ -40,6 +40,16 @@ static uint32_t deadlineMs = 0;
 
 bool homingActive(void) { return claimed; }
 
+void resumeOrHold(void) {
+    if (homingLatched) {
+        alarmReason  = ALARM_LIMIT_LATCHED;
+        machineState = STATE_ALARM;
+    } else {
+        alarmReason  = ALARM_NONE;
+        machineState = STATE_IDLE;
+    }
+}
+
 // The home is over, one way or the other. Both exits invalidate the origin, and
 // that is not conservatism -- it is required. A home moves the axis with the
 // NODE's own pulser, so the node counts those steps and Core 1 does not; the
@@ -53,6 +63,10 @@ static void homingRelease(uint8_t node) {
     originInvalidate(node);
 }
 
+// homingLatched is deliberately untouched here, and it is already right in both
+// failure modes: a seek that failed never reached the switch, so its bit should
+// stay clear, and a retract that failed never escaped one, so its bit should
+// stay set. Both are what the last successful leg left behind.
 static void homingFail(void) {
     homingRelease(hNode);
     alarmReason  = ALARM_HOMING_FAIL;
@@ -75,13 +89,17 @@ static uint32_t homingTimeoutMs(uint16_t startUs, uint16_t floorUs,
     return (uint32_t)ms;
 }
 
-bool homingBegin(uint8_t node, uint8_t dir, uint16_t startUs, uint16_t floorUs,
+bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
+                 uint16_t startUs, uint16_t floorUs,
                  uint16_t rampSteps, uint32_t maxSteps) {
     NodeStatus st;
-    RpcResult r = rpcHome(node, dir, startUs, floorUs, rampSteps, maxSteps, &st);
+    RpcResult r = rpcHome(node, dir, intendedRetract, startUs, floorUs,
+                          rampSteps, maxSteps, &st);
     if (r != RPC_OK) {
         // A node with no switch wired NAKs CMD_HOME, and that refusal is on the
         // wire rather than being a silent drop the master reads as absence.
+        // Same path now covers NAK_INTENT_MISMATCH: the host's plan disagreed
+        // with the node's own switch read (docs/homing.md §1.4/§2.6).
         Serial.printf("err node %d %s\n", node, rpcResultText(r));
         return true;
     }
@@ -164,6 +182,13 @@ void homingTick(void) {
         return;
     }
 
+    // The leg succeeded, so its outcome is known without re-reading the pin: a
+    // seek ended ON the switch and a retract ended OFF it. Recorded against the
+    // NODE, which is what the switch is wired to; position.cpp keeps the
+    // slot-framed homingLatched in step and re-derives it across a rebind, the
+    // same way it does for the datum.
+    nodeLatchSet(hNode, !wasRetract);
+
     homingRelease(hNode);
     // Retire OUR OWN leftover reason, and only that one. homingFail() writes the
     // pair (ALARM, ALARM_HOMING_FAIL), but recovering the state does not
@@ -172,6 +197,12 @@ void homingTick(void) {
     // the host renders, so the machine read as broken after it had recovered.
     // Anything else in there belongs to a fault this command did not cause and
     // is not ours to clear.
-    if (alarmReason == ALARM_HOMING_FAIL) alarmReason = ALARM_NONE;
-    machineState = STATE_IDLE;
+    //
+    // resumeOrHold() then decides IDLE vs ALARM/LIMIT_LATCHED from the mask
+    // above, which is why the clear is guarded: it must not run for a reason
+    // that outranks homing, and resumeOrHold() would overwrite one.
+    if (alarmReason == ALARM_HOMING_FAIL || alarmReason == ALARM_LIMIT_LATCHED ||
+        alarmReason == ALARM_NONE) {
+        resumeOrHold();
+    }
 }

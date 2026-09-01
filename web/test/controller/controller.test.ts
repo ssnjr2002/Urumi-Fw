@@ -23,6 +23,7 @@ import {
 import { KNIFE, PEN } from "../../src/machine/tools.js";
 import { resolvedAxesDefault } from "../../src/machine/resolve.js";
 import { MachineState } from "../../src/wire/format/status.js";
+import { setOrigin } from "../../src/wire/link/commands.js";
 
 /** Head 0: knife, Z at 1200 steps/mm on node 3. Head 1: pen, Z at 600 on node 5. */
 function dualHead(defaultHead = 0) {
@@ -121,6 +122,44 @@ describe("setup reconciliation", () => {
         expect(controller.committed).toEqual([1, 2, 5, 6]);
         expect(controller.setup.engaged).toBe(1);
         expect(controller.synced).toBe(true);
+    });
+
+    it("refreshes status after a commit — a rebind changes it without moving", async () => {
+        // The firmware re-derives machinePos / axes_homed / axes_enabled for
+        // every slot it binds, adopting the incoming node's own state. So the
+        // host's last sample describes the OUTGOING head the instant a commit
+        // lands, and without a refresh the UI shows a stale homed mask until the
+        // background poll catches up — indefinitely, if auto-poll is off.
+        const { controller } = bench();
+        let samples = 0;
+        controller.on("status", () => samples++);
+
+        await controller.commit(0);
+        expect(samples).toBeGreaterThan(0);
+
+        const before = samples;
+        await controller.commit(1);
+        expect(samples).toBeGreaterThan(before);
+    });
+
+    it("a datum survives a head swap — swapping heads is not re-homing", async () => {
+        // The datum lives with the NODE (core0/position.cpp), so head 0's Z on
+        // node 3 keeps it while slot 2 is lent to node 5 and gets it back on the
+        // return trip. The mask is re-derived per bind, which is what makes the
+        // middle assertion the interesting one: node 5 has never been datumed,
+        // and a slot-framed mask would have reported it as homed.
+        const { controller, link, sim } = bench();
+        await controller.commit(0);              // slots = 1 2 3 4
+        await setOrigin(link, "z");
+        await controller.refresh();
+        expect(controller.status!.homed("z")).toBe(true);
+
+        await controller.commit(1);              // slot 2 -> node 5
+        expect(controller.status!.homed("z")).toBe(false);
+
+        await controller.commit(0);              // slot 2 -> node 3 again
+        expect(controller.status!.homed("z")).toBe(true);
+        expect(sim.nodeHomed.has(3)).toBe(true);
     });
 
     it("sync adopts the head the firmware is actually bound to", async () => {

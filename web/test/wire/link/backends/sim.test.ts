@@ -68,7 +68,7 @@ describe("wire/link/backends/sim: control plane", () => {
     it("getstate reports the state + masks", async () => {
         await withLink(async (link) => {
             expect(await link.command("getstate")).toBe(
-                "state=0 enabled=0x00 homed=0x00 alarm=0 running=0",
+                "state=0 enabled=0x00 homed=0x00 alarm=0 running=0 latched=0x00",
             );
         });
     });
@@ -77,11 +77,11 @@ describe("wire/link/backends/sim: control plane", () => {
         await withLink(async (link) => {
             expect(await link.command("axes_enable on")).toBe("ok");
             expect(await link.command("getstate")).toBe(
-                "state=0 enabled=0x0f homed=0x00 alarm=0 running=0",
+                "state=0 enabled=0x0f homed=0x00 alarm=0 running=0 latched=0x00",
             );
             expect(await link.command("setorigin")).toBe("ok");
             expect(await link.command("getstate")).toBe(
-                "state=0 enabled=0x0f homed=0x0f alarm=0 running=0",
+                "state=0 enabled=0x0f homed=0x0f alarm=0 running=0 latched=0x00",
             );
 
             // stop → ALARM, then setorigin recovers
@@ -122,6 +122,55 @@ describe("wire/link/backends/sim: control plane", () => {
             expect(await link.command("unalarm")).toBe("ok");
             expect((await link.getStatus()).state).toBe(MachineState.IDLE);
         });
+    });
+
+    it("home arms and returns; the leg finishes asynchronously", async () => {
+        // `ok` means ARMED, not finished — the whole reason the supervisor
+        // exists (docs/homing.md §2.3). A handler that blocked until the pulser
+        // stopped would freeze getstate and every abort for the whole seek.
+        await withLink(async (link, sim) => {
+            sim.homingLegMs = 30;
+            expect(await link.command("home x 1 2500 500 400 88000")).toBe("ok");
+            expect((await link.getStatus()).state).toBe(MachineState.HOMING);
+            expect(await link.command("home y 1 2500 500 400 88000")).toBe("err busy");
+
+            await tick(80);
+            // A seek ends ON the switch, which is an alarm and not a failure.
+            const st = await link.getStatus();
+            expect(st.state).toBe(MachineState.ALARM);
+            expect(st.alarm).toBe(AlarmReason.LIMIT_LATCHED);
+            expect(await link.command("getstate")).toContain("latched=0x01");
+
+            // `unalarm` cannot clear it: nothing moved, so the switch is still
+            // held. Only a retract gets out.
+            expect(await link.command("unalarm")).toBe("ok");
+            expect((await link.getStatus()).alarm).toBe(AlarmReason.LIMIT_LATCHED);
+
+            // Armed while latched, so the node reads its pin and runs a RETRACT.
+            expect(await link.command("home x 0 8013 8013 0 320")).toBe("ok");
+            await tick(80);
+            const done = await link.getStatus();
+            expect(done.state).toBe(MachineState.IDLE);
+            expect(await link.command("getstate")).toContain("latched=0x00");
+        });
+    });
+
+    it("a latched limit follows the NODE across a rebind, not the slot", async () => {
+        await withLink(async (link, sim) => {
+            sim.homingLegMs = 20;
+            await link.command("home z 1 2500 500 400 88000"); // slot 2 = node 3
+            await tick(60);
+            expect(await link.command("getstate")).toContain("latched=0x04");
+
+            // Slot 2 now holds node 5, which is not on a switch. The gate lifts.
+            expect(await link.command("axis_map 1 2 5 6")).toBe("ok");
+            expect(await link.command("getstate")).toContain("latched=0x00");
+
+            // ...and comes back with node 3, because node 3 really is still
+            // standing on its switch and really will still refuse stream steps.
+            expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
+            expect(await link.command("getstate")).toContain("latched=0x04");
+        }, { busNodes: [1, 2, 3, 4, 5, 6] });
     });
 
     it("pingnode all → one line, not one per node", async () => {

@@ -110,6 +110,69 @@ export interface MachineTarget {
 
 // ── machine tier (axes) ──────────────────────────────────────────────────────
 
+/**
+ * Homing recipe for an axis with a limit switch at one end of a bounded travel.
+ *
+ * Every number the four-leg sequence needs and nothing it can derive. Feeds are
+ * in the axis's own units per second (mm/s here) rather than step intervals,
+ * because that is what an operator can reason about and check against maxFeed;
+ * `interval_us = 1e6 / (feed × stepsPerUnit)` converts at the wire, in
+ * homing/derive.ts.
+ */
+export interface LinearHoming {
+    readonly kind: "linear";
+
+    /**
+     * Usable travel between hard stops, mm. The runaway budget for a seek comes
+     * from this — an axis that has travelled more than its whole length without
+     * finding the switch is not going to.
+     *
+     * NOT the same as `maxTravel`, which is a soft-limit envelope the operator
+     * may set well inside the frame. Homing has to be able to leave that
+     * envelope, since before a datum exists there is nothing to measure it from.
+     */
+    readonly hardTravel: number;
+
+    /**
+     * Which end the switch is at: true = the 0 end, false = the far end.
+     *
+     * This is the ONLY thing that decides where the datum lands, and getting it
+     * backwards puts the origin a full `hardTravel` away — every subsequent move
+     * then drives at a hard stop. It is separate from `invert` (which is wiring)
+     * because the two are independent: either end can be reached by either
+     * direction sense.
+     */
+    readonly atOrigin: boolean;
+
+    /** mm/s the seek STARTS at, before the ramp. */
+    readonly pullInFeed: number;
+    /** mm/s the seek ramps up to and cruises at. */
+    readonly seekFeed: number;
+    /** mm/s for the slow re-approach and the two retracts. Sets repeatability. */
+    readonly latchFeed: number;
+    /** Steps taken ramping pullInFeed → seekFeed. */
+    readonly rampSteps: number;
+
+    /**
+     * Leg 2's retract, mm. Must EXCEED the switch's release hysteresis — a
+     * back-off shorter than that never leaves the switch, and since a retract
+     * is judged by whether the limit cleared, it reports a homing failure on a
+     * perfectly healthy machine.
+     */
+    readonly backoffMm: number;
+
+    /**
+     * Leg 4's retract, mm — where the axis is left standing when the home ends.
+     * Non-zero on purpose: parking ON the switch would leave the machine in
+     * ALARM/LIMIT_LATCHED with the node refusing stream steps, so the first
+     * move of the next job would silently drop this axis.
+     */
+    readonly parkMm: number;
+}
+
+/** Union point for the rotary recipe (index pulse / hard stop) when it lands. */
+export type HomingConfig = LinearHoming;
+
 export interface AxisConfig {
     readonly node: BusNode;
     readonly stepsPerUnit: number;
@@ -120,6 +183,13 @@ export interface AxisConfig {
     readonly maxTravel: number;
     readonly invert: boolean;
     readonly rotary: boolean;
+    /**
+     * Absent = this axis has no limit switch and cannot be homed. Optional
+     * rather than defaulted because there is no safe default: every field is a
+     * physical measurement of THIS machine, and a plausible-looking guess would
+     * drive the axis into a hard stop at seek speed.
+     */
+    readonly homing?: HomingConfig;
 }
 
 export function axisConfig(

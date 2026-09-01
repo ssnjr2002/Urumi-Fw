@@ -420,7 +420,8 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             if (len < 3 + CMD_HOME_PAYLOAD_LEN + 1) return false;
 
             const uint8_t* p = &pkt[3];
-            const bool     dir       = p[0] != 0;
+            const bool     dir             = (p[0] & 0x01) != 0;
+            const bool     intendedRetract = (p[0] & 0x02) != 0;
             const uint16_t startUs   = ((uint16_t)p[1] << 8) | p[2];
             const uint16_t floorUs   = ((uint16_t)p[3] << 8) | p[4];
             const uint16_t rampSteps = ((uint16_t)p[5] << 8) | p[6];
@@ -432,6 +433,26 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             // THE mode decision, and the only place it is made: one pin read,
             // now. Sitting on the switch means the only useful move is off it.
             const bool retract = HAL_LIMIT_ASSERTED();
+
+            // The intent bit does not feed the decision above -- it is checked
+            // AGAINST it. A mismatch means the host's model of the switch state
+            // has diverged from reality, and arming anyway would run the
+            // declared budget under the WRONG semantics: a host expecting a
+            // seek sized its budget as a runaway cap for a move the switch was
+            // meant to cut short, and a retract ignores the switch and runs
+            // that same budget to completion (include/common.h, CMD_HOME). NAK
+            // here, before anything moves, rather than silently execute a move
+            // the host did not intend.
+            //
+            // A reasoned NAK, not the generic `return false`: NAK_UNSUPPORTED
+            // would read as "this node does not do CMD_HOME", which is false —
+            // it does, just not with THIS command's premise. NAK_INTENT_MISMATCH
+            // tells the host to re-read the switch before retrying rather than
+            // to suspect its wiring or payload framing.
+            if (retract != intendedRetract) {
+                node_reply_nak(CMD_HOME, NAK_INTENT_MISMATCH, reply, replyLen);
+                return true;
+            }
 
             if (!homingArm(dir, retract, startUs, floorUs, rampSteps, maxSteps))
                 return false;

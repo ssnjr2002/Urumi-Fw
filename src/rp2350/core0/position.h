@@ -53,6 +53,29 @@ void slotBind(uint8_t s, uint8_t n, const NodeStatus* st);
 // also zeroes machinePos[s] and clears its homed and enabled bits.
 void slotUnbind(uint8_t s);
 
+// ─── Limit latch, in the NODE frame ───────────────────────────────────────────
+//
+// Same shape as the datum below, and for the same reason. A limit switch is
+// wired to a NODE; whether it is held down is a fact about that node's
+// mechanism and has nothing to do with which stream slot the node currently
+// occupies. Stored per slot it went stale on the first rebind: homing Z on
+// head 0 (slot 2 = node 3) and then binding slot 2 to node 5 left the slot bit
+// asserting that head 1's Z was on a switch it had never touched -- and since
+// the mask gates ALARM_LIMIT_LATCHED, that held the machine in an alarm no
+// `unalarm` could clear.
+//
+// So `homingLatched` (per SLOT) is DERIVED from this on every bind, exactly as
+// axes_homed is derived from nodeHomed. The derived mask then means the useful
+// thing: latched switches among the axes the machine is CURRENTLY driving. An
+// unbound node's latch stops gating the machine and comes back when that node
+// is bound again -- which is right, because the node really will still refuse
+// stream steps.
+void nodeLatchSet(uint8_t n, bool latched);
+
+// Per-SLOT view of the above (bit0=X .. bit3=A), rebuilt by slotBind/slotUnbind.
+// Read-only to everything but position.cpp.
+extern uint8_t homingLatched;
+
 // ─── Position datum, in the NODE frame ────────────────────────────────────────
 
 // Record that node `n`'s own counter `nodePos` corresponds to machine position

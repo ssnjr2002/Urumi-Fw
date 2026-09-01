@@ -565,20 +565,47 @@ No wire change. No `web/src` coordination. No new state values.
 
 None of this is implemented node-side. Listed in dependency order.
 
-### 8.1 `CMD_NAK [reason]` — prerequisite for everything else
+### 8.1 `CMD_NAK [reason]` — DONE
 
-1. Add the opcode node-side with `BAD_TOKEN` / `UNSUPPORTED` reasons.
-2. Produce `RPC_NAK` in the codec — one line, given §3.4.
-3. Update the text replies: `node %d timeout` → `node %d nak unsupported`.
+`CMD_NAK 0x07`, reply-only: `[ID][CMD_NAK][2][orig_cmd][NAK_*][crc]`. Reasons
+`UNSUPPORTED` / `BAD_TOKEN` / `BAD_ARG`; only the first is produced today, and
+`BAD_TOKEN` is §8.2's to raise.
 
 **Why first:** [node_session_and_datum.md](node_session_and_datum.md) §7 names it
-as the prerequisite. Today an unhandled command is silently dropped
-(`src/node/dispatch.cpp:135`) and the master times out, so bad-token is
-indistinguishable from node-absent.
+as the prerequisite. An unhandled command used to be dropped exactly like a
+bad-CRC frame, so the master timed out and "refused" was indistinguishable from
+"absent" — which is why the home path could only print `nak_or_timeout`.
+
+Five places, in the order a frame travels:
+
+1. **`include/common.h`** — the opcode and the reason codes, shared by both ends.
+2. **`src/node/dispatch.cpp`** — `dispatchCommand` answers an unhandled command
+   instead of dropping it. `routeCommand` still returns 0, so `debug_console.cpp`
+   is unchanged: the NAK belongs to the wire, where the ambiguity lives.
+   Excludes broadcasts (nothing may answer one) and `CMD_NAK` itself.
+3. **`core1/bus/packet.cpp`** — `receivePacket` accepts `CMD_NAK` whatever
+   `expectedCmd` is, and reports what actually arrived through a new `outCmd`.
+   Without this the frame filter drops the refusal and the caller times out
+   anyway — the filter, not the decoder, was the load-bearing part.
+4. **`core1/rpc_server.cpp`** — a NAK frame becomes `RPC_NAK` + `nakReason`. The
+   reply still echoes the REQUEST's opcode, so `rpcCall`'s echo assert holds.
+5. **`ipc/core1_rpc.cpp`** — `rpcResultText()`, one mapping from `RpcResult` to
+   the printed word, replacing the literal `"timeout"` at eight call sites. An
+   unrecognised reason prints `nak <n>`, never `timeout`.
 
 **Wire-visible:** `web/src/wire/link/commands.ts` `_nodeOk` matches
-`reply.endsWith("ok")`, so the happy path survives — but anything distinguishing
-failures updates in step.
+`reply.endsWith("ok")`, so the happy path survives and a NAK reads as failure —
+which it is. `nodepos` gained a distinct `bad_reply` for "answered, but with no
+stepper tail", previously folded into `timeout`. The sim backend models neither
+unsupported commands nor absent-node NAKs, so it is unchanged.
+
+**Bench check (mixed-firmware bus).** Flash one node with this firmware and
+leave another on the old code, then send a command neither implements —
+`laser <node> on` at a non-laser stepper is the cleanest, since both nodes are
+otherwise identical. New node answers `node N nak unsupported` immediately; old
+node still spends `RESPONSE_TIMEOUT_MS` and answers `node N timeout`. The two
+firmwares are distinguishable on the wire by exactly that, and neither confuses
+the other — which is what makes a staged rollout possible.
 
 ### 8.2 Session token
 

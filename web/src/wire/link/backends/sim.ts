@@ -87,8 +87,47 @@ export class SimTransport implements Transport {
     state: MachineState = MachineState.ALARM;
     alarm: AlarmReason = AlarmReason.CONFIG;
     running: RunningReason = RunningReason.JOB;
+    /**
+     * DERIVED, per slot. Never assign it directly — call `_rederiveHomed()`.
+     * The firmware holds the datum against the NODE (`nodeOrigin`/`nodeHomed`
+     * in core0/position.cpp) and rebuilds this mask from the incoming node on
+     * every bind, which is what lets a head that was homed earlier come back
+     * homed after a re-bind instead of needing to re-home.
+     *
+     * The sim used to hold it per slot and leave it untouched across a rebind,
+     * so `axis_map 1 2 3 4` → setorigin → `axis_map 1 2 5 6` reported head 1's
+     * never-datumed Z as homed. Backwards from the machine, and on the exact
+     * property the axis map exists to get right.
+     */
     axesHomed = 0;
     axesEnabled = 0;
+
+    /** Bus ids holding a valid datum — the truth `axesHomed` is derived from. */
+    nodeHomed = new Set<number>();
+
+    /**
+     * Bus ids standing on their limit switch, and the per-slot view of it.
+     * Node-framed for the same reason the datum is: a switch belongs to a
+     * motor, not to a stream slot (core0/position.cpp).
+     */
+    nodeLatched = new Set<number>();
+    axesLatched = 0;
+
+    /**
+     * The home in flight, if any. A crude model of the node-run sequence: the
+     * node decides seek-vs-retract from ONE read of its own switch at arm time
+     * and does not report which (docs/homing.md §1.2), so that read is all this
+     * needs to reproduce the behaviour the host sequencer keys off.
+     *
+     * Deliberately not a step-by-step simulation. What the host has to get
+     * right is the arm/poll/verdict protocol and the alternation of terminal
+     * states, and this reproduces those exactly; how long the axis takes to
+     * arrive is not something the host reasons about.
+     */
+    homing: { node: number; slot: number; retract: boolean; until: number } | null = null;
+
+    /** Wall-clock ms a modelled home leg takes. Short — it is not the point. */
+    homingLegMs = 60;
     pos: [number, number, number, number] = [0, 0, 0, 0];
 
     /** Diagnostic: how many reply frames the sim has fed into the demux. */
@@ -356,6 +395,7 @@ export class SimTransport implements Transport {
     // ticks have accrued to cover it.
 
     private _tick(): void {
+        this._tickHoming();
         const frameS = this.frameMs / 1000;
         if (!this.executing || this.state !== MachineState.RUNNING) {
             this.timeCredit = 0;
@@ -478,6 +518,15 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                     if (id !== null && !S.busNodes.has(id)) return `err node ${id} timeout`;
                 }
                 S.slotNode = desired;
+                // Each incoming node brings its own datum with it, and a slot
+                // that lost its node loses the bit. This is the whole point of
+                // holding the datum against the node: swapping heads does not
+                // mean re-homing, and swapping BACK does not mean re-homing
+                // either.
+                S._rederiveHomed();
+                // Same for the latch: an incoming node standing on its switch
+                // brings that with it, and gates the machine again.
+                S._rederiveLatched();
 
                 // The gate condition is "every slot ACK-confirmed", not "a
                 // string parsed" — reaching here means it held.
@@ -496,11 +545,50 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 }
                 return "ok";
             }
+            // `home <axis> <dir> <startUs> <floorUs> <rampSteps> <maxSteps> <intent>` —
+            // arms ONE leg and returns; the machine sits in HOMING until
+            // _tickHoming() finishes it. `dir`/`startUs`/`floorUs`/`rampSteps`/
+            // `maxSteps` are accepted and ignored: this models the protocol, not
+            // the motion. `intent` is not ignored — it is the one field the real
+            // node actually checks before arming (include/common.h, CMD_HOME).
+            case "home": {
+                if (S.homing !== null) return "err busy";
+                if (!isIdlePausedAlarm(S.state)) return "err bad_state";
+                if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
+                    return "err unconfigured";
+                }
+                const slot = "xyza".indexOf((args[0] ?? "").toLowerCase());
+                if (slot < 0) return "err usage";
+                const node = S.slotNode[slot];
+                if (node === null || node === undefined) return "err unbound";
+                // The node reads its own switch ONCE, here, and that read alone
+                // decides seek vs retract.
+                const retract = S.nodeLatched.has(node);
+                // The intent bit does not feed the decision above -- it is
+                // checked AGAINST it, mirroring the real node's CMD_HOME handler.
+                // A missing arg (an older caller) is treated as "no opinion" and
+                // never mismatches, so pre-intent test calls keep working.
+                const intentArg = args[6];
+                if (intentArg !== undefined) {
+                    const intendedRetract = intentArg === "1";
+                    if (intendedRetract !== retract) return "err node intent_mismatch";
+                }
+                S.homing = {
+                    node, slot,
+                    retract,
+                    until: Date.now() + S.homingLegMs,
+                };
+                S.state = MachineState.HOMING;
+                return "ok";
+            }
             case "getstate":
                 return (
                     `state=${S.state} enabled=0x${S.axesEnabled.toString(16).padStart(2, "0")} ` +
                     `homed=0x${S.axesHomed.toString(16).padStart(2, "0")} ` +
-                    `alarm=${S.alarm} running=${S.running}`
+                    `alarm=${S.alarm} running=${S.running} ` +
+                    // Last, after every field an older host parses. Only the
+                    // text plane carries it — STATUS_RSP has no room.
+                    `latched=0x${S.axesLatched.toString(16).padStart(2, "0")}`
                 );
             case "getpos":
                 // Trailing validity mask, as the firmware does — the counts are
@@ -512,7 +600,11 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             case "stop": // always available; de-energises
                 S.state = MachineState.ALARM;
                 S.alarm = AlarmReason.ESTOP;
-                S.axesHomed = 0;
+                // An estop de-energises everything, so every node loses its
+                // datum — not just the four currently bound.
+                S.nodeHomed.clear();
+                S._rederiveHomed();
+                S.homing = null;          // an estop abandons a home in flight
                 S.axesEnabled = 0;
                 S.motion = [];
                 S.executing = false;
@@ -537,9 +629,13 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                         if (on) S.axesEnabled |= 1 << i;
                         else {
                             S.axesEnabled &= ~(1 << i);
-                            S.axesHomed &= ~(1 << i); // de-energise -> datum lost
+                            // De-energise -> datum lost, and lost for the NODE:
+                            // the motor may have been back-driven while off, so
+                            // re-binding it elsewhere must not resurrect it.
+                            S.nodeHomed.delete(S.slotNode[i]!);
                         }
                     }
+                    S._rederiveHomed();
                     return "ok";
                 }
                 return "err bad_state";
@@ -557,21 +653,31 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                     const node = parseInt(args[0] ?? "", 10);
                     if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
                     const slot = S._nodeSlot(node);
-                    if (slot !== null) {
-                        S.axesEnabled &= ~(1 << slot);
-                        S.axesHomed &= ~(1 << slot);
-                    }
+                    if (slot !== null) S.axesEnabled &= ~(1 << slot);
+                    // Per NODE, and unconditionally: de-energising a motor
+                    // costs its datum whether or not it currently holds a slot.
+                    S.nodeHomed.delete(node);
+                    S._rederiveHomed();
                     return "ok";
                 }
                 return "err bad_state";
             case "setorigin": {
                 if (!isIdlePausedAlarm(S.state)) return "err bad_state";
                 const axes = args[0] ?? "xyza";
-                S.axesHomed |= axisMask(axes);
+                const m = axisMask(axes);
                 const axisChars = "xyza";
                 for (let i = 0; i < 4; i++) {
-                    if (axes.includes(axisChars[i]!)) S.pos[i] = 0;
+                    if (!(m & (1 << i))) continue;
+                    // Recorded against the NODE in the slot, not the slot — an
+                    // unbound slot has nothing to datum and is skipped, which is
+                    // also why the firmware answers `err unbound` when NOTHING
+                    // in the mask resolved.
+                    const n = S.slotNode[i];
+                    if (n === null || n === undefined) continue;
+                    S.nodeHomed.add(n);
+                    S.pos[i] = 0;
                 }
+                S._rederiveHomed();
                 // setorigin recovers from an ESTOP-alarm, but NOT from the
                 // config gate — only a committed axis_map leaves that (§6.1).
                 if (S.state === MachineState.ALARM && S.alarm !== AlarmReason.CONFIG) {
@@ -608,6 +714,13 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 if (S.state === MachineState.ALARM) {
                     // The config gate is not a clearable fault (§6.1).
                     if (S.alarm === AlarmReason.CONFIG) return "err unconfigured";
+                    // A latched limit is not cleared by asking: `unalarm` moves
+                    // nothing, so the condition still holds afterwards. Answers
+                    // `ok` and stays in ALARM — a retract is the way out.
+                    if (S.axesLatched !== 0) {
+                        S.alarm = AlarmReason.LIMIT_LATCHED;
+                        return "ok";
+                    }
                     S.state = MachineState.IDLE;
                     S.alarm = AlarmReason.NONE;
                     return "ok";
@@ -664,6 +777,63 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             default:
                 return "err unknown";
         }
+    }
+
+    /**
+     * Finish a modelled home once its leg time is up.
+     *
+     * The verdict is decided by which move this was, exactly as on the Pico: a
+     * seek ends ON the switch, a retract ends OFF it, and the terminal state
+     * follows from the latch mask rather than from the leg — so an axis parked
+     * clear lands IDLE while one still holding a switch lands
+     * ALARM/LIMIT_LATCHED, whichever leg put it there.
+     */
+    private _tickHoming(): void {
+        const h = this.homing;
+        if (h === null || Date.now() < h.until) return;
+        this.homing = null;
+
+        if (h.retract) this.nodeLatched.delete(h.node);
+        else this.nodeLatched.add(h.node);
+        this._rederiveLatched();
+
+        // A home moves the axis with the NODE's own pulser, which the master
+        // does not count, so the datum is dropped either way — §3.4's closing
+        // `setorigin` is what re-derives it.
+        this.nodeHomed.delete(h.node);
+        this._rederiveHomed();
+
+        if (this.axesLatched !== 0) {
+            this.state = MachineState.ALARM;
+            this.alarm = AlarmReason.LIMIT_LATCHED;
+        } else {
+            this.state = MachineState.IDLE;
+            this.alarm = AlarmReason.NONE;
+        }
+    }
+
+    /** Per-slot view of `nodeLatched`, rebuilt on every bind — as for the datum. */
+    _rederiveLatched(): void {
+        let m = 0;
+        for (let s = 0; s < MOTION_SLOTS; s++) {
+            const n = this.slotNode[s];
+            if (n !== null && n !== undefined && this.nodeLatched.has(n)) m |= 1 << s;
+        }
+        this.axesLatched = m;
+    }
+
+    /**
+     * Rebuild `axesHomed` from `nodeHomed` and the current bindings, the way
+     * slotAdoptStatus() does on the Pico. Called after anything that changes
+     * either — a rebind, a datum, a de-energise.
+     */
+    _rederiveHomed(): void {
+        let m = 0;
+        for (let s = 0; s < MOTION_SLOTS; s++) {
+            const n = this.slotNode[s];
+            if (n !== null && n !== undefined && this.nodeHomed.has(n)) m |= 1 << s;
+        }
+        this.axesHomed = m;
     }
 
     /** Which stream slot a bus id is ENGAGE-bound to, or null (nodeSlot()). */

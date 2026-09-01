@@ -18,8 +18,14 @@ static void replyAck(uint8_t cmd, uint8_t* reply, uint8_t* replyLen) {
 
 // A refusal. Same frame shape as any reply, but the opcode is CMD_NAK rather
 // than the command's, so the payload has to carry what was refused.
-static void replyNak(uint8_t cmd, uint8_t reason, uint8_t* reply,
-                     uint8_t* replyLen) {
+//
+// Exposed to node types (node_hooks.h: node_reply_nak) as well as used here for
+// the generic unhandled-command case, so a type that has a specific reason for
+// refusing (CMD_HOME's intent check, docs/homing.md §1.4) can report it instead
+// of falling through to the generic NAK_UNSUPPORTED every plain `return false`
+// produces below.
+void node_reply_nak(uint8_t cmd, uint8_t reason, uint8_t* reply,
+                    uint8_t* replyLen) {
     reply[0] = NODE_ID;
     reply[1] = CMD_NAK;
     reply[2] = 2;
@@ -148,7 +154,7 @@ void dispatchCommand(const uint8_t* pkt, uint8_t len, bool broadcast) {
     // sent something no master sends; NAKing it back would put a refusal on the
     // wire addressed at nobody listening.
     if (!replyLen && !broadcast && pkt[1] != CMD_NAK)
-        replyNak(pkt[1], NAK_UNSUPPORTED, reply, &replyLen);
+        node_reply_nak(pkt[1], NAK_UNSUPPORTED, reply, &replyLen);
 
     // Never answer a broadcast: every node would transmit at once, and the
     // collision would take out the confirm pass that follows it. That still

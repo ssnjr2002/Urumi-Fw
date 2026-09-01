@@ -2,7 +2,14 @@
 
 **Status:** §1 (the node) and §2 (the Pico: `home`, `setorigin <pos_steps>`, the
 supervisor in `src/rp2350/core0/homing.cpp`) implemented and confirmed on
-hardware. §3 (the host schema) is still design.
+hardware — **except** the `<intent>` argument and `NAK_INTENT_MISMATCH` (§1.2,
+§1.4, §2.2), which build clean on both `db_node1` and `pico` but have not yet
+run on real bus hardware, only against the Sim. §2.6's `ALARM_LIMIT_LATCHED` and
+§3 (schema, validation, the host sequencer in `web/src/homing/`, and the demo
+panel) are likewise implemented and exercised end to end against the Sim —
+**not yet against hardware**, because the numbers in §6.3 are still unmeasured.
+`atOrigin` in particular is a guess in every config that has it, and a wrong one
+drives the axis into a hard stop at seek speed.
 **Cross-links:** [node_session_and_datum.md](node_session_and_datum.md) (`nodeOrigin`,
 `NODE_FLAG_DATUM`), [coordinate_frames_and_limits.md](coordinate_frames_and_limits.md)
 (the *home* frame), [wire_protocol.md](wire_protocol.md) (host↔Pico framing),
@@ -147,8 +154,10 @@ RAM, refreshed by each `CMD_HOME`, so it could tell "pressed and digging in" fro
 The mode is fixed once, at entry, and never re-evaluated. Inside a retract there
 is nothing to detect. Inside a seek the level suffices, because a seek starts
 clear by construction. So the node holds **no direction state at all** — no
-`approachDir`, no boot sentinel, no previous-sample bit, and no seek/retract bit
-in the payload.
+`approachDir`, no boot sentinel, no previous-sample bit.
+
+**A payload bit was added later, and it does not change any of the above.** See
+"The intent bit" below — it rides alongside this decision, not inside it.
 
 It also removes the boot-degradation path the old §1.2 needed. A node that boots
 with its axis already parked on the switch reads the pin as asserted and retracts
@@ -173,6 +182,64 @@ that ran and finished is precisely the deliberate operator act meaning
 
 The normal sequence ends on a retract-to-backoff, so a clean home leaves the node
 unlatched and streamable with nothing special-cased.
+
+#### The intent bit checks the decision; it does not make it
+
+**Implemented.** `CMD_HOME` payload byte 0 gained a second bit: `dir` in bit 0,
+unchanged, and `intent` in bit 1. This does **not** reopen the question the rest
+of this section just closed — the pin sample above is still the only thing that
+decides seek vs retract, still taken once at entry, still never re-evaluated.
+`intent` is a second, independently-arrived-at opinion that the host attaches so
+the node can catch the two opinions disagreeing, rather than silently acting on
+its own.
+
+**The gap this closes.** Nothing before this checked that the host's plan and
+the node's physical reality agreed. Concretely: the host derives a seek's budget
+as a runaway cap — generous, because the switch is supposed to cut the move
+short. If the host *thinks* it is arming a seek but the pin is already asserted
+— stale state, a bounced or mis-wired switch, a prior leg that did not clear it
+as expected — the node silently arms a **retract** instead. A retract ignores
+the switch and runs its budget to completion. Same huge number, opposite
+semantics: the axis travels the full seek-sized distance with nothing left to
+stop it. That is the crash the two-pass, alternating-direction design in §3.4
+exists to prevent, arrived at by a different door.
+
+**The check, in the node's `CMD_HOME` handler:**
+
+```c
+const bool retract         = HAL_LIMIT_ASSERTED();   // unchanged: THE decision
+const bool intendedRetract = (p[0] & 0x02) != 0;      // the host's prediction
+
+if (retract != intendedRetract) {
+    node_reply_nak(CMD_HOME, NAK_INTENT_MISMATCH, reply, replyLen);
+    return true;
+}
+```
+
+Stateless, same as the pin read itself: nothing is stored past the single
+command, and a node with older firmware that never reads bit 1 behaves exactly
+as before (the bit sits unread in a byte it already receives).
+
+**A reasoned NAK, not the pre-existing generic one.** Every earlier `CMD_HOME`
+rejection — bad interval, zero budget, no switch wired — answers with a bare
+`return false`, which the core's dispatcher turns into `NAK_UNSUPPORTED`
+(`common.h`) regardless of which of those it was. That was always slightly
+wrong, and reusing it here would have been more so: `NAK_UNSUPPORTED` reads as
+"this node does not do `CMD_HOME`", which is false — it does, just not under
+this command's premise. `NAK_INTENT_MISMATCH` (`0x04`) is a new reason,
+propagated through `RpcResult`'s existing `nakReason` field to
+`rpcResultText()` and printed by `homingBegin()` as `nak intent_mismatch` — so
+an operator sees a name that says what to check (re-read the switch) rather
+than one that suggests a wiring or framing bug.
+
+**Where `intent` comes from on the host: `HomingLeg.kind`, not a fresh guess.**
+The plan already knows, leg by leg, whether it expects to start on the switch —
+that is exactly what alternates through the four legs in §3.4. `BACKOFF` and
+`PARK` start on it (they exist to retract off it); `SEEK` and `LATCH` start
+clear. `homing/sequence.ts` derives `intendedRetract` from `leg.kind` and passes
+it to `home()`, which packs it into bit 1 alongside `dir`. The Pico is a pure
+relay for it end to end — `cmdHome()` parses a sixth text argument and hands it
+straight to `homingBegin()` → `rpcHome()`, none of which inspect it.
 
 ### 1.3 The pulser
 
@@ -237,18 +304,19 @@ This is also why the ramp is integer decay rather than the `sqrtf` Core 1 uses.
 
 | field | type | meaning |
 |---|---|---|
-| `dir` | u8 | wire dir bit — which way this move goes |
+| `dir`/`intent` | u8 | bit0 = wire dir bit; bit1 = intent (§1.2's "The intent bit") |
 | `start_interval` | u16 | µs — pull-in rate |
 | `floor_interval` | u16 | µs — cruise rate |
 | `ramp_steps` | u16 | steps from start to floor; 0 = no ramp |
 | `max_steps` | u32 | runaway budget |
 
-**One direction field, and no mode field.** Earlier drafts carried both an
-`approach_dir` (for the node to retain) and a `flags` bit selecting seek or
-retract. Both are gone: the node retains nothing, and the mode comes from the pin
-sample (§1.2). `dir` now means only *which way to move* — the host knows which way
-that is for each leg of the sequence (§3.4), and the node does not need to know
-what the move is for.
+**One direction field, one CHECK field, and still no mode field.** Earlier
+drafts carried both an `approach_dir` (for the node to retain) and a `flags` bit
+*selecting* seek or retract. Both are gone, and neither is what `intent` is: the
+node retains nothing, and the mode still comes from the pin sample (§1.2) alone.
+`dir` means only *which way to move* — the host knows which way that is for each
+leg of the sequence (§3.4). `intent` means only *what the host expects the pin
+to say*, checked against it, never substituted for it.
 
 **Intervals are microseconds, not timer ticks.** The node converts on receipt.
 This keeps board clock differences (ATtiny at 20 MHz, DB32 at 24 MHz) out of the
@@ -355,17 +423,27 @@ plane is for high-rate windowed streams and would need new binary framing for no
 gain.
 
 ```
-home <axis> <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+home <axis> <dir> <start_us> <floor_us> <ramp_steps> <max_steps> <intent>
 ```
 
 **Implemented**, in `cmd/axis.cpp`, and WITHOUT the `<seek|retract>` token this
 section originally specified — dropped by design, not left unbuilt. The node
-picks the mode from one read of its own limit pin at arm time (§1.2), which
-reproduces §3.4's sequence on its own: after a seek the switch is asserted, so
-the next command retracts; after the back-off it is clear, so the next one seeks.
-A host token could only agree with the pin or contradict it. What the master
-actually needs — WHICH mode ran, since the terminal flags read oppositely for the
-two (§1.5) — comes back in the arm ack, whose LIMIT bit *is* that pin read.
+still picks the mode from one read of its own limit pin at arm time (§1.2),
+which reproduces §3.4's sequence on its own: after a seek the switch is
+asserted, so the next command retracts; after the back-off it is clear, so the
+next one seeks. What the master needs — WHICH mode ran, since the terminal
+flags read oppositely for the two (§1.5) — comes back in the arm ack, whose
+LIMIT bit *is* that pin read.
+
+**`<intent>` is not that dropped token come back.** It carries no authority over
+the mode — the paragraph above is unchanged by its existence. What it does is
+give the node something to check the pin read AGAINST: `0` or `1`, the host's
+own prediction of whether this leg starts on the switch, taken straight from
+which leg of the plan this is (§1.2's "The intent bit"). Agree and the leg
+arms as before. Disagree and the node NAKs (`nak intent_mismatch`) instead of
+arming — the case this catches is the host's plan and physical reality having
+quietly diverged, which used to run silently under whichever leg's semantics
+the pin happened to pick.
 
 `<axis>` reuses `axisMask()` but **rejects any mask with more than one bit** —
 one axis at a time (§3.5). `axisMask()` answers `0x0F` for both "all axes" and
@@ -373,7 +451,9 @@ one axis at a time (§3.5). `axisMask()` answers `0x0F` for both "all axes" and
 axis and `home q`.
 
 Replies `ok`, or `err busy` / `err bad_state` / `err unconfigured` /
-`err unbound` / `err usage` / `err range` / `err node N <reason>`.
+`err unbound` / `err usage` / `err range` / `err node N <reason>`, where
+`<reason>` now includes `nak intent_mismatch` alongside the pre-existing
+`nak unsupported` / `nak bad_token` / `nak bad_arg`.
 
 **It must not block.** A home takes ~13 s, and the control-plane contract is one
 reply line per command. A blocking `home` would freeze the plane for the whole
@@ -381,7 +461,8 @@ seek — no `getstate`, no `stop`, **no abort** — on a command that is driving
 axis at a hard stop. So it returns immediately and the machine enters
 `STATE_HOMING` (already reserved in `shared.h`), exactly as a job does:
 
-- success: `STATE_HOMING` → `STATE_IDLE`
+- success: `STATE_HOMING` → `STATE_IDLE`, **or** → `STATE_ALARM` /
+  `ALARM_LIMIT_LATCHED` if the axis ended parked on the switch (§2.6)
 - fault: `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOMING_FAIL`
 - abort: the existing `stop` works unchanged
 
@@ -445,11 +526,150 @@ purely about motion, so the retract and re-approach passes carry no datum
 baggage; and this inherits `setorigin`'s existing estop-window handling (the
 `alarmAtEntry` snapshot), which is subtle code that should not exist twice.
 
+### 2.6 IDLE between legs is a lie
+
+**Implemented.** `ALARM_LIMIT_LATCHED = 6` in `shared_state.h`, the mask and
+`resumeOrHold()` as described below — with one correction, at the end of this
+section, to where the mask lives.
+
+The supervisor sends `STATE_HOMING` → `STATE_IDLE` on every success, so between
+leg 1 and leg 2 the machine reports IDLE while the axis is sitting on a latched
+switch. It is not idle. It cannot move:
+
+- the node's stream path refuses every step while `limAsserted || limitLatched`
+  (§1.1), and refuses it **silently** — no NAK, no flag change;
+- `data_plane.cpp` admits a job in IDLE with no check of any kind;
+- Core 1 adds the emitted steps to `machinePos` regardless.
+
+So a job started between legs streams normally, one axis does not move,
+`machinePos` says it did, and `axes_homed` still reads set. The counters diverge
+with nothing indicating it. IDLE is the symptom; the silent divergence is the
+fault.
+
+**The condition becomes an alarm.** A seek that ends on the switch enters
+`STATE_ALARM` with `ALARM_LIMIT_LATCHED`. This costs nothing to gate: ALARM
+already blocks the data plane, and `busGateDenies()` already admits ALARM, so
+`home` and `setorigin` keep working and the four-leg sequence runs unchanged. No
+new NACK and no new gate.
+
+It is also safe against the one thing that would have killed it:
+`reconcileValidity()` invalidates only on `STATE_ESTOP` / `ALARM_ESTOP` /
+`ALARM_SOFT_LIMIT`, so a new reason does not destroy the datum or drop
+`axes_enabled`. Entering ALARM on a *successful* seek therefore costs nothing —
+and it is not "success produced an alarm", it is "the axis is now parked against
+a limit", which is a condition, not an outcome.
+
+**A latch mask, one bit per axis, is the durable truth** — per *node*, with the
+per-slot `homingLatched` derived from it; see the correction below. `alarmReason`
+is a single slot and can only name one thing: latch Z0, then fail a Y home, and
+`ALARM_HOMING_FAIL` overwrites `ALARM_LIMIT_LATCHED`. Clear the Y failure and the
+machine reads IDLE with Z0 still gated. The mask is what survives that; the
+reason is only the headline.
+
+**The transition is derived, never written.** The supervisor's success path is
+not the only site that hardcodes IDLE — `cmdUnalarm` and `setorigin`'s
+alarm-clearing block do too, so retracting Z0 while X is still latched would drop
+to IDLE with no `unalarm` involved. All three go through one function:
+
+```c
+void resumeOrHold(void) {
+    if (homingLatched) { alarmReason = ALARM_LIMIT_LATCHED; machineState = STATE_ALARM; }
+    else               { alarmReason = ALARM_NONE;          machineState = STATE_IDLE;  }
+}
+```
+
+Which means `unalarm` needs no special case for this reason: it clears what it
+clears, calls `resumeOrHold()`, and the machine falls straight back into ALARM if
+the physical condition is still there. One rule instead of three guards.
+
+The invariant that makes it hold: **a bit is set on a seek's terminal verdict and
+cleared only by that same axis's successful retract.** Never by `unalarm`, never
+by `setorigin`, never wholesale. The mask is physical fact; the state is a view
+of it.
+
+#### The mask is node-framed, and lives in `position.h`
+
+**This corrects the paragraph that used to stand here**, which put the mask in
+`homing.h` as one bit per motion *slot*. Per slot it was wrong, and wrong in a
+way that wedged the machine:
+
+> Home Z on head 0 — slot 2, node 3 — which sets slot bit 2. Then `axis_map 1 2
+> 5 6` binds slot 2 to node 5. Bit 2 now asserts that head 1's Z is sitting on a
+> switch it has never touched, and since the mask gates `ALARM_LIMIT_LATCHED`,
+> the machine holds in an alarm that `unalarm` cannot clear and `setorigin`
+> cannot clear — only a physical retract on slot 2, or a reboot.
+
+A limit switch is wired to a **node**. Whether it is held down is a fact about
+that node's mechanism, and has nothing to do with which stream slot the node
+currently occupies. So the truth is stored per bus id and the slot view is
+re-derived on every bind — exactly the shape `nodeOrigin[]` / `nodeHomed` already
+had, and for exactly the same reason. `position.cpp`'s own header comment states
+the rule; this mask was written in violation of it.
+
+```c
+// position.h
+void nodeLatchSet(uint8_t n, bool latched);   // node-framed truth
+extern uint8_t homingLatched;                 // slot-framed view, derived
+```
+
+- `slotAdoptStatus()` re-derives the slot bit from the incoming node, so a bind
+  **adopts** the latch rather than inheriting the outgoing node's.
+- `slotUnbind()` clears the slot bit only. The node's bit is deliberately
+  untouched: unbinding a slot does not move anything off a switch.
+- `homingFail()` touches neither, and is already right in both failure modes — a
+  seek that failed never reached the switch, and a retract that failed never
+  escaped one.
+
+The old reasoning for `homing.h` over `shared_state.h` — that sitting beside
+`axes_homed` would overstate its authority, since a crash-latch during a job
+never reaches this code (§6.6) — was sound but argued the wrong axis. `position.h`
+answers it better anyway: the mask now sits beside the datum, the other
+node-framed fact with the same caveat and the same rebind behaviour. `getstate`
+includes `position.h` to report it.
+
+**The generalisation, since this is the second time the same bug has been
+written:** any fact about *physical mechanism* is node-framed. Any fact about
+*the current stream* is slot-framed. Store the first per slot and it goes stale
+on the next `axis_map`, silently, at the moment the operator is least expecting
+state to change — nothing moved.
+
+#### Reporting it: `latched=` on the text plane only
+
+`getstate` gains one field, appended **last** so every existing parse position is
+undisturbed:
+
+```
+state=0 enabled=0x00 homed=0x03 alarm=0 running=0 latched=0x00
+```
+
+`parseGetstate` ignores trailing tokens it does not know, so a new host reading
+old firmware is a missing key rather than a parse failure.
+
+**It is deliberately NOT in `STATUS_RSP`.** That frame is a fixed 30 bytes whose
+length the demux checks, so adding a byte is a version-skew problem across two
+binaries, not a field addition. The consequence is that `axesLatched` is
+`undefined` on a binary poll — **not `0`**. Zero would be a claim ("every switch
+clear") made on the strength of a frame that never asked, which is precisely the
+class of silent-wrong this section exists to remove. The demo panel renders that
+`undefined` as `— (binary poll — run getstate)`.
+
+**Deploy the firmware and the host together.** `enumFromInt` coerces an unknown
+`AlarmReason` to the fallback, so a host without `LIMIT_LATCHED: 6` renders an
+alarmed machine as **NO ALARM** — it does not render `ALARM(6)`. The degrade is
+silent and points the wrong way.
+
+**Out of scope:** detecting a crash-latch during a job. Host preflight owns that
+— see §6.6.
+
 ---
 
 ## 3. Host
 
 ### 3.1 Schema
+
+**Implemented** in `web/src/machine/schema.ts`, loaded by `json/load.ts`. The
+shipped interface is this one plus the three fields the paragraph below adds —
+`pullInFeed`, `rampSteps`, `parkMm` — nine fields in total.
 
 `AxisConfig` gains one optional field. The group is optional; the fields inside it
 are not — one decision per axis ("does this have a switch"), and if yes,
@@ -476,7 +696,9 @@ export interface AxisConfig {
 ```
 
 **Absent means no sensor**, which handles both A axes by omission rather than by a
-`homePresent: false` flag.
+`homePresent: false` flag. `buildHoming()` enforces this as all-or-nothing: a
+partial block is an error, not a block with defaults. `atOrigin` in particular has
+no default — there is no safe direction to guess.
 
 **Nothing goes in `DEFAULTS.axis`.** Per that file's own rule, calibration must
 come from config with no silent fallback, and every field here is calibration: a
@@ -494,6 +716,28 @@ Tagging from day one makes adding `RotaryHoming` a pure addition rather than a
 breaking change to every config that already has homing, and keeps
 `json/load.ts` from having to sniff structurally. Precedent: `Anchor` in
 `frames.ts`.
+
+**Three fields are missing, found by deriving §7's confirmed X/Y recipe back
+through this schema.** `CMD_HOME` takes `start_us` AND `floor_us` AND
+`ramp_steps`; `seekFeed` supplies only the second. The pull-in rate is a physical
+property — the fastest rate the motor starts from rest without stalling — and is
+not derivable from the cruise rate. And the two retracts are different distances
+(X/Y use 2 mm for leg 2, 5 mm for leg 4), so one `backoffMm` cannot say both:
+
+```ts
+readonly pullInFeed: number;    // mm/s, the rate leg 1 STARTS at
+readonly rampSteps: number;     // steps from pullInFeed to seekFeed
+readonly backoffMm: number;     // leg 2 — must exceed RELEASE hysteresis
+readonly parkMm: number;        // leg 4 — where the axis is left standing
+```
+
+The conversion in both directions is one expression:
+`interval_us = 1e6 / (feed × stepsPerUnit)`. Checked against §7's X numbers
+(`stepsPerUnit: 160`): `2500 µs` → 2.5 mm/s pull-in, `500 µs` → 12.5 mm/s seek,
+`8000 µs` → 0.78 mm/s latch, `320` steps → 2 mm back-off, and the `88000` budget is
+500 mm × 160 × 1.1 exactly. Z0 does not fit the same way: its `180000` is 150 mm
+× 1200 with **no** 1.1 margin, so either its `hardTravel` is 136.4 or the margin
+was skipped. Measure it rather than infer it.
 
 Everything else derives:
 
@@ -525,16 +769,38 @@ other, with nothing to catch it. The node never hears the word `invert`.
 
 ### 3.3 Validation
 
-New rules appended to `RULES`, hanging off the existing `namedAxes()`:
+**Implemented** as one rule, `homingCoherent`, appended to `RULES` and hanging off
+the existing `namedAxes()`. What shipped:
 
 | rule | level |
 |---|---|
-| `rotary: true` with `kind: "linear"` (and the converse) | error |
-| budget has a source: `hardTravel > 0` | error |
-| `maxTravel <= hardTravel` when both set (`maxTravel: 0` = uncapped, exempt) | error |
-| `seekFeed`, `latchFeed` > 0 and `<= maxFeed` | error |
-| `latchFeed < seekFeed` | warning |
-| X and Y both have `homing`, or neither | warning |
+| `hardTravel`, `pullInFeed`, `seekFeed`, `latchFeed`, `backoffMm`, `parkMm` all `> 0` | error |
+| `rampSteps >= 0` | error |
+| `latchFeed < seekFeed` | error |
+| `pullInFeed <= seekFeed` | error |
+| `seekFeed <= maxFeed` (when `maxFeed > 0`) | error |
+| `parkMm < hardTravel` | error |
+| `backoffMm <= parkMm` | warning |
+| `hardTravel >= maxTravel` (when `maxTravel > 0`) | warning |
+
+Three of these differ from the table this section originally carried, each for a
+reason found while writing the rule:
+
+- **`latchFeed < seekFeed` is an error, not a warning.** If the slow leg is not
+  slower, leg 3 is not a re-approach and the entire two-pass structure buys
+  nothing. That is a broken config, not a questionable one.
+- **`pullInFeed <= seekFeed` is new.** A pull-in above the cruise makes the
+  "ramp" a *decel*, so the axis meets the switch at the fastest point of the leg
+  — the exact opposite of the intent.
+- **`hardTravel >= maxTravel` is a warning, not an error**, and the comparison
+  runs the other way round from the original row. Homing legitimately moves
+  outside the soft envelope, because no datum exists yet to measure that envelope
+  from. But `hardTravel < maxTravel` means one of the two numbers is simply
+  wrong.
+
+The two rows about `rotary` and about X/Y agreeing were not written: there is no
+`RotaryHoming` member to conflict with yet, and an X-only machine is a legitimate
+bring-up state that a warning would just train the operator to ignore.
 
 The feed-ceiling rule is an **error**, unlike the house convention for targets.
 `overCeiling` warns because targets get clamped; a seek feed above the ceiling is
@@ -546,21 +812,67 @@ numbers and both are needed.
 
 ### 3.4 The sequence
 
-Three moves, then the datum. All host-side; the Pico gains no sequencer and the
-node gains nothing at all — it is the same command three times with different
+**Four** moves, then the datum. All host-side; the Pico gains no sequencer and the
+node gains nothing at all — it is the same command four times with different
 parameters.
+
+**Implemented** in `web/src/homing/`, split on the seam that matters for testing:
+
+| file | contents |
+|---|---|
+| `derive.ts` | **pure.** `approachDir()`, `derivePlan()` — config in, a four-leg plan plus the datum out. No link, no I/O, no clock. |
+| `sequence.ts` | `runHoming()` — arms each leg, polls to its terminal verdict, then `setorigin`. Throws `HomingError`. |
+| `types.ts` | `LegKind`, `HomingLeg`, `HomingPlan`. |
+
+The split means the arithmetic every one of the paragraphs below argues about —
+directions, budgets, the datum — is checked by tests that never open a link.
+`SEEK_MARGIN = 1.1` and `LATCH_MARGIN = 2.5` are the two constants, the second
+being the answer to "leg 3's budget must exceed leg 2's *actual* distance", below.
+
+An earlier version of this section specified three, ending on the switch. That
+leaves the axis latched, and the latch is cleared ONLY by a successful retract
+(§1.1) — so a three-leg home ends with the machine unable to move, and under
+§2.6 it ends in `ALARM_LIMIT_LATCHED`. The final back-off is not optional. §7's
+bench-confirmed recipes have always had four legs; this section was the one that
+disagreed.
 
 Worked example — X, switch at the far end, 500 mm, 160 steps/mm:
 
 ```
-home x 1 1000  125   2000 88000   → ok    # fast seek: 1000µs→125µs over 2000 steps
-                                          (poll getstate until state leaves HOMING)
-home x 0 1000  1000  0    320     → ok    # 2 mm back-off — NOTE dir 0
-                                          (poll)
-home x 1 20000 20000 0    8000    → ok    # slow re-approach, no ramp
-                                          (poll)
-setorigin x 80000                 → ok    # 500 mm × 160 steps/mm
+home x 1 1000  125   2000 88000 0 → ok    # 1 fast seek: 1000µs→125µs over 2000 steps
+                                          (poll; ends ALARM / LIMIT_LATCHED)
+home x 0 1000  1000  0    320   1 → ok    # 2 back-off 2 mm — NOTE dir 0
+                                          (poll; ends IDLE)
+home x 1 20000 20000 0    8000  0 → ok    # 3 slow re-approach, no ramp
+                                          (poll; ends ALARM / LIMIT_LATCHED)
+home x 0 1000  1000  0    800   1 → ok    # 4 park 5 mm clear — NOTE dir 0
+                                          (poll; ends IDLE)
+setorigin x 79200                 → ok    # (500 mm − 5 mm) × 160 steps/mm
 ```
+
+The trailing digit on each `home` is `intent` (§1.2's "The intent bit"): `0` for
+legs 1 and 3, which are expected to start clear of the switch, `1` for legs 2
+and 4, which are expected to start on it. It rides alongside `dir`, not instead
+of it — get either one wrong against physical reality and this leg NAKs
+(`nak intent_mismatch`) rather than running under the wrong leg's budget
+semantics. This example predates the intent field; §7's bench-confirmed lines
+below carry it too, added the same way.
+
+**The datum goes last, and it is not `tripPos × stepsPerUnit`.** `homingRelease()`
+invalidates the origin on EVERY home, success included, so a datum set after leg 3
+is destroyed by leg 4. It must be set at the parked position:
+
+```
+pos_steps = (tripPos ∓ parkMm) × stepsPerUnit
+```
+
+That is exact, because of an asymmetry worth stating plainly: **a seek ends at an
+unknown position — the trip point — while a retract travels exactly its budget**,
+since it ignores the switch and nothing but the budget stops it (§1.3). Leg 4's
+distance is therefore known a priori and leg 1's never is.
+
+**Leg 3's budget must exceed leg 2's actual distance**, not the planned one — it
+has to re-cross whatever leg 2 travelled to find the switch again. See §7.
 
 **THE DIRECTION MUST ALTERNATE.** An earlier version of this example carried
 `dir 1` on all three passes, and that is a crash: the node holds no direction
@@ -605,12 +917,57 @@ allowed-state matrix: no job stream during a home, and no second home.
 or Y with a tool down will drag it across the material. That warning now lives in
 the operator flow rather than in a sequencer, and it needs a home.
 
+### 3.6 The operator surface
+
+A Homing panel in `web/demo/comms.html` / `comms.js` — the demo, so the bar is
+"exercisable and honest", not "production":
+
+- **A checkbox per homeable axis**, meaning an axis with a `homing` block whose
+  node is present. Absent config = absent row, which is the §3.1 rule made
+  visible.
+- **A homed tick per row**, repainted on every status sample *and* on `committed`.
+  A Z/A on the non-engaged head reads `—`, not `·`: its slot currently holds the
+  other head's node, so the mask has nothing to say about it, and `·` would be a
+  claim the machine never made.
+- **Dry run**, which needs no machine. It calls `derivePlan()` and prints the four
+  legs and the datum. This is where a backwards `atOrigin` is caught — on a
+  screen, rather than at seek speed against a hard stop — and it is the reason
+  `derive.ts` is pure.
+- **Home selected**, running axes **sequentially**: the firmware answers `err
+  busy` to a second `home` while one is in flight, because Core 0 supervises
+  exactly one at a time (§3.5).
+- **Stop**, which is an e-stop and not a cancel. Mid-home the axis is between two
+  known points; there is nothing to unwind to, and only a fresh home can say
+  where it is.
+
+The panel shows `ALARM` / `LIMIT_LATCHED` between legs, and says in a hint that
+this is the sequence working (§2.6), not a fault. An operator who learns to clear
+that alarm mid-home has been taught the wrong reflex by the UI.
+
+**The Sim models `home`** (`wire/link/backends/sim.ts`), so all of the above is
+exercisable without hardware: it arms, sits in `HOMING`, and finishes on the tick
+loop, with seek-vs-retract decided the way the node decides it — one read of its
+own switch at arm time (§1.2). It models the *protocol*, not the motion: arm,
+poll, verdict, and the alternation of terminal states. Step timing is not
+simulated, so it can prove the sequencer's logic and can prove nothing about
+feeds.
+
 ---
 
 ## 4. What does not change
 
 The datum machinery, the axis map and `ENGAGE`, the stream byte format, and the
 MSEG path are all untouched. Homing bolts on beside them.
+
+**In particular, `axis_map` does not cost a re-home.** This gets asked, because
+the slot view of `axes_homed` visibly changes when a head is swapped. But the
+datum is node-framed — `nodeOrigin[]` and `nodeHomed` are indexed by bus id — and
+`slotAdoptStatus()` recomputes both `machinePos[s]` and the `axes_homed` bit from
+the incoming node on every bind. Swap head 0 out and back in, and the axes that
+were homed still are. Nothing moved, so nothing was lost; only the *view* was
+rebuilt. §2.6's latch mask now works the same way, and the host refreshes status
+after a commit so the panel shows the re-derived answer rather than the
+pre-commit one.
 
 In particular, homing establishes `nodeOrigin` through the *existing* mechanism.
 `absolutePosition` is not a position — it is a free-running tally with an
@@ -763,6 +1120,13 @@ needs a pin chosen and the four `HAL_LIMIT_*` symbols defined — the whole gate
 
 ### 6.3 Numbers to measure before first run
 
+- **`atOrigin` for X, Y, Z0, Z1** — which *end* each switch is at. Not a
+  measurement so much as a look, but it is the one field with no safe default and
+  no way to fail soft: backwards, the first seek runs a full `hardTravel` away
+  from the switch and into a hard stop, at `seekFeed`. The values presently in
+  `web/demo/comms.json` (`hardTravel: 500`, `atOrigin: false`) are placeholders,
+  not findings. Dry run (§3.6) prints the derived direction and datum without
+  moving anything; use it first.
 - **Switch over-travel.** This bounds `seekFeed` — not `maxFeed`. The fast pass
   must stop within the travel between trip point and hard bottom-out, or it trips
   the switch and then crashes into it.
@@ -781,6 +1145,17 @@ The lifetime chatter count (§1.1) is maintained but not exposed. Exposing it me
 extending the stepper status tail, which changes a payload the Pico parses — worth
 doing as its own step rather than bundled into the gate.
 
+### 6.6 A crash-latch during a job is invisible
+
+§2.6 covers only latches the homing supervisor observes. A limit tripped by a
+crash mid-job never reaches that code, so `homingLatched` stays clear while the
+axis is gated, and the stream keeps emitting steps the node silently refuses —
+the same divergence §2.6 exists to prevent, outside its reach.
+
+Deliberately out of scope here: it is not a homing problem, and the host is
+better placed to answer it with a preflight poll before a job than the Pico is by
+polling continuously. Named so the gap is not mistaken for coverage.
+
 ---
 
 ## 7. Bench-confirmed reference
@@ -791,6 +1166,13 @@ against hardware, kept here so a future session does not have to re-derive them
 from `comms.json` and re-discover the same corrections. These are per-node
 findings, not spec — §3.4's derivation is still how a new axis gets a starting
 point.
+
+**The lines below predate the `<intent>` argument (§2.2, §1.2's "The intent
+bit") and will NAK verbatim against current firmware.** Replaying any of them
+today needs a trailing `0` on the two seek lines and `1` on the two retract
+lines — `dir` and `intent` happen to coincide numerically in every line below,
+which is a property of this particular bench sequence, not a rule; do not
+assume they always match.
 
 **Per-node direction and polarity, as confirmed on the bench:**
 

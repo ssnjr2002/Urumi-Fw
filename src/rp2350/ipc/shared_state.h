@@ -137,6 +137,15 @@ enum AlarmReason : uint8_t {
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
     ALARM_HOMING_FAIL= 4,   // home ended wrong: no switch found, or none cleared
     ALARM_NODE_FAULT = 5,   // reserved — a node reported or failed a check
+    // A limit switch is held down. Not a failure: it is where a SEEK is
+    // supposed to end, and legs 1 and 3 of a home both finish here
+    // (docs/homing.md §2.6). It is an alarm because the machine genuinely
+    // cannot do work in this condition — the node refuses stream steps
+    // outright while its limit is latched, so a job admitted here would run
+    // three axes and silently drop the fourth. ALARM already gates the data
+    // plane while busGateDenies() still admits control commands, which is
+    // exactly the gating a mid-home pause wants, for free.
+    ALARM_LIMIT_LATCHED = 6,
 };
 
 enum RunningReason : uint8_t {

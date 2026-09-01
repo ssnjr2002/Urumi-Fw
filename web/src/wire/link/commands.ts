@@ -152,8 +152,72 @@ export function axesEnable(link: Link, on: boolean): Promise<boolean> {
 
 // ── motion control ────────────────────────────────────────────────────────────
 
-export function setOrigin(link: Link, axes: string = ""): Promise<boolean> {
-    return _ok(link, `setorigin ${axes}`.trimEnd());
+/**
+ * Record a datum: the named axes' current physical position IS `posSteps`.
+ *
+ * `posSteps` defaults to 0 — "here is the origin" — which is the bare-jog case.
+ * A home needs the other form: after leg 4 the axis is parked a known distance
+ * clear of a switch whose own machine coordinate is known, so the datum is that
+ * arithmetic, not zero. Omitting it there would put the origin at the park
+ * point and silently shift the whole coordinate system by parkMm.
+ *
+ * Answers `err unbound` if NO named axis resolved to a node — a mask where
+ * nothing resolved recorded nothing, and `ok` there would report a datum that
+ * does not exist.
+ */
+export function setOrigin(link: Link, axes: string = "", posSteps?: number): Promise<boolean> {
+    const args = posSteps !== undefined ? `${axes} ${posSteps}` : axes;
+    return _ok(link, `setorigin ${args}`.trim());
+}
+
+// ── homing ────────────────────────────────────────────────────────────────────
+
+/**
+ * Arm ONE leg of a home on `axis` and return as soon as the Pico has armed it.
+ *
+ * Deliberately a single leg, not a sequence. The firmware command is one leg —
+ * the node runs the motion and stops itself, Core 0 only supervises the waiting
+ * — and a full home is four of these plus a `setorigin` (docs/homing.md §3.4).
+ * The sequencing lives in `homing/`, which owns the config arithmetic; this
+ * stays a thin verb so a bring-up console can drive a single leg by hand.
+ *
+ * `ok` means ARMED, not finished. The machine is now in HOMING and the caller
+ * must poll `getstate` until it leaves — see homing/sequence.ts.
+ *
+ * `retract` does not STEER the node — it still picks seek or retract itself
+ * from a single read of its own switch pin at arm time, and the host cannot
+ * know that pin's state ahead of the command (§1.2). What it does is let the
+ * node catch a divergence between the plan's model and physical reality: this
+ * plan's leg has an expectation (`HomingLeg.kind`), the node checks it against
+ * the pin, and a mismatch is a NAK (NAK_INTENT_MISMATCH) rather than a leg run
+ * under the wrong budget semantics — a seek's runaway cap executed to
+ * completion as a retract, ignoring the switch it was meant to stop at.
+ *
+ * @param dir       1 or 0 — the node's own direction sense, not a signed axis
+ *                  direction. Derive it with approachDir(); `invert` is already
+ *                  folded in there.
+ * @param retract   this leg's expected mode — true for one planned to start
+ *                  already on the switch (§3.4 legs 2 and 4), false for one
+ *                  planned to start clear (legs 1 and 3). From `HomingLeg.kind`.
+ * @param startUs   step interval the leg starts at
+ * @param floorUs   interval it ramps down to (== startUs for an un-ramped leg)
+ * @param rampSteps steps taken to get from startUs to floorUs
+ * @param maxSteps  runaway budget. A seek stops at the switch and this is only
+ *                  a cap; a retract IGNORES the switch and travels EXACTLY this
+ *                  many steps, which is what makes leg 4's distance knowable.
+ */
+export function home(
+    link: Link,
+    axis: string,
+    dir: 0 | 1,
+    retract: boolean,
+    startUs: number,
+    floorUs: number,
+    rampSteps: number,
+    maxSteps: number,
+): Promise<boolean> {
+    const intent = retract ? 1 : 0;
+    return _ok(link, `home ${axis} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps} ${intent}`);
 }
 
 export function pause(link: Link): Promise<boolean> {

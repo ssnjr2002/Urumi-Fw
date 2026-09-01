@@ -49,6 +49,8 @@
 #define NAK_UNSUPPORTED 0x01  // this node does not implement that opcode
 #define NAK_BAD_TOKEN   0x02  // session token mismatch (plan section 8.2)
 #define NAK_BAD_ARG     0x03  // opcode known, payload rejected
+#define NAK_INTENT_MISMATCH 0x04  // CMD_HOME only: declared intent disagreed
+                                   // with the node's own pin read — see below.
 // Type-specific (0x20+): only one type is compiled per node, so values may
 // overlap between types. Stepper:
 // Node status flags (the [flags] byte of the status payload below).
@@ -104,19 +106,34 @@
 // wired accept it; every other stepper NAKs. See docs/homing.md 1.4.
 //
 //   payload (11 bytes, big-endian, matching the status tail's convention):
-//     [0]    dir            wire dir bit: which way THIS move goes
+//     [0]    dir/intent     bit0 = wire dir bit: which way THIS move goes
+//                           bit1 = intent: 0 = host expects a seek,
+//                                          1 = host expects a retract
 //     [1..2] start_interval microseconds, pull-in rate
 //     [3..4] floor_interval microseconds, cruise rate
 //     [5..6] ramp_steps     steps from start to floor; 0 = no ramp
 //     [7..10] max_steps     runaway budget
 //   ack: the status payload, sampled after arming (same shape as CMD_ENGAGE).
 //
-// There is NO seek/retract field. The node samples its limit pin when the
-// command is accepted and that single read picks the mode: pin clear means seek
-// (run until the switch asserts), pin asserted means retract (ignore the switch,
-// run the budget out). Deciding from the pin rather than from a flag or from
-// retained state is what lets a node that booted with its axis already parked on
-// the switch retract correctly on the FIRST command.
+// There is NO SEPARATE seek/retract command or node-retained mode. The node
+// still samples its limit pin when the command is accepted, and that single
+// read is still what actually PICKS the mode: pin clear runs a seek (until the
+// switch asserts), pin asserted runs a retract (switch ignored, budget run out
+// in full). Deciding from the pin rather than from retained state is what lets
+// a node that booted with its axis already parked on the switch retract
+// correctly on the FIRST command — that property is unchanged.
+//
+// The intent bit does not steer that decision. It is a second, independent
+// opinion the host attaches to let the node CATCH a disagreement it would
+// otherwise execute silently. Without it, a host that thinks it is arming a
+// seek (large runaway budget, meant to be cut short by the switch) but finds
+// the pin already asserted -- stale prior state, a bounced or mis-wired
+// switch, a leg that did not clear it as expected -- gets a retract instead:
+// same huge budget, but a retract IGNORES the switch and runs it to
+// completion. That is not a wrong-direction nudge, it is the full seek-sized
+// runaway distance with nothing left to stop it. Comparing pin-derived mode
+// against declared intent and NAKing on mismatch closes that hole for the cost
+// of one bit and one comparison; nothing is stored past the single command.
 //
 // Intervals are MICROSECONDS, not timer ticks: the node converts on receipt, so
 // the 20MHz/24MHz difference between board families never reaches the master or
