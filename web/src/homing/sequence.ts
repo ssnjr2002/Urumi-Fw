@@ -72,12 +72,13 @@ async function runLeg(
     // disagreement rather than running the leg under the wrong budget
     // semantics (docs/homing.md §1.4, §2.6).
     const intendedRetract = leg.kind === LegKind.BACKOFF || leg.kind === LegKind.PARK;
-    const armed = await home(
+    const { armed, reason } = await home(
         link, leg.axis, leg.dir, intendedRetract,
         leg.startUs, leg.floorUs, leg.rampSteps, leg.maxSteps,
     );
     if (!armed) {
-        throw new HomingError(leg, null, `${leg.axis}: Pico refused to arm the ${leg.kind} leg`);
+        throw new HomingError(leg, null,
+            `${leg.axis}: Pico refused to arm the ${leg.kind} leg (${reason ?? "no reply"})`);
     }
 
     try {

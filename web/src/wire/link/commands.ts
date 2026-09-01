@@ -206,7 +206,14 @@ export function setOrigin(link: Link, axes: string = "", posSteps?: number): Pro
  *                  a cap; a retract IGNORES the switch and travels EXACTLY this
  *                  many steps, which is what makes leg 4's distance knowable.
  */
-export function home(
+/** Result of arming a homing leg: whether it armed, and — on refusal — why. */
+export interface HomeResult {
+    armed: boolean;
+    /** The raw `err <reason>` text (e.g. "err node intent_mismatch", "err bad_state"), omitted on success. */
+    reason?: string;
+}
+
+export async function home(
     link: Link,
     axis: string,
     dir: 0 | 1,
@@ -215,9 +222,13 @@ export function home(
     floorUs: number,
     rampSteps: number,
     maxSteps: number,
-): Promise<boolean> {
+): Promise<HomeResult> {
     const intent = retract ? 1 : 0;
-    return _ok(link, `home ${axis} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps} ${intent}`);
+    const r = await link.command(
+        `home ${axis} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps} ${intent}`,
+    );
+    if (r === "ok") return { armed: true };
+    return { armed: false, reason: r };
 }
 
 export function pause(link: Link): Promise<boolean> {
