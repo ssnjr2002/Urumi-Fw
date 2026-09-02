@@ -126,9 +126,19 @@ const char* rpcResultText(RpcResult r) {
 #define NS_HEAD_LEN   2    // [type][flags] — §8.2 grows this by session/cause/fw
 #define NS_STEP_POS   2    // …5, int32 big-endian
 #define NS_STEP_SLOT  6
-#define NS_STEP_LEN   7    // full stepper payload length
-#define NS_STEP_SPAN  7    // …10, int32 big-endian — switch-equipped boards only
-#define NS_SPAN_LEN   11   // stepper payload length WITH the homing span
+#define NS_HOME_KIND  7    // HOMING_KIND_* — DECLARED, not inferred from length
+#define NS_STEP_LEN   8    // full stepper payload length
+#define NS_STEP_SPAN  8    // …11, int32 big-endian — homing-capable boards only
+#define NS_SPAN_LEN   12   // stepper payload length WITH the homing span
+#define NS_IDX_POS   12    // …15, int32 big-endian — rotary (Hall index) only
+#define NS_IDX_CAUSE 16
+#define NS_IDX_LEN   17    // stepper payload length WITH the rotary index
+#define NS_HALL_RAW  17    // …18, int16 BE — live sensor value (bring-up)
+#define NS_HALL_BASE 19    // …20, int16 BE — last sweep's baseline
+#define NS_HALL_LEN  21
+#define NS_LAP_STEPS 21    // …24, int32 BE — measured steps per revolution
+#define NS_LAP_CROSS 25    // index crossings the sweep completed
+#define NS_LAP_LEN   26
 
 bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out) {
     if (len < NS_HEAD_LEN) return false;
@@ -150,8 +160,17 @@ bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out) {
                    ((int32_t)buf[NS_STEP_POS + 2] <<  8) |
                     (int32_t)buf[NS_STEP_POS + 3];
         out->slot = buf[NS_STEP_SLOT];
+        out->homingKind = buf[NS_HOME_KIND];
         out->hasStepperTail = true;
     }
+
+    // Everything below is gated on the node's DECLARED kind, not on how long the
+    // payload happens to be. Length still bounds each read -- a truncated frame
+    // must not be indexed past -- but it no longer DECIDES what the bytes mean.
+    // Inferring from length conflated capability with firmware age and would
+    // have silently mis-decoded a linear node as rotary the first time anyone
+    // appended a field to the linear tail.
+    const bool rotary = (out->homingKind == HOMING_KIND_INDEX);
 
     // Appended by boards that have a switch, so its absence is a fact about the
     // node (no switch ⇒ no homing ⇒ no leg to measure), not about the firmware
@@ -164,7 +183,56 @@ bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out) {
                          (int32_t)buf[NS_STEP_SPAN + 3];
         out->hasHomeSpan = true;
     }
+
+    // Third length, same rule. A rotary node reports WHERE ITS INDEX IS, which
+    // is not where the axis stopped -- a dip's centre is only knowable after
+    // passing it, so the sweep runs through the feature and `pos` is somewhere
+    // past it. Both numbers are real and neither substitutes for the other.
+    //
+    // The cause rides alongside because `index` is meaningful only for
+    // ROTARY_IDX_OK: a sweep that found nothing has no index, and a 0 there is a
+    // legitimate step coordinate rather than a sentinel.
+    if (rotary && len >= NS_IDX_LEN) {
+        out->indexPos = ((int32_t)buf[NS_IDX_POS]     << 24) |
+                        ((int32_t)buf[NS_IDX_POS + 1] << 16) |
+                        ((int32_t)buf[NS_IDX_POS + 2] <<  8) |
+                         (int32_t)buf[NS_IDX_POS + 3];
+        out->indexCause = buf[NS_IDX_CAUSE];
+        out->hasIndex   = true;
+    }
+    if (rotary && len >= NS_HALL_LEN) {
+        out->hallRaw      = (int16_t)(((uint16_t)buf[NS_HALL_RAW]  << 8) |
+                                                  buf[NS_HALL_RAW + 1]);
+        out->hallBaseline = (int16_t)(((uint16_t)buf[NS_HALL_BASE] << 8) |
+                                                  buf[NS_HALL_BASE + 1]);
+    }
+    if (rotary && len >= NS_LAP_LEN) {
+        out->stepsPerRev = ((int32_t)buf[NS_LAP_STEPS]     << 24) |
+                           ((int32_t)buf[NS_LAP_STEPS + 1] << 16) |
+                           ((int32_t)buf[NS_LAP_STEPS + 2] <<  8) |
+                            (int32_t)buf[NS_LAP_STEPS + 3];
+        out->crossings   = buf[NS_LAP_CROSS];
+        out->hasLap      = true;
+    }
     return true;
+}
+
+const char* rotaryIdxCauseText(uint8_t cause) {
+    switch (cause) {
+        case ROTARY_IDX_NONE:       return "none";
+        case ROTARY_IDX_OK:         return "ok";
+        case ROTARY_IDX_NOTFOUND:   return "notfound";
+        case ROTARY_IDX_DEGENERATE: return "degenerate";
+        case ROTARY_IDX_OVERFLOW:   return "overflow";
+        case ROTARY_IDX_SLIP:       return "slip";
+        default: break;
+    }
+    // Same discipline as rpcResultText: an unknown cause prints as itself
+    // rather than degrading to one of the known words, which would make the
+    // first firmware that adds a cause report a confident wrong reason.
+    static char buf[16];
+    snprintf(buf, sizeof buf, "cause_%u", (unsigned)cause);
+    return buf;
 }
 
 // ─── Convenience wrappers ─────────────────────────────────────────────────────

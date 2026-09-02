@@ -41,6 +41,7 @@ static const Cmd kCommands[] = {
     { "axis_map",     cmdAxisMap     },
     { "setorigin",    cmdSetOrigin   },
     { "step",         cmdStep        },
+    { "hallscan",     cmdHallScan    },
     { "home",         cmdHome        },
     { "axes_enable",  cmdAxesEnable  },
     { "bus_enable",   cmdBusEnable   },

@@ -165,11 +165,17 @@ bool cmdNodeStat(const char* args) {
     // this print IS how a bench run is observed. limit is "pin asserted OR
     // gate latched" and homing is "the node's pulser is running" — see
     // docs/homing.md 1.5 for how the pair reads after each kind of move.
-    Serial.printf("node %d type %d en %d datum %d limit %d homing %d", node, type,
+    Serial.printf("node %d type %d en %d datum %d", node, type,
                   (st.flags & NODE_FLAG_ENABLED) ? 1 : 0,
-                  (st.flags & NODE_FLAG_DATUM)   ? 1 : 0,
-                  (st.flags & NODE_FLAG_LIMIT)   ? 1 : 0,
-                  (st.flags & NODE_FLAG_HOMING)  ? 1 : 0);
+                  (st.flags & NODE_FLAG_DATUM)   ? 1 : 0);
+    // `limit` is printed only where it can ever be non-zero. The BIT stays
+    // reserved bus-wide (common.h) so the flags byte has one meaning for every
+    // board -- but printing "limit 0" for a node with no switch states a fact
+    // about a thing that does not exist, and on a rotary node that reads as a
+    // switch that is fine rather than a switch that is absent.
+    if (st.homingKind == HOMING_KIND_LIMIT)
+        Serial.printf(" limit %d", (st.flags & NODE_FLAG_LIMIT) ? 1 : 0);
+    Serial.printf(" homing %d", (st.flags & NODE_FLAG_HOMING) ? 1 : 0);
     switch (type) {
         case NODE_TYPE_STEPPER: {
             if (st.slot == 0xFF) Serial.printf(" pos %ld slot none", (long)st.pos);
@@ -179,6 +185,24 @@ bool cmdNodeStat(const char* args) {
             // which has no homing and so nothing to measure -- printed only
             // when the node actually sent it, never defaulted to 0.
             if (st.hasHomeSpan) Serial.printf(" span %ld", (long)st.homeSpan);
+            // Rotary only. The cause always prints when the node has an index,
+            // including "none" before the first sweep -- the alternative is a
+            // silent absence that reads identically to a linear node, which is
+            // exactly the distinction this line exists to show.
+            if (st.hasIndex) {
+                Serial.printf(" idxcause %s", rotaryIdxCauseText(st.indexCause));
+                if (st.indexCause == ROTARY_IDX_OK)
+                    Serial.printf(" index %ld", (long)st.indexPos);
+                Serial.printf(" hall %d base %d", st.hallRaw, st.hallBaseline);
+            }
+            // Always printed when the node sends it, INCLUDING on a failure --
+            // `cross 0` against `idxcause notfound` is the whole diagnosis (the
+            // magnet was never seen), and a short count says the budget ran out
+            // before the sweep could prove the feature repeats.
+            if (st.hasLap) {
+                Serial.printf(" cross %u", st.crossings);
+                if (st.stepsPerRev) Serial.printf(" steprev %ld", (long)st.stepsPerRev);
+            }
             break;
         }
         case NODE_TYPE_VACUUM:
