@@ -54,23 +54,6 @@ bool homingActive(void);
 // ALARM_HOMING_FAIL; reset at the next arm.
 uint8_t homingFailWhy(void);
 
-// How far the last COMPLETED leg moved, in the node's own steps. False if no leg
-// has finished since boot, or if the last one failed -- see homing.cpp for why a
-// failed leg's distance is deliberately not offered.
-//
-// Reports the endpoints, not a distance: `home` cannot know which leg of a
-// sequence it is running, so the caller is the one that knows this was the seek
-// and that its span is the frame. Signed subtraction is theirs to do, and the
-// sign is worth having -- it catches an approach direction that ran the wrong
-// way. This is the MEASUREMENT; deciding it means max travel is the operator's
-// call, and depends on them having started at the far end (docs/homing.md §7).
-// `wasSeek` distinguishes the two kinds of leg, and without it the number is
-// anonymous: after a full four-leg home this reports leg 4's 5 mm park retract,
-// which looks exactly like a frame measurement to anyone reading it by hand.
-// Only a SEEK measures anything the host did not already command -- a retract
-// travels precisely the max_steps it was given, so its span is an echo.
-bool homingLastSpan(uint8_t* node, int32_t* from, int32_t* to, bool* wasSeek);
-
 // The latch mask itself lives in position.h, beside the datum it mirrors: a
 // limit switch belongs to a NODE, so the truth is node-framed and the per-slot
 // view is re-derived on every bind. Homing writes it via nodeLatchSet() and

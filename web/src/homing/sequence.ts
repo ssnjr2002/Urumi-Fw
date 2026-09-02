@@ -118,14 +118,16 @@ async function runLeg(
         }
         // BUDGET, or firmware predating homefail= (undefined). The original
         // wording, which is correct for this case.
-        // Quote what it ACTUALLY travelled next to the budget. "never reached
-        // within 211200 steps" reads as a switch that was driven at and missed;
-        // if the axis in fact stopped at 14000, the budget was never the story
-        // and the message was pointing at the wrong component.
-        const got = st.homeSpanSteps !== undefined
-            ? ` (travelled ${Math.abs(st.homeSpanSteps)})` : "";
+        //
+        // How far it ACTUALLY went is no longer quoted here, because it is no
+        // longer in this reply: the span moved to the node, where `nodestat`
+        // reports it (commands.ts nodeStat). That is worth reading alongside
+        // this message -- "never reached within 211200 steps" describes a switch
+        // driven at and missed, and if the axis in fact stopped at 26000 the
+        // budget was never the story.
         throw new HomingError(leg, st, leg.endsLatched
-            ? `${leg.axis} ${leg.kind}: switch never reached within ${leg.maxSteps} steps${got}`
+            ? `${leg.axis} ${leg.kind}: switch never reached within ${leg.maxSteps} steps` +
+              ` — run \`nodestat\` for how far it actually went`
             : `${leg.axis} ${leg.kind}: never cleared the switch in ${leg.maxSteps} steps ` +
               `— back-off is likely shorter than the switch's release hysteresis`);
     }

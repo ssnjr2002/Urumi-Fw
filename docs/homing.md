@@ -661,6 +661,71 @@ silent and points the wrong way.
 **Out of scope:** detecting a crash-latch during a job. Host preflight owns that
 — see §6.6.
 
+### 2.7 `span`: the node measures its own leg
+
+**Implemented**, and it lives on the **node**, not the Pico. `homingArm()`
+snapshots `absolutePosition`; `homingFinish()` stores `end - start`;
+`node_status()` appends it to the stepper tail, and `nodestat <id>` prints it
+as `span <steps>`.
+
+It answers one question — **how far did the last completed leg actually
+move** — and nothing past that.
+
+**Per LEG, not per home, and that is what makes it answerable.** An earlier
+design spanned a seek/retract PAIR and ran aground immediately: a full home is
+*two* pairs, and the node cannot tell which one it is in, because it sees four
+unrelated `CMD_HOME`s and has no sequence context at all. Per-leg is the
+primitive the node can actually stand behind. Composing legs into "distance
+from the far stop to the datum" is the master's job, and the master has the leg
+boundaries to do it with.
+
+**Why the node and not the Pico** — where it was first built, and where it was
+wrong. The master *could* get the same number by bracketing two
+`CMD_NODE_STATUS` reads around a leg, since `absolutePosition` is free-running
+and nothing ever resets it (§4). What that argument misses is the **bench
+path**: every value in §7 was found by driving one node directly with the raw
+console `home` command, with no host sequencer in the picture at all.
+Bracketing does not exist there. The node-side span does, which is exactly when
+a homing diagnostic is most needed — bringing up an axis whose numbers are not
+yet known.
+
+Reading it is still the operator's job, and deliberately so:
+
+- **Steps, never mm.** The Pico does not parse `stepsPerUnit` — that is host
+  config, and a board that converted would be authoritative about a calibration
+  it cannot check (§2.1). Signed, because the sign catches a leg that ran the
+  wrong way.
+- **It survives a failed leg, on purpose.** Where a leg stopped IS the
+  diagnostic when it stopped somewhere unexpected — §7.2's seek died 164 mm
+  into a 1200 mm frame, and that number is what disproved the truncation theory
+  and found the real bug. An earlier version cleared the span on failure, on
+  the reasoning that a failed leg's distance is just its budget. That was wrong
+  twice: a leg that fails part-way travelled some OTHER distance, and that
+  distance is precisely what the failure raises as a question.
+- **Reading it as "max travel" is a precondition the node cannot verify.** The
+  number is the frame's full extent only if the axis started the seek parked at
+  the *opposite* hard stop. Nothing in the firmware can tell whether that was
+  true; it reports what moved, not what that implies.
+
+**The tail is now legitimately two lengths.** Switch-equipped boards send
+`[pos][slot][span]` (9 bytes) and switchless ones `[pos][slot]` (5). Safe in
+both directions of version skew because `nodeStatusDecode()` branches on
+`len >= NS_STEP_LEN` rather than equality — an old master ignores the extra
+four bytes, a new one reading a switchless node reports no span rather than
+mis-parsing. `hasHomeSpan` carries the distinction, so a missing span never
+degrades into a `0` that reads as "went nowhere".
+
+**Why not a dedicated calibration command**, or a two-leg `home` wrapper that
+seeks, backs off, and hands back a distance: it saves nothing. The host already
+arms both legs of a real home, so such a command would be `home` then `home`
+with the subtraction moved firmware-side, for a number the host can already
+compute. The one thing it would buy — an answer in mm — needs `stepsPerUnit`,
+and §2.1 keeps that on the host regardless of which command produced the steps.
+That is the general shape of the bottleneck: any feature wanting the Pico to do
+more than relay and count hits the same wall, because config reaches it only as
+an opaque blob. Worth solving once, generally, if that class of feature is ever
+actually wanted — not worth solving here for one subtraction.
+
 ---
 
 ## 3. Host
@@ -1262,3 +1327,28 @@ bench command could not have exposed because it never polled the bus mid-move:
 - `err busy` sat below the bus gate in `cmdHome`, which does not admit
   `STATE_HOMING`, so a second `home` mid-move got a generic `err bad_state` and
   the specific branch was unreachable.
+
+### 7.2 2026-09-01 run — 1200 mm seek, wedge fix, and a node-side glitch
+
+Two more master-side defects, found bench-testing X at `hardTravel: 1200` (up
+from the placeholder 500), both fixed this session:
+
+- **A stale `ALARM_ESTOP` wedged `STATE_HOMING` forever.** Stop mid-leg, then
+  home again: leg 1 latched correctly, but the machine never left
+  `STATE_HOMING` for leg 2 — `resumeOrHold()` is the only exit on that path and
+  its guard excluded `ALARM_ESTOP`. Fixed by retiring `alarmReason` at the ARM,
+  not the exit, so `STATE_HOMING` never coexists with a reason describing a
+  machine that already stopped (§2.2, §2.6's `resumeOrHold`).
+- **The node's homing pulser had no glitch rejection**, unlike the stream path
+  (§1.1's `LIMIT_LATCH_BYTES`). A seek repeatably stopped ~164 mm into the
+  1200 mm frame with `homefail=BUDGET` and `nodestat` reading `limit 0`
+  immediately after — a transient assert halted the pulser, nothing latched,
+  and the pin had released by the Pico's next 25 ms poll. `span` (§2.7) is
+  what disproved the first theory (a 16-bit truncation at 14592 steps): the
+  actual travelled figure, 26241, doesn't match, and pointed at the ISR
+  instead. Fixed with a 3-sample debounce in the pulser, mirroring the stream
+  path's discipline.
+
+Both fixes are in `src/rp2350/core0/homing.cpp` and
+`src/node/types/stepper/stepper.cpp` respectively — flash both, not just the
+Pico, to get the second one.

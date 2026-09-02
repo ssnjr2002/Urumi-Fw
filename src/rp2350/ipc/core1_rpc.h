@@ -125,6 +125,8 @@ typedef struct {
     int32_t  pos;                  // stepper tail
     uint8_t  slot;                 // stepper tail
     bool     hasStepperTail;       // false when the payload stopped at [flags]
+    int32_t  homeSpan;             // stepper tail, switch-equipped boards only
+    bool     hasHomeSpan;          // false on a node with no switch (no homing)
 
     // The type-specific tail, verbatim, already offset past the generic head.
     // Decoding it means knowing what a vacuum node or a knife node puts there,

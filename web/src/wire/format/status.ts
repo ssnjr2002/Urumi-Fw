@@ -164,31 +164,6 @@ export class MachineStatus {
          */
         readonly axesLatched: number | undefined = undefined,
         /**
-         * How far the last COMPLETED homing leg moved, in that node's own steps,
-         * signed in the node's direction convention. The measurement behind a
-         * max-travel calibration (docs/homing.md §7).
-         *
-         * `undefined` means no completed leg stands behind it — no home since
-         * boot, the last one failed, or a binary sample (text plane only, same
-         * rule as `axesLatched`). Never 0 for "unknown": 0 is a real reading,
-         * and it means an axis that armed on its switch and went nowhere.
-         *
-         * Per LEG, not per home. The Pico sees four unrelated `home` commands
-         * and cannot know they form a sequence, so this is whichever leg
-         * finished last — the caller is the one that knows leg 1 was the seek
-         * and that its span is the frame.
-         */
-        readonly homeSpanSteps: number | undefined = undefined,
-        /** Bus id of the node `homeSpanSteps` was measured on. */
-        readonly homeSpanNode: number | undefined = undefined,
-        /**
-         * True if the leg behind `homeSpanSteps` was a SEEK. A retract travels
-         * exactly the max_steps it was handed, so its span echoes the command
-         * back and measures nothing — after a full four-leg home this is false
-         * and the span is leg 4's park retract, not the frame.
-         */
-        readonly homeSpanWasSeek: boolean | undefined = undefined,
-        /**
          * Which fault ended the last home, when `alarm` is HOMING_FAIL. See
          * HomeFail — the three causes are diagnosed in completely different
          * places, and the reason byte alone cannot tell them apart.
@@ -264,9 +239,6 @@ export function parseGetstate(line: string): MachineStatus {
         // firmware's own "nothing to report" and not merely an old-firmware
         // fallback -- which is why it does NOT default to 0 the way `latched`
         // above does. Signed, so toInt must not be the hex-tolerant path.
-        fields.span !== undefined ? parseInt(fields.span, 10) : undefined,
-        fields.spannode !== undefined ? parseInt(fields.spannode, 10) : undefined,
-        fields.spanseek !== undefined ? fields.spanseek === "1" : undefined,
         fields.homefail !== undefined
             ? enumFromStr(HOME_FAIL_VALUES, fields.homefail, HomeFail.BUDGET)
             : undefined,

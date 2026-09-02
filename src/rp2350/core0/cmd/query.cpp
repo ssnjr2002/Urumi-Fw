@@ -26,26 +26,6 @@ bool cmdGetState(const char*) {
                   machineState, axes_enabled, axes_homed, alarmReason, runningReason,
                   homingLatched);
 
-    // `span` rides getstate rather than earning a command of its own, because
-    // this is already the poll that tells the host a leg finished -- the same
-    // reply that carries `latched` for the verdict now carries how far the leg
-    // ran, for free. A `homespan` command would have been a second round trip
-    // asking about the state this one just reported.
-    //
-    // Signed, and in the node's own steps. The sign catches an approach that ran
-    // the wrong way; steps stay steps because stepsPerUnit lives in the host's
-    // config, and a Pico that converted would be authoritative about a
-    // calibration it cannot check. Absent entirely when no completed leg stands
-    // behind it (docs/homing.md §7).
-    // `spanseek` is not decoration. A retract travels exactly the max_steps it
-    // was handed, so its span echoes the command back; only a seek measures
-    // something. After a full four-leg home this field describes leg 4's park
-    // retract, and without the flag that 800 reads like a frame measurement.
-    uint8_t spanNode; int32_t from, to; bool wasSeek;
-    if (homingLastSpan(&spanNode, &from, &to, &wasSeek)) {
-        Serial.printf(" span=%ld spannode=%d spanseek=%d",
-                      (long)(to - from), spanNode, wasSeek ? 1 : 0);
-    }
     // Only meaningful alongside ALARM_HOMING_FAIL, and omitted otherwise so it
     // cannot be read as a live fault. See homing.h for what the codes point at.
     if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != HOMEFAIL_NONE) {
@@ -194,6 +174,11 @@ bool cmdNodeStat(const char* args) {
         case NODE_TYPE_STEPPER: {
             if (st.slot == 0xFF) Serial.printf(" pos %ld slot none", (long)st.pos);
             else              Serial.printf(" pos %ld slot %d", (long)st.pos, st.slot);
+            // How far this node's last homing leg ran, straight from the node
+            // (stepper.cpp's "Leg span"). Absent on a board with no switch,
+            // which has no homing and so nothing to measure -- printed only
+            // when the node actually sent it, never defaulted to 0.
+            if (st.hasHomeSpan) Serial.printf(" span %ld", (long)st.homeSpan);
             break;
         }
         case NODE_TYPE_VACUUM:

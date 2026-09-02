@@ -82,6 +82,38 @@ export async function nodePos(link: Link, nodeId: number): Promise<{ nodeId: num
 }
 
 /**
+ * A node's full state via `nodestat <id>`, including the homing leg span.
+ *
+ * `span` is how far that node's last COMPLETED homing leg actually moved, in
+ * its own steps, measured by the node itself (src/node/types/stepper/stepper.cpp).
+ * It is per LEG and not per home: the node sees individual `home` commands and
+ * has no idea they form a sequence, so this is whichever leg finished last. The
+ * caller is the one that knows leg 1 was the seek and that its span is the frame.
+ *
+ * `undefined` when the node did not send it — a board with no limit switch has
+ * no homing, so there is no leg to measure. Never defaulted to 0, which is a
+ * real reading meaning "armed and went nowhere".
+ *
+ * Reply: `node <id> type <t> en <b> datum <b> limit <b> homing <b> pos <p> slot <s> [span <n>]`
+ */
+export async function nodeStat(link: Link, nodeId: number): Promise<{
+    nodeId: number; type: number; enabled: boolean; datum: boolean;
+    limit: boolean; homing: boolean; pos: number; span: number | undefined;
+}> {
+    const r = await link.command(`nodestat ${nodeId}`);
+    const m = /^node\s+(\d+)\s+type\s+(\d+)\s+en\s+(\d)\s+datum\s+(\d)\s+limit\s+(\d)\s+homing\s+(\d)\s+pos\s+(-?\d+)/.exec(r);
+    if (!m) throw new Error(`bad nodestat reply: ${JSON.stringify(r)}`);
+    const sp = /span\s+(-?\d+)/.exec(r);
+    return {
+        nodeId: parseInt(m[1]!), type: parseInt(m[2]!),
+        enabled: m[3] === "1", datum: m[4] === "1",
+        limit: m[5] === "1", homing: m[6] === "1",
+        pos: parseInt(m[7]!),
+        span: sp ? parseInt(sp[1]!, 10) : undefined,
+    };
+}
+
+/**
  * Toggle a vacuum-node servo channel on/off.
  * Syntax: `vac_servo <node> <idx> <on|off>`.
  */

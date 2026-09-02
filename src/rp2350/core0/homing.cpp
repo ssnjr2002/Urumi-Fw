@@ -38,32 +38,6 @@ static uint8_t  settleLeft = 0;
 static uint32_t nextPollMs = 0;
 static uint32_t deadlineMs = 0;
 
-// ─── Leg span, for travel calibration (docs/homing.md §7) ────────────────────
-// How far the last COMPLETED leg actually moved, in the node's own steps.
-//
-// Free to collect: the arm ack and the terminal poll both already carry the
-// node's counter, so this is two subtractions and no extra bus traffic. It is
-// worth collecting because the node's pulser is the only thing counting during
-// a home -- Core 1 emits nothing, so machinePos cannot answer "how far did that
-// go", and the operator measuring a frame has no other source for it.
-//
-// PER LEG, not per home. The Pico sees four unrelated `home` commands and has
-// no idea they form a sequence (cmd/axis.cpp) -- inventing one here to sum them
-// would be the planning this module deliberately does not do. The seek leg is
-// the one that spans the frame, so the host reads this after leg 1.
-//
-// SURVIVES A FAILURE, and updates on every answered poll rather than only at the
-// end. How far a leg got before it stopped is precisely what a failure leaves
-// you asking, and pairing it with homefail= is what separates "the budget really
-// did run out" from "it stopped nowhere near its limit". Reading it live during
-// a seek works for the same reason.
-static bool     spanValid = false;
-static uint8_t  spanNode  = 0;
-static int32_t  spanFrom  = 0;
-static int32_t  spanTo    = 0;
-static bool     spanSeek  = false;  // was the measured leg a seek, or a retract?
-static int32_t  legStart  = 0;      // the in-flight leg's arm-time counter
-
 // Why the last home failed. ALARM_HOMING_FAIL alone conflates three different
 // faults with three different fixes, and the host cannot tell them apart from
 // the reason byte -- so it guessed, and printed "switch never reached within
@@ -75,15 +49,6 @@ static int32_t  legStart  = 0;      // the in-flight leg's arm-time counter
 static uint8_t  failWhy = HOMEFAIL_NONE;
 
 bool homingActive(void) { return claimed; }
-
-bool homingLastSpan(uint8_t* node, int32_t* from, int32_t* to, bool* wasSeek) {
-    if (!spanValid) return false;
-    if (node)    *node    = spanNode;
-    if (from)    *from    = spanFrom;
-    if (to)      *to      = spanTo;
-    if (wasSeek) *wasSeek = spanSeek;
-    return true;
-}
 
 uint8_t homingFailWhy(void) { return failWhy; }
 
@@ -115,9 +80,10 @@ static void homingRelease(uint8_t node) {
 // stay clear, and a retract that failed never escaped one, so its bit should
 // stay set. Both are what the last successful leg left behind.
 static void homingFail(uint8_t why) {
-    // The span is deliberately LEFT STANDING. How far the leg got before it
-    // stopped is the whole diagnostic -- read it with homefail= to tell a budget
-    // that genuinely ran out from one that stopped nowhere near its limit.
+    // The node's own span survives this untouched, which is the point of it
+    // living there: how far the leg got before it stopped is the whole
+    // diagnostic, and `nodestat` still reports it alongside homefail= to tell a
+    // budget that genuinely ran out from one that stopped nowhere near its limit.
     failWhy = why;
     homingRelease(hNode);
     alarmReason  = ALARM_HOMING_FAIL;
@@ -182,17 +148,6 @@ bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
         return true;
     }
 
-    // The ack was sampled after homingArm() started the pulser, so a handful of
-    // steps may already be counted. At the slowest leg's interval that is tens
-    // of microseconds of travel -- irrelevant against a frame measured in tens
-    // of thousands of steps, and the alternative (a second poll before arming)
-    // costs a round trip and straddles the start.
-    legStart     = st.pos;
-    spanFrom     = st.pos;          // zero-length until the first poll lands
-    spanTo       = st.pos;
-    spanNode     = node;
-    spanSeek     = !wasRetract;
-    spanValid    = true;
     failWhy      = HOMEFAIL_NONE;   // this leg has not failed yet
 
     const uint32_t now = millis();
@@ -240,25 +195,6 @@ void homingTick(void) {
         return;
     }
     misses = 0;
-
-    // Span is updated on EVERY answered poll, not only when the leg succeeds.
-    //
-    // It used to be recorded only on success and CLEARED on failure, on the
-    // reasoning that a failed leg's distance is just its budget. That was wrong
-    // twice over: a leg that fails part-way has travelled some OTHER distance,
-    // and that distance is the single most useful number for working out why it
-    // stopped -- which is exactly the question a failure raises. Discarding it
-    // left `switch never reached within 211200 steps` with no way to tell
-    // whether the axis had run 211200 steps or 14000.
-    //
-    // Updating per poll also makes it live: `getstate` during a seek now shows
-    // how far the axis has gone, so a leg that is about to fail can be watched
-    // rather than reconstructed afterwards.
-    spanFrom  = legStart;
-    spanTo    = st.pos;
-    spanNode  = hNode;
-    spanSeek  = !wasRetract;
-    spanValid = true;
 
     if (st.flags & NODE_FLAG_HOMING) {
         // Still pulsing. The runaway budget is the node's, but Core 0 keeps its

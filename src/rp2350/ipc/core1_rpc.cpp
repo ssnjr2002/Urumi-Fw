@@ -127,6 +127,8 @@ const char* rpcResultText(RpcResult r) {
 #define NS_STEP_POS   2    // …5, int32 big-endian
 #define NS_STEP_SLOT  6
 #define NS_STEP_LEN   7    // full stepper payload length
+#define NS_STEP_SPAN  7    // …10, int32 big-endian — switch-equipped boards only
+#define NS_SPAN_LEN   11   // stepper payload length WITH the homing span
 
 bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out) {
     if (len < NS_HEAD_LEN) return false;
@@ -149,6 +151,18 @@ bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out) {
                     (int32_t)buf[NS_STEP_POS + 3];
         out->slot = buf[NS_STEP_SLOT];
         out->hasStepperTail = true;
+    }
+
+    // Appended by boards that have a switch, so its absence is a fact about the
+    // node (no switch ⇒ no homing ⇒ no leg to measure), not about the firmware
+    // being old. Either way `hasHomeSpan` says so rather than letting a
+    // zero-filled 0 read as "the last leg travelled nothing".
+    if (len >= NS_SPAN_LEN) {
+        out->homeSpan = ((int32_t)buf[NS_STEP_SPAN]     << 24) |
+                        ((int32_t)buf[NS_STEP_SPAN + 1] << 16) |
+                        ((int32_t)buf[NS_STEP_SPAN + 2] <<  8) |
+                         (int32_t)buf[NS_STEP_SPAN + 3];
+        out->hasHomeSpan = true;
     }
     return true;
 }

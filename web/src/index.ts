@@ -369,6 +369,7 @@ export {
     getStatus,
     getPos,
     nodePos,
+    nodeStat,
     vacServo,
     vacPump,
     vacSwitch,
