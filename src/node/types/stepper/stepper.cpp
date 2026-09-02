@@ -144,6 +144,33 @@ static volatile bool homingHitLimit = false;
 // owns and is therefore loop-context only.
 static volatile bool homingFinished = false;
 
+// ─── Leg span ────────────────────────────────────────────────────────────────
+// How far the last COMPLETED homing leg actually moved: the counter at the arm,
+// and the difference once it stops. Reported in the status tail, so every leg
+// is self-describing.
+//
+// One leg, not a sequence. An earlier design tried to span a seek/retract PAIR
+// and immediately ran aground on the fact that a full home is two pairs and the
+// node cannot tell which one it is in -- it sees individual legs and has no
+// sequence context at all. Per-leg is the primitive the node can actually
+// answer for; composing legs into "distance from the far stop to the datum" is
+// the master's job, and it has the leg boundaries to do it with.
+//
+// It matters that this lives here rather than on the master, even though the
+// master could subtract two CMD_NODE_STATUS reads and get the same number: the
+// BENCH path has no master sequencer. Every value in docs/homing.md §7 was
+// found by driving one node directly with the raw console `home` command, and
+// that is how the axes get brought up. Bracketing is unavailable there; this is
+// not.
+//
+// Signed and in raw steps -- the sign catches a leg that ran the wrong way, and
+// steps stay steps because stepsPerUnit is host config that no node has ever
+// seen. Both directions of the subtraction survive a failed leg on purpose:
+// where a leg stopped IS the diagnostic when it stopped somewhere unexpected.
+static int32_t homingSpanFrom  = 0;
+static int32_t homingSpanSteps = 0;
+
+static int32_t readPositionAtomic(void);
 static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
                       uint16_t rampSteps, uint32_t maxSteps);
 static void homingHalt(void);
@@ -263,6 +290,10 @@ static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs
     homing         = h;
     homingActive   = true;
     homingHitLimit = false;
+    // Span start. Captured inside the same cli() as the arm so it cannot be
+    // taken a step late -- the pulser is enabled below, but the stream path can
+    // still be advancing the counter right up to here.
+    homingSpanFrom = absolutePosition;
     sei();
 
     // DIR is set here, once, in loop context — so the pulser ISR never pays the
@@ -331,6 +362,11 @@ static void homingHalt(void) {
 // The loop-context half of stopping, run once per completed move.
 static void homingFinish(void) {
     homingFinished = false;
+    // Close the span. Unconditional: a leg that failed still went somewhere, and
+    // that distance is exactly what a failure needs to be diagnosed -- a seek
+    // that stopped 164 mm into a 1200 mm frame says something a "switch never
+    // reached" verdict on its own does not (docs/homing.md §7.2).
+    homingSpanSteps = readPositionAtomic() - homingSpanFrom;
     // Clearing the latch is the retract's ONLY write to the gate, and only when
     // it verifiably got clear of the switch: a retract that spent its whole
     // budget and is still asserted did not escape (under-budgeted, wrong
@@ -410,8 +446,15 @@ static int32_t readPositionAtomic() {
     return pos;
 }
 
-// Type-specific status tail: [pos int32 BE][slot]. Lets a host see both what the
-// node counted and which stream slot it is ENGAGE-bound to (0xFF = disengaged).
+// Type-specific status tail: [pos int32 BE][slot], plus [span int32 BE] on a
+// board with a switch. Lets a host see what the node counted, which stream slot
+// it is ENGAGE-bound to (0xFF = disengaged), and how far its last homing leg ran.
+//
+// The span is APPENDED, and only on HAS_LIMIT_SWITCH builds, so the tail is
+// legitimately two different lengths across the bus. That is safe in both
+// directions because the master decodes on `len >= NS_STEP_LEN` rather than
+// equality: an old master ignores the extra four bytes, and a new one reading a
+// switchless node simply finds no span rather than mis-parsing.
 uint8_t node_status(uint8_t* buf) {
     int32_t pos = readPositionAtomic();
     buf[0] = (pos >> 24) & 0xFF;
@@ -419,7 +462,16 @@ uint8_t node_status(uint8_t* buf) {
     buf[2] = (pos >> 8)  & 0xFF;
     buf[3] =  pos        & 0xFF;
     buf[4] = slot;
+#ifdef HAS_LIMIT_SWITCH
+    const int32_t span = homingSpanSteps;
+    buf[5] = (span >> 24) & 0xFF;
+    buf[6] = (span >> 16) & 0xFF;
+    buf[7] = (span >> 8)  & 0xFF;
+    buf[8] =  span        & 0xFF;
+    return 9;
+#else
     return 5;
+#endif
 }
 
 bool node_handle_command(const uint8_t* pkt, uint8_t len,

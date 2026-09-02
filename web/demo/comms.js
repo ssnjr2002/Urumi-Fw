@@ -66,6 +66,7 @@ import {
     maskStr,
     derivePlan,
     runHoming,
+    nodeStat,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -496,25 +497,37 @@ homeRunBtn.addEventListener('click', async () => {
                 // say "ok" -- it did for a while, and printed a confident pass
                 // on the line directly above the failure that contradicted it.
                 // Report what the machine actually said and let the throw speak.
-                onLegDone: (leg, st) => {
+                onLegDone: async (leg, st) => {
                     log(`  ${a.letter} ${leg.kind}: state ${STATE_NAMES[st.state] ?? st.state}` +
                         ` latched=0x${(st.axesLatched ?? 0).toString(16)}`, 'rx');
                     // Only the SEEK leg spans the frame, and only if the
-                    // operator started at the far end — which is why this is
+                    // operator started at the far end -- which is why this is
                     // reported as a measurement, not written anywhere. Turning
-                    // it into maxTravel is their call (docs/homing.md §7).
-                    // NOT on a failed leg. onLegDone fires before runLeg checks
-                    // the verdict, and the span now survives a failure (it is the
-                    // diagnostic), so without this guard a seek that stopped on a
-                    // glitch printed its 164 mm as a travel measurement on the
-                    // line directly above "switch never reached".
-                    if (leg.kind === 'seek' && st.homeSpanSteps !== undefined
-                        && st.homeSpanWasSeek !== false
-                        && st.alarm !== AlarmReason.HOMING_FAIL) {
-                        const mm = Math.abs(st.homeSpanSteps) / a.cal.stepsPerUnit;
-                        log(`  ${a.letter} travelled ${Math.abs(st.homeSpanSteps)} steps` +
-                            ` = ${mm.toFixed(2)} ${a.unit} to reach the switch` +
-                            ` — that is maxTravel ONLY if it started at the far end`, 'note');
+                    // it into maxTravel is their call (docs/homing.md §2.7).
+                    //
+                    // The span comes from the NODE now, so this costs one extra
+                    // round trip and is only made on the leg worth measuring.
+                    // Reading it needs the machine out of STATE_HOMING, which it
+                    // is by the time onLegDone runs.
+                    //
+                    // NOT on a failed leg: onLegDone fires before runLeg checks
+                    // the verdict, and the span deliberately survives a failure
+                    // (it is the diagnostic), so without this guard a seek that
+                    // stopped on a glitch printed its 164 mm as a travel
+                    // measurement directly above "switch never reached".
+                    if (leg.kind === 'seek' && st.alarm !== AlarmReason.HOMING_FAIL) {
+                        try {
+                            const ns = await nodeStat(link, a.ax.node.id);
+                            if (ns.span !== undefined) {
+                                const steps = Math.abs(ns.span);
+                                const mm = steps / a.cal.stepsPerUnit;
+                                log(`  ${a.letter} travelled ${steps} steps` +
+                                    ` = ${mm.toFixed(2)} ${a.unit} to reach the switch` +
+                                    ` — that is maxTravel ONLY if it started at the far end`, 'note');
+                            }
+                        } catch (e) {
+                            log(`  ${a.letter} span unavailable: ${e.message}`, 'note');
+                        }
                     }
                 },
             });
