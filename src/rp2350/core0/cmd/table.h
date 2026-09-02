@@ -51,6 +51,7 @@ bool cmdLaser(const char*);
 bool cmdAxisMap(const char*);
 bool cmdSetOrigin(const char*);
 bool cmdStep(const char*);
+bool cmdHallScan(const char*);
 bool cmdHome(const char*);
 bool cmdAxesEnable(const char*);
 bool cmdBusEnable(const char*);

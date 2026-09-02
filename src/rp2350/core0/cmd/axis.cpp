@@ -475,3 +475,71 @@ bool cmdStep(const char* args) {
     Serial.printf("ok %ld steps %lu sps\n", count, (unsigned long)sps);
     return true;
 }
+
+// ── hallscan <node> <stepPer> <samples> [sps] — field profile vs position ────
+// The bring-up instrument the node port never had. src/scratch/hall_capture.py
+// could plot the A1324's output against step count before choosing a single
+// threshold; on the bus there was no equivalent, so HOME_ENTER, HOME_WIN and
+// HOME_DECIM were carried over from node 4's captures and applied to node 5 on
+// faith. Three bench runs failed in three different ways for the same reason:
+// nobody had seen node 5's waveform. This shows it.
+//
+// It steps and reads rather than sampling during a move, so it is SLOW and the
+// profile it draws is a static one -- which is the point. It answers, without
+// any thresholding in the way: how deep is the dip, how wide is it, is there
+// exactly one per revolution, and how many steps IS a revolution on this head.
+//
+// ONE line of output, not one per sample. The text plane is strictly
+// request/response and the host reads exactly one line per command; a multi-line
+// reply desyncs it for the rest of the session, which is the same trap
+// documented at cmdPingNode. Paste the line into a plot.
+#define HALLSCAN_MAX 300
+
+bool cmdHallScan(const char* args) {
+    if (busGateDenies()) return true;
+    char* end;
+    uint8_t node = (uint8_t)strtoul(args, &end, 10);
+    long stepPer = strtol(end, &end, 10);
+    long samples = strtol(end, &end, 10);
+    if (!node || stepPer == 0 || samples <= 0) { Serial.println("err usage"); return true; }
+    if (samples > HALLSCAN_MAX) { Serial.println("err too_many"); return true; }
+    uint32_t sps = strtoul(end, &end, 10);
+    if (sps == 0) sps = STEP_DEBUG_SPS;
+    if (sps > STEP_DEBUG_SPS_MAX) sps = STEP_DEBUG_SPS_MAX;
+
+    uint8_t slot = nodeSlot(node);
+    if (slot == SLOT_NONE) { Serial.println("err not_engaged"); return true; }
+    // Same reason as cmdStep: a de-energised node still counts stream bytes, so
+    // an unenabled scan would advance the count while the shaft -- and therefore
+    // the field -- stayed put, drawing a flat line that looks like a dead sensor.
+    if (!(axes_enabled & (1 << slot))) { Serial.println("err not_enabled"); return true; }
+
+    NodeStatus st;
+    if (rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st) != RPC_OK || !st.hasIndex) {
+        Serial.println("err no_index");    // not a rotary build, or not answering
+        return true;
+    }
+
+    Serial.printf("hallscan node %d step %ld n %ld from %ld vals",
+                  node, stepPer, samples, (long)st.pos);
+    for (long i = 0; i < samples; i++) {
+        Serial.printf(" %d", st.hallRaw);
+        rpcStepDebug(slot, (uint16_t)sps, (int32_t)stepPer);
+
+        // Wait for the burst to land rather than trusting a computed duration.
+        // rpcStepDebug is fire-and-forget (no reply, no in-flight slot), so the
+        // only evidence the steps were emitted is the node's OWN count reaching
+        // the target -- which is also the check that would catch the axis being
+        // stalled or the stream not arriving at all.
+        const int32_t want = st.pos + (int32_t)stepPer;
+        const uint32_t deadline = millis() + (uint32_t)(labs(stepPer) * 1000 / sps) + 500;
+        do {
+            if (rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st) != RPC_OK) {
+                Serial.println(" err bus"); return true;
+            }
+        } while (st.pos != want && (int32_t)(millis() - deadline) < 0);
+        if (st.pos != want) { Serial.println(" err stalled"); return true; }
+    }
+    Serial.printf(" %d end %ld\n", st.hallRaw, (long)st.pos);
+    return true;
+}

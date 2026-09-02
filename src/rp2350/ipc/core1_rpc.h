@@ -125,8 +125,24 @@ typedef struct {
     int32_t  pos;                  // stepper tail
     uint8_t  slot;                 // stepper tail
     bool     hasStepperTail;       // false when the payload stopped at [flags]
-    int32_t  homeSpan;             // stepper tail, switch-equipped boards only
-    bool     hasHomeSpan;          // false on a node with no switch (no homing)
+    int32_t  homeSpan;             // stepper tail, homing-capable boards only
+    bool     hasHomeSpan;          // false on a node that cannot home
+    int32_t  indexPos;             // stepper tail, rotary (Hall index) only —
+                                   // NOT the same as `pos`: the sweep runs
+                                   // through the dip, so it stops past it
+    uint8_t  indexCause;           // ROTARY_IDX_* — indexPos is meaningful only
+                                   // for ROTARY_IDX_OK
+    bool     hasIndex;             // false on a node with no Hall index
+    int16_t  hallRaw;              // live sensor value — bring-up diagnostic
+    int16_t  hallBaseline;         // last sweep's away-from-magnet level
+    uint8_t  homingKind;           // HOMING_KIND_*, declared by the node itself
+    // Measured on the sweep, not configured. stepsPerRev is the mean interval
+    // between index crossings; crossings is how many the sweep completed, which
+    // is the only thing that separates "never saw the magnet" from "ran out of
+    // budget" when the cause is notfound.
+    int32_t  stepsPerRev;
+    uint8_t  crossings;
+    bool     hasLap;               // false on firmware older than the lap tail
 
     // The type-specific tail, verbatim, already offset past the generic head.
     // Decoding it means knowing what a vacuum node or a knife node puts there,
@@ -137,6 +153,10 @@ typedef struct {
 } NodeStatus;
 
 bool nodeStatusDecode(const uint8_t* buf, uint8_t len, NodeStatus* out);
+
+// The word a ROTARY_IDX_* cause prints as. One place, for the same reason
+// rpcResultText is one place.
+const char* rotaryIdxCauseText(uint8_t cause);
 
 // ─── Transport ────────────────────────────────────────────────────────────────
 // Call once from setup(), before Core 1 launches.

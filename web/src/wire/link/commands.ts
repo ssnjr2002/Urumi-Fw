@@ -90,26 +90,69 @@ export async function nodePos(link: Link, nodeId: number): Promise<{ nodeId: num
  * has no idea they form a sequence, so this is whichever leg finished last. The
  * caller is the one that knows leg 1 was the seek and that its span is the frame.
  *
- * `undefined` when the node did not send it — a board with no limit switch has
- * no homing, so there is no leg to measure. Never defaulted to 0, which is a
- * real reading meaning "armed and went nowhere".
+ * `undefined` when the node did not send it — a board that cannot home has no
+ * leg to measure. Never defaulted to 0, which is a real reading meaning "armed
+ * and went nowhere".
  *
- * Reply: `node <id> type <t> en <b> datum <b> limit <b> homing <b> pos <p> slot <s> [span <n>]`
+ * `index` is the ROTARY answer, and it is deliberately NOT `pos`. A limit
+ * switch's edge IS the position, so a linear seek stops on its datum; an analog
+ * dip's centre is only knowable after passing it, so a rotary sweep runs THROUGH
+ * the feature and halts somewhere past it. Both numbers are real and neither
+ * substitutes for the other.
+ *
+ * `indexCause` is present whenever the node has an index at all — including
+ * "none" before the first sweep — while `index` appears only when that cause is
+ * "ok". A sweep that found nothing has no index, and 0 is a legitimate step
+ * coordinate rather than a sentinel. Both `undefined` on a linear node.
+ *
+ * `limit` is ABSENT on a node whose homing kind is not a limit switch, and that
+ * absence is the point: printing `limit 0` for a node with no switch states a
+ * fact about a thing that does not exist, and reads as a switch that is fine
+ * rather than one that is not there. So it is optional here and surfaces as
+ * `undefined`, never as `false` -- a caller that cannot tell "clear" from
+ * "absent" is exactly the caller this distinction exists for.
+ *
+ * `cross` and `steprev` are the rotary sweep's EVIDENCE, not its answer.
+ * `cross` is how many times the sweep passed the index; it is reported even on
+ * a failure, where `cross 0` against `idxcause notfound` says the magnet was
+ * never seen at all rather than that the budget was short. `steprev` is the
+ * mean interval between those crossings -- a measured steps-per-revolution,
+ * only meaningful once at least two crossings exist.
+ *
+ * Reply: `node <id> type <t> en <b> datum <b> [limit <b>] homing <b> pos <p> slot <s>
+ *         [span <n>] [idxcause <word> [index <n>] hall <n> base <n>]
+ *         [cross <n> [steprev <n>]]`
  */
 export async function nodeStat(link: Link, nodeId: number): Promise<{
     nodeId: number; type: number; enabled: boolean; datum: boolean;
-    limit: boolean; homing: boolean; pos: number; span: number | undefined;
+    limit: boolean | undefined; homing: boolean; pos: number;
+    span: number | undefined;
+    index: number | undefined; indexCause: string | undefined;
+    crossings: number | undefined; stepsPerRev: number | undefined;
 }> {
     const r = await link.command(`nodestat ${nodeId}`);
-    const m = /^node\s+(\d+)\s+type\s+(\d+)\s+en\s+(\d)\s+datum\s+(\d)\s+limit\s+(\d)\s+homing\s+(\d)\s+pos\s+(-?\d+)/.exec(r);
+    // `limit` is an optional GROUP rather than a separate probe so the fields
+    // around it stay anchored: `homing` follows it either way, and a loose
+    // /limit\s+(\d)/ searched anywhere in the line would let a genuinely
+    // malformed reply through while happily matching nothing on a rotary node.
+    const m = /^node\s+(\d+)\s+type\s+(\d+)\s+en\s+(\d)\s+datum\s+(\d)\s+(?:limit\s+(\d)\s+)?homing\s+(\d)\s+pos\s+(-?\d+)/.exec(r);
     if (!m) throw new Error(`bad nodestat reply: ${JSON.stringify(r)}`);
-    const sp = /span\s+(-?\d+)/.exec(r);
+    const sp = /\bspan\s+(-?\d+)/.exec(r);
+    const ic = /\bidxcause\s+(\S+)/.exec(r);
+    const ix = /\bindex\s+(-?\d+)/.exec(r);
+    const cr = /\bcross\s+(\d+)/.exec(r);
+    const sr = /\bsteprev\s+(-?\d+)/.exec(r);
     return {
         nodeId: parseInt(m[1]!), type: parseInt(m[2]!),
         enabled: m[3] === "1", datum: m[4] === "1",
-        limit: m[5] === "1", homing: m[6] === "1",
+        limit: m[5] === undefined ? undefined : m[5] === "1",
+        homing: m[6] === "1",
         pos: parseInt(m[7]!),
         span: sp ? parseInt(sp[1]!, 10) : undefined,
+        index: ix ? parseInt(ix[1]!, 10) : undefined,
+        indexCause: ic ? ic[1]! : undefined,
+        crossings: cr ? parseInt(cr[1]!, 10) : undefined,
+        stepsPerRev: sr ? parseInt(sr[1]!, 10) : undefined,
     };
 }
 

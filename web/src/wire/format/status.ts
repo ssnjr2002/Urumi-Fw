@@ -89,6 +89,18 @@ export const HomeFail = {
     /** Still pulsing past the supervisor's own timeout. The node's own budget
      *  should have stopped it first, so this points at the pulser. */
     DEADLINE: 3,
+    /** Rotary only. The sweep completed and found no usable feature: it never saw
+     *  the magnet (zero crossings), or the captured window reduced to nothing.
+     *  Sensor, magnet, or wiring — NOT the budget. */
+    INDEX_ABSENT: 4,
+    /** Rotary only. A feature was there but would not fit the node's capture
+     *  buffer even at the derived decimation. The dip's shape changed; the
+     *  detector is working and refusing to trust it. */
+    INDEX_SHAPE: 5,
+    /** Rotary only. The index repeated at intervals that disagree with each
+     *  other. The measurement is sound and the MECHANISM is not: slipped belt,
+     *  stalled driver, or a feature that is not once-per-revolution. */
+    INDEX_SLIP: 6,
 } as const;
 export type HomeFail = (typeof HomeFail)[keyof typeof HomeFail];
 const HOME_FAIL_VALUES = Object.values(HomeFail) as readonly number[];

@@ -46,6 +46,24 @@ void homingTick(void);
                               // The node's budget should have stopped it first,
                               // so this points at the pulser, not the switch.
 
+// ── rotary only (ROTARY_IDX_* in include/common.h) ──────────────────────────
+// A rotary leg has no switch, so BUDGET above cannot describe its failures: the
+// sweep always stops, and what varies is what it managed to prove. These three
+// split that by WHERE TO LOOK, which is the only reason a failure code exists.
+#define HOMEFAIL_INDEX_ABSENT 4  // the sweep completed and found no usable
+                                 // feature: crossings 0 (never saw the magnet
+                                 // at all) or a window that reduced to nothing.
+                                 // Sensor, magnet, or wiring -- NOT the budget.
+#define HOMEFAIL_INDEX_SHAPE  5  // a feature was there but did not fit the
+                                 // capture buffer even at the derived
+                                 // decimation. The dip's shape changed; the
+                                 // detector is working and disbelieving it.
+#define HOMEFAIL_INDEX_SLIP   6  // the index repeated at intervals that disagree
+                                 // with each other. The measurement is sound and
+                                 // the MECHANISM is not: slipped belt, stalled
+                                 // driver, or a feature that is not
+                                 // once-per-revolution.
+
 // True while this module holds a home. Lets the gates refuse a second `home`
 // without reading machineState, which anything may write.
 bool homingActive(void);

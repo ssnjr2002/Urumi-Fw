@@ -95,6 +95,31 @@ void drivers_disable();
     #endif
 #endif
 
+// Hall index (rotary axes). A magnet on the OUTPUT side of the reduction passes
+// a fixed A1324 whose analog output dips once per output revolution; that dip's
+// centre is the index. See docs/rotary_a_axis.md.
+//
+// PD1 AGAIN, and that is not a collision to fix -- it is the same pin doing the
+// same job for the two kinds of axis, and an axis is exactly one of them. A
+// linear axis has a switch, a rotary axis has a magnet, and neither board wires
+// both. The build flags are mutually exclusive for the same reason (asserted
+// below), so the pin is only ever configured one way in one binary.
+#ifdef HAS_HALL_INDEX
+    #if defined(HAS_LIMIT_SWITCH)
+    #error "HAS_HALL_INDEX and HAS_LIMIT_SWITCH both claim PD1 — an axis is one or the other"
+    #endif
+    #define HAL_HALL_PIN     PIN_PD1
+    #define HAL_HALL_MUXPOS  ADC_MUXPOS_AIN1_gc    // PD1 = AIN1 on AVR128DB32
+#endif
+
+// Either flavour of home runs the SAME step pulser, budget, ramp and leg span;
+// only the thing that ENDS the move differs (a debounced switch edge vs a
+// completed dip). This is what the shared machinery in stepper.cpp guards on, so
+// that adding rotary did not fork the pulser.
+#if defined(HAS_LIMIT_SWITCH) || defined(HAS_HALL_INDEX)
+#define HAS_HOMING 1
+#endif
+
 
 // PD2 is the thermistor ADC input by default, OR — on the single stepper node
 // that carries a laser (-DNODE_HAS_LASER) — a digital on/off gate for the laser.

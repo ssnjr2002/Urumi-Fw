@@ -116,6 +116,30 @@ async function runLeg(
                 `${leg.axis} ${leg.kind}: still pulsing past the supervisor's timeout — ` +
                 `the node's own ${leg.maxSteps}-step budget should have stopped it first`);
         }
+        // Rotary. These never mean "ran out of budget", so they must be caught
+        // before the fallthrough below quotes maxSteps at them -- the same
+        // mistake the POLL/DEADLINE branches above exist to prevent. Each names
+        // a different thing to go and look at, which is the only reason the
+        // node distinguishes them at all.
+        if (st.homeFail === HomeFail.INDEX_ABSENT) {
+            throw new HomingError(leg, st,
+                `${leg.axis} ${leg.kind}: the index sweep ran but never found the ` +
+                `magnet — look at the Hall sensor, its magnet and its wiring, not at ` +
+                `the budget. Run \`nodestat\` for the crossing count and the live ` +
+                `hall/base readings`);
+        }
+        if (st.homeFail === HomeFail.INDEX_SHAPE) {
+            throw new HomingError(leg, st,
+                `${leg.axis} ${leg.kind}: the index feature no longer fits the node's ` +
+                `capture window — the dip's shape has changed. Run \`hallscan\` on ` +
+                `the node and compare it with the reference waveform`);
+        }
+        if (st.homeFail === HomeFail.INDEX_SLIP) {
+            throw new HomingError(leg, st,
+                `${leg.axis} ${leg.kind}: the index was found but did not repeat at a ` +
+                `consistent interval — the axis slipped or stalled during the sweep. ` +
+                `This is mechanical: check belt tension and driver current`);
+        }
         // BUDGET, or firmware predating homefail= (undefined). The original
         // wording, which is correct for this case.
         //

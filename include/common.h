@@ -50,7 +50,11 @@
 #define NAK_BAD_TOKEN   0x02  // session token mismatch (plan section 8.2)
 #define NAK_BAD_ARG     0x03  // opcode known, payload rejected
 #define NAK_INTENT_MISMATCH 0x04  // CMD_HOME only: declared intent disagreed
-                                   // with the node's own pin read — see below.
+                                  // with the node's own pin read — see below.
+#define NAK_BUSY        0x05  // opcode known, payload fine, node already doing
+                              // it. Distinct from BAD_ARG because retrying the
+                              // IDENTICAL frame later is the correct response;
+                              // a BAD_ARG frame is wrong however long you wait.
 // Type-specific (0x20+): only one type is compiled per node, so values may
 // overlap between types. Stepper:
 // Node status flags (the [flags] byte of the status payload below).
@@ -138,8 +142,69 @@
 // Intervals are MICROSECONDS, not timer ticks: the node converts on receipt, so
 // the 20MHz/24MHz difference between board families never reaches the master or
 // the config schema.
+//
+// ROTARY (-DHAS_HALL_INDEX) reuses this command unchanged. A rotary axis has no
+// limit pin, so there is no mode to pick and the intent bit is IGNORED rather
+// than repurposed: there is nothing for the node to disagree with, and giving
+// the bit a second meaning on some boards is how a payload stops being one
+// payload. Everything else — direction, both intervals, ramp, budget — means
+// exactly what it means for a linear leg.
+//
+// What differs is the REPLY, not the request. A switch edge IS the position, so
+// a linear seek reports its answer as the position it stopped at, already in the
+// tail. A dip's centre is only knowable after passing it, so a rotary sweep runs
+// THROUGH the feature and reports a separate index position that is not where
+// the axis stopped. See the status tail below.
 #define CMD_HOME     0x24
 #define CMD_HOME_PAYLOAD_LEN 11
+
+// ─── ROTARY_IDX_* — how a rotary index sweep ended ──────────────────────────
+// Named for the operation, not for homing in general: these describe one
+// technique (run through the magnet, buffer it, reduce it) and say nothing about
+// a limit-switch leg. The supervisor's own verdict on any home, by whatever
+// technique, is HOMEFAIL_* in rp2350/core0/homing.h — do not confuse the two.
+//
+// Reported in the stepper status tail on HAS_HALL_INDEX builds. `index` is
+// meaningful ONLY for ROTARY_IDX_OK; every other value says why there is no
+// answer, which a bare "did not work" could not.
+//
+// ONLY ROTARY_IDX_OK IS A PASS. Everything below it is a refusal, because a
+// datum is either trustworthy or it is not — there is no degraded mode where
+// a wrong index is better than none. They differ in what an operator should DO, not in
+// whether the home succeeded, and that is why they stay distinct rather than
+// collapsing to one failure code.
+#define ROTARY_IDX_NONE       0  // no sweep has completed since reset. Seen AFTER a
+                                 // home, it means resolve never ran — a fault in the
+                                 // node, not in the mechanism.
+#define ROTARY_IDX_OK         1  // index found, and proven periodic by the crossings
+#define ROTARY_IDX_NOTFOUND   2  // budget ran out before the required number of
+                                 // COMPLETE crossings. `crossings` disambiguates: 0
+                                 // means the magnet was never seen at all (no sensor,
+                                 // no magnet, or no rotation), and a short count means
+                                 // the budget was simply too small.
+#define ROTARY_IDX_DEGENERATE 3  // autoconvolution peak <= 0: the window held no
+                                 // usable feature (sensor dead, magnet missing)
+#define ROTARY_IDX_OVERFLOW   4  // dip wider than the capture buffer even at the
+                                 // derived decimation — a real shape change, not a
+                                 // near miss
+#define ROTARY_IDX_SLIP       5  // the index was found, but the intervals between
+                                 // consecutive crossings disagree by more than a
+                                 // fraction of themselves: the axis slipped, stalled,
+                                 // or the sensor caught something that is not
+                                 // once-per-revolution. A datum measured across a slip
+                                 // is wrong BY the slip. Only detectable because the
+                                 // sweep crosses the index more than twice.
+
+// ─── HOMING_KIND_* — which terminator this stepper actually has ──────────────
+// Sent in the stepper status tail by EVERY stepper node, including ones with no
+// homing at all. It exists because capability was previously inferred from the
+// PAYLOAD LENGTH, which conflates two different things: what the board can do,
+// and how old its firmware is. Length-inference also breaks silently the first
+// time a field is appended to the linear tail — the lengths collide and a linear
+// node decodes as rotary. Declaring the kind removes the guess.
+#define HOMING_KIND_NONE  0  // no switch, no index: this node NAKs CMD_HOME
+#define HOMING_KIND_LIMIT 1  // limit switch on the terminator pin (linear)
+#define HOMING_KIND_INDEX 2  // Hall index, analog dip (rotary)
 // Vacuum:
 #define CMD_SERVO_SET 0x10  // payload: [idx(0=all,1..N)][angle(0..180)]; ACK echoes cmd
 // Host-side on/off shorthand: the Pico expands "on" to this angle before it hits

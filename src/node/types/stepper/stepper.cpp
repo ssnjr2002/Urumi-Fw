@@ -13,6 +13,7 @@
 #include "common.h"
 #include "node_hooks.h"
 #include "rs485/frame.h"
+#include "hall_index.h"
 
 // drivers_init() is declared by hal_stepper.h (via motor.h). A weak no-op
 // default lives in board/hal/motor.cpp (always compiled); a board with real
@@ -101,7 +102,9 @@ static bool             currentDir       = false;
 static volatile uint32_t limitBytesAsserted = 0;
 static volatile uint32_t limitRunBase       = 0;
 static volatile bool     limitLatched       = false;
+#endif  // HAS_LIMIT_SWITCH
 
+#ifdef HAS_HOMING
 // ─── Homing pulser state (CMD_HOME) ─────────────────────────────────────────
 // Written once at arm time in loop context, then owned by the pulser ISR until
 // it stops. `active` is the handshake between the two: loop context must not
@@ -109,7 +112,8 @@ static volatile bool     limitLatched       = false;
 //
 // `retract` is decided by ONE read of the limit pin at arm time and never
 // revisited (docs/homing.md 1.2). It is not carried in the payload and is not
-// remembered across commands.
+// remembered across commands. On a rotary build there is no pin and no mode: it
+// is forced false, and the ISR's terminator is a completed dip instead.
 struct HomingState {
     uint16_t interval;    // current step interval, TCA0 ticks
     uint16_t floorTicks;  // fastest interval this move is allowed to reach
@@ -171,11 +175,11 @@ static int32_t homingSpanFrom  = 0;
 static int32_t homingSpanSteps = 0;
 
 static int32_t readPositionAtomic(void);
-static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
-                      uint16_t rampSteps, uint32_t maxSteps);
+static uint8_t homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
+                         uint16_t rampSteps, uint32_t maxSteps);
 static void homingHalt(void);
 static void homingFinish(void);
-#endif
+#endif  // HAS_HOMING
 
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 // Guard against an env that compiles this type dir with the wrong identity flag.
@@ -195,6 +199,11 @@ void node_setup(void) {
     // Input with pull-up: the switch pulls to ground, so asserted reads LOW and
     // a broken wire reads asserted too — the safe way round.
     pinMode(HAL_LIMIT_SWITCH_PIN, INPUT_PULLUP);
+#endif
+#ifdef HAS_HALL_INDEX
+    // Same pin, other kind of axis. No pull-up: this one is an analog input
+    // driven by the Hall sensor, and a pull-up would fight it.
+    hallIndexSetup();
 #endif
 
     // Init driver (brings up SPI for TMC2660) BEFORE the first HAL_MOTOR_DISABLE,
@@ -224,7 +233,7 @@ void node_set_enabled(bool on) {
     if (on) {
         HAL_MOTOR_ENABLE();
     } else {
-#ifdef HAS_LIMIT_SWITCH
+#ifdef HAS_HOMING
         // De-energising mid-home must kill the pulser, or TCA0 would keep
         // counting steps into a position the motor is no longer holding. This is
         // what makes the existing broadcast estop stop a home too, with no new
@@ -241,12 +250,20 @@ void node_set_enabled(bool on) {
 // the ISR that produces the state. The ISR latches into its own volatiles and
 // this mirrors them out.
 void node_loop(void) {
-#ifdef HAS_LIMIT_SWITCH
+#ifdef HAS_HOMING
     // Finish before publishing: homingFinish() can clear the latch, and the
     // flags below must describe the state the master will act on, not the one
     // that existed a microsecond before the move ended.
+    //
+    // On a rotary build this is also where the ~50 ms autoconvolution runs. It
+    // blocks node_loop, which is fine: a stepper node does its bus work in the
+    // RS485 RX ISR, so commands keep being answered throughout — the only thing
+    // delayed is the flag publish, and NODE_FLAG_HOMING staying set until the
+    // answer actually exists is the correct reading, not a lag to apologise for.
     if (homingFinished) homingFinish();
     node_set_flag(NODE_FLAG_HOMING, homingActive);
+#endif
+#ifdef HAS_LIMIT_SWITCH
     // Live pin OR latch — the master needs to see the flag while the axis is
     // sitting on the switch AND after a latch that a bounce-free release has
     // since cleared from the pin but not from the gate.
@@ -254,7 +271,7 @@ void node_loop(void) {
 #endif
 }
 
-#ifdef HAS_LIMIT_SWITCH
+#ifdef HAS_HOMING
 // ─── Arming a homing move (§1.4) ────────────────────────────────────────────
 // Validates, converts to ticks, and hands the move to the pulser. Returns false
 // to NAK — the master then knows the move never started, which is a different
@@ -263,17 +280,20 @@ void node_loop(void) {
 // Rejecting rather than clamping is deliberate. Every one of these is a config
 // or arithmetic mistake on the host side, and a clamped homing move would run at
 // a rate nobody asked for, into a hard stop, while reporting success.
-static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
-                      uint16_t rampSteps, uint32_t maxSteps) {
-    if (homingActive)              return false;  // one move at a time
-    if (startUs == 0 || floorUs == 0) return false;
-    if (floorUs > startUs)         return false;  // floor is the FASTER rate
-    if (maxSteps == 0)             return false;  // no budget = no runaway guard
+static uint8_t homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
+                         uint16_t rampSteps, uint32_t maxSteps) {
+    // The one refusal that is not the host's fault and not permanent: the same
+    // frame is correct, just early. Everything below it is arithmetic the host
+    // got wrong and will keep getting wrong until it changes the numbers.
+    if (homingActive)              return NAK_BUSY;   // one move at a time
+    if (startUs == 0 || floorUs == 0) return NAK_BAD_ARG;
+    if (floorUs > startUs)         return NAK_BAD_ARG;  // floor is the FASTER rate
+    if (maxSteps == 0)             return NAK_BAD_ARG;  // no budget = no runaway guard
 
     const uint32_t startTicks = (uint32_t)startUs * HOMING_TICKS_PER_US;
     const uint32_t floorTicks = (uint32_t)floorUs * HOMING_TICKS_PER_US;
-    if (startTicks > 0xFFFF || startTicks == 0) return false;  // TCA0 is 16-bit
-    if (floorTicks == 0)                        return false;
+    if (startTicks > 0xFFFF || startTicks == 0) return NAK_BAD_ARG;  // TCA0 is 16-bit
+    if (floorTicks == 0)                        return NAK_BAD_ARG;
 
     HomingState h;
     h.dir        = dir;
@@ -294,6 +314,14 @@ static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs
     // taken a step late -- the pulser is enabled below, but the stream path can
     // still be advancing the counter right up to here.
     homingSpanFrom = absolutePosition;
+#ifdef HAS_HALL_INDEX
+    // Same cli() for the same reason. `sign` is what one pulser step adds to
+    // the counter (see the ISR), and the dip window is mapped back to absolute
+    // steps through it — get it backwards and the index lands mirrored about
+    // the start, which is a plausible-looking wrong answer rather than a
+    // failure.
+    hallIndexArm(dir ? 1 : -1, absolutePosition);
+#endif
     sei();
 
     // DIR is set here, once, in loop context — so the pulser ISR never pays the
@@ -341,7 +369,7 @@ static bool homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs
     TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm;      // discard any stale flag
     TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;
     TCA0.SINGLE.CTRLA   = TCA_SINGLE_CLKSEL_DIV8_gc | TCA_SINGLE_ENABLE_bm;
-    return true;
+    return 0;                                      // armed and pulsing
 }
 
 // Stop the pulser. Safe from either context and idempotent — the ISR calls it to
@@ -367,6 +395,14 @@ static void homingFinish(void) {
     // that stopped 164 mm into a 1200 mm frame says something a "switch never
     // reached" verdict on its own does not (docs/homing.md §7.2).
     homingSpanSteps = readPositionAtomic() - homingSpanFrom;
+#ifdef HAS_HALL_INDEX
+    // Reduce the window the ISR buffered. This is the expensive half of a
+    // rotary home and it deliberately happens HERE rather than in the pulser:
+    // a dip's centre is only knowable after passing it, so there was never an
+    // ISR-sized answer to compute.
+    hallIndexResolve();
+#endif
+#ifdef HAS_LIMIT_SWITCH
     // Clearing the latch is the retract's ONLY write to the gate, and only when
     // it verifiably got clear of the switch: a retract that spent its whole
     // budget and is still asserted did not escape (under-budgeted, wrong
@@ -383,6 +419,7 @@ static void homingFinish(void) {
     // parked against the switch and false the instant the trip is electrically
     // noisy, i.e. exactly when it matters.
     if (!homing.retract && homingHitLimit) limitLatched = true;
+#endif
 }
 
 // ─── The pulser (§1.3) ──────────────────────────────────────────────────────
@@ -401,6 +438,7 @@ ISR(TCA0_OVF_vect) {
     // A retract ignores the switch entirely — it starts on an asserted one, so
     // testing the level would stop it before it ever moved. Its only terminator
     // is the budget, which is therefore a distance, not a guard.
+#ifdef HAS_LIMIT_SWITCH
     if (!homing.retract) {
         // Debounced, unlike the single port read this used to be. A run that
         // breaks before HOMING_LIMIT_SAMPLES was a glitch and the seek carries
@@ -417,6 +455,7 @@ ISR(TCA0_OVF_vect) {
             homing.limitRun = 0;
         }
     }
+#endif
     if (homing.remaining == 0)                   { homingHalt(); return; }
 
     HAL_STEP_PORT.OUTSET = HAL_STEP_BM;
@@ -426,6 +465,15 @@ ISR(TCA0_OVF_vect) {
     HAL_STEP_TIMER_INST.CTRLA = HAL_STEP_TIMER_CLKSEL | HAL_STEP_TIMER_ENABLE_bm;
 
     homing.remaining--;
+
+#ifdef HAS_HALL_INDEX
+    // Sampled AFTER the step, so the sample belongs to the position just
+    // reached — which is what makes the window's step tags exact rather than
+    // off by one. Note this is the opposite order from the limit check above,
+    // and necessarily so: a switch is a reason NOT to take the next step, while
+    // a dip sample is a measurement OF the step just taken.
+    if (hallIndexSample(absolutePosition)) { homingHalt(); return; }
+#endif
 
     // Linear decay of the interval toward the floor. Not constant acceleration
     // (that falls as ~1/sqrt(n)), but gentler early, which is the direction that
@@ -462,15 +510,60 @@ uint8_t node_status(uint8_t* buf) {
     buf[2] = (pos >> 8)  & 0xFF;
     buf[3] =  pos        & 0xFF;
     buf[4] = slot;
-#ifdef HAS_LIMIT_SWITCH
-    const int32_t span = homingSpanSteps;
-    buf[5] = (span >> 24) & 0xFF;
-    buf[6] = (span >> 16) & 0xFF;
-    buf[7] = (span >> 8)  & 0xFF;
-    buf[8] =  span        & 0xFF;
-    return 9;
+    // Which terminator this board has, DECLARED rather than inferred from how
+    // long the rest of this tail turns out to be. Sent by every stepper,
+    // including ones with neither -- see HOMING_KIND_* in common.h.
+#if defined(HAS_HALL_INDEX)
+    buf[5] = HOMING_KIND_INDEX;
+#elif defined(HAS_LIMIT_SWITCH)
+    buf[5] = HOMING_KIND_LIMIT;
 #else
-    return 5;
+    buf[5] = HOMING_KIND_NONE;
+#endif
+#ifdef HAS_HOMING
+    const int32_t span = homingSpanSteps;
+    buf[6] = (span >> 24) & 0xFF;
+    buf[7] = (span >> 16) & 0xFF;
+    buf[8] = (span >> 8)  & 0xFF;
+    buf[9] =  span        & 0xFF;
+#ifdef HAS_HALL_INDEX
+    // Appended again, by the same rule that appended the span: a longer tail on
+    // the boards that have more to say. The index is NOT buf[0..3] — a rotary
+    // sweep runs THROUGH its feature, so where the axis stopped and where the
+    // index is are two different numbers and both are wanted.
+    const int32_t idx = hallIndexPos();
+    buf[10] = (idx >> 24) & 0xFF;
+    buf[11] = (idx >> 16) & 0xFF;
+    buf[12] = (idx >> 8)  & 0xFF;
+    buf[13] =  idx        & 0xFF;
+    buf[14] = hallIndexCause();
+    // Live sensor value and the last sweep's baseline. Diagnostics, not part of
+    // the homing answer -- but a NOTFOUND cannot otherwise be told apart from a
+    // sensor that is not wired to this pin at all, and on a new board that is
+    // the FIRST thing worth ruling out.
+    const int16_t raw  = hallIndexRaw();
+    const int16_t base = hallIndexBaseline();
+    buf[15] = (raw  >> 8) & 0xFF;
+    buf[16] =  raw        & 0xFF;
+    buf[17] = (base >> 8) & 0xFF;
+    buf[18] =  base       & 0xFF;
+    // Lap length, measured by the sweep itself, and the count of index crossings
+    // it managed. The lap length is what makes the answer portable: no host can
+    // know it in advance on an unknown head. The crossing count is what makes a
+    // FAILURE legible -- 0 means the magnet was never seen, and a short count
+    // means the budget ran out before periodicity could be proven.
+    const int32_t spr = hallIndexStepsPerRev();
+    buf[19] = (spr >> 24) & 0xFF;
+    buf[20] = (spr >> 16) & 0xFF;
+    buf[21] = (spr >> 8)  & 0xFF;
+    buf[22] =  spr        & 0xFF;
+    buf[23] = hallIndexCrossings();
+    return 24;
+#else
+    return 10;
+#endif
+#else
+    return 6;
 #endif
 }
 
@@ -517,16 +610,23 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             return true;
         }
 #endif
-#ifdef HAS_LIMIT_SWITCH
+#ifdef HAS_HOMING
         case CMD_HOME: {
-            // [id][cmd][len][11 payload][crc]. Compiled only where a switch is
-            // wired: a node that cannot see a limit has no way to terminate a
-            // seek, so it NAKs rather than running open-loop into the stop.
-            if (len < 3 + CMD_HOME_PAYLOAD_LEN + 1) return false;
+            // [id][cmd][len][11 payload][crc]. Compiled only where the node has
+            // something that can END a move — a switch or a Hall index. Without
+            // one there is no terminator at all, so such a node NAKs rather than
+            // running open-loop into the stop.
+            // BAD_ARG, not the dispatcher's UNSUPPORTED: the opcode IS
+            // supported and the frame is simply the wrong length. Answering
+            // "unsupported" here points the host at its firmware version when
+            // the fault is in the bytes it just sent.
+            if (len < 3 + CMD_HOME_PAYLOAD_LEN + 1) {
+                node_reply_nak(CMD_HOME, NAK_BAD_ARG, reply, replyLen);
+                return true;
+            }
 
             const uint8_t* p = &pkt[3];
             const bool     dir             = (p[0] & 0x01) != 0;
-            const bool     intendedRetract = (p[0] & 0x02) != 0;
             const uint16_t startUs   = ((uint16_t)p[1] << 8) | p[2];
             const uint16_t floorUs   = ((uint16_t)p[3] << 8) | p[4];
             const uint16_t rampSteps = ((uint16_t)p[5] << 8) | p[6];
@@ -534,6 +634,9 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
                                        ((uint32_t)p[8]  << 16) |
                                        ((uint32_t)p[9]  <<  8) |
                                         (uint32_t)p[10];
+
+#ifdef HAS_LIMIT_SWITCH
+            const bool intendedRetract = (p[0] & 0x02) != 0;
 
             // THE mode decision, and the only place it is made: one pin read,
             // now. Sitting on the switch means the only useful move is off it.
@@ -558,9 +661,20 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
                 node_reply_nak(CMD_HOME, NAK_INTENT_MISMATCH, reply, replyLen);
                 return true;
             }
+#else
+            // Rotary: no pin, so no mode and nothing to disagree about. The
+            // intent bit is IGNORED rather than given a second meaning here
+            // (include/common.h, CMD_HOME) — there is exactly one kind of
+            // rotary leg, a sweep, and `retract` false is what runs it.
+            const bool retract = false;
+#endif
 
-            if (!homingArm(dir, retract, startUs, floorUs, rampSteps, maxSteps))
-                return false;
+            const uint8_t why = homingArm(dir, retract, startUs, floorUs,
+                                          rampSteps, maxSteps);
+            if (why) {
+                node_reply_nak(CMD_HOME, why, reply, replyLen);
+                return true;
+            }
 
             // Ack with full status, like CMD_ENGAGE: one atomic observation of
             // (homing, limit, position) taken after the arm, so the supervisor
@@ -604,7 +718,7 @@ ISR(HAL_USART_RXC_vect) {
     frame_stream_reset();           // 9th bit → stream byte
     if (slot == SLOT_NONE) return;  // disengaged → ignore stream, freeze position
 
-#ifdef HAS_LIMIT_SWITCH
+#ifdef HAS_HOMING
     // A home owns the axis outright, and this path must not touch it. The
     // collision is not hypothetical or rare: busQuiesce() prefaces EVERY command
     // frame with a NOP stream byte, and a zero byte has dirBitMask clear, so it
@@ -618,9 +732,13 @@ ISR(HAL_USART_RXC_vect) {
     // Returning before the limit accumulator as well: during a home the pulser's
     // own pin read is the authority on the switch, and letting NOP bytes advance
     // limitBytesAsserted would move the baseline homingFinish() judges a retract
-    // against.
+    // against. The DIR hazard is identical on a rotary build — the pulser owns
+    // DIR there too — so this guard is NOT limit-specific and must not be
+    // folded back under the switch's #ifdef.
     if (homingActive) return;
+#endif
 
+#ifdef HAS_LIMIT_SWITCH
     // One port read, no debounce, no branch on direction. Refusal is IMMEDIATE:
     // a real trip stops on the very next step, because waiting out the latch
     // window before refusing would let the axis run ~500 ms further into the

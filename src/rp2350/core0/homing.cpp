@@ -32,6 +32,12 @@
 
 static bool     claimed    = false;
 static bool     wasRetract = false;
+// Which VERDICT applies at the end of this leg, latched at the arm from the
+// node's declared HOMING_KIND_*. Latched rather than re-read each poll for the
+// same reason wasRetract is: a leg is judged by the rules it was started
+// under, and a node that answered a poll with a different kind byte is a fault
+// to notice, not a rule change to adopt mid-flight.
+static bool     isRotary   = false;
 static uint8_t  hNode      = 0;
 static uint8_t  misses     = 0;
 static uint8_t  settleLeft = 0;
@@ -106,6 +112,28 @@ static uint32_t homingTimeoutMs(uint16_t startUs, uint16_t floorUs,
     return (uint32_t)ms;
 }
 
+// ROTARY_IDX_* -> HOMEFAIL_*. Only ROTARY_IDX_OK is a pass, so everything that
+// arrives here is a failure and the only question is what to go and look at.
+//
+// NOTFOUND splits on the crossing count, and that split is the whole value of
+// this function: "the budget was too small" and "there is no sensor" produce the
+// identical cause byte, and telling them apart by hand cost three bench
+// sessions. Zero crossings means the magnet was never seen at all.
+static uint8_t rotaryIdxFail(uint8_t cause, uint8_t crossings) {
+    switch (cause) {
+        case ROTARY_IDX_NOTFOUND:
+            return crossings ? HOMEFAIL_BUDGET : HOMEFAIL_INDEX_ABSENT;
+        case ROTARY_IDX_DEGENERATE: return HOMEFAIL_INDEX_ABSENT;
+        case ROTARY_IDX_OVERFLOW:   return HOMEFAIL_INDEX_SHAPE;
+        case ROTARY_IDX_SLIP:       return HOMEFAIL_INDEX_SLIP;
+        // ROTARY_IDX_NONE after a completed leg means resolve never ran at all.
+        // That is the node failing to answer, not the mechanism failing to move,
+        // which is exactly what POLL already names.
+        case ROTARY_IDX_NONE:       return HOMEFAIL_POLL;
+        default:                    return HOMEFAIL_POLL;   // cause we do not know
+    }
+}
+
 bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
                  uint16_t startUs, uint16_t floorUs,
                  uint16_t rampSteps, uint32_t maxSteps) {
@@ -132,7 +160,13 @@ bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
     //
     // It is also why `home` carries no <seek|retract> argument: the host cannot
     // know the pin state, and the node has already answered the question.
-    wasRetract = (st.flags & NODE_FLAG_LIMIT) != 0;
+    //
+    // A rotary node has no pin, so its LIMIT bit is permanently 0 and this read
+    // would silently classify every sweep as a seek. Ask the node what it IS
+    // first: kind is declared in the same tail (include/common.h,
+    // HOMING_KIND_*), so the answer is in this same transaction.
+    isRotary   = (st.homingKind == HOMING_KIND_INDEX);
+    wasRetract = !isRotary && (st.flags & NODE_FLAG_LIMIT) != 0;
 
     // The node accepted the command but is not pulsing. This should not happen:
     // homingArm() starts TCA0 before the reply is built, the first overflow is a
@@ -204,23 +238,41 @@ void homingTick(void) {
         return;
     }
 
-    // Stopped. §1.5: after a seek, LIMIT set means found and clear means the
-    // budget ran out without ever reaching the switch; after a retract it is the
-    // other way round.
-    const bool ok = wasRetract ? !(st.flags & NODE_FLAG_LIMIT)
-                               :  (st.flags & NODE_FLAG_LIMIT);
-    if (!ok) {
-        if (settleLeft) { settleLeft--; return; }   // homingFinish() may not have run
-        homingFail(HOMEFAIL_BUDGET);
-        return;
-    }
+    // Stopped. Two different questions, because the two kinds of leg are ended
+    // by different things and there is no flag they share.
+    if (isRotary) {
+        // No settle window here, and none is needed: the node runs
+        // hallIndexResolve() BEFORE it publishes NODE_FLAG_HOMING clear
+        // (stepper.cpp node_loop), so a cause is already final by the time this
+        // poll can see the leg stopped. That ordering is what makes the cause
+        // safe to read on the very first stopped poll.
+        if (st.indexCause != ROTARY_IDX_OK) {
+            homingFail(rotaryIdxFail(st.indexCause, st.crossings));
+            return;
+        }
+        // Deliberately no nodeLatchSet(): the latch means "this axis is standing
+        // on its limit switch", and a rotary axis has no switch to stand on.
+        // Setting it would put the machine in ALARM/LIMIT_LATCHED after a home
+        // that succeeded, with nothing an operator could do to clear it.
+    } else {
+        // §1.5: after a seek, LIMIT set means found and clear means the budget
+        // ran out without ever reaching the switch; after a retract it is the
+        // other way round.
+        const bool ok = wasRetract ? !(st.flags & NODE_FLAG_LIMIT)
+                                   :  (st.flags & NODE_FLAG_LIMIT);
+        if (!ok) {
+            if (settleLeft) { settleLeft--; return; }  // homingFinish() may not have run
+            homingFail(HOMEFAIL_BUDGET);
+            return;
+        }
 
-    // The leg succeeded, so its outcome is known without re-reading the pin: a
-    // seek ended ON the switch and a retract ended OFF it. Recorded against the
-    // NODE, which is what the switch is wired to; position.cpp keeps the
-    // slot-framed homingLatched in step and re-derives it across a rebind, the
-    // same way it does for the datum.
-    nodeLatchSet(hNode, !wasRetract);
+        // The leg succeeded, so its outcome is known without re-reading the pin:
+        // a seek ended ON the switch and a retract ended OFF it. Recorded against
+        // the NODE, which is what the switch is wired to; position.cpp keeps the
+        // slot-framed homingLatched in step and re-derives it across a rebind,
+        // the same way it does for the datum.
+        nodeLatchSet(hNode, !wasRetract);
+    }
 
     homingRelease(hNode);
 
