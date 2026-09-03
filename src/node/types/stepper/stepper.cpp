@@ -147,6 +147,12 @@ static volatile bool homingHitLimit = false;
 // both go through node_set_flag(), which read-modify-writes a byte the core also
 // owns and is therefore loop-context only.
 static volatile bool homingFinished = false;
+#ifdef HAS_HALL_INDEX
+// True from the moment the pulser stops until the sliced correlation has an
+// answer. Not volatile: written and read only in loop context, unlike
+// homingFinished which the pulser ISR sets.
+static bool homingResolving = false;
+#endif
 
 // ─── Leg span ────────────────────────────────────────────────────────────────
 // How far the last COMPLETED homing leg actually moved: the counter at the arm,
@@ -255,13 +261,24 @@ void node_loop(void) {
     // flags below must describe the state the master will act on, not the one
     // that existed a microsecond before the move ended.
     //
-    // On a rotary build this is also where the ~50 ms autoconvolution runs. It
-    // blocks node_loop, which is fine: a stepper node does its bus work in the
-    // RS485 RX ISR, so commands keep being answered throughout — the only thing
-    // delayed is the flag publish, and NODE_FLAG_HOMING staying set until the
-    // answer actually exists is the correct reading, not a lag to apologise for.
     if (homingFinished) homingFinish();
-    node_set_flag(NODE_FLAG_HOMING, homingActive);
+#ifdef HAS_HALL_INDEX
+    // The rotary correlation runs HERE, one bounded slice per pass, because a
+    // node dispatches RS485 commands from loop() -- the RX ISR only queues them.
+    // Run to completion in one go it took ~170 ms, during which this node
+    // answered nothing and the supervisor failed the home on 4 missed polls,
+    // every single time, with the sweep itself perfect.
+    if (homingResolving && hallIndexResolveStep()) homingResolving = false;
+#endif
+    // Homing means "no answer yet", not "the motor is still turning". The
+    // resolve is part of the home: publishing clear before the index exists
+    // would hand the master the PREVIOUS sweep's cause and let it verdict on
+    // that. Core 0's own deadline still bounds the whole thing.
+    node_set_flag(NODE_FLAG_HOMING, homingActive
+#ifdef HAS_HALL_INDEX
+                                    || homingResolving
+#endif
+                  );
 #endif
 #ifdef HAS_LIMIT_SWITCH
     // Live pin OR latch — the master needs to see the flag while the axis is
@@ -400,7 +417,12 @@ static void homingFinish(void) {
     // rotary home and it deliberately happens HERE rather than in the pulser:
     // a dip's centre is only knowable after passing it, so there was never an
     // ISR-sized answer to compute.
-    hallIndexResolve();
+    //
+    // Begin() only; the correlation itself is sliced across node_loop passes so
+    // the bus keeps being served. Begin() settles the cheap refusals outright,
+    // and for those the first Step() finishes immediately.
+    hallIndexResolveBegin();
+    homingResolving = true;
 #endif
 #ifdef HAS_LIMIT_SWITCH
     // Clearing the latch is the retract's ONLY write to the gate, and only when
