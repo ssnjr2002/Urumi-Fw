@@ -27,9 +27,13 @@
 //                       autoconvolution (~50 ms) and produces the answer.
 //
 // The split is forced by cost, not taste: the reduction is ~800k cycles against
-// a step budget of a few microseconds, so it cannot live in the ISR. Running it
-// in loop context does not stall the bus — a stepper node handles commands in
-// the RS485 RX ISR, which keeps preempting this.
+// a step budget of a few microseconds, so it cannot live in the ISR.
+//
+// It does not run to completion in loop context either. A node dispatches RS485
+// commands FROM loop() — the RX ISR only fills the queue — so a resolve that
+// blocked for its full O(n^2) runtime (~170 ms at HOME_WIN on a 24 MHz AVR)
+// answered nothing for that whole time, and the supervisor failed every
+// successful home as HOMEFAIL_POLL. Hence Begin/Step below.
 
 // Called once from node_setup(). Puts the ADC in free-running mode; see the
 // .cpp for why the conversion is not started per-step.
@@ -44,9 +48,16 @@ void hallIndexArm(int8_t sign, int32_t posNow);
 // complete and the move should end.
 bool hallIndexSample(int32_t posNow);
 
-// Reduce the buffered window. Call once after the pulser stops, in loop
-// context. Sets the reported index and cause.
-void hallIndexResolve(void);
+// Reduce the buffered window, across several loop() passes.
+//
+// Begin() once after the pulser stops: it does everything cheap, and settles
+// every refusal that does not need the correlation. Step() then runs one
+// bounded slice per call and returns true when the index and cause are final —
+// so the caller must keep NODE_FLAG_HOMING set until it does. "Still homing" is
+// the correct reading while the answer does not yet exist; the alternative is a
+// master that reads a stale cause from the previous sweep.
+void hallIndexResolveBegin(void);
+bool hallIndexResolveStep(void);
 
 // Last completed sweep's answer, for the status tail. `index` is only
 // meaningful when cause == ROTARY_IDX_OK.

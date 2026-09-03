@@ -61,7 +61,7 @@
 // a revolution, while a skipped step or a stall moves it by far more.
 #define LAP_SPREAD_SHIFT  3   // tolerance = mean >> 3, i.e. 12.5%
 
-// ONE buffer, not the scratch rig's two. mirrorCentre's first pass reads win[i]
+// ONE buffer, not the scratch rig's two. The resolve's first pass reads win[i]
 // and writes at the same index with no cross-talk, so it transforms in place.
 static int16_t g_win[HOME_WIN];
 
@@ -98,6 +98,16 @@ static int32_t s_index       = 0;
 static int32_t s_stepsPerRev = 0;
 static int32_t s_lapSpread   = 0;
 static uint8_t s_cause       = ROTARY_IDX_NONE;
+
+// Resolve is a state machine because it spans loop() passes.
+#define RS_IDLE 0
+#define RS_RUN  1
+#define RS_DONE 2
+static uint8_t  s_rs      = RS_IDLE;
+static uint16_t s_k, s_kmax;
+static int32_t  s_h0, s_h1;
+static int32_t  s_best, s_ba, s_bb, s_bc;
+static uint16_t s_bk;
 
 // ─── ADC ─────────────────────────────────────────────────────────────────────
 // FREE-RUNNING, and read rather than triggered. The scratch rig called
@@ -173,6 +183,10 @@ void hallIndexArm(int8_t sign, int32_t posNow) {
 
     s_index = 0; s_stepsPerRev = 0; s_lapSpread = 0;
     s_cause = ROTARY_IDX_NONE;
+    // Abandon any resolve still slicing. A new arm makes the old window
+    // meaningless, and leaving the state machine in RS_RUN would let it keep
+    // correlating a buffer this sweep is about to overwrite.
+    s_rs    = RS_IDLE;
 }
 
 // Size the capture from the crossing just surveyed. THIS is the number that was
@@ -291,11 +305,11 @@ bool hallIndexSample(int32_t posNow) {
     return false;
 }
 
-// Symmetry axis of the buffered dip, in decimated-sample units.
+// ─── Resolve: symmetry axis of the buffered dip, SLICED ─────────────────────
 //
 // est_mirror: correlate the dip against its own reverse, since the
 // autoconvolution of a bump centred at c peaks at 2c. It assumes symmetry and
-// nothing else — no template, no shape model, no depth calibration — which is
+// nothing else -- no template, no shape model, no depth calibration -- which is
 // why it beat the matched filter on real data, where the dip width wanders lap
 // to lap and no single template fits every lap. argmin and a parabolic fit were
 // ~10x worse, because the dip bottom is flat for about +/-100 steps. That is
@@ -304,40 +318,33 @@ bool hallIndexSample(int32_t posNow) {
 //
 // Fixed point throughout except the final vertex interpolation. Node vs PC float
 // over the very same window agreed to 0.03-0.04 steps (docs/rotary_a_axis.md).
-static float mirrorCentre(uint16_t n, int32_t baseline) {
-    // Depth below baseline, clipped at zero so the flat shoulders contribute
-    // nothing, and scaled down so the autoconvolution stays inside int32:
-    // worst case n * (2732>>2)^2 is about 1.9e8 against a 2.1e9 ceiling.
-    for (uint16_t i = 0; i < n; i++) {
-        int32_t d = baseline - g_win[i];
-        if (d < 0) d = 0;
-        g_win[i] = (int16_t)(d >> 2);
-    }
+//
+// WHY THIS IS SLICED, and it is not an optimisation. The correlation is O(n^2):
+// at HOME_WIN it is ~160k multiply-accumulates, which is ~170 ms on a 24 MHz
+// AVR. A node dispatches RS485 commands from loop() -- the RX ISR only fills the
+// queue -- so a resolve that ran to completion in one pass answered NOTHING for
+// those 170 ms. The supervisor polls every 25 ms and fails a home after 4
+// unanswered polls, so every successful rotary home was reported as
+// HOMEFAIL_POLL: the sweep worked, the arithmetic worked, and the node went
+// silent while doing it.
+//
+// Slicing fixes the cause rather than the symptom. Raising the miss count would
+// have tuned a bus-health threshold to the runtime of an O(n^2) loop whose n
+// varies with the dip -- and would have blinded the supervisor to a genuinely
+// dead node for as long as it took.
 
-    // AC[k] = sum_i g[i]*g[k-i]. Keep a 3-deep history so the peak and both its
-    // neighbours are available for the vertex fit without a second pass.
-    int32_t h0 = 0, h1 = 0;
-    int32_t best = -1, ba = 0, bb = 0, bc = 0;
-    uint16_t bk = 0;
-    const uint16_t kmax = (uint16_t)(2 * n - 1);
+// Multiply-accumulates per hallIndexResolveStep() call. ~2000 MACs is ~2 ms
+// here, comfortably inside one 25 ms poll interval with the rest of loop() to
+// spare. Whole lags are always finished, so a pass may overshoot by up to n.
+#define RESOLVE_MACS 2048
 
-    for (uint16_t k = 0; k < kmax; k++) {
-        const uint16_t lo = (k >= n) ? (uint16_t)(k - n + 1) : 0;
-        const uint16_t hi = (k < n) ? k : (uint16_t)(n - 1);
-        int32_t acc = 0;
-        for (uint16_t i = lo; i <= hi; i++) acc += (int32_t)g_win[i] * g_win[k - i];
+// Everything cheap and every refusal that can be decided without the
+// correlation. Leaves s_rs at RS_DONE for those, so the caller's first
+// hallIndexResolveStep() returns true immediately and no home waits on an
+// answer that already exists.
+void hallIndexResolveBegin(void) {
+    s_rs = RS_DONE;
 
-        if (k >= 2 && h1 > best) { best = h1; bk = (uint16_t)(k - 1); ba = h0; bb = h1; bc = acc; }
-        h0 = h1; h1 = acc;
-    }
-    if (best <= 0) return -1.0f;
-
-    const int32_t den = ba - 2 * bb + bc;
-    const float delta = den ? (0.5f * (float)(ba - bc) / (float)den) : 0.0f;
-    return ((float)bk + delta) * 0.5f;   // peak at 2c
-}
-
-void hallIndexResolve(void) {
     if (s_overflow) { s_cause = ROTARY_IDX_OVERFLOW; return; }
 
     // NOTFOUND is the honest verdict for every way of arriving here without a
@@ -363,8 +370,67 @@ void hallIndexResolve(void) {
     s_stepsPerRev = sum / (HALL_CROSSINGS - 1);
     s_lapSpread   = dmax - dmin;
 
-    const float c = mirrorCentre(s_nwin, s_baseline);
-    if (c < 0) { s_cause = ROTARY_IDX_DEGENERATE; return; }
+    // Depth below baseline, clipped at zero so the flat shoulders contribute
+    // nothing, and scaled down so the autoconvolution stays inside int32:
+    // worst case n * (2732>>2)^2 is about 1.9e8 against a 2.1e9 ceiling.
+    //
+    // One pass over the window, O(n), so it stays here rather than being sliced
+    // -- and it MUST complete before the first correlation slice reads g_win.
+    for (uint16_t i = 0; i < s_nwin; i++) {
+        int32_t d = s_baseline - g_win[i];
+        if (d < 0) d = 0;
+        g_win[i] = (int16_t)(d >> 2);
+    }
+
+    s_k    = 0;
+    s_kmax = (uint16_t)(2 * s_nwin - 1);
+    s_h0   = 0;
+    s_h1   = 0;
+    s_best = -1;
+    s_bk   = 0;
+    s_ba   = 0;
+    s_bb   = 0;
+    s_bc   = 0;
+    s_rs   = RS_RUN;
+}
+
+// One bounded slice. Returns true when the answer (or the refusal) is final.
+bool hallIndexResolveStep(void) {
+    if (s_rs != RS_RUN) return true;
+
+    // AC[k] = sum_i g[i]*g[k-i]. A 3-deep history keeps the peak and both its
+    // neighbours available for the vertex fit without a second pass -- which is
+    // also why the history has to survive across slices rather than being
+    // rebuilt: the peak may sit on either side of a slice boundary.
+    int32_t budget = RESOLVE_MACS;
+    while (s_k < s_kmax) {
+        const uint16_t n  = s_nwin;
+        const uint16_t lo = (s_k >= n) ? (uint16_t)(s_k - n + 1) : 0;
+        const uint16_t hi = (s_k < n) ? s_k : (uint16_t)(n - 1);
+        int32_t acc = 0;
+        for (uint16_t i = lo; i <= hi; i++) acc += (int32_t)g_win[i] * g_win[s_k - i];
+
+        if (s_k >= 2 && s_h1 > s_best) {
+            s_best = s_h1; s_bk = (uint16_t)(s_k - 1);
+            s_ba = s_h0; s_bb = s_h1; s_bc = acc;
+        }
+        s_h0 = s_h1; s_h1 = acc;
+        s_k++;
+
+        // Charged AFTER the lag completes: a lag is indivisible (its history
+        // update is not restartable), so the budget bounds the slice rather
+        // than cutting one short.
+        budget -= (int32_t)(hi - lo + 1);
+        if (budget <= 0) return false;
+    }
+
+    s_rs = RS_DONE;
+
+    if (s_best <= 0) { s_cause = ROTARY_IDX_DEGENERATE; return true; }
+
+    const int32_t den = s_ba - 2 * s_bb + s_bc;
+    const float delta = den ? (0.5f * (float)(s_ba - s_bc) / (float)den) : 0.0f;
+    const float c     = ((float)s_bk + delta) * 0.5f;   // peak at 2c
 
     // Back to absolute step coordinates. Decimated sample j sits at
     // winStart + j*decim*sign, so a fractional j interpolates the same way.
@@ -376,6 +442,7 @@ void hallIndexResolve(void) {
     // nothing downstream able to tell.
     s_cause = (s_lapSpread > (s_stepsPerRev >> LAP_SPREAD_SHIFT))
                 ? ROTARY_IDX_SLIP : ROTARY_IDX_OK;
+    return true;
 }
 
 int32_t hallIndexPos(void)        { return s_index; }
