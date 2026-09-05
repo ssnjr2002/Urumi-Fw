@@ -282,14 +282,14 @@ RpcResult rpcSwitchGet(uint8_t node, uint8_t* level) {
 RpcResult rpcHome(uint8_t node, uint8_t dir, bool intendedRetract,
                   uint16_t startIntervalUs, uint16_t floorIntervalUs,
                   uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out) {
-    // The node's CMD_HOME payload, big-endian, laid out once here instead of
+    // The node's CMD_HOME_LEG payload, big-endian, laid out once here instead of
     // being smeared across four FIFO words and unpacked on the far side.
     RpcRequest req = {};
     req.op   = RPC_OP_NODE;
-    req.cmd  = CMD_HOME;
+    req.cmd  = CMD_HOME_LEG;
     req.node = node;
-    req.argLen = CMD_HOME_PAYLOAD_LEN;
-    // bit0 = dir, bit1 = intent (include/common.h, CMD_HOME payload).
+    req.argLen = CMD_HOME_LEG_PAYLOAD_LEN;
+    // bit0 = dir, bit1 = intent (include/common.h, CMD_HOME_LEG payload).
     req.args[0]  = (dir & 0x01) | (intendedRetract ? 0x02 : 0x00);
     req.args[1]  = (uint8_t)(startIntervalUs >> 8);
     req.args[2]  = (uint8_t)(startIntervalUs);

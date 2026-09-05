@@ -248,49 +248,66 @@ export function setOrigin(link: Link, axes: string = "", posSteps?: number): Pro
 // ── homing ────────────────────────────────────────────────────────────────────
 
 /**
- * Arm ONE leg of a home on `axis` and return as soon as the Pico has armed it.
+ * Arm ONE LEG on bus node `node` and return as soon as the Pico has armed it.
  *
- * Deliberately a single leg, not a sequence. The firmware command is one leg —
- * the node runs the motion and stops itself, Core 0 only supervises the waiting
- * — and a full home is four of these plus a `setorigin` (docs/homing.md §3.4).
- * The sequencing lives in `homing/`, which owns the config arithmetic; this
+ * Deliberately a single leg, not a sequence — and the verb says so. The
+ * firmware command is one leg: the node runs the motion and stops itself, Core 0
+ * only supervises the waiting. A full linear home is four of these plus a
+ * `setorigin` (docs/homing.md §3.4); a rotary home is two plus a `setorigin` and
+ * a `moveto`. The sequencing lives in `homing/`, which owns the arithmetic; this
  * stays a thin verb so a bring-up console can drive a single leg by hand.
+ *
+ * ADDRESSES A BUS ID, not an axis letter. Everything a leg produces is
+ * node-framed — the span, the index in the node own counter, the limit latch —
+ * so the firmware refuses to route it through the axis map. The practical gain
+ * is that a leg runs BEFORE any `axis_map` is committed, which is exactly when
+ * a new head is being commissioned.
  *
  * `ok` means ARMED, not finished. The machine is now in HOMING and the caller
  * must poll `getstate` until it leaves — see homing/sequence.ts.
  *
- * `retract` does not STEER the node — it still picks seek or retract itself
- * from a single read of its own switch pin at arm time, and the host cannot
- * know that pin's state ahead of the command (§1.2). What it does is let the
- * node catch a divergence between the plan's model and physical reality: this
- * plan's leg has an expectation (`HomingLeg.kind`), the node checks it against
- * the pin, and a mismatch is a NAK (NAK_INTENT_MISMATCH) rather than a leg run
- * under the wrong budget semantics — a seek's runaway cap executed to
- * completion as a retract, ignoring the switch it was meant to stop at.
+ * The Pico probes the node kind before arming and answers `err kind_mismatch`
+ * if the verb does not match what the node declares, so a `linLeg` aimed at a
+ * rotary head refuses without moving anything.
  *
- * @param dir       1 or 0 — the node's own direction sense, not a signed axis
+ * @param node      RS485 bus id.
+ * @param dir       1 or 0 — the node own direction sense, not a signed axis
  *                  direction. Derive it with approachDir(); `invert` is already
  *                  folded in there.
- * @param retract   this leg's expected mode — true for one planned to start
- *                  already on the switch (§3.4 legs 2 and 4), false for one
- *                  planned to start clear (legs 1 and 3). From `HomingLeg.kind`.
  * @param startUs   step interval the leg starts at
  * @param floorUs   interval it ramps down to (== startUs for an un-ramped leg)
  * @param rampSteps steps taken to get from startUs to floorUs
- * @param maxSteps  runaway budget. A seek stops at the switch and this is only
- *                  a cap; a retract IGNORES the switch and travels EXACTLY this
- *                  many steps, which is what makes leg 4's distance knowable.
+ * @param maxSteps  runaway budget.
  */
-/** Result of arming a homing leg: whether it armed, and — on refusal — why. */
+/** Result of arming a leg: whether it armed, and — on refusal — why. */
 export interface HomeResult {
     armed: boolean;
-    /** The raw `err <reason>` text (e.g. "err node intent_mismatch", "err bad_state"), omitted on success. */
+    /** The raw `err <reason>` text (e.g. "err kind_mismatch node 4 is 2 want 1", "err bad_state"), omitted on success. */
     reason?: string;
 }
 
-export async function home(
+/**
+ * One leg of a LINEAR (limit-switch) home.
+ *
+ * `retract` does not STEER the node — it still picks seek or retract itself
+ * from a single read of its own switch pin at arm time, and the host cannot
+ * know that pin state ahead of the command (§1.2). What it does is let the
+ * node catch a divergence between the plan model and physical reality: this
+ * plan leg has an expectation (`HomingLeg.kind`), the node checks it against
+ * the pin, and a mismatch is a NAK (NAK_INTENT_MISMATCH) rather than a leg run
+ * under the wrong budget semantics — a seek runaway cap executed to completion
+ * as a retract, ignoring the switch it was meant to stop at.
+ *
+ * @param retract   this leg expected mode — true for one planned to start
+ *                  already on the switch (§3.4 legs 2 and 4), false for one
+ *                  planned to start clear (legs 1 and 3). From `HomingLeg.kind`.
+ * @param maxSteps  a seek stops at the switch and this is only a cap; a retract
+ *                  IGNORES the switch and travels EXACTLY this many steps, which
+ *                  is what makes leg 4 distance knowable.
+ */
+export async function linLeg(
     link: Link,
-    axis: string,
+    node: number,
     dir: 0 | 1,
     retract: boolean,
     startUs: number,
@@ -300,7 +317,36 @@ export async function home(
 ): Promise<HomeResult> {
     const intent = retract ? 1 : 0;
     const r = await link.command(
-        `home ${axis} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps} ${intent}`,
+        `lin_leg ${node} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps} ${intent}`,
+    );
+    if (r === "ok") return { armed: true };
+    return { armed: false, reason: r };
+}
+
+/**
+ * One leg of a ROTARY (Hall index) home.
+ *
+ * No `intent`, because a rotary node has no limit pin: there is nothing for the
+ * host to predict and nothing for the node to disagree with. The leg is
+ * evidence-terminated — it runs until it has crossed the magnet enough times to
+ * prove the period — so `maxSteps` here is a pure runaway ceiling and never a
+ * tuning knob. Give it about 4x the expected steps per revolution: a sweep that
+ * starts just past the index needs three full laps.
+ *
+ * The answer is not where the axis stopped. Read `index` and `steprev` out of
+ * `nodeStat` once the machine leaves HOMING.
+ */
+export async function rotLeg(
+    link: Link,
+    node: number,
+    dir: 0 | 1,
+    startUs: number,
+    floorUs: number,
+    rampSteps: number,
+    maxSteps: number,
+): Promise<HomeResult> {
+    const r = await link.command(
+        `rot_leg ${node} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps}`,
     );
     if (r === "ok") return { armed: true };
     return { armed: false, reason: r };

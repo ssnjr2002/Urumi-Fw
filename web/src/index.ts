@@ -50,6 +50,7 @@ export {
     axisConfig,
     type HomingConfig,
     type LinearHoming,
+    type RotaryHoming,
     type OpTarget,
     type MachineTarget,
     type BusNode,
@@ -378,7 +379,8 @@ export {
     enable,
     disable,
     setOrigin,
-    home,
+    linLeg,
+    rotLeg,
     pause,
     resume,
     cancel,
@@ -421,14 +423,19 @@ export {
     type AxisCalibration,
 } from "./operatorJog/index.js";
 
-// ── homing: the four-leg home, config → datum (docs/homing.md §3) ────────────
+// ── homing: config → datum (docs/homing.md §3) ───────────────────────────────
 export {
     derivePlan,
+    deriveRotaryPlan,
     approachDir,
     runHoming,
+    runRotaryHoming,
     HomingError,
     LegKind,
     type HomingLeg,
     type HomingPlan,
+    type RotaryHomingPlan,
     type RunHomingOptions,
+    type SweepResult,
+    type RotaryHomingResult,
 } from "./homing/index.js";

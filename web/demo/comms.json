@@ -24,7 +24,7 @@
       "rotary": false,
       "homing": {
         "kind": "linear",
-        "hardTravel": 500,
+        "hardTravel": 1200,
         "atOrigin": false,
         "pullInFeed": 2.5,
         "seekFeed": 12.5,
@@ -84,12 +84,21 @@
           "id": 4,
           "present": true
         },
-        "stepsPerUnit": 45.8272,
+        "stepsPerUnit": 45.9847,
         "maxFeed": 100,
         "maxAccel": 500,
         "maxTravel": 0,
         "invert": false,
-        "rotary": true
+        "rotary": true,
+        "homing": {
+          "kind": "rotary",
+          "budgetRevs": 4,
+          "pullInFeed": 18.12,
+          "sweepFeed": 54.37,
+          "rampSteps": 400,
+          "toleranceDeg": 2.0,
+          "datumDeg": 0
+        }
       }
     },
     {
@@ -115,12 +124,21 @@
           "id": 5,
           "present": true
         },
-        "stepsPerUnit": 45.8272,
-        "maxFeed": 100,
+        "stepsPerUnit": 2.8611,
+        "maxFeed": 360,
         "maxAccel": 500,
         "maxTravel": 0,
         "invert": false,
-        "rotary": true
+        "rotary": true,
+        "homing": {
+          "kind": "rotary",
+          "budgetRevs": 4,
+          "pullInFeed": 174.76,
+          "sweepFeed": 291.27,
+          "rampSteps": 400,
+          "toleranceDeg": 2.0,
+          "datumDeg": 0
+        }
       }
     }
   ],

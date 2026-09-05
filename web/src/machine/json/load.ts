@@ -89,14 +89,21 @@ interface JsonAxis {
 
 interface JsonHoming {
     readonly kind?: string;
+    // linear
     readonly hardTravel?: number;
     readonly atOrigin?: boolean;
-    readonly pullInFeed?: number;
     readonly seekFeed?: number;
     readonly latchFeed?: number;
-    readonly rampSteps?: number;
     readonly backoffMm?: number;
     readonly parkMm?: number;
+    // rotary
+    readonly budgetRevs?: number;
+    readonly sweepFeed?: number;
+    readonly toleranceDeg?: number;
+    readonly datumDeg?: number;
+    // both
+    readonly pullInFeed?: number;
+    readonly rampSteps?: number;
 }
 
 interface JsonHead {
@@ -413,8 +420,8 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
 }
 
 /**
- * A homing block is all-or-nothing: absent means no switch, present means every
- * field. There is no partial form and no defaulting, because each number is a
+ * A homing block is all-or-nothing: absent means no terminator, present means
+ * every field of ITS kind, and no field of the other. There is no partial form and no defaulting, because each number is a
  * measurement of this specific machine and a filled-in guess would be acted on
  * at seek speed against a hard stop. A block missing a field is an ERROR, not a
  * block to complete.
@@ -430,8 +437,9 @@ function buildHoming(
         errors.push(`${p}: must be an object`);
         return undefined;
     }
-    if (jh.kind !== undefined && jh.kind !== "linear") {
-        errors.push(`${p}.kind: only "linear" is supported`);
+    const kind = jh.kind ?? "linear";
+    if (kind !== "linear" && kind !== "rotary") {
+        errors.push(`${p}.kind: must be "linear" or "rotary"`);
         return undefined;
     }
     const num = (k: keyof JsonHoming): number => {
@@ -442,6 +450,32 @@ function buildHoming(
         }
         return v;
     };
+    if (kind === "rotary") {
+        // Rejected by NAME rather than ignored. A linear field in a rotary block
+        // is not a harmless extra: `atOrigin` or `parkMm` sitting there means
+        // whoever wrote it believed this axis parks somewhere, and silently
+        // dropping the field would leave that belief untested.
+        for (const k of ["hardTravel", "atOrigin", "seekFeed", "latchFeed",
+                         "backoffMm", "parkMm"] as const) {
+            if (jh[k] !== undefined) {
+                errors.push(`${p}.${k}: not a rotary field — a rotary axis has no ends`);
+            }
+        }
+        return {
+            kind: "rotary",
+            budgetRevs: num("budgetRevs"),
+            pullInFeed: num("pullInFeed"),
+            sweepFeed: num("sweepFeed"),
+            rampSteps: num("rampSteps"),
+            toleranceDeg: num("toleranceDeg"),
+            datumDeg: num("datumDeg"),
+        };
+    }
+    for (const k of ["budgetRevs", "sweepFeed", "toleranceDeg", "datumDeg"] as const) {
+        if (jh[k] !== undefined) {
+            errors.push(`${p}.${k}: not a linear field — did you mean kind "rotary"?`);
+        }
+    }
     if (typeof jh.atOrigin !== "boolean") {
         // No default. Guessing this one puts the origin a whole hardTravel from
         // where it belongs, and nothing downstream can detect that.

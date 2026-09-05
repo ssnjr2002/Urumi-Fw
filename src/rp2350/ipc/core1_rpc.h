@@ -25,12 +25,12 @@
 
 // ─── Request ──────────────────────────────────────────────────────────────────
 // One shape for every bus transaction. The old encoding packed cmd, node and a
-// single argument byte into one 32-bit word, which is why CMD_HOME (11 bytes of
+// single argument byte into one 32-bit word, which is why CMD_HOME_LEG (11 bytes of
 // payload) and the debug step (an int32) each needed their own multi-word opcode
 // in the FIFO_* namespace. A struct has room, so those opcodes are gone: `cmd`
 // is always a CMD_* from common.h, and the arguments are just bytes.
 
-#define RPC_ARG_MAX      CMD_HOME_PAYLOAD_LEN   // 11 — the largest command payload
+#define RPC_ARG_MAX      CMD_HOME_LEG_PAYLOAD_LEN   // 11 — the largest command payload
 #define RPC_PAYLOAD_MAX  32                     // max node reply payload
 
 // What Core 1 should DO with this request. The old encoding had no such field,
@@ -207,7 +207,7 @@ RpcResult rpcNodeStatus(uint8_t cmd, uint8_t node, uint8_t arg, NodeStatus* out)
 // CMD_SWITCH_GET — replies with a single level byte.
 RpcResult rpcSwitchGet(uint8_t node, uint8_t* level);
 
-// CMD_HOME. Core 1 only marshals: it does not know seek from retract, does not
+// CMD_HOME_LEG. Core 1 only marshals: it does not know seek from retract, does not
 // interpret the reply and runs no supervision. The node decides the mode from
 // its own limit pin; Core 0 polls for the outcome. `intendedRetract` rides
 // along unexamined -- it is Core 0's prediction for the node to check itself

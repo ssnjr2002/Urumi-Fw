@@ -124,15 +124,15 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("home arms and returns; the leg finishes asynchronously", async () => {
+    it("lin_leg arms and returns; the leg finishes asynchronously", async () => {
         // `ok` means ARMED, not finished — the whole reason the supervisor
         // exists (docs/homing.md §2.3). A handler that blocked until the pulser
         // stopped would freeze getstate and every abort for the whole seek.
         await withLink(async (link, sim) => {
             sim.homingLegMs = 30;
-            expect(await link.command("home x 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.command("lin_leg 1 1 2500 500 400 88000")).toBe("ok");
             expect((await link.getStatus()).state).toBe(MachineState.HOMING);
-            expect(await link.command("home y 1 2500 500 400 88000")).toBe("err busy");
+            expect(await link.command("lin_leg 2 1 2500 500 400 88000")).toBe("err busy");
 
             await tick(80);
             // A seek ends ON the switch, which is an alarm and not a failure.
@@ -147,7 +147,7 @@ describe("wire/link/backends/sim: control plane", () => {
             expect((await link.getStatus()).alarm).toBe(AlarmReason.LIMIT_LATCHED);
 
             // Armed while latched, so the node reads its pin and runs a RETRACT.
-            expect(await link.command("home x 0 8013 8013 0 320")).toBe("ok");
+            expect(await link.command("lin_leg 1 0 8013 8013 0 320")).toBe("ok");
             await tick(80);
             const done = await link.getStatus();
             expect(done.state).toBe(MachineState.IDLE);
@@ -155,10 +155,41 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
+    it("a leg is node-addressed: it runs with no axis_map committed", async () => {
+        // The point of node addressing. Every output of a leg is node-framed, so
+        // the firmware does not route it through the map — which means a head
+        // can be homed during commissioning, before anything is bound. Under the
+        // old axis-addressed `home` this needed a throwaway `axis_map` to borrow
+        // a slot first.
+        await withLink(async (link, sim) => {
+            sim.homingLegMs = 20;
+            expect(await link.command("axis_map - - - -")).toBe("ok");
+            expect((await link.getStatus()).alarm).toBe(AlarmReason.CONFIG);
+
+            expect(await link.command("lin_leg 3 1 2500 500 400 88000")).toBe("ok");
+            await tick(60);
+
+            // Node 3 is standing on its switch, and no slot claims it, so the
+            // per-slot view is empty while the node-framed truth is not. The
+            // machine stays in the config alarm it was already in.
+            expect(await link.command("getstate")).toContain("latched=0x00");
+            expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
+            expect(await link.command("getstate")).toContain("latched=0x04");
+        }, { busNodes: [1, 2, 3, 4] });
+    });
+
+    it("rot_leg on a limit-switch node is refused before anything moves", async () => {
+        await withLink(async (link) => {
+            expect(await link.command("rot_leg 1 1 2500 500 400 88000"))
+                .toContain("kind_mismatch");
+            expect((await link.getStatus()).state).not.toBe(MachineState.HOMING);
+        });
+    });
+
     it("a latched limit follows the NODE across a rebind, not the slot", async () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 20;
-            await link.command("home z 1 2500 500 400 88000"); // slot 2 = node 3
+            await link.command("lin_leg 3 1 2500 500 400 88000"); // node 3 = slot 2
             await tick(60);
             expect(await link.command("getstate")).toContain("latched=0x04");
 

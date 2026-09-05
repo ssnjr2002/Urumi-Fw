@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { derivePlan, approachDir } from "../../src/homing/derive.js";
+import { derivePlan, deriveRotaryPlan, approachDir } from "../../src/homing/derive.js";
 import { LegKind } from "../../src/homing/types.js";
 import { axisConfig, busNode, type LinearHoming } from "../../src/machine/schema.js";
 
@@ -123,6 +123,10 @@ describe("derivePlan — refusals", () => {
     it("throws for an axis with no switch rather than returning an empty plan", () => {
         // A silent empty plan would let a `home all` skip an axis and report ok.
         const noSwitch = axisConfig(busNode(3), 1200);
-        expect(() => derivePlan("z", noSwitch)).toThrow(/no homing config/);
+        expect(() => derivePlan("z", noSwitch)).toThrow(/no linear homing config/);
+        // And the two entry points refuse each other's config, which is what the
+        // discriminated union buys: a rotary block reaching derivePlan is a
+        // wiring mistake in the caller, not an axis without a switch.
+        expect(() => deriveRotaryPlan("z", noSwitch)).toThrow(/no rotary homing config/);
     });
 });

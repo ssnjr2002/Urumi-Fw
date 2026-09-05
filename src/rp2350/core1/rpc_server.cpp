@@ -53,7 +53,7 @@ static void busQuiesce(void) {
 // property of the command, not a per-command reply shape.
 static bool answersWithStatus(uint8_t cmd) {
     return cmd == CMD_NODE_STATUS || cmd == CMD_DATUM_SET ||
-           cmd == CMD_ENGAGE      || cmd == CMD_HOME;
+           cmd == CMD_ENGAGE      || cmd == CMD_HOME_LEG;
 }
 
 // Expand a request's argument bytes into the node's on-wire payload.

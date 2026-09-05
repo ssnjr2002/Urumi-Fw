@@ -65,7 +65,9 @@ import {
     RUNNING_NAMES,
     maskStr,
     derivePlan,
+    deriveRotaryPlan,
     runHoming,
+    runRotaryHoming,
     nodeStat,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
@@ -376,10 +378,17 @@ function renderAxisMap() {
 
 // ── homing ──────────────────────────────────────────────────────────────────
 //
-// The panel drives src/homing/: derivePlan() turns an AxisConfig into four legs
-// and a datum, runHoming() arms each leg and waits. Nothing about the four-leg
-// structure or the arithmetic lives here — a demo that re-derived any of it
-// would be a second implementation to keep in step with the machine.
+// The panel drives src/homing/: derivePlan()/deriveRotaryPlan() turn an
+// AxisConfig into legs, runHoming()/runRotaryHoming() arm each leg and wait.
+// Nothing about the leg structure or the arithmetic lives here — a demo that
+// re-derived any of it would be a second implementation to keep in step with
+// the machine.
+//
+// The two kinds are branched on `homing.kind` and nowhere else. They are not
+// two flavours of one sequence: a linear home is four legs against a switch
+// whose datum is known before anything moves, and a rotary home is two sweeps
+// whose datum only exists once both have reported. Trying to render them
+// through one path is what would force the differences into flags.
 
 /** The live home, if any: { abort } — abort is a flag runHoming does not read;
  *  the Stop button estops, because mid-home there is nothing to unwind to. */
@@ -454,9 +463,28 @@ homeDryBtn.addEventListener('click', () => {
     for (const a of rows) {
         let plan;
         try {
-            plan = derivePlan(a.letter, a.ax);
+            plan = a.ax.homing.kind === 'rotary'
+                ? deriveRotaryPlan(a.letter, a.ax)
+                : derivePlan(a.letter, a.ax);
         } catch (e) {
             log(`${a.label}: ${e.message}`, 'err');
+            continue;
+        }
+        if (a.ax.homing.kind === 'rotary') {
+            const tolDeg = (plan.toleranceSteps / plan.stepsPerUnit).toFixed(2);
+            log(`${a.label} — 2 sweeps, ~${plan.nominalStepsPerRev.toFixed(0)} steps/rev, ` +
+                `agree within ${plan.toleranceSteps} steps (${tolDeg} ${a.unit})`, 'note');
+            plan.legs.forEach((g, i) => {
+                const ramp = g.startUs === g.floorUs ? `${g.floorUs}us` : `${g.startUs}->${g.floorUs}us`;
+                // Always `<=`: a sweep is evidence-terminated, so the budget is
+                // a runaway ceiling it does not expect to reach. Printing `=`
+                // here would read as a distance the axis is meant to travel.
+                log(` ${i + 1} ${g.kind.padEnd(8)} dir ${g.dir}  ${ramp.padEnd(13)}` +
+                    `ramp ${String(g.rampSteps).padEnd(5)}<=${String(g.maxSteps).padEnd(9)}` +
+                    `ends: wherever post-roll left it`, 'rx');
+            });
+            log(` datum: the INDEX itself gets ${plan.datumSteps} steps — the axis is ` +
+                `left standing off it, and a moveto is what closes that`, 'note');
             continue;
         }
         const mm = (plan.datumSteps / a.cal.stepsPerUnit).toFixed(1);
@@ -477,6 +505,42 @@ homeDryBtn.addEventListener('click', () => {
     setHomeLine(`dry run: ${rows.length} axis(es) — see console`, 'ok');
 });
 
+/**
+ * One rotary axis: two sweeps, then the datum, reporting the evidence.
+ *
+ * Split out rather than branched inline because almost nothing is shared with
+ * the linear path — no latch to report, no span worth quoting as a travel
+ * measurement, and a result object that only exists after both legs.
+ */
+async function runRotarySweeps(a) {
+    const plan = deriveRotaryPlan(a.letter, a.ax);
+    const r = await runRotaryHoming(link, plan, {
+        onLeg: (leg, i, n) =>
+            setHomeLine(`${a.label} — sweep ${i + 1}/${n} · dir ${leg.dir} · ` +
+                        `<=${leg.maxSteps} steps`, 'idle'),
+        onLegDone: (leg, st) =>
+            log(`  ${a.letter} sweep dir ${leg.dir}: state ` +
+                `${STATE_NAMES[st.state] ?? st.state}`, 'rx'),
+    });
+    // The evidence, not just the verdict. steprev is a MEASUREMENT of this
+    // mechanism -- microsteps, pulley teeth and gear ratio in one number -- so
+    // it is worth comparing against the configured stepsPerUnit by eye. A
+    // persistent disagreement means the config is describing a different
+    // machine, and the sweep is the one that measured reality.
+    const measuredSpu = r.stepsPerRev / 360;
+    log(`  ${a.letter} index fwd ${r.forward.index} (steprev ${r.forward.stepsPerRev}), ` +
+        `rev ${r.reverse.index} (steprev ${r.reverse.stepsPerRev})`, 'rx');
+    log(`  ${a.letter} bias ${r.biasSteps.toFixed(1)} steps = ` +
+        `${(r.biasSteps / plan.stepsPerUnit).toFixed(2)} ${a.unit} one-way — ` +
+        `averaged out, not corrected for`, 'note');
+    log(`  ${a.letter} steps/rev ${r.stepsPerRev.toFixed(1)} → ` +
+        `stepsPerUnit ${measuredSpu.toFixed(4)} (config says ` +
+        `${a.ax.stepsPerUnit}) — measured, worth adopting if it holds`, 'note');
+    log(`${a.label} homed — origin ${r.originSteps} steps ` +
+        `(${(r.originSteps / plan.stepsPerUnit).toFixed(1)} ${a.unit}); ` +
+        `moveto ${a.letter} 0 to sit on the index`, 'ok');
+}
+
 homeRunBtn.addEventListener('click', async () => {
     const rows = selectedHomeAxes();
     if (rows.length === 0 || !ctl) return;
@@ -487,6 +551,10 @@ homeRunBtn.addEventListener('click', async () => {
         // `err busy` to a second `home` while one is in flight, because Core 0
         // supervises exactly one at a time.
         for (const a of rows) {
+            if (a.ax.homing.kind === 'rotary') {
+                await runRotarySweeps(a);
+                continue;
+            }
             const plan = derivePlan(a.letter, a.ax);
             await runHoming(link, plan, {
                 onLeg: (leg, i, n) =>

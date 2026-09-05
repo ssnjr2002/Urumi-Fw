@@ -134,14 +134,39 @@ static uint8_t rotaryIdxFail(uint8_t cause, uint8_t crossings) {
     }
 }
 
-bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
+bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
+                 bool intendedRetract,
                  uint16_t startUs, uint16_t floorUs,
                  uint16_t rampSteps, uint32_t maxSteps) {
+    // ASK WHAT THE NODE IS BEFORE ARMING IT. The kind also arrives in the arm
+    // ack below, which is where the seek/retract classification reads it -- but
+    // that ack is sampled AFTER the pulser has started. Checking there would
+    // mean a `lin_leg` aimed at a rotary node runs a full sweep before anyone
+    // notices, and a `rot_leg` aimed at a linear one drives into a hard stop
+    // hunting a dip that does not exist. One extra transaction, ~1 ms, buys a
+    // refusal that costs no motion.
+    //
+    // A node with no terminator at all (HOMING_KIND_NONE) fails this too, and
+    // more usefully than the NAK it would otherwise get: the error names what
+    // the node IS rather than only that it said no.
+    NodeStatus probe;
+    RpcResult pr = rpcNodeStatus(CMD_NODE_STATUS, node, 0, &probe);
+    if (pr != RPC_OK) {
+        Serial.printf("err node %d %s\n", node, rpcResultText(pr));
+        return true;
+    }
+    if (!probe.hasStepperTail) { Serial.println("err bad_reply"); return true; }
+    if (probe.homingKind != expectKind) {
+        Serial.printf("err kind_mismatch node %d is %d want %d\n",
+                      node, probe.homingKind, expectKind);
+        return true;
+    }
+
     NodeStatus st;
     RpcResult r = rpcHome(node, dir, intendedRetract, startUs, floorUs,
                           rampSteps, maxSteps, &st);
     if (r != RPC_OK) {
-        // A node with no switch wired NAKs CMD_HOME, and that refusal is on the
+        // A node with no switch wired NAKs CMD_HOME_LEG, and that refusal is on the
         // wire rather than being a silent drop the master reads as absence.
         // Same path now covers NAK_INTENT_MISMATCH: the host's plan disagreed
         // with the node's own switch read (docs/homing.md §1.4/§2.6).
@@ -162,14 +187,15 @@ bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
     // know the pin state, and the node has already answered the question.
     //
     // A rotary node has no pin, so its LIMIT bit is permanently 0 and this read
-    // would silently classify every sweep as a seek. Ask the node what it IS
-    // first: kind is declared in the same tail (include/common.h,
-    // HOMING_KIND_*), so the answer is in this same transaction.
+    // would silently classify every sweep as a seek. Kind is declared in the
+    // same tail (include/common.h, HOMING_KIND_*), so the answer rides along in
+    // this same transaction -- read it from the ACK rather than trusting the
+    // probe above, which is a whole round trip older.
     isRotary   = (st.homingKind == HOMING_KIND_INDEX);
     wasRetract = !isRotary && (st.flags & NODE_FLAG_LIMIT) != 0;
 
     // The node accepted the command but is not pulsing. This should not happen:
-    // homingArm() starts TCA0 before the reply is built, the first overflow is a
+    // homingLegArm() starts TCA0 before the reply is built, the first overflow is a
     // whole start_interval away, and `home` rejects the zero budget that is the
     // only way to finish inside that window. It cannot be INTERPRETED either --
     // "stopped" and "never started" produce identical flags, so the §1.5 table
@@ -194,7 +220,7 @@ bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
     // The alarm this home was started FROM is retired here, at the arm, so that
     // STATE_HOMING never coexists with a reason describing a machine that is no
     // longer stopped. `home` is admitted in ALARM precisely because homing is
-    // how an operator recovers from one (cmdHome), and the node has just
+    // how an operator recovers from one (cmdLinLeg/cmdRotLeg), and the node has just
     // accepted the leg and started pulsing -- that is the moment the old reason
     // stops being true, not some later point.
     //

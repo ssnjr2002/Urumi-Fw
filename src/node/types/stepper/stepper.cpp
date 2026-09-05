@@ -57,7 +57,7 @@ static bool             currentDir       = false;
 // emitting open-loop with no idea the axis is pinned.
 //
 // The coupling with the pulser runs one way only. The pulser NEVER reads these
-// — it samples the pin directly when a CMD_HOME arrives, and that one read
+// — it samples the pin directly when a CMD_HOME_LEG arrives, and that one read
 // picks its mode: clear → seek (stop when the level asserts), asserted →
 // retract (ignore the switch, run the step budget out). Deciding from the pin
 // rather than from the latch is what makes a boot with the axis already parked
@@ -105,7 +105,7 @@ static volatile bool     limitLatched       = false;
 #endif  // HAS_LIMIT_SWITCH
 
 #ifdef HAS_HOMING
-// ─── Homing pulser state (CMD_HOME) ─────────────────────────────────────────
+// ─── Homing pulser state (CMD_HOME_LEG) ─────────────────────────────────────────
 // Written once at arm time in loop context, then owned by the pulser ISR until
 // it stops. `active` is the handshake between the two: loop context must not
 // touch the rest while it is set.
@@ -128,7 +128,7 @@ static volatile bool        homingActive = false;
 
 // TCA0 ticks per microsecond, from the board's own F_CPU with the div8
 // prescaler: 3 on the 24MHz DB32, 2 (truncated from 2.5) on a 20MHz ATtiny.
-// This is why CMD_HOME carries microseconds — the difference dies here and never
+// This is why CMD_HOME_LEG carries microseconds — the difference dies here and never
 // reaches the master or the config schema.
 #define HOMING_TICKS_PER_US ((F_CPU / 1000000UL) / 8UL)
 
@@ -181,7 +181,7 @@ static int32_t homingSpanFrom  = 0;
 static int32_t homingSpanSteps = 0;
 
 static int32_t readPositionAtomic(void);
-static uint8_t homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
+static uint8_t homingLegArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
                          uint16_t rampSteps, uint32_t maxSteps);
 static void homingHalt(void);
 static void homingFinish(void);
@@ -297,7 +297,7 @@ void node_loop(void) {
 // Rejecting rather than clamping is deliberate. Every one of these is a config
 // or arithmetic mistake on the host side, and a clamped homing move would run at
 // a rate nobody asked for, into a hard stop, while reporting success.
-static uint8_t homingArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
+static uint8_t homingLegArm(bool dir, bool retract, uint16_t startUs, uint16_t floorUs,
                          uint16_t rampSteps, uint32_t maxSteps) {
     // The one refusal that is not the host's fault and not permanent: the same
     // frame is correct, just early. Everything below it is arithmetic the host
@@ -633,7 +633,7 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
         }
 #endif
 #ifdef HAS_HOMING
-        case CMD_HOME: {
+        case CMD_HOME_LEG: {
             // [id][cmd][len][11 payload][crc]. Compiled only where the node has
             // something that can END a move — a switch or a Hall index. Without
             // one there is no terminator at all, so such a node NAKs rather than
@@ -642,8 +642,8 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             // supported and the frame is simply the wrong length. Answering
             // "unsupported" here points the host at its firmware version when
             // the fault is in the bytes it just sent.
-            if (len < 3 + CMD_HOME_PAYLOAD_LEN + 1) {
-                node_reply_nak(CMD_HOME, NAK_BAD_ARG, reply, replyLen);
+            if (len < 3 + CMD_HOME_LEG_PAYLOAD_LEN + 1) {
+                node_reply_nak(CMD_HOME_LEG, NAK_BAD_ARG, reply, replyLen);
                 return true;
             }
 
@@ -670,31 +670,31 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             // declared budget under the WRONG semantics: a host expecting a
             // seek sized its budget as a runaway cap for a move the switch was
             // meant to cut short, and a retract ignores the switch and runs
-            // that same budget to completion (include/common.h, CMD_HOME). NAK
+            // that same budget to completion (include/common.h, CMD_HOME_LEG). NAK
             // here, before anything moves, rather than silently execute a move
             // the host did not intend.
             //
             // A reasoned NAK, not the generic `return false`: NAK_UNSUPPORTED
-            // would read as "this node does not do CMD_HOME", which is false —
+            // would read as "this node does not do CMD_HOME_LEG", which is false —
             // it does, just not with THIS command's premise. NAK_INTENT_MISMATCH
             // tells the host to re-read the switch before retrying rather than
             // to suspect its wiring or payload framing.
             if (retract != intendedRetract) {
-                node_reply_nak(CMD_HOME, NAK_INTENT_MISMATCH, reply, replyLen);
+                node_reply_nak(CMD_HOME_LEG, NAK_INTENT_MISMATCH, reply, replyLen);
                 return true;
             }
 #else
             // Rotary: no pin, so no mode and nothing to disagree about. The
             // intent bit is IGNORED rather than given a second meaning here
-            // (include/common.h, CMD_HOME) — there is exactly one kind of
+            // (include/common.h, CMD_HOME_LEG) — there is exactly one kind of
             // rotary leg, a sweep, and `retract` false is what runs it.
             const bool retract = false;
 #endif
 
-            const uint8_t why = homingArm(dir, retract, startUs, floorUs,
+            const uint8_t why = homingLegArm(dir, retract, startUs, floorUs,
                                           rampSteps, maxSteps);
             if (why) {
-                node_reply_nak(CMD_HOME, why, reply, replyLen);
+                node_reply_nak(CMD_HOME_LEG, why, reply, replyLen);
                 return true;
             }
 
@@ -703,7 +703,7 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             // never has to infer the starting point from a separate read that
             // could straddle the first steps.
             reply[0] = NODE_ID;
-            reply[1] = CMD_HOME;
+            reply[1] = CMD_HOME_LEG;
             uint8_t n = buildNodeStatus(&reply[3]);
             reply[2] = n;
             *replyLen = 3 + n + 1;

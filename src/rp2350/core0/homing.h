@@ -12,17 +12,33 @@
 // So `home` arms and returns, the machine sits in STATE_HOMING, and the polling
 // lives out here in the Core 0 loop where it cannot hold the plane shut.
 
-// Arm a home on `node` and enter STATE_HOMING. Prints exactly one reply line in
+// Arm ONE LEG on `node` and enter STATE_HOMING. Prints exactly one reply line in
 // every path, per the control-plane contract. Returns true if the command was
 // answered at all -- which is what the handler propagates -- not whether the
-// axis found its switch.
+// leg found anything.
+//
+// NODE-ADDRESSED, and that is not an accident of convenience. Every output of a
+// leg is node-framed -- the span, the index in the node's own counter, the limit
+// latch (a switch is wired to a NODE, position.h) -- and none of them is
+// slot-framed. Routing the command through the axis map would have made a
+// command that writes only truths ask a view for permission first. It also means
+// a leg runs during commissioning, before any axis_map is committed.
+//
+// `expectKind` is HOMING_KIND_LIMIT or HOMING_KIND_INDEX -- which VERB the
+// operator typed. The node declares its own kind in the status tail, so this
+// probes it and refuses a mismatch BEFORE arming: a rotary node has no pin, and
+// a linear one has no index, so running the wrong leg's semantics would drive an
+// axis for a full budget to produce an answer that could never exist.
+//
 // `intendedRetract` is the host's own prediction of what this leg is: true for
 // a leg the plan expects to end already on the switch (§3.4's legs 2 and 4),
 // false for one it expects to start clear (legs 1 and 3). The node checks it
 // against its own pin read and NAKs on disagreement (NAK_INTENT_MISMATCH,
 // include/common.h) rather than silently running the wrong leg's semantics
-// under the right leg's budget.
-bool homingBegin(uint8_t node, uint8_t dir, bool intendedRetract,
+// under the right leg's budget. Meaningless for HOMING_KIND_INDEX -- there is no
+// pin to agree with -- and `rot_leg` passes false.
+bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
+                 bool intendedRetract,
                  uint16_t startUs, uint16_t floorUs,
                  uint16_t rampSteps, uint32_t maxSteps);
 
