@@ -9,6 +9,14 @@
 #include "board.h"
 #include "rs485/frame.h"
 
+// Non-motion types ignore stream bytes -- except a vacuum carrying the probe
+// switch, which answers them (docs/tool_probe.md §4.2). The reply must run here
+// and not in loop(), because loop() runs the SSR burst-fire machine and would
+// put a variable-duration task directly in the reply path.
+#ifdef NODE_HAS_PROBE_REPLY
+#include "types/vacuum/probe_slot.h"
+#endif
+
 ISR(HAL_USART_RXC_vect) {
     uint8_t status = HAL_USART_INST.RXDATAH;
     uint8_t b      = HAL_USART_INST.RXDATAL;
@@ -17,5 +25,10 @@ ISR(HAL_USART_RXC_vect) {
         frame_command_byte(b);
         return;
     }
-    frame_stream_reset();           // 9th bit = 0 → stream byte: ignored
+    frame_stream_reset();           // 9th bit = 0 → stream byte
+#ifdef NODE_HAS_PROBE_REPLY
+    probe_stream_byte(b);           // … answered, if it is addressed to our slot
+#else
+    (void)b;                        // … otherwise ignored
+#endif
 }
