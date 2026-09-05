@@ -39,15 +39,6 @@ static void replyWith(const RpcRequest* req, RpcResult result,
     rpcServerReply(&rep);
 }
 
-// Quiesce the wire before a command frame: let the TX drain, drop anything
-// stale in RX, then send a NOP stream byte so slave parsers start from a known
-// state. Every command path did this identically.
-static void busQuiesce(void) {
-    while (!rs485.txEmpty());
-    rs485.flushRX();
-    rs485.writeStream(0);
-}
-
 // Which commands answer with a status payload ([type][flags][tail…]) rather than
 // a bare ack. The node has one serializer (buildNodeStatus), so this is a
 // property of the command, not a per-command reply shape.
@@ -197,6 +188,42 @@ bool rpcServerPoll(void) {
                                              ((uint32_t)req.args[5] <<  8) |
                                               (uint32_t)req.args[6]);
             emitDebugSteps(slot, sps, steps);
+            return true;
+        }
+        case RPC_OP_PROBE_LEG: {
+            // Unpack, run, reply. Nothing here interprets the leg -- which leg of
+            // four it is and what its failure costs are Core 0's, exactly as this
+            // server does not know seek from retract for CMD_HOME_LEG.
+            const uint8_t* a = req.args;
+            ProbeLegReq rq;
+            rq.zSlot      = a[0];
+            rq.vacSlot    = a[1];
+            rq.vacNode    = a[2];
+            rq.dir        = a[3];
+            rq.startUs    = (uint16_t)((a[4]  << 8) | a[5]);
+            rq.ceilUs     = (uint16_t)((a[6]  << 8) | a[7]);
+            rq.rampSteps  = (uint16_t)((a[8]  << 8) | a[9]);
+            rq.pollDiv    = a[10];
+            rq.maxSteps   = ((uint32_t)a[11] << 24) | ((uint32_t)a[12] << 16) |
+                            ((uint32_t)a[13] <<  8) |  (uint32_t)a[14];
+            rq.deadlineUs = (uint16_t)((a[15] << 8) | a[16]);
+            rq.confirmPolls = a[17];
+            rq.retryLimit   = a[18];
+
+            ProbeLegOut res;
+            emitProbeLeg(&rq, &res);
+
+            const uint32_t st = (uint32_t)res.steps;
+            const uint8_t payload[7] = {
+                res.cause, res.retries, res.level,
+                (uint8_t)(st >> 24), (uint8_t)(st >> 16),
+                (uint8_t)(st >>  8), (uint8_t)(st),
+            };
+            // RPC_OK means "the leg ran and here is what happened", never "the
+            // probe succeeded" -- the outcome is in the payload. Conflating the
+            // two would make a BUDGET failure indistinguishable from a bus
+            // fault at the one call site that has to tell them apart.
+            replyWith(&req, RPC_OK, payload, sizeof(payload));
             return true;
         }
         case RPC_OP_NODE:

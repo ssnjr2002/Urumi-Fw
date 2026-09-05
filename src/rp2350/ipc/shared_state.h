@@ -126,6 +126,12 @@ enum MachineState : uint8_t {
     STATE_ALARM   = 3,
     STATE_PAUSED  = 4,
     STATE_HOMING  = 5,   // a node-run home is in progress (core0/homing.cpp)
+    // A tool-height probe session is open (core0/probe.cpp, docs/tool_probe.md).
+    // A SESSION state, not a motion state: it is entered by `probe_map`, spans
+    // several legs with the host deciding between them, and is left only by an
+    // explicit exit. Like HOMING it is neither IDLE nor RUNNING, so the data
+    // plane refuses MSEG and JOG in it for free.
+    STATE_PROBING = 6,
 };
 
 // Reason codes (state_redesign Layer 2): metadata on WHY we are in a state, so
@@ -146,6 +152,16 @@ enum AlarmReason : uint8_t {
     // plane while busGateDenies() still admits control commands, which is
     // exactly the gating a mid-home pause wants, for free.
     ALARM_LIMIT_LATCHED = 6,
+    // A probe leg ended wrong (docs/tool_probe.md §5.11.1). Mirrors
+    // ALARM_HOMING_FAIL and is deliberately NOT one of the reasons
+    // position.cpp invalidates the origin on: most probe failures leave the Z
+    // datum intact, and only the two that lost track of steps void it -- which
+    // the probe supervisor does itself, per cause, rather than by reason.
+    //
+    // A host that does not know this value must not read it as "no alarm". The
+    // web host currently degrades an unrecognised AlarmReason silently, so it
+    // needs teaching alongside this.
+    ALARM_PROBE_FAIL = 7,
 };
 
 enum RunningReason : uint8_t {
@@ -156,6 +172,31 @@ enum RunningReason : uint8_t {
     // IS running, so every existing IDLE/RUNNING/PAUSED gate stays correct
     // untouched, and an un-updated host reads it as plain RUNNING — which is true.
     RUNNING_ABORT_DECEL = 2,
+};
+
+// Why we are in STATE_PROBING (docs/tool_probe.md §5.2). Activity, plus the one
+// phase fact the Pico owns.
+//
+// A session state destroys the leg-done signal that HOMING->IDLE gave the host,
+// so it has to be put back: LEG -> not-LEG IS that signal. The distinction is
+// mechanically real -- during a leg Core 1 holds the emit position and
+// rpcServerPoll() is starved; between legs it is not -- so the reason marks
+// exactly when the bus is available for supervision.
+//
+// CLEAR/CONTACT is not leg identity smuggled back in. The Pico never learns
+// which leg of four it is running. But it does know the switch, and the switch
+// partitions the legs: open means a retract is the only thing that can legally
+// happen next, closed means a descent can.
+//
+// DERIVED, not latched as a phase flag: it is refreshed from an actual switch
+// read at every leg boundary and at the exit gate. Between legs nothing moves,
+// so nothing else can change it. It is deliberately NOT re-read on each
+// `getstate` -- that would put a bus transaction inside a read-only query, which
+// query.cpp refuses to do for the same reason everywhere else.
+enum ProbingReason : uint8_t {
+    PROBING_LEG     = 0,   // a leg is executing; the bus is starved
+    PROBING_CLEAR   = 1,   // between legs, switch closed  — tool off the surface
+    PROBING_CONTACT = 2,   // between legs, switch open    — tool on the surface
 };
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
@@ -181,6 +222,11 @@ static inline uint32_t queuedUs() { return queuedUsIn - queuedUsOut; }
 extern volatile uint8_t machineState;     // one of MachineState
 extern volatile uint8_t alarmReason;      // one of AlarmReason   (set before STATE_ALARM)
 extern volatile uint8_t runningReason;    // one of RunningReason (meaningful while RUNNING)
+// One of ProbingReason (meaningful while STATE_PROBING). A separate byte rather
+// than a second meaning for runningReason: getstate publishes that one as
+// `running=`, and two unrelated facts in one wire field is how a host ends up
+// decoding a probe phase as a jog.
+extern volatile uint8_t probingReason;
 
 // Machine position in steps (X,Y,Z,A), owned and accumulated by Core 1 per
 // completed segment. The consumer (Core 1) is the single source of truth so it

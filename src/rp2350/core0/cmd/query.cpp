@@ -10,6 +10,7 @@
 #include "gate.h"
 #include "../position.h"
 #include "../homing.h"
+#include "../probe.h"
 #include "../status.h"                  // getBufCount (status alias)
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -30,6 +31,17 @@ bool cmdGetState(const char*) {
     // cannot be read as a live fault. See homing.h for what the codes point at.
     if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != HOMEFAIL_NONE) {
         Serial.printf(" homefail=%d", homingFailWhy());
+    }
+
+    // Appended last, after every field an existing host parses, for the same
+    // reason `latched` was. `probing=` is the session phase (ProbingReason);
+    // `probe=` is the LAST LEG's outcome and is emitted alongside it, because a
+    // leg boundary is not a terminal state -- the machine stays PROBING and the
+    // only report of what just happened is this pair.
+    if (machineState == STATE_PROBING || alarmReason == ALARM_PROBE_FAIL) {
+        Serial.printf(" probing=%d probe=%d retries=%d psteps=%ld",
+                      probingReason, probeLastCause(), probeLastRetries(),
+                      (long)probeLastSteps());
     }
 #ifdef DEBUG_TIMING
     // texp/tmeas = expected vs measured duration (us) of the last completed

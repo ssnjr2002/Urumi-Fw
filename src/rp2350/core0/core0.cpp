@@ -14,6 +14,7 @@
 #include "control_plane.h"
 #include "position.h"
 #include "homing.h"
+#include "probe.h"
 #include "data_plane.h"
 #include "status.h"
 #include "../config/config_store.h"
@@ -110,6 +111,7 @@ void loop() {
     machineState = STATE_ALARM;
     alarmReason = ALARM_CONFIG;
     runningReason = RUNNING_JOB;
+    probingReason = PROBING_CLEAR;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
     axes_homed = 0;
     // axes_enabled is DERIVED and deliberately not wiped here: reconcileValidity
@@ -152,6 +154,11 @@ void loop() {
         // command: blocking there would hold `getstate` and `stop` shut for the
         // whole seek, on the one command that is driving an axis at a hard stop.
         homingTick();
+        // And a probe leg, for the same reason and on the same terms: a leg runs
+        // for seconds with a tool descending onto a bed, and holding `getstate`
+        // and `stop` shut for the whole of it is exactly what a supervisor out
+        // here avoids.
+        probeTick();
         // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
         // responses synchronously inside handleCommand (relayNode), so there is no
         // async response stream to drain here. Backpressure is handled by the

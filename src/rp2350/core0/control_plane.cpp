@@ -48,6 +48,9 @@ static const Cmd kCommands[] = {
     { "bus_enable",   cmdBusEnable   },
     { "enable",       cmdEnable      },
     { "disable",      cmdDisable     },
+    { "probe_map",    cmdProbeMap    },
+    { "probe_leg",    cmdProbeLeg    },
+    { "probe_end",    cmdProbeEnd    },
 };
 
 // Handle one control-plane text line. Replies with exactly one line per the wire

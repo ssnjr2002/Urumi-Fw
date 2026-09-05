@@ -344,14 +344,20 @@ can. That is not leg identity smuggled back in — it is coarser, two-valued, an
 derived rather than remembered — but it is real phase information, and it is
 information the Pico owns rather than infers.
 
-**Derived on read, never latched.** `PROBING_CLEAR` / `PROBING_CONTACT` are not
-two states the session transitions between; they are one state rendered through a
-fresh read of the pin at the moment the reason is asked for. This matters, because
-it is what stops the third reason from being a second source of truth: it is the
-*same read* the intent gate already performs (§5.7 — "the Pico can read the switch
-itself between legs, so it checks before arming"), not a copy of it kept
-alongside. A latched phase flag set at leg end would drift the instant a tool
-slipped or a cable twitched; a derived one cannot.
+**Derived from a real read, refreshed at every boundary.** `PROBING_CLEAR` /
+`PROBING_CONTACT` are not two states the session transitions between; they are one
+state re-derived from an actual `CMD_SWITCH_GET` at each leg boundary, at
+`probe_map`, and again at the exit gate. It is the *same read* the intent gate
+performs (§5.7), not a copy kept alongside it — which is what stops the third
+reason from being a second source of truth.
+
+It is deliberately **not** re-read on each `getstate`. The switch is on the far
+side of the bus, so a fresh read per query would put a bus transaction inside a
+read-only command, which `query.cpp` refuses to do everywhere else and which would
+make `getstate` cost up to `RESPONSE_TIMEOUT_MS`. The boundary refresh is
+sufficient because between legs **nothing moves**: the only things that can change
+the switch are a fault or a hand, and neither is what the reason is for. The one
+place that must not trust a cached answer is the exit, and §5.5's gate re-reads.
 
 Between legs the bus is available, which is precisely what makes the read
 affordable — the same fact that motivates the `LEG` / not-`LEG` split in the first
@@ -464,7 +470,7 @@ wrong one.
 ### 5.7 `probe_leg` — arming one leg
 
 ```
-probe_leg <dir> <ceil_us> <ramp_steps> <poll_div> <max_steps> <deadline_us> <intent>
+probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps> <deadline_us> <intent>
 ```
 
 Positional, `err usage` / `err range`, following `lin_leg`'s idiom in
@@ -480,6 +486,7 @@ truth that could disagree with the binding.
 | arg | meaning |
 |---|---|
 | `dir` | 0/1, as `lin_leg` |
+| `start_us` | first step interval — where the ramp starts |
 | `ceil_us` | step interval floor — the feed **ceiling** (§2.3) |
 | `ramp_steps` | 0 = no ramp; required on fast legs (§2.4) |
 | `poll_div` | poll every N steps; 1 = every step |
@@ -487,7 +494,13 @@ truth that could disagree with the binding.
 | `deadline_us` | poll deadline for **this leg** (§5.7 note below) |
 | `intent` | 0 = expect switch closed at start, 1 = expect open |
 
-Zero is rejected for `ceil_us`, `poll_div`, `max_steps` and `deadline_us` — same
+`start_us` was not in this table when it was first written. It is here for the
+reason `lin_leg` carries both a start and a floor: a ramp needs somewhere to ramp
+*from*, and the alternative was a hidden multiplier of `ceil_us` buried in the
+emitter — a poor home for a number that decides whether Z loses steps (§2.4).
+
+Zero is rejected for `start_us`, `ceil_us`, `poll_div`, `max_steps` and
+`deadline_us` — same
 reasoning `legCommon` gives for rejecting a zero interval and a zero budget: a
 command that cannot move and cannot fail.
 
@@ -585,6 +598,14 @@ Split by *where to look*, following `HOMEFAIL_*`:
 | `NOT_CLEARED` | retract done, switch still open | tool still on the bed, or switch failed open | intact |
 | `POS_MISMATCH` | node counter ≠ dead reckoning | steps refused; measurement void | **void** |
 | `DEADLINE` | supervisor timeout | the emitter, not the switch | **void** |
+| `ESTOP` | stopped by an estop mid-leg | — | **void** |
+
+`ESTOP` is an implementation addition, and it does not get to publish a verdict.
+It is reported as the leg's cause so the result does not have to lie about why it
+stopped, but the session tears down without touching `alarmReason` or
+`machineState`: Core 1's estop path owns that transition, and `ALARM_ESTOP`
+outranks a probe-fail reason because the recovery ladders genuinely differ
+(§5.11.1).
 
 **Most probe failures do not destroy the datum**, and the existing code already
 draws that line correctly: [position.cpp](../src/rp2350/core0/position.cpp) keys
@@ -636,7 +657,13 @@ teardown — never by a leg completing.
 These are separate severities and must not be collapsed. Only the second
 de-energises, and de-energising is the only thing here that destroys a datum.
 
-**Probe failure → `ALARM` + probe-fail reason**, mirroring `ALARM_HOMING_FAIL`.
+**Probe failure → `ALARM` + `ALARM_PROBE_FAIL` (7)**, mirroring
+`ALARM_HOMING_FAIL`. It is deliberately not one of the reasons `position.cpp`
+invalidates the origin on; the supervisor voids the datum itself, per cause, for
+the two rows in §5.10 that earn it. **The web host degrades an unrecognised
+`AlarmReason` silently — it reads as "no alarm" — so a Pico carrying this code
+against a host that has not been taught it reports a fault as health. Teach the
+host in the same change.**
 Nothing is de-energised, so the datum survives except in the two cases marked in
 §5.10. Recovery is `unalarm`, fix the cause, retry. **No re-home.**
 
