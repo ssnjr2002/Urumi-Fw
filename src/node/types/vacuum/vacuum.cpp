@@ -15,6 +15,9 @@
 #include "vacuum/vacuum.h"
 #include "common.h"
 #include "node_hooks.h"
+#ifdef NODE_HAS_PROBE_REPLY
+#include "probe_slot.h"
+#endif
 
 // Guard against an env that compiles this type dir with the wrong identity flag.
 #ifdef NODE_TYPE
@@ -45,6 +48,15 @@ uint8_t node_type(void) { return NODE_TYPE_VACUUM; }
 #else
 #define VAC_LED_GREEN(on)    ((void)0)
 #define VAC_LED_GREEN_INIT() ((void)0)
+#endif
+
+#ifdef NODE_HAS_PROBE_REPLY
+// ─── Probe stream slot ──────────────────────────────────────────────
+// Defined here, used from the RX ISR through probe_slot.h. Boots disengaged, so
+// a vacuum that nobody has bound ignores the stream exactly as it always has.
+volatile uint8_t probeSlot     = 0xFF;   // SLOT_NONE
+volatile uint8_t probeStepMask = 0;
+volatile uint8_t probeDirMask  = 0;
 #endif
 
 // ─── Servos (angle-controlled, 1-based to match the wire) ───────────────────
@@ -212,6 +224,40 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             *replyLen = 4;
             return true;
         }
+#ifdef NODE_HAS_PROBE_REPLY
+        case CMD_ENGAGE: {
+            // payload [slot]: 0..3 bind to that stream slot, 0xFF = disengage.
+            //
+            // Deliberately NOT shared with the stepper's handler, though the
+            // opcode and the payload match. This engage means "answer polls
+            // here", not "step here": there is no position to report and the dir
+            // bit is a data channel rather than a direction. Two commands that
+            // are diverging should not be unified on the strength of a shared
+            // opcode -- the knife would want a third variant.
+            if (len < 5) return false;
+            uint8_t s = pkt[3];
+            if (s == 0xFF) {
+                probeStepMask = 0;
+                probeDirMask  = 0;
+            } else if (s < 4) {           // four stream slots, as stepper.cpp
+                probeStepMask = 1 << (s * 2);
+                probeDirMask  = 1 << (s * 2 + 1);
+            } else {
+                return false;              // out-of-range slot → NAK, keep state
+            }
+            probeSlot = s;
+            // Ack is the full status payload, whose first byte is node_type() --
+            // which is what makes probe_map's type verification free (§5.3): the
+            // same pass that disengages every node proves the id called a vacuum
+            // is a vacuum.
+            reply[0] = NODE_ID;
+            reply[1] = CMD_ENGAGE;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2]  = n;
+            *replyLen = 3 + n + 1;
+            return true;
+        }
+#endif
         case CMD_SWITCH_GET: {
             // [dest][cmd][len=0][crc] → reply [id][cmd][1][level][crc]
             uint8_t level = digitalRead(HAL_VACUUM_SWITCH_PIN) ? 1 : 0;
