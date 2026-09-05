@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""node_console.py — talk to a node directly over the USART0 bench console.
+"""node_console.py — talk to a node directly over its bench console USART.
 
-Pairs with the -DNODE_DEBUG_CONSOLE firmware build (env vac_node5_dbg). It sends
-command frames straight to the node over a plain serial link (USART0, PB2/PB3),
-bypassing the Pico and the RS485 bus entirely — for bench-testing node logic.
+Pairs with any -DNODE_DEBUG_CONSOLE firmware build. It sends command frames
+straight to the node over a plain serial link, bypassing the Pico and the RS485
+bus entirely — for bench-testing node logic.
+
+Which USART is the console depends on the board, because it is whichever one
+RS485 is NOT using (see each board.h's HAL_DEBUG_SERIAL):
+    ATtiny3224 / 3226   RS485 on USART1  ->  console USART0, PB2 TX / PB3 RX
+    AVR128DB32          RS485 on USART2  ->  console USART1, PC0 TX / PC1 RX
+This is a SEPARATE physical connection from the UPDI programming link; flashing
+over UPDI does not mean the console is reachable on that same COM port.
 
 Wire format (see src/node/debug_console.cpp): each command is one ASCII line of
 space-separated hex bytes  [id] [cmd] [len] [payload...]  WITHOUT the CRC — the
@@ -15,7 +22,7 @@ Usage:
     python node_console.py --port COM7 servo 1 90     # servo 1 -> 90 deg
     python node_console.py --port COM7 servo 0 180     # all servos -> 180 deg
     python node_console.py --port COM7 ssr 1
-    python node_console.py --port COM7 raw 05 14 00      # arbitrary frame (no CRC)
+    python node_console.py --port COM7 --id 7 raw 07 14 00  # arbitrary frame (no CRC)
 
     # interactive REPL (no command given):
     python node_console.py --port COM7 --id 7

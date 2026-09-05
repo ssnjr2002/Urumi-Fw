@@ -216,7 +216,11 @@
 // the RS485 wire (see core1.cpp); "off" is 0. The node itself takes a raw angle.
 #define SERVO_ON_ANGLE  180
 #define CMD_SSR_SET   0x11  // payload: [state(0=off, 1=on w/ soft-start)]; ACK echoes cmd
-#define CMD_SWITCH_GET 0x14 // no payload; reply payload: [level] (raw PA3 digitalRead)
+// no payload; reply payload: [level] — a raw read of the vacuum board's probe
+// switch pin (HAL_VACUUM_SWITCH_PIN: PA3 on the ATtiny3226 board, PA2 on the
+// AVR128DB32 one). Both wire NC→GND against the internal pull-up, so the byte
+// means the same on either: 0 = closed/at rest, 1 = open/actuated.
+#define CMD_SWITCH_GET 0x14
 // Knife (oscillating drag knife):
 #define CMD_KNIFE_OSC    0x12  // payload: [state(0=off, 1=on)]; ACK echoes cmd
 #define CMD_KNIFE_BLOWER 0x13  // payload: [duty(0..100 %)]; ACK echoes cmd

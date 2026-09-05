@@ -52,13 +52,22 @@
 // USART1 (PC0 TX / PC1 RX) — DxCore's `Serial1`. Used by debug_console.cpp.
 #define HAL_DEBUG_SERIAL   Serial1
 
-// ─── RGB LED ────────────────────────────────────────────────────────────────
+// ─── LED ────────────────────────────────────────────────────────────────────
+// Not uniform across the DB32 boards, so it is selected by board flag rather
+// than assumed. -DBOARD_DB32_VACUUM marks the vacuum revision, which carries a
+// single debug LED on PA3; every other DB32 board carries the RGB triple on
+// PF2/PF4/PF5. The flag has to live here (not in the vacuum type's cell header)
+// because the core's address blink in main.cpp sees only board.h.
+#ifdef BOARD_DB32_VACUUM
+#define HAL_LED_PIN       PIN_PA3
+#else
 // HAL_LED_PIN maps to red for protocol-compatible single-LED behaviour.
 #define HAL_LED_PIN       PIN_PF2
 #define HAL_LED_RED_PIN   PIN_PF2
 #define HAL_LED_GREEN_PIN PIN_PF4
 #define HAL_LED_BLUE_PIN  PIN_PF5
 #define HAL_HAS_RGB_LED   // expose RGB channel symbols
+#endif
 
 // ─── HAL self-check ─────────────────────────────────────────────────────────
 // (contract headers removed — board.h is a direct provider; consumers

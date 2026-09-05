@@ -25,6 +25,28 @@ static_assert(NODE_TYPE == NODE_TYPE_VACUUM,
 // ─── Hooks: identity ────────────────────────────────────────────────────────
 uint8_t node_type(void) { return NODE_TYPE_VACUUM; }
 
+// ─── Optional activity LEDs ─────────────────────────────────────────────────
+// The ATtiny3226 vacuum board has an RGB LED and spends two of its channels on
+// SSR (red) and servo-idle (green) activity. The AVR128DB32 board has a single
+// LED, which the core already owns for the address blink, so it binds neither
+// symbol and these compile to nothing. Whether the pin exists is the capability
+// test — there is no separate feature flag to keep in sync.
+#ifdef HAL_VACUUM_LED_RED
+#define VAC_LED_RED(on)     digitalWrite(HAL_VACUUM_LED_RED,   (on) ? HIGH : LOW)
+#define VAC_LED_RED_INIT()  pinMode(HAL_VACUUM_LED_RED, OUTPUT)
+#else
+#define VAC_LED_RED(on)     ((void)0)
+#define VAC_LED_RED_INIT()  ((void)0)
+#endif
+
+#ifdef HAL_VACUUM_LED_GREEN
+#define VAC_LED_GREEN(on)    digitalWrite(HAL_VACUUM_LED_GREEN, (on) ? HIGH : LOW)
+#define VAC_LED_GREEN_INIT() pinMode(HAL_VACUUM_LED_GREEN, OUTPUT)
+#else
+#define VAC_LED_GREEN(on)    ((void)0)
+#define VAC_LED_GREEN_INIT() ((void)0)
+#endif
+
 // ─── Servos (angle-controlled, 1-based to match the wire) ───────────────────
 // Each channel is a real RC servo driven via the Servo lib (50 Hz 1–2 ms pulse),
 // NOT a plain on/off GPIO. Index 0 is unused so servo commands stay 1-based;
@@ -43,7 +65,7 @@ static void servoUpdateLed(void) {
     bool anyOn = false;
     for (uint8_t i = 1; i <= HAL_VACUUM_SERVO_COUNT; i++)
         if (servoAngle[i]) { anyOn = true; break; }
-    digitalWrite(HAL_VACUUM_LED_GREEN, anyOn ? LOW : HIGH);
+    VAC_LED_GREEN(!anyOn);
 }
 
 // ─── SSR soft-start (non-blocking integral-cycle control) ───────────────────
@@ -112,14 +134,14 @@ static void ssrStart() {
     windowSlot   = 0;
     lastSlotTime = 0;
     bresErr      = 0;
-    digitalWrite(HAL_VACUUM_LED_RED, HIGH);
+    VAC_LED_RED(true);
 }
 
 static void ssrStop() {
     ssrState   = SSR_OFF;
     windowSlot = 0;
     digitalWrite(HAL_VACUUM_SSR_PIN, LOW);
-    digitalWrite(HAL_VACUUM_LED_RED, LOW);
+    VAC_LED_RED(false);
 }
 
 // ─── Hooks: setup ───────────────────────────────────────────────────────────
@@ -129,8 +151,8 @@ void node_setup(void) {
         servoWriteAngle(i, 0);              // park at 0°
     }
     pinMode(HAL_VACUUM_SSR_PIN, OUTPUT);   digitalWrite(HAL_VACUUM_SSR_PIN, LOW);
-    pinMode(HAL_VACUUM_LED_RED, OUTPUT);   digitalWrite(HAL_VACUUM_LED_RED, LOW);
-    pinMode(HAL_VACUUM_LED_GREEN, OUTPUT); digitalWrite(HAL_VACUUM_LED_GREEN, HIGH);
+    VAC_LED_RED_INIT();   VAC_LED_RED(false);
+    VAC_LED_GREEN_INIT(); VAC_LED_GREEN(true);   // green = idle, and we start idle
     pinMode(HAL_VACUUM_SWITCH_PIN, INPUT_PULLUP);   // NC switch → GND
 }
 
