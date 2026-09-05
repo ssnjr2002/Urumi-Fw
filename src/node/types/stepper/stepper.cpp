@@ -757,6 +757,12 @@ ISR(HAL_USART_RXC_vect) {
     // against. The DIR hazard is identical on a rotary build — the pulser owns
     // DIR there too — so this guard is NOT limit-specific and must not be
     // folded back under the switch's #ifdef.
+    //
+    // The DIR half of this is now also covered generally, further down: a
+    // non-stepping byte no longer touches DIR at all. This guard still earns its
+    // place for the limit accumulator, and for returning before ANY of the
+    // stream path runs while the pulser owns the axis. Do not delete it as
+    // redundant.
     if (homingActive) return;
 #endif
 
@@ -781,9 +787,23 @@ ISR(HAL_USART_RXC_vect) {
     if (limAsserted || limitLatched) return;   // refuse the step
 #endif
 
-    bool stepReq = (b & stepBitMask) != 0;
-    bool newDir  = (b & dirBitMask)  != 0;
+    // A byte that does not step THIS axis must not touch its DIR pin.
+    //
+    // Every stream byte carries a dir bit for every slot, because
+    // microsegment.cpp computes dirBits once per segment and ORs it into all of
+    // them. So a byte stepping some other axis still carries a bit in this
+    // axis's dir position, and latching it means moving DIR on a byte that asked
+    // this axis for nothing. That is exactly how busQuiesce()'s NOP preamble
+    // drove DIR low mid-home; the homingActive guard above fixed that one caller,
+    // this makes the invariant general -- DIR moves only on a byte that steps.
+    //
+    // Behaviour-preserving for motion: any byte that steps axis i already carries
+    // axis i's correct dir bit, and no emitter has ever sent direction in a
+    // separate leading byte. The only change is that a reversal pays the 5 us
+    // DM542 setup guard on the stepping byte rather than one byte earlier.
+    if ((b & stepBitMask) == 0) return;
 
+    bool newDir = (b & dirBitMask) != 0;
     if (newDir != currentDir) {
         if (newDir) HAL_DIR_PORT.OUTSET = HAL_DIR_BM;
         else        HAL_DIR_PORT.OUTCLR = HAL_DIR_BM;
@@ -791,13 +811,11 @@ ISR(HAL_USART_RXC_vect) {
         delayMicroseconds(5);       // DM542 DIR-before-STEP setup guard
     }
 
-    if (stepReq) {
-        HAL_STEP_PORT.OUTSET = HAL_STEP_BM;
-        absolutePosition += (currentDir ? 1 : -1);
-        HAL_STEP_TIMER_INST.CCMP  = HAL_STEP_PULSE_CCMP;
-        HAL_STEP_TIMER_INST.CNT   = 0;
-        HAL_STEP_TIMER_INST.CTRLA = HAL_STEP_TIMER_CLKSEL | HAL_STEP_TIMER_ENABLE_bm;
-    }
+    HAL_STEP_PORT.OUTSET = HAL_STEP_BM;
+    absolutePosition += (currentDir ? 1 : -1);
+    HAL_STEP_TIMER_INST.CCMP  = HAL_STEP_PULSE_CCMP;
+    HAL_STEP_TIMER_INST.CNT   = 0;
+    HAL_STEP_TIMER_INST.CTRLA = HAL_STEP_TIMER_CLKSEL | HAL_STEP_TIMER_ENABLE_bm;
 }
 
 // ─── Step-pulse timer — end of step pulse ───────────────────────────────────
