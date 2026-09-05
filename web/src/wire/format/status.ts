@@ -32,6 +32,16 @@ export const MachineState = {
     ALARM: 3,
     PAUSED: 4,
     HOMING: 5,
+    /**
+     * A tool-height probe session is open (docs/tool_probe.md §5.1). Entered by
+     * `probe_map`, spans several legs, and left only by an explicit exit.
+     *
+     * Load-bearing for the same reason LIMIT_LATCHED is below: enumFromInt()
+     * coerces an unrecognised value to the fallback, so a host missing this
+     * entry renders a probing machine as IDLE — and would happily start a job
+     * against a machine whose axis map is currently a probe binding.
+     */
+    PROBING: 6,
 } as const;
 export type MachineState = (typeof MachineState)[keyof typeof MachineState];
 const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
@@ -55,6 +65,19 @@ export const AlarmReason = {
      * refusing motion. It must be added in lockstep with the firmware.
      */
     LIMIT_LATCHED: 6,
+    /**
+     * A probe leg ended wrong (docs/tool_probe.md §5.11.1). Mirrors HOMING_FAIL,
+     * and like it says only THAT one failed — which of the seven causes it was
+     * travels separately, in the `probe=` field of `getstate`.
+     *
+     * Most probe failures leave the Z datum intact; the firmware voids it per
+     * cause rather than by reason, so this value must NOT be treated as
+     * position-invalidating the way ESTOP is.
+     *
+     * Load-bearing, exactly as LIMIT_LATCHED above: without this entry a probe
+     * failure renders as no alarm at all.
+     */
+    PROBE_FAIL: 7,
 } as const;
 export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
 const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];
