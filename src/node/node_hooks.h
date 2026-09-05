@@ -61,7 +61,7 @@ void    node_set_flag(uint8_t bit, bool on);
 // Stage a reasoned refusal instead of a bare ACK/data reply: [ID][CMD_NAK]
 // [len=2][cmd][reason][crc-slot]. For a type that wants the master to see WHY a
 // command was rejected rather than the generic NAK_UNSUPPORTED every plain
-// `return false` produces — CMD_HOME's intent check (docs/homing.md §1.4) is
+// `return false` produces — CMD_HOME_LEG's intent check (docs/homing.md §1.4) is
 // the first caller. Sets `replyLen`; the handler still returns true (a reply
 // WAS staged) rather than false (nothing was staged, core NAKs generically).
 void    node_reply_nak(uint8_t cmd, uint8_t reason, uint8_t* reply,

@@ -233,6 +233,50 @@ const homingCoherent: Rule = ({ machine }) =>
         const p = `${path}.homing`;
         const issues: Issue[] = [];
 
+        if (h.kind === "rotary") {
+            // Same shape of check, different physics. Feeds are divisors either
+            // way, so a zero is still an infinite step interval.
+            for (const k of ["pullInFeed", "sweepFeed", "budgetRevs",
+                             "toleranceDeg"] as const) {
+                if (h[k] <= 0) issues.push(error(`${p}.${k}: must be > 0`));
+            }
+            if (h.rampSteps < 0) issues.push(error(`${p}.rampSteps: must be >= 0`));
+            if (h.pullInFeed > h.sweepFeed) {
+                issues.push(error(`${p}.pullInFeed: must be <= sweepFeed (${h.sweepFeed})`));
+            }
+            if (ax.maxFeed > 0 && h.sweepFeed > ax.maxFeed) {
+                issues.push(error(`${p}.sweepFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
+            }
+            // The measured floor, not a round number. A sweep needs three full
+            // laps in the worst starting phase plus its post-roll; under this a
+            // healthy axis reports `notfound`, which reads as a dead sensor and
+            // sends an operator to the wiring.
+            if (h.budgetRevs < 3.2) {
+                issues.push(error(
+                    `${p}.budgetRevs (${h.budgetRevs}): must be >= 3.2 — a sweep that ` +
+                    `starts just past the index needs three full laps plus post-roll`,
+                ));
+            }
+            // Not an error: a magnet glued 90° from the tool's zero is a real
+            // machine. But a datum outside one revolution is almost always a
+            // units mistake, and it lands silently in every coordinate after.
+            if (Math.abs(h.datumDeg) >= 360) {
+                issues.push(warn(
+                    `${p}.datumDeg (${h.datumDeg}): outside one revolution — ` +
+                    `this is an offset from the index, not an absolute angle`,
+                ));
+            }
+            // A rotary axis has no ends, so a soft-limit envelope on one is
+            // either unbounded (0) or a deliberate restriction. Homing spins
+            // freely regardless, which is worth saying once here.
+            if (!ax.rotary) {
+                issues.push(error(
+                    `${p}: rotary homing on ${path}, which is not marked rotary`,
+                ));
+            }
+            return issues;
+        }
+
         // Every one of these is a divisor or a distance; a zero produces an
         // infinite step interval or a zero-step leg, neither of which the
         // firmware can act on sensibly.

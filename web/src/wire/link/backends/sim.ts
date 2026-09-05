@@ -124,7 +124,7 @@ export class SimTransport implements Transport {
      * states, and this reproduces those exactly; how long the axis takes to
      * arrive is not something the host reasons about.
      */
-    homing: { node: number; slot: number; retract: boolean; until: number } | null = null;
+    homing: { node: number; retract: boolean; until: number } | null = null;
 
     /** Wall-clock ms a modelled home leg takes. Short — it is not the point. */
     homingLegMs = 60;
@@ -545,42 +545,49 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 }
                 return "ok";
             }
-            // `home <axis> <dir> <startUs> <floorUs> <rampSteps> <maxSteps> <intent>` —
-            // arms ONE leg and returns; the machine sits in HOMING until
+            // `lin_leg <node> <dir> <startUs> <floorUs> <rampSteps> <maxSteps> <intent>`
+            // — arms ONE leg and returns; the machine sits in HOMING until
             // _tickHoming() finishes it. `dir`/`startUs`/`floorUs`/`rampSteps`/
             // `maxSteps` are accepted and ignored: this models the protocol, not
             // the motion. `intent` is not ignored — it is the one field the real
-            // node actually checks before arming (include/common.h, CMD_HOME).
-            case "home": {
+            // node actually checks before arming (include/common.h,
+            // CMD_HOME_LEG).
+            //
+            // Addresses a BUS ID, like the firmware. No `err unconfigured` and no
+            // map lookup: a leg needs no committed axis_map, which is the point
+            // of node addressing. Nothing here needs the slot either —
+            // _tickHoming() writes the node-framed masks and re-derives the
+            // per-slot views, so an unbound node models correctly with no
+            // special case.
+            case "lin_leg": {
                 if (S.homing !== null) return "err busy";
                 if (!isIdlePausedAlarm(S.state)) return "err bad_state";
-                if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
-                    return "err unconfigured";
-                }
-                const slot = "xyza".indexOf((args[0] ?? "").toLowerCase());
-                if (slot < 0) return "err usage";
-                const node = S.slotNode[slot];
-                if (node === null || node === undefined) return "err unbound";
+                const node = parseInt(args[0] ?? "", 10);
+                if (!Number.isInteger(node)) return "err usage";
                 // The node reads its own switch ONCE, here, and that read alone
                 // decides seek vs retract.
                 const retract = S.nodeLatched.has(node);
                 // The intent bit does not feed the decision above -- it is
-                // checked AGAINST it, mirroring the real node's CMD_HOME handler.
-                // A missing arg (an older caller) is treated as "no opinion" and
-                // never mismatches, so pre-intent test calls keep working.
+                // checked AGAINST it, mirroring the real node's CMD_HOME_LEG
+                // handler. A missing arg (an older caller) is treated as "no
+                // opinion" and never mismatches.
                 const intentArg = args[6];
                 if (intentArg !== undefined) {
                     const intendedRetract = intentArg === "1";
                     if (intendedRetract !== retract) return "err node intent_mismatch";
                 }
-                S.homing = {
-                    node, slot,
-                    retract,
-                    until: Date.now() + S.homingLegMs,
-                };
+                S.homing = { node, retract, until: Date.now() + S.homingLegMs };
                 S.state = MachineState.HOMING;
                 return "ok";
             }
+            // `rot_leg <node> <dir> <startUs> <floorUs> <rampSteps> <maxSteps>`
+            // — accepted by the protocol, but this sim models no index node:
+            // there is no Hall capture, no `index`, no `steprev`, and nothing to
+            // report in nodeStat. Answering the way a real Pico answers a
+            // wrong-kind verb is honest; pretending to sweep would let a test
+            // pass against a rotary path that was never exercised.
+            case "rot_leg":
+                return "err kind_mismatch node " + (args[0] ?? "?") + " is 1 want 2";
             case "getstate":
                 return (
                     `state=${S.state} enabled=0x${S.axesEnabled.toString(16).padStart(2, "0")} ` +

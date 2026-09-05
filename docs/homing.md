@@ -1,6 +1,6 @@
 # Homing
 
-**Status:** §1 (the node) and §2 (the Pico: `home`, `setorigin <pos_steps>`, the
+**Status:** §1 (the node) and §2 (the Pico: `lin_leg`/`rot_leg`, `setorigin <pos_steps>`, the
 supervisor in `src/rp2350/core0/homing.cpp`) implemented and confirmed on
 hardware — **except** the `<intent>` argument and `NAK_INTENT_MISMATCH` (§1.2,
 §1.4, §2.2), which build clean on both `db_node1` and `pico` but have not yet
@@ -141,10 +141,10 @@ homing moves need opposite treatment:
 
 So "stop while pressed" cannot be the rule: a retract starts pressed and would
 never move. Earlier drafts solved that by having the node hold an `approachDir` in
-RAM, refreshed by each `CMD_HOME`, so it could tell "pressed and digging in" from
+RAM, refreshed by each `CMD_HOME_LEG`, so it could tell "pressed and digging in" from
 "pressed and escaping". That is gone.
 
-**The rule is one pin sample, taken when `CMD_HOME` is accepted:**
+**The rule is one pin sample, taken when `CMD_HOME_LEG` is accepted:**
 
 | pin at command entry | mode | stop condition |
 |---|---|---|
@@ -185,7 +185,7 @@ unlatched and streamable with nothing special-cased.
 
 #### The intent bit checks the decision; it does not make it
 
-**Implemented.** `CMD_HOME` payload byte 0 gained a second bit: `dir` in bit 0,
+**Implemented.** `CMD_HOME_LEG` payload byte 0 gained a second bit: `dir` in bit 0,
 unchanged, and `intent` in bit 1. This does **not** reopen the question the rest
 of this section just closed — the pin sample above is still the only thing that
 decides seek vs retract, still taken once at entry, still never re-evaluated.
@@ -204,14 +204,14 @@ semantics: the axis travels the full seek-sized distance with nothing left to
 stop it. That is the crash the two-pass, alternating-direction design in §3.4
 exists to prevent, arrived at by a different door.
 
-**The check, in the node's `CMD_HOME` handler:**
+**The check, in the node's `CMD_HOME_LEG` handler:**
 
 ```c
 const bool retract         = HAL_LIMIT_ASSERTED();   // unchanged: THE decision
 const bool intendedRetract = (p[0] & 0x02) != 0;      // the host's prediction
 
 if (retract != intendedRetract) {
-    node_reply_nak(CMD_HOME, NAK_INTENT_MISMATCH, reply, replyLen);
+    node_reply_nak(CMD_HOME_LEG, NAK_INTENT_MISMATCH, reply, replyLen);
     return true;
 }
 ```
@@ -220,12 +220,12 @@ Stateless, same as the pin read itself: nothing is stored past the single
 command, and a node with older firmware that never reads bit 1 behaves exactly
 as before (the bit sits unread in a byte it already receives).
 
-**A reasoned NAK, not the pre-existing generic one.** Every earlier `CMD_HOME`
+**A reasoned NAK, not the pre-existing generic one.** Every earlier `CMD_HOME_LEG`
 rejection — bad interval, zero budget, no switch wired — answers with a bare
 `return false`, which the core's dispatcher turns into `NAK_UNSUPPORTED`
 (`common.h`) regardless of which of those it was. That was always slightly
 wrong, and reusing it here would have been more so: `NAK_UNSUPPORTED` reads as
-"this node does not do `CMD_HOME`", which is false — it does, just not under
+"this node does not do `CMD_HOME_LEG`", which is false — it does, just not under
 this command's premise. `NAK_INTENT_MISMATCH` (`0x04`) is a new reason,
 propagated through `RpcResult`'s existing `nakReason` field to
 `rpcResultText()` and printed by `homingBegin()` as `nak intent_mismatch` — so
@@ -294,7 +294,7 @@ Other properties:
 **ISR budget.** Keep it lean: no floating point, no `delayMicroseconds`, no SPI.
 This is also why the ramp is integer decay rather than the `sqrtf` Core 1 uses.
 
-### 1.4 `CMD_HOME` (0x24)
+### 1.4 `CMD_HOME_LEG` (0x24)
 
 **Implemented.** Constants in `include/common.h`, handler and `homingArm()` in
 `stepper.cpp`.
@@ -406,7 +406,7 @@ taken — but it is the one long ISR on the node.
 
 ### 2.1 What the Pico does not do
 
-- **Generates no homing motion.** It relays `CMD_HOME`, polls, and reports.
+- **Generates no homing motion.** It relays `CMD_HOME_LEG`, polls, and reports.
 - **Parses no config.** `config_store` owns *"one opaque msgpack blob"* and reads
   no fields; every parameter arrives from the host as a plain number.
 
@@ -415,7 +415,7 @@ mechanism is a CRC32 equality check — an *agreement* mechanism, not an *access
 one. It proves both sides hold the same bytes; it never lets the Pico read a
 field. Homing is not blocked behind it.
 
-### 2.2 The `home` command
+### 2.2 The `lin_leg` and `rot_leg` commands
 
 Control plane (text, one line in, one line out) — homing is infrequent,
 parameterised, and wants a reply, which is that plane's exact profile. The data
@@ -423,40 +423,85 @@ plane is for high-rate windowed streams and would need new binary framing for no
 gain.
 
 ```
-home <axis> <dir> <start_us> <floor_us> <ramp_steps> <max_steps> <intent>
+lin_leg <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps> <intent>
+rot_leg <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
 ```
 
-**Implemented**, in `cmd/axis.cpp`, and WITHOUT the `<seek|retract>` token this
-section originally specified — dropped by design, not left unbuilt. The node
-still picks the mode from one read of its own limit pin at arm time (§1.2),
-which reproduces §3.4's sequence on its own: after a seek the switch is
-asserted, so the next command retracts; after the back-off it is clear, so the
-next one seeks. What the master needs — WHICH mode ran, since the terminal
-flags read oppositely for the two (§1.5) — comes back in the arm ack, whose
-LIMIT bit *is* that pin read.
+**ONE LEG, NOT A HOME**, and the verbs say so. These replace the single `home`
+verb, which named the wrong thing in two different ways: for a linear axis it
+was one leg of four, and for a rotary one it looked like the entire job. The
+firmware runs legs. Sequencing them into a home, deciding when a pair is
+complete, and turning the result into a datum are all the host's (§3).
+
+**Addressed by BUS ID, not by axis.** Everything a leg produces is node-framed
+— the span, the index in the node's own step counter, the limit latch (a switch
+is wired to a node, not to a stream slot) — and nothing it produces is
+slot-framed. `core0/position.h` states the rule these obey: *the NODE frame is
+the truth, the SLOT frame is a view, and a view is never written directly by a
+command handler.* Routing a leg through the axis map made a command that writes
+only truths ask a view for permission first.
+
+Two consequences, both wanted:
+
+- **No `err unconfigured`.** An axis cannot be resolved without a committed
+  `axis_map`, but a bus id needs no map at all, so a leg now runs during
+  commissioning — which is precisely when homing matters. Homing an unbound
+  head used to need a throwaway `axis_map - - - 4` to borrow a slot first.
+- **The enable gate reads `nodeEnabled`,** not `axes_enabled`. The latter is
+  only the former projected through the map (`core0/position.cpp`), so on a
+  bound node the two agree and on an unbound one only the node mask exists.
+
+The datum survives either way. `originInvalidate()` is node-framed and clears a
+slot's homed bit only if some slot happens to point at that node;
+`slotAdoptStatus()` recomputes `machinePos` from `nodeOrigin` on every later
+bind. A leg run before the map and a map committed after it land correctly.
+
+**Two verbs, so no argument means two things.** `rot_leg` has no `<intent>`,
+because a rotary node has no limit pin: there is nothing for the host to predict
+and nothing for the node to disagree with. Under the single overloaded verb that
+argument was inert on half the nodes it could be sent to.
+
+**The Pico probes the node's kind before arming.** `HOMING_KIND_*` is declared in
+every stepper's status tail, so `homingBegin()` spends one extra transaction
+(~1 ms) asking what the node is and answers
+`err kind_mismatch node <n> is <k> want <k>` on a mismatch. The kind also arrives
+in the arm ack — which is where the seek/retract classification reads it — but
+that ack is sampled *after* the pulser has started, so checking only there would
+let a `lin_leg` aimed at a rotary node run a full sweep before anyone noticed,
+and a `rot_leg` aimed at a linear one drive into a hard stop hunting a dip that
+does not exist. A node with no terminator at all (`HOMING_KIND_NONE`) fails the
+same check, and more usefully than the bare NAK it would otherwise get: the error
+names what the node *is*, not merely that it said no.
+
+**No `<seek|retract>` token** on the linear side, dropped by design and not left
+unbuilt. The node still picks the mode from one read of its own limit pin at arm
+time (§1.2), which reproduces §3.4's sequence on its own: after a seek the switch
+is asserted, so the next leg retracts; after the back-off it is clear, so the
+next one seeks. What the master needs — WHICH mode ran, since the terminal flags
+read oppositely for the two (§1.5) — comes back in the arm ack, whose LIMIT bit
+*is* that pin read.
 
 **`<intent>` is not that dropped token come back.** It carries no authority over
-the mode — the paragraph above is unchanged by its existence. What it does is
-give the node something to check the pin read AGAINST: `0` or `1`, the host's
-own prediction of whether this leg starts on the switch, taken straight from
-which leg of the plan this is (§1.2's "The intent bit"). Agree and the leg
-arms as before. Disagree and the node NAKs (`nak intent_mismatch`) instead of
-arming — the case this catches is the host's plan and physical reality having
-quietly diverged, which used to run silently under whichever leg's semantics
-the pin happened to pick.
+the mode. What it does is give the node something to check the pin read AGAINST:
+`0` or `1`, the host's own prediction of whether this leg starts on the switch,
+taken straight from which leg of the plan this is (§1.2's "The intent bit").
+Agree and the leg arms as before. Disagree and the node NAKs
+(`nak intent_mismatch`) instead of arming — the case this catches is the host's
+plan and physical reality having quietly diverged, which used to run silently
+under whichever leg's semantics the pin happened to pick.
 
-`<axis>` reuses `axisMask()` but **rejects any mask with more than one bit** —
-one axis at a time (§3.5). `axisMask()` answers `0x0F` for both "all axes" and
-"nothing I recognised", so the single-bit test is also what rejects `home` with no
-axis and `home q`.
+One leg at a time, machine-wide: the supervisor holds a single claim, so a
+second leg while one is in flight gets `err busy` (§3.5). Node addressing makes
+concurrent per-node legs *expressible* and they are deliberately not built —
+that is a separate decision about whether two axes may home at once.
 
-Replies `ok`, or `err busy` / `err bad_state` / `err unconfigured` /
-`err unbound` / `err usage` / `err range` / `err node N <reason>`, where
-`<reason>` now includes `nak intent_mismatch` alongside the pre-existing
-`nak unsupported` / `nak bad_token` / `nak bad_arg`.
+Replies `ok`, or `err busy` / `err bad_state` / `err not_enabled` /
+`err kind_mismatch ...` / `err usage` / `err range` / `err bad_reply` /
+`err node N <reason>`, where `<reason>` includes `nak intent_mismatch` alongside
+the pre-existing `nak unsupported` / `nak bad_token` / `nak bad_arg`.
 
 **It must not block.** A home takes ~13 s, and the control-plane contract is one
-reply line per command. A blocking `home` would freeze the plane for the whole
+reply line per command. A blocking leg would freeze the plane for the whole
 seek — no `getstate`, no `stop`, **no abort** — on a command that is driving an
 axis at a hard stop. So it returns immediately and the machine enters
 `STATE_HOMING` (already reserved in `shared.h`), exactly as a job does:
@@ -493,7 +538,7 @@ ramp_steps × avg_interval  +  (max_steps − ramp_steps) × floor_interval
 **Superseded.** This section described packing the payload into single FIFO
 words, which the IPC refactor removed: `RpcRequest` now carries a generic
 `args[]` buffer sized by `RPC_ARG_MAX`, which is *defined as*
-`CMD_HOME_PAYLOAD_LEN` (11) precisely because `CMD_HOME` is the largest payload.
+`CMD_HOME_LEG_PAYLOAD_LEN` (11) precisely because `CMD_HOME_LEG` is the largest payload.
 So no continuation words, no `FIFO_HOME` tag, and no per-command packing: the
 11 bytes are laid out once in `rpcHome()` and copied verbatim by `buildPayload()`
 (`core1/rpc_server.cpp`).
@@ -674,7 +719,7 @@ move** — and nothing past that.
 **Per LEG, not per home, and that is what makes it answerable.** An earlier
 design spanned a seek/retract PAIR and ran aground immediately: a full home is
 *two* pairs, and the node cannot tell which one it is in, because it sees four
-unrelated `CMD_HOME`s and has no sequence context at all. Per-leg is the
+unrelated `CMD_HOME_LEG`s and has no sequence context at all. Per-leg is the
 primitive the node can actually stand behind. Composing legs into "distance
 from the far stop to the datum" is the master's job, and the master has the leg
 boundaries to do it with.
@@ -783,7 +828,7 @@ breaking change to every config that already has homing, and keeps
 `frames.ts`.
 
 **Three fields are missing, found by deriving §7's confirmed X/Y recipe back
-through this schema.** `CMD_HOME` takes `start_us` AND `floor_us` AND
+through this schema.** `CMD_HOME_LEG` takes `start_us` AND `floor_us` AND
 `ramp_steps`; `seekFeed` supplies only the second. The pull-in rate is a physical
 property — the fastest rate the motor starts from rest without stalling — and is
 not derivable from the cruise rate. And the two retracts are different distances
@@ -825,7 +870,7 @@ const approachDir = approachPositive !== axis.invert ? 1 : 0;    // wire bit
 ```
 
 `approachDir` is a **host-side local**, not node state: it is what the host uses
-to fill `CMD_HOME.dir` — as-is for a seek leg, inverted for a retract leg. The
+to fill `CMD_HOME_LEG.dir` — as-is for a seek leg, inverted for a retract leg. The
 node stores no direction of its own (§1.2).
 
 Putting a raw approach dir in config instead would create two independent
@@ -967,7 +1012,7 @@ re-approach begins already triggered.
 ### 3.5 One axis at a time
 
 The operator picks an axis; there is no ordering policy and no batch sequencer.
-Batched homing later is pure host sequencing over the same `CMD_HOME`, so neither
+Batched homing later is pure host sequencing over the same `CMD_HOME_LEG`, so neither
 the Pico nor the node changes when it arrives.
 
 Parallel homing was considered and dropped. The one case that would have forced
@@ -1069,7 +1114,7 @@ hall-effect index, and to name what must not be foreclosed.
 
 ### 5.1 What transfers unchanged
 
-The `CMD_HOME` payload, the pulser and its ramp, the non-blocking `home` command,
+The `CMD_HOME_LEG` payload, the pulser and its ramp, the non-blocking `home` command,
 `STATE_HOMING`, the poll loop, the timeout derivation, `setorigin <axes>
 <pos_steps>`, the `nodeOrigin` arithmetic, and the fault handling. All of it.
 
@@ -1155,7 +1200,7 @@ Only two things, both free:
    pulser" separate from "refuse a stream step."** They are naturally separate —
    one lives in the RX ISR, one in the pulser. If they collapse into a single
    always-on directional check, a rotary node inherits behaviour it must not have.
-2. **Do not let `CMD_HOME`'s completion semantics assume "stopped because
+2. **Do not let `CMD_HOME_LEG`'s completion semantics assume "stopped because
    blocked."** The three terminal flag states (§1.5) already work for both kinds;
    just do not add a barrier-specific shortcut.
 

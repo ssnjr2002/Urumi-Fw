@@ -170,8 +170,89 @@ export interface LinearHoming {
     readonly parkMm: number;
 }
 
-/** Union point for the rotary recipe (index pulse / hard stop) when it lands. */
-export type HomingConfig = LinearHoming;
+/**
+ * Homing recipe for a rotary axis with a once-per-revolution Hall index.
+ *
+ * Structurally unlike LinearHoming and deliberately not a superset of it. A
+ * limit switch is a POSITION — its edge is the datum, so the sequence is four
+ * legs that approach it twice and park clear. An index is a FEATURE the axis
+ * runs THROUGH: the dip's centre is only knowable after passing it, so a leg
+ * reports an `index` that is not where the axis stopped, and the sequence is two
+ * legs whose answers are averaged.
+ *
+ * No `hardTravel`, no `atOrigin`, no `backoffMm`, no `parkMm`. A rotary axis has
+ * no ends, so there is no travel to bound, no switch end to name, no hysteresis
+ * to clear, and nowhere unsafe to park. Reusing the linear block would have
+ * meant six fields that mean nothing carrying values nobody can check.
+ *
+ * Feeds are deg/s, converted at the wire by `interval_us = 1e6 / (feed x
+ * stepsPerUnit)` exactly as for a linear axis.
+ */
+export interface RotaryHoming {
+    readonly kind: "rotary";
+
+    /**
+     * Runaway ceiling for a sweep, in revolutions. NOT a distance and never a
+     * tuning knob: a sweep is EVIDENCE-terminated — it stops once it has crossed
+     * the magnet enough times to prove the period — so this only decides how far
+     * a broken axis may spin before the node gives up.
+     *
+     * The floor is 3.2, measured rather than guessed. A sweep needs three full
+     * laps in the worst case (starting just past the index) plus the post-roll
+     * that follows the last crossing, and `span / stepsPerRev = 2 + phase +
+     * postroll` with phase in [0,1). Under about 3.2 a HEALTHY axis that started
+     * at the wrong phase reports `notfound`, which reads as a dead sensor.
+     * 4 is the recommended value and what the bench runs.
+     */
+    readonly budgetRevs: number;
+
+    /** deg/s the sweep STARTS at, before the ramp. */
+    readonly pullInFeed: number;
+    /** deg/s the sweep ramps up to and cruises at. */
+    readonly sweepFeed: number;
+    /** Steps taken ramping pullInFeed → sweepFeed. */
+    readonly rampSteps: number;
+
+    /**
+     * How far the two sweeps' answers may disagree, in degrees, after folding.
+     *
+     * This bounds a REAL and reproducible effect, not noise. A sweep measures
+     * the index slightly late in whichever direction it is travelling — the dip
+     * is not symmetric about its centre, because the magnet is a little
+     * off-centre or the sensor responds unevenly — so the forward and reverse
+     * answers straddle the truth. Averaging them cancels it exactly, and does so
+     * without needing the diagnosis to be right, which is the whole reason the
+     * sequence is two legs instead of one.
+     *
+     * The bench measures about 1.05° of separation on both heads — heads that
+     * differ 16x in gearing and 5.4x in angular speed, which is what rules out a
+     * fixed time lag or backlash. So a couple of degrees is a generous bound and
+     * anything much larger means slip, a second magnet, or a wrong stepsPerUnit.
+     */
+    readonly toleranceDeg: number;
+
+    /**
+     * The machine coordinate to assign to the index point itself, degrees.
+     *
+     * Almost always 0: unlike a linear axis, where the datum is offset from the
+     * switch by parkMm, a rotary axis is measured AT the feature. It exists
+     * because the magnet is glued where it fits, not where the tool's zero is,
+     * so a head whose knife points 90° off the index says so here rather than
+     * everywhere downstream.
+     */
+    readonly datumDeg: number;
+}
+
+/**
+ * The two recipes, discriminated by `kind`.
+ *
+ * A union rather than one optional-heavy interface because the two sequences
+ * share no field beyond the feeds: they terminate on different evidence, run a
+ * different number of legs, and produce a datum by different arithmetic. Code
+ * that has a HomingConfig must say which it is holding, and derive.ts has two
+ * entry points for that reason.
+ */
+export type HomingConfig = LinearHoming | RotaryHoming;
 
 export interface AxisConfig {
     readonly node: BusNode;
@@ -184,10 +265,11 @@ export interface AxisConfig {
     readonly invert: boolean;
     readonly rotary: boolean;
     /**
-     * Absent = this axis has no limit switch and cannot be homed. Optional
-     * rather than defaulted because there is no safe default: every field is a
-     * physical measurement of THIS machine, and a plausible-looking guess would
-     * drive the axis into a hard stop at seek speed.
+     * Absent = this axis has no terminator (no limit switch, no index) and
+     * cannot be homed. Optional rather than defaulted because there is no safe
+     * default: every field is a physical measurement of THIS machine, and a
+     * plausible-looking guess would drive the axis into a hard stop at seek
+     * speed.
      */
     readonly homing?: HomingConfig;
 }

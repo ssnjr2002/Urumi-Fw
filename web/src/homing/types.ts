@@ -20,11 +20,17 @@ export const LegKind = {
     LATCH: "latch",
     /** 4 — retract to the park point. Ends OFF the switch, machine IDLE. */
     PARK: "park",
+    /**
+     * Rotary — one evidence-terminated sweep through the index. Both legs of a
+     * rotary home are this kind; only `dir` differs, and that is the point:
+     * their answers straddle the truth and averaging cancels the difference.
+     */
+    SWEEP: "sweep",
 } as const;
 export type LegKind = (typeof LegKind)[keyof typeof LegKind];
 
 /**
- * One `home` command, in the units the wire takes.
+ * One leg command, in the units the wire takes.
  *
  * Step intervals rather than feeds because the conversion has happened: this is
  * the last representation before the command string, and keeping mm/s here
@@ -62,5 +68,31 @@ export interface HomingLeg {
 export interface HomingPlan {
     readonly axis: AxisLetter;
     readonly legs: readonly HomingLeg[];
+    readonly datumSteps: number;
+}
+
+/**
+ * A rotary home: two sweeps, and what to do with the two answers.
+ *
+ * A separate type from HomingPlan rather than a variant of it, because the
+ * datum is not a number that can be computed here. A linear plan knows
+ * `datumSteps` before anything moves — leg 4 parks a known distance from a
+ * switch whose coordinate is known. A rotary plan CANNOT: the index's position
+ * is the measurement, so the datum is only available after both legs have run.
+ * What is decidable in advance is what to do with the pair, which is these
+ * fields.
+ */
+export interface RotaryHomingPlan {
+    readonly axis: AxisLetter;
+    /** Exactly two, identical but for `dir`. */
+    readonly legs: readonly HomingLeg[];
+    /** Steps per degree, carried so the sequencer need not re-read the config. */
+    readonly stepsPerUnit: number;
+    /** Nominal steps per revolution, `stepsPerUnit x 360`. The sweep MEASURES
+     *  the real one; this is only what the budget was sized against. */
+    readonly nominalStepsPerRev: number;
+    /** Max allowed separation between the two answers, in steps. */
+    readonly toleranceSteps: number;
+    /** Machine coordinate the index itself is assigned, in steps. */
     readonly datumSteps: number;
 }

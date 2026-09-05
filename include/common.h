@@ -49,7 +49,7 @@
 #define NAK_UNSUPPORTED 0x01  // this node does not implement that opcode
 #define NAK_BAD_TOKEN   0x02  // session token mismatch (plan section 8.2)
 #define NAK_BAD_ARG     0x03  // opcode known, payload rejected
-#define NAK_INTENT_MISMATCH 0x04  // CMD_HOME only: declared intent disagreed
+#define NAK_INTENT_MISMATCH 0x04  // CMD_HOME_LEG only: declared intent disagreed
                                   // with the node's own pin read — see below.
 #define NAK_BUSY        0x05  // opcode known, payload fine, node already doing
                               // it. Distinct from BAD_ARG because retrying the
@@ -82,7 +82,7 @@
 // simply never sets it — same contract as NODE_FLAG_DATUM on a vacuum node.
 #define NODE_FLAG_LIMIT   0x04
 
-// NODE_FLAG_HOMING — the local step pulser is running (CMD_HOME). Set when the
+// NODE_FLAG_HOMING — the local step pulser is running (CMD_HOME_LEG). Set when the
 // command is accepted, cleared when the pulser stops for any reason. The master
 // learns a home finished by polling this off; a node never announces it.
 //
@@ -106,8 +106,13 @@
 #define CMD_LASER    0x21   // stepper (-DNODE_HAS_LASER only): payload [state 0/1]; NAK elsewhere
 #define CMD_NODE_STATUS 0x22 // any type; no payload; reply = status payload (above)
 
-// CMD_HOME — run the node's own step pulser. Only nodes with a limit switch
-// wired accept it; every other stepper NAKs. See docs/homing.md 1.4.
+// CMD_HOME_LEG — run the node's own step pulser for ONE leg. Only nodes that
+// declare a terminator (HOMING_KIND_LIMIT or HOMING_KIND_INDEX) accept it; every
+// other stepper NAKs. See docs/homing.md 1.4.
+//
+// ONE LEG, NOT A HOME. The node measures and reports; it does not know that legs
+// come in pairs, what a datum is, or that post-roll is a concept. Sequencing
+// legs into a home, and turning the result into an origin, is the HOST's job.
 //
 //   payload (11 bytes, big-endian, matching the status tail's convention):
 //     [0]    dir/intent     bit0 = wire dir bit: which way THIS move goes
@@ -155,8 +160,8 @@
 // tail. A dip's centre is only knowable after passing it, so a rotary sweep runs
 // THROUGH the feature and reports a separate index position that is not where
 // the axis stopped. See the status tail below.
-#define CMD_HOME     0x24
-#define CMD_HOME_PAYLOAD_LEN 11
+#define CMD_HOME_LEG 0x24
+#define CMD_HOME_LEG_PAYLOAD_LEN 11
 
 // ─── ROTARY_IDX_* — how a rotary index sweep ended ──────────────────────────
 // Named for the operation, not for homing in general: these describe one
@@ -202,7 +207,7 @@
 // and how old its firmware is. Length-inference also breaks silently the first
 // time a field is appended to the linear tail — the lengths collide and a linear
 // node decodes as rotary. Declaring the kind removes the guess.
-#define HOMING_KIND_NONE  0  // no switch, no index: this node NAKs CMD_HOME
+#define HOMING_KIND_NONE  0  // no switch, no index: this node NAKs CMD_HOME_LEG
 #define HOMING_KIND_LIMIT 1  // limit switch on the terminator pin (linear)
 #define HOMING_KIND_INDEX 2  // Hall index, analog dip (rotary)
 // Vacuum:

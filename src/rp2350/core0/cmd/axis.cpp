@@ -341,88 +341,88 @@ bool cmdSetOrigin(const char* args) {
     return true;
 }
 
-// ── home <axis> <dir> <start_us> <floor_us> <ramp_steps> <max_steps> ─────────
+// ── lin_leg / rot_leg <node> <dir> <start_us> <floor_us> <ramp> <max> [intent]
 //
-// docs/homing.md §2.2. Addresses an AXIS, not a bus id: the host plans against
-// axes and should not have to know which node is bound to one. Exactly one bit,
-// because homing is one axis at a time (§3.5) -- there is no ordering policy and
-// no batch sequencer, and a mask that quietly homed two axes at once would be a
-// sequencer nobody specified.
+// docs/homing.md §2.2. ONE LEG, NOT A HOME. The firmware runs a leg and reports
+// what it measured; sequencing legs into a home, deciding when a pair is done,
+// and turning the result into a datum all belong to the host (§3). The verb says
+// so, which the old `home` did not: for a linear axis `home` was one leg of
+// four, and for a rotary one it looked like the whole job. Two verbs also mean
+// no argument means two things -- `rot_leg` has no `intent` because there is no
+// pin to predict.
+//
+// ADDRESSES A BUS ID, not an axis. Every output of a leg is node-framed: the
+// span, the index in the node's own counter, the limit latch (a switch is wired
+// to a NODE). Not one of them is slot-framed. position.h's rule is that the node
+// frame is the truth and the slot frame is a view, so routing a command that
+// writes only truths through a view was backwards -- and it cost a real thing on
+// the bench: homing a node that no slot claimed needed a throwaway
+// `axis_map - - - 4` to borrow a slot first. It also means the config gate is
+// gone from here. An axis cannot be resolved without a committed map, but a node
+// id needs no map at all, so a leg now runs during commissioning -- which is
+// exactly when homing matters.
+//
+// The datum survives either way: originInvalidate() is node-framed and clears
+// the slot's homed bit only if a slot happens to point here (position.cpp), and
+// slotAdoptStatus recomputes machinePos from nodeOrigin on every later bind. A
+// leg run before the map and a map committed after it land correctly.
 //
 // Still raw and positional in its numbers: no mm, no steps/mm, no config lookup,
 // no `invert`. Composing those belongs to the host (§3), and a temporary
 // Pico-side version of them is exactly how they end up living here permanently.
 // The Pico relays and supervises; it does not plan.
 //
-// NO <seek|retract> ARGUMENT THAT STEERS ANYTHING. The node still picks the
-// mode from one read of its own limit pin at arm time (§1.2), which reproduces
-// §3.4's seek → retract → seek sequence on its own: after a seek the switch is
-// asserted, so the next command retracts; after the back-off it is clear, so
-// the next one seeks. What the master needs -- WHICH mode ran, to interpret the
-// terminal flags -- still comes back in the arm ack; see homingBegin().
+// NO <seek|retract> ARGUMENT THAT STEERS ANYTHING on the linear side. The node
+// picks the mode from one read of its own limit pin at arm time (§1.2), which
+// reproduces §3.4's seek → retract → seek sequence on its own: after a seek the
+// switch is asserted, so the next leg retracts; after the back-off it is clear,
+// so the next one seeks. WHICH mode ran -- needed to interpret the terminal
+// flags -- comes back in the arm ack; see homingBegin().
 //
-// A sixth argument, `intent`, DOES exist, and it is exactly the token the
-// paragraph above used to say could only agree with the pin or contradict it --
-// now the node checks that instead of leaving it unheard. It carries no
-// authority: the host's own plan (§3.4) already knows whether this leg is
-// SUPPOSED to start on the switch, so it says so, and the node NAKs
-// (NAK_INTENT_MISMATCH) rather than silently running under the wrong leg's
-// budget semantics when the two disagree. The Pico is a pure relay for it —
-// this parser reads it off the wire and hands it straight to homingBegin(),
-// same as every other field here.
-//
-// Gated like the other bus commands, plus the config gate: an axis cannot be
-// resolved to a node without a committed axis map. ALARM otherwise stays open,
-// because commissioning is exactly when homing matters.
-bool cmdHome(const char* args) {
+// `intent` is the host's prediction of that same thing, checked rather than
+// obeyed: the host's own plan (§3.4) knows whether this leg is SUPPOSED to start
+// on the switch, so it says so, and the node NAKs (NAK_INTENT_MISMATCH) rather
+// than silently running under the wrong leg's budget semantics. The Pico is a
+// pure relay for it.
+
+// Everything both verbs share: gates, the node token, and the six numbers.
+// `intent` is parsed by the caller because only one verb has it.
+static bool legCommon(const char* args, uint8_t expectKind, bool wantIntent) {
     // BEFORE the bus gate, which does not admit STATE_HOMING and would answer
-    // the commonest mistake here -- a second `home` while one is in flight --
-    // with a generic `bad_state`. Same refusal either way; this one names what
-    // to wait for, and putting it second made it unreachable.
+    // the commonest mistake here -- a second leg while one is in flight -- with
+    // a generic `bad_state`. Same refusal either way; this one names what to
+    // wait for, and putting it second made it unreachable.
     if (homingActive()) { Serial.println("err busy"); return true; }
     if (busGateDenies()) return true;
-    if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
-        Serial.println("err unconfigured"); return true;
-    }
 
-    const char* p = args;
-    while (*p && *p != ' ') p++;
-    char axesTok[8];
-    size_t n = (size_t)(p - args);
-    if (n == 0 || n >= sizeof(axesTok)) { Serial.println("err usage"); return true; }
-    memcpy(axesTok, args, n);
-    axesTok[n] = '\0';
+    char* end;
+    const unsigned long nodeV = strtoul(args, &end, 10);
+    if (end == args || nodeV > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
+    const uint8_t node = (uint8_t)nodeV;
+    const char* p = end;
 
-    const uint8_t m = axisMask(axesTok);
-    // axisMask() answers 0x0F for both "all axes" and "nothing I recognised", so
-    // a single-bit test is what rejects `home` with no axis, `home q`, and
-    // `home xy` alike -- all three are the same mistake to make.
-    if (m == 0 || (m & (m - 1)) != 0) { Serial.println("err usage"); return true; }
-
-    uint8_t slot = 0;
-    while (slot < MOTION_SLOTS && !(m & (1 << slot))) slot++;
-    const uint8_t node = slotNodeAt(slot);
-    if (node == SLOT_NONE) { Serial.println("err unbound"); return true; }
-
-    // A de-energised node accepts CMD_HOME and pulses into a motor that cannot
-    // turn: the switch is never reached, so the leg burns its entire max_steps
-    // budget -- tens of seconds on a seek -- and then reports HOMING_FAIL, which
-    // reads as a broken switch rather than a motor nobody turned on.
+    // A de-energised node accepts CMD_HOME_LEG and pulses into a motor that
+    // cannot turn: the terminator is never reached, so the leg burns its entire
+    // max_steps budget -- tens of seconds on a seek -- and then reports a
+    // failure that reads as a broken switch rather than a motor nobody turned
+    // on.
     //
-    // This is the gate ALARM does not provide and should not: `home` is admitted
+    // This is the gate ALARM does not provide and should not: a leg is admitted
     // in ALARM because homing is how an operator recovers from an estop, and the
     // estop sweep de-energises the bus on its way in. The two are separate facts
     // -- "the machine faulted" and "this axis can move" -- and only the second
-    // one decides whether a leg is worth arming. axes_enabled is projected from
-    // node truth every pass (position.cpp), so this reads what the bus last
-    // confirmed rather than what a command hoped for.
-    if (!(axes_enabled & (1 << slot))) {
+    // decides whether a leg is worth arming.
+    //
+    // Reads nodeEnabled, not axes_enabled. axes_enabled is only the projection
+    // of this mask through the axis map (position.cpp), so on a bound node the
+    // two agree, and on an unbound one only this exists.
+    if (!(nodeEnabled & (1u << node))) {
         Serial.println("err not_enabled"); return true;
     }
 
-    char* end;
-    unsigned long v[6];
-    for (int i = 0; i < 6; i++) {
+    const int want = wantIntent ? 6 : 5;
+    unsigned long v[6] = {0};
+    for (int i = 0; i < want; i++) {
         v[i] = strtoul(p, &end, 10);
         if (end == p) { Serial.println("err usage"); return true; }
         p = end;
@@ -434,9 +434,20 @@ bool cmdHome(const char* args) {
     // step pin; a zero budget is a command that cannot move and cannot fail.
     if (v[1] == 0 || v[2] == 0 || v[4] == 0) { Serial.println("err range"); return true; }
 
-    return homingBegin(node, (uint8_t)(v[0] & 1), v[5] != 0,
+    return homingBegin(node, expectKind, (uint8_t)(v[0] & 1), v[5] != 0,
                        (uint16_t)v[1], (uint16_t)v[2],
                        (uint16_t)v[3], (uint32_t)v[4]);
+}
+
+bool cmdLinLeg(const char* args) {
+    return legCommon(args, HOMING_KIND_LIMIT, true);
+}
+
+// No `intent`: a rotary node has no limit pin, so there is nothing for the host
+// to predict and nothing for the node to disagree with. It passes false, and
+// the node's intent check is dead code on an index build.
+bool cmdRotLeg(const char* args) {
+    return legCommon(args, HOMING_KIND_INDEX, false);
 }
 
 // ── step <node> <count> [sps] — debug stepping (bring-up only) ───────────────

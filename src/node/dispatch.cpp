@@ -21,7 +21,7 @@ static void replyAck(uint8_t cmd, uint8_t* reply, uint8_t* replyLen) {
 //
 // Exposed to node types (node_hooks.h: node_reply_nak) as well as used here for
 // the generic unhandled-command case, so a type that has a specific reason for
-// refusing (CMD_HOME's intent check, docs/homing.md §1.4) can report it instead
+// refusing (CMD_HOME_LEG's intent check, docs/homing.md §1.4) can report it instead
 // of falling through to the generic NAK_UNSUPPORTED every plain `return false`
 // produces below.
 void node_reply_nak(uint8_t cmd, uint8_t reason, uint8_t* reply,
