@@ -58,3 +58,12 @@ bool cmdAxesEnable(const char*);
 bool cmdBusEnable(const char*);
 bool cmdEnable(const char*);
 bool cmdDisable(const char*);
+
+// ─── the probe session (core0/probe.cpp) ──────────────────────────────────────
+// Here rather than in a file of their own because probe_map writes the axis map
+// and axis.cpp is the only file that writes the position model. The session
+// state and its supervisor live in core0/probe.cpp; these are the three
+// handlers that reach it.
+bool cmdProbeMap(const char*);
+bool cmdProbeLeg(const char*);
+bool cmdProbeEnd(const char*);

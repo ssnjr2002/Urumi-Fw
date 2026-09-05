@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "../../ipc/core1_rpc.h"   // ProbeLegReq / ProbeLegOut
 // emit.h — the contract every step emitter reports against.
 //
 // Split out of shared.h: Core 0 never sees an EmitResult. It lives here rather
@@ -37,3 +38,18 @@ void processMicroSegments(void);
 // slot is already resolved: Core 0 maps the target bus node to a stream slot via
 // the axis map before posting. `steps` is signed -- the sign IS the direction.
 void emitDebugSteps(uint8_t slot, uint16_t sps, int32_t steps);
+
+// ─── Probe leg (docs/tool_probe.md §5.6, §5.7.1) ──────────────────────────────
+// One leg of a tool-height probe: step Z under lockstep with the vacuum node
+// that carries the bed-floor switch, and stop on the first open.
+//
+// LOCKSTEP is the whole design. On a poll step the emitter does not emit the
+// next byte until the reply to this one has arrived, which converts a hard
+// real-time problem (a reply that must land inside a step interval) into a soft
+// one (a reply that must land at all). The failure mode becomes stall, not
+// collision.
+//
+// Slots, not node ids, for the stream -- the session bound both before this ran.
+// `vacNode` is carried anyway because the contact confirm (§5.9) uses the
+// CRC-protected command path, which is node-addressed.
+void emitProbeLeg(const ProbeLegReq* rq, ProbeLegOut* out);

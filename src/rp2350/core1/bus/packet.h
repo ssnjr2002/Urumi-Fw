@@ -10,6 +10,13 @@
 
 extern RS485Bus rs485;
 
+// Quiesce the wire before a command frame: let the TX drain, drop anything
+// stale in RX, then send a NOP stream byte so slave parsers start from a known
+// state. Every command path does this identically -- including the probe
+// emitter's contact confirm, which is why it lives here rather than staying
+// private to rpc_server.cpp.
+void busQuiesce(void);
+
 // Stamps the CRC into packet[len-1] and writes the frame. `packet` is mutated.
 void sendPacket(uint8_t* packet, uint8_t len);
 

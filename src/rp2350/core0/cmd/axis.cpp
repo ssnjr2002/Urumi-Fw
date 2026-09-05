@@ -15,6 +15,8 @@
 #include "gate.h"
 #include "../position.h"
 #include "../homing.h"
+#include "../probe.h"
+#include "axis_map.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
@@ -167,6 +169,19 @@ bool cmdAxisMap(const char* args) {
                 Serial.println("err dup"); return true;
             }
 
+    // Committing a map is also the OTHER way out of a probe session (§5.5):
+    // during a probe the machine genuinely has no working axis map, and the way
+    // out of that condition has always been to commit one. This is not an
+    // overload of `axis_map` -- it is the ALARM_CONFIG parallel taken seriously.
+    // Any committed map ends the session, and `probe_end` is sugar for
+    // committing the one that was already there.
+    if (machineState == STATE_PROBING) return probeExit(desired);
+
+    axisMapApply(desired, /*quiet=*/false);
+    return true;
+}
+
+bool axisMapApply(const uint8_t* desired, bool quiet) {
     // NOT a diff — deliberately dumb. First disengage every previously-bound
     // node (best-effort: a since-removed/reset node that won't ACK is already
     // where we want it), then engage EVERY desired node to its slot,
@@ -201,8 +216,8 @@ bool cmdAxisMap(const char* args) {
         if (r != RPC_OK) {
             // `nak unsupported` here means a non-stepper node was mapped to a
             // motion slot — a config error, not a bus fault.
-            Serial.printf("err node %d %s\n", desired[i], rpcResultText(r));
-            return true;              // leave the map as-is; a retry redoes all
+            if (!quiet) Serial.printf("err node %d %s\n", desired[i], rpcResultText(r));
+            return false;             // leave the map as far as it got
         }
         // Frozen-while-parked check (position.h). Silent by design: the
         // wire contract is exactly one line per command, so this cannot print.
@@ -245,9 +260,10 @@ bool cmdAxisMap(const char* args) {
         machineState = STATE_IDLE;
         alarmReason  = ALARM_NONE;
     }
-    Serial.println("ok");
+    if (!quiet) Serial.println("ok");
     return true;
 }
+
 
 // ── setorigin [axes] [pos_steps] (IDLE/PAUSED/ALARM) ─────────────────────────
 //
@@ -553,4 +569,74 @@ bool cmdHallScan(const char* args) {
     }
     Serial.printf(" %d end %ld\n", st.hallRaw, (long)st.pos);
     return true;
+}
+
+// ── probe_map <stepper-id> <switch-id> ───────────────────────────────────────
+// Open a probe session. See core0/probe.h for why this is a session and not a
+// single command, and docs/tool_probe.md §5.3 for why it is a full alternative
+// binding rather than an overlay.
+bool cmdProbeMap(const char* args) {
+    if (probeActive()) { Serial.println("err busy"); return true; }
+    if (busGateDenies()) return true;
+    char* end;
+    const uint8_t z   = parseNode(args, &end);
+    const uint8_t vac = parseNode(end,  &end);
+    if (!z || !vac) { Serial.println("err bad_node"); return true; }
+    return probeBegin(z, vac);
+}
+
+// ── probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps>
+//             <deadline_us> <intent> ─────────────────────────────────────────
+// Positional, following lin_leg's idiom. The host owns the sequence and the Pico
+// runs ONE leg: there is no leg index, and the Pico never learns which leg of
+// four this is.
+//
+// No node argument, and that is the difference from lin_leg rather than an
+// oversight. A home is node-framed and runs before any map is committed; a probe
+// is the opposite — the session already bound both nodes, so naming them again
+// would be a second source of truth that could disagree with the binding.
+//
+// `start_us` is not in the design document's argument table. It is here for the
+// reason lin_leg carries both a start and a floor: a ramp needs somewhere to
+// ramp FROM, and the alternative was a hidden multiplier of ceil_us buried in
+// the emitter, which is a worse place for a number that decides whether Z loses
+// steps.
+bool cmdProbeLeg(const char* args) {
+    // The bus gate does not admit STATE_PROBING -- correctly, since it is a
+    // motion state for every other command. Checked first so the commonest
+    // mistake here, a leg with no session, is named rather than answered with a
+    // generic bad_state.
+    if (machineState != STATE_PROBING) { Serial.println("err not_probing"); return true; }
+    char* end;
+    const char* p = args;
+    unsigned long v[8];
+    for (int i = 0; i < 8; i++) {
+        v[i] = strtoul(p, &end, 10);
+        if (end == p) { Serial.println("err usage"); return true; }
+        p = end;
+    }
+    if (v[0] > 1 || v[1] > 0xFFFF || v[2] > 0xFFFF || v[3] > 0xFFFF ||
+        v[4] > 0xFF || v[6] > 0xFFFF || v[7] > 1) {
+        Serial.println("err range"); return true;
+    }
+    // Zero is rejected for the interval, the poll divisor, the budget and the
+    // deadline, for the reason legCommon gives about a zero interval and a zero
+    // budget: a command that cannot move and cannot fail. It is also why there
+    // is no no-op leg, and therefore why exit-by-flag was rejected — an exit
+    // flag would have made MOTION MANDATORY FOR TEARDOWN, exactly backwards for
+    // the case where you most want to bail.
+    if (v[1] == 0 || v[2] == 0 || v[4] == 0 || v[5] == 0 || v[6] == 0) {
+        Serial.println("err range"); return true;
+    }
+    return probeArmLeg((uint8_t)v[0], (uint16_t)v[1], (uint16_t)v[2],
+                       (uint16_t)v[3], (uint8_t)v[4], (uint32_t)v[5],
+                       (uint16_t)v[6], (uint8_t)v[7]);
+}
+
+// ── probe_end ────────────────────────────────────────────────────────────────
+// "Put it back the way it was." Takes no arguments, so it works from a console
+// and in the bail-out case, where the operator is already unsure what state
+// things are in.
+bool cmdProbeEnd(const char*) {
+    return probeExit(nullptr);
 }

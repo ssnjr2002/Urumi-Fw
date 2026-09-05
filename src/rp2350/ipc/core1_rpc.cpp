@@ -326,3 +326,55 @@ bool rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps) {
     req.args[6] = (uint8_t)((uint32_t)steps);
     return rpcPost(&req, nullptr);
 }
+
+// ─── Probe leg (docs/tool_probe.md §5.6) ─────────────────────────────────────
+// Marshalling only. Nothing here interprets a leg: which leg of four this is,
+// what the switch means, and what a failure costs are all Core 0's, exactly as
+// rpcHome does not know seek from retract.
+
+const char* probeCauseText(uint8_t c) {
+    switch (c) {
+        case PROBE_OK:           return "ok";
+        case PROBE_BUDGET:       return "budget";
+        case PROBE_POLL:         return "poll";
+        case PROBE_CHATTER:      return "chatter";
+        case PROBE_ALREADY_OPEN: return "already_open";
+        case PROBE_NOT_CLEARED:  return "not_cleared";
+        case PROBE_POS_MISMATCH: return "pos_mismatch";
+        case PROBE_DEADLINE:     return "deadline";
+        case PROBE_ESTOP:        return "estop";
+        default:                 return "?";
+    }
+}
+
+bool rpcProbeLegPost(const ProbeLegReq* rq, uint16_t* idOut) {
+    RpcRequest req = {};
+    req.op     = RPC_OP_PROBE_LEG;   // not a node command — Core 1 acts locally
+    req.argLen = 19;
+    uint8_t* a = req.args;
+    a[0]  = rq->zSlot;
+    a[1]  = rq->vacSlot;
+    a[2]  = rq->vacNode;
+    a[3]  = rq->dir;
+    a[4]  = (uint8_t)(rq->startUs   >> 8);  a[5]  = (uint8_t)rq->startUs;
+    a[6]  = (uint8_t)(rq->ceilUs    >> 8);  a[7]  = (uint8_t)rq->ceilUs;
+    a[8]  = (uint8_t)(rq->rampSteps >> 8);  a[9]  = (uint8_t)rq->rampSteps;
+    a[10] = rq->pollDiv;
+    a[11] = (uint8_t)(rq->maxSteps >> 24);  a[12] = (uint8_t)(rq->maxSteps >> 16);
+    a[13] = (uint8_t)(rq->maxSteps >>  8);  a[14] = (uint8_t)(rq->maxSteps);
+    a[15] = (uint8_t)(rq->deadlineUs >> 8); a[16] = (uint8_t)rq->deadlineUs;
+    a[17] = rq->confirmPolls;
+    a[18] = rq->retryLimit;
+    return rpcPost(&req, idOut);
+}
+
+bool rpcProbeLegDecode(const RpcReply* rep, ProbeLegOut* out) {
+    if (rep->len < 7) return false;
+    const uint8_t* p = rep->payload;
+    out->cause   = p[0];
+    out->retries = p[1];
+    out->level   = p[2];
+    out->steps   = (int32_t)(((uint32_t)p[3] << 24) | ((uint32_t)p[4] << 16) |
+                             ((uint32_t)p[5] <<  8) |  (uint32_t)p[6]);
+    return true;
+}

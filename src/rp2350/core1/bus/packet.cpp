@@ -6,6 +6,12 @@
 
 RS485Bus rs485;
 
+void busQuiesce(void) {
+    while (!rs485.txEmpty());
+    rs485.flushRX();
+    rs485.writeStream(0);
+}
+
 void sendPacket(uint8_t* packet, uint8_t len) {
     packet[len - 1] = crc8(packet, len - 1);
     for (int i = 0; i < len; i++) rs485.writeCommand(packet[i]);

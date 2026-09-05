@@ -27,6 +27,7 @@ volatile uint32_t queuedUsOut = 0;   // Core 1 adds on retire
 volatile uint8_t machineState   = STATE_IDLE;
 volatile uint8_t alarmReason    = ALARM_NONE;
 volatile uint8_t runningReason  = RUNNING_JOB;
+volatile uint8_t probingReason  = PROBING_CLEAR;
 
 // Position model (Layer 4) — counts always retained; bits say the datum is known
 volatile int32_t machinePos[4]  = {0, 0, 0, 0};   // X, Y, Z, A steps

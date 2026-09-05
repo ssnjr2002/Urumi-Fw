@@ -30,7 +30,13 @@
 // in the FIFO_* namespace. A struct has room, so those opcodes are gone: `cmd`
 // is always a CMD_* from common.h, and the arguments are just bytes.
 
-#define RPC_ARG_MAX      CMD_HOME_LEG_PAYLOAD_LEN   // 11 — the largest command payload
+// Sized by the largest thing that rides a request, which is no longer a node
+// command payload: RPC_OP_PROBE_LEG marshals 19 bytes of leg parameters to Core
+// 1 (rpcProbeLeg below). CMD_HOME_LEG's 11 is still the largest payload that
+// goes on the WIRE, and the static_assert keeps the two from silently parting.
+#define RPC_ARG_MAX      20
+static_assert(RPC_ARG_MAX >= CMD_HOME_LEG_PAYLOAD_LEN,
+              "RPC_ARG_MAX must still hold the largest node command payload");
 #define RPC_PAYLOAD_MAX  32                     // max node reply payload
 
 // What Core 1 should DO with this request. The old encoding had no such field,
@@ -42,7 +48,72 @@
 typedef enum {
     RPC_OP_NODE = 0,     // relay `cmd` to `node` over RS485 and report the reply
     RPC_OP_STEP_DEBUG,   // Core-1-local: emit a stream-byte step burst, no reply
+    // Core-1-local: run one probe leg under lockstep and REPLY with the result.
+    // Unlike STEP_DEBUG this is not fire-and-forget -- a leg's outcome is the
+    // entire point of running it, and Core 0's supervisor is waiting on it.
+    RPC_OP_PROBE_LEG,
 } RpcOp;
+
+// ─── Probe leg outcome (docs/tool_probe.md §5.10) ──────────────────────────────
+// Split by WHERE TO LOOK, following HOMEFAIL_*. The Z-datum column is the part
+// that matters most: MOST probe failures do not destroy it, and only the two
+// marked below do -- for the same reason in both cases, an unknown number of
+// steps went unaccounted for.
+#define PROBE_OK            0   // contacted and confirmed          datum intact
+#define PROBE_BUDGET        1   // ran the budget, never contacted  datum intact
+                                // tool length, bad travel figure, or dead switch
+#define PROBE_POLL          2   // the vacuum stopped answering     datum intact
+                                // the bus is the suspect; the motion may have
+                                // been fine. Lockstep makes that stronger than
+                                // HOMEFAIL_POLL: the Pico physically cannot have
+                                // emitted a step it did not get a reply for, so
+                                // it stops at a count it knows exactly.
+#define PROBE_CHATTER       3   // retry limit exhausted            datum intact
+                                // switch or cable noise
+#define PROBE_ALREADY_OPEN  4   // switch open at arm time          datum intact
+#define PROBE_NOT_CLEARED   5   // retract done, switch still open  datum intact
+#define PROBE_POS_MISMATCH  6   // node counter != dead reckoning   DATUM VOID
+#define PROBE_DEADLINE      7   // supervisor timeout               DATUM VOID
+                                // points at the emitter, not the switch
+#define PROBE_ESTOP         8   // stopped by an estop mid-leg      DATUM VOID
+                                // (the estop path voids it anyway, by its own
+                                //  route -- named so the leg result does not
+                                //  have to lie about why it stopped)
+
+// True for the two causes that lose the Z datum. One place, because
+// position.cpp keys origin invalidation on a short list of reasons and a probe
+// must not join it wholesale -- a probe-fail alarm that used ALARM_ESTOP or
+// ALARM_SOFT_LIMIT would invalidate on every failure, including the five that
+// leave the measurement sound.
+static inline bool probeCauseVoidsDatum(uint8_t c) {
+    return c == PROBE_POS_MISMATCH || c == PROBE_DEADLINE || c == PROBE_ESTOP;
+}
+
+const char* probeCauseText(uint8_t c);
+
+struct ProbeLegReq {
+    uint8_t  zSlot, vacSlot, vacNode;
+    uint8_t  dir;             // 0/1, as lin_leg
+    uint16_t startUs;         // first step interval
+    uint16_t ceilUs;          // interval floor == the feed CEILING (§2.3)
+    uint16_t rampSteps;       // 0 = no ramp
+    uint8_t  pollDiv;         // poll every N steps; 1 = every step
+    uint32_t maxSteps;        // budget
+    uint16_t deadlineUs;      // per-leg poll deadline — NOT RESPONSE_TIMEOUT_MS
+    uint8_t  confirmPolls;    // zero-step confirm polls after a trigger (§5.9)
+    uint8_t  retryLimit;      // how many noise retries before CHATTER
+};
+
+// What the leg did. `steps` is what was actually emitted on every path,
+// including estop -- the caller decides what to do with it, and machinePos has
+// already been advanced by exactly this much.
+struct ProbeLegOut {
+    uint8_t cause;            // PROBE_* (ipc/core1_rpc.h)
+    uint8_t retries;          // noise retries spent; reported even on success
+    uint8_t level;            // switch level at the end: 1 = open, 0 = closed
+    int32_t steps;
+};
+
 
 typedef struct {
     uint8_t  op;                   // RpcOp
@@ -235,6 +306,17 @@ bool rpcServerReply(const RpcReply* rep);
 // would otherwise have overwritten a shared rate and run burst #1 at burst #2's
 // speed. Queued, each burst carries its own.
 bool rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps);
+
+// ─── Probe leg — posted, then collected by the Core 0 supervisor ─────────────
+// Post/poll rather than rpcCall, and for the reason rpcCall's own comment gives:
+// a leg runs for seconds and Core 0 must keep serving `getstate` and `stop`
+// throughout. Same shape as the homing supervisor, which exists for exactly
+// this. *idOut receives the request id to match the reply against.
+bool rpcProbeLegPost(const ProbeLegReq* rq, uint16_t* idOut);
+
+// Decode a collected reply's payload back into a result. False if the payload is
+// not the shape this decoder knows.
+bool rpcProbeLegDecode(const RpcReply* rep, ProbeLegOut* out);
 
 // ─── Debug-step limits ───────────────────────────────────────────────────────
 // Argument bounds for RPC_OP_STEP_DEBUG. Core 0 validates against these before
