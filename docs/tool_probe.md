@@ -1,8 +1,14 @@
 # Tool-height probe
 
-Status: **design, not implemented.** Nothing in §8.1 has been measured, and §8.1
-decides how much of this document survives. Read that section before building
-anything here.
+Status: **implemented, never run.** The node half landed in `c144545`, the Pico
+half in `b0243da`, the web host's two enum values in `b9a922c`. Nothing in §8.1
+has been measured and **no leg has been executed on hardware**, so §8.1 still
+decides how much of this document survives — it is now a bring-up list rather than
+a precondition for writing code.
+
+Sections carrying a **Deviation** note are places where the implementation
+settled something this document had left open, or contradicted it outright. They
+are the parts most worth re-reading if you were following the design.
 
 ---
 
@@ -220,7 +226,28 @@ where it can be controlled. Check reentrancy against the SSR machine.
 
 A reply the node cannot deliver in time must be **dropped, not sent late.** Under
 lockstep a dropped reply costs one poll; a late one collides with the Pico's
-timeout path. The node checks elapsed-time-since-RX before asserting DE.
+timeout path.
+
+**Deviation.** This section originally said "the node checks elapsed-time-since-RX
+before asserting DE." That is not implementable: the byte's arrival time is
+recorded nowhere the ISR can read, so an ISR that entered late cannot discover
+that it did. Lateness is invisible from inside the thing that is late.
+
+What [probe_slot.h](../src/node/types/vacuum/probe_slot.h) does instead is check
+`RXCIF` immediately before asserting DE and return without replying if another
+byte has already arrived:
+
+```c
+if (HAL_USART_INST.STATUS & USART_RXCIF_bm) return;   // drop, don't send late
+```
+
+That catches the one form of lateness the node *can* observe — having fallen a
+whole byte behind — which is also the only form that can collide with the next
+frame, since under lockstep the Pico emits nothing until it is answered. Residual
+lateness shorter than a byte time is covered from the other end: the Pico's
+per-leg deadline bounds it, and §3.3's encoding makes a reply that never arrives
+decode as "open → stop". The node is not the only thing guarding this edge, which
+is why the weaker check is enough.
 
 ### 4.3 The switch pin is pulled up, but weakly
 
@@ -381,12 +408,23 @@ table is the "updated one frame, forgot the other" class that
 [axis.cpp](../src/rp2350/core0/cmd/axis.cpp) says cost a 1000-line file once
 already.
 
-1. Save the committed axis map.
+1. Save the committed axis map — the **ids**, not the derived state. Both exits
+   rebuild everything else from ENGAGE acks (§5.5), and the `axis_map` exit does
+   not use the saved ids at all; it commits the host's. What the save is really
+   for is `probe_end` and the failure teardown, which need *some* map to replay
+   and have no other source for one.
 2. Disengage every bound node. Each `CMD_ENGAGE` ack carries `node_type()` as its
    first status byte, so the disengage pass **verifies types for free**: the id
    called a stepper is a stepper, the id called a vacuum is a vacuum.
 3. Refuse to proceed if any node fails to ack.
-4. Engage Z to slot 2, vacuum to its slot.
+4. Engage Z to slot 2, vacuum to its slot. **`slotBind()` only Z.** The vacuum
+   is engaged — it must be, or it would not answer polls — but binding it would
+   write `machinePos`, `axes_homed` and `homingLatched` for a node with no
+   stepper tail, and the host would see slot 3 as an enabled, unhomed axis at
+   zero (§5.5). Engaged and bound are not the same thing, and this is the one
+   place in the codebase where they come apart. Every slot the probe does not
+   use is explicitly **unbound**, not merely left alone: a slot bound before the
+   session would otherwise survive into it.
 
 Step 3 is the safety property, not a nicety. The Pico requests a poll by setting
 the vacuum slot's **step** bit — so a stepper still engaged in that slot would
@@ -519,6 +557,20 @@ design's position — `CMD_HOME_LEG` carries an intent the node could otherwise
 infer from its own pin, and carries it precisely so that it can be contradicted.
 Do not later "simplify" this by computing `intent` from the reason.
 
+**Deviation — `ALREADY_OPEN` is derived from `intent`, not from `dir`.** The
+obvious reading of §5.10's row is "a descending leg that finds the switch already
+open", and that is what the first implementation did. It is wrong, because which
+way is *down* is not knowable here: `dir` is a wire bit and the host owns the
+geometry (§6.1). So the two halves of an intent mismatch are split by what the
+host declared, not by direction:
+
+- declared "expect closed", found **open** → `ALREADY_OPEN`, and the session
+  fails. The switch has failed or Z is parked on the bed; either way the leg
+  would drive the tool further into it.
+- declared "expect open", found **closed** → an ordinary host sequencing error.
+  Nothing is pressed into anything, so it is refused with `err intent` and the
+  session stays open.
+
 **Refuse a de-energised Z**, reading `nodeEnabled` directly as `legCommon` does.
 Its rationale transfers verbatim: a de-energised node accepts the leg and the
 motor cannot turn, so the terminator is never reached, the budget burns out, and
@@ -587,7 +639,10 @@ quite fails is otherwise invisible from the bus.
 
 ### 5.10 Failure taxonomy
 
-Split by *where to look*, following `HOMEFAIL_*`:
+Split by *where to look*, following `HOMEFAIL_*`. The codes below are
+`PROBE_BUDGET` … `PROBE_ESTOP` = 1…8 in
+[core1_rpc.h](../src/rp2350/ipc/core1_rpc.h), with `PROBE_OK` = 0; `getstate`
+reports the raw number as `probe=` (§5.12):
 
 | code | meaning | suspect | Z datum |
 |---|---|---|---|
@@ -616,6 +671,16 @@ origin invalidation on `STATE_ESTOP || ALARM_ESTOP || ALARM_SOFT_LIMIT`, not on
 the suspect. The motion may well have been fine." Lockstep makes it stronger
 here: the Pico physically cannot have emitted a step it did not get a reply for,
 so a poll failure stops at a count it knows exactly.
+
+**Correction:** that last sentence holds exactly at `poll_div = 1`. Above it the
+emitter does not wait on non-poll steps (§5.7), so up to `poll_div - 1` steps can
+be in flight when the bus goes quiet — emitted, almost certainly executed, but
+never acknowledged. The count is still known to within that window and the datum
+still survives, because §5.8's cross-check runs against the node's own counter at
+the next boundary and would catch a real divergence as `POS_MISMATCH`. But a
+latch leg is the only leg where "cannot have emitted an unacknowledged step" is
+literally true, and it is worth knowing which kind of leg you are reading a
+`POLL` from.
 
 Only the two marked **void** lose the datum, and for the same reason in both
 cases — an unknown number of steps went unaccounted for.
@@ -704,6 +769,29 @@ already a stop-everything event with nothing streaming, so an unresponsive
 control plane during a fault is tolerable in a way it would not be on the happy
 path — which is exactly why the happy-path exit is a command (§5.5).
 
+### 5.12 What `getstate` reports
+
+Four fields, appended **after** every field an existing host already parses, for
+the reason `latched` was:
+
+```
+probing=<ProbingReason> probe=<cause> retries=<n> psteps=<int32>
+```
+
+Emitted when `machineState == STATE_PROBING` **or**
+`alarmReason == ALARM_PROBE_FAIL` — the second condition matters, because a
+failed probe has already left `STATE_PROBING` by the time the host asks, and the
+cause is the only thing worth reporting about it.
+
+`probing=` is the session phase (§5.2). The other three describe the **last leg
+that ran**, not the session: a leg boundary is not a terminal state (§5.11), the
+machine stays in `STATE_PROBING` across it, and this triple is the only report
+of what just happened. `retries` is emitted on success too, per §5.9.
+
+A host that ignores all four still reads `state` and `alarm` correctly, which is
+the part that gates motion — but it cannot tell a completed probe from a failed
+one, so it should not be driving a probe.
+
 ---
 
 ## 6. Host
@@ -743,6 +831,16 @@ live there — and it would be invisible to the thing planning the moves.
 ## 8. Open
 
 ### 8.1 Numbers to measure before first run
+
+**Before any of them, check the reply encoding by hand.** Engage the vacuum into
+a slot, send stream bytes with its step bit set, and confirm that a *closed*
+switch sets the dir bit and an open one does not (§3.3). A reversed sense reads
+as "switch already open", so the failure mode is not a bad measurement — it is
+`ALREADY_OPEN` refusing every descent, which looks like a broken switch. Ten
+minutes here saves an hour of chasing the wrong thing.
+
+`probe_leg` with `poll_div = 1` on a short budget *is* the latency harness for
+the first two measurements below; it does not need a separate one.
 
 **These decide how much of this document is needed.** Every timing figure above
 is arithmetic plus an estimate of software latency; none has been on a scope or a
@@ -800,13 +898,26 @@ conclusion is safe in a way the reverse is not.
 - Whether an unrecognised `RunningReason` degrades silently in the web host, as
   an unrecognised `AlarmReason` is known to (it renders as "no alarm"). Affects
   nothing here directly — this design uses a state, not a reason — but the same
-  decoder handles both.
+  decoder handles both. The `AlarmReason` half is closed: `STATE_PROBING` and
+  `ALARM_PROBE_FAIL` were added to the web host in `b9a922c`, so a probing
+  machine no longer renders as IDLE and a failed probe no longer renders as no
+  alarm at all. Parsing §5.12's fields is still to do.
 - Retract distance, and whether it is per-leg or one constant.
 - Retry limit for §5.9.
 - **Reason precedence when a failure restore lands an empty map.** `cmdAxisMap`
   re-enters `ALARM_CONFIG` on an empty commit, which would collide with the
   probe-fail reason §5.11.2 says to preserve. An unconfigured machine is the more
   urgent gate; the probe failure is the more useful diagnosis. Not resolved.
+
+**Settled by the implementation** (kept here because the reasoning is worth
+finding again, not because anything is open):
+
+- `PROBE_ESTOP` exists as a ninth cause and publishes no verdict — §5.10.
+- `start_us` joined `probe_leg`'s arguments — §5.7.
+- `ALREADY_OPEN` is keyed off `intent`, not `dir` — §5.7.
+- `PROBING_CLEAR` / `PROBING_CONTACT` refresh at boundaries, not per `getstate`
+  — §5.2.
+- The node's drop rule is an `RXCIF` check, not an elapsed-time one — §4.2.
 
 ### 8.3 Deferred
 
