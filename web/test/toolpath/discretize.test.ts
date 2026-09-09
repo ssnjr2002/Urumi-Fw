@@ -680,12 +680,27 @@ describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", 
     // floor to stretch a segment. Every fixture where D3 cannot fire is exact.
     const D3_STRETCHED = new Set(["cusp", "near_cusp"]);
 
+    // The bound was 1.02 while `k` was derived from the linear |Δv|. Correcting
+    // it to the v² law (see discretize.ts) subdivides ramps harder, and step
+    // ROUNDING — not the interval trunc — is what that costs: `interval()` takes
+    // its distance from the rounded dx/dy, so each sub-segment's time carries its
+    // own round-off, and shorter sub-segments carry proportionally more.
+    //
+    // Isolated by scaling each quantiser away independently on a 10mm ramp:
+    //     fCpu x100          0.9906 -> 0.9906   (clock trunc: contributes nothing)
+    //     stepsPerUnit x100  0.9906 -> 0.9978   (step rounding: the whole effect)
+    // so this is a property of subdivision itself, not of the new formula, and
+    // the old formula only avoided it by under-subdividing.
+    //
+    // 1.025 admits short_curve at its measured 1.023. On the knife snakes that
+    // stand in for real work the figure is 1.001-1.003, because they cruise;
+    // short_curve is nearly all ramp, which is the worst case by construction.
     it("emitted cut time matches the exact constant-accel time", () => {
         forEachFixture((name, curves) => {
             if (D3_STRETCHED.has(name)) return []; // asserted red under D3
             const p = planFor([curves], KNIFE);
             const ratio = emittedSeconds(cutting(prep([curves], KNIFE))) / plannedSeconds(p);
-            return ratio > 1.02
+            return ratio > 1.025
                 ? [`${name}: emitted ${ratio.toFixed(3)}x the exact cut time`]
                 : [];
         });
@@ -702,8 +717,13 @@ describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", 
 
         expect(ratioAt(1e9)).toBeCloseTo(1.0, 3); // k=1 everywhere
         expect(ratioAt(6)).toBeCloseTo(1.0, 2);   // was 1.268
-        expect(ratioAt(0.75)).toBeCloseTo(1.0, 2); // was 1.510 — the harder it
-        // subdivides the worse it used to get; monotonic degradation is gone.
+        // was 1.510 under the linear model. The residual 0.0094 at dvMax=0.75
+        // is step rounding, and it is bounded rather than monotonic: the linear
+        // model degraded WITHOUT limit as dvMax fell (1.268 -> 1.510 and rising),
+        // because the error was in the velocity model itself. This one is
+        // quantisation noise on a 10mm all-ramp line, and it does not compound —
+        // the same measurement on cruising geometry is 1.001-1.003.
+        expect(Math.abs(ratioAt(0.75) - 1.0)).toBeLessThan(0.012);
     });
 
     it("times a ramp-dominated path as accurately as a cruising one", () => {
@@ -714,7 +734,11 @@ describe("stage 8 D2 (FIXED): sub-segment speed follows constant acceleration", 
             const p = planFor([[line({ x: 0, y: 0 }, { x: L, y: 0 })]], PEN);
             return emittedSeconds(discretize(p, MACH, AXES, PEN, q)) / plannedSeconds(p);
         };
-        expect(ratioFor(10)).toBeCloseTo(1.0, 2);  // was 1.361
+        // was 1.361. The asymmetry this test exists to police is gone: 10mm and
+        // 500mm now agree to 0.5%, where they differed by 36%. What is left at
+        // 10mm is step-rounding noise (0.0052), and the 500mm case shows it
+        // washing out as soon as there is any cruise to dilute it.
+        expect(Math.abs(ratioFor(10) - 1.0)).toBeLessThan(0.008);
         expect(ratioFor(500)).toBeCloseTo(1.0, 2);
     });
 
@@ -781,7 +805,10 @@ describe("stage 8 D3 (RESOLVED, doc): the plan is a velocity schedule, not a clo
         });
     });
 
-    // T2 — bound the divergence per fixture. Every fixture where none of
+    // T2 — bound the divergence per fixture. Bound raised 1.02 -> 1.025 with the
+    // v²-law k fix; see the note on the D2 test above for why subdividing harder
+    // costs step-rounding accuracy, and why that is subdivision's tax rather than
+    // the new formula's error. Every fixture where none of
     // D3a/D3b/D3c can fire executes its plan's timeline to within 0.71%; the
     // two where they do are exempted at their MEASURED value plus headroom.
     // Those two numbers are the acknowledgement: this is how far apart the
@@ -795,7 +822,7 @@ describe("stage 8 D3 (RESOLVED, doc): the plan is a velocity schedule, not a clo
         forEachFixture((name, curves) => {
             const p = planFor([curves], KNIFE);
             const ratio = emittedSeconds(cutting(prep([curves], KNIFE))) / plannedSeconds(p);
-            const bound = T2_BOUND[name] ?? 1.02;
+            const bound = T2_BOUND[name] ?? 1.025;
             return ratio > bound
                 ? [`${name}: emitted ${ratio.toFixed(3)}x planned, bound ${bound}`]
                 : [];
