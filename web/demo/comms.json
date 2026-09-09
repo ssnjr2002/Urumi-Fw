@@ -76,8 +76,19 @@
         "maxFeed": 20,
         "maxAccel": 500,
         "maxTravel": 0,
-        "invert": true,
-        "rotary": false
+        "invert": false,
+        "rotary": false,
+        "homing": {
+          "kind": "linear",
+          "hardTravel": 25,
+          "atOrigin": true,
+          "pullInFeed": 2.5,
+          "seekFeed": 10,
+          "latchFeed": 0.78,
+          "rampSteps": 400,
+          "backoffMm": 3,
+          "parkMm": 4
+        }
       },
       "a": {
         "node": {
@@ -116,8 +127,19 @@
         "maxFeed": 20,
         "maxAccel": 500,
         "maxTravel": 0,
-        "invert": true,
-        "rotary": false
+        "invert": false,
+        "rotary": false,
+        "homing": {
+          "kind": "linear",
+          "hardTravel": 25,
+          "atOrigin": true,
+          "pullInFeed": 2.5,
+          "seekFeed": 10,
+          "latchFeed": 0.78,
+          "rampSteps": 400,
+          "backoffMm": 3,
+          "parkMm": 4
+        }
       },
       "a": {
         "node": {
