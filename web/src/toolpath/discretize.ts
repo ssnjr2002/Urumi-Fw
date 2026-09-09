@@ -205,11 +205,30 @@ export function discretize(
             // sub-segments so the speed never changes by more than dvMax within
             // one MicroSegment. Cruise (dv~0) stays k=1; only ramps subdivide.
             // Corners (v~0 both ends, dtheta huge) also stay k=1.
+            //
+            // k must be derived from the same v² law `subV` interpolates under,
+            // not from the linear |Δv| (which is what this computed before). The
+            // sub-steps are equal in v², so they are UNEQUAL in v, and the
+            // largest lands at the slow end: for a ramp to rest, subV gives
+            // v(f) = v0·√(1−f) and the final sub-step drops the whole v0/√k at
+            // once. Dividing |Δv| by dvMax under-counts by a factor of √k there,
+            // and every PATH_END ramps to rest, so this fired on every subpath
+            // of every tool — 6.7 mm/s against a 3.0 dvMax on a plain pen.
+            //
+            // Requiring the LAST sub-step to fit instead:
+            //     √(vmin² + |Δ(v²)|/k) − vmin ≤ dvMax
+            //   ⇒ k ≥ |v1² − v0²| / (dvMax² + 2·vmin·dvMax)
+            // which is the binding one because it is the largest. It reduces to
+            // the old |Δv|/dvMax when vmin >> dvMax (the cruise-to-cruise ramps
+            // it was right for), and to (v0/dvMax)² when vmin = 0.
             let k: number;
             if (isCorner) {
                 k = 1;
             } else {
-                k = Math.max(1, Math.ceil(Math.abs(b.v - a.v) / quality.dvMax));
+                const vLo = Math.min(a.v, b.v);
+                const d = quality.dvMax;
+                const need = Math.abs(b.v * b.v - a.v * a.v) / (d * d + 2 * vLo * d);
+                k = Math.max(1, Math.ceil(need));
                 k = Math.min(k, 256);
             }
 
