@@ -49,7 +49,9 @@ describe("demo/comms.json", () => {
             // config rather than repeating it: a literal here goes stale the
             // next time the recipe is tuned, and asserts the old value against
             // the new config.
-            const parkMm = head.z.homing!.parkMm;
+            const homing = head.z.homing!;
+            if (homing.kind !== "linear") throw new Error("Z homing must be linear");
+            const parkMm = homing.parkMm;
             expect(plan.datumSteps).toBe(Math.round(parkMm * head.z.stepsPerUnit));
         }
     });
