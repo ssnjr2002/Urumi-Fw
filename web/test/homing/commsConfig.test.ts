@@ -38,10 +38,19 @@ describe("demo/comms.json", () => {
         }
     });
 
-    it("leaves Z without one — no limit switch is fitted", () => {
+    it("gives both heads' Z a homing recipe — a top switch, origin at the top", () => {
         if (!result.ok) throw new Error("config did not load");
         for (const head of result.config.machine.heads) {
-            expect(head.z.homing).toBeUndefined();
+            expect(head.z.homing).toBeDefined();
+            const plan = derivePlan("z", head.z);
+            expect(plan.legs).toHaveLength(4);
+            // atOrigin: true — the switch sits at Z's 0 end, so the datum is
+            // just parkMm off it, not hardTravel - parkMm. Read parkMm from the
+            // config rather than repeating it: a literal here goes stale the
+            // next time the recipe is tuned, and asserts the old value against
+            // the new config.
+            const parkMm = head.z.homing!.parkMm;
+            expect(plan.datumSteps).toBe(Math.round(parkMm * head.z.stepsPerUnit));
         }
     });
 
