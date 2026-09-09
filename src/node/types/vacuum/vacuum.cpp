@@ -165,7 +165,11 @@ void node_setup(void) {
     pinMode(HAL_VACUUM_SSR_PIN, OUTPUT);   digitalWrite(HAL_VACUUM_SSR_PIN, LOW);
     VAC_LED_RED_INIT();   VAC_LED_RED(false);
     VAC_LED_GREEN_INIT(); VAC_LED_GREEN(true);   // green = idle, and we start idle
-    pinMode(HAL_VACUUM_SWITCH_PIN, INPUT_PULLUP);   // NC switch → GND
+    #ifdef BOARD_DB32_VACUUM
+        pinMode(HAL_VACUUM_SWITCH_PIN, INPUT);   // NC switch → GND
+    #else
+        pinMode(HAL_VACUUM_SWITCH_PIN, INPUT_PULLUP);   // NC switch → GND
+    #endif
 }
 
 // ─── Hooks: CMD_ENABLE / CMD_DISABLE effect ─────────────────────────────────
