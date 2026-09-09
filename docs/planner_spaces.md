@@ -1,8 +1,19 @@
 # Planner Spaces
 
 **Status:** DESIGN NOTE — describes the current pipeline and argues for a set
-of re-placements. Nothing here is implemented. The measurements in §7 were
-taken against the code at `b9a922c`; the defects in §5 are live.
+of re-placements. Baseline measurements in §7 were taken against `b9a922c`.
+
+Two of §5's defects have since been fixed and their sections updated in place:
+**5.3** (the A clamp, via the feedback loop of option B) and **5.4** (the
+subdivision count `k`). §7.4–7.6 carry the before/after numbers. The rest of §5
+is still live.
+
+Three claims in the original note were **wrong and are struck through rather
+than deleted**, because in each case the correction changed a decision: §5.4
+(subdivision needs no iteration — the opposite of what was written), §6 (which
+operation motivates the feedback loop), and §7.4/§7.5 (where the violations sit,
+and which way the timing bias points). Two of the three were only caught by
+re-measuring something already believed settled.
 
 The planner moves data through three representations. Most of the hard bugs
 found so far are not bugs inside a stage — they are operations performed in
@@ -160,10 +171,11 @@ exceed local κ through both step rounding and curvature varying within the
 segment.
 
 The consequence is measured in §7.4: the floor engages on 26–31% of knife
-cutting packets, and every `dvMax` violation in a fast stretch sits at an edge
-where it engages or disengages. `plan` produces a smooth profile; the clamp
-then carves a notch out of it with vertical walls, because nothing ramped into
-a constraint `plan` never saw.
+cutting packets. `plan` produces a smooth profile; the clamp then carves a
+notch out of it with vertical walls, because nothing ramped into a constraint
+`plan` never saw. Roughly half the violations sit at an engage/disengage edge
+and the other half sit *inside* the clamped region, where the delivered speed
+is tracking quantised `dist/|da|` noise rather than the plan (§7.4).
 
 This is structurally the same defect as audit P1 — two components each
 bounding one thing correctly, nobody owning the seam.
@@ -182,16 +194,64 @@ effective speeds back into the sample ceilings, re-run. Exact, no fudge
 factor, and it terminates because the clamp only ever lowers v. Costs one
 extra compile per block; a test can assert the fixed point directly.
 
-**B is recommended.** Beyond correctness, it makes `plan`'s profile *true* —
-after it, planned speeds are what the machine will actually deliver, which
-matters because several other designs here rest on that identity.
+**B was recommended, and B is what landed** (`fix(planner): plan against the
+curvature the packets will have, not kappa`).
 
-Either way, `interval()`'s floor should become an assertion rather than a
-silent clamp. A limit belongs where it can be planned around.
+The inside-the-clamp half of the violations is what settles it against A. A
+margin is a sample-space bound, and inside the clamped region the delivered
+speed follows `dist/|da|` — a quantity that exists only after subdivision and
+rounding. No margin computed from κ can track it. The measurement that
+distinguished the two options is in §7.4.
 
-**5.4 Subdivision count.** `k = ceil(|Δv|/dvMax)` is a sample-space decision
-about a packet-space property. It is the one row where neither space alone is
-right: it has to be proposed, emitted, checked, refined.
+Implementation. `discretize` takes an optional `DiscretizeReport` and records,
+per sample, `dist/tRate` — the fastest that sub-segment can be *commanded* and
+still be *executed* at the speed it was planned for. `constrain` takes it back
+as `measuredCeilings`; `compileBlock` runs 5→6→8 in a bounded descending loop
+(three passes, a determinism cap rather than a convergence requirement).
+
+The property that makes it work is that it **retires the clamp rather than
+smoothing it**: once `v ≤ dist/tRate` the floor does not bind at all, so the
+delivered speed *is* the planned speed and `plan`'s own accel-continuity
+carries the rest. That is also why it makes `plan`'s profile true — after it,
+planned speeds are what the machine delivers, which several other designs here
+rest on (§7.5).
+
+Results in §7.4. Byte-neutral for a non-tangential tool, as the argument
+requires and both PEN goldens confirm.
+
+`interval()`'s floor should still become an assertion rather than a silent
+clamp — the loop now drives it inactive, so a floor that *does* engage is
+evidence the loop did not converge, which is worth saying out loud. Not done.
+
+**5.4 Subdivision count.** ~~It is the one row where neither space alone is
+right: it has to be proposed, emitted, checked, refined.~~ **Wrong, and worth
+recording as wrong**, because the error was in this document's own framing
+rather than in the code.
+
+`k` needs no iteration at all. It is a closed form, and it is exactly right
+the moment its input equals the delivered speed — which is precisely what
+§5.3's feedback loop now guarantees. Subdivision is not a row that spans two
+spaces; it is a sample-space decision that was being made against a *wrong
+input*, and fixing the input fixed it.
+
+The formula was separately wrong, in a way unrelated to spaces.
+`k = ceil(|Δv|/dvMax)` measures the linear velocity change, but `subV`
+distributes sub-steps evenly in **v²**. Even in v² means unequal in v, with
+the largest step at the slow end: for a ramp to rest,
+`v(f) = v0·sqrt(1−f)`, so the last sub-step drops the whole `v0/sqrt(k)` at
+once. Dividing `|Δv|` by `dvMax` under-counts by a factor of `sqrt(k)` exactly
+there — and every `PATH_END` ramps to rest, so it fired at the end of every
+subpath of every tool, pen included. Requiring the last sub-step to fit
+instead, since it is the largest:
+
+```
+sqrt(vmin² + |Δ(v²)|/k) − vmin ≤ dvMax
+  ⇒ k ≥ |v1² − v0²| / (dvMax² + 2·vmin·dvMax)
+```
+
+A strict generalisation: it reduces to `|Δv|/dvMax` when `vmin ≫ dvMax` (the
+cruise-to-cruise ramps the old form was right for) and to `(v0/dvMax)²` when
+`vmin = 0`. Landed; results and costs in §7.6.
 
 **5.5 Time per sample is missing.** `dt = 2·ds/(v[i] + v[i+1])` is exact under
 constant acceleration, and `plan` holds both terms the moment its sweeps
@@ -210,10 +270,19 @@ that ramp needs. See §7.3 for why the in-place alternative is dead.
 ## 6. What this means for the pipeline's shape
 
 The obvious conclusion — "the linear stage chain is the bottleneck" — is
-mostly wrong. Of the misplaced operations above, only **subdivision** actually
-requires the pipeline to iterate. The rest are re-placements: moving an
-operation to the space where its inputs are exact. Those need different call
-sites, not feedback edges.
+mostly wrong, though not for the reason first given here.
+
+The original claim was that subdivision is the one row requiring iteration.
+That is backwards on both halves. **Subdivision requires none** (§5.4): it is
+a closed form, correct as soon as its input is the delivered speed. What *does*
+require a feedback edge is **the A clamp** (§5.3) — because the quantity it
+must respect, `dist/|da|`, does not exist until after subdivision and rounding,
+so no amount of re-placement can compute it early.
+
+The correction matters because it inverts which operation motivates the loop.
+Everything else on the list is a re-placement: moving an operation to the space
+where its inputs are exact. Those need different call sites, not feedback
+edges.
 
 What the linear design is carrying should not be given up lightly:
 
@@ -235,8 +304,15 @@ and re-run*:
 
 The system is therefore a **descending fixed-point iteration on the velocity
 ceiling field**. Ceilings only fall and are bounded below by zero, so it
-terminates. In practice it should terminate in one extra pass, because the
-perturbations are local (§7.1).
+terminates.
+
+One nuance the A-clamp implementation exposed: the iteration descends *toward*
+a fixed point rather than landing on one. Re-planning slower changes the
+subdivision, which changes `|da|` per sub-segment, which moves the measured cap
+slightly. So the loop is capped (three passes) rather than run to convergence.
+That is sound because every pass is individually safe — it can only lower — so
+stopping early yields a conservatively planned stream, never a wrong one. The
+first pass removes essentially all of the error in practice.
 
 This single frame subsumes three designs previously treated as unrelated: the
 A-clamp fix, duty tier 2, and the re-plan question.
@@ -319,22 +395,106 @@ knife tight :  both-capped 0 | one-capped  40 | neither 0
 adjacent capped pairs: |da| differs by <=1 in 168/168 and 320/350
 ```
 
-**Zero violations occur while A is capped.** Inside the clamped region the
-profile is smooth. Every violation is at an engage or disengage edge — which
-is what proves the clamp value and `constrain`'s ceiling disagree, rather than
-the clamp merely being noisy.
+~~**Zero violations occur while A is capped.**~~ **CORRECTED — this was an
+artefact of the "capped" threshold, and the correction changed the fix.**
 
-The pen has no A-capped packets and its worst violation is 3.09 against 3.0 —
-3% over, matching what step quantisation alone predicts (0.99 mm/s, plus
-interval truncation). Quantisation is a real but minor contributor; it is the
-whole story for the pen and roughly a fifth of it for the knife.
+Re-measured with "capped" meaning *A rate ≥ 0.98 × its ceiling* rather than an
+exact-equality test, and counting all cutting packets rather than fast
+stretches only:
 
-**7.5 Interval truncation is one-signed and negligible.** Cutting packets use
-`Math.trunc` on the interval, so the machine runs each marginally *faster*
-than planned — bounded by `Σmajor / fCpu`, sub-millisecond per 30 s burst.
-`rampChunks` uses `Math.round` and contributes no systematic component. An
-open-loop timing model over a burst is therefore sound, and conservatively
-biased (predicted ≥ actual).
+| fixture | violations | clamp edge | inside clamp | neither |
+|---|---|---|---|---|
+| knife gentle 60/20 | 26 | 16 | 6 | 4 |
+| knife tight 20/12 | 85 | 38 | 44 | 3 |
+| knife tighter 10/8 | 142 | 69 | 69 | 4 |
+| pen gentle | 4 | 0 | 0 | 4 |
+| pen tight | 3 | 0 | 0 | 3 |
+
+So roughly **half the violations are inside the clamp**, not at its edges. That
+is not a smooth region with bad walls; it is a region where the delivered speed
+follows `dist/|da|` — the packet's own quantised curvature — and inherits its
+noise. This is what ruled out the margin fix (§5.3 option A) in favour of the
+feedback loop: a margin computed from κ cannot predict a quantity that does not
+exist until after rounding.
+
+**After the fix** (§5.3), same measurement:
+
+| fixture | before | after | clamp edge | inside clamp |
+|---|---|---|---|---|
+| knife gentle | 26 | 4 | 16 → 0 | 6 → 0 |
+| knife tight | 85 | 3 | 38 → 0 | 44 → 0 |
+| knife tighter | 142 | 4 | 69 → 0 | 69 → 0 |
+
+Every clamp-attributable violation is gone. The knife's residual (4, 3, 4) is
+now **exactly the pen's** (4, 3) — same count, same worst value 6.72 mm/s, same
+index. That identity is the evidence the A-clamp defect is fully closed, and
+that what remains is tool-independent: it is the `subV`/`k` defect of §5.4,
+which §7.6 covers.
+
+**7.5 Timing prediction.** The first version of this section said the
+sample-space clock is *conservatively biased* (predicted ≥ actual) because
+`Math.trunc` makes each packet marginally fast. **That was wrong in the
+direction that matters.** Truncation is real but tiny; the A clamp made packets
+*slower* than planned, pushing actual burst duration *above* predicted — the
+unsafe direction for a duty limit — and it was active on 26–31% of knife
+packets, dominating truncation by orders of magnitude.
+
+Measured as `emitted / planned` over cutting packets:
+
+| fixture | baseline | + A-clamp fix | + both fixes |
+|---|---|---|---|
+| knife gentle | 1.0037 | 1.0000 | 1.0025 |
+| knife tight | 1.0071 | 1.0001 | 1.0013 |
+| knife tighter | 1.0130 | 1.0003 | 1.0010 |
+
+The A-clamp fix removes ~1.3% of over-run; the `k` fix gives back ~0.15%.
+Net, prediction is an order of magnitude better than before either landed, and
+still biased *slow* (predicted < actual) — so a duty-burst model needs a small
+margin, not a large one. It is now sound enough to schedule against, which §5.6
+and duty tier 2 both depend on.
+
+**7.6 The `k` fix: what it costs.** Landed after the A-clamp fix; violations
+are against `dvMax = 3.0`.
+
+| fixture | before | after |
+|---|---|---|
+| knife gentle | 4, worst 6.72 | 2, worst 3.22 |
+| knife tight | 3, worst 6.69 | **0**, worst 2.98 |
+| knife tighter | 4, worst 6.67 | **0**, worst 2.96 |
+
+6.72 against a 3.0 budget is a 2.2× overshoot of the smoothness contract the
+pipeline advertises, landing at the end of every stroke on every tool. The
+residual 3.22 on `gentle` is the 256 sub-segment cap binding, not the formula —
+so `dvMax` is still not *strictly* guaranteed on fast ramps.
+
+Two costs, both real.
+
+*Packet count rises 9–13%.* `dvMax` is now a knob that means what it says, so
+raising it is the lever if the bus feels it. That trade was not available
+before, because the number did not control what it claimed to.
+
+*Plan-vs-emitted timing loses ~0.15% on knife geometry* (§7.5) and up to 0.9%
+on a synthetic all-ramp 10 mm line. The cause is **step rounding, not the
+formula** — `interval()` takes its distance from the rounded `dx`/`dy`, so each
+sub-segment carries its own round-off and shorter ones carry proportionally
+more. Isolated by scaling each quantiser away independently on that line:
+
+```
+                    ratio at dvMax=0.75
+baseline                 0.9906
+fCpu x100                0.9906   clock truncation contributes NOTHING
+stepsPerUnit x100        0.9978   step rounding is the whole effect
+both x100                0.9998
+```
+
+So it is subdivision's tax, which the old formula avoided only by
+under-subdividing. Note this also refines §7.4's earlier remark that pen
+quantisation is "the whole story for the pen": the pen's 3.09 was `k`, not step
+quantisation, and it is now 2.87.
+
+An earlier hypothesis — that the regression was the `vMin` floor being exposed
+by finer subdivision — was **falsified**: the ratio is identical to four decimal
+places for `vMin` from 0.5 down to 0.001.
 
 ---
 
@@ -363,17 +523,37 @@ Independent of everything above, and independent of each other.
    favour of a throw, or document that pure single-axis moves must go through
    `rampChunks`.
 
+4. **Under-subdivision on every ramp to rest.** ~~Live.~~ **FIXED** — see
+   §5.4 for the defect and §7.6 for the numbers. Recorded here because it was
+   found by this work but is independent of duty limits, affected both tools,
+   and had nothing to do with spaces: `k` and `subV` simply disagreed about
+   whether velocity interpolates linearly or in v². Worth keeping as a reminder
+   that two functions ten lines apart can each be right about a different model.
+
 ---
 
 ## 9. Open questions
 
-- **Does one extra pass suffice?** Locality (§7.1) and monotonicity (§6) both
-  support it, but the full loop with multiple interacting constraints has not
-  been measured. This is the load-bearing assumption of §6.
+- **Does one extra pass suffice?** Partly answered. For the A clamp alone, the
+  first pass removes essentially all of the error, but the loop descends toward
+  a fixed point rather than landing on one (§6), so "suffice" now means "leaves
+  a conservative stream", not "converges". The open half is unchanged and still
+  load-bearing: whether that holds with **several duty breaks interacting**,
+  which has not been measured.
 - **Is κ′ actually noisy in practice?** §5.2 is reasoning, not measurement.
-- **Is the A-clamp defect worth fixing?** It is a ~17% velocity step at clamp
-  edges, order 100 times per block, knife only. Whether that is visible in the
-  cut is a shop question, not a code one.
+- ~~**Is the A-clamp defect worth fixing?**~~ Answered by fixing it: the cost
+  was one bounded loop, the goldens moved by ±0.5%, and timing prediction
+  improved tenfold as a side effect (§7.5). The shop question — whether the
+  velocity steps were *visible in the cut* — was never answered and no longer
+  needs to be.
+- **Does the machine care about a 3.0 `dvMax`?** Now the live version of that
+  shop question. The pipeline honours its stated budget as of §7.6, at a 9–13%
+  packet cost. If the bench says 3.0 is over-conservative, raising it is a real
+  lever and refunds most of that cost.
+- **Should `interval()`'s floor throw?** With the §5.3 loop driving it inactive,
+  a floor that still engages means the loop did not converge. That is worth
+  saying out loud rather than absorbing silently, but it needs a tolerance
+  first — the loop is capped, not converged.
 - **The `onDutyBreak` signature cannot express masked dwell.** `findIndex`
   matches `RELEASE | ASSERT` as one condition, so the §10 split layout fires
   the hook twice with no way to tell "cut power now" from "restore power now".
