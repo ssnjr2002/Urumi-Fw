@@ -55,6 +55,28 @@ function subV(v0: number, v1: number, f: number): number {
     return sq > 0 ? Math.sqrt(sq) : 0;
 }
 
+/**
+ * Optional out-parameter: what packet space turned out to allow.
+ *
+ * Discretize is the first stage that knows the integer step deltas, and so the
+ * first that can see where `interval()`'s per-axis rate floor will bind. That
+ * information has nowhere to go — the packets are already emitted — unless the
+ * stage hands it back for another pass. This is that hand-back.
+ *
+ * `vCap[i]` is the largest XY speed at which every sub-segment touching sample
+ * i runs without `interval()` flooring its time; Infinity where no floor binds.
+ * Feed it to `constrain` as `measuredCeilings` and re-plan. See
+ * ConstrainOptions.measuredCeilings for why, and docs/planner_spaces.md §5.3.
+ *
+ * An out-parameter rather than a changed return type on purpose: measuring is
+ * not part of discretizing, every existing caller wants only the packets, and
+ * the report costs nothing when nobody asks for it.
+ */
+export interface DiscretizeReport {
+    /** Filled with one entry per input sample. Infinity = unconstrained. */
+    vCap: number[];
+}
+
 export interface DiscretizeOverrides {
     readonly jogFeed?: number;
     readonly liftHeight?: number;
@@ -77,6 +99,8 @@ export interface DiscretizeOverrides {
  * quality — QualityConfig (dvMax, vMin for subdivision + interval).
  * overrides — explicit per-call overrides for jogFeed/liftHeight/zFeed;
  *             absence falls back to profile, then machine defaults.
+ * report  — optional out-parameter; see DiscretizeReport. Filled but never
+ *           read here: emitting the packets is unaffected by measuring them.
  */
 export function discretize(
     samples: readonly PlannedSample[],
@@ -85,6 +109,7 @@ export function discretize(
     profile: ToolProfile,
     quality: QualityConfig,
     overrides?: DiscretizeOverrides,
+    report?: DiscretizeReport,
 ): MicroSegment[] {
     if (needsOffsetComp(profile)) {
         throw new Error(
@@ -114,6 +139,19 @@ export function discretize(
 
     const zSteps = zStepCount(liftHeight, axes);
     const lift = zSteps > 0;
+
+    // The per-axis step-rate ceilings interval() floors against, in the same
+    // shape it uses them. Read once: they are config, not per-segment.
+    const xRate = axes.x.maxFeed * axes.x.stepsPerUnit;
+    const yRate = axes.y.maxFeed * axes.y.stepsPerUnit;
+    const aRate = axes.a.maxFeed * axes.a.stepsPerUnit;
+    if (report) report.vCap = new Array<number>(samples.length).fill(Infinity);
+    /** Lower the cap on both endpoints of the pair this sub-segment came from. */
+    const noteCap = (i: number, cap: number): void => {
+        if (!report) return;
+        if (cap < report.vCap[i]!) report.vCap[i] = cap;
+        if (cap < report.vCap[i + 1]!) report.vCap[i + 1] = cap;
+    };
 
     const out: MicroSegment[] = [];
     let posX = 0;   // float step accumulators (round at emit)
@@ -219,6 +257,21 @@ export function discretize(
                 const v1 = subV(a.v, b.v, f);
                 const vbar = 0.5 * (v0 + v1);
                 const iv = interval(vbar, axes, quality.vMin, dx, dy, 0, da);
+
+                // What interval() will actually allow. Mirrors its tRate, then
+                // inverts it: the floor binds once dist/v drops below tRate, so
+                // dist/tRate is the fastest this sub-segment can be commanded
+                // and still be executed at the speed it was planned for.
+                if (report) {
+                    let tRate = 0;
+                    if (xRate > 0 && dx !== 0) tRate = Math.max(tRate, Math.abs(dx) / xRate);
+                    if (yRate > 0 && dy !== 0) tRate = Math.max(tRate, Math.abs(dy) / yRate);
+                    if (aRate > 0 && da !== 0) tRate = Math.max(tRate, Math.abs(da) / aRate);
+                    if (tRate > 0) {
+                        const distMm = Math.hypot(dx / xSpu, dy / ySpu);
+                        if (distMm > 1e-9) noteCap(i, distMm / tRate);
+                    }
+                }
                 const flags = segFinal ? MICRO_PATH_END : 0;
                 out.push(microSegment(
                     axes.x.invert ? -dx : dx,
