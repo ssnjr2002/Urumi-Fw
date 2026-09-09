@@ -29,7 +29,7 @@ import { enforceC1 } from "../toolpath/repair.js";
 import { flatten } from "../toolpath/flatten.js";
 import { constrain } from "../toolpath/constrain.js";
 import { plan } from "../toolpath/plan.js";
-import { discretize } from "../toolpath/discretize.js";
+import { discretize, type DiscretizeReport } from "../toolpath/discretize.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 import { scheduleDutyBreaks } from "./dutyBreaks.js";
 
@@ -174,7 +174,18 @@ export function compileBlock(
     });
 
     // Stage 5: constrain — per-sample velocity ceiling
-    const constrained = constrain(samples, {
+    //
+    // Run inside a descending fixed-point loop with 6 and 8, because the A-slew
+    // ceiling constrain applies is computed against the CONTINUOUS curvature κ
+    // while `interval()` enforces it against the QUANTISED |da|/dist. Where they
+    // disagree the packet silently runs slower than planned. Each pass measures
+    // what packet space allowed and hands it back as an extra ceiling; ceilings
+    // only ever fall, so the loop descends and terminates. See
+    // ConstrainOptions.measuredCeilings and docs/planner_spaces.md §5.3.
+    //
+    // Byte-neutral for a non-tangential tool: with aRate = 0 the A floor is off,
+    // the XY floors sit above the planned feed, and pass 1 finds nothing to lower.
+    const constrainOpts = {
         feedMax: pathFeed,
         aMax: xyAccel,
         junctionDeviation: quality.junctionDeviation,
@@ -184,7 +195,8 @@ export function compileBlock(
         // The same floor discretize clamps intervals to — constrain must not
         // plan a speed the machine will refuse to execute (audit C1).
         vMin: quality.vMin,
-    });
+    };
+    const constrained = constrain(samples, constrainOpts);
 
     // Stage 6: plan — look-ahead feedrate, per-axis accel.
     //
@@ -197,16 +209,46 @@ export function compileBlock(
     // motion is emitted by choreograph (preOrient / aMoveTo) against A's own
     // limits — it never rides a cutting segment, so it has no claim on the
     // cutting path's acceleration budget.
-    const planned = plan(constrained, {
+    const planOpts = {
         xAccel: machine.x.maxAccel,
         yAccel: machine.y.maxAccel,
         aAccelDegS2: aAccel,
         aMax: xyAccel,
         pathAccel,
-    });
+    };
+    let planned = plan(constrained, planOpts);
 
     // Stage 8: discretize — Sample[] → MicroSegment[], choreograph at transitions
-    const segments = discretize(planned, machine, axes, profile, quality);
+    const report: DiscretizeReport = { vCap: [] };
+    let segments = discretize(planned, machine, axes, profile, quality, undefined, report);
+
+    // ── the feedback passes ───────────────────────────────────────────────────
+    //
+    // Bounded rather than run to convergence: re-planning slower changes the
+    // subdivision, which changes |da| per sub-segment, which moves the measured
+    // cap slightly — so the sequence descends towards a fixed point rather than
+    // landing on one. The first pass removes essentially all of the error and
+    // each further pass is strictly safe (it can only lower), so a small cap
+    // buys determinism and a bounded compile time. Exceeding it is not an error:
+    // the result is a valid, conservatively-planned stream either way.
+    const MAX_FEEDBACK_PASSES = 3;
+    const held = new Array<number>(samples.length).fill(Infinity);
+    for (let pass = 0; pass < MAX_FEEDBACK_PASSES; pass++) {
+        let lowered = false;
+        for (let i = 0; i < samples.length; i++) {
+            const cap = report.vCap[i] ?? Infinity;
+            if (cap < held[i]!) held[i] = cap;
+            // Only a cap that actually binds the CURRENT plan is progress. A cap
+            // above the planned speed is the floor sitting idle, which is the
+            // state we are driving towards, not evidence to act on.
+            if (held[i]! < planned[i]!.v - 1e-9) lowered = true;
+        }
+        if (!lowered) break;
+        const reC = constrain(samples, { ...constrainOpts, measuredCeilings: held });
+        planned = plan(reC, planOpts);
+        report.vCap = [];
+        segments = discretize(planned, machine, axes, profile, quality, undefined, report);
+    }
 
     // Stage 9: duty breaks — mark enable-line resets for a duty-limited tool.
     // A pure post-pass that ORs flags onto lifts already in the stream, so a

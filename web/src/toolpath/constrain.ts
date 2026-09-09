@@ -124,6 +124,31 @@ export interface ConstrainOptions {
      * wrong across the cusp with it.
      */
     readonly vMin?: number;
+    /**
+     * Per-sample ceilings measured in PACKET space and fed back — indexed like
+     * `samples`, absent/undefined/negative entries ignored.
+     *
+     * The A-slew ceiling above is exact in the continuum: a tangential tool
+     * turning through κ·ds radians over ds mm holds ω = κ·v, so v ≤ ω_max/κ.
+     * What discretize emits is not that. It emits an integer `da` over an
+     * integer (dx, dy), and `interval()` floors the segment time at
+     * |da| / (a.maxFeed · a.stepsPerUnit) — against the QUANTISED curvature
+     * |da|/dist, not against κ. The two agree only up to rounding, and on a
+     * subdivided ramp |da| is small enough that half a step is tens of percent.
+     *
+     * Where they disagree the floor wins silently: the packet runs slower than
+     * planned, its neighbour does not, and the delivered speed steps by more
+     * than dvMax with nothing in sample space aware of it. Measured on a
+     * 10mm/8mm knife snake: 138 dvMax violations, 69 of them between two
+     * packets that were BOTH at the A cap — the delivered speed was tracking
+     * dist/|da| noise, not the plan.
+     *
+     * Feeding the measurement back closes the loop. Once v ≤ dist/tRate the
+     * floor no longer binds, so the delivered speed IS the planned speed and
+     * plan's own accel-continuity carries the smoothness. The pass only ever
+     * lowers ceilings, so the iteration descends and terminates.
+     */
+    readonly measuredCeilings?: readonly number[];
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -184,6 +209,7 @@ export function constrain(
         cornerStopAngleDeg,
         forcedStops,
         vMin = 0,
+        measuredCeilings,
     } = options;
 
     const aRateRad = aRateDegS > 0 ? (aRateDegS * Math.PI) / 180 : 0;
@@ -233,6 +259,12 @@ export function constrain(
                 cap = Math.min(cap, junctionCap(turn, aMax, junctionDeviation, feedMax));
             }
         }
+
+        // The packet-space measurement, if a previous pass made one. Applied
+        // last of the ceilings but before the vMin test, so a measured ceiling
+        // below the execution floor becomes an honest stop like any other.
+        const measured = measuredCeilings?.[i];
+        if (measured !== undefined && measured >= 0 && measured < cap) cap = measured;
 
         // A ceiling under the floor the machine will actually execute is a stop
         // (audit C1). Forcing it to 0 makes plan decelerate into it and
