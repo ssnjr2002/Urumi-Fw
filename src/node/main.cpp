@@ -31,7 +31,7 @@ void setup() {
     sei();
 
     // Blink NODE_ID times — visual address confirmation.
-    uint8_t blinks = (NODE_ID < 6) ? (uint8_t)NODE_ID : 5u;
+    uint8_t blinks = (NODE_ID < 8) ? (uint8_t)NODE_ID : 0;
     for (uint8_t i = 0; i < blinks; i++) {
         digitalWrite(HAL_LED_PIN, HIGH); delay(150);
         digitalWrite(HAL_LED_PIN, LOW);  delay(150);
