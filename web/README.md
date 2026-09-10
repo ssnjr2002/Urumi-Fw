@@ -1,4 +1,4 @@
-# urumi-toolpath
+# urumi-host
 
 A geometry and motion planning engine that transforms **SVG drawings + a machine config** into **binary wire packets** for real-time CNC/plotter control over RS485.
 
@@ -25,7 +25,7 @@ Built for the [Urumi Digital Cutter](https://github.com/ssnjr2002/Urumi-Fw/tree/
 ## Installation
 
 ```sh
-npm install urumi-toolpath
+npm install urumi-host
 ```
 
 Node 18+ or any modern browser. ESM only (`import`, not `require`).
@@ -35,7 +35,7 @@ Node 18+ or any modern browser. ESM only (`import`, not `require`).
 ## Quick Start
 
 ```ts
-import { parseConfig, bakePlan } from "urumi-toolpath";
+import { parseConfig, bakePlan } from "urumi-host";
 
 const cfg = parseConfig(await (await fetch("/config.json")).text());
 if (!cfg.ok) throw new Error(cfg.errors.join("\n"));
@@ -60,7 +60,7 @@ console.log(`${plan.blocks.length} blocks, ${bytes.length} bytes`);
 import {
     parseConfig, bakePlan,
     loadPlan, scheduleMounts, walkSchedule,
-} from "urumi-toolpath";
+} from "urumi-host";
 
 // ── Bake (once, offline) ──────────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ SVG parsing relies on `DOMParser`, which does not exist in Node. Inject one **on
 ```ts
 import { readFileSync, writeFileSync } from "node:fs";
 import { DOMParser } from "@xmldom/xmldom";         // your dependency, not ours
-import { parseConfig, bakePlan, setDOMParser } from "urumi-toolpath";
+import { parseConfig, bakePlan, setDOMParser } from "urumi-host";
 
 setDOMParser(() => new DOMParser());                // call before bakePlan
 
@@ -133,7 +133,7 @@ for (const block of plan.blocks) {
 **Round-tripping the file:**
 
 ```ts
-import { savePlan, loadPlan } from "urumi-toolpath";
+import { savePlan, loadPlan } from "urumi-host";
 
 const bytes = savePlan(plan);     // Plan → Uint8Array
 const plan2 = loadPlan(bytes);    // Uint8Array → Plan  (structurally identical)
@@ -142,7 +142,7 @@ const plan2 = loadPlan(bytes);    // Uint8Array → Plan  (structurally identica
 **Turning segments into wire bytes:**
 
 ```ts
-import { packMicrosegment, writeStream } from "urumi-toolpath";
+import { packMicrosegment, writeStream } from "urumi-host";
 
 const packets = segments.map((seg, i) => packMicrosegment(seg, i & 0xFF));
 const framed  = writeStream(packets);  // [u16 LE len][26-byte packet] × n
@@ -312,7 +312,7 @@ The input SVG does not have to be authored from scratch. A common workflow is to
 For that workflow use `loadSvgLayers` instead of `loadSvgMmLayers`. `loadSvgLayers` runs stage 1 only (parse to `CubicBezier[][]` in the SVG's own coordinate space) and skips stage 2 entirely. If the upstream pipeline already outputs mm coordinates, the result goes straight into `compileBlock`:
 
 ```ts
-import { loadSvgLayers, toolForLayer, compileBlock } from "urumi-toolpath";
+import { loadSvgLayers, toolForLayer, compileBlock } from "urumi-host";
 
 // SVG coordinates are already in mm, Y already flipped upstream
 const layers = loadSvgLayers(svgText);   // Map<layerName, CubicBezier[][]>
@@ -392,7 +392,7 @@ speed (mm/sec)    = speed (steps/sec) / stepsPerUnit
 distance (mm) = dX / stepsPerUnit_X
 ```
 
-**Flag constants** (import from `urumi-toolpath`):
+**Flag constants** (import from `urumi-host`):
 
 | Constant | Value | Meaning |
 |---|---|---|
@@ -552,7 +552,7 @@ Converts the `PlannedSample[]` from stage 6 into integer `MicroSegment` step eve
 
 ## API Reference
 
-Everything below is imported from `urumi-toolpath`. Anything not listed here is internal.
+Everything below is imported from `urumi-host`. Anything not listed here is internal.
 
 ### Config
 
