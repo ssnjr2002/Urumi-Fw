@@ -1,5 +1,5 @@
 {
-  "name": "urumi-toolpath",
+  "name": "urumi-host",
   "version": "0.1.0",
   "description": "SVG + machine config → .plan → schedule → wire packets, for the AVR128DB32 x RP2350 RS485 CNC motion controller. TypeScript, ESM, zero runtime dependencies.",
   "type": "module",

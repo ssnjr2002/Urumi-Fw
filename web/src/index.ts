@@ -13,8 +13,8 @@
  * barrel — import them from their own package subpaths so a Node consumer never
  * pulls browser globals:
  *
- *   import { WebSerialTransport } from "urumi-toolpath/wire/link/backends/webserial";
- *   import { openNodeLink }       from "urumi-toolpath/wire/link/backends/node";
+ *   import { WebSerialTransport } from "urumi-host/wire/link/backends/webserial";
+ *   import { openNodeLink }       from "urumi-host/wire/link/backends/node";
  *
  * Those subpaths are in the `exports` map, and test/packageExports.test.ts
  * keeps them there.
