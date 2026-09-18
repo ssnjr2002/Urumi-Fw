@@ -37,6 +37,9 @@ static uint8_t  zNodeId     = 0;
 static uint8_t  vacNodeId   = 0;
 static uint8_t  savedMap[MOTION_SLOTS];
 static uint8_t  returnState = STATE_IDLE;
+// Which mode the in-flight leg was armed in. Kept because the retract's verdict
+// is taken at the NEXT boundary, by which time the arm-time read is gone.
+static bool     legWasRetract = false;
 static uint16_t legId       = 0;
 static uint32_t legDeadline = 0;
 
@@ -137,17 +140,29 @@ static void probeFail(uint8_t cause) {
 }
 
 // ── probe_map ────────────────────────────────────────────────────────────────
-bool probeBegin(uint8_t zNode, uint8_t vacNode) {
+bool probeBegin(uint8_t vacNode) {
     if (claimed) { Serial.println("err busy"); return true; }
-    if (zNode == vacNode) { Serial.println("err dup"); return true; }
+
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++) savedMap[i] = slotNodeAt(i);
+
+    // Z comes from the committed map, not from the operator. One source of truth
+    // for "which node is Z", and the map is already that source everywhere else.
+    const uint8_t zNode = savedMap[PROBE_Z_SLOT];
+    if (zNode == SLOT_NONE) { Serial.println("err no_z"); return true; }
+
+    // The vacuum must not hold a motion slot. It would be caught anyway -- the
+    // disengage pass below type-checks every mapped node and a vacuum in a
+    // motion slot fails as not_stepper -- but that reports a confusing thing
+    // about the wrong command, and a map that bound a vacuum as an axis is a
+    // problem to fix in the map rather than to work around here.
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
+        if (savedMap[i] == vacNode) { Serial.println("err vac_mapped"); return true; }
 
     // A de-energised Z accepts every leg and cannot turn, so the terminator is
     // never reached, the budget burns out, and the result reads as a broken
     // switch rather than a motor nobody turned on. legCommon refuses a home for
     // this reason; the same reason applies here and the same mask answers it.
     if (!(nodeEnabled & (1u << zNode))) { Serial.println("err not_enabled"); return true; }
-
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++) savedMap[i] = slotNodeAt(i);
     returnState = machineState;        // IDLE or PAUSED — a mid-job tool swap
                                        // must land back in PAUSED, and neither
                                        // exit route can infer where it started
@@ -280,7 +295,14 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
         return true;
     }
 
+    // THE mode decision, and the only place it is made: the read above, which
+    // has already happened. Sitting off the switch means the only useful move is
+    // back onto it -- and `intent` did not decide this, it was checked against
+    // it. Same split, same order, same reasoning as stepper.cpp's homing leg.
+    legWasRetract = open;
+
     ProbeLegReq rq;
+    rq.retract      = open ? 1 : 0;
     rq.zSlot        = PROBE_Z_SLOT;
     rq.vacSlot      = PROBE_VAC_SLOT;
     rq.vacNode      = vacNodeId;
@@ -317,17 +339,30 @@ bool probeExit(const uint8_t* newMap) {
     if (!claimed)    { Serial.println("err not_probing"); return true; }
     if (legInFlight) { Serial.println("err busy");        return true; }
 
-    // Re-read rather than trusting probingReason. The reason is refreshed at
-    // every boundary and nothing moves between legs, so the two agree — but this
-    // is the gate that keeps a tool off the bed, and a gate should read the pin
-    // it is protecting.
+    // The switch is REPORTED, not gated on.
+    //
+    // This used to refuse the exit while the switch was open, on the theory that
+    // it kept a tool off the bed. It did not earn that. Homing's equivalent
+    // refusal has a mechanism behind it -- a latched node REFUSES STREAM STEPS,
+    // so ending a home on the switch breaks the next job -- and this switch has
+    // no such effect: it is an input to the vacuum board and gates no motion
+    // anywhere. So the gate was protecting an aesthetic condition and charging a
+    // state the machine could enter and not leave: `claimed` clears only inside
+    // probeRestore, which both exit routes reach only PAST this point, so a
+    // switch that would not close wedged the machine in STATE_PROBING with no
+    // abort, no timeout, and nothing but a reset to get out.
+    //
+    // The two bed switches are wired in SERIES, which is what turned that from
+    // theoretical into reachable: the line reads open if EITHER is open, so the
+    // OTHER head parked on ITS switch, or debris under it, or one broken cable,
+    // all present as "your tool is on the bed" -- a diagnosis a retract cannot
+    // act on because it was never true.
+    //
+    // A read failure is likewise not fatal here. Refusing to tear down because
+    // the bus is sick is precisely backwards: a sick bus is when you most need
+    // the map back.
     bool open = false;
-    if (!readSwitch(&open)) { Serial.println("err node no_switch"); return true; }
-    if (open) {
-        Serial.println("err not_cleared");
-        lastCause = PROBE_NOT_CLEARED;
-        return true;                    // session stays open: a retract can fix it
-    }
+    const bool known = readSwitch(&open);
 
     probeRestore(newMap ? newMap : savedMap);
 
@@ -336,7 +371,12 @@ bool probeExit(const uint8_t* newMap) {
     // exactly — so the session cannot simply land in IDLE.
     __dmb();
     machineState = (returnState == STATE_PAUSED) ? STATE_PAUSED : STATE_IDLE;
-    Serial.println("ok");
+
+    // `switch=1` on the way out is worth an operator's attention -- the tool may
+    // be resting on the bed, or the far switch may be stuck -- but it is
+    // information, not a refusal. `switch=?` means the read itself failed.
+    if (known) Serial.printf("ok switch=%d\n", open ? 1 : 0);
+    else       Serial.println("ok switch=?");
     return true;
 }
 
@@ -367,6 +407,20 @@ void probeTick(void) {
         // transition IS the leg-done signal the session state took away.
         bool open = false;
         if (!readSwitch(&open)) { probeFail(PROBE_POLL); return; }
+
+        // A retract ran its budget out and reported OK, because completing IS
+        // its terminator. Whether it WORKED is a separate question, answered
+        // here by the pin: a retract that spent its whole distance and is still
+        // off the switch did not clear it. That is PROBE_NOT_CLEARED, and the
+        // usual cause is a backoff shorter than the switch's release hysteresis
+        // -- the same failure homing's backoffMm warns about.
+        //
+        // homing/stepper.cpp merely leaves limitLatched set here and lets the
+        // host notice, which it can afford because a latched node REFUSES stream
+        // steps -- the condition enforces itself. Nothing enforces this one, so
+        // it is failed rather than reported: the next leg would arm against a
+        // switch state the host does not expect and drive Z under it.
+        if (legWasRetract && open) { probeFail(PROBE_NOT_CLEARED); return; }
         return;
     }
 

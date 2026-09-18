@@ -120,7 +120,18 @@ void emitProbeLeg(const ProbeLegReq* rq, ProbeLegOut* out) {
 
     uint32_t emitted = 0;
     uint32_t sincePoll = 0;
-    uint8_t  cause = PROBE_BUDGET;           // the outcome if the budget runs out
+
+    // The budget means opposite things in the two modes, so its outcome does
+    // too. A SEEK's budget is a runaway cap on a move the switch was meant to
+    // cut short, so exhausting it is BUDGET -- never found the surface. A
+    // RETRACT's budget IS the move, so exhausting it is the leg working.
+    //
+    // This is stepper.cpp's homing split, transplanted whole. Note what it does
+    // NOT do: a retract does not poll, does not wait, and does not consult the
+    // switch at all. It starts on an open switch, so a switch-terminated retract
+    // would end after one step -- which is precisely how this went wrong before
+    // the mode existed.
+    uint8_t  cause = rq->retract ? PROBE_OK : PROBE_BUDGET;
     uint32_t t0 = rp2040.getCycleCount();
 
     while (emitted < rq->maxSteps) {
@@ -132,7 +143,11 @@ void emitProbeLeg(const ProbeLegReq* rq, ProbeLegOut* out) {
         }
         t0 += interval;
 
-        const bool poll = (++sincePoll >= rq->pollDiv);
+        // A retract asks the vacuum nothing, so it never sets the poll bit and
+        // never blocks on a reply. It therefore runs at its full configured
+        // interval with no bus ripple at all -- the one leg in the sequence that
+        // is not rate-limited by a round trip.
+        const bool poll = !rq->retract && (++sincePoll >= rq->pollDiv);
 
         rs485.flushRX();                     // nothing stale may look like a reply
         rs485.writeStream(poll ? (uint8_t)(stepByte | vacStep) : stepByte);

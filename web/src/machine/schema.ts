@@ -243,6 +243,125 @@ export interface RotaryHoming {
     readonly datumDeg: number;
 }
 
+
+/**
+ * Tool-height probe recipe for a Z axis. See docs/tool_probe.md.
+ *
+ * Deliberately shaped like LinearHoming, and named like it: `pullInFeed`,
+ * `seekFeed`, `latchFeed`, `rampSteps`, `backoffMm`, `parkMm` mean exactly what
+ * they mean there, on the same four-leg sequence. Where the names differ, the
+ * meaning differs -- that is the point of keeping the rest identical.
+ *
+ * Two fields carry the whole difference from homing, and both trace to one
+ * fact: the terminator is on ANOTHER NODE.
+ *
+ *   - `node` -- homing needs no such field, because a limit switch is on the
+ *     axis's own node and CMD_HOME_LEG is node-framed. This switch is on the
+ *     vacuum, so the sequence spans two nodes and the Pico closes the loop.
+ *   - `switchXMm/YMm` -- homing's switch is wherever the axis already is, so it
+ *     has no coordinate. This one is a fixture somewhere else on the bed.
+ *
+ * And one field is CONSPICUOUSLY ABSENT: there is no `atOrigin`. Homing's switch
+ * DEFINES the datum, so which end it is at decides where the origin lands. A
+ * probe measures against an origin that already exists, so there is no datum
+ * arithmetic here and no end to name -- the clearest single statement of why a
+ * probe is not a home (docs/tool_probe.md §1).
+ *
+ * There is likewise no Z field of any kind. The switch's own trip height never
+ * has to be known, because every use of a probe result is DIFFERENTIAL and
+ * same-head: this tool's contact height against the previous tool's, on the same
+ * switch, shifting the remaining geometry (§6.2). The trip height cancels.
+ *
+ * That "same-head" is enforced by the machine rather than by code. The two bed
+ * switches sit at opposite ends of X and each head can reach only the nearer
+ * one, so a head physically cannot produce a reading against the other's
+ * reference. The comparison that would be meaningless is the one that cannot be
+ * performed.
+ */
+export interface ProbeConfig {
+    /**
+     * The node the SWITCH is on -- the vacuum, not the Z node. Both heads name
+     * the same node, and that is not redundancy: it is one physical board with
+     * two switches wired in series to one input.
+     */
+    readonly node: BusNode;
+
+    /**
+     * Where the TOOL TIP must be to press this head's switch, mm, in TIP frame
+     * (docs/coordinate_frames_and_limits.md §1).
+     *
+     * Tip frame rather than home frame because there is no home-frame answer to
+     * store: the tip is offset from the machine position by the head offset AND
+     * the mounted tool's `toolOffset`, and the latter differs per tool. So a
+     * knife and a pen need different machine positions to touch the same
+     * physical switch. `toolToHome()` converts at move time, per mounted tool,
+     * which is what jog already does (§3.2).
+     */
+    readonly switchXMm: number;
+    readonly switchYMm: number;
+
+    /**
+     * How long to wait for the vacuum's stream-byte reply before calling the
+     * poll failed, microseconds. NOT the bus's RESPONSE_TIMEOUT_MS.
+     *
+     * This costs no overtravel at any feed, which is not obvious: under lockstep
+     * the Pico cannot emit the next step until the last is answered, so it is
+     * STOPPED while it waits. The number only decides how long silence is
+     * tolerated before PROBE_POLL. Size it from measured reply latency
+     * (docs/tool_probe.md §8.1), not from a distance budget.
+     */
+    readonly replyDeadlineUs: number;
+
+    /**
+     * How far below the starting height to search before giving up, mm.
+     * Exceeding it is PROBE_BUDGET -- "never found the surface".
+     *
+     * Unlike homing's `hardTravel`, this is not a physical constant of the
+     * frame. It is a search window below wherever Z happens to be, and it exists
+     * BECAUSE there is no start offset to compute: tool length varies by tool,
+     * and a tool that slipped in its holder violates any standoff assumed in
+     * advance (§5.7.1). Size it to cover the longest tool plus the deepest
+     * plausible slip.
+     */
+    readonly probeTravel: number;
+
+    /** mm/s the seek STARTS at, before the ramp. */
+    readonly pullInFeed: number;
+    /** mm/s the seek ramps up to. Fast; this leg does not measure. */
+    readonly seekFeed: number;
+    /** mm/s for the latch and both retracts. This number sets repeatability. */
+    readonly latchFeed: number;
+    /** Steps taken ramping pullInFeed -> seekFeed. */
+    readonly rampSteps: number;
+
+    /**
+     * Retract between seek and latch, mm. Must EXCEED the switch's release
+     * hysteresis, for the same reason homing's `backoffMm` must: a retract that
+     * never leaves the switch reports a failure on a healthy machine.
+     */
+    readonly backoffMm: number;
+
+    /** Final retract, mm -- where Z is left standing when the probe ends. */
+    readonly parkMm: number;
+
+    /**
+     * How far Z may descend PAST the moment the switch opens, on the seek leg
+     * only, mm.
+     *
+     * The probe learns the switch state only on poll steps and is blind between
+     * them, so this is the poll gap expressed as a distance:
+     * `pollDiv = max(1, floor(seekOvertravelMm x stepsPerUnit))`. At 1280
+     * steps/mm, 50um gives a poll every 64 steps.
+     *
+     * The crash-protection knob, and a genuine trade: too large and a full-speed
+     * seek drives the tool that far into the bed before it can stop; too small
+     * and every step waits on a bus round trip, so the seek crawls. The LATCH
+     * leg does not use it -- it polls every step, one step of overtravel, which
+     * is what makes it the leg whose answer is trusted.
+     */
+    readonly seekOvertravelMm: number;
+}
+
 /**
  * The two recipes, discriminated by `kind`.
  *
@@ -272,6 +391,13 @@ export interface AxisConfig {
      * speed.
      */
     readonly homing?: HomingConfig;
+
+    /**
+     * Absent = this axis cannot be probed. Optional for the same reason `homing`
+     * is: every field is a measurement of THIS machine, so there is no safe
+     * default. Only a head's Z axis is ever expected to carry one.
+     */
+    readonly probe?: ProbeConfig;
 }
 
 export function axisConfig(

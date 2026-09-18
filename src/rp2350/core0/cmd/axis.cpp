@@ -571,18 +571,27 @@ bool cmdHallScan(const char* args) {
     return true;
 }
 
-// ── probe_map <stepper-id> <switch-id> ───────────────────────────────────────
+// ── probe_map <switch-id> ──────────────────────────────────────────────────
+// One argument. Z is read from the committed map's slot 2 (probe.h).──
 // Open a probe session. See core0/probe.h for why this is a session and not a
 // single command, and docs/tool_probe.md §5.3 for why it is a full alternative
 // binding rather than an overlay.
 bool cmdProbeMap(const char* args) {
     if (probeActive()) { Serial.println("err busy"); return true; }
-    if (busGateDenies()) return true;
+    // NOT busGateDenies(). That gate admits STATE_ALARM, correctly, because
+    // `axis_map` is how a machine LEAVES ALARM_CONFIG -- but a probe session is
+    // not an alarm exit. probeBegin writes STATE_PROBING unconditionally, so
+    // entering from ALARM would clear the state while leaving alarmReason set,
+    // and probe_end (which collapses anything not PAUSED into IDLE) would then
+    // land an unconfigured machine in IDLE reading as ready. That is the exact
+    // condition ALARM_CONFIG exists to prevent.
+    if (machineState != STATE_IDLE && machineState != STATE_PAUSED) {
+        Serial.println("err bad_state"); return true;
+    }
     char* end;
-    const uint8_t z   = parseNode(args, &end);
-    const uint8_t vac = parseNode(end,  &end);
-    if (!z || !vac) { Serial.println("err bad_node"); return true; }
-    return probeBegin(z, vac);
+    const uint8_t vac = parseNode(args, &end);
+    if (!vac) { Serial.println("err bad_node"); return true; }
+    return probeBegin(vac);
 }
 
 // ── probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps>

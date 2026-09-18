@@ -306,7 +306,7 @@ Three commands, one session:
 
 | command | §  | effect |
 |---|---|---|
-| `probe_map <stepper-id> <switch-id>` | 5.3 | enter the session, rebind slots |
+| `probe_map <switch-id>` | 5.3 | enter the session, rebind slots |
 | `probe_leg <dir> <ceil_us> …` | 5.7 | run one leg |
 | `probe_end` | 5.5 | exit, restore the saved axis map |
 | `axis_map …` | 5.5 | exit, committing a new map instead |
@@ -401,14 +401,32 @@ nowhere to live:
   command. The host has the same fact from the last leg result (§5.11); the
   operator, mid-bail-out, does not.
 
-### 5.3 `probe_map <stepper-id> <switch-id>`
+### 5.3 `probe_map <switch-id>`
+
+**Deviation — one argument, not two, and a committed axis map is a
+precondition.** This section originally passed both ids. Z is now read from the
+committed map's slot 2, because passing it made `probe_map` a *second binder*
+whose answer could disagree with the very map it saves and later restores — the
+"two commands writing one slot table" failure this section opens by warning
+about, reintroduced in the command that warns about it.
+
+Requiring a committed map is not a new restriction, only an enforced one: §5.5's
+teardown replays `savedMap`, so a session begun without a map had nothing
+coherent to go back to. `probe_map` is refused outside `IDLE`/`PAUSED` for the
+same reason — entering from `ALARM_CONFIG` would clear the state, strand the
+reason, and let `probe_end` land an unconfigured machine in `IDLE`.
+
+The operator consequence is a fixed order: **`axis_map` first, then
+`probe_map`.** Refusals are `err no_z` (slot 2 unbound), `err vac_mapped` (the
+switch node holds a motion slot) and `err bad_state`.
 
 A **full alternative binding**, not an overlay. Two commands writing one slot
 table is the "updated one frame, forgot the other" class that
 [axis.cpp](../src/rp2350/core0/cmd/axis.cpp) says cost a 1000-line file once
 already.
 
-1. Save the committed axis map — the **ids**, not the derived state. Both exits
+1. Save the committed axis map — the **ids**, not the derived state. This is
+   also where Z comes from (slot 2), so the save and the binding cannot disagree. Both exits
    rebuild everything else from ENGAGE acks (§5.5), and the `axis_map` exit does
    not use the saved ids at all; it commits the host's. What the save is really
    for is `probe_end` and the failure teardown, which need *some* map to replay
@@ -593,6 +611,46 @@ On non-poll steps the Pico emits and continues without waiting; on poll steps it
 waits. The resulting ripple is one ~40 µs stretch every 64 steps — irrelevant on
 a leg that is not measuring.
 
+**Deviation — a retract has no terminator, and the table above hid that.** As
+first written this section listed the retracts with a dash under "poll every" and
+said nothing about how they end. They cannot end the way a seek does: a retract
+STARTS on an open switch, so a switch-terminated retract triggers on its first
+poll and stops after one step. The first implementation did exactly that, and the
+sequence died at leg 2 with the tool still on the bed.
+
+The fix is the split
+[stepper.cpp](../src/node/types/stepper/stepper.cpp) already makes for homing,
+transplanted whole:
+
+| | terminator | budget exhausted means | polls? |
+|---|---|---|---|
+| **seek** (switch closed at arm) | the switch opens | `BUDGET` — never found it, **failure** | yes |
+| **retract** (switch open at arm) | the step count | the leg **worked** | **no** |
+
+A retract ignores the switch entirely. It sets no poll bit, waits on no reply,
+and therefore runs at its full configured interval with no bus ripple — the one
+leg in the sequence not rate-limited by a round trip.
+
+**The mode is decided by a real read of the switch at arm time, never by
+`intent`.** `intent` is checked *against* that read, exactly as `CMD_HOME_LEG`'s
+intent bit is checked against `HAL_LIMIT_ASSERTED()` and never allowed to feed
+it. A declaration whose entire value is that it can be contradicted must not be
+the thing that decides — and the cost of getting this backwards is concrete,
+because the budget means opposite things in the two modes: a host that armed a
+retract believing it was a seek would run a full seek budget as a real distance.
+
+**A retract's success is judged afterwards, not by its terminator.** Completing
+is what a retract does; whether it CLEARED is a separate question, answered at
+the next boundary by the same read that refreshes the reason (§5.2). Still open
+after a full retract is `NOT_CLEARED` — usually a `backoffMm` shorter than the
+switch's release hysteresis, the failure homing's own `backoffMm` warns about.
+
+Homing merely leaves `limitLatched` set here and lets the host notice, which it
+can afford because a latched node **refuses stream steps** — the condition
+enforces itself. Nothing enforces this one, so the probe fails the leg instead:
+the next leg would otherwise arm against a switch state the host does not expect,
+and drive Z under it.
+
 There is **no Z start offset in config.** Tool length varies by tool, so no
 standoff height can be computed in advance, and a tool that slipped in its holder
 violates whatever bound was assumed. The approach leg starts from wherever homing
@@ -650,7 +708,7 @@ reports the raw number as `probe=` (§5.12):
 | `POLL` | vacuum stopped answering | the bus; the motion may have been fine | intact |
 | `CHATTER` | retry limit exhausted | switch or cable noise | intact |
 | `ALREADY_OPEN` | switch open at arm time | switch failed, or Z parked on the bed | intact |
-| `NOT_CLEARED` | retract done, switch still open | tool still on the bed, or switch failed open | intact |
+| `NOT_CLEARED` | retract ran its full budget, switch still open | backoffMm under the switch hysteresis, tool still on the bed, or switch failed open | intact |
 | `POS_MISMATCH` | node counter ≠ dead reckoning | steps refused; measurement void | **void** |
 | `DEADLINE` | supervisor timeout | the emitter, not the switch | **void** |
 | `ESTOP` | stopped by an estop mid-leg | — | **void** |
