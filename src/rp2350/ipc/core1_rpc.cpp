@@ -350,7 +350,7 @@ const char* probeCauseText(uint8_t c) {
 bool rpcProbeLegPost(const ProbeLegReq* rq, uint16_t* idOut) {
     RpcRequest req = {};
     req.op     = RPC_OP_PROBE_LEG;   // not a node command — Core 1 acts locally
-    req.argLen = 19;
+    req.argLen = RPC_PROBE_LEG_ARGLEN;
     uint8_t* a = req.args;
     a[0]  = rq->zSlot;
     a[1]  = rq->vacSlot;
@@ -365,6 +365,7 @@ bool rpcProbeLegPost(const ProbeLegReq* rq, uint16_t* idOut) {
     a[15] = (uint8_t)(rq->deadlineUs >> 8); a[16] = (uint8_t)rq->deadlineUs;
     a[17] = rq->confirmPolls;
     a[18] = rq->retryLimit;
+    a[19] = rq->retract;
     return rpcPost(&req, idOut);
 }
 

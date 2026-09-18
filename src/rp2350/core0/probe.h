@@ -32,8 +32,16 @@
 // per poll — a phantom axis tracking Z's entire descent. Verified teardown makes
 // that impossible by construction.
 //
+// Z is NOT an argument. It is read out of the committed axis map's slot 2, so
+// there is exactly one place that says which node is Z. Taking it as an argument
+// made probe_map a second binder whose answer could disagree with the map it
+// then saves and later restores -- the "two commands writing one slot table"
+// failure axis.cpp already paid for once. It also means a probe requires a
+// committed map, which is not a new restriction: probeExit restores savedMap,
+// so a session begun without one had nothing coherent to go back to.
+//
 // Prints exactly one reply line on every path.
-bool probeBegin(uint8_t zNode, uint8_t vacNode);
+bool probeBegin(uint8_t vacNode);
 
 // Arm one leg. Returns once the leg is POSTED, not once it has run; the result
 // arrives through probeTick(). `intent` is the host's prediction of the switch
@@ -46,8 +54,10 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
 // commit instead of the saved ones (the `axis_map`-as-exit route), or nullptr
 // for `probe_end`'s "put it back the way it was".
 //
-// Refuses while the switch is open: exiting there restores the axis map and
-// leaves the tool pressed into the bed. That is PROBE_NOT_CLEARED, not an exit.
+// Refuses ONLY while a leg is in flight, which is a real conflict: Core 1 is
+// emitting into the slot table this is about to rewrite. The switch state is
+// reported on the way out (`ok switch=N`) and never gated on -- see the note in
+// probeExit for why a teardown must not be refusable.
 bool probeExit(const uint8_t* newMap);
 
 // Poll a leg in flight. No-op unless one is. Call from the Core 0 loop.

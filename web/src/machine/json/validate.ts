@@ -329,8 +329,76 @@ const homingCoherent: Rule = ({ machine }) =>
         return issues;
     });
 
+
+/**
+ * The probe block, on homingCoherent's terms: reject only what has a physical
+ * consequence. Every feed is a divisor into a step interval, so a zero is an
+ * infinite interval; every distance is a leg that either happens or does not.
+ */
+const probeCoherent: Rule = ({ machine }) =>
+    namedAxes(machine).flatMap(([path, ax]) => {
+        const pr = ax.probe;
+        if (pr === undefined) return [];
+        const p = `${path}.probe`;
+        const issues: Issue[] = [];
+
+        for (const k of ["pullInFeed", "seekFeed", "latchFeed", "probeTravel",
+                         "replyDeadlineUs"] as const) {
+            if (pr[k] <= 0) issues.push(error(`${p}.${k}: must be > 0`));
+        }
+        if (pr.rampSteps < 0) issues.push(error(`${p}.rampSteps: must be >= 0`));
+
+        if (pr.pullInFeed > pr.seekFeed) {
+            issues.push(error(`${p}.pullInFeed: must be <= seekFeed (${pr.seekFeed})`));
+        }
+        if (ax.maxFeed > 0 && pr.seekFeed > ax.maxFeed) {
+            issues.push(error(`${p}.seekFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
+        }
+        // The latch is the leg that measures, so a latch faster than the seek is
+        // not a small mistake -- it means the two legs were swapped, and the
+        // number reported as a measurement came from the fast one.
+        if (pr.latchFeed > pr.seekFeed) {
+            issues.push(error(
+                `${p}.latchFeed (${pr.latchFeed}) > seekFeed (${pr.seekFeed}) — ` +
+                `the latch is the leg that measures and must be the slow one`,
+            ));
+        }
+
+        // A backoff shorter than the switch's release hysteresis never leaves the
+        // switch, and the latch that follows then starts already tripped. Same
+        // failure homing's backoffMm has; the hysteresis is not knowable here, so
+        // only the degenerate case is caught.
+        if (pr.backoffMm <= 0) issues.push(error(`${p}.backoffMm: must be > 0`));
+
+        // Parking ON the switch leaves the next probe's arm check reading open,
+        // which is refused as ALREADY_OPEN -- a healthy machine that cannot probe
+        // twice in a row.
+        if (pr.parkMm <= 0) issues.push(error(`${p}.parkMm: must be > 0`));
+
+        // Overtravel converts to a poll divisor of `floor(mm x stepsPerUnit)`,
+        // which is 0 below one step -- harmless (it clamps to 1, polling every
+        // step) but it means the seek silently runs at latch cadence, so say so
+        // rather than let someone wonder why the seek is slow.
+        if (pr.seekOvertravelMm < 0) {
+            issues.push(error(`${p}.seekOvertravelMm: must be >= 0`));
+        } else if (pr.seekOvertravelMm * ax.stepsPerUnit < 1) {
+            issues.push(warn(
+                `${p}.seekOvertravelMm (${pr.seekOvertravelMm}) is under one step ` +
+                `at ${ax.stepsPerUnit} steps/mm — the seek will poll every step ` +
+                `and run at latch speed`,
+            ));
+        }
+
+        // The budget is a search window below the start, not a frame dimension,
+        // so it is NOT compared against maxTravel the way hardTravel is. It is
+        // compared against nothing: how far a tool may protrude is not something
+        // config knows.
+        return issues;
+    });
+
 const RULES: readonly Rule[] = [
     homingCoherent,
+    probeCoherent,
     nonNegativeCeilings,
     nonNegativeTargets,
     xyMustBeCapped,

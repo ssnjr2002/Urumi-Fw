@@ -37,6 +37,13 @@
 #define RPC_ARG_MAX      20
 static_assert(RPC_ARG_MAX >= CMD_HOME_LEG_PAYLOAD_LEN,
               "RPC_ARG_MAX must still hold the largest node command payload");
+
+// The probe leg is the largest LOCAL op, and it now fills the buffer exactly.
+// Asserted because argLen is written by hand in rpcProbeLegPost: adding a field
+// there and forgetting this would overflow args[] with no diagnostic at all.
+#define RPC_PROBE_LEG_ARGLEN  20
+static_assert(RPC_ARG_MAX >= RPC_PROBE_LEG_ARGLEN,
+              "RPC_ARG_MAX must hold a ProbeLegReq -- raise it if a field was added");
 #define RPC_PAYLOAD_MAX  32                     // max node reply payload
 
 // What Core 1 should DO with this request. The old encoding had no such field,
@@ -94,6 +101,16 @@ const char* probeCauseText(uint8_t c);
 struct ProbeLegReq {
     uint8_t  zSlot, vacSlot, vacNode;
     uint8_t  dir;             // 0/1, as lin_leg
+    // true = IGNORE the switch and run the budget out; false = stop when it
+    // opens. Exactly stepper.cpp's homing split, and the budget means opposite
+    // things in the two modes: a seek's is a runaway cap for a move the switch
+    // was meant to cut short, a retract's IS the move.
+    //
+    // Decided by Core 0 from ONE real read of the switch at arm time, never from
+    // the host's `intent` -- which is checked against that read, not used to
+    // make it (§5.7). A declaration whose only job is to be contradicted must
+    // not be the thing that decides.
+    uint8_t  retract;
     uint16_t startUs;         // first step interval
     uint16_t ceilUs;          // interval floor == the feed CEILING (§2.3)
     uint16_t rampSteps;       // 0 = no ramp

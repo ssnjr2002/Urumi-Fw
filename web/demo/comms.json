@@ -80,13 +80,13 @@
         "rotary": false,
         "homing": {
           "kind": "linear",
-          "hardTravel": 25,
+          "hardTravel": 40,
           "atOrigin": true,
           "pullInFeed": 2.5,
-          "seekFeed": 10,
+          "seekFeed": 6,
           "latchFeed": 0.78,
           "rampSteps": 400,
-          "backoffMm": 3,
+          "backoffMm": 4,
           "parkMm": 4
         }
       },
@@ -131,13 +131,13 @@
         "rotary": false,
         "homing": {
           "kind": "linear",
-          "hardTravel": 25,
+          "hardTravel": 40,
           "atOrigin": true,
           "pullInFeed": 2.5,
-          "seekFeed": 10,
+          "seekFeed": 6,
           "latchFeed": 0.78,
           "rampSteps": 400,
-          "backoffMm": 3,
+          "backoffMm": 4,
           "parkMm": 4
         }
       },

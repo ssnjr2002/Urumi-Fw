@@ -209,6 +209,7 @@ bool rpcServerPoll(void) {
             rq.deadlineUs = (uint16_t)((a[15] << 8) | a[16]);
             rq.confirmPolls = a[17];
             rq.retryLimit   = a[18];
+            rq.retract      = a[19];
 
             ProbeLegOut res;
             emitProbeLeg(&rq, &res);

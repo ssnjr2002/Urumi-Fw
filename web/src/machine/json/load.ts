@@ -51,6 +51,7 @@ import {
     type BusNode,
     type AxisConfig,
     type HomingConfig,
+    type ProbeConfig,
     type OpTarget,
     type MachineTarget,
     type ToolHead,
@@ -85,6 +86,22 @@ interface JsonAxis {
     readonly invert?: boolean;
     readonly rotary?: boolean;
     readonly homing?: JsonHoming;
+    readonly probe?: JsonProbe;
+}
+
+interface JsonProbe {
+    readonly node?: JsonNode;
+    readonly switchXMm?: number;
+    readonly switchYMm?: number;
+    readonly replyDeadlineUs?: number;
+    readonly probeTravel?: number;
+    readonly pullInFeed?: number;
+    readonly seekFeed?: number;
+    readonly latchFeed?: number;
+    readonly rampSteps?: number;
+    readonly backoffMm?: number;
+    readonly parkMm?: number;
+    readonly seekOvertravelMm?: number;
 }
 
 interface JsonHoming {
@@ -406,6 +423,7 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         present: ja.node.present ?? true,
     });
     const homing = buildHoming(ja.homing, errors, path);
+    const probe = buildProbe(ja.probe, errors, path);
     return axisConfig(node, ja.stepsPerUnit, {
         maxFeed: ja.maxFeed ?? 0,
         maxAccel: ja.maxAccel ?? 0,
@@ -416,7 +434,64 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         // rather than an explicit `undefined`. `"homing" in axis` then means
         // what it says, and the optional field stays honest under exactOptional.
         ...(homing !== undefined ? { homing } : {}),
+        ...(probe !== undefined ? { probe } : {}),
     });
+}
+
+/**
+ * A probe block is all-or-nothing, on buildHoming's terms and for its reason:
+ * every number is a measurement of this machine, and a filled-in guess would be
+ * acted on by driving a tool at the bed. A block missing a field is an ERROR.
+ *
+ * `node` is the VACUUM's id and is required even though both heads name the same
+ * one. Defaulting it would mean a config that probes the wrong node whenever the
+ * bus is renumbered, and the failure looks like a dead switch.
+ */
+function buildProbe(
+    jp: JsonProbe | undefined,
+    errors: string[],
+    path: string,
+): ProbeConfig | undefined {
+    if (jp === undefined) return undefined;
+    const p = `${path}.probe`;
+    if (typeof jp !== "object" || jp === null) {
+        errors.push(`${p}: must be an object`);
+        return undefined;
+    }
+    if (typeof jp.node !== "object" || jp.node === null ||
+        typeof jp.node.id !== "number") {
+        errors.push(`${p}.node: required — the bus id of the node the SWITCH is on`);
+        return undefined;
+    }
+    const num = (k: keyof Omit<JsonProbe, "node">): number => {
+        const v = jp[k];
+        if (typeof v !== "number" || !Number.isFinite(v)) {
+            errors.push(`${p}.${k}: required (number)`);
+            return 0;
+        }
+        return v;
+    };
+    return {
+        node: busNode(jp.node.id, {
+            // The switch lives on the vacuum. Named rather than defaulted to
+            // STEPPER, because probe_map type-checks this out of the ENGAGE ack
+            // and a config that said "stepper" would fail there with a message
+            // about the wrong thing.
+            type: (jp.node.type ?? NodeType.VACUUM) as NodeType,
+            present: jp.node.present ?? true,
+        }),
+        switchXMm: num("switchXMm"),
+        switchYMm: num("switchYMm"),
+        replyDeadlineUs: num("replyDeadlineUs"),
+        probeTravel: num("probeTravel"),
+        pullInFeed: num("pullInFeed"),
+        seekFeed: num("seekFeed"),
+        latchFeed: num("latchFeed"),
+        rampSteps: num("rampSteps"),
+        backoffMm: num("backoffMm"),
+        parkMm: num("parkMm"),
+        seekOvertravelMm: num("seekOvertravelMm"),
+    };
 }
 
 /**
