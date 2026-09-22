@@ -22,13 +22,20 @@ consumer, the axis map.
   decodes and uses. The host (`validate.ts`) validates everything. A shared
   fixture set (good and bad configs) runs through both.
 * **`ALARM_CONFIG` means "no valid config"**, as `shared_state.h:142`
-  originally reserved it. It stops being the unmapped-axis boot gate. No new
-  alarm reason: once the map is built from config, a valid config with an
-  unmapped machine is unreachable.
-* **First consumer: the axis map.** The Pico builds the `defaultHead` map from
-  config at boot and after each accepted `CFG_SET`, matching
+  originally reserved it. It stops being the unmapped-axis boot gate.
+* **A failed map is `ALARM_NODE_FAULT`** (`shared_state.h:145`, reserved
+  until now). No new alarm reason. The exit rule checks state, not history:
+  leaving `ALARM_NODE_FAULT` (by `unalarm` or a successful `axis_map`) is
+  refused while the map is incomplete. Complete means it equals the config's
+  map for some head; a slot whose node the config marks absent is correctly
+  empty.
+* **First consumer: the axis map, driven by a Pico controller layer on top of
+  the control plane.** At boot and after each accepted `CFG_SET`, the
+  controller builds the `defaultHead` map from config, matching
   `slotMapFor(machine, machine.defaultHead)` in `web/src/machine/slots.ts:82`
-  (X, Y, then the head's Z/A; an absent node binds as null). A host
+  (X, Y, then the head's Z/A; an absent node binds as null), and calls
+  `axisMapApply` (`src/rp2350/core0/cmd/axis.cpp:184`), the same path as a
+  host `axis_map`, so node engage and slot state adoption are reused. A host
   `axis_map` remains the head-switch command.
 
 ## Branch 1: `refactor/config-littlefs`
@@ -73,15 +80,21 @@ consumer, the axis map.
   * `src/rp2350/core0/data_plane.cpp`: decode and validate the staged blob
     before commit; new NACK reason `CFG_NACK_SCHEMA` on failure. Accept
     `CFG_SET` only in IDLE or ALARM.
-  * `src/rp2350/core0/core0.cpp:108`: at boot, valid config → build the
-    `defaultHead` map and go IDLE; missing or invalid → `ALARM_CONFIG`.
+  * New `src/rp2350/controller/`: builds the `defaultHead` map from
+    `MachineCfg` and calls `axisMapApply`; a failure raises
+    `ALARM_NODE_FAULT`.
+  * `src/rp2350/core0/core0.cpp:108`: at boot, missing or invalid config →
+    `ALARM_CONFIG`; valid → run the controller's boot map.
   * `src/rp2350/core0/cmd/axis.cpp`: `axis_map` no longer clears
     `ALARM_CONFIG` (`:259`, `:350`) and is refused in it; rejects nodes not in
-    the config and maps that bind nothing (replaces the re-alarm at `:240-256`).
-    Rewrite the comments at `:44`, `:134`, `:175`, `:582`.
-  * `src/rp2350/core0/cmd/lifecycle.cpp:75`, `src/rp2350/core0/position.h:48`,
-    `src/rp2350/ipc/shared_state.h:142`: comments for the new meaning. The
-    `unalarm`/`setorigin` guards stay.
+    the config. The re-alarm at `:240-256` becomes: an incomplete map leaves or
+    puts the machine in `ALARM_NODE_FAULT`; a complete one clears it. Rewrite
+    the comments at `:44`, `:134`, `:175`, `:582`.
+  * `src/rp2350/core0/cmd/lifecycle.cpp:75`: `unalarm` refuses
+    `ALARM_CONFIG` (as now) and refuses `ALARM_NODE_FAULT` while the map is
+    incomplete. Same check on `setorigin`'s ALARM→IDLE path.
+  * `src/rp2350/core0/position.h:48`, `src/rp2350/ipc/shared_state.h:142-145`:
+    comments for the new meanings.
   * `src/rp2350/core0/usb_protocol.h`: `CFG_NACK_SCHEMA`.
   * `status cfg`: report decoded / schema version / reject reason.
 * Web:
@@ -89,6 +102,8 @@ consumer, the axis map.
   * `web/src/wire/format/cfg.ts` + a sender in `web/src/wire/link/`: encode the
     resolved config with `v`, push via `CFG_SET`, pull via `CFG_GET`.
     `CFG_NACK_SCHEMA` added to the NACK namespace.
+  * `web/src/wire/format/status.ts:49`: `ALARM_NODE_FAULT` and
+    `ALARM_CONFIG` descriptions for their new meanings.
   * `web/src/controller/controller.ts:396-424`: connect no longer owes an
     `axis_map`; `commit()` is for head switches. Update the doc comments that
     say the Pico sits in `ALARM_CONFIG` until a map commits, including
@@ -104,7 +119,9 @@ consumer, the axis map.
 * Checks: `pio run -e pico`, `pio test -e native`, `pnpm typecheck` and
   `pnpm test` in `web/`. Human: boot with no config → ALARM_CONFIG; push a
   config → IDLE and mapped without the host sending `axis_map`; push a bad
-  config → NACK, old config and state kept; head switch still works.
+  config → NACK, old config and state kept; head switch still works; boot with
+  a node unplugged → `ALARM_NODE_FAULT`, `unalarm` refused, plug it in and
+  `axis_map` → IDLE.
 
 **Status:** not started
 
@@ -112,8 +129,5 @@ consumer, the axis map.
 
 ## Open questions
 
-* Whether the boot-time map should also send the node engage commands itself
-  (as a host `axis_map` does today), and what happens if a node does not
-  answer at boot.
 * Which controller-layer piece moves next once the config is readable (homing
   and probe recipes are the obvious candidates).
