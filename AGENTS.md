@@ -133,3 +133,20 @@ Tested the happy path and it works.
 **Rule**: **If uncertain, ASK before committing.**
 
 ---
+
+## Agent Tooling on Windows
+
+* Edit files with the Edit/Write tools. Never rewrite a file through
+  PowerShell `Get-Content`/`Set-Content` or `>`: Windows PowerShell 5.1 reads
+  UTF-8 as the ANSI codepage and writes a BOM, which corrupts non-ASCII text
+  (`platformio.ini` box-drawing characters, em dashes in comments).
+* If a script must write a file, use .NET with explicit UTF-8 without BOM:
+  `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))`
+* For commit messages with more than one line, write the message to a file
+  that way and pass it with `git commit -F <file>`; piping text into git from
+  PowerShell adds a BOM to the message.
+* Check `git diff --stat` after any scripted edit. A line count far larger
+  than the edit means the encoding was damaged: restore the file with
+  `git checkout -- <file>` and redo the edit.
+
+---
