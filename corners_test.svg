@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120">
+  <!-- Square: four 90-degree corners -->
+  <path d="M 30,30 L 70,30 L 70,70 L 30,70 Z"/>
+  <!-- Triangle: three sharper corners (apex ~37 deg) -->
+  <path d="M 110,75 L 170,75 L 140,25 Z"/>
+</svg>

@@ -1,0 +1,214 @@
+Folder PATH listing
+Volume serial number is 000000C0 2C52:CC84
+C:.
+|   .gitignore
+|   CLAUDE.md -- stale ahh claude file
+|   corners.bin -- .bin files are probably useless now
+|   corners_sample.bin
+|   corners_test.svg
+|   corners_test_a2000.bin
+|   corners_test_a800.bin
+|   corners_test_sample.bin
+|   corners_test_tile.bin
+|   corners_tile.bin
+|   fish.bin
+|   fish.plan
+|   fish.svg
+|   fish_a.bin
+|   fish_gentle.bin
+|   fish_knife.bin
+|   fish_lift.bin
+|   fish_norect.svg
+|   fish_norect_sample.bin
+|   fish_norect_tile.bin
+|   fish_pen.bin
+|   fish_result.svg
+|   fish_simplified.svg
+|   fish_slowjog.bin
+|   job.bin
+|   knife.bin
+|   platformio.ini -- all important platformio config file
+|   test.svg
+|   test_circle.bin
+|   test_circle.svg
+|   test_fish.bin
+|   test_fish.svg
+|   test_fish_a2000.bin
+|   test_fish_a800.bin
+|   test_fish_layered.plan
+|   test_fish_layered.svg
+|   test_fish_sample.bin
+|   test_fish_tile.bin
+|   TEST_PROCEDURE.md -- ancient doc for testing early host drive
+|   test_rect.bin
+|   test_snake.svg
+|   test_star.svg
+|   test_triangle.svg
+|   tmc2660_drvstatus.md
+|   tree.txt
+|   _inspect.py -- .bin inspector??
+|   
++---docs
+|       config_management_discussion.md -- the discussion i had with claude about the config, verbatim. 
+|       DEFERRED.md -- all the shit that is deffered, contains stuff about pipeline that is in conflict with multi_tool_orchestration_strategy
+|       multi_tool_orchestration_strategy.md -- plan to isolate pipeline and host properly with dual production in mind
+|       online_ui_arch.drawio -- seed for the online ui arch and assisted in creating ui_architecture
+|       PLAN_config_management.md -- Plan that was cooked up from the discussion during config_management_discussion
+|       PLAN_microseg_host_drive.md -- dual production plan
+|       PLAN_per_axis.md -- really old plan to convert the old pipeline from scalar to non scalar?
+|       PLAN_phase1_host_impl.md -- the so called phase 1 & 2 which really follows in lieu of the dual production plans which didnt consider state and config heavily but now state and config are here we have to rework the plans as phase 1 and 2, basically fully host driven and phase 2 split drive with support for full host drive
+|       PLAN_pipeline_redesign.md -- old plan to redesign the pipeline which is completed i think
+|       PLAN_svg_tile_motion.md -- the plan that started it all
+|       state_config_integration_premortem.md -- the discussion that led to the realisation that we need to implement things in two phases
+|       state_redesign.md -- ideas for the reworked pico state machine
+|       ui_architecture.md -- new host ui arch
+|       wire_protocol.md -- comms spec for host to pico i think 
+|       
++---host
+|   |   .python-version
+|   |   cli.py -- idk what to do with this
+|   |   gui.py -- old monolithic gui, kept just for reference, will be phased out 
+|   |   job_runner.py -- streams the multi tool .plan to support tool swaps with pause and resume?
+|   |   plan_io.py -- .plan loader and packer
+|   |   POSTMORTEM.md -- ancient premortem, probably useless now
+|   |   preflight.py -- host side preflight checks 
+|   |   pyproject.toml
+|   |   README.md -- stale now, remove it
+|   |   run.ps1 -- stale, remove it
+|   |   sim_config.py -- config file for the fw sim backend, should be placed near the sim but i have to figure out where the sim is
+|   |   uv.lock
+|   |   __init__.py
+|   |   
+|   +---diagnostics
+|   |   |   conform.py -- claude wrote this when i told it to test phase1, idk what to do with this
+|   |   |   sim_duplicates.py -- simulates what happens when go back n is used without duplication protection
+|   |   |   test_comms.py -- tests duh
+|   |   |   test_job_runner.py
+|   |   |   test_planner.py
+|   |   |   test_protocol.py
+|   |   |   __init__.py
+|   |   |   
+|   +---production
+|   |   |   bake.py -- current entry point for creating a .plan coupling our single tool pipeline with rudimentary svg layers -> tool mapped .plan
+|   |   |   planner.py -- bake calls this to map 
+|   |   |   svg_to_packets.py -- old entry point which can create a single tool .bin file
+|   |   |   validate_plan.py -- .plan validator?? 
+|   |   |   verify_packets.py -- .bin validator??
+|   |   |   __init__.py
+|   |   |   
+|   +---protocol
+|   |   |   commands.py -- commands that host can send to pico??
+|   |   |   link.py -- oh this is where serial and sim back ends live! "owns the Pico USB link and the two-plane framing"
+|   |   |   packets.py -- packet generator, the doc strings are stale for pipeline
+|   |   |   state.py -- pico state tracking by the host?
+|   |   |   stream.py -- calls it self sender.py in the doc string lmao, streams the packets. ig it satisfies the binary side of usb pipeline. then there is the ascii side.
+|   |   |   __init__.py
+|   |   |   
+|   +---ui -- the new mvp ui i cooked up, 
+|   |   |   app_state.py
+|   |   |   axis_nodes_view.py
+|   |   |   bus_nodes_view.py
+|   |   |   config_view.py
+|   |   |   draggable_container.py
+|   |   |   job_execution_view.py
+|   |   |   main.py
+|   |   |   master_view.py
+|   |   |   offline_session.py
+|   |   |   offline_tab.py
+|   |   |   online_session.py
+|   |   |   online_tab.py
+|   |   |   plan_view.py
+|   |   |   svg_view.py
+|   |   |   tooltip.py
+|   |   |   
++---include
+|       common.h
+|       README
+|       
++---lib
+|       README
+|       
++---pipeline
+|   |   POSTMORTEM.md
+|   |   README.md
+|   |   
+|   +---data
+|   |   |   coord_cm_units.svg
+|   |   |   coord_mm_units.svg
+|   |   |   coord_nonsquare.svg
+|   |   |   coord_nonzero_origin.svg
+|   |   |   coord_no_size.svg
+|   |   |   coord_px_units.svg
+|   |   |   coord_yfliip_verify.svg
+|   |   |   mock_curves.py
+|   |   |   mock_stage3.py
+|   |   |   test.svg
+|   |   |   test_circle.svg
+|   |   |   test_ellipse.svg
+|   |   |   test_layers.svg
+|   |   |   test_line.svg
+|   |   |   test_polygon.svg
+|   |   |   test_rect.svg
+|   |   |   test_saturate.svg
+|   |   |   test_snake.svg
+|   |   |   test_star.svg
+|   |   |   test_triangle.svg
+|   |   |   
+|   \---stages
+|       |   bezier.py
+|       |   config.py
+|       |   constrain.py
+|       |   discretize.py
+|       |   flatten.py
+|       |   microsegment.py
+|       |   plan_lookahead.py
+|       |   sample.py
+|       |   stage1.py
+|       |   stage2.py
+|       |   stage3.py
+|       |   test_constrain.py
+|       |   test_discretize.py
+|       |   test_flatten.py
+|       |   test_layers.py
+|       |   test_plan_lookahead.py
+|       |   test_stage1.py
+|       |   test_stage2.py
+|       |   test_stage3.py
+|       |   
++---src
+|   +---node
+|   |   |   isr.cpp
+|   |   |   main.cpp
+|   |   |   protocol.h
+|   |   |   
+|   |   +---attiny3224
+|   |   |       config.h
+|   |   |       
+|   |   \---avr128db32
+|   |           config.h
+|   |           drivers.cpp
+|   |           
+|   \---rp2350
+|           core0.cpp
+|           core1.cpp
+|           main.cpp
+|           RS485Bus.cpp
+|           RS485Bus.h
+|           shared.h
+|           uart_9bit.pio
+|           uart_9bit.pio.h
+|           
++---test
+|       README
+|       
+\---Urumi_svg_tile -- attempt to one shot PLAN_svg_tile_motion, too ambitious so it was stopped, files remain there just for the heck of it
+    +---include
+    |       common.h
+    |       
+    \---pico
+            core0.cpp
+            main.cpp
+            planner.cpp
+            planner.h
+            shared.h
+            
