@@ -87,7 +87,6 @@
       "z": {
         "feed": 10
       },
-      "liftHeight": 2.0,
       "toolOffset": {
         "xOffset": 0,
         "yOffset": 0
@@ -105,7 +104,6 @@
       "z": {
         "feed": 10
       },
-      "liftHeight": 0,
       "toolOffset": {
         "xOffset": 0,
         "yOffset": 0
@@ -123,7 +121,6 @@
       "z": {
         "feed": 10
       },
-      "liftHeight": 0,
       "toolOffset": {
         "xOffset": 0,
         "yOffset": 0
@@ -141,7 +138,6 @@
       "z": {
         "feed": 10
       },
-      "liftHeight": 0,
       "toolOffset": {
         "xOffset": 0,
         "yOffset": 0

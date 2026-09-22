@@ -36,6 +36,8 @@ export const DEFAULTS = {
         z: { feed: 20 },
         /** Standalone-A slew (reposition). Empty ⇒ falls to the A axis ceiling. */
         slew: {},
+        /** Margin above the material top that counts as clear, mm. */
+        clearanceMm: 2,
         defaultHead: 0,
         peripherals: [],
     },
@@ -71,7 +73,7 @@ export const DEFAULTS = {
         unwind: false,
         cornerAngleDeg: 20,
         minRadiusMm: 0,
-        liftHeight: 0,
+        plunge: false,
         requiredPeripheralTypes: [],
         toolOffset: { xOffset: 0, yOffset: 0 },
     },

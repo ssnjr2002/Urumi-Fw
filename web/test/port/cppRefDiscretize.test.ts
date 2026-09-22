@@ -225,7 +225,7 @@ it("generates the C++ discretize reference", (ctx) => {
                    [profile.cornerAngleDeg, profile.offsetMm].map(hex).join(" "));
         lines.push("trav " + [qual.dvMax, qual.vMin,
                               overrides?.jogFeed ?? targets.rapid.feed,
-                              overrides?.liftHeight ?? profile.liftHeight,
+                              overrides?.liftHeight ?? 0,
                               overrides?.zFeed ?? (profile.z?.feed ?? targets.z.feed),
                               overrides?.zAccel ??
                                   (profile.z?.accel ?? targets.z.accel ?? ax.z.maxAccel)]

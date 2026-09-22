@@ -126,7 +126,8 @@ export function rampChunks(
 
 /**
  * Emit a ramped Z move (trapezoidal, via the same `rampChunks` generator A
- * uses). `dz` is in STEPS (signed); invert is applied to the emitted values.
+ * uses). `dz` is in STEPS (signed, positive toward the bed); invert is applied
+ * to the emitted values.
  * Returns [] for dz = 0.
  *
  * This closes audit H3. Z used to be a single constant-velocity segment — it
@@ -252,9 +253,9 @@ export function pivot(
     slew?: OpTarget,
 ): MicroSegment[] {
     const out: MicroSegment[] = [];
-    if (lift) out.push(...zMove(+zSteps, axes, zFeed, zAccel));
-    out.push(...aMove(daTrue, axes, slew));
     if (lift) out.push(...zMove(-zSteps, axes, zFeed, zAccel));
+    out.push(...aMove(daTrue, axes, slew));
+    if (lift) out.push(...zMove(+zSteps, axes, zFeed, zAccel));
     return out;
 }
 

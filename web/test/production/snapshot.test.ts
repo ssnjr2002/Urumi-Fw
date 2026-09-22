@@ -42,7 +42,9 @@ const UPDATE = process.env.UPDATE_GOLDEN === "1";
 /** Bake an SVG through the living production stage chain → framed stream .bin. */
 function bakeStreamBin(svgText: string): Uint8Array {
     const { subpaths } = loadSvgMmSubpaths(svgText);
-    const { segments } = compileBlock(subpaths, defaultConfig().machine, qualityConfig(), KNIFE, 0);
+    // No clearance and no material: lift 0, so the golden pins XY/A only.
+    const machine = { ...defaultConfig().machine, clearanceMm: 0 };
+    const { segments } = compileBlock(subpaths, machine, qualityConfig(), KNIFE, 0, 0);
     return writeStream([...serialiseMicrosegments(segments)]);
 }
 

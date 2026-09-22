@@ -106,6 +106,12 @@ export class SimTransport implements Transport {
     nodeHomed = new Set<number>();
 
     /**
+     * Stored probe contact height per bus id (`setprobe`). Reported only while
+     * the node is also in `nodeHomed`, which models every datum loss clearing it.
+     */
+    nodeProbe = new Map<number, number>();
+
+    /**
      * Bus ids standing on their limit switch, and the per-slot view of it.
      * Node-framed for the same reason the datum is: a switch belongs to a
      * motor, not to a stream slot (core0/position.cpp).
@@ -595,8 +601,32 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                     `alarm=${S.alarm} running=${S.running} ` +
                     // Last, after every field an older host parses. Only the
                     // text plane carries it — STATUS_RSP has no room.
-                    `latched=0x${S.axesLatched.toString(16).padStart(2, "0")}`
+                    `latched=0x${S.axesLatched.toString(16).padStart(2, "0")}` +
+                    S._probedField()
                 );
+            case "setprobe": {
+                if (S.state !== MachineState.IDLE && S.state !== MachineState.PAUSED) {
+                    return "err bad_state";
+                }
+                const z = parseInt(args[0] ?? "", 10);
+                if (!Number.isFinite(z)) return "err usage";
+                const n = S.slotNode[2];
+                if (n === null || n === undefined) return "err unbound";
+                if (!S.nodeHomed.has(n)) return "err not_homed";
+                S.nodeProbe.set(n, z);
+                return `ok probe node=${n} z=${z}`;
+            }
+            case "unprobe": {
+                let n: number | null | undefined = S.slotNode[2];
+                if (args[0] !== undefined) {
+                    n = parseInt(args[0], 10);
+                    if (!(n >= 1 && n <= BUS_ADDR_MAX)) return "err bad_node";
+                } else if (n === null || n === undefined) {
+                    return "err unbound";
+                }
+                S.nodeProbe.delete(n);
+                return `ok unprobe node=${n}`;
+            }
             case "getpos":
                 // Trailing validity mask, as the firmware does — the counts are
                 // always plain numbers, never a sentinel.
@@ -682,6 +712,7 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                     const n = S.slotNode[i];
                     if (n === null || n === undefined) continue;
                     S.nodeHomed.add(n);
+                    S.nodeProbe.delete(n);
                     S.pos[i] = 0;
                 }
                 S._rederiveHomed();
@@ -841,6 +872,15 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             if (n !== null && n !== undefined && this.nodeHomed.has(n)) m |= 1 << s;
         }
         this.axesHomed = m;
+    }
+
+    /** getstate's ` probed=<0|1>[ pz=<z>]` for the Z in slot 2. */
+    _probedField(): string {
+        const n = this.slotNode[2];
+        const z = n !== null && n !== undefined && this.nodeHomed.has(n)
+            ? this.nodeProbe.get(n)
+            : undefined;
+        return z === undefined ? " probed=0" : ` probed=1 pz=${z}`;
     }
 
     /** Which stream slot a bus id is ENGAGE-bound to, or null (nodeSlot()). */

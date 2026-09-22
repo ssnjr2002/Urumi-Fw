@@ -267,16 +267,8 @@ export interface RotaryHoming {
  * arithmetic here and no end to name -- the clearest single statement of why a
  * probe is not a home (docs/tool_probe.md §1).
  *
- * There is likewise no Z field of any kind. The switch's own trip height never
- * has to be known, because every use of a probe result is DIFFERENTIAL and
- * same-head: this tool's contact height against the previous tool's, on the same
- * switch, shifting the remaining geometry (§6.2). The trip height cancels.
- *
- * That "same-head" is enforced by the machine rather than by code. The two bed
- * switches sit at opposite ends of X and each head can reach only the nearer
- * one, so a head physically cannot produce a reading against the other's
- * reference. The comparison that would be meaningless is the one that cannot be
- * performed.
+ * The one Z field is `tripMm`: the contact height is taken as the mat, less the
+ * switch's trip offset (docs/tool_probe_planner_integration.md §1).
  */
 export interface ProbeConfig {
     /**
@@ -360,6 +352,13 @@ export interface ProbeConfig {
      * is what makes it the leg whose answer is trusted.
      */
     readonly seekOvertravelMm: number;
+
+    /**
+     * Height of the switch's trip point above the mat, mm: the mat is the
+     * contact height lowered by this. Positive when the switch trips above the
+     * mat surface, negative when it sits below it. 0 = no correction.
+     */
+    readonly tripMm: number;
 }
 
 /**
@@ -393,8 +392,9 @@ export interface AxisConfig {
     readonly homing?: HomingConfig;
 
     /**
-     * Absent = this axis cannot be probed. Optional for the same reason `homing`
-     * is: every field is a measurement of THIS machine, so there is no safe
+     * Absent = no bed switch. A head's Z then takes its height from a manual
+     * touch-off on the mat. Optional for the same reason `homing` is:
+     * every field is a measurement of THIS machine, so there is no safe
      * default. Only a head's Z axis is ever expected to carry one.
      */
     readonly probe?: ProbeConfig;
@@ -494,7 +494,12 @@ export interface ToolProfile {
     readonly path?: OpTarget;
     /** Engage (touch-down / retract) target; overrides machine.z. */
     readonly z?: OpTarget;
-    readonly liftHeight: number;
+    /**
+     * True if the tool cuts INTO the material (knife, crease): its cut height is
+     * the mat. False for a tool that works ON the surface (pen): its cut height
+     * is the material top. See machine/heights.ts.
+     */
+    readonly plunge: boolean;
     readonly requiredPeripheralTypes: readonly NodeType[];
     /** Fixed XY offset of tool tip from head center (mm). Default (0,0). */
     readonly toolOffset: ToolOffset;
@@ -602,6 +607,8 @@ export interface MachineConfig {
     readonly z: MachineTarget;
     /** Standalone-A slew (reposition; machine-owned). feed unset ⇒ A ceiling. */
     readonly slew: OpTarget;
+    /** Margin above the material top that counts as clear, mm. */
+    readonly clearanceMm: number;
     readonly peripherals: readonly BusNode[];
     /** Optional laser pointer module (alignment reference). */
     readonly laser?: LaserPointer;

@@ -163,9 +163,9 @@ std::vector<MicroSegment> pivot(double daTrue, bool lift, double zSteps,
     const auto append = [&out](const std::vector<MicroSegment>& v) {
         out.insert(out.end(), v.begin(), v.end());
     };
-    if (lift) append(zMove(+zSteps, axes, zFeed, zAccel));
-    append(aMove(daTrue, axes, slew));
     if (lift) append(zMove(-zSteps, axes, zFeed, zAccel));
+    append(aMove(daTrue, axes, slew));
+    if (lift) append(zMove(+zSteps, axes, zFeed, zAccel));
     return out;
 }
 

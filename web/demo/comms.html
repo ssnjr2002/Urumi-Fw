@@ -53,6 +53,7 @@
 
     .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
     .row > .grow { flex: 1; }
+    .row[hidden] { display: none; }
 
     pre, .mono { font-family: ui-monospace, monospace; font-size: 12px; }
 
@@ -246,9 +247,16 @@
       <div class="row">
         <input id="job-svg" type="file" accept=".svg">
         <label>default tool <input id="job-tool" type="text" size="8" placeholder="(from layer)"></label>
+        <label>material mm <input id="job-material" type="number" min="0" step="0.1" size="5"></label>
         <button id="job-compile" type="button" disabled>Compile</button>
         <button id="job-run" class="go" type="button" disabled>Run</button>
         <button id="job-stop" class="danger" type="button" disabled>Stop</button>
+      </div>
+      <div id="touchoff" class="row" hidden>
+        <span id="touchoff-msg"></span>
+        <button id="touchoff-set" type="button">Set Z here</button>
+        <button id="touchoff-continue" class="go" type="button" disabled>Continue</button>
+        <button id="touchoff-cancel" class="danger" type="button">Cancel job</button>
       </div>
       <div class="progress"><div id="job-progress"></div></div>
       <pre id="job-metrics" class="mono">No SVG loaded.</pre>

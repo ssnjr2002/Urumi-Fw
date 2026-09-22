@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { Controller } from "../../src/controller/controller.js";
-import { runWalk } from "../../src/controller/runWalk.js";
+import { runWalk, type RunWalkHooks } from "../../src/controller/runWalk.js";
 import { Link } from "../../src/wire/link/link.js";
 import { SimTransport } from "../../src/wire/link/backends/sim.js";
 import {
@@ -108,6 +108,16 @@ const pause = (
     mounts: Mounts = FITTED,
 ): WalkEvent => ({ kind: "pause", swapIn, swapOut, mounts });
 
+/**
+ * runWalk with Z preparation stubbed out: these tests are about the stream
+ * rules, and the bench machine has no probe config. probe.test.ts covers it.
+ */
+const run = (
+    controller: Controller,
+    events: readonly WalkEvent[],
+    hooks: RunWalkHooks = {},
+) => runWalk(controller, events, 0, { prepareZ: async () => {}, ...hooks });
+
 /** Every MicroSegment the sim was actually sent, in order. */
 function segmentsSeen(sim: RecordingSim): ReturnType<typeof unpackMicrosegment>[] {
     return sim.packets.map((p) => unpackMicrosegment(p));
@@ -119,20 +129,20 @@ describe("pre-flight", () => {
     it("refuses to run against a machine whose axis map does not match", async () => {
         const { controller } = await bench();
         controller.engage(1); // pending, not committed
-        await expect(runWalk(controller, [motion(4)])).rejects.toThrow(/axis map/);
+        await expect(run(controller, [motion(4)])).rejects.toThrow(/axis map/);
     });
 
     it("refuses to run from a state that would NACK every packet", async () => {
         const { controller, sim } = await bench();
         sim.state = MachineState.ALARM;
-        await expect(runWalk(controller, [motion(4)])).rejects.toThrow(/ALARM/);
+        await expect(run(controller, [motion(4)])).rejects.toThrow(/ALARM/);
     });
 
     it("holds the job lease for the whole run and releases it after", async () => {
         const { controller } = await bench();
         const busyDuring: (string | null)[] = [];
         controller.on("busy", (b) => busyDuring.push(b));
-        await runWalk(controller, [motion(4)]);
+        await run(controller, [motion(4)]);
         expect(busyDuring).toEqual(["job", null]);
         expect(controller.busy).toBeNull();
     });
@@ -140,7 +150,7 @@ describe("pre-flight", () => {
     it("refuses to start while something else holds the lease", async () => {
         const { controller } = await bench();
         controller.acquire("jog");
-        await expect(runWalk(controller, [motion(4)])).rejects.toThrow(/busy: jog/);
+        await expect(run(controller, [motion(4)])).rejects.toThrow(/busy: jog/);
     });
 });
 
@@ -150,7 +160,7 @@ describe("streaming", () => {
     it("coalesces consecutive motion events and reports progress against the total", async () => {
         const { controller } = await bench();
         const progress: number[] = [];
-        const result = await runWalk(controller, [motion(3), motion(2), motion(4)], {
+        const result = await run(controller, [motion(3), motion(2), motion(4)], {
             onProgress: (sent) => progress.push(sent),
         });
         expect(result.segmentsTotal).toBe(9);
@@ -163,7 +173,7 @@ describe("streaming", () => {
         // Rule 1: the host is acked ahead of the Pico by the depth of its ring.
         // If the runner returned on the ack, the sim would still be executing.
         const { controller, sim } = await bench();
-        await runWalk(controller, [motion(20)]);
+        await run(controller, [motion(20)]);
         expect(sim.state).toBe(MachineState.IDLE);
         expect(sim.pos[0]).toBe(20);
     });
@@ -174,7 +184,7 @@ describe("streaming", () => {
         const { controller, sim } = await bench();
         let promptedWhileParked: number | null = null;
 
-        const result = await runWalk(controller, [motion(4), pause([KNIFE.toolType]), motion(3)], {
+        const result = await run(controller, [motion(4), pause([KNIFE.toolType]), motion(3)], {
             confirmSwap: () => {
                 promptedWhileParked = sim.state;
                 return true;
@@ -195,7 +205,7 @@ describe("streaming", () => {
     it("abandons the run when the operator declines the swap", async () => {
         const { controller } = await bench();
         await expect(
-            runWalk(controller, [motion(2), pause([KNIFE.toolType])], { confirmSwap: () => false }),
+            run(controller, [motion(2), pause([KNIFE.toolType])], { confirmSwap: () => false }),
         ).rejects.toThrow(/cancelled by the operator/);
     });
 });
@@ -221,7 +231,7 @@ describe("duty breaks", () => {
         const { controller, sim } = await bench();
         const stateAtBreak: number[] = [];
 
-        const result = await runWalk(controller, [broken()], {
+        const result = await run(controller, [broken()], {
             onDutyBreak: () => {
                 stateAtBreak.push(sim.state);
             },
@@ -239,7 +249,7 @@ describe("duty breaks", () => {
         // peripheral itself, so it hands over what is cutting right now.
         const { controller } = await bench();
         const seen: (ToolType | null)[][] = [];
-        await runWalk(controller, [pause([PEN.toolType]), broken()], {
+        await run(controller, [pause([PEN.toolType]), broken()], {
             confirmSwap: () => true,
             onDutyBreak: (mounts) => {
                 seen.push([...mounts]);
@@ -257,7 +267,7 @@ describe("head rebinding", () => {
         // upcoming blocks were compiled against.
         const { controller, sim } = await bench();
 
-        await runWalk(controller, [motion(2), pause([PEN.toolType], [KNIFE.toolType]), motion(2)], {
+        await run(controller, [motion(2), pause([PEN.toolType], [KNIFE.toolType]), motion(2)], {
             confirmSwap: () => true,
         });
 
@@ -271,7 +281,7 @@ describe("head rebinding", () => {
         const { controller, sim } = await bench();
         const mapDuring: (number | null)[][] = [];
 
-        await runWalk(controller, [
+        await run(controller, [
             motion(2),
             { kind: "rebind", head: 1 },
             motion(2),
@@ -289,9 +299,18 @@ describe("head rebinding", () => {
         expect(mapDuring).toEqual([[1, 2, 3, 4], [1, 2, 5, 6]]);
     });
 
+    it("prepares Z again for the head a rebind switches to", async () => {
+        const { controller } = await bench();
+        const prepared: number[] = [];
+        await run(controller, [motion(2), { kind: "rebind", head: 1 }, motion(2)], {
+            prepareZ: async (head) => { prepared.push(head); },
+        });
+        expect(prepared).toEqual([0, 1]);
+    });
+
     it("leaves the map alone when the swap does not change heads", async () => {
         const { controller, sim } = await bench();
-        await runWalk(controller, [pause([KNIFE.toolType])], { confirmSwap: () => true });
+        await run(controller, [pause([KNIFE.toolType])], { confirmSwap: () => true });
         expect(sim.slotNode).toEqual([1, 2, 3, 4]);
     });
 });
@@ -306,13 +325,13 @@ describe("mount verification", () => {
         // ruined material.
         const { controller } = await bench();
         await expect(
-            runWalk(controller, [motion(2)], { initialMount: [PEN.toolType, KNIFE.toolType] }),
+            run(controller, [motion(2)], { initialMount: [PEN.toolType, KNIFE.toolType] }),
         ).rejects.toThrow(/head 0 holds knife/i);
     });
 
     it("starts when the opening phase matches what is fitted", async () => {
         const { controller } = await bench();
-        const r = await runWalk(controller, [motion(2)], { initialMount: FITTED });
+        const r = await run(controller, [motion(2)], { initialMount: FITTED });
         expect(r.segmentsSent).toBe(2);
     });
 
@@ -321,7 +340,7 @@ describe("mount verification", () => {
         // tool is NOT fitted at job start, and must not be, or every swap job
         // would refuse to begin. `null` says "this phase does not care".
         const { controller } = await bench();
-        const r = await runWalk(controller, [motion(2)], {
+        const r = await run(controller, [motion(2)], {
             initialMount: [KNIFE.toolType, null],
         });
         expect(r.segmentsSent).toBe(2);
@@ -332,7 +351,7 @@ describe("mount verification", () => {
         // "fits" nothing, and the phase wants the pen in head 0.
         const { controller } = await bench();
         await expect(
-            runWalk(controller, [pause([PEN.toolType], [], [PEN.toolType, null])], {
+            run(controller, [pause([PEN.toolType], [], [PEN.toolType, null])], {
                 confirmSwap: () => true,
             }),
         ).rejects.toThrow(/head 0 holds knife/i);
@@ -346,7 +365,7 @@ describe("phases and abort", () => {
         // nothing armed.
         const { controller } = await bench();
         const phases: (Mounts | null)[] = [];
-        await runWalk(controller, [motion(3)], {
+        await run(controller, [motion(3)], {
             initialMount: [KNIFE.toolType],
             onPhase: (mounts) => {
                 phases.push(mounts);
@@ -359,7 +378,7 @@ describe("phases and abort", () => {
         const { controller, sim } = await bench();
         const flag = new AbortFlag();
         flag.set();
-        const result = await runWalk(controller, [motion(2), pause([KNIFE.toolType]), motion(2)], {
+        const result = await run(controller, [motion(2), pause([KNIFE.toolType]), motion(2)], {
             abort: flag,
             confirmSwap: () => true,
         });
@@ -384,7 +403,7 @@ describe("phases and abort", () => {
             },
         ];
         const before = events.length;
-        await runWalk(controller, events, { onDutyBreak: () => {} });
+        await run(controller, events, { onDutyBreak: () => {} });
         expect(events.length).toBe(before);
         expect(events[0]!.segments).toHaveLength(3);
     });

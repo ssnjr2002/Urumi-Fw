@@ -2,9 +2,9 @@
  * compileBlock.ts — mm subpaths + a tool → MicroSegment[] (the stage 3-8 chain).
  *
  * The living per-block compile: one SVG layer's subpaths (in mm), the tool that
- * cuts them, and the machine/quality config → compiled wire events. Travel /
- * lift / feed resolve from the tool profile then the machine inside discretize,
- * so this layer takes no per-call feed/lift overrides.
+ * cuts them, and the machine/quality config → compiled wire events. Travel and
+ * feed resolve from the tool profile then the machine inside discretize; the
+ * lift comes from the material thickness (machine/heights.ts).
  *
  * Output is guarded by a golden snapshot: test/production/snapshot.test.ts bakes
  * fixtures through this stage chain and asserts byte-for-byte equality against a
@@ -23,7 +23,7 @@
 
 import type { CubicBezier } from "../toolpath/geometry.js";
 import type { MachineConfig, ToolProfile, QualityConfig } from "../machine/index.js";
-import { axesForHead } from "../machine/index.js";
+import { axesForHead, toolHeights } from "../machine/index.js";
 import { resolveTargets } from "../machine/resolve.js";
 import { enforceC1 } from "../toolpath/repair.js";
 import { flatten } from "../toolpath/flatten.js";
@@ -114,8 +114,10 @@ export function compileBlock(
     quality: QualityConfig,
     profile: ToolProfile,
     head: number,
+    materialMm: number,
 ): CompileBlockResult {
     const axes = axesForHead(machine, head);
+    const overrides = { liftHeight: toolHeights(profile, machine, materialMm).liftMm };
 
     // Shift paths by -toolOffset so all baked coordinates are in head-center
     // space. Zero offset is a fast-path no-op (returns the original array).
@@ -220,7 +222,7 @@ export function compileBlock(
 
     // Stage 8: discretize — Sample[] → MicroSegment[], choreograph at transitions
     const report: DiscretizeReport = { vCap: [] };
-    let segments = discretize(planned, machine, axes, profile, quality, undefined, report);
+    let segments = discretize(planned, machine, axes, profile, quality, overrides, report);
 
     // ── the feedback passes ───────────────────────────────────────────────────
     //
@@ -247,7 +249,7 @@ export function compileBlock(
         const reC = constrain(samples, { ...constrainOpts, measuredCeilings: held });
         planned = plan(reC, planOpts);
         report.vCap = [];
-        segments = discretize(planned, machine, axes, profile, quality, undefined, report);
+        segments = discretize(planned, machine, axes, profile, quality, overrides, report);
     }
 
     // Stage 9: duty breaks — mark enable-line resets for a duty-limited tool.

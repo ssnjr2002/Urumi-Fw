@@ -92,7 +92,7 @@ std::vector<MicroSegment> discretize(const std::vector<PlannedSample>& samples,
         aAccum = aPhys;
         started = true;
 
-        if (lift) appendAll(out, zMove(-zSteps, axes, options.zFeed, options.zAccel)); // lower to cut
+        if (lift) appendAll(out, zMove(+zSteps, axes, options.zFeed, options.zAccel)); // lower to cut
 
         // Index of the last segment that may carry this subpath's PATH_END. It
         // tracks the last CUTTING segment; if the subpath's final sub-step turns
@@ -212,7 +212,7 @@ std::vector<MicroSegment> discretize(const std::vector<PlannedSample>& samples,
             out[static_cast<size_t>(endIdx)].flags |= MICRO_PATH_END;
         }
 
-        if (lift) appendAll(out, zMove(+zSteps, axes, options.zFeed, options.zAccel)); // raise after the stroke
+        if (lift) appendAll(out, zMove(-zSteps, axes, options.zFeed, options.zAccel)); // raise after the stroke
     }
 
     return out;

@@ -43,6 +43,7 @@ import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
 const svgInput     = document.getElementById('svg-input');
 const defaultTool  = document.getElementById('default-tool');
+const materialMm   = document.getElementById('material-mm');
 const configEditor = document.getElementById('config-editor');
 const revertBtn    = document.getElementById('revert-btn');
 const compileBtn   = document.getElementById('compile-btn');
@@ -139,7 +140,7 @@ function compile(initialState) {
     // the head decides step counts, so mm cannot become steps until the
     // scheduler has said which socket each block's tool sits in. It hands back
     // the phases it used rather than letting us recompute them and disagree.
-    const { blocks, phases } = bakePlan(config, svgText, { defaultTool: tool });
+    const { blocks, phases } = bakePlan(config, svgText, Number(materialMm.value) || 0, { defaultTool: tool });
     const events = walkSchedule(phases, blocks, config.machine, initialState ? { initialState } : {});
     return { blocks, phases, events, config };
 }

@@ -352,6 +352,62 @@ export async function rotLeg(
     return { armed: false, reason: r };
 }
 
+// ── tool probe (docs/tool_probe.md §5) ───────────────────────────────────────
+
+/** A probe verb's outcome: `ok`, or the raw `err <reason>` line. */
+export interface ProbeReply {
+    ok: boolean;
+    reason?: string;
+}
+
+async function _probeReply(link: Link, cmd: string): Promise<ProbeReply> {
+    const r = await link.command(cmd);
+    return r === "ok" || r.startsWith("ok ") ? { ok: true } : { ok: false, reason: r || "no reply" };
+}
+
+/** Open a probe session against the switch on vacuum node `switchNode`. */
+export function probeMap(link: Link, switchNode: number): Promise<ProbeReply> {
+    return _probeReply(link, `probe_map ${switchNode}`);
+}
+
+/** One probe leg's arguments, in wire units. */
+export interface ProbeLegArgs {
+    readonly dir: 0 | 1;
+    readonly startUs: number;
+    readonly ceilUs: number;
+    readonly rampSteps: number;
+    /** Poll the switch every N steps; 1 = every step. */
+    readonly pollDiv: number;
+    readonly maxSteps: number;
+    readonly deadlineUs: number;
+    /** True if the leg starts on the switch (a retract). */
+    readonly retract: boolean;
+}
+
+/** Arm one probe leg. `ok` means ARMED; poll `getstate` until `probing=` leaves 0. */
+export function probeLeg(link: Link, leg: ProbeLegArgs): Promise<ProbeReply> {
+    return _probeReply(
+        link,
+        `probe_leg ${leg.dir} ${leg.startUs} ${leg.ceilUs} ${leg.rampSteps} ${leg.pollDiv} ` +
+            `${leg.maxSteps} ${leg.deadlineUs} ${leg.retract ? 1 : 0}`,
+    );
+}
+
+/** Close the probe session and restore the committed axis map. */
+export function probeEnd(link: Link): Promise<ProbeReply> {
+    return _probeReply(link, "probe_end");
+}
+
+/** Store `zSteps` as the contact height of the Z in slot 2. */
+export function setProbe(link: Link, zSteps: number): Promise<ProbeReply> {
+    return _probeReply(link, `setprobe ${Math.round(zSteps)}`);
+}
+
+/** Forget node `node`'s contact height, or the engaged Z's when omitted. */
+export function unprobe(link: Link, node?: number): Promise<ProbeReply> {
+    return _probeReply(link, node === undefined ? "unprobe" : `unprobe ${node}`);
+}
+
 export function pause(link: Link): Promise<boolean> {
     return _ok(link, "pause");
 }
