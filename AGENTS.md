@@ -45,7 +45,7 @@ Node Build Flags:
 
 * All nodes:
     * `NODE_ID`: Specifies the node addressing id of a node.
-    * `NODE_DEBUG_CONSOLE`: Address a node over USB Serial instead of RS485 Bus through a python script (host/node_console.py).
+    * `NODE_DEBUG_CONSOLE`: Address a node over USB Serial instead of RS485 Bus through a python script (node_console.py).
     * `NODE_HAS_PROBE_REPLY`: Allow a special stream reply mode which relays probe switch state. 
     * `RS485_USE_XDIR`: Turn on XDIR, an automatic hardware direction switch for half duplex RS485 buses. 
     * `NODE_HAS_LASER`: Node has a laser attached to it which can be toggled on or off.

@@ -15,7 +15,7 @@
 // the bytes the Pico's sendPacket() would frame. The console appends the CRC and
 // pushes it through routeCommand() (the same handler the RS485 path uses), then
 // prints the reply as "OK <hex…>" (payload bytes, CRC omitted) or "NAK" /
-// "ERR …". The host side is host/node_console.py.
+// "ERR …". The host side is node_console.py.
 #ifdef NODE_DEBUG_CONSOLE
 #include <Arduino.h>
 #include "board.h"      // provides HAL_DEBUG_SERIAL — WITHOUT this the fallback
