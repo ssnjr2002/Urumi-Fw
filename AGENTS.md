@@ -175,7 +175,7 @@ Start ──► Planning ──► Work ──► Merge ──► Planning ─�
 #### Planning
 
 * Location: main folder, on `main`.
-* Allowed: read code, discuss, create and commit plan docs.
+* Allowed: read code, discuss, create and commit plan docs (after user explicitly agrees).
 * Not allowed: code edits.
 * Cite the files and lines the plan touches.
 * Propose a branch type for each branch and let the user confirm it (see
