@@ -59,7 +59,7 @@ import {
     type XY,
 } from "../machine/frames.js";
 import { Link } from "../wire/link/link.js";
-import { axisMap, readAxisMap, type SlotBinding } from "../wire/link/commands.js";
+import { axisMap, readAxisMap, unprobe, type SlotBinding } from "../wire/link/commands.js";
 import {
     settle,
     atRest,
@@ -458,9 +458,20 @@ export class Controller {
         return next;
     }
 
-    /** Record what the operator physically fitted (or null to empty the socket). */
+    /**
+     * Record what the operator physically fitted (or null to empty the socket).
+     * A different tool invalidates that head's probe on the Pico; the `unprobe`
+     * is sent in the background and a refusal is reported as an `error` event.
+     */
     mount(head: number, profile: ToolProfile | null): Setup {
         const next = mount(this.machine, this._setup, head, profile);
+        if (next.mounts[head] !== this._setup.mounts[head] && !this.link.closed) {
+            const node = this.machine.heads[head]!.z.node.id;
+            void unprobe(this.link, node).then(
+                (r) => { if (!r.ok) this._emit("error", new Error(`unprobe ${node} refused: ${r.reason}`)); },
+                (e: unknown) => this._emit("error", e instanceof Error ? e : new Error(String(e))),
+            );
+        }
         this._setup = next;
         this._emit("setup", next);
         return next;

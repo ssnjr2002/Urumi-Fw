@@ -436,6 +436,15 @@ describe("stage 8: Z lift choreography", () => {
         expect(runs[0]!.dz).toBe(-runs[1]!.dz); // down first, up last
     });
 
+    it("lowers toward the bed (+Z before invert) with either invert", () => {
+        for (const invert of [false, true]) {
+            const axes = { ...AXES, z: { ...AXES.z, invert } };
+            const p = planFor([CASES.straight_line!.curves], KNIFE);
+            const runs = zRuns(discretize(p, MACH, axes, KNIFE, q, { liftHeight: LIFT }));
+            expect(runs[0]!.dz).toBe((invert ? -1 : 1) * Math.round(LIFT * AXES.z.stepsPerUnit));
+        }
+    });
+
     it("net Z is zero over many subpaths — every lower is matched by a raise", () => {
         const segs = lifted(
             [CASES.straight_line!.curves, CASES.quarter_circle_r5!.curves, CUSP],

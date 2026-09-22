@@ -22,6 +22,7 @@ export const PEN: ToolProfile = toolProfile("pen", {
 export const KNIFE: ToolProfile = toolProfile("knife", {
     toolType: ToolType.KNIFE,
     tangential: true,
+    plunge: true,
     offsetMm: 0,
     unwind: true,
     cornerAngleDeg: 20,
@@ -30,6 +31,7 @@ export const KNIFE: ToolProfile = toolProfile("knife", {
 export const CREASE: ToolProfile = toolProfile("crease", {
     toolType: ToolType.CREASE,
     tangential: true,
+    plunge: true,
     offsetMm: 0,
     unwind: false,
     cornerAngleDeg: 30,

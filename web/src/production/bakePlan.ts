@@ -133,10 +133,14 @@ export function assembleBlocks(
  * head arrangement, so a file baked under one `accepts` config is silently
  * wrong under another — see docs/head_binding.md. Callers that still want a
  * file call savePlan() themselves, for as long as that survives.
+ *
+ * `materialMm` is the stock thickness for this job. The Z lift is baked into
+ * every block from it, so a different thickness needs a fresh bake.
  */
 export function bakePlan(
     config: PipelineConfig,
     svgText: string,
+    materialMm: number,
     opts: BakePlanOptions = {},
 ): { blocks: readonly CompiledBlock[]; phases: readonly SwapPhase[] } {
     const layers = opts.skipNormalisation
@@ -162,7 +166,7 @@ export function bakePlan(
     const blocks: CompiledBlock[] = ordered.map((b, i) => {
         const head = headOf[i]!;
         const { segments, startSteps } = compileBlock(
-            b.subpaths, config.machine, config.quality, b.profile, head,
+            b.subpaths, config.machine, config.quality, b.profile, head, materialMm,
         );
         return b.slot === undefined
             ? { profile: b.profile, head, segments, startSteps }

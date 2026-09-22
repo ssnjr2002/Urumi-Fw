@@ -54,8 +54,8 @@ std::vector<RampChunk> rampChunks(double N, double v0, double cruise,
                                   double accel, double fCpu);
 
 /**
- * A ramped Z move (trapezoidal, via `rampChunks`). `dz` is in STEPS, signed;
- * invert is applied to the emitted values. Empty for dz = 0.
+ * A ramped Z move (trapezoidal, via `rampChunks`). `dz` is in STEPS, signed,
+ * positive toward the bed; invert is applied to the emitted values. Empty for dz = 0.
  *
  * Closes H3. Z used to be one constant-velocity segment, asking the axis for
  * its whole feed in zero distance — the defect H2 fixed for travel jogs and H1

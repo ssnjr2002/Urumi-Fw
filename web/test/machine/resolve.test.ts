@@ -64,8 +64,8 @@ describe("toolForLayer", () => {
 });
 
 describe("requiredAxes", () => {
-    it("pen with no lift needs neither Z nor A", () => {
-        expect(requiredAxes(PEN)).toEqual({ z: false, a: false });
+    it("pen needs Z but not A", () => {
+        expect(requiredAxes(PEN)).toEqual({ z: true, a: false });
     });
 
     it("tangential tools need A", () => {
@@ -78,16 +78,15 @@ describe("requiredAxes", () => {
         expect(requiredAxes(REVOLVER_PEN).a).toBe(true);
     });
 
-    it("Z is required only when the tool lifts", () => {
-        const lifter = toolProfile("lifter", { liftHeight: 2 });
-        expect(requiredAxes(lifter).z).toBe(true);
-        expect(requiredAxes(PEN).z).toBe(false);
+    it("Z is required by every tool", () => {
+        expect(requiredAxes(PEN).z).toBe(true);
+        expect(requiredAxes(KNIFE).z).toBe(true);
     });
 });
 
 describe("canRunTool (node presence, not mount)", () => {
-    it("pen runs on a bus with only X/Y present", () => {
-        const [ok, reason] = canRunTool(machine({ zPresent: false, aPresent: false }), PEN);
+    it("pen runs on a bus with only X/Y/Z present", () => {
+        const [ok, reason] = canRunTool(machine({ aPresent: false }), PEN);
         expect(ok).toBe(true);
         expect(reason).toBe("");
     });
@@ -110,9 +109,8 @@ describe("canRunTool (node presence, not mount)", () => {
         expect(reason).toContain("X axis node");
     });
 
-    it("a lifting tool fails when no Z node is wired", () => {
-        const lifter = toolProfile("lifter", { liftHeight: 2 });
-        const [ok, reason] = canRunTool(machine({ zPresent: false }), lifter);
+    it("fails when no Z node is wired", () => {
+        const [ok, reason] = canRunTool(machine({ zPresent: false }), PEN);
         expect(ok).toBe(false);
         expect(reason).toContain("Z axis node");
     });

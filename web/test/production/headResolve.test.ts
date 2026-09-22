@@ -9,7 +9,7 @@
  * (schedule, then compile against the chosen head) or by any other. This was
  * the acceptance test for docs/head_binding.md, written red and now green.
  *
- * Mechanism: two profiles sharing a liftHeight but bound to heads with
+ * Mechanism: two profiles sharing a lift but bound to heads with
  * different Z calibration (1200 vs 600 steps/mm, twoHeadMachine's ratio — see
  * its doc comment in test/machines.ts). A lift of the same physical height
  * must produce a DIFFERENT step count on each head; a test built on identical
@@ -51,7 +51,9 @@ const wrap = (inner: string) =>
 const tri = (x: number, y: number) =>
     `<path d="M${x},${y} L${x + 10},${y} L${x + 10},${y + 10} Z"/>`;
 
-const LIFT_MM = 2;
+/** Neither profile plunges, so both lift by exactly machine.clearanceMm. */
+const MATERIAL_MM = 1;
+const LIFT_MM = twoHeadMachine().clearanceMm;
 
 /** knife → head 0 (1200 spu), pen → head 1 (600 spu). Same lift height. */
 function config(): PipelineConfig {
@@ -59,8 +61,8 @@ function config(): PipelineConfig {
         machine: twoHeadMachine(),
         quality: qualityConfig(),
         toolProfiles: {
-            knife: toolProfile("knife", { toolType: ToolType.KNIFE, liftHeight: LIFT_MM }),
-            pen: toolProfile("pen", { toolType: ToolType.PEN, liftHeight: LIFT_MM }),
+            knife: toolProfile("knife", { toolType: ToolType.KNIFE }),
+            pen: toolProfile("pen", { toolType: ToolType.PEN }),
         },
     };
 }
@@ -72,7 +74,9 @@ function liftSteps(segments: readonly { flags: number; dz: number }[]): number {
 
 describe("head resolution — spec", () => {
     it("resolves each block's Z against the head that actually holds its tool", () => {
-        const { blocks } = bakePlan(config(), wrap(`<g id="knife">${tri(10, 10)}</g><g id="pen">${tri(30, 30)}</g>`));
+        const { blocks } = bakePlan(
+            config(), wrap(`<g id="knife">${tri(10, 10)}</g><g id="pen">${tri(30, 30)}</g>`), MATERIAL_MM,
+        );
         const knife = blocks.find((b) => b.profile.name === "knife")!;
         const pen = blocks.find((b) => b.profile.name === "pen")!;
 
@@ -95,14 +99,14 @@ describe("head resolution — spec", () => {
     });
 
     it("a job using a tool no head declares is refused at bake, not at the machine", () => {
-        const noHome = toolProfile("crease", { toolType: ToolType.CREASE, liftHeight: LIFT_MM });
+        const noHome = toolProfile("crease", { toolType: ToolType.CREASE });
         const cfg: PipelineConfig = {
             machine: heads([ToolType.KNIFE], [ToolType.PEN]), // neither accepts crease
             quality: qualityConfig(),
             toolProfiles: { crease: noHome },
         };
         expect(() =>
-            bakePlan(cfg, wrap(`<g id="crease">${tri(10, 10)}</g>`)),
+            bakePlan(cfg, wrap(`<g id="crease">${tri(10, 10)}</g>`), MATERIAL_MM),
         ).toThrow(/no head/i);
     });
 });

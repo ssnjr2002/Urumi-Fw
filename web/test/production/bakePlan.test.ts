@@ -34,9 +34,9 @@ describe("bakePlan: single-tool equivalence", () => {
         const config = defaultConfig();
         const text = svg("test_circle.svg");
         const { subpaths } = loadSvgMmSubpaths(text);
-        const { segments: ref } = compileBlock(subpaths, config.machine, config.quality, KNIFE, 0);
+        const { segments: ref } = compileBlock(subpaths, config.machine, config.quality, KNIFE, 0, 0);
 
-        const { blocks } = bakePlan(config, text, { defaultTool: "knife" });
+        const { blocks } = bakePlan(config, text, 0, { defaultTool: "knife" });
         expect(blocks.length).toBe(1);
         expect(blocks[0]!.profile.name).toBe("knife");
         expect(blocks[0]!.segments).toEqual(ref);
@@ -75,7 +75,7 @@ describe("bakePlan: revolver slots", () => {
     it("carries the slot through the full bake, not just assembleBlocks", () => {
         const config = defaultConfig();
         const text = wrap(`<g id="revolver_pen"><g id="slot2">${tri(10, 10)}</g></g>`);
-        const { blocks } = bakePlan(config, text);
+        const { blocks } = bakePlan(config, text, 0);
         expect(blocks[0]!.slot).toBe(1);
     });
 });
@@ -99,8 +99,8 @@ describe("bakePlan: toolOffset shift (Option A)", () => {
     };
 
     it("startSteps is in head-center coordinates (shifted by -toolOffset)", () => {
-        const { blocks: planNoOffset } = bakePlan(config, text);
-        const { blocks: planWithOffset } = bakePlan(configWithOffset, text);
+        const { blocks: planNoOffset } = bakePlan(config, text, 0);
+        const { blocks: planWithOffset } = bakePlan(configWithOffset, text, 0);
 
         const startNoOffset = planNoOffset[0]!.startSteps!;
         const startWithOffset = planWithOffset[0]!.startSteps!;
@@ -116,8 +116,8 @@ describe("bakePlan: toolOffset shift (Option A)", () => {
         // The offset shifts the ENTIRE path, so the net XY of the first
         // cutting move from the block start changes by stepsPerUnit * offset.
         // We verify the first cutting segment's dx differs by the shift.
-        const { blocks: planNone } = bakePlan(config, text);
-        const { blocks: planShifted } = bakePlan(configWithOffset, text);
+        const { blocks: planNone } = bakePlan(config, text, 0);
+        const { blocks: planShifted } = bakePlan(configWithOffset, text, 0);
 
         // The net XY sum of all segments encodes the full path travel.
         // With a constant offset applied to all points, the NET displacement
@@ -140,21 +140,21 @@ describe("bakePlan: error paths", () => {
     const config = defaultConfig();
 
     it("rejects an unlayered SVG with no defaultTool", () => {
-        expect(() => bakePlan(config, svg("test_circle.svg"))).toThrow(/unlayered/);
+        expect(() => bakePlan(config, svg("test_circle.svg"), 0)).toThrow(/unlayered/);
     });
 
     it("rejects an unknown layer name", () => {
         const text = wrap(`<g id="sparkles">${tri(10, 10)}</g>`);
-        expect(() => bakePlan(config, text)).toThrow(/no tool/);
+        expect(() => bakePlan(config, text, 0)).toThrow(/no tool/);
     });
 
     it("rejects a revolver layer without slot sub-layers", () => {
         const text = wrap(`<g id="revolver_pen">${tri(10, 10)}</g>`);
-        expect(() => bakePlan(config, text)).toThrow(/slot sub-layers/);
+        expect(() => bakePlan(config, text, 0)).toThrow(/slot sub-layers/);
     });
 
     it("rejects an out-of-range slot", () => {
         const text = wrap(`<g id="revolver_pen"><g id="slot99">${tri(10, 10)}</g></g>`);
-        expect(() => bakePlan(config, text)).toThrow(/out of range/);
+        expect(() => bakePlan(config, text, 0)).toThrow(/out of range/);
     });
 });

@@ -525,20 +525,20 @@ describe("patchToolProfile", () => {
     }
 
     it("applies the overridden field", () => {
-        expect(patched("knife", { liftHeight: 7.5 }).liftHeight).toBe(7.5);
+        expect(patched("knife", { minRadiusMm: 7.5 }).minRadiusMm).toBe(7.5);
     });
 
     it("preserves preset fields that differ from the toolProfile() default", () => {
         // KNIFE is tangential/unwind; the generic default is neither. An
         // override of an UNRELATED field must not reset these.
-        const p = patched("knife", { liftHeight: 7.5 });
+        const p = patched("knife", { minRadiusMm: 7.5 });
         expect(p.tangential).toBe(KNIFE.tangential);
         expect(p.unwind).toBe(KNIFE.unwind);
         expect(p.toolType).toBe(KNIFE.toolType);
     });
 
     it("preserves an optional preset field (revolver slotOffsets)", () => {
-        const p = patched("revolver_pen", { liftHeight: 1 });
+        const p = patched("revolver_pen", { minRadiusMm: 1 });
         expect(p.slotOffsets).toEqual(REVOLVER_PEN.slotOffsets);
         expect(p.slotOffsets).toHaveLength(7);
     });
@@ -554,7 +554,7 @@ describe("patchToolProfile", () => {
     it("leaves an absent tool override as undefined (inherit, not fill)", () => {
         // Tool tier must NOT be filled from DEFAULTS — undefined means
         // "inherit from machine", which resolveTargets applies later.
-        const p = patched("pen", { liftHeight: 1 });
+        const p = patched("pen", { minRadiusMm: 1 });
         expect(p.path).toBeUndefined();
     });
 

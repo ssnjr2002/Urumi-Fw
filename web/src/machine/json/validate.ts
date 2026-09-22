@@ -136,6 +136,11 @@ const uniqueNodeIds: Rule = ({ machine }) => {
         );
 };
 
+const clearanceNonNegative: Rule = ({ machine }) =>
+    Number.isFinite(machine.clearanceMm) && machine.clearanceMm >= 0
+        ? []
+        : [error(`machine.clearanceMm: must be >= 0 (got ${machine.clearanceMm})`)];
+
 const defaultHeadInRange: Rule = ({ machine }) => {
     const n = machine.heads.length;
     const i = machine.defaultHead;
@@ -164,7 +169,7 @@ const headsHaveAxesForAccepted: Rule = ({ machine }) =>
                              "but that head's A node is not present")]
                     : []),
                 ...(req.z && !h.z.node.present
-                    ? [error(`heads[${i}]: accepts '${p.name}', which lifts Z, ` +
+                    ? [error(`heads[${i}]: accepts '${p.name}', which needs Z, ` +
                              "but that head's Z node is not present")]
                     : []),
             ];
@@ -405,6 +410,7 @@ const RULES: readonly Rule[] = [
     targetsUnderCeilings,
     uniqueNodeIds,
     defaultHeadInRange,
+    clearanceNonNegative,
     headsHaveAxesForAccepted,
     headsAcceptSomething,
     everyToolHasAHead,

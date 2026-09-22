@@ -102,6 +102,7 @@ interface JsonProbe {
     readonly backoffMm?: number;
     readonly parkMm?: number;
     readonly seekOvertravelMm?: number;
+    readonly tripMm?: number;
 }
 
 interface JsonHoming {
@@ -145,6 +146,7 @@ interface JsonMachine {
     readonly rapid?: JsonOpTarget;
     readonly z?: JsonOpTarget;
     readonly slew?: JsonOpTarget;
+    readonly clearanceMm?: number;
     readonly x: JsonAxis;
     readonly y: JsonAxis;
     readonly laser?: JsonLaser;
@@ -165,6 +167,8 @@ interface JsonToolOverride {
     readonly minRadiusMm?: number;
     readonly path?: JsonOpTarget;
     readonly z?: JsonOpTarget;
+    readonly plunge?: boolean;
+    /** Removed — see the tools build step. Typed so the check can see it. */
     readonly liftHeight?: number;
     readonly toolOffset?: { xOffset: number; yOffset: number };
     readonly slotOffsets?: readonly number[];
@@ -349,6 +353,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         rapid: machineTarget(machine.rapid, DEFAULTS.machine.rapid),
         z: machineTarget(machine.z, DEFAULTS.machine.z),
         slew: opTarget(machine.slew, DEFAULTS.machine.slew),
+        clearanceMm: machine.clearanceMm ?? DEFAULTS.machine.clearanceMm,
         peripherals,
         defaultHead: json.defaultHead ?? 0,
         laser: machine.laser ?? undefined,
@@ -360,6 +365,13 @@ export function parseConfig(jsonText: string): ConfigResult {
         for (const name of Object.keys(json.tools)) {
             if (!(name in TOOL_PROFILES)) {
                 errors.push(`tools.${name}: not a known tool preset`);
+                continue;
+            }
+            if (json.tools[name]!.liftHeight !== undefined) {
+                errors.push(
+                    `tools.${name}.liftHeight: removed — set 'plunge'; the lift is ` +
+                    "derived from the job's material thickness and machine.clearanceMm",
+                );
                 continue;
             }
             const base = TOOL_PROFILES[name]!;
@@ -491,6 +503,7 @@ function buildProbe(
         backoffMm: num("backoffMm"),
         parkMm: num("parkMm"),
         seekOvertravelMm: num("seekOvertravelMm"),
+        tripMm: num("tripMm"),
     };
 }
 
@@ -625,7 +638,7 @@ function patchToolProfile(
     delete merged.name; // supplied by toolProfile()
 
     for (const key of ["tangential", "offsetMm", "unwind", "cornerAngleDeg",
-                       "minRadiusMm", "liftHeight", "toolOffset", "slotOffsets"] as const) {
+                       "minRadiusMm", "plunge", "toolOffset", "slotOffsets"] as const) {
         if (o[key] !== undefined) merged[key] = o[key];
     }
     // Engage targets merge FIELD-WISE over the preset: `{accel}` alone must not

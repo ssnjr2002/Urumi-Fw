@@ -31,6 +31,12 @@
  *      checked before the first segment and again after every swap, because a
  *      tool in the wrong socket is a silent 2x Z error, not a failure.
  *
+ *   6. A block assumes Z starts at clear height. Before the first segment of
+ *      each phase and after each rebind, `prepareZ` measures the tool (bed
+ *      switch, or the operator's touch-off) if the Pico holds no height for it
+ *      and moves Z to clear. A swap forgets the height of every head whose tool
+ *      changed.
+ *
  * Peripheral policy is deliberately NOT here. Which node runs the knife
  * oscillator, and whether the vacuum belongs to the job or the shop, is
  * installation knowledge — the hooks hand the caller each boundary where the bus
@@ -40,7 +46,7 @@
 
 import type { WalkEvent } from "../orchestrate/walk.js";
 import type { Mounts } from "../production/schedule.js";
-import type { ToolType } from "../machine/index.js";
+import type { ToolProfile, ToolType } from "../machine/index.js";
 import type { MicroSegment } from "../wire/format/microsegment.js";
 import {
     MICRO_PAUSE,
@@ -55,6 +61,9 @@ import { stateName } from "../wire/format/names.js";
 import type { AbortToken } from "../wire/link/transport.js";
 import type { Controller } from "./controller.js";
 import { verifyPhaseMounts } from "./controller.js";
+import { prepareZ } from "./prepareZ.js";
+import { unprobe } from "../wire/link/commands.js";
+import type { RunProbeOptions } from "../probe/sequence.js";
 
 /** A pause event, as handed to `confirmSwap`. */
 export interface SwapRequest {
@@ -102,6 +111,19 @@ export interface RunWalkHooks {
      * arm nothing and the first blade would drag cold.
      */
     initialMount?: Mounts;
+    /** Probe timing and progress, for when a phase has to probe. */
+    probe?: RunProbeOptions;
+    /**
+     * Manual touch-off for a Z with no bed switch (PrepareZOptions.touchOff).
+     * Called whenever that head is about to cut unprobed: at the first phase,
+     * after a swap, or after a head switch.
+     */
+    touchOff?(head: number, tool: ToolProfile): Promise<void>;
+    /**
+     * Replaces the default rule-6 step (`prepareZ`). For a host that positions
+     * Z itself, and for tests against a machine that cannot probe.
+     */
+    prepareZ?(head: number, tool: ToolProfile): Promise<void>;
 }
 
 export interface RunWalkResult {
@@ -113,7 +135,8 @@ export interface RunWalkResult {
 }
 
 /**
- * Stream `events` under a "job" lease.
+ * Stream `events` under a "job" lease. `materialMm` must be the thickness the
+ * blocks were baked with; it sets the clear height Z is moved to.
  *
  * Throws on a stream failure, an operator cancellation, or a refused rebind —
  * the caller's `finally` is where peripheral teardown belongs, because a
@@ -122,6 +145,7 @@ export interface RunWalkResult {
 export async function runWalk(
     controller: Controller,
     events: readonly WalkEvent[],
+    materialMm: number,
     hooks: RunWalkHooks = {},
 ): Promise<RunWalkResult> {
     const { onLog, onProgress, abort, window = DEFAULT_WINDOW } = hooks;
@@ -168,6 +192,7 @@ export async function runWalk(
 
         let i = 0;
         let machinePaused = false;
+        let zReady = false;
 
         while (i < queue.length) {
             if (abort?.isSet()) {
@@ -179,6 +204,7 @@ export async function runWalk(
 
             if (ev.kind === "pause") {
                 pauses++;
+                const before = controller.setup.mounts;
                 const ok = await hooks.confirmSwap?.({
                     swapIn: ev.swapIn,
                     swapOut: ev.swapOut,
@@ -188,6 +214,16 @@ export async function runWalk(
 
                 // Rule 5. The machine just changed under us; re-check it.
                 verifyPhaseMounts(ev.mounts, controller.setup);
+
+                // Rule 6.
+                const after = controller.setup.mounts;
+                for (let h = 0; h < after.length; h++) {
+                    if (after[h] === before[h]) continue;
+                    const node = controller.machine.heads[h]!.z.node.id;
+                    const r = await unprobe(controller.link, node);
+                    if (!r.ok) throw new Error(`unprobe ${node} refused: ${r.reason}`);
+                }
+                zReady = false;
 
                 // After the tool is physically in and before anything moves —
                 // the machine is PAUSED here, the one window the gate allows.
@@ -213,6 +249,7 @@ export async function runWalk(
                 }
                 log(`rebinding slots to head ${ev.head}`, "note");
                 await controller.commit(ev.head);
+                zReady = false;
                 i++;
                 continue;
             }
@@ -242,6 +279,20 @@ export async function runWalk(
                 const last = batch[batch.length - 1]!;
                 batch[batch.length - 1] = { ...last, flags: last.flags | MICRO_PAUSE };
                 machinePaused = true;
+            }
+
+            if (!zReady) {
+                const head = controller.setup.engaged;
+                const tool = controller.setup.mounts[head];
+                if (!tool) throw new Error(`head ${head} is engaged but has no tool mounted`);
+                if (hooks.prepareZ) {
+                    await hooks.prepareZ(head, tool);
+                } else {
+                    const clear = await prepareZ(controller, controller.machine, head, tool,
+                        materialMm, { probe: hooks.probe, touchOff: hooks.touchOff, onLog: (m) => log(m, "note") });
+                    log(`head ${head} Z at clear height (${clear} steps)`, "ok");
+                }
+                zReady = true;
             }
 
             log(`streaming ${batch.length} segments`, "tx");

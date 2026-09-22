@@ -69,6 +69,8 @@ import {
     runHoming,
     runRotaryHoming,
     nodeStat,
+    getState,
+    touchOffHere,
 } from '../src/index.js';
 import { WebSerialTransport } from '../src/wire/link/backends/webserial.js';
 
@@ -125,11 +127,17 @@ const periphPanel  = $('periph-panel');
 
 const jobSvg       = $('job-svg');
 const jobTool      = $('job-tool');
+const jobMaterial  = $('job-material');
 const jobCompile   = $('job-compile');
 const jobRun       = $('job-run');
 const jobStop      = $('job-stop');
 const jobProgress  = $('job-progress');
 const jobMetrics   = $('job-metrics');
+const touchOffRow  = $('touchoff');
+const touchOffMsg  = $('touchoff-msg');
+const touchOffSet  = $('touchoff-set');
+const touchOffGo   = $('touchoff-continue');
+const touchOffStop = $('touchoff-cancel');
 
 const pollOnceBtn  = $('poll-once');
 const pollAuto     = $('poll-auto');
@@ -173,6 +181,9 @@ let lastStatus = null;
 let queue   = [];     // [{ id, head, targets: [{axisKey, target}], feedMmS, state }]
 let queueSeq = 0;
 let running = false;  // a "send all" walk or a job stream is in flight
+// A job waiting on a manual touch-off: { head, resolve, reject }. Jogging is
+// open while it is set.
+let touchOffGate = null;
 
 /** The SVG the job runner compiles, if one has been chosen. */
 let svgText = null;
@@ -1064,7 +1075,7 @@ window.addEventListener('keydown', e => {
     // key is swallowed rather than walking the radio group.
     e.preventDefault();
     if (e.repeat) return;   // one press, one increment — see above
-    if (!isConnected() || !axis.present || goTo !== null || running) return;
+    if (!isConnected() || !axis.present || goTo !== null || (running && !touchOffGate)) return;
     if (axis.head !== undefined && axis.head !== committedHead()) return;
 
     onJogClick(axis, e.key === 'ArrowRight' ? +1 : -1);
@@ -1671,6 +1682,16 @@ const toolName = t => TOOL_PROFILES_BY_TYPE[t]?.name ?? `tool ${t}`;
  * position so the lead-in jog starts where the head actually is, which is what
  * makes back-to-back runs repeat in place instead of drifting.
  */
+/** The job's material thickness, mm. Required: the Z lift is baked from it. */
+function materialMm() {
+    const v = jobMaterial.value.trim();
+    const mm = Number(v);
+    if (v === '' || !Number.isFinite(mm) || mm < 0) {
+        throw new Error('enter the material thickness (mm) first');
+    }
+    return mm;
+}
+
 function compileJob(initialState) {
     if (!config) throw new Error('no config loaded');
     if (!svgText) throw new Error('select an SVG first');
@@ -1680,7 +1701,7 @@ function compileJob(initialState) {
     // decides step counts, so mm cannot become steps until each block's socket
     // is known — and hands back the phases it used, so nothing downstream
     // recomputes them and disagrees.
-    const { blocks, phases } = bakePlan(config, svgText, {
+    const { blocks, phases } = bakePlan(config, svgText, materialMm(), {
         defaultTool: jobTool.value.trim() || undefined,
         mounts: ctl ? mountedTypes(ctl.setup) : undefined,
     });
@@ -1854,11 +1875,12 @@ jobRun.addEventListener('click', async () => {
     renderAll();
 
     try {
-        await runWalk(ctl, events, {
+        await runWalk(ctl, events, materialMm(), {
             initialMount: phases[0]?.mounts ?? [],
             onPhase: (mount, why) => applyPeripherals(mount, why),
             onDutyBreak: handleDutyBreak,
             confirmSwap: confirmSwap,
+            touchOff: touchOff,
             onProgress: (sent, total) => {
                 jobProgress.style.width = `${(sent / total * 100).toFixed(1)}%`;
             },
@@ -1946,6 +1968,61 @@ function confirmSwap(req) {
     return true;
 }
 
+/**
+ * A head with no bed switch is about to cut unprobed. The job waits here while
+ * the operator jogs the tip onto the mat and stores it; Continue opens only
+ * once the Pico reports probed=1. runWalk restores XY afterwards.
+ */
+function touchOff(head, tool) {
+    return new Promise((resolve, reject) => {
+        touchOffGate = { head, resolve, reject };
+        touchOffMsg.textContent =
+            `Touch-off, head ${head} (${tool.name}): jog the tip down onto bare mat, then Set Z here.`;
+        touchOffGo.disabled = true;
+        touchOffRow.hidden = false;
+        renderAll();
+    });
+}
+
+function closeTouchOff() {
+    touchOffGate = null;
+    touchOffRow.hidden = true;
+    renderAll();
+}
+
+touchOffSet.addEventListener('click', async () => {
+    if (!touchOffGate || jog) return;
+    try {
+        const r = await touchOffHere(link);
+        if (!r.ok) throw new Error(r.reason);
+        const pz = (await getState(link)).probeZ;
+        log(`job: head ${touchOffGate.head} mat stored at Z ${pz}`, 'ok');
+        touchOffGo.disabled = pz === null || pz === undefined;
+    } catch (e) {
+        log(`job: touch-off failed: ${e.message}`, 'err');
+    }
+});
+
+touchOffGo.addEventListener('click', async () => {
+    const gate = touchOffGate;
+    if (!gate || jog) return;
+    const pz = (await getState(link)).probeZ;
+    if (pz === null || pz === undefined) {
+        touchOffGo.disabled = true;
+        log('job: the Pico holds no height — Set Z here first', 'err');
+        return;
+    }
+    closeTouchOff();
+    gate.resolve();
+});
+
+touchOffStop.addEventListener('click', () => {
+    const gate = touchOffGate;
+    if (!gate) return;
+    closeTouchOff();
+    gate.reject(new Error('cancelled by the operator at the touch-off'));
+});
+
 // ── render gating ───────────────────────────────────────────────────────────
 
 function renderAll() {
@@ -1980,7 +2057,8 @@ function renderAll() {
         // the OTHER head's nodes, so the click would move that head instead.
         const rowHead = b.dataset.head === undefined ? null : parseInt(b.dataset.head, 10);
         const wrongHead = rowHead !== null && rowHead !== engaged;
-        b.disabled = b.dataset.absent === '1' || wrongHead || !on || goTo !== null || running;
+        b.disabled = b.dataset.absent === '1' || wrongHead || !on || goTo !== null ||
+            (running && !touchOffGate);
     }
     mapCommit.disabled = !on || !cfg;
 

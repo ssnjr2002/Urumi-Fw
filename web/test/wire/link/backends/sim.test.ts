@@ -68,7 +68,7 @@ describe("wire/link/backends/sim: control plane", () => {
     it("getstate reports the state + masks", async () => {
         await withLink(async (link) => {
             expect(await link.command("getstate")).toBe(
-                "state=0 enabled=0x00 homed=0x00 alarm=0 running=0 latched=0x00",
+                "state=0 enabled=0x00 homed=0x00 alarm=0 running=0 latched=0x00 probed=0",
             );
         });
     });
@@ -77,11 +77,11 @@ describe("wire/link/backends/sim: control plane", () => {
         await withLink(async (link) => {
             expect(await link.command("axes_enable on")).toBe("ok");
             expect(await link.command("getstate")).toBe(
-                "state=0 enabled=0x0f homed=0x00 alarm=0 running=0 latched=0x00",
+                "state=0 enabled=0x0f homed=0x00 alarm=0 running=0 latched=0x00 probed=0",
             );
             expect(await link.command("setorigin")).toBe("ok");
             expect(await link.command("getstate")).toBe(
-                "state=0 enabled=0x0f homed=0x0f alarm=0 running=0 latched=0x00",
+                "state=0 enabled=0x0f homed=0x0f alarm=0 running=0 latched=0x00 probed=0",
             );
 
             // stop → ALARM, then setorigin recovers

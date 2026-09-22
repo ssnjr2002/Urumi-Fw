@@ -79,6 +79,7 @@ export interface DiscretizeReport {
 
 export interface DiscretizeOverrides {
     readonly jogFeed?: number;
+    /** Clear-to-cut Z distance, mm (machine/heights.ts). Absent = no Z moves. */
     readonly liftHeight?: number;
     readonly zFeed?: number;
     readonly zAccel?: number;
@@ -95,10 +96,10 @@ export interface DiscretizeOverrides {
  *           segment stream rather than scaling it, so this function cannot pick
  *           a head without deciding one. Its caller already knows which.
  * profile — ToolProfile (PEN/KNIFE/CREASE). Selects tangent tracking, corner
- *           threshold, unwind, lift.
+ *           threshold, unwind.
  * quality — QualityConfig (dvMax, vMin for subdivision + interval).
- * overrides — explicit per-call overrides for jogFeed/liftHeight/zFeed;
- *             absence falls back to profile, then machine defaults.
+ * overrides — the lift, and per-call overrides for jogFeed/zFeed/zAccel;
+ *             absent feeds fall back to profile, then machine defaults.
  * report  — optional out-parameter; see DiscretizeReport. Filled but never
  *           read here: emitting the packets is unaffected by measuring them.
  */
@@ -128,7 +129,7 @@ export function discretize(
     //   slew  — machine-owned standalone-A, threaded into pivot/preOrient.
     const targets = resolveTargets(machine, profile);
     const jogFeed = overrides?.jogFeed ?? targets.rapid.feed;
-    const liftHeight = overrides?.liftHeight ?? profile.liftHeight;
+    const liftHeight = overrides?.liftHeight ?? 0;
     const zFeed = overrides?.zFeed ?? targets.z.feed;
     const zAccel = overrides?.zAccel ?? targets.z.accel ?? axes.z.maxAccel;
     const slew = targets.slew;
@@ -184,7 +185,7 @@ export function discretize(
         aAccum = aPhys;
         started = true;
 
-        if (lift) out.push(...zMove(-zSteps, axes, zFeed, zAccel)); // lower to cut
+        if (lift) out.push(...zMove(+zSteps, axes, zFeed, zAccel)); // lower to cut
 
         // Index of the last segment that may carry this subpath's PATH_END. It
         // tracks the last CUTTING segment; if the subpath's final sub-step turns
@@ -335,7 +336,7 @@ export function discretize(
             out[endIdx] = { ...out[endIdx]!, flags: out[endIdx]!.flags | MICRO_PATH_END };
         }
 
-        if (lift) out.push(...zMove(+zSteps, axes, zFeed, zAccel)); // raise after the stroke
+        if (lift) out.push(...zMove(-zSteps, axes, zFeed, zAccel)); // raise after the stroke
     }
 
     return out;

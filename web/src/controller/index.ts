@@ -25,3 +25,5 @@ export {
     type RunWalkResult,
     type SwapRequest,
 } from "./runWalk.js";
+
+export { prepareZ, touchOffHere, type PrepareZOptions } from "./prepareZ.js";

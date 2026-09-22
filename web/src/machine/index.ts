@@ -35,6 +35,7 @@ export * from "./resolve.js";
 export * from "./frames.js";
 export * from "./slots.js";
 export * from "./setup.js";
+export * from "./heights.js";
 export { DEFAULTS } from "./defaults.js";
 export { parseConfig, loadConfig, type ConfigResult, type LoadResult } from "./json/load.js";
 export { validateConfig, type ValidationResult } from "./json/validate.js";

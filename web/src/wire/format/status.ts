@@ -128,6 +128,31 @@ export const HomeFail = {
 export type HomeFail = (typeof HomeFail)[keyof typeof HomeFail];
 const HOME_FAIL_VALUES = Object.values(HomeFail) as readonly number[];
 
+/** Probe session phase, `probing=` (ProbingReason in ipc/shared_state.h). */
+export const Probing = {
+    /** A leg is executing. */
+    LEG: 0,
+    /** Between legs, switch closed: the tool is off the surface. */
+    CLEAR: 1,
+    /** Between legs, switch open: the tool is on the surface. */
+    CONTACT: 2,
+} as const;
+export type Probing = (typeof Probing)[keyof typeof Probing];
+
+/** Last probe leg's outcome, `probe=` (PROBE_* in ipc/core1_rpc.h). */
+export const ProbeCause = {
+    OK: 0,
+    BUDGET: 1,
+    POLL: 2,
+    CHATTER: 3,
+    ALREADY_OPEN: 4,
+    NOT_CLEARED: 5,
+    POS_MISMATCH: 6,
+    DEADLINE: 7,
+    ESTOP: 8,
+} as const;
+export type ProbeCause = (typeof ProbeCause)[keyof typeof ProbeCause];
+
 // ── axis bitmask — bit0=X bit1=Y bit2=Z bit3=A ─────────────────────────────────
 
 export type AxisLetter = "x" | "y" | "z" | "a";
@@ -204,6 +229,15 @@ export class MachineStatus {
          * places, and the reason byte alone cannot tell them apart.
          */
         readonly homeFail: HomeFail | undefined = undefined,
+        /** Probe session phase; present only while PROBING or after PROBE_FAIL. */
+        readonly probing: number | undefined = undefined,
+        /** Last probe leg's outcome (ProbeCause), alongside `probing`. */
+        readonly probeCause: number | undefined = undefined,
+        /**
+         * Stored contact height of the engaged Z, wire steps. null = not probed;
+         * undefined = the reply did not say (binary plane or older firmware).
+         */
+        readonly probeZ: number | null | undefined = undefined,
     ) {}
 
     homed(axis: AxisLetter): boolean {
@@ -277,6 +311,13 @@ export function parseGetstate(line: string): MachineStatus {
         fields.homefail !== undefined
             ? enumFromStr(HOME_FAIL_VALUES, fields.homefail, HomeFail.BUDGET)
             : undefined,
+        fields.probing !== undefined ? parseInt(fields.probing, 10) : undefined,
+        fields.probe !== undefined ? parseInt(fields.probe, 10) : undefined,
+        fields.probed === undefined
+            ? undefined
+            : fields.probed === "1" && fields.pz !== undefined
+                ? parseInt(fields.pz, 10)
+                : null,
     );
 }
 

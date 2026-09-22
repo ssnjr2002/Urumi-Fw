@@ -90,6 +90,13 @@ export {
     type ResolvedTargets,
 } from "./machine/resolve.js";
 
+export {
+    toolHeights,
+    zDownSign,
+    zAtHeightSteps,
+    type ToolHeights,
+} from "./machine/heights.js";
+
 // ── coordinate frames: home ↔ tool (docs/coordinate_frames_and_limits.md) ────
 export {
     type XY,
@@ -249,6 +256,8 @@ export {
     MachineState,
     AlarmReason,
     HomeFail,
+    Probing,
+    ProbeCause,
     RunningReason,
     MachineStatus,
     parseGetstate,
@@ -381,6 +390,13 @@ export {
     setOrigin,
     linLeg,
     rotLeg,
+    probeMap,
+    probeLeg,
+    probeEnd,
+    setProbe,
+    unprobe,
+    type ProbeLegArgs,
+    type ProbeReply,
     pause,
     resume,
     cancel,
@@ -407,7 +423,20 @@ export {
     type RunWalkHooks,
     type RunWalkResult,
     type SwapRequest,
+    prepareZ,
+    touchOffHere,
+    type PrepareZOptions,
 } from "./controller/index.js";
+
+// ── probe: tool contact height (docs/tool_probe_planner_integration.md) ──────
+export {
+    deriveProbePlan,
+    runProbe,
+    ProbeError,
+    type ProbePlan,
+    type ProbeStep,
+    type RunProbeOptions,
+} from "./probe/index.js";
 
 // ── operatorJog ──────────────────────────────────────────────────────────────
 export {

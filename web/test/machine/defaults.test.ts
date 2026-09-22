@@ -50,7 +50,7 @@ describe("factories derive from DEFAULTS", () => {
     it("toolProfile uses DEFAULTS.tool", () => {
         const t = toolProfile("x");
         expect(t.cornerAngleDeg).toBe(DEFAULTS.tool.cornerAngleDeg);
-        expect(t.liftHeight).toBe(DEFAULTS.tool.liftHeight);
+        expect(t.plunge).toBe(DEFAULTS.tool.plunge);
         expect(t.tangential).toBe(DEFAULTS.tool.tangential);
     });
 
