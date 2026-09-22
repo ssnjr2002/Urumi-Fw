@@ -38,6 +38,10 @@
 
 #define SLOT_NONE     0xFF
 #define MOTION_SLOTS  4     // stream-byte motion slots (X/Y/Z/A)
+#define SLOT_X        0
+#define SLOT_Y        1
+#define SLOT_Z        2
+#define SLOT_A        3
 
 // ─── Axis map ─────────────────────────────────────────────────────────────────
 
@@ -117,6 +121,21 @@ void originInvalidateAll(void);
 // True once an origin has been recorded for node `n` and nothing since has
 // invalidated it. Core 0's half of the validity conjunction.
 bool originValid(uint8_t n);
+
+// ─── Tool probe, in the NODE frame ────────────────────────────────────────────
+// The machine-frame Z at which node n's tool opened the bed switch. Keyed by bus
+// id like the origin, so a parked head keeps its probe across axis_map swaps.
+// Only valid while the origin it was measured against is: originRecord and both
+// originInvalidate variants clear it.
+
+// Store node `n`'s contact height. Ignored unless `n` is homed.
+void probeRecord(uint8_t n, int32_t zSteps);
+
+// Clear node `n`'s probe. Idempotent.
+void probeForget(uint8_t n);
+
+// True if node `n` holds a valid probe; writes it to `zSteps` when non-null.
+bool probeValid(uint8_t n, int32_t* zSteps);
 
 // ─── Frozen-while-parked check ────────────────────────────────────────────────
 // A parked node can neither move nor count (its RX ISR returns on slot ==

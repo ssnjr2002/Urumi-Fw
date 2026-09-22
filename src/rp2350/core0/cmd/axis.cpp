@@ -649,3 +649,39 @@ bool cmdProbeLeg(const char* args) {
 bool cmdProbeEnd(const char*) {
     return probeExit(nullptr);
 }
+
+// ── setprobe <z_steps> ───────────────────────────────────────────────────────
+// Record the contact height, machine-frame steps, for the Z node in slot 2. The
+// host issues it after a clean probe with the latch leg's getpos Z.
+bool cmdSetProbe(const char* args) {
+    if (machineState != STATE_IDLE && machineState != STATE_PAUSED) {
+        Serial.println("err bad_state"); return true;
+    }
+    if (probeActive()) { Serial.println("err probing"); return true; }
+    char* end;
+    const long z = strtol(args, &end, 10);
+    if (end == args) { Serial.println("err usage"); return true; }
+    const uint8_t zNode = slotNodeAt(SLOT_Z);
+    if (zNode == SLOT_NONE) { Serial.println("err unbound"); return true; }
+    if (!originValid(zNode)) { Serial.println("err not_homed"); return true; }
+    probeRecord(zNode, (int32_t)z);
+    Serial.printf("ok probe node=%d z=%ld\n", zNode, z);
+    return true;
+}
+
+// ── unprobe [node] ───────────────────────────────────────────────────────────
+// Clear a probe. No argument means the Z node in slot 2; a node argument
+// reaches the parked head, whose tool can be swapped while it holds no slot.
+bool cmdUnprobe(const char* args) {
+    uint8_t node;
+    if (*args) {
+        node = parseNode(args, nullptr);
+        if (!node) { Serial.println("err bad_node"); return true; }
+    } else {
+        node = slotNodeAt(SLOT_Z);
+        if (node == SLOT_NONE) { Serial.println("err unbound"); return true; }
+    }
+    probeForget(node);
+    Serial.printf("ok unprobe node=%d\n", node);
+    return true;
+}
