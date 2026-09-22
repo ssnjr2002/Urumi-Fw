@@ -58,9 +58,17 @@ consumer, the axis map.
 * Checks: `pio run -e pico`. Human: push/pull a blob on hardware, power-cycle,
   confirm it survives; pull power during a write, confirm the old one survives.
 
-**Status:** not started
+**Status:** merged. Hardware checks move to branch 2, which adds the host
+sender. Unblocks branch 2.
 
 **Outcome:**
+
+* `ConfigBlobHeader` keeps `version` (drops `magic`); `ConfigCache` now holds
+  `mounted/valid/length/seq/crc32`, and readers use `configStoreRead()`.
+* The park handshake stays around the whole write, on top of LittleFS's own
+  per-operation Core 1 idle.
+* First boot on this firmware formats the span; a config stored by the old A/B
+  store is lost and must be pushed again.
 
 ## Branch 2: `feature/pico-config-read`
 
@@ -121,7 +129,9 @@ consumer, the axis map.
   config → IDLE and mapped without the host sending `axis_map`; push a bad
   config → NACK, old config and state kept; head switch still works; boot with
   a node unplugged → `ALARM_NODE_FAULT`, `unalarm` refused, plug it in and
-  `axis_map` → IDLE.
+  `axis_map` → IDLE. Plus branch 1's storage checks: pull matches push and
+  survives a power cycle; power cut mid-write keeps the old config; steps still
+  stream after a config write.
 
 **Status:** not started
 

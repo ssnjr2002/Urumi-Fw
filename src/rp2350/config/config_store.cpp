@@ -1,23 +1,20 @@
-// Config blob store — A/B double-buffered flash storage for one opaque blob.
+// Config blob store — /config.bin in LittleFS.
 // See config_store.h and docs/config_storage.md for the scheme and rationale.
 
 #include <Arduino.h>
+#include <LittleFS.h>
 #include <string.h>
-#include "hardware/flash.h"
 #include "hardware/sync.h"
 #include "../ipc/shared_state.h"
 #include "../core0/usb_protocol.h"
 #include "config_store.h"
 
-// Linker symbols bounding the reserved filesystem span (memmap_default.ld
-// PROVIDEs these; referencing them here forces emission). We repurpose the low
-// CFG_REGION_BYTES of this span as raw config flash — LittleFS is never mounted.
-extern uint8_t _FS_start;
-extern uint8_t _FS_end;
+static const char* const CFG_PATH = "/config.bin";
+static const char* const TMP_PATH = "/config.tmp";
 
 // ─── Globals ──────────────────────────────────────────────────────────────────
 
-ConfigCache g_cfg = { nullptr, 0, 0, -1 };
+ConfigCache g_cfg = { false, false, 0, 0, 0 };
 
 // RAM mirror of a blob, filled by the receiver, source for a commit. 32 KB in
 // .bss — always resident, but RP2350 has 520 KB SRAM.
@@ -25,59 +22,65 @@ static uint8_t cfgStage[CFG_MAX_BYTES];
 
 uint8_t* configStageBuf() { return cfgStage; }
 
-// ─── Geometry helpers ─────────────────────────────────────────────────────────
+// ─── File helpers ─────────────────────────────────────────────────────────────
 
-// Flash offset (relative to XIP_BASE) of the config region base.
-static inline uint32_t cfgRegionOff() {
-    return (uint32_t)((uintptr_t)&_FS_start - XIP_BASE);
+static inline uint32_t crc32Fold(uint32_t crc, const uint8_t* p, uint32_t n) {
+    while (n--) {
+        crc ^= *p++;
+        for (uint8_t k = 0; k < 8; k++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)(-(int32_t)(crc & 1u)));
+    }
+    return crc;
 }
 
-// True if the reserved FS span is large enough to hold both slots. Guards every
-// read/write so a too-small filesystem_size fails closed instead of corrupting
-// whatever sits above the region.
-static inline bool cfgRegionOk() {
-    return (uint32_t)((uintptr_t)&_FS_end - (uintptr_t)&_FS_start) >= CFG_REGION_BYTES;
+// Validate a blob file: header well-formed, size consistent, payload CRC matches.
+static bool fileValid(const char* path, ConfigBlobHeader* out) {
+    File f = LittleFS.open(path, "r");
+    if (!f) return false;
+
+    ConfigBlobHeader h;
+    bool ok = f.read((uint8_t*)&h, sizeof(h)) == sizeof(h)
+           && h.version == CFG_VERSION
+           && h.length != 0 && h.length <= CFG_MAX_BYTES
+           && f.size() == sizeof(h) + h.length;
+
+    if (ok) {
+        uint8_t  chunk[256];
+        uint32_t crc  = 0xFFFFFFFFu;
+        uint32_t left = h.length;
+        while (left) {
+            uint32_t n = left < sizeof(chunk) ? left : sizeof(chunk);
+            if (f.read(chunk, n) != n) { ok = false; break; }
+            crc   = crc32Fold(crc, chunk, n);
+            left -= n;
+        }
+        ok = ok && (~crc == h.crc32);
+    }
+    f.close();
+    if (ok) *out = h;
+    return ok;
 }
 
-static inline const uint8_t* slotBase(uint32_t i) {
-    return (const uint8_t*)(XIP_BASE + cfgRegionOff() + i * CFG_SLOT_BYTES);
-}
-
-// A slot is valid only if the header is well-formed AND the payload CRC matches.
-// Returns the payload length via *outLen and seq via *outSeq when valid.
-static bool slotValid(uint32_t i, uint32_t* outLen, uint32_t* outSeq) {
-    const uint8_t* base = slotBase(i);
-    const ConfigBlobHeader* h = (const ConfigBlobHeader*)base;
-    if (h->magic != CFG_MAGIC)                       return false;
-    if (h->version != CFG_VERSION)                   return false;
-    if (h->length == 0 || h->length > CFG_MAX_BYTES) return false;
-    if (crc32(base + CFG_SECTOR, h->length) != h->crc32) return false;
-    *outLen = h->length;
-    *outSeq = h->seq;
-    return true;
-}
-
-// ─── Boot scan ────────────────────────────────────────────────────────────────
+// ─── Boot ─────────────────────────────────────────────────────────────────────
 
 void configStoreInit() {
-    g_cfg = { nullptr, 0, 0, -1 };
-    if (!cfgRegionOk()) return;   // misconfigured reservation — no config available
+    g_cfg = { false, false, 0, 0, 0 };
+    g_cfg.mounted = LittleFS.begin();   // formats on first use
+    if (!g_cfg.mounted) return;
 
-    for (uint32_t i = 0; i < CFG_NUM_SLOTS; i++) {
-        uint32_t len, seq;
-        if (!slotValid(i, &len, &seq)) continue;
-        if (g_cfg.slot < 0 || seq > g_cfg.seq) {   // keep the higher-seq valid slot
-            g_cfg.addr   = slotBase(i) + CFG_SECTOR;
-            g_cfg.length = len;
-            g_cfg.seq    = seq;
-            g_cfg.slot   = (int8_t)i;
-        }
-    }
+    ConfigBlobHeader h;
+    if (!fileValid(CFG_PATH, &h)) return;
+    g_cfg.valid  = true;
+    g_cfg.length = h.length;
+    g_cfg.seq    = h.seq;
+    g_cfg.crc32  = h.crc32;
 }
 
 // ─── Core 1 flash quiesce (Core 0 side) ───────────────────────────────────────
-// These run before/after the XIP-down window, so they may stay flash-resident.
-// Core 1's matching park loop is RAM-resident (core1.cpp).
+// LittleFS idles Core 1 around each erase/program by itself, but that doorbell
+// can land anywhere in Core 1's bus loop. Parking Core 1 first holds it at a
+// known point for the whole write. Core 1's park loop is RAM-resident
+// (core1.cpp) and keeps interrupts enabled, so LittleFS's own idle still works.
 
 static void core1FlashQuiesce() {
     flash_op_requested = true;
@@ -93,58 +96,57 @@ static void core1FlashRelease() {
 
 // ─── Commit ───────────────────────────────────────────────────────────────────
 
+// Write header + staged payload to TMP_PATH. Core 1 must be parked.
+static bool writeTmp(const ConfigBlobHeader& h) {
+    File f = LittleFS.open(TMP_PATH, "w");
+    if (!f) return false;
+    bool ok = f.write((const uint8_t*)&h, sizeof(h)) == sizeof(h)
+           && f.write(cfgStage, h.length) == h.length;
+    f.close();
+    return ok;
+}
+
 bool configStoreCommit(uint32_t len, uint32_t crc, uint8_t* nack) {
-    // Validate before touching flash — cheap rejects leave the active slot alone.
-    // The caller (data-plane receiver) has already verified `crc` against the
-    // staged bytes via its incremental CRC32, so we do NOT recompute it here — the
-    // post-flash readback below is the remaining integrity gate. A caller passing
-    // an inconsistent (buffer, crc) pair still cannot corrupt the active config:
-    // readback would fail and the cache swap is skipped.
+    // The caller has already verified `crc` against the staged bytes, so it is
+    // not recomputed here; the readback of TMP_PATH is the remaining integrity
+    // gate before the rename makes it active.
     if (machineState != STATE_IDLE && machineState != STATE_ALARM) {
         *nack = CFG_NACK_BAD_STATE; return false;
     }
     if (len == 0 || len > CFG_MAX_BYTES) { *nack = CFG_NACK_TOO_BIG; return false; }
-    if (!cfgRegionOk())                  { *nack = CFG_NACK_FLASH;   return false; }
+    if (!g_cfg.mounted)                  { *nack = CFG_NACK_FLASH;   return false; }
 
-    // Target the inactive slot; the active one stays intact until we commit.
-    uint8_t  writeSlot = (g_cfg.slot < 0) ? 0 : (uint8_t)(g_cfg.slot ^ 1);
-    uint32_t newSeq    = (g_cfg.slot < 0) ? 1u : g_cfg.seq + 1u;
-    uint32_t slotOff   = cfgRegionOff() + writeSlot * CFG_SLOT_BYTES;
+    ConfigBlobHeader h = { CFG_VERSION, 0, g_cfg.seq + 1u, len, crc };
 
-    // Build the header page (payload CRC + length + new seq), padded to a page.
-    uint8_t hp[CFG_HEADER_BYTES];
-    memset(hp, 0xFF, sizeof(hp));
-    ConfigBlobHeader* h = (ConfigBlobHeader*)hp;
-    h->magic = CFG_MAGIC; h->version = CFG_VERSION; h->_rsvd = 0;
-    h->seq = newSeq; h->length = len; h->crc32 = crc;
-
-    // Payload program length must be a whole number of flash pages.
-    uint32_t payLen = (len + (FLASH_PAGE_SIZE - 1)) & ~(uint32_t)(FLASH_PAGE_SIZE - 1);
-
-    // ── XIP-down critical section ──────────────────────────────────────────────
-    // Core 1 parked in RAM; Core 0 IRQs off so no flash-resident ISR runs. Erase
-    // the whole slot, program payload, program header LAST so an interrupted write
-    // leaves an invalid header (old slot still wins on the next boot scan).
+    // The rename is the commit point: a power cut before it leaves /config.bin
+    // untouched, and LittleFS renames atomically.
     core1FlashQuiesce();
-    uint32_t irq = save_and_disable_interrupts();
-
-    flash_range_erase(slotOff, CFG_SLOT_BYTES);
-    flash_range_program(slotOff + CFG_SECTOR, cfgStage, payLen);
-    flash_range_program(slotOff, hp, CFG_HEADER_BYTES);
-
-    restore_interrupts(irq);
+    ConfigBlobHeader back;
+    bool ok = writeTmp(h)
+           && fileValid(TMP_PATH, &back) && back.crc32 == crc
+           && LittleFS.rename(TMP_PATH, CFG_PATH);
+    if (!ok) LittleFS.remove(TMP_PATH);
     core1FlashRelease();
-    // ── XIP restored ───────────────────────────────────────────────────────────
 
-    // Readback verify from flash — catches a program failure (distinct from the
-    // transfer-integrity CRC checked above). Do not swap the cache on failure.
-    const uint8_t* payload = (const uint8_t*)(XIP_BASE + slotOff + CFG_SECTOR);
-    if (crc32(payload, len) != crc) { *nack = CFG_NACK_FLASH; return false; }
+    if (!ok) { *nack = CFG_NACK_FLASH; return false; }
 
-    // Commit: the new slot is now the active handle.
-    g_cfg.addr   = payload;
+    g_cfg.valid  = true;
     g_cfg.length = len;
-    g_cfg.seq    = newSeq;
-    g_cfg.slot   = (int8_t)writeSlot;
+    g_cfg.seq    = h.seq;
+    g_cfg.crc32  = crc;
     return true;
+}
+
+// ─── Read ─────────────────────────────────────────────────────────────────────
+
+uint32_t configStoreRead(uint32_t off, uint8_t* dst, uint32_t n) {
+    if (!g_cfg.valid || off >= g_cfg.length) return 0;
+    if (n > g_cfg.length - off) n = g_cfg.length - off;
+
+    File f = LittleFS.open(CFG_PATH, "r");
+    if (!f) return 0;
+    uint32_t got = 0;
+    if (f.seek(sizeof(ConfigBlobHeader) + off)) got = f.read(dst, n);
+    f.close();
+    return got;
 }

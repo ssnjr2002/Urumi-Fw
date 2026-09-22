@@ -65,7 +65,7 @@ void setup() {
     Serial.begin(115200);
     rpcInit();           // channel-1 queues, before Core 1 can service them
     while (!Serial && millis() < 10000) {}
-    configStoreInit();   // cold-boot scan: populate g_cfg from flash (pure reads)
+    configStoreInit();   // mount LittleFS, verify /config.bin into g_cfg
 }
 
 void loop() {

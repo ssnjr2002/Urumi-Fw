@@ -227,15 +227,25 @@ static void feedCfg(uint8_t b) {
 
 // ─── CFG_GET responder ────────────────────────────────────────────────────────
 // [CFG_DATA][length u32 LE][crc32 u32 LE][payload]. length 0 = no config stored.
-// Payload streams straight from XIP; crc is recomputed (GET is a one-shot fetch).
+// crc is the one verified at boot/commit; the payload streams from the file.
+// A short read mid-stream cannot be signalled after the header, so it pads with
+// zeros to keep the frame length and the host's CRC check rejects it.
 
 static void handleCfgGet() {
-    uint32_t len = g_cfg.length;
-    uint32_t crc = (len && g_cfg.addr) ? crc32(g_cfg.addr, len) : 0u;
+    uint32_t len = g_cfg.valid ? g_cfg.length : 0u;
+    uint32_t crc = g_cfg.valid ? g_cfg.crc32  : 0u;
     Serial.write(CFG_DATA);
     Serial.write((const uint8_t*)&len, 4);
     Serial.write((const uint8_t*)&crc, 4);
-    if (len && g_cfg.addr) Serial.write(g_cfg.addr, len);
+
+    uint8_t chunk[512];
+    for (uint32_t off = 0; off < len; ) {
+        uint32_t want = len - off < sizeof(chunk) ? len - off : sizeof(chunk);
+        uint32_t got  = configStoreRead(off, chunk, want);
+        if (got < want) memset(chunk + got, 0, want - got);
+        Serial.write(chunk, want);
+        off += want;
+    }
 }
 
 // ─── Public Interface ─────────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
 # Config Storage: Migration to LittleFS
 
-**Status:** Cancelled 
-**Replaces:** `docs/config_storage.md` (raw-flash A/B implementation)  
-**Effort:** ~2 hours, net deletion of ~100 lines
+**Status:** Implemented. `docs/config_storage.md` describes the current store;
+this doc is kept for the design reasoning. The implementation also keeps a
+`version` field in the header and parks Core 1 around the whole write.
 
 ---
 

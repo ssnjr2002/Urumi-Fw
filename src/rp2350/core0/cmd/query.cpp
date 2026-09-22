@@ -81,18 +81,19 @@ bool cmdGetPos(const char*) {
 }
 
 // `status` / `?` — human-readable, not host-facing. `status cfg` reports the
-// committed config slot. One handler because they share a command word: the
+// committed config blob. One handler because they share a command word: the
 // table matches words, so the sub-verb has to be dispatched here.
 bool cmdStatus(const char* args) {
     if (strcmp(args, "cfg") == 0) {
-        if (g_cfg.slot < 0) {
-            Serial.println("cfg slot=none");
+        if (!g_cfg.mounted) {
+            Serial.println("cfg fs=unmounted");
+        } else if (!g_cfg.valid) {
+            Serial.println("cfg none");
         } else {
-            Serial.printf("cfg slot=%d seq=%lu len=%lu addr=0x%08lx\n",
-                          g_cfg.slot,
+            Serial.printf("cfg seq=%lu len=%lu crc=0x%08lx\n",
                           (unsigned long)g_cfg.seq,
                           (unsigned long)g_cfg.length,
-                          (unsigned long)(uintptr_t)g_cfg.addr);
+                          (unsigned long)g_cfg.crc32);
         }
         return true;
     }
