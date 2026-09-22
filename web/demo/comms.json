@@ -1,0 +1,235 @@
+{
+  "machine": {
+    "fCpu": 150000000,
+    "path": {
+      "feed": 80
+    },
+    "rapid": {
+      "feed": 80
+    },
+    "z": {
+      "feed": 10
+    },
+    "slew": {},
+    "x": {
+      "node": {
+        "id": 1,
+        "present": true
+      },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 100,
+      "maxTravel": 0,
+      "invert": false,
+      "rotary": false,
+      "homing": {
+        "kind": "linear",
+        "hardTravel": 1200,
+        "atOrigin": false,
+        "pullInFeed": 2.5,
+        "seekFeed": 12.5,
+        "latchFeed": 0.78,
+        "rampSteps": 400,
+        "backoffMm": 2,
+        "parkMm": 5
+      }
+    },
+    "y": {
+      "node": {
+        "id": 2,
+        "present": true
+      },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 100,
+      "maxTravel": 0,
+      "invert": true,
+      "rotary": false,
+      "homing": {
+        "kind": "linear",
+        "hardTravel": 500,
+        "atOrigin": false,
+        "pullInFeed": 2.5,
+        "seekFeed": 12.5,
+        "latchFeed": 0.78,
+        "rampSteps": 400,
+        "backoffMm": 2,
+        "parkMm": 5
+      }
+    },
+    "laser": null
+  },
+  "heads": [
+    {
+      "accepts": [
+        "knife",
+        "crease"
+      ],
+      "xOffset": 0,
+      "yOffset": 0,
+      "z": {
+        "node": {
+          "id": 3,
+          "present": true
+        },
+        "stepsPerUnit": 1200,
+        "maxFeed": 20,
+        "maxAccel": 500,
+        "maxTravel": 0,
+        "invert": false,
+        "rotary": false,
+        "homing": {
+          "kind": "linear",
+          "hardTravel": 40,
+          "atOrigin": true,
+          "pullInFeed": 2.5,
+          "seekFeed": 6,
+          "latchFeed": 0.78,
+          "rampSteps": 400,
+          "backoffMm": 4,
+          "parkMm": 4
+        }
+      },
+      "a": {
+        "node": {
+          "id": 4,
+          "present": true
+        },
+        "stepsPerUnit": 45.9847,
+        "maxFeed": 100,
+        "maxAccel": 500,
+        "maxTravel": 0,
+        "invert": false,
+        "rotary": true,
+        "homing": {
+          "kind": "rotary",
+          "budgetRevs": 4,
+          "pullInFeed": 18.12,
+          "sweepFeed": 54.37,
+          "rampSteps": 400,
+          "toleranceDeg": 2.0,
+          "datumDeg": 0
+        }
+      }
+    },
+    {
+      "accepts": [
+        "pen"
+      ],
+      "xOffset": 60,
+      "yOffset": 0,
+      "z": {
+        "node": {
+          "id": 6,
+          "present": true
+        },
+        "stepsPerUnit": 600,
+        "maxFeed": 20,
+        "maxAccel": 500,
+        "maxTravel": 0,
+        "invert": false,
+        "rotary": false,
+        "homing": {
+          "kind": "linear",
+          "hardTravel": 40,
+          "atOrigin": true,
+          "pullInFeed": 2.5,
+          "seekFeed": 6,
+          "latchFeed": 0.78,
+          "rampSteps": 400,
+          "backoffMm": 4,
+          "parkMm": 4
+        }
+      },
+      "a": {
+        "node": {
+          "id": 5,
+          "present": true
+        },
+        "stepsPerUnit": 2.8611,
+        "maxFeed": 360,
+        "maxAccel": 500,
+        "maxTravel": 0,
+        "invert": false,
+        "rotary": true,
+        "homing": {
+          "kind": "rotary",
+          "budgetRevs": 4,
+          "pullInFeed": 174.76,
+          "sweepFeed": 291.27,
+          "rampSteps": 400,
+          "toleranceDeg": 2.0,
+          "datumDeg": 0
+        }
+      }
+    }
+  ],
+  "defaultHead": 0,
+  "peripherals": [
+    {
+      "id": 7,
+      "type": 2,
+      "present": true
+    },
+    {
+      "id": 8,
+      "type": 3,
+      "present": true
+    }
+  ],
+  "tools": {
+    "knife": {
+      "tangential": true,
+      "unwind": true,
+      "offsetMm": 0,
+      "cornerAngleDeg": 20,
+      "minRadiusMm": 0,
+      "path": {
+        "feed": 40
+      },
+      "z": {
+        "feed": 10
+      },
+      "toolOffset": {
+        "xOffset": 0,
+        "yOffset": 0
+      },
+      "dutyLimits": {
+        "maxOnS": 30,
+        "minOnS": 20,
+        "dwellS": 2,
+        "settleS": 0.3
+      }
+    },
+    "pen": {
+      "tangential": false,
+      "unwind": false,
+      "offsetMm": 0,
+      "cornerAngleDeg": 20,
+      "minRadiusMm": 0,
+      "path": {
+        "feed": 80
+      },
+      "z": {
+        "feed": 10
+      },
+      "toolOffset": {
+        "xOffset": 0,
+        "yOffset": 0
+      }
+    }
+  },
+  "quality": {
+    "chordTol": 0.01,
+    "dvMax": 3.0,
+    "vMin": 0.5,
+    "dtMax": 0.05,
+    "dtMin": 1e-06,
+    "angleTol": 5.0,
+    "gapTol": 0.01,
+    "nKappa": 20,
+    "junctionDeviation": 0.05,
+    "dsMax": 0.5,
+    "dthetaMax": 2.0
+  }
+}

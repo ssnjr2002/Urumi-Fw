@@ -1,0 +1,658 @@
+/**
+ * schema.ts — the config TYPES and their factories. Nothing else.
+ *
+ * No tool presets (tools.ts), no hardcoded machines (test/machines.ts), no default
+ * VALUES (defaults.ts), no resolution policy (resolve.ts). Every factory here
+ * fills absent fields from DEFAULTS and is otherwise pure shape.
+ *
+ * The stages stay pure functions that receive these values explicitly; this
+ * module is only where the SHAPES are defined.
+ *
+ * Five tiers:
+ *
+ *   bus     — BusNode: the RS485 topology primitive. A node can be anything
+ *             (stepper axis, knife controller, suction valve). id is the RS485
+ *             address; type names the node's firmware identity; present=false
+ *             marks a node declared but not fitted.
+ *   machine — AxisConfig: a BusNode WITH step-math (steps/mm or steps/deg,
+ *             maxFeed/maxAccel ceilings, invert, rotary). MachineConfig: the
+ *             per-machine definition — X/Y shared gantry, one or more ToolHeads,
+ *             bus peripherals, operation targets (path/rapid/z/slew), and fCpu.
+ *   head    — ToolHead: a co-mounted Z + A pair, the tools its fixture accepts,
+ *             and its X mounting offset. A machine has one or more heads;
+ *             only one is live at a time. Which head runs a given block is
+ *             decided at the bake from `accepts`; defaultHead says only which
+ *             head is engaged before anything has chosen.
+ *   tool    — ToolProfile: per-tool kinematic behaviour (tangential tracking,
+ *             lift, corner handling, cut feed). Presets keyed by ToolType
+ *             (PEN / KNIFE / CREASE). A new tool is a new preset, never a code
+ *             change.
+ *   quality — QualityConfig: algorithm tuning (chord_tol, ds_max, dtheta_max,
+ *             junction_deviation, velocity/accel discretization caps).
+ */
+
+import { DEFAULTS } from "./defaults.js";
+
+// ── bus tier ─────────────────────────────────────────────────────────────────
+
+/**
+ * Node type — the RS485 node's firmware identity, a numeric mirror of the
+ * include/common.h NODE_TYPE_* enum. CMD_GET_TYPE returns this byte; the
+ * orchestrator validates each node's reported type against config at connect
+ * time (see docs/node_type_architecture.md §2). Same stable-byte-value pattern
+ * as ToolType.
+ */
+export const NodeType = {
+    STEPPER: 0x01,
+    VACUUM: 0x02,
+    KNIFE_OSC: 0x03,
+} as const;
+
+export type NodeType = (typeof NodeType)[keyof typeof NodeType];
+
+/**
+ * One node on the RS485 bus.
+ *
+ * A BusNode is never declared on its own — it is always declared BY the thing
+ * that uses it: an axis (`machine.x.node`, `heads[i].z.node`, …) or a
+ * `peripherals[]` entry. There is deliberately no top-level node list, because
+ * a node with no consumer is not something the pipeline can act on: nothing
+ * would address it. So the config states what the machine HAS, and the bus
+ * topology falls out of that.
+ *
+ * `present` is about WIRING, not liveness: false means "this node is accounted
+ * for in the design but not physically fitted". Nothing here is ever inferred
+ * from a ping — connect-time reachability and node-type agreement are the
+ * orchestrator's business (docs/node_type_architecture.md §2). A config with
+ * present: true and an unplugged node is a valid config describing a broken
+ * machine, and it is the orchestrator that must say so.
+ */
+export interface BusNode {
+    readonly id: number;
+    readonly type: NodeType;
+    readonly present: boolean;
+}
+
+export function busNode(
+    id: number,
+    overrides?: Partial<Omit<BusNode, "id">>,
+): BusNode {
+    return { id, type: NodeType.STEPPER, present: true, ...overrides };
+}
+
+// ── operation target (feed/accel) ─────────────────────────────────────────────
+
+/**
+ * An operation's desired feed / accel — a scalar in the operation's own motion
+ * space, NOT a per-axis ceiling. Both optional: an omitted value falls through
+ * to the machine baseline (feed) or the participating-axis ceiling (accel).
+ * See docs/feed_accel_value_model.md.
+ */
+export interface OpTarget {
+    readonly feed?: number;
+    readonly accel?: number;
+}
+
+/**
+ * An operation target at the MACHINE tier, where fill-at-load guarantees a
+ * feed (see defaults.ts). Distinct from OpTarget — a tool-tier target keeps
+ * `feed` optional because `undefined` there means "inherit", which is real
+ * information. This is the type-level statement of that difference, and it is
+ * what lets consumers drop their `?? 80` fallbacks without a `!`.
+ *
+ * `accel` stays optional at both tiers: unset means "derive from the axis
+ * ceilings", which no single number expresses.
+ */
+export interface MachineTarget {
+    readonly feed: number;
+    readonly accel?: number;
+}
+
+// ── machine tier (axes) ──────────────────────────────────────────────────────
+
+/**
+ * Homing recipe for an axis with a limit switch at one end of a bounded travel.
+ *
+ * Every number the four-leg sequence needs and nothing it can derive. Feeds are
+ * in the axis's own units per second (mm/s here) rather than step intervals,
+ * because that is what an operator can reason about and check against maxFeed;
+ * `interval_us = 1e6 / (feed × stepsPerUnit)` converts at the wire, in
+ * homing/derive.ts.
+ */
+export interface LinearHoming {
+    readonly kind: "linear";
+
+    /**
+     * Usable travel between hard stops, mm. The runaway budget for a seek comes
+     * from this — an axis that has travelled more than its whole length without
+     * finding the switch is not going to.
+     *
+     * NOT the same as `maxTravel`, which is a soft-limit envelope the operator
+     * may set well inside the frame. Homing has to be able to leave that
+     * envelope, since before a datum exists there is nothing to measure it from.
+     */
+    readonly hardTravel: number;
+
+    /**
+     * Which end the switch is at: true = the 0 end, false = the far end.
+     *
+     * This is the ONLY thing that decides where the datum lands, and getting it
+     * backwards puts the origin a full `hardTravel` away — every subsequent move
+     * then drives at a hard stop. It is separate from `invert` (which is wiring)
+     * because the two are independent: either end can be reached by either
+     * direction sense.
+     */
+    readonly atOrigin: boolean;
+
+    /** mm/s the seek STARTS at, before the ramp. */
+    readonly pullInFeed: number;
+    /** mm/s the seek ramps up to and cruises at. */
+    readonly seekFeed: number;
+    /** mm/s for the slow re-approach and the two retracts. Sets repeatability. */
+    readonly latchFeed: number;
+    /** Steps taken ramping pullInFeed → seekFeed. */
+    readonly rampSteps: number;
+
+    /**
+     * Leg 2's retract, mm. Must EXCEED the switch's release hysteresis — a
+     * back-off shorter than that never leaves the switch, and since a retract
+     * is judged by whether the limit cleared, it reports a homing failure on a
+     * perfectly healthy machine.
+     */
+    readonly backoffMm: number;
+
+    /**
+     * Leg 4's retract, mm — where the axis is left standing when the home ends.
+     * Non-zero on purpose: parking ON the switch would leave the machine in
+     * ALARM/LIMIT_LATCHED with the node refusing stream steps, so the first
+     * move of the next job would silently drop this axis.
+     */
+    readonly parkMm: number;
+}
+
+/**
+ * Homing recipe for a rotary axis with a once-per-revolution Hall index.
+ *
+ * Structurally unlike LinearHoming and deliberately not a superset of it. A
+ * limit switch is a POSITION — its edge is the datum, so the sequence is four
+ * legs that approach it twice and park clear. An index is a FEATURE the axis
+ * runs THROUGH: the dip's centre is only knowable after passing it, so a leg
+ * reports an `index` that is not where the axis stopped, and the sequence is two
+ * legs whose answers are averaged.
+ *
+ * No `hardTravel`, no `atOrigin`, no `backoffMm`, no `parkMm`. A rotary axis has
+ * no ends, so there is no travel to bound, no switch end to name, no hysteresis
+ * to clear, and nowhere unsafe to park. Reusing the linear block would have
+ * meant six fields that mean nothing carrying values nobody can check.
+ *
+ * Feeds are deg/s, converted at the wire by `interval_us = 1e6 / (feed x
+ * stepsPerUnit)` exactly as for a linear axis.
+ */
+export interface RotaryHoming {
+    readonly kind: "rotary";
+
+    /**
+     * Runaway ceiling for a sweep, in revolutions. NOT a distance and never a
+     * tuning knob: a sweep is EVIDENCE-terminated — it stops once it has crossed
+     * the magnet enough times to prove the period — so this only decides how far
+     * a broken axis may spin before the node gives up.
+     *
+     * The floor is 3.2, measured rather than guessed. A sweep needs three full
+     * laps in the worst case (starting just past the index) plus the post-roll
+     * that follows the last crossing, and `span / stepsPerRev = 2 + phase +
+     * postroll` with phase in [0,1). Under about 3.2 a HEALTHY axis that started
+     * at the wrong phase reports `notfound`, which reads as a dead sensor.
+     * 4 is the recommended value and what the bench runs.
+     */
+    readonly budgetRevs: number;
+
+    /** deg/s the sweep STARTS at, before the ramp. */
+    readonly pullInFeed: number;
+    /** deg/s the sweep ramps up to and cruises at. */
+    readonly sweepFeed: number;
+    /** Steps taken ramping pullInFeed → sweepFeed. */
+    readonly rampSteps: number;
+
+    /**
+     * How far the two sweeps' answers may disagree, in degrees, after folding.
+     *
+     * This bounds a REAL and reproducible effect, not noise. A sweep measures
+     * the index slightly late in whichever direction it is travelling — the dip
+     * is not symmetric about its centre, because the magnet is a little
+     * off-centre or the sensor responds unevenly — so the forward and reverse
+     * answers straddle the truth. Averaging them cancels it exactly, and does so
+     * without needing the diagnosis to be right, which is the whole reason the
+     * sequence is two legs instead of one.
+     *
+     * The bench measures about 1.05° of separation on both heads — heads that
+     * differ 16x in gearing and 5.4x in angular speed, which is what rules out a
+     * fixed time lag or backlash. So a couple of degrees is a generous bound and
+     * anything much larger means slip, a second magnet, or a wrong stepsPerUnit.
+     */
+    readonly toleranceDeg: number;
+
+    /**
+     * The machine coordinate to assign to the index point itself, degrees.
+     *
+     * Almost always 0: unlike a linear axis, where the datum is offset from the
+     * switch by parkMm, a rotary axis is measured AT the feature. It exists
+     * because the magnet is glued where it fits, not where the tool's zero is,
+     * so a head whose knife points 90° off the index says so here rather than
+     * everywhere downstream.
+     */
+    readonly datumDeg: number;
+}
+
+
+/**
+ * Tool-height probe recipe for a Z axis. See docs/tool_probe.md.
+ *
+ * Deliberately shaped like LinearHoming, and named like it: `pullInFeed`,
+ * `seekFeed`, `latchFeed`, `rampSteps`, `backoffMm`, `parkMm` mean exactly what
+ * they mean there, on the same four-leg sequence. Where the names differ, the
+ * meaning differs -- that is the point of keeping the rest identical.
+ *
+ * Two fields carry the whole difference from homing, and both trace to one
+ * fact: the terminator is on ANOTHER NODE.
+ *
+ *   - `node` -- homing needs no such field, because a limit switch is on the
+ *     axis's own node and CMD_HOME_LEG is node-framed. This switch is on the
+ *     vacuum, so the sequence spans two nodes and the Pico closes the loop.
+ *   - `switchXMm/YMm` -- homing's switch is wherever the axis already is, so it
+ *     has no coordinate. This one is a fixture somewhere else on the bed.
+ *
+ * And one field is CONSPICUOUSLY ABSENT: there is no `atOrigin`. Homing's switch
+ * DEFINES the datum, so which end it is at decides where the origin lands. A
+ * probe measures against an origin that already exists, so there is no datum
+ * arithmetic here and no end to name -- the clearest single statement of why a
+ * probe is not a home (docs/tool_probe.md §1).
+ *
+ * The one Z field is `tripMm`: the contact height is taken as the mat, less the
+ * switch's trip offset (docs/tool_probe_planner_integration.md §1).
+ */
+export interface ProbeConfig {
+    /**
+     * The node the SWITCH is on -- the vacuum, not the Z node. Both heads name
+     * the same node, and that is not redundancy: it is one physical board with
+     * two switches wired in series to one input.
+     */
+    readonly node: BusNode;
+
+    /**
+     * Where the TOOL TIP must be to press this head's switch, mm, in TIP frame
+     * (docs/coordinate_frames_and_limits.md §1).
+     *
+     * Tip frame rather than home frame because there is no home-frame answer to
+     * store: the tip is offset from the machine position by the head offset AND
+     * the mounted tool's `toolOffset`, and the latter differs per tool. So a
+     * knife and a pen need different machine positions to touch the same
+     * physical switch. `toolToHome()` converts at move time, per mounted tool,
+     * which is what jog already does (§3.2).
+     */
+    readonly switchXMm: number;
+    readonly switchYMm: number;
+
+    /**
+     * How long to wait for the vacuum's stream-byte reply before calling the
+     * poll failed, microseconds. NOT the bus's RESPONSE_TIMEOUT_MS.
+     *
+     * This costs no overtravel at any feed, which is not obvious: under lockstep
+     * the Pico cannot emit the next step until the last is answered, so it is
+     * STOPPED while it waits. The number only decides how long silence is
+     * tolerated before PROBE_POLL. Size it from measured reply latency
+     * (docs/tool_probe.md §8.1), not from a distance budget.
+     */
+    readonly replyDeadlineUs: number;
+
+    /**
+     * How far below the starting height to search before giving up, mm.
+     * Exceeding it is PROBE_BUDGET -- "never found the surface".
+     *
+     * Unlike homing's `hardTravel`, this is not a physical constant of the
+     * frame. It is a search window below wherever Z happens to be, and it exists
+     * BECAUSE there is no start offset to compute: tool length varies by tool,
+     * and a tool that slipped in its holder violates any standoff assumed in
+     * advance (§5.7.1). Size it to cover the longest tool plus the deepest
+     * plausible slip.
+     */
+    readonly probeTravel: number;
+
+    /** mm/s the seek STARTS at, before the ramp. */
+    readonly pullInFeed: number;
+    /** mm/s the seek ramps up to. Fast; this leg does not measure. */
+    readonly seekFeed: number;
+    /** mm/s for the latch and both retracts. This number sets repeatability. */
+    readonly latchFeed: number;
+    /** Steps taken ramping pullInFeed -> seekFeed. */
+    readonly rampSteps: number;
+
+    /**
+     * Retract between seek and latch, mm. Must EXCEED the switch's release
+     * hysteresis, for the same reason homing's `backoffMm` must: a retract that
+     * never leaves the switch reports a failure on a healthy machine.
+     */
+    readonly backoffMm: number;
+
+    /** Final retract, mm -- where Z is left standing when the probe ends. */
+    readonly parkMm: number;
+
+    /**
+     * How far Z may descend PAST the moment the switch opens, on the seek leg
+     * only, mm.
+     *
+     * The probe learns the switch state only on poll steps and is blind between
+     * them, so this is the poll gap expressed as a distance:
+     * `pollDiv = max(1, floor(seekOvertravelMm x stepsPerUnit))`. At 1280
+     * steps/mm, 50um gives a poll every 64 steps.
+     *
+     * The crash-protection knob, and a genuine trade: too large and a full-speed
+     * seek drives the tool that far into the bed before it can stop; too small
+     * and every step waits on a bus round trip, so the seek crawls. The LATCH
+     * leg does not use it -- it polls every step, one step of overtravel, which
+     * is what makes it the leg whose answer is trusted.
+     */
+    readonly seekOvertravelMm: number;
+
+    /**
+     * Height of the switch's trip point above the mat, mm: the mat is the
+     * contact height lowered by this. Positive when the switch trips above the
+     * mat surface, negative when it sits below it. 0 = no correction.
+     */
+    readonly tripMm: number;
+}
+
+/**
+ * The two recipes, discriminated by `kind`.
+ *
+ * A union rather than one optional-heavy interface because the two sequences
+ * share no field beyond the feeds: they terminate on different evidence, run a
+ * different number of legs, and produce a datum by different arithmetic. Code
+ * that has a HomingConfig must say which it is holding, and derive.ts has two
+ * entry points for that reason.
+ */
+export type HomingConfig = LinearHoming | RotaryHoming;
+
+export interface AxisConfig {
+    readonly node: BusNode;
+    readonly stepsPerUnit: number;
+    /** Physical velocity ceiling (mm/s or deg/s). 0 = uncapped. */
+    readonly maxFeed: number;
+    /** Physical acceleration ceiling (mm/s² or deg/s²). 0 = uncapped. */
+    readonly maxAccel: number;
+    readonly maxTravel: number;
+    readonly invert: boolean;
+    readonly rotary: boolean;
+    /**
+     * Absent = this axis has no terminator (no limit switch, no index) and
+     * cannot be homed. Optional rather than defaulted because there is no safe
+     * default: every field is a physical measurement of THIS machine, and a
+     * plausible-looking guess would drive the axis into a hard stop at seek
+     * speed.
+     */
+    readonly homing?: HomingConfig;
+
+    /**
+     * Absent = no bed switch. A head's Z then takes its height from a manual
+     * touch-off on the mat. Optional for the same reason `homing` is:
+     * every field is a measurement of THIS machine, so there is no safe
+     * default. Only a head's Z axis is ever expected to carry one.
+     */
+    readonly probe?: ProbeConfig;
+}
+
+export function axisConfig(
+    node: BusNode,
+    stepsPerUnit: number,
+    overrides?: Partial<Omit<AxisConfig, "node" | "stepsPerUnit">>,
+): AxisConfig {
+    return { node, stepsPerUnit, ...DEFAULTS.axis, ...overrides };
+}
+
+// ── tool tier ────────────────────────────────────────────────────────────────
+
+export const ToolType = {
+    PEN: 0x01,
+    KNIFE: 0x02,
+    CREASE: 0x03,
+    REVOLVER_PEN: 0x04,
+} as const;
+
+export type ToolType = (typeof ToolType)[keyof typeof ToolType];
+
+/**
+ * A 2D offset in mm from one reference point to another. Used for:
+ *   - head offsets (head center vs machine reference)
+ *   - laser pointer position (vs machine reference)
+ *   - tool tip offset (tool tip vs head center)
+ *
+ * Convention: whichever party has (0, 0) defines the machine reference.
+ * In a typical dual-head + laser setup, laser is at (0, 0), head 1 at
+ * (-50, 0), head 2 at (+50, 0). In a single-head setup, the head is at
+ * (0, 0), no laser.
+ */
+export interface ReferencePoint {
+    readonly xOffset: number;
+    readonly yOffset: number;
+}
+
+/**
+ * Fixed XY offset of the tool tip from the head center, in mm.
+ *
+ * Distinct from `offsetMm` (the knife blade caster offset, which is
+ * along the direction of travel and rotates with A). The toolOffset is
+ * a constant XY shift — e.g. the revolver pen's active pen tip is at a
+ * fixed offset from the head center regardless of which slot is active
+ * or what the A angle is.
+ *
+ * Applied as a bake-time geometry shift: all of a tool's path
+ * coordinates are shifted by `-toolOffset` before baking, so the baked
+ * paths are in "head center" coordinates. The orchestrator then only
+ * needs to account for `headOffset` when positioning the head.
+ */
+export type ToolOffset = ReferencePoint;
+
+/**
+ * Duty limits for a tool that cannot run continuously (docs/tool_duty_limits.md).
+ *
+ * The ultrasonic knife's controller shuts itself off after ~40 s of continuous
+ * power and resets only when its enable line is released for a second or two.
+ * Rather than model heat, the planner works in the only terms it can observe:
+ * a budget of run time, and an off duration it must find room for.
+ *
+ * Grouped rather than spread flat across ToolProfile because the fields are
+ * interdependent — a budget with no dwell is a config error, and validate can
+ * only say so if it sees them together. Absent means no limit, so pens and
+ * crease tools carry none of this.
+ */
+export interface DutyLimits {
+    /** Hard budget of enable-line-on time between resets (seconds). */
+    readonly maxOnS: number;
+    /**
+     * Don't reset before this much has elapsed (seconds). Without it a drawing
+     * of many short subpaths would reset at every one of them for no benefit.
+     */
+    readonly minOnS: number;
+    /** Required release duration for the tool to reset (seconds). */
+    readonly dwellS: number;
+    /**
+     * Lead time between re-asserting and touching material (seconds) — an
+     * ultrasonic transducer needs a moment to reach full amplitude, and a blade
+     * that enters material below amplitude wedges rather than cuts.
+     */
+    readonly settleS: number;
+}
+
+export interface ToolProfile {
+    readonly name: string;
+    readonly toolType: ToolType;
+    readonly tangential: boolean;
+    readonly offsetMm: number;
+    readonly unwind: boolean;
+    readonly cornerAngleDeg: number;
+    readonly minRadiusMm: number;
+    /** Cut (pen-down) target; overrides machine.path. feed omitted → machine default. */
+    readonly path?: OpTarget;
+    /** Engage (touch-down / retract) target; overrides machine.z. */
+    readonly z?: OpTarget;
+    /**
+     * True if the tool cuts INTO the material (knife, crease): its cut height is
+     * the mat. False for a tool that works ON the surface (pen): its cut height
+     * is the material top. See machine/heights.ts.
+     */
+    readonly plunge: boolean;
+    readonly requiredPeripheralTypes: readonly NodeType[];
+    /** Fixed XY offset of tool tip from head center (mm). Default (0,0). */
+    readonly toolOffset: ToolOffset;
+    /**
+     * A-axis slot offset angles (degrees) for a revolver tool. Absent on
+     * PEN/KNIFE/CREASE. Present on REVOLVER_PEN — the orchestrator jogs A
+     * to slotOffsets[i] before cutting with slot i.
+     */
+    readonly slotOffsets?: readonly number[];
+    /**
+     * Duty limit for a tool that cannot run continuously. Absent = unlimited,
+     * which is every tool except the ultrasonic knife.
+     */
+    readonly dutyLimits?: DutyLimits;
+}
+
+export function toolProfile(
+    name: string,
+    overrides?: Partial<Omit<ToolProfile, "name">>,
+): ToolProfile {
+    return { name, ...DEFAULTS.tool, ...overrides };
+}
+
+// ── head tier ────────────────────────────────────────────────────────────────
+
+/**
+ * One physical tool head: a co-mounted Z + A pair, the tools its fixture
+ * accepts, and its XY mounting offset from the machine reference.
+ *
+ * A machine has one or more heads. On the current machine there is a
+ * single centred head (offset 0, 0). A dual-head machine fixes two
+ * heads side by side; they are software-selected, NEVER run
+ * simultaneously, so only one head's Z/A are "live" at a time.
+ *
+ * A head is a *socket*: fixed geometry (Z + A wiring, XY mounting offset).
+ * `xOffset`/`yOffset` is the head's position relative to the machine
+ * reference (see ReferencePoint). When a non-centred head is active, every
+ * XY move must be corrected by this offset — applied by the orchestrator as
+ * a head-switch jog, not consumed by the bake pipeline.
+ *
+ * `accepts` declares what this socket's fixture can physically hold, and is
+ * the only head→tool fact config carries. It is a CAPABILITY, not a mount:
+ * it says the knife FITS here, never that the knife IS here. What is screwed
+ * in this morning is live state (setup.ts); which head a given job will use is
+ * decided at the bake by the scheduler, reading this list.
+ *
+ * The list is ordered, and the order is preference: `["knife", "crease"]` means
+ * both fit and the knife is what this head would rather hold. An empty list is
+ * legal and means a socket nothing can mount on — declared, unusable.
+ *
+ * This replaces the old `profile?` seed field. A seed could not say what else
+ * fit, so every consumer that needed the real answer reconstructed it; the
+ * capability list answers both questions and is checked at load.
+ */
+export interface ToolHead extends ReferencePoint {
+    readonly z: AxisConfig;
+    readonly a: AxisConfig;
+    /** Tools whose fixture this socket takes, preference-ordered. See interface doc. */
+    readonly accepts: readonly ToolType[];
+}
+
+/**
+ * `accepts` defaults to empty — a socket accepts nothing until something says
+ * otherwise. Defaulting it to "every tool" would make an unconfigured head look
+ * universally capable, which is the failure mode the seed field had.
+ */
+export function toolHead(
+    z: AxisConfig,
+    a: AxisConfig,
+    overrides?: Partial<Omit<ToolHead, "z" | "a">>,
+): ToolHead {
+    return { z, a, xOffset: 0, yOffset: 0, accepts: [], ...overrides };
+}
+
+// ── machine tier (config) ────────────────────────────────────────────────────
+
+/**
+ * Optional laser pointer module. When present, defines the machine
+ * reference point (the laser is at (0, 0) by convention). Heads are
+ * positioned relative to the laser. When absent, the head at (0, 0) is
+ * the reference.
+ *
+ * The laser is a passive alignment aid — it doesn't move, doesn't have
+ * axes, and isn't on the bus. It's purely a geometric reference for
+ * head offset calculations.
+ */
+export type LaserPointer = ReferencePoint;
+
+export interface MachineConfig {
+    readonly x: AxisConfig;
+    readonly y: AxisConfig;
+    readonly heads: readonly ToolHead[];
+    /**
+     * Head engaged before anything has chosen one — the initial wire binding
+     * at connect, and nothing more. It is NOT a preference the bake consults:
+     * which head cuts a block comes from the scheduler reading `accepts`.
+     */
+    readonly defaultHead: number;
+    readonly fCpu: number;
+    /** Cut target baseline (engage; tools override). */
+    readonly path: MachineTarget;
+    /** Pen-up XY travel target (reposition; machine-owned). */
+    readonly rapid: MachineTarget;
+    /** Z engage target baseline (tools override). */
+    readonly z: MachineTarget;
+    /** Standalone-A slew (reposition; machine-owned). feed unset ⇒ A ceiling. */
+    readonly slew: OpTarget;
+    /** Margin above the material top that counts as clear, mm. */
+    readonly clearanceMm: number;
+    readonly peripherals: readonly BusNode[];
+    /** Optional laser pointer module (alignment reference). */
+    readonly laser?: LaserPointer;
+}
+
+export function machineConfig(
+    x: AxisConfig,
+    y: AxisConfig,
+    heads: readonly ToolHead[],
+    overrides?: Partial<Omit<MachineConfig, "x" | "y" | "heads">>,
+): MachineConfig {
+    return { x, y, heads, ...DEFAULTS.machine, ...overrides };
+}
+
+// ── quality tier ─────────────────────────────────────────────────────────────
+
+export interface QualityConfig {
+    readonly chordTol: number;
+    readonly dvMax: number;
+    readonly vMin: number;
+    readonly dtMax: number;
+    readonly dtMin: number;
+    readonly angleTol: number;
+    readonly gapTol: number;
+    readonly nKappa: number;
+    readonly junctionDeviation: number;
+    readonly dsMax: number;
+    readonly dthetaMax: number;
+    /**
+     * Halvings allowed when a flatten step overshoots dsMax or dthetaMax
+     * (audit F1/F7). Bounds how many samples a cusp can cost. 0 disables
+     * enforcement, restoring the pre-F7 predict-and-hope behaviour.
+     */
+    readonly maxRefine: number;
+}
+
+export function qualityConfig(overrides?: Partial<QualityConfig>): QualityConfig {
+    return { ...DEFAULTS.quality, ...overrides };
+}
+
+// ── pipeline config ──────────────────────────────────────────────────────────
+
+export interface PipelineConfig {
+    readonly machine: MachineConfig;
+    readonly quality: QualityConfig;
+    readonly toolProfiles: Readonly<Record<string, ToolProfile>>;
+}

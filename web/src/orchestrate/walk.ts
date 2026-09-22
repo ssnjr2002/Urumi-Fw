@@ -1,0 +1,270 @@
+/**
+ * walk.ts — runtime orchestrator walk.
+ *
+ * Drives a Schedule over the actual Plan, emitting the MicroSegments that
+ * fill the gaps between blocks: inter-block travel jogs, A-home / revolver
+ * slot selection, head-offset jogs on head switches, and pause markers where
+ * the operator must swap tools.
+ *
+ * The walk is stateful (it tracks posX/posY/aPhys) but side-effect
+ * free: it returns a WalkEvent[] rather than streaming to hardware. The caller
+ * feeds motion events to the RS485 streamer and acts on pause events (prompting
+ * the operator, updating the physical mount table, then resuming).
+ *
+ * Key invariant — A-home before every block:
+ *   Compiled blocks have their preOrient segment baked assuming aPhys = 0 at
+ *   block entry. For tangential tools this means the preOrient rotates to the
+ *   absolute entry tangent from 0, not from whatever A happens to be. The walk
+ *   therefore homes A to 0 before every tangential block and before every
+ *   revolver block (the revolver then jogs to the target slot from 0).
+ *   This guarantees block segments play back correctly regardless of history.
+ *
+ * Heads:
+ *   The walk does not decide, look up, or guess a head. Each CompiledBlock
+ *   carries the head its segments were discretised against (docs/head_binding.md),
+ *   and this function reads it. A switch — `blocks[i].head` differing from its
+ *   predecessor's — emits a `rebind` event so the axis map can follow, plus the
+ *   head-offset jog between the two sockets. Without the rebind the next block
+ *   would drive the new head's Z/A through the old head's motors.
+ *
+ *   The first block's rebind is unconditional. The walk has no way to know what
+ *   the firmware is bound to when it starts — that is live machine state and
+ *   this function is pure — so it states the head it needs rather than assuming
+ *   a default. The controller's commit is idempotent when the map already
+ *   agrees.
+ */
+
+import type { MachineConfig, ResolvedAxes, ToolType } from "../machine/index.js";
+import { axesForHead } from "../machine/index.js";
+import type { CompiledBlock } from "../production/compileBlock.js";
+import type { MicroSegment } from "../wire/format/microsegment.js";
+import type { SwapPhase, Mounts } from "../production/schedule.js";
+import {
+    aMoveTo,
+    travelJog,
+    headOffsetJog,
+} from "../choreograph/choreograph.js";
+
+// ── types ─────────────────────────────────────────────────────────────────────
+
+/** One unit of output from the walk. */
+export type WalkEvent =
+    | { readonly kind: "motion"; readonly segments: readonly MicroSegment[] }
+    | {
+          readonly kind: "pause";
+          readonly swapIn: readonly ToolType[];
+          readonly swapOut: readonly ToolType[];
+          /**
+           * The full mount set in force for the phase this pause opens — not
+           * just the diff. swapIn/swapOut tell the operator what to change;
+           * `mount` tells the caller what will be cutting once it resumes,
+           * which is what a host needs to decide peripheral state (knife
+           * oscillator, blower, vacuum) for the phase ahead.
+           */
+          readonly mounts: Mounts;
+      }
+    | {
+          /**
+           * Bind the wire's Z/A slots to `head` before anything after this
+           * point moves. Emitted at a head switch, between the outgoing head's
+           * last A move and the incoming head's first one.
+           *
+           * X/Y are fixed at slots 0/1, but both heads' Z/A contend for slots
+           * 2/3 — so the segments either side of this event need DIFFERENT
+           * bindings, and no single motion event can carry both. The firmware
+           * refuses to rebind while RUNNING, so the runner stamps MICRO_PAUSE
+           * on the batch before it and waits for rest.
+           */
+          readonly kind: "rebind";
+          readonly head: number;
+      };
+
+/** Mutable state the walk maintains across blocks. All positions in TRUE steps (pre-invert). */
+export interface WalkState {
+    posX: number;
+    posY: number;
+    /** Physical A position in TRUE steps from the last A-home (0 = homed). */
+    aPhys: number;
+}
+
+export interface WalkOptions {
+    /**
+     * Minimum feed velocity (mm/s) for travel jog interval clamping.
+     * Default 0.5 (matches default QualityConfig.vMin).
+     */
+    readonly vMin?: number;
+    /** Override jog feed (mm/s). Defaults to machine.rapid.feed. */
+    readonly jogFeed?: number;
+    /** Initial machine state. Defaults to origin, A=0. */
+    readonly initialState?: Partial<WalkState>;
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Accumulate the net XY and A displacement of a segment list (un-applying
+ * axis invert so the result is in TRUE step space).
+ */
+function netDisplacement(
+    segs: readonly MicroSegment[],
+    axes: ResolvedAxes,
+): { dx: number; dy: number; da: number } {
+    let dx = 0, dy = 0, da = 0;
+    for (const s of segs) {
+        dx += axes.x.invert ? -s.dx : s.dx;
+        dy += axes.y.invert ? -s.dy : s.dy;
+        da += axes.a.invert ? -s.da : s.da;
+    }
+    return { dx, dy, da };
+}
+
+// ── walk ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Walk the phases, emitting WalkEvents in execution order.
+ *
+ * Each motion event is a flat MicroSegment[] ready to stream. Each pause event
+ * tells the caller which tools to swap before continuing. The caller drives
+ * the loop: stream motion, act on pauses, then call this function's generator
+ * (or buffer the full output and advance accordingly).
+ */
+export function walkSchedule(
+    phases: readonly SwapPhase[],
+    blocks: readonly CompiledBlock[],
+    machine: MachineConfig,
+    opts: WalkOptions = {},
+): WalkEvent[] {
+    const { vMin = 0.5 } = opts;
+
+    const state: WalkState = {
+        posX: 0,
+        posY: 0,
+        aPhys: 0,
+        ...opts.initialState,
+    };
+
+    // The head the segments emitted so far belong to. `null` until the first
+    // block names one — the walk starts knowing nothing about the binding,
+    // which is why the first block's rebind is unconditional.
+    let curHead: number | null = null;
+    const curAxes = (): ResolvedAxes => axesForHead(machine, curHead ?? machine.defaultHead);
+
+    const events: WalkEvent[] = [];
+    const slew = machine.slew;
+
+    function push(segs: MicroSegment[]) {
+        if (segs.length > 0) events.push({ kind: "motion", segments: segs });
+    }
+
+    function aHome(axes: ResolvedAxes): void {
+        if (state.aPhys === 0) return;
+        const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes, slew);
+        push(segments);
+        state.aPhys = newAPhys;
+    }
+
+    for (const phase of phases) {
+        // ── phase boundary: A-home then pause if there's a swap ──────────────
+        if (phase.swapIn.length > 0 || phase.swapOut.length > 0) {
+            aHome(curAxes());
+            events.push({
+                kind: "pause",
+                swapIn: phase.swapIn,
+                swapOut: phase.swapOut,
+                mounts: phase.mounts,
+            });
+        }
+
+        // ── execute blocks in this phase ──────────────────────────────────────
+        for (const blockIdx of phase.blockIndices) {
+            const block = blocks[blockIdx]!;
+            // The head is READ, not derived: these segments were discretised
+            // against it and mean nothing anywhere else.
+            const targetHead = block.head;
+            const prevAxes = curAxes();
+            const axes = axesForHead(machine, targetHead);
+            const jogFeed = opts.jogFeed ?? machine.rapid.feed;
+
+            const interBlock: MicroSegment[] = [];
+
+            // ── head switch ───────────────────────────────────────────────────
+            if (targetHead !== curHead) {
+                // home A on the old head before switching
+                if (state.aPhys !== 0) {
+                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, prevAxes, slew);
+                    interBlock.push(...segments);
+                    state.aPhys = newAPhys;
+                }
+                // Cut here. Everything above drove the OUTGOING head's A (slot
+                // 3 = its motor); everything below needs the incoming head's.
+                // The offset jog is XY only, so it is indifferent and sits on
+                // the far side where the axes are already the new head's.
+                // splice, not push-then-clear: `push` stores the array it is
+                // given, so emptying it afterwards empties the event too. That
+                // was invisible while this branch only ran on a real switch
+                // with A off-home; the unconditional opening rebind runs it on
+                // every job.
+                push(interBlock.splice(0));
+                events.push({ kind: "rebind", head: targetHead });
+
+                // No jog on the opening rebind: there is no socket to travel
+                // FROM. The first block's start is reached by the ordinary
+                // travel jog below, in the new head's frame.
+                if (curHead !== null) {
+                    const jog = headOffsetJog(
+                        machine.heads[curHead]!,
+                        machine.heads[targetHead]!,
+                        axes,
+                        vMin,
+                        jogFeed,
+                    );
+                    interBlock.push(...jog);
+                }
+                curHead = targetHead;
+            }
+
+            // ── A management ──────────────────────────────────────────────────
+            if (block.profile.tangential) {
+                // Compiled preOrient assumes aPhys=0 at block entry — home A.
+                if (state.aPhys !== 0) {
+                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes, slew);
+                    interBlock.push(...segments);
+                    state.aPhys = newAPhys;
+                }
+            } else if (block.slot !== undefined) {
+                // Revolver: home A first, then rotate to the target slot.
+                if (state.aPhys !== 0) {
+                    const { segments, newAPhys } = aMoveTo(0, state.aPhys, axes, slew);
+                    interBlock.push(...segments);
+                    state.aPhys = newAPhys;
+                }
+                const slotDeg = block.profile.slotOffsets?.[block.slot] ?? 0;
+                if (slotDeg !== 0) {
+                    const { segments, newAPhys } = aMoveTo(slotDeg, state.aPhys, axes, slew);
+                    interBlock.push(...segments);
+                    state.aPhys = newAPhys;
+                }
+            }
+
+            // ── travel jog to block start ─────────────────────────────────────
+            const start = block.startSteps;
+            const jog = travelJog(state.posX, state.posY, start.x, start.y, axes, vMin, jogFeed);
+            interBlock.push(...jog);
+            state.posX = start.x;
+            state.posY = start.y;
+
+            push(interBlock);
+
+            // ── block segments ────────────────────────────────────────────────
+            push([...block.segments]);
+
+            // Update state from the block's net displacement.
+            const { dx, dy, da } = netDisplacement(block.segments, axes);
+            state.posX += dx;
+            state.posY += dy;
+            state.aPhys += da;
+        }
+    }
+
+    return events;
+}

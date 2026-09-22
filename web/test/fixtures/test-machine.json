@@ -1,0 +1,43 @@
+{
+  "machine": {
+    "fCpu": 150000000,
+    "path": { "feed": 80 },
+    "rapid": { "feed": 80 },
+    "z": { "feed": 20 },
+    "x": {
+      "node": { "id": 1 },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 1000,
+      "invert": true
+    },
+    "y": {
+      "node": { "id": 2 },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 1000
+    }
+  },
+  "heads": [
+    {
+      "accepts": ["knife", "crease"],
+      "xOffset": 0,
+      "yOffset": 0,
+      "z": {
+        "node": { "id": 3 },
+        "stepsPerUnit": 1200,
+        "maxFeed": 10,
+        "invert": true
+      },
+      "a": {
+        "node": { "id": 4 },
+        "stepsPerUnit": 51.667,
+        "maxFeed": 100,
+        "maxAccel": 2000,
+        "invert": true,
+        "rotary": true
+      }
+    }
+  ],
+  "defaultHead": 0
+}

@@ -1,0 +1,415 @@
+/**
+ * format/status.ts — binary STATUS_RSP (0xA7, 30B) + the operational enums.
+ * Ported from host/protocol/{state,packets}.py: MachineState / AlarmReason /
+ * RunningReason, MachineStatus, parse_getstate, parse_status_rsp,
+ * pack_status_rsp, axis_mask.
+ *
+ * STATUS_RSP folds state + position + expectedSeq + queued motion time into
+ * one coherent sample (docs/comms_architecture.md §4.2/§4.6). It supersedes
+ * the text `getstate` + `getpos` pair for any caller that can do a binary
+ * poll — including mid-stream, where the ASCII line would be a heavier
+ * insertion between MSEG packets. ASCII `getstate` remains for bring-up and
+ * human use; parseGetstate keeps parity with it.
+ *
+ * The fields text cannot carry (`pos`, `expectedSeq`, `queuedUs`, `bufCount`)
+ * stay `undefined` on a getstate-parsed MachineStatus, distinguishing "this
+ * came from the text plane" from a real zero.
+ */
+
+import { crc8 } from "./crc.js";
+import {
+    MAGIC_STATUS_RSP,
+    MAGIC_STATUS_RSP_V1,
+    STATUS_RSP_SIZE,
+} from "./constants.js";
+
+// ── operational enums (mirror firmware values; docs/wire_protocol.md) ──────────
+
+export const MachineState = {
+    IDLE: 0,
+    RUNNING: 1,
+    ESTOP: 2, // transient inter-core flush signal; rarely seen by the host
+    ALARM: 3,
+    PAUSED: 4,
+    HOMING: 5,
+    /**
+     * A tool-height probe session is open (docs/tool_probe.md §5.1). Entered by
+     * `probe_map`, spans several legs, and left only by an explicit exit.
+     *
+     * Load-bearing for the same reason LIMIT_LATCHED is below: enumFromInt()
+     * coerces an unrecognised value to the fallback, so a host missing this
+     * entry renders a probing machine as IDLE — and would happily start a job
+     * against a machine whose axis map is currently a probe binding.
+     */
+    PROBING: 6,
+} as const;
+export type MachineState = (typeof MachineState)[keyof typeof MachineState];
+const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
+
+export const AlarmReason = {
+    NONE: 0,
+    ESTOP: 1,
+    CONFIG: 2, // Phase 2
+    SOFT_LIMIT: 3,
+    HOMING_FAIL: 4,
+    NODE_FAULT: 5,
+    /**
+     * An axis is standing on a latched limit switch — where legs 1 and 3 of a
+     * home are SUPPOSED to end (docs/homing.md §2.6). Not a fault, but a real
+     * alarm: the node refuses stream steps while its limit is latched, so a job
+     * admitted here would run the other axes and silently drop this one.
+     *
+     * This member is load-bearing, not decorative. enumFromInt() coerces an
+     * unrecognised value to NONE, so a host missing this entry does not render
+     * "ALARM(6)" — it renders NO ALARM AT ALL, on a machine that is alarmed and
+     * refusing motion. It must be added in lockstep with the firmware.
+     */
+    LIMIT_LATCHED: 6,
+    /**
+     * A probe leg ended wrong (docs/tool_probe.md §5.11.1). Mirrors HOMING_FAIL,
+     * and like it says only THAT one failed — which of the seven causes it was
+     * travels separately, in the `probe=` field of `getstate`.
+     *
+     * Most probe failures leave the Z datum intact; the firmware voids it per
+     * cause rather than by reason, so this value must NOT be treated as
+     * position-invalidating the way ESTOP is.
+     *
+     * Load-bearing, exactly as LIMIT_LATCHED above: without this entry a probe
+     * failure renders as no alarm at all.
+     */
+    PROBE_FAIL: 7,
+} as const;
+export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
+const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];
+
+export const RunningReason = {
+    JOB: 0,
+    JOG: 1,
+    // Decelerating to rest after a pause/abort request (§4.5). A RunningReason
+    // and not a MachineState: the machine IS running, so every existing
+    // IDLE/RUNNING/PAUSED gate stays correct, and an older host reads it as
+    // plain RUNNING.
+    ABORT_DECEL: 2,
+} as const;
+export type RunningReason = (typeof RunningReason)[keyof typeof RunningReason];
+const RUNNING_REASON_VALUES = Object.values(RunningReason) as readonly number[];
+
+/**
+ * Which fault ended a home, alongside AlarmReason.HOMING_FAIL (core0/homing.h).
+ *
+ * These three were one value until a seek died 190k steps short of its budget
+ * and the host confidently reported "switch never reached within 211200 steps"
+ * — an accusation against a switch that had done nothing wrong. They are
+ * diagnosed in three unrelated places, so they are three values.
+ */
+export const HomeFail = {
+    /** The node stopped itself and the switch never asserted. A genuine "never
+     *  reached": bad travel figure, wrong approach direction, or a dead switch. */
+    BUDGET: 1,
+    /** The node stopped ANSWERING mid-leg (4 polls in a row). Says nothing about
+     *  the axis — the bus is the suspect, and the motion may have been fine. */
+    POLL: 2,
+    /** Still pulsing past the supervisor's own timeout. The node's own budget
+     *  should have stopped it first, so this points at the pulser. */
+    DEADLINE: 3,
+    /** Rotary only. The sweep completed and found no usable feature: it never saw
+     *  the magnet (zero crossings), or the captured window reduced to nothing.
+     *  Sensor, magnet, or wiring — NOT the budget. */
+    INDEX_ABSENT: 4,
+    /** Rotary only. A feature was there but would not fit the node's capture
+     *  buffer even at the derived decimation. The dip's shape changed; the
+     *  detector is working and refusing to trust it. */
+    INDEX_SHAPE: 5,
+    /** Rotary only. The index repeated at intervals that disagree with each
+     *  other. The measurement is sound and the MECHANISM is not: slipped belt,
+     *  stalled driver, or a feature that is not once-per-revolution. */
+    INDEX_SLIP: 6,
+} as const;
+export type HomeFail = (typeof HomeFail)[keyof typeof HomeFail];
+const HOME_FAIL_VALUES = Object.values(HomeFail) as readonly number[];
+
+/** Probe session phase, `probing=` (ProbingReason in ipc/shared_state.h). */
+export const Probing = {
+    /** A leg is executing. */
+    LEG: 0,
+    /** Between legs, switch closed: the tool is off the surface. */
+    CLEAR: 1,
+    /** Between legs, switch open: the tool is on the surface. */
+    CONTACT: 2,
+} as const;
+export type Probing = (typeof Probing)[keyof typeof Probing];
+
+/** Last probe leg's outcome, `probe=` (PROBE_* in ipc/core1_rpc.h). */
+export const ProbeCause = {
+    OK: 0,
+    BUDGET: 1,
+    POLL: 2,
+    CHATTER: 3,
+    ALREADY_OPEN: 4,
+    NOT_CLEARED: 5,
+    POS_MISMATCH: 6,
+    DEADLINE: 7,
+    ESTOP: 8,
+} as const;
+export type ProbeCause = (typeof ProbeCause)[keyof typeof ProbeCause];
+
+// ── axis bitmask — bit0=X bit1=Y bit2=Z bit3=A ─────────────────────────────────
+
+export type AxisLetter = "x" | "y" | "z" | "a";
+
+export const AXIS_BITS: Readonly<Record<AxisLetter, number>> = {
+    x: 0x1,
+    y: 0x2,
+    z: 0x4,
+    a: 0x8,
+};
+
+/** Mask for a string of axis letters, e.g. "xy" -> 0b0011. */
+export function axisMask(axes: string): number {
+    let m = 0;
+    for (const ch of axes) {
+        const bit = AXIS_BITS[ch as AxisLetter];
+        if (bit !== undefined) m |= bit;
+    }
+    return m;
+}
+
+// ── enum coercion — tolerant of unknown values from a newer firmware ──────────
+
+function enumFromInt<E extends number>(values: readonly number[], v: number, fallback: E): E {
+    return values.includes(v) ? (v as E) : fallback;
+}
+
+function toInt(tok: string): number {
+    const t = tok.trim();
+    return t.toLowerCase().startsWith("0x") ? parseInt(t, 16) : parseInt(t, 10);
+}
+
+function enumFromStr<E extends number>(values: readonly number[], raw: string | undefined, fallback: E): E {
+    if (raw === undefined) return fallback;
+    return enumFromInt(values, toInt(raw), fallback);
+}
+
+// ── parsed snapshot ────────────────────────────────────────────────────────────
+
+/**
+ * Parsed snapshot from a `getstate` reply or a binary STATUS_RSP. The binary
+ * form is a strict superset: it also carries `bufCount`, `pos`, `expectedSeq`
+ * and `queuedUs`, which text cannot express. Those stay `undefined` on a
+ * getstate-parsed status so a caller can tell "no information" apart from a
+ * genuine zero.
+ */
+export class MachineStatus {
+    constructor(
+        readonly state: MachineState,
+        readonly axesHomed: number,
+        readonly axesEnabled: number,
+        readonly alarm: AlarmReason,
+        readonly running: RunningReason,
+        readonly bufCount: number | undefined = undefined,
+        readonly pos: readonly [number, number, number, number] | undefined = undefined,
+        readonly expectedSeq: number | undefined = undefined,
+        readonly queuedUs: number | undefined = undefined,
+        /**
+         * Axes standing on a latched limit switch. Text plane only — STATUS_RSP
+         * has no spare byte, and adding one would change a fixed-length frame
+         * whose size the demux checks.
+         *
+         * `undefined` on a binary sample, following the same rule as `pos` and
+         * `bufCount` above: a plane that cannot carry a field reports no
+         * information, never a zero. Here the distinction has teeth — 0 means
+         * "no axis is on a switch", which a UI would render as safe, and a
+         * binary poll has no basis for saying that. The consequential fact (the
+         * ALARM) is in `alarm`, which both planes carry.
+         */
+        readonly axesLatched: number | undefined = undefined,
+        /**
+         * Which fault ended the last home, when `alarm` is HOMING_FAIL. See
+         * HomeFail — the three causes are diagnosed in completely different
+         * places, and the reason byte alone cannot tell them apart.
+         */
+        readonly homeFail: HomeFail | undefined = undefined,
+        /** Probe session phase; present only while PROBING or after PROBE_FAIL. */
+        readonly probing: number | undefined = undefined,
+        /** Last probe leg's outcome (ProbeCause), alongside `probing`. */
+        readonly probeCause: number | undefined = undefined,
+        /**
+         * Stored contact height of the engaged Z, wire steps. null = not probed;
+         * undefined = the reply did not say (binary plane or older firmware).
+         */
+        readonly probeZ: number | null | undefined = undefined,
+    ) {}
+
+    homed(axis: AxisLetter): boolean {
+        return !!(this.axesHomed & AXIS_BITS[axis]);
+    }
+
+    /**
+     * True if `axis` is standing on its limit switch. False on a binary sample,
+     * which carries no latch information — check `axesLatched !== undefined`
+     * first if the difference between "clear" and "unknown" matters.
+     */
+    latched(axis: AxisLetter): boolean {
+        return !!((this.axesLatched ?? 0) & AXIS_BITS[axis]);
+    }
+
+    enabled(axis: AxisLetter): boolean {
+        return !!(this.axesEnabled & AXIS_BITS[axis]);
+    }
+
+    /** True if every axis in `requiredMask` is homed (the pre-flight/resume gate). */
+    allHomed(requiredMask: number): boolean {
+        return (this.axesHomed & requiredMask) === requiredMask;
+    }
+
+    /** True if every axis in `requiredMask` is energised (a pre-flight gate). */
+    allEnabled(requiredMask: number): boolean {
+        return (this.axesEnabled & requiredMask) === requiredMask;
+    }
+}
+
+// ── text-plane parser — `getstate` reply ───────────────────────────────────────
+
+/**
+ * Parse a `getstate` reply line:
+ *     state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r> latched=<hex>
+ *
+ * Key=value tokens, space-separated. Tolerant of unknown trailing tokens
+ * (forward-compatible) and of out-of-range enum values. Requires at least
+ * `state` and `homed`; `enabled` defaults to 0 if absent. Throws if the line
+ * is not a status reply.
+ */
+export function parseGetstate(line: string): MachineStatus {
+    const fields: Record<string, string> = {};
+    for (const tok of line.trim().split(/\s+/)) {
+        const eq = tok.indexOf("=");
+        if (eq > 0) {
+            fields[tok.slice(0, eq)] = tok.slice(eq + 1);
+        }
+    }
+    if (fields.state === undefined || fields.homed === undefined) {
+        throw new Error(`not a getstate reply: ${JSON.stringify(line)}`);
+    }
+    return new MachineStatus(
+        enumFromStr(MACHINE_STATE_VALUES, fields.state, MachineState.IDLE),
+        toInt(fields.homed),
+        toInt(fields.enabled ?? "0"),
+        enumFromStr(ALARM_REASON_VALUES, fields.alarm, AlarmReason.NONE),
+        enumFromStr(RUNNING_REASON_VALUES, fields.running, RunningReason.JOB),
+        undefined, // bufCount, pos, expectedSeq, queuedUs — text cannot carry these
+        undefined,
+        undefined,
+        undefined,
+        // Absent on firmware predating docs/homing.md §2.6. 0 is the right
+        // default for that case and not a guess: such firmware has no concept of
+        // a latched limit, so no axis can be in one as far as it is concerned.
+        fields.latched !== undefined ? toInt(fields.latched) : 0,
+        // Absent whenever no completed leg backs it, so `undefined` here is the
+        // firmware's own "nothing to report" and not merely an old-firmware
+        // fallback -- which is why it does NOT default to 0 the way `latched`
+        // above does. Signed, so toInt must not be the hex-tolerant path.
+        fields.homefail !== undefined
+            ? enumFromStr(HOME_FAIL_VALUES, fields.homefail, HomeFail.BUDGET)
+            : undefined,
+        fields.probing !== undefined ? parseInt(fields.probing, 10) : undefined,
+        fields.probe !== undefined ? parseInt(fields.probe, 10) : undefined,
+        fields.probed === undefined
+            ? undefined
+            : fields.probed === "1" && fields.pz !== undefined
+                ? parseInt(fields.pz, 10)
+                : null,
+    );
+}
+
+// ── binary STATUS_RSP (0xA7, 30 bytes) ─────────────────────────────────────────
+//
+// [0]      magic        0xA7
+// [1]      state        u8   MachineState
+// [2]      axes_enabled u8   bitmask
+// [3]      axes_homed   u8   bitmask
+// [4]      alarm        u8   AlarmReason
+// [5]      running      u8   RunningReason
+// [6..7]   bufCount     u16 LE — segments queued (incl. executing)
+// [8..23]  pos[4]       i32 LE — x, y, z, a (steps)
+// [24]     expectedSeq  u8   — informational, not flow control
+// [25..28] queuedUs     u32 LE — queued motion time, microseconds
+// [29]     CRC8 over [0..28]
+
+/**
+ * Parse a 30-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
+ *
+ * The retired 0xA6 (9-byte v1) frame is detected explicitly and rejected with
+ * a message naming the firmware that emitted it — a host consuming fixed-length
+ * frames blind must surface the version skew rather than mis-parse 30 bytes as
+ * 9 and desync the stream.
+ */
+export function parseStatusRsp(data: Uint8Array): MachineStatus {
+    if (data.length !== STATUS_RSP_SIZE) {
+        throw new Error(`Expected ${STATUS_RSP_SIZE} bytes, got ${data.length}`);
+    }
+    if (data[0] === MAGIC_STATUS_RSP_V1) {
+        throw new Error(
+            "Pico is sending the retired 9-byte STATUS_RSP (0xA6) — firmware " +
+            "predates docs/comms_architecture.md §4.2. Reflash it.",
+        );
+    }
+    if (data[0] !== MAGIC_STATUS_RSP) {
+        throw new Error(`Bad magic: 0x${data[0]!.toString(16).padStart(2, "0")}`);
+    }
+    if (crc8(data, 0, STATUS_RSP_SIZE - 1) !== data[STATUS_RSP_SIZE - 1]) {
+        throw new Error("CRC mismatch");
+    }
+    const dv = new DataView(data.buffer, data.byteOffset, STATUS_RSP_SIZE);
+    return new MachineStatus(
+        enumFromInt(MACHINE_STATE_VALUES, dv.getUint8(1), MachineState.IDLE),
+        dv.getUint8(3),
+        dv.getUint8(2),
+        enumFromInt(ALARM_REASON_VALUES, dv.getUint8(4), AlarmReason.NONE),
+        enumFromInt(RUNNING_REASON_VALUES, dv.getUint8(5), RunningReason.JOB),
+        dv.getUint16(6, true),
+        [dv.getInt32(8, true), dv.getInt32(12, true), dv.getInt32(16, true), dv.getInt32(20, true)],
+        dv.getUint8(24),
+        dv.getUint32(25, true),
+    );
+}
+
+export interface PackStatusRspOptions {
+    state: number;
+    axesEnabled: number;
+    axesHomed: number;
+    alarm: number;
+    running: number;
+    bufCount?: number;
+    pos?: readonly [number, number, number, number];
+    expectedSeq?: number;
+    queuedUs?: number;
+}
+
+/**
+ * Pack a status snapshot into the 30-byte STATUS_RSP wire format. Mainly used
+ * by the in-process SimTransport (mirrors host.protocol.link.SimBackend) and
+ * by tests; the real Pico emits this frame.
+ */
+export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
+    const buf = new ArrayBuffer(STATUS_RSP_SIZE);
+    const dv = new DataView(buf);
+    const u8 = new Uint8Array(buf);
+
+    dv.setUint8(0, MAGIC_STATUS_RSP);
+    dv.setUint8(1, opts.state & 0xff);
+    dv.setUint8(2, opts.axesEnabled & 0xff);
+    dv.setUint8(3, opts.axesHomed & 0xff);
+    dv.setUint8(4, opts.alarm & 0xff);
+    dv.setUint8(5, opts.running & 0xff);
+    dv.setUint16(6, (opts.bufCount ?? 0) & 0xffff, true);
+    const p = opts.pos ?? [0, 0, 0, 0];
+    dv.setInt32(8, p[0] | 0, true);
+    dv.setInt32(12, p[1] | 0, true);
+    dv.setInt32(16, p[2] | 0, true);
+    dv.setInt32(20, p[3] | 0, true);
+    dv.setUint8(24, (opts.expectedSeq ?? 0) & 0xff);
+    dv.setUint32(25, (opts.queuedUs ?? 0) >>> 0, true);
+    dv.setUint8(29, crc8(u8, 0, STATUS_RSP_SIZE - 1));
+
+    return u8;
+}

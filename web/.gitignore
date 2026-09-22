@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Cache
+*.tsbuildinfo
+node_modules/.cache/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+
+# Snapshot test current-output bins (written each run for manual diff;
+# the *_golden.bin are tracked)
+test/production/data/*_current.bin

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200mm" height="200mm">
+  <!-- viewBox 100x100 px mapped to 200x200 mm — scale factor 2.0 on both axes -->
+  <!-- p0 should come out at (20, 180) mm after Y-flip (SVG y=10 → machine y=190? no: machine_y = height_mm - svg_y*scale = 200 - 10*2 = 180) -->
+  <path d="M 10 10 L 90 10 L 90 90 L 10 90 Z" fill="none" stroke="red"/>
+</svg>
