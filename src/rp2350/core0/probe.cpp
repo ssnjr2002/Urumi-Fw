@@ -15,7 +15,7 @@
 // most likely genuinely unoccupied, and if that verification ever regressed,
 // phantom steps on a rotary/aux axis are less destructive than on the gantry.
 // Slot 1 would be fine.
-#define PROBE_Z_SLOT    2
+#define PROBE_Z_SLOT    SLOT_Z
 #define PROBE_VAC_SLOT  3
 
 // Confirm polls and noise retries. Both are cheap, and both are only spent after
@@ -216,6 +216,7 @@ bool probeBegin(uint8_t vacNode) {
     for (uint8_t i = 0; i < MOTION_SLOTS; i++)
         if (i != PROBE_Z_SLOT) slotUnbind(i);
 
+    probeForget(zNode);                  // a new measurement replaces the old
     zNodeId     = zNode;
     vacNodeId   = vacNode;
     claimed     = true;

@@ -56,6 +56,13 @@ void nodeLatchSet(uint8_t n, bool latched) {
 static int32_t  parkPos[BUS_ADDR_MAX + 1] = {0};
 static uint16_t parkSeen = 0;
 
+// probeZ[n] is the machine-frame Z at which node n's tool opened the bed switch
+// (docs/tool_probe_planner_integration.md). Machine frame means it is measured
+// against nodeOrigin[n], so every path that changes or drops that origin clears
+// the probe too: nodeProbed is always a subset of nodeHomed.
+static int32_t  probeZ[BUS_ADDR_MAX + 1] = {0};
+static uint16_t nodeProbed = 0;              // bit n = probeZ[n] is valid
+
 // ─── Axis map ─────────────────────────────────────────────────────────────────
 
 void axisMapReset(void) {
@@ -75,8 +82,9 @@ uint8_t nodeSlot(uint8_t n) {
 
 void originInvalidate(uint8_t node) {
     if (node > BUS_ADDR_MAX) return;
-    nodeHomed &= ~(1u << node);
-    parkSeen  &= ~(1u << node);        // its parked counter means nothing now
+    nodeHomed  &= ~(1u << node);
+    parkSeen   &= ~(1u << node);       // its parked counter means nothing now
+    nodeProbed &= ~(1u << node);
     uint8_t s = nodeSlot(node);
     if (s != SLOT_NONE) axes_homed &= ~(1 << s);
 }
@@ -84,6 +92,7 @@ void originInvalidate(uint8_t node) {
 void originInvalidateAll(void) {
     nodeHomed  = 0;
     parkSeen   = 0;
+    nodeProbed = 0;
     axes_homed = 0;
 }
 
@@ -95,12 +104,31 @@ void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps) {
     // places that a later bind could disagree about.
     nodeOrigin[n] = nodePos - machineSteps;
     nodeHomed    |= (1u << n);
+    nodeProbed   &= ~(1u << n);        // measured against the origin just replaced
     uint8_t s = nodeSlot(n);
     if (s != SLOT_NONE) { machinePos[s] = machineSteps; axes_homed |= (1 << s); }
 }
 
 bool originValid(uint8_t n) {
     return n <= BUS_ADDR_MAX && (nodeHomed & (1u << n)) != 0;
+}
+
+// ─── Tool probe ───────────────────────────────────────────────────────────────
+
+void probeRecord(uint8_t n, int32_t zSteps) {
+    if (n > BUS_ADDR_MAX || !(nodeHomed & (1u << n))) return;
+    probeZ[n]   = zSteps;
+    nodeProbed |= (1u << n);
+}
+
+void probeForget(uint8_t n) {
+    if (n <= BUS_ADDR_MAX) nodeProbed &= ~(1u << n);
+}
+
+bool probeValid(uint8_t n, int32_t* zSteps) {
+    if (n > BUS_ADDR_MAX || !(nodeProbed & (1u << n))) return false;
+    if (zSteps) *zSteps = probeZ[n];
+    return true;
 }
 
 // ─── Frozen-while-parked check ────────────────────────────────────────────────

@@ -67,3 +67,5 @@ bool cmdDisable(const char*);
 bool cmdProbeMap(const char*);
 bool cmdProbeLeg(const char*);
 bool cmdProbeEnd(const char*);
+bool cmdSetProbe(const char*);
+bool cmdUnprobe(const char*);
