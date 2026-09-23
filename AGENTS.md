@@ -194,6 +194,29 @@ Start ──► Planning ──► Work ──► Merge ──► Planning ─�
   (same purpose, no effect on other branches), agree it with the user, update
   this branch's Plan section, and note it in the Outcome.
 
+Work has two phases.
+
+**Read**
+
+* Read the code the branch touches before writing any.
+* No code edits. Docs may be written if it helps and the user agrees.
+* End with a findings brief, then wait for the user's go-ahead:
+  * What the code showed that the plan didn't know.
+  * Decisions that need the user (see below).
+  * A one-line direction to start in. No step list.
+
+**Write**
+
+* Implement the branch.
+* Decisions that need the user: scope changes, new files or modules,
+  interface or behaviour changes, new dependencies, anything that affects
+  another branch. If one comes up while writing, pause and ask then; don't
+  defer it to the hand-back.
+* Implementation details the agent settles alone go in the Outcome.
+* After each coherent unit, with its Agent Scope checks passing, propose a
+  commit with its message and wait. Docs written in Read are proposed before
+  the first write.
+
 #### Merge
 
 * Location: main folder, on `main`.
@@ -208,7 +231,7 @@ Start ──► Planning ──► Work ──► Merge ──► Planning ─�
 
 1. The user agrees to the plan.
 2. If there is a plan doc, commit it to `main`.
-3. Check other open branches for overlapping files:
+3. Check other open branches for overlapping files (if they belong to a type; see Branch Types):
    `git diff --name-only main...<other-branch>`
    Report overlap to the user, especially in: `platformio.ini`,
    `src/rp2350/core0/cmd/table.h`, `web/src/wire/`, `web/src/machine/schema.ts`,
