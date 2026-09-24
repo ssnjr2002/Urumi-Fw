@@ -17,10 +17,14 @@ import {
     CFG_NACK_BAD_STATE,
     CFG_NACK_FLASH,
     CFG_NACK_TIMEOUT,
+    CFG_NACK_SCHEMA,
+    CFG_SET_HDR_SIZE,
     packCfgDataHeader,
+    packCfgSetHeader,
     unpackCfgDataHeader,
 } from "../../../src/wire/format/cfg.js";
-import { MAGIC_CFG_DATA } from "../../../src/wire/format/constants.js";
+import { MAGIC_CFG_DATA, MAGIC_CFG_SET } from "../../../src/wire/format/constants.js";
+import { crc32 } from "../../../src/wire/format/crc.js";
 
 // ── reference vector from Python struct.pack("<BII", 0xB5, 12345, 0xDEADBEEF) ──
 const REF_HDR = new Uint8Array([181, 57, 48, 0, 0, 239, 190, 173, 222]);
@@ -32,6 +36,21 @@ describe("wire/format/cfg: CFG NACK reasons", () => {
         expect(CFG_NACK_BAD_STATE).toBe(0x03);
         expect(CFG_NACK_FLASH).toBe(0x04);
         expect(CFG_NACK_TIMEOUT).toBe(0x05);
+        expect(CFG_NACK_SCHEMA).toBe(0x06);
+    });
+});
+
+describe("wire/format/cfg: CFG_SET header", () => {
+    it("packs [0xB0][u32 LE length][u32 LE crc32]", () => {
+        const h = packCfgSetHeader(12345, 0xdeadbeef);
+        expect(h.length).toBe(CFG_SET_HDR_SIZE);
+        expect(Array.from(h)).toEqual([MAGIC_CFG_SET, ...Array.from(REF_HDR.slice(1))]);
+    });
+});
+
+describe("wire/format/crc: crc32", () => {
+    it("matches the canonical CRC-32 check value", () => {
+        expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
     });
 });
 

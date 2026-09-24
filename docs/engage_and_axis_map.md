@@ -274,46 +274,58 @@ no cross-core hazard.
 
 At boot the map is empty, so nothing can stream. We gate on it through the **one
 true motion gate on the Pico — `machineState`** (see §8; the `axes_*` bitmasks
-are advisory and enforce nothing). Reuse the reserved `ALARM_CONFIG` reason
-(`shared.h`):
+are advisory and enforce nothing). The map comes from the stored config
+(docs/plans/pico-config.md): the Pico's controller commits the config's
+`defaultHead` map itself, through the same `axisMapApply` path as a host
+`axis_map`.
 
 ```
-boot                     → STATE_ALARM, ALARM_CONFIG      (all motion ingest refused)
-axis_map x y z a         → Core 0 diffs, engages nodes (via Core 1 relay), collects ACKs
-   all slots ACKed       → commit slotNode; if reason==ALARM_CONFIG → STATE_IDLE
-   any ACK failed        → stay ALARM_CONFIG, report the offending node
-axis_map - - - -         → commits an EMPTY map → STATE_ALARM, ALARM_CONFIG
+boot / soft reset, no valid config → STATE_ALARM, ALARM_CONFIG
+boot / soft reset, valid config    → STATE_ALARM, ALARM_NODE_FAULT, then the
+                                     controller commits the defaultHead map
+   map complete                    → resumeOrHold() → IDLE (or LIMIT_LATCHED)
+   a node did not ACK              → stay ALARM_NODE_FAULT, map incomplete
+accepted CFG_SET                   → re-derive the defaultHead map the same way
+axis_map x y z a                   → refused under ALARM_CONFIG; each id must be
+                                     an axis node the config marks present
+   map complete                    → clears ALARM_NODE_FAULT
+   map incomplete                  → raises ALARM_NODE_FAULT
 ```
 
-The gate is **bidirectional**. `axis_map - - - -` parses, commits, and leaves
-every slot unbound, so it must re-enter `ALARM_CONFIG` rather than merely fail to
-clear it. Otherwise the machine sits in IDLE with no axis bound, and since motion
-ingest gates on `machineState` alone it would accept a job and emit stream bytes
-nobody is listening to. The command still answers `ok`: committing an empty map
-is what was asked for and it succeeded — the resulting machine being
-unconfigured is a state fact, carried by the reason code.
+**Complete** means the bound map equals the **requested** map, the one last
+passed to `axisMapApply` (`axisMapComplete`). The controller requests the
+config's `[x, y, head.z, head.a]` for `defaultHead`; a host `axis_map` replaces
+the request, and may be partial (`axis_map 1 - - -` to bench one node): once
+every node it names engages, the alarm clears. A node that fails to engage
+leaves its slot and every later slot unbound, so a stale id can never make a
+map read as complete.
+The command still answers `ok` when the result is incomplete: committing the
+map is what was asked for — the resulting machine being alarmed is a state
+fact, carried by the reason code.
 
 Why a state and not a new boolean: motion ingest already gates on `machineState`
-alone (`data_plane.cpp` — non-IDLE/RUNNING → `NACK_BAD_STATE`), so booting into
-`ALARM_CONFIG` refuses **every** motion path (job, jog, debug-step) for free,
-with no new predicate threaded through each ingest site. It also reuses the exact
-`ALARM → IDLE`-on-precondition recovery shape that `setorigin` already uses.
-
-The gate condition is **"all four slots ACK-confirmed engaged"**, not "a string
-was parsed" — a miswired or missing axis node cannot let the machine leave the
-unconfigured state.
+alone (`data_plane.cpp` — non-IDLE/RUNNING → `NACK_BAD_STATE`), so an alarm
+refuses **every** motion path (job, jog, debug-step) for free, with no new
+predicate threaded through each ingest site.
 
 ### 6.1 The exit-guard wrinkle
 
-Overloading `ALARM` means the two existing `ALARM`-exit paths must **not** clear a
-config-ALARM (only a successful `axis_map` does):
+The exit rule checks state, not history. Every path back to IDLE goes through
+`resumeOrHold()`, which holds `ALARM_CONFIG` without a valid config and
+`ALARM_NODE_FAULT` while the map is incomplete, before it considers a latched
+limit. On top of that:
 
-- `unalarm` (`control_plane.cpp`) — add `if (alarmReason == ALARM_CONFIG) return err`.
-- `setorigin`'s ALARM→IDLE recovery — same guard.
+- `unalarm` answers `err unconfigured` under `ALARM_CONFIG`. With the map
+  incomplete it re-applies the requested map once (`axisMapRetry`), and answers
+  `err unmapped` if a node still does not engage.
+- `setorigin`'s ALARM→IDLE recovery skips `ALARM_CONFIG` and otherwise defers
+  to `resumeOrHold()`.
+- Probe teardown restores the map and lands in `resumeOrHold()` if the restore
+  left it incomplete.
 
 (Alternative considered: a dedicated `STATE_UNCONFIGURED`. Rejected — it keeps
 `ALARM`'s exits pristine but costs a new state in every state switch /
-`stateName` / ingest check. Two small guards is the smaller footprint.)
+`stateName` / ingest check.)
 
 ### 6.2 `axis_map` allowed states
 

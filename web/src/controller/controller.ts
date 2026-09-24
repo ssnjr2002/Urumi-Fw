@@ -396,12 +396,12 @@ export class Controller {
     /**
      * Bind this setup's slots on the firmware, optionally engaging `head` first.
      *
-     * Until a map commits, the Pico sits in ALARM/ALARM_CONFIG and NACKs every
-     * job, jog and debug step, so this is the first thing a host does after
-     * connecting and the thing it re-asserts on every reconnect. Not a diff:
-     * re-issuing the same map deliberately re-sends every engage, so a node that
-     * silently lost its slot (reflash, power blip) is re-bound rather than
-     * skipped.
+     * The Pico commits its stored config's defaultHead map itself at boot, so
+     * connecting owes no commit; this is the head-switch command, and the way
+     * out of ALARM_NODE_FAULT once a node that failed to engage is back. Not a
+     * diff: re-issuing the same map deliberately re-sends every engage, so a
+     * node that silently lost its slot (reflash, power blip) is re-bound rather
+     * than skipped.
      *
      * Refused while RUNNING. Rebinding slots mid-motion would land the incoming
      * head's Z/A on the outgoing head's motors, which is the failure the whole

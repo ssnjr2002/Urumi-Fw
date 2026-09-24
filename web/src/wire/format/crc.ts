@@ -5,9 +5,8 @@
  * variant the RP2350 firmware and the Python host both use (host/protocol/
  * packets.py `_crc8`). Every wire packet ends in this CRC over its body.
  *
- * A CRC-32 placeholder is reserved for the Phase-2 config-blob integrity
- * check (docs/wire_protocol.md "CRC Algorithms"); it lands with the cfg
- * packer.
+ * CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320) guards the config blob,
+ * matching crc32() in include/common.h.
  */
 
 /**
@@ -30,4 +29,16 @@ export function crc8(data: ArrayLike<number>, start = 0, end = data.length): num
         }
     }
     return crc & 0xff;
+}
+
+/** CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320) over the whole buffer. */
+export function crc32(data: ArrayLike<number>): number {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++) {
+        crc ^= data[i]!;
+        for (let _ = 0; _ < 8; _++) {
+            crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+        }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
 }

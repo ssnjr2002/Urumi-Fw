@@ -98,8 +98,10 @@ uint8_t homingFailWhy(void);
 // does NOT set a bit, and nothing here pretends otherwise. The host's preflight
 // owns that case (docs/homing.md §6.6).
 
-// Leave a completed leg in the right state: ALARM/LIMIT_LATCHED while any axis
-// is still standing on a switch, IDLE once none is.
+// Leave a completed leg (or a cleared alarm) in the right state: ALARM_CONFIG
+// without a valid config, ALARM_NODE_FAULT while the axis map is incomplete,
+// ALARM/LIMIT_LATCHED while any axis is still standing on a switch, IDLE once
+// none of those hold.
 //
 // DERIVED, never assigned, and that is the whole point. Legs 1 and 3 end
 // latched and legs 2 and 4 end clear, so a sequence that wrote the state

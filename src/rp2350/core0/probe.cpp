@@ -4,6 +4,7 @@
 #include "probe.h"
 #include "position.h"
 #include "cmd/axis_map.h"
+#include "homing.h"            // resumeOrHold
 #include "../ipc/shared_state.h"
 #include "../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
@@ -369,9 +370,13 @@ bool probeExit(const uint8_t* newMap) {
 
     // Back to wherever the session started. A jog during pause returns to PAUSED
     // because the job is still suspended, and a mid-job tool swap is that case
-    // exactly — so the session cannot simply land in IDLE.
+    // exactly — so the session cannot simply land in IDLE. A restore that left
+    // the map incomplete lands in ALARM_NODE_FAULT instead (resumeOrHold).
     __dmb();
-    machineState = (returnState == STATE_PAUSED) ? STATE_PAUSED : STATE_IDLE;
+    if (!axisMapComplete())
+        resumeOrHold();
+    else
+        machineState = (returnState == STATE_PAUSED) ? STATE_PAUSED : STATE_IDLE;
 
     // `switch=1` on the way out is worth an operator's attention -- the tool may
     // be resting on the bed, or the far switch may be stuck -- but it is

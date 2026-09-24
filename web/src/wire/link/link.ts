@@ -32,10 +32,31 @@ export interface Attachable {
 }
 import {
     MAGIC_ABORT,
+    MAGIC_CFG_ACK,
+    MAGIC_CFG_DATA,
+    MAGIC_CFG_GET,
+    MAGIC_CFG_NACK,
+    MAGIC_CFG_RDY,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
 } from "../format/constants.js";
+import { CFG_MAX_BYTES, packCfgSetHeader } from "../format/cfg.js";
+import { crc32 } from "../format/crc.js";
 import { parseStatusRsp, type MachineStatus } from "../format/status.js";
+
+/**
+ * A config transfer the Pico refused. `reason` is a CFG_NACK_* code, or null
+ * when the Pico did not answer at all.
+ */
+export class ConfigTransferError extends Error {
+    constructor(
+        message: string,
+        readonly reason: number | null,
+    ) {
+        super(message);
+        this.name = "ConfigTransferError";
+    }
+}
 
 export class Link {
     readonly sinks: DemuxSinks;
@@ -43,6 +64,7 @@ export class Link {
     readonly writer: Writer;
     private readonly _transport: Transport;
     private _textLock: Promise<unknown> = Promise.resolve();
+    private _cfgLock: Promise<unknown> = Promise.resolve();
     private readonly _readLoop: Promise<void>;
 
     /**
@@ -174,6 +196,80 @@ export class Link {
      */
     abort(): void {
         void this.writer.writeFrame(new Uint8Array([MAGIC_ABORT]));
+    }
+
+    // -- config blob (docs/config_storage.md §5) -------------------------------
+
+    /**
+     * Store `blob` as the Pico's config. Two-phase: the header goes first and
+     * the payload only after CFG_RDY, so a size or state refusal never leaves
+     * payload bytes on the wire. Resolves on CFG_ACK; throws
+     * ConfigTransferError on a NACK or a missing reply.
+     *
+     * `commitTimeoutMs` covers the Pico's decode, flash write and readback,
+     * which take far longer than a reply to a header.
+     */
+    pushConfig(blob: Uint8Array, timeoutMs = 1000, commitTimeoutMs = 5000): Promise<void> {
+        return this._withCfgLock(async () => {
+            if (blob.length === 0 || blob.length > CFG_MAX_BYTES) {
+                throw new ConfigTransferError(
+                    `config blob is ${blob.length} bytes (1..${CFG_MAX_BYTES})`,
+                    null,
+                );
+            }
+            this.sinks.cfg.clear();
+            await this.writer.writeFrame(packCfgSetHeader(blob.length, crc32(blob)));
+            await this._cfgExpect(MAGIC_CFG_RDY, "header", timeoutMs);
+            await this.writer.writeFrame(blob);
+            await this._cfgExpect(MAGIC_CFG_ACK, "commit", commitTimeoutMs);
+        });
+    }
+
+    /**
+     * Fetch the Pico's stored config blob, or null when none is stored. Throws
+     * ConfigTransferError on no reply or a payload that fails its CRC.
+     */
+    pullConfig(timeoutMs = 3000): Promise<Uint8Array | null> {
+        return this._withCfgLock(async () => {
+            this.sinks.cfg.clear();
+            await this.writer.writeFrame(new Uint8Array([MAGIC_CFG_GET]));
+            const r = await this.sinks.cfg.get(timeoutMs);
+            if (!r || r.kind !== MAGIC_CFG_DATA) {
+                throw new ConfigTransferError("no CFG_DATA reply", null);
+            }
+            const payload = r.payload ?? new Uint8Array(0);
+            if (payload.length === 0) return null;
+            if (crc32(payload) !== r.crc32) {
+                throw new ConfigTransferError("pulled config failed its CRC32", null);
+            }
+            return payload;
+        });
+    }
+
+    private _withCfgLock<T>(fn: () => Promise<T>): Promise<T> {
+        const run = this._cfgLock.then(fn);
+        this._cfgLock = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return run;
+    }
+
+    private async _cfgExpect(kind: number, phase: string, timeoutMs: number): Promise<void> {
+        const r = await this.sinks.cfg.get(timeoutMs);
+        if (!r) throw new ConfigTransferError(`no reply to config ${phase}`, null);
+        if (r.kind === MAGIC_CFG_NACK) {
+            throw new ConfigTransferError(
+                `config ${phase} refused (reason 0x${(r.reason ?? 0).toString(16)})`,
+                r.reason ?? null,
+            );
+        }
+        if (r.kind !== kind) {
+            throw new ConfigTransferError(
+                `unexpected reply 0x${r.kind.toString(16)} to config ${phase}`,
+                null,
+            );
+        }
     }
 
     /**

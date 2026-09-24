@@ -139,10 +139,12 @@ enum MachineState : uint8_t {
 enum AlarmReason : uint8_t {
     ALARM_NONE       = 0,
     ALARM_ESTOP      = 1,   // stop command or poison pill
-    ALARM_CONFIG     = 2,   // reserved — invalid config (Phase 2)
+    ALARM_CONFIG     = 2,   // no valid config stored; cleared by an accepted CFG_SET
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
     ALARM_HOMING_FAIL= 4,   // home ended wrong: no switch found, or none cleared
-    ALARM_NODE_FAULT = 5,   // reserved — a node reported or failed a check
+    // A node failed to answer, leaving the axis map incomplete (axisMapComplete).
+    // Held while the map is incomplete; a complete axis_map clears it.
+    ALARM_NODE_FAULT = 5,
     // A limit switch is held down. Not a failure: it is where a SEEK is
     // supposed to end, and legs 1 and 3 of a home both finish here
     // (docs/homing.md §2.6). It is an alarm because the machine genuinely

@@ -8,7 +8,15 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Link } from "../../../src/wire/link/link.js";
+import { ConfigTransferError, Link } from "../../../src/wire/link/link.js";
+import {
+    CFG_MAX_BYTES,
+    CFG_NACK_BAD_STATE,
+    CFG_NACK_SCHEMA,
+    packCfgDataHeader,
+    packCfgSetHeader,
+} from "../../../src/wire/format/cfg.js";
+import { crc32 } from "../../../src/wire/format/crc.js";
 import type { Transport } from "../../../src/wire/link/transport.js";
 import {
     packStatusRsp,
@@ -19,6 +27,10 @@ import {
 import {
     MAGIC_ACK,
     MAGIC_ABORT,
+    MAGIC_CFG_ACK,
+    MAGIC_CFG_GET,
+    MAGIC_CFG_NACK,
+    MAGIC_CFG_RDY,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
 } from "../../../src/wire/format/constants.js";
@@ -233,6 +245,85 @@ describe("wire/link/link: resetSeq / abort / send", () => {
         const link = new Link(t);
         await link.send("stop");
         expect(writtenStrings(t)).toEqual(["stop\n"]);
+    });
+});
+
+describe("wire/link/link: config push/pull", () => {
+    const blob = new Uint8Array([0x81, 0xa1, 0x76, 0x01]); // {v: 1}
+
+    it("pushConfig sends the header, then the payload only after CFG_RDY", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.pushConfig(blob);
+        await tick();
+        expect(t.writes).toEqual([packCfgSetHeader(blob.length, crc32(blob))]);
+
+        t.feedReply(new Uint8Array([MAGIC_CFG_RDY]));
+        await tick();
+        expect(t.writes[1]).toEqual(blob);
+
+        t.feedReply(new Uint8Array([MAGIC_CFG_ACK]));
+        await expect(p).resolves.toBeUndefined();
+    });
+
+    it("pushConfig surfaces a NACK reason and sends no payload", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.pushConfig(blob);
+        await tick();
+        t.feedReply(new Uint8Array([MAGIC_CFG_NACK, CFG_NACK_BAD_STATE]));
+        await expect(p).rejects.toMatchObject({ reason: CFG_NACK_BAD_STATE });
+        expect(t.writes.length).toBe(1);
+    });
+
+    it("pushConfig surfaces a schema rejection at commit", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.pushConfig(blob);
+        await tick();
+        t.feedReply(new Uint8Array([MAGIC_CFG_RDY]));
+        await tick();
+        t.feedReply(new Uint8Array([MAGIC_CFG_NACK, CFG_NACK_SCHEMA]));
+        await expect(p).rejects.toBeInstanceOf(ConfigTransferError);
+    });
+
+    it("pushConfig refuses an oversize blob without writing", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        await expect(link.pushConfig(new Uint8Array(CFG_MAX_BYTES + 1))).rejects.toThrow(
+            /bytes/,
+        );
+        expect(t.writes.length).toBe(0);
+    });
+
+    it("pullConfig returns the payload after checking its CRC", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.pullConfig();
+        await tick();
+        expect(t.writes).toEqual([new Uint8Array([MAGIC_CFG_GET])]);
+        t.feedReply(packCfgDataHeader(blob.length, crc32(blob)));
+        t.feedReply(blob);
+        expect(await p).toEqual(blob);
+    });
+
+    it("pullConfig returns null when nothing is stored", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.pullConfig();
+        await tick();
+        t.feedReply(packCfgDataHeader(0, 0));
+        expect(await p).toBeNull();
+    });
+
+    it("pullConfig rejects a payload that fails its CRC", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.pullConfig();
+        await tick();
+        t.feedReply(packCfgDataHeader(blob.length, crc32(blob) ^ 1));
+        t.feedReply(blob);
+        await expect(p).rejects.toThrow(/CRC32/);
     });
 });
 

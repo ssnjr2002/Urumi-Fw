@@ -14,6 +14,7 @@
 #include "table.h"
 #include "gate.h"
 #include "../homing.h"
+#include "axis_map.h"        // axisMapComplete (unalarm)
 #include "../data_plane.h"   // dataPlaneResetSeq (seqreset)
 #include "../../ipc/shared_state.h"
 
@@ -72,9 +73,13 @@ bool cmdCancel(const char*) {
 
 bool cmdUnalarm(const char*) {
     if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
-    // The config gate is not a clearable fault — only a committed axis_map
-    // leaves it (docs/engage_and_axis_map.md §6.1).
+    // Missing config is not cleared by asking: an accepted CFG_SET leaves it.
+    // An incomplete axis map is retried once (docs/engage_and_axis_map.md §6.1).
     if (alarmReason == ALARM_CONFIG) { Serial.println("err unconfigured"); return true; }
+    if (!axisMapComplete() && !axisMapRetry()) {
+        Serial.println("err unmapped");
+        return true;
+    }
     // Not a plain clear-to-IDLE: an axis may still be standing on its switch,
     // and `unalarm` does not move anything, so the condition that raised
     // ALARM_LIMIT_LATCHED is still true afterwards. Answering `ok` and dropping

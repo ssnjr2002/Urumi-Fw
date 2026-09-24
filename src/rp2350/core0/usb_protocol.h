@@ -116,8 +116,9 @@
 #define CFG_NACK_CRC       0x01 // CRC32 mismatch on the staged blob
 #define CFG_NACK_TOO_BIG   0x02 // length 0 or > CFG_MAX_BYTES
 #define CFG_NACK_BAD_STATE 0x03 // write rejected — machine not IDLE/ALARM
-#define CFG_NACK_FLASH     0x04 // flash readback verify failed (or region too small)
+#define CFG_NACK_FLASH     0x04 // filesystem unmounted, write failed, or readback verify failed
 #define CFG_NACK_TIMEOUT   0x05 // transfer stalled — no byte within CFG_RX_TIMEOUT_MS
+#define CFG_NACK_SCHEMA    0x06 // blob did not decode or failed validation (config_decode.h)
 
 #define MSEG_NACK_CRC    0x01
 #define MSEG_NACK_FULL   0x02

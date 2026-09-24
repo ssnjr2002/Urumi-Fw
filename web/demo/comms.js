@@ -329,10 +329,9 @@ function anchorLabel() {
  * refuses the rebind while RUNNING, sends `axis_map` and reads the map back.
  * What is left here is the narration.
  *
- * Why it is the first thing after connecting: until a map commits, the Pico
- * sits in ALARM/ALARM_CONFIG and NACKs every job, jog and debug-step — the map
- * is host-authored and never appears in STATUS_RSP (docs/engage_and_axis_map.md
- * §8).
+ * The Pico already commits its config's defaultHead map at boot, so this
+ * re-asserts it (re-sending every engage) and is how the operator switches
+ * heads (docs/engage_and_axis_map.md §6).
  */
 async function commitAxisMap(head) {
     if (!ctl || !isConnected()) return false;

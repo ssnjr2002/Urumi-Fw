@@ -442,16 +442,16 @@ export type SlotBinding = number | null;
  * re-sends every engage, so a node that silently lost its slot (reflash, power
  * blip, fresh Pico) is re-bound rather than skipped.
  *
- * Until a map commits the machine sits in ALARM/ALARM_CONFIG and refuses ALL
- * motion, so this is the first thing a host does after connecting — and the
- * thing it re-asserts on every reconnect, since the map is host-authored and
- * never appears in STATUS_RSP (docs/engage_and_axis_map.md §8).
+ * The Pico commits its config's defaultHead map itself at boot; this is how a
+ * host switches heads, and how it leaves ALARM_NODE_FAULT once a node that
+ * failed to engage answers again (docs/engage_and_axis_map.md §6).
  *
  * Throws with the firmware's reason on rejection (`err dup`, `err bad_node`,
- * `err bad_state`, `err node <id> timeout`) — the failure modes are distinct
+ * `err unconfigured`, `err node <id> not_in_config`, `err bad_state`,
+ * `err node <id> timeout`) — the failure modes are distinct
  * enough that collapsing them to `false` would lose what the operator needs.
- * A partial failure leaves the committed map untouched; retrying redoes all of
- * it.
+ * A partial failure leaves the map incomplete and the machine in
+ * ALARM_NODE_FAULT; retrying redoes all of it.
  *
  * Only valid in IDLE/PAUSED/ALARM — rebinding slots mid-RUNNING would corrupt
  * in-flight motion (§6.2).

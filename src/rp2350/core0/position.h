@@ -45,8 +45,8 @@
 
 // ─── Axis map ─────────────────────────────────────────────────────────────────
 
-// All slots unbound. Boot state: the machine sits in ALARM_CONFIG until an
-// axis_map commits a binding.
+// All slots unbound. Boot state, until the controller commits the config's
+// defaultHead map (controller/controller.h).
 void axisMapReset(void);
 
 // The bus id bound to slot `s`, or SLOT_NONE. Slot indices are 0..MOTION_SLOTS-1.

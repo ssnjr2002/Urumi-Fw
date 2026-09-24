@@ -133,11 +133,80 @@ sender. Unblocks branch 2.
   survives a power cycle; power cut mid-write keeps the old config; steps still
   stream after a config write.
 
-**Status:** not started
+**Status:** implemented. On the bench: push, readback and persistence across
+power cycles pass; boot with nodes off → `ALARM_NODE_FAULT`, nodes on then
+`unalarm` → IDLE. Remaining hardware checks: bad blob (`CFG_NACK_SCHEMA`),
+power cut mid-push, partial `axis_map`, motion after a config write.
 
 **Outcome:**
+
+* Changed from the plan (agreed on the bench): "complete" means the bound map
+  equals the last requested map, not the config's map for some head. A host
+  `axis_map` may be partial (bench testing one node) and clears
+  `ALARM_NODE_FAULT` once its nodes engage. `unalarm` retries the requested
+  map once before answering `err unmapped`.
+* The barebones demo gained Push/Pull config and `status cfg` buttons.
+* Follow-up: the web Sim (`web/src/wire/link/backends/sim.ts`) still models
+  the old boot gate (host `axis_map` clears `ALARM_CONFIG`) and has no
+  `CFG_SET`/`CFG_GET`. It needs the config store, the controller's default
+  map commit, and the complete-map rule. Deferred by the user.
 
 ## Open questions
 
 * Which controller-layer piece moves next once the config is readable (homing
   and probe recipes are the obvious candidates).
+* Layering of Core 0 code (needs more deliberation before planning). A likely
+  shape: `cmd/` only parses and replies; `controller/` runs sequences
+  (default map, homing, probing, head switch) and is called by `cmd/`;
+  operations (`axisMapApply`, node RPC, position model, alarm gate) sit below
+  both. That means moving the operations out of `cmd/` (`axisMapApply` lives in
+  `cmd/axis.cpp` only because the command was its first caller), and later
+  `homing.cpp`/`probe.cpp` into `controller/`. The move would be its own
+  `refactor/` branch, landing before homing/probing move. Open: where the
+  operations live (`core0/ops/`, or folded into `position.*`), and how Core 0's
+  lifecycle hooks (soft reset, `CFG_SET`) enter the controller.
+  * Commands split in two. Primitive commands (today's `cmd/`) are atomic and
+    config-free: everything they need is an argument, so a host or a person at
+    a terminal can drive the machine step by step, as when the host was the
+    controller. Controller commands read the config and run sequences built
+    from the same operations.
+  * `ALARM_CONFIG` would gate only controller commands; primitives keep working
+    without a config, for bench work. The partial `axis_map` from branch 2 is
+    already this pattern. Production builds could block primitive commands
+    entirely (a build flag).
+  * Branch 2 leaks config into a primitive: `axis_map` answers
+    `err unconfigured` and `err node N not_in_config`. The refactor moves those
+    checks to the controller.
+  * `unalarm` is a controller command: it recovers according to `alarmReason`
+    (retry the requested map for `ALARM_NODE_FAULT` today; backing off a
+    latched switch is a candidate). Primitives may need no `unalarm`, since the
+    exit rule checks state: re-issuing the fixing primitive (`axis_map`, a
+    reverse `home`) clears the alarm through `resumeOrHold()`. Check which alarm
+    reasons have no fixing primitive and need a plain acknowledge instead.
+  * Still to decide: what `ALARM_CONFIG` means for the machine state when
+    primitives may run, and which side the data plane (segment streaming) is on.
+* Motion gating replaces the unmapped alarm (needs its own planning pass).
+  Branch 2 keeps the unmapped-map `ALARM_NODE_FAULT` gate as a conservative
+  interim; it is safe but too broad.
+  * Problem: `ALARM_NODE_FAULT` means two things, "a node failed during an
+    operation" (e.g. the knife timing out) and "slots are not bound". Recovery
+    for one asks about the other, and an unmapped machine blocks non-motion
+    work: testing the knife board needed a throwaway `axis_map` first.
+  * Direction: an unmapped machine is IDLE, not alarmed. Only motion is gated.
+    Motion primitives (`step`, jog, segment ingest, `home`, `probe`) NACK or
+    answer `err unmapped` when the map is incomplete, with no state change.
+    Motion controller commands (home the machine, probe, run a job) run
+    `axis_map` first, even when already mapped, so every sequence starts with
+    every node engaged. `ALARM_NODE_FAULT` goes back to meaning only a node
+    failure during an operation.
+  * Jogs are the exception: an `axis_map` before every jog is too slow. Jobs
+    and jogs both need the correct frame set up first, so the jog path is
+    part of that design, not solved by the map alone.
+  * Costs: motion ingest gates on `machineState` alone today, so a shared
+    `motionAllowed()` check is threaded through every motion entry point
+    (`engage_and_axis_map.md` §6 argues for the alarm on exactly this ground and
+    gets rewritten); `STATUS_RSP` must report map state so a host can tell why
+    motion was refused (wire change, `web/src/wire/`); `unalarm`'s map retry
+    goes away with the unmapped alarm.
+  * Depends on the command split above: which commands are motion primitives
+    and which are controller commands.

@@ -18,6 +18,8 @@
 #include "data_plane.h"
 #include "status.h"
 #include "../config/config_store.h"
+#include "../config/machine_cfg.h"
+#include "../controller/controller.h"
 
 // ─── Text line assembly ───────────────────────────────────────────────────────
 
@@ -66,6 +68,7 @@ void setup() {
     rpcInit();           // channel-1 queues, before Core 1 can service them
     while (!Serial && millis() < 10000) {}
     configStoreInit();   // mount LittleFS, verify /config.bin into g_cfg
+    machineCfgLoad();    // decode it; the axis map follows once Core 1 runs
 }
 
 void loop() {
@@ -103,13 +106,14 @@ void loop() {
     mBufTail = 0;
     queuedUsIn = 0;
     queuedUsOut = 0;
-    // Boot/connect into the config gate: the axis map is empty, so nothing may
-    // stream until the host commits a binding with axis_map (docs/engage_and_axis
-    // _map.md §6). ALARM_CONFIG ⇒ non-IDLE/RUNNING ⇒ every motion ingest is
-    // refused for free. The host re-asserts axis_map on connect (§8).
+    // The axis map is empty, so nothing may stream until one commits
+    // (docs/engage_and_axis_map.md §6). ALARM ⇒ non-IDLE/RUNNING ⇒ every motion
+    // ingest is refused for free. With a valid config the controller commits
+    // the defaultHead map as soon as Core 1 is released (section B), which
+    // clears ALARM_NODE_FAULT; without one the machine stays in ALARM_CONFIG.
     axisMapReset();
     machineState = STATE_ALARM;
-    alarmReason = ALARM_CONFIG;
+    alarmReason = machineCfgValid() ? ALARM_NODE_FAULT : ALARM_CONFIG;
     runningReason = RUNNING_JOB;
     probingReason = PROBING_CLEAR;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
@@ -141,6 +145,8 @@ void loop() {
     // ─── B: MAIN EXECUTION ──────────────────────────────
     // ══════════════════════════════════════════════════════════
     Serial.printf("RS485 MicroSegment Host Drive (%d baud)\n", RS485_BAUD);
+
+    controllerApplyDefaultMap();
 
     while (!soft_reset_requested) {
         // Fold Core 1's ALARM signals into the validity masks BEFORE serving the

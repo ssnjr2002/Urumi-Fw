@@ -23,6 +23,8 @@
 #include "hardware/sync.h"
 #include "data_plane.h"
 #include "../config/config_store.h"
+#include "../config/machine_cfg.h"
+#include "../controller/controller.h"
 
 // ─── Receiver dispatch ────────────────────────────────────────────────────────
 
@@ -187,7 +189,9 @@ static void feedFixed26(uint8_t b) {
 //          reply CFG_RDY (or CFG_NACK). A well-behaved host waits for CFG_RDY
 //          before sending payload, so an early NACK cannot desync the stream.
 // Phase 2: `length` payload bytes staged into configStageBuf(), CRC32 folded as
-//          they land (one pass — the transfer-integrity gate), then commit.
+//          they land (one pass — the transfer-integrity gate), then decode and
+//          validate (CFG_NACK_SCHEMA), commit, and re-commit the defaultHead
+//          axis map from the new config before the ACK.
 // A stalled transfer is aborted by dataPlaneTick() via the inter-byte timeout.
 
 static void feedCfg(uint8_t b) {
@@ -220,9 +224,19 @@ static void feedCfg(uint8_t b) {
         return;
     }
 
+    // A blob that does not decode never becomes the active config.
+    if (machineCfgStage(configStageBuf(), cfgLen) != CFG_DEC_OK) {
+        sendCfgNack(CFG_NACK_SCHEMA);
+        return;
+    }
     uint8_t nack;
-    if (configStoreCommit(cfgLen, cfgCrc, &nack)) sendCfgAck();
-    else                                          sendCfgNack(nack);
+    if (!configStoreCommit(cfgLen, cfgCrc, &nack)) { sendCfgNack(nack); return; }
+    machineCfgAdopt();
+    // The new config may bind different nodes, so the committed map is re-derived
+    // from it. A node that does not answer leaves ALARM_NODE_FAULT, not a NACK:
+    // the config itself was stored.
+    controllerApplyDefaultMap();
+    sendCfgAck();
 }
 
 // ─── CFG_GET responder ────────────────────────────────────────────────────────

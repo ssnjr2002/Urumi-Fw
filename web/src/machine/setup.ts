@@ -153,10 +153,10 @@ export function setupSlotMap(machine: MachineConfig, setup: Setup): SlotMap {
  * Does the firmware's committed map agree with this setup?
  *
  * The reconciliation the Controller owns, reduced to a function. `false` means
- * a commit is owed — either nothing has been bound since connect (the machine
- * sits in ALARM_CONFIG and NACKs everything), or a head switch has been made
- * host-side and not yet pushed. It never means "probably fine": an unreadable
- * or unbound map is not a match.
+ * a commit is owed — either the Pico's map is incomplete (a node failed to
+ * engage and the machine sits in ALARM_NODE_FAULT), or a head switch has been
+ * made host-side and not yet pushed. It never means "probably fine": an
+ * unreadable or unbound map is not a match.
  */
 export function isCommitted(
     machine: MachineConfig,

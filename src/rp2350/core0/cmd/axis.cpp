@@ -17,6 +17,7 @@
 #include "../homing.h"
 #include "../probe.h"
 #include "axis_map.h"
+#include "../../config/machine_cfg.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
@@ -41,11 +42,10 @@ static inline bool busGateDenies() {
 bool cmdAxesEnable(const char* args) {
     if (busGateDenies()) return true;
     if (*args == '\0') { Serial.println("err usage"); return true; }
-    // ALARM_CONFIG refuses: this command's target IS the axis map, and under the
-    // config gate there is no committed map to operate on. Before the gate became
-    // bidirectional (cmdAxisMap below) it walked zero slots and answered `ok`,
-    // which reads as "the axes are now off" on a machine that has no axes.
-    // Same string as `unalarm`, which refuses the same state for the same reason.
+    // ALARM_CONFIG refuses: this command's target IS the axis map, and without a
+    // config there is no committed map to operate on. Walking zero slots and
+    // answering `ok` would read as "the axes are now off" on a machine that has
+    // no axes. Same string as `unalarm`, which refuses the same state.
     if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
         Serial.println("err unconfigured"); return true;
     }
@@ -130,10 +130,12 @@ bool cmdDisable(const char* args) {
 
 // ── axis_map [<x> <y> <z> <a>] — bind bus nodes to stream slots ──────────────
 // No-arg: read back the committed map in setter syntax ('-' = unbound slot).
-// Four tokens (a bus id, or '-'/'0' = unbound). Committing a map with at least
-// one slot bound clears the ALARM_CONFIG boot gate; committing an empty one
-// re-enters it. Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING corrupts motion
-// (§6.2).
+// Four tokens (a bus id, or '-'/'0' = unbound). Every bound id must be an axis
+// node the config marks present. The map becomes the requested one: if every
+// node in it engages, ALARM_NODE_FAULT clears; otherwise it is raised
+// (axisMapComplete). A partial map is accepted as asked for.
+// Refused under ALARM_CONFIG. Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING
+// corrupts motion (§6.2).
 bool cmdAxisMap(const char* args) {
     if (*args == '\0') {                          // read-back form
         Serial.print("axis_map");
@@ -146,6 +148,7 @@ bool cmdAxisMap(const char* args) {
     }
 
     if (busGateDenies()) return true;
+    if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
 
     // Parse exactly four tokens into desired[]: a bus id, or '-'/'0' = unbound.
     uint8_t desired[4];
@@ -168,20 +171,34 @@ bool cmdAxisMap(const char* args) {
             if (desired[i] != SLOT_NONE && desired[i] == desired[j]) {
                 Serial.println("err dup"); return true;
             }
+    for (int i = 0; i < 4; i++)
+        if (desired[i] != SLOT_NONE && !axisNodeInConfig(desired[i])) {
+            Serial.printf("err node %d not_in_config\n", desired[i]); return true;
+        }
 
     // Committing a map is also the OTHER way out of a probe session (§5.5):
     // during a probe the machine genuinely has no working axis map, and the way
-    // out of that condition has always been to commit one. This is not an
-    // overload of `axis_map` -- it is the ALARM_CONFIG parallel taken seriously.
-    // Any committed map ends the session, and `probe_end` is sugar for
-    // committing the one that was already there.
+    // out of that condition has always been to commit one. Any committed map
+    // ends the session, and `probe_end` is sugar for committing the one that
+    // was already there.
     if (machineState == STATE_PROBING) return probeExit(desired);
 
     axisMapApply(desired, /*quiet=*/false);
     return true;
 }
 
-bool axisMapApply(const uint8_t* desired, bool quiet) {
+// The map last passed to axisMapApply: what the bound map must equal to count
+// as complete, and what `unalarm` retries.
+static uint8_t requested[4];
+static bool    haveRequest = false;
+
+bool axisMapApply(const uint8_t* in, bool quiet) {
+    // Copy first: `in` may be `requested` itself (axisMapRetry).
+    uint8_t desired[4];
+    memcpy(desired, in, sizeof desired);
+    memcpy(requested, desired, sizeof requested);
+    haveRequest = true;
+
     // NOT a diff — deliberately dumb. First disengage every previously-bound
     // node (best-effort: a since-removed/reset node that won't ACK is already
     // where we want it), then engage EVERY desired node to its slot,
@@ -214,10 +231,15 @@ bool axisMapApply(const uint8_t* desired, bool quiet) {
         NodeStatus st;
         RpcResult r = rpcNodeStatus(CMD_ENGAGE, desired[i], (uint8_t)i, &st);
         if (r != RPC_OK) {
+            // Every previously-bound node was parked above, so this slot and
+            // the ones after it hold nothing engaged. Unbind them rather than
+            // leave stale ids that could make the map read as complete.
+            for (int j = i; j < 4; j++) slotUnbind((uint8_t)j);
+            axisMapGate();
             // `nak unsupported` here means a non-stepper node was mapped to a
             // motion slot — a config error, not a bus fault.
             if (!quiet) Serial.printf("err node %d %s\n", desired[i], rpcResultText(r));
-            return false;             // leave the map as far as it got
+            return false;
         }
         // Frozen-while-parked check (position.h). Silent by design: the
         // wire contract is exactly one line per command, so this cannot print.
@@ -233,35 +255,55 @@ bool axisMapApply(const uint8_t* desired, bool quiet) {
         slotUnbind((uint8_t)i);
     }
 
-    // Committed. The config gate tracks the map both ways.
-    //
-    // A map with nothing bound is not a configured machine, and `axis_map - - - -`
-    // is a legitimate way to reach one -- it parses, it commits, and every slot
-    // ends unbound. Clearing ALARM_CONFIG on that would leave the machine IDLE
-    // with no axis bound, and motion ingest gates on machineState alone
-    // (data_plane.cpp), so it would then accept a job and emit stream bytes that
-    // no node is listening to, advancing machinePos for axes that do not exist.
-    //
-    // So the gate is re-entered, not merely left un-cleared: the map can go from
-    // configured to unconfigured, and the state has to be able to follow it back.
-    // The command still answers `ok` -- committing an empty map is what was asked
-    // for, and it succeeded. That the result is an unconfigured machine is a state
-    // fact, and state facts travel as reason codes here, not as command errors.
-    bool anyBound = false;
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
-        if (slotNodeAt(i) != SLOT_NONE) { anyBound = true; break; }
-
-    if (!anyBound) {
-        // Reason before state, matching how Core 1 publishes the pair.
-        alarmReason  = ALARM_CONFIG;
-        __dmb();
-        machineState = STATE_ALARM;
-    } else if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
-        machineState = STATE_IDLE;
-        alarmReason  = ALARM_NONE;
-    }
+    axisMapGate();
+    // `ok` even when the result is incomplete: committing the map is what was
+    // asked for, and it succeeded. That the machine is now in ALARM_NODE_FAULT
+    // is a state fact, and state facts travel as reason codes, not as errors.
     if (!quiet) Serial.println("ok");
     return true;
+}
+
+bool axisNodeInConfig(uint8_t node) {
+    if (!machineCfgValid()) return false;
+    const MachineCfg& c = machineCfg();
+    const CfgAxis* axes[2] = { &c.x, &c.y };
+    for (const CfgAxis* a : axes)
+        if (a->node.present && a->node.id == node) return true;
+    for (uint8_t h = 0; h < c.headCount; h++) {
+        const CfgHead& hd = c.heads[h];
+        if (hd.z.node.present && hd.z.node.id == node) return true;
+        if (hd.a.node.present && hd.a.node.id == node) return true;
+    }
+    return false;
+}
+
+bool axisMapComplete(void) {
+    if (!machineCfgValid() || !haveRequest) return false;
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
+        if (slotNodeAt(i) != requested[i]) return false;
+    return true;
+}
+
+bool axisMapRetry(void) {
+    if (!machineCfgValid() || !haveRequest) return false;
+    axisMapApply(requested, /*quiet=*/true);
+    return axisMapComplete();
+}
+
+void axisMapGate(void) {
+    // An incomplete map would let motion ingest (which gates on machineState
+    // alone, data_plane.cpp) accept a job and stream to slots no node is
+    // listening on. A probe session is the one legitimate incomplete binding;
+    // its own exit path restores the map and then settles the state.
+    if (machineState == STATE_PROBING) return;
+    if (!axisMapComplete()) {
+        // Reason before state, matching how Core 1 publishes the pair.
+        alarmReason  = machineCfgValid() ? ALARM_NODE_FAULT : ALARM_CONFIG;
+        __dmb();
+        machineState = STATE_ALARM;
+    } else if (machineState == STATE_ALARM && alarmReason == ALARM_NODE_FAULT) {
+        resumeOrHold();
+    }
 }
 
 
@@ -346,10 +388,11 @@ bool cmdSetOrigin(const char* args) {
     if (alarmReason != alarmAtEntry || machineState == STATE_ESTOP) {
         Serial.println("err estop"); return true;
     }
-    // setorigin recovers from an ESTOP-alarm, but NOT the config gate — only a
-    // committed axis_map clears ALARM_CONFIG (docs/engage_and_axis_map.md §6.1).
-    // ...and not out of a latched limit either, for the same reason unalarm
-    // cannot: recording a datum does not move the axis off the switch.
+    // setorigin recovers from an ESTOP-alarm, but NOT from ALARM_CONFIG — only
+    // an accepted CFG_SET clears that (docs/engage_and_axis_map.md §6.1).
+    // resumeOrHold() also holds an incomplete map in ALARM_NODE_FAULT and a
+    // latched limit in ALARM, for the same reason unalarm cannot clear them:
+    // recording a datum fixes neither.
     if (machineState == STATE_ALARM && alarmReason != ALARM_CONFIG) {
         resumeOrHold();
     }
@@ -579,12 +622,10 @@ bool cmdHallScan(const char* args) {
 bool cmdProbeMap(const char* args) {
     if (probeActive()) { Serial.println("err busy"); return true; }
     // NOT busGateDenies(). That gate admits STATE_ALARM, correctly, because
-    // `axis_map` is how a machine LEAVES ALARM_CONFIG -- but a probe session is
-    // not an alarm exit. probeBegin writes STATE_PROBING unconditionally, so
+    // `axis_map` is how a machine LEAVES ALARM_NODE_FAULT -- but a probe session
+    // is not an alarm exit. probeBegin writes STATE_PROBING unconditionally, so
     // entering from ALARM would clear the state while leaving alarmReason set,
-    // and probe_end (which collapses anything not PAUSED into IDLE) would then
-    // land an unconfigured machine in IDLE reading as ready. That is the exact
-    // condition ALARM_CONFIG exists to prevent.
+    // and probe_end would then land an alarmed machine in IDLE reading as ready.
     if (machineState != STATE_IDLE && machineState != STATE_PAUSED) {
         Serial.println("err bad_state"); return true;
     }

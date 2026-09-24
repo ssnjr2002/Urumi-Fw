@@ -49,9 +49,15 @@ const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
 export const AlarmReason = {
     NONE: 0,
     ESTOP: 1,
-    CONFIG: 2, // Phase 2
+    /** No valid config stored on the Pico. Cleared only by an accepted CFG_SET. */
+    CONFIG: 2,
     SOFT_LIMIT: 3,
     HOMING_FAIL: 4,
+    /**
+     * A node failed to answer. Raised when the axis map could not be committed;
+     * no way out of ALARM succeeds while the map is incomplete, and a
+     * successful axis_map that completes it clears the alarm.
+     */
     NODE_FAULT: 5,
     /**
      * An axis is standing on a latched limit switch — where legs 1 and 3 of a

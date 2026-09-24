@@ -4,12 +4,11 @@
  * demux routes on, plus the one length-prefixed frame helper the format layer
  * owns — the CFG_DATA 9-byte header.
  *
- * Config transfer (docs/wire_protocol.md "CRC Algorithms" + §config): the
- * host pushes a MachineConfigFlash blob with CFG_SET (header, then payload on
- * RDY), or pulls it with CFG_GET (replied with CFG_DATA). The magics live in
- * constants.ts (single source for the demux's magic table); this file owns the
- * CFG_DATA header layout, the CFG NACK reason namespace, and the payload-size
- * guard.
+ * Config transfer (docs/config_storage.md §5): the host pushes a msgpack
+ * config blob with CFG_SET (header, then payload on RDY), or pulls it with
+ * CFG_GET (replied with CFG_DATA). The magics live in constants.ts (single
+ * source for the demux's magic table); this file owns the CFG_SET and CFG_DATA
+ * header layouts, the CFG NACK reason namespace, and the payload-size guards.
  *
  * Why a 9-byte header gets its own file: the demux consumes CFG_DATA
  * length-prefixed — it reads 9 header bytes, pulls a u32 LE `length`, then
@@ -19,14 +18,32 @@
  * the header is the natural home for the size constants and the payload cap
  * that bounds it.
  *
- * The packer here has no Pico-side consumer yet — the host never sends CFG_GET
- * today (comms_architecture.md §5 "a missing sender, not dead surface"). It
- * exists so the demux test can build a hostile CFG_DATA frame (header + a
- * payload full of magic bytes) to pin the phantom-ACK hazard, and so the Sim
- * can emit CFG_DATA if/when the sender lands.
+ * packCfgDataHeader is the Pico's side of the frame; tests use it to build
+ * CFG_DATA replies, including a hostile payload full of magic bytes that pins
+ * the phantom-ACK hazard.
  */
 
-import { MAGIC_CFG_DATA } from "./constants.js";
+import { MAGIC_CFG_DATA, MAGIC_CFG_SET } from "./constants.js";
+
+// ── CFG_SET header layout ─────────────────────────────────────────────────────
+//
+// [0]     magic   0xB0
+// [1..4]  length  u32 LE — payload byte count (1..CFG_MAX_BYTES)
+// [5..8]  crc32   u32 LE — CRC32 of the payload
+export const CFG_SET_HDR_SIZE = 9;
+
+// Firmware ceiling on a stored blob (usb_protocol.h CFG_MAX_BYTES). A push
+// over this is NACKed with CFG_NACK_TOO_BIG before any payload is sent.
+export const CFG_MAX_BYTES = 32768;
+
+export function packCfgSetHeader(length: number, crc32: number): Uint8Array {
+    const buf = new ArrayBuffer(CFG_SET_HDR_SIZE);
+    const dv = new DataView(buf);
+    dv.setUint8(0, MAGIC_CFG_SET);
+    dv.setUint32(1, length >>> 0, true);
+    dv.setUint32(5, crc32 >>> 0, true);
+    return new Uint8Array(buf);
+}
 
 // ── CFG_DATA header layout ────────────────────────────────────────────────────
 //
@@ -54,6 +71,7 @@ export const CFG_NACK_TOO_BIG = 0x02; // payload exceeds CFG_MAX_BYTES
 export const CFG_NACK_BAD_STATE = 0x03; // push rejected — machine not IDLE or ALARM
 export const CFG_NACK_FLASH = 0x04; // flash write failed
 export const CFG_NACK_TIMEOUT = 0x05; // payload did not arrive within the transfer window
+export const CFG_NACK_SCHEMA = 0x06; // blob did not decode or failed the Pico's validation
 
 export interface CfgDataHeader {
     readonly length: number;

@@ -39,6 +39,12 @@ export {
 } from "./machine/json/validate.js";
 
 export {
+    CONFIG_BLOB_VERSION,
+    encodeConfigBlob,
+    decodeConfigBlob,
+} from "./machine/json/blob.js";
+
+export {
     // top-level config
     type PipelineConfig,
     type MachineConfig,
@@ -236,7 +242,7 @@ export {
     type DutyBreakResult,
 } from "./production/dutyBreaks.js";
 
-export { crc8 } from "./wire/format/crc.js";
+export { crc8, crc32 } from "./wire/format/crc.js";
 export { MAGIC_MICROSEG, PACKET_SIZE } from "./wire/format/constants.js";
 
 export {
@@ -311,6 +317,10 @@ export {
     CFG_NACK_BAD_STATE,
     CFG_NACK_FLASH,
     CFG_NACK_TIMEOUT,
+    CFG_NACK_SCHEMA,
+    CFG_SET_HDR_SIZE,
+    CFG_MAX_BYTES,
+    packCfgSetHeader,
     packCfgDataHeader,
     unpackCfgDataHeader,
     type CfgDataHeader,
@@ -353,6 +363,7 @@ export {
 
 export {
     Link,
+    ConfigTransferError,
     type Attachable,
 } from "./wire/link/link.js";
 

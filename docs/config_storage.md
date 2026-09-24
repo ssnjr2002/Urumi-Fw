@@ -1,14 +1,16 @@
 # Config Blob Storage
 
-**Status:** Implemented (firmware). Host sender + on-hardware bring-up pending.
+**Status:** Implemented (firmware and host sender, `Link.pushConfig` /
+`Link.pullConfig`). On-hardware bring-up pending.
 **Scope:** storage and retrieval of one opaque config blob on the RP2350.
 **Cross-ref:** USB framing conventions — [wire_protocol.md](wire_protocol.md).
 
-The Pico stores **one opaque blob** (≤32 KB) supplied by the host. The host
-converts its JSON machine config to msgpack; the firmware stores the bytes
-**verbatim** — it does not parse them (today). A firmware msgpack reader decodes
-the blob once into working structs (docs/plans/pico-config.md), so readers go
-through the file API rather than walking flash in place.
+The Pico stores **one blob** (≤32 KB) supplied by the host: the resolved
+machine config as msgpack with a payload schema version `v`
+(`web/src/machine/json/blob.ts`). The store keeps the bytes **verbatim**;
+`config/config_decode.*` decodes the fields the Pico consumes into a
+`MachineCfg` at boot and before every commit (`config/machine_cfg.*` holds the
+active one). See docs/plans/pico-config.md for the design.
 
 ---
 
@@ -66,8 +68,13 @@ metadata consistent across power loss.
    payload CRC32 matches the header.
 3. Valid → cache `{length, seq, crc32}` in `g_cfg`. Otherwise → **no config**.
 
-**No-config policy: permissive.** An empty store is a normal state; the machine
-boots to IDLE and runs. Gating on config lands with the firmware msgpack reader.
+`machineCfgLoad()` then decodes the stored blob. A blob that is missing or does
+not decode leaves the active config invalid.
+
+**No-config policy: gated.** Without a valid config the machine sits in
+`ALARM_CONFIG` and refuses all motion; an accepted `CFG_SET` is the way out.
+With one, the controller commits the config's `defaultHead` axis map after
+every soft reset (docs/engage_and_axis_map.md §6).
 
 `g_cfg` is updated **only** by the boot check and a successful commit. It is
 deliberately **not** cleared by soft reset — the blob lives in flash, which soft
@@ -77,8 +84,10 @@ reset does not touch.
 
 ## 3. Write (commit) — power-safe rename
 
-`configStoreCommit(len, crc, &nack)` (called by the data-plane receiver once a
-transfer completes):
+Once a transfer completes and its CRC matches, the data-plane receiver first
+decodes the staged blob (`machineCfgStage`). A blob that does not decode or
+fails validation is refused with `CFG_NACK_SCHEMA` and never reaches flash.
+Then `configStoreCommit(len, crc, &nack)`:
 
 1. Reject unless `machineState` is IDLE or ALARM (`CFG_NACK_BAD_STATE`).
 2. Reject `len == 0 || len > CFG_MAX_BYTES` (`CFG_NACK_TOO_BIG`).
@@ -91,6 +100,11 @@ transfer completes):
 8. Release Core 1. On any failure in 5–7 → remove `/config.tmp`,
    `CFG_NACK_FLASH`, the old config stays active.
 9. On success, update `g_cfg`.
+
+After a successful commit the decoded config becomes active
+(`machineCfgAdopt`) and the controller re-commits the `defaultHead` axis map
+from it before `CFG_ACK` is sent. A node that does not answer leaves
+`ALARM_NODE_FAULT`, not a NACK: the config itself was stored.
 
 **Why the rename is the commit point:** LittleFS renames atomically. A power cut
 before it leaves `/config.bin` untouched (a stray `/config.tmp` is ignored and
@@ -190,6 +204,7 @@ payload is zero-padded to `length` and the host's CRC check rejects it.
 | `CFG_NACK_BAD_STATE` | `0x03` | Machine not in IDLE/ALARM (phase 1, re-checked at commit). |
 | `CFG_NACK_FLASH` | `0x04` | Filesystem not mounted, write failed, or readback verify failed. |
 | `CFG_NACK_TIMEOUT` | `0x05` | Transfer stalled — no byte within `CFG_RX_TIMEOUT_MS`. |
+| `CFG_NACK_SCHEMA` | `0x06` | Blob did not decode or failed validation (`config_decode.h`). |
 
 CRC is standard reflected CRC-32 (poly 0xEDB88320) — verified against zlib's
 canonical `0xCBF43926`.
@@ -222,10 +237,10 @@ treated as an idle-time operation.
 ## 8. Control-plane inspection
 
 `status cfg` (text command, always available) prints the active blob metadata
-from `g_cfg` without touching flash:
+from `g_cfg` and the decode result, without touching flash:
 
 ```
-cfg seq=1 len=4120 crc=0x1c291ca3
+cfg seq=1 len=1374 crc=0x1c291ca3 schema=1
 ```
 
 | Output | Meaning |
@@ -235,6 +250,9 @@ cfg seq=1 len=4120 crc=0x1c291ca3
 | `seq` | Monotonic write counter — increments on every successful `CFG_SET` |
 | `len` | Payload byte count of the active blob |
 | `crc` | Payload CRC32 |
+| `schema` | Payload schema version of the decoded active config |
+| `decoded=0` | The stored blob is intact but did not decode (`ALARM_CONFIG`) |
+| `rejected=<name>` | The most recent rejection, at boot or of a `CFG_SET` (`configDecodeErrorName`) |
 
 This is a human-readable diagnostic, not a host-facing binary response. The binary
 path for reading the blob is `CFG_GET` (§5).

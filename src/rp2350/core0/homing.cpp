@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include "homing.h"
 #include "position.h"
+#include "cmd/axis_map.h"
+#include "../config/machine_cfg.h"
 #include "../ipc/shared_state.h"
 #include "../ipc/core1_rpc.h"
 
@@ -59,7 +61,13 @@ bool homingActive(void) { return claimed; }
 uint8_t homingFailWhy(void) { return failWhy; }
 
 void resumeOrHold(void) {
-    if (homingLatched) {
+    if (!machineCfgValid()) {
+        alarmReason  = ALARM_CONFIG;
+        machineState = STATE_ALARM;
+    } else if (!axisMapComplete()) {
+        alarmReason  = ALARM_NODE_FAULT;
+        machineState = STATE_ALARM;
+    } else if (homingLatched) {
         alarmReason  = ALARM_LIMIT_LATCHED;
         machineState = STATE_ALARM;
     } else {
