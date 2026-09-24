@@ -133,7 +133,7 @@ sender. Unblocks branch 2.
   survives a power cycle; power cut mid-write keeps the old config; steps still
   stream after a config write.
 
-**Status:** implemented. On the bench: push, readback and persistence across
+**Status:** merged. All planned branches are done. On the bench: push, readback and persistence across
 power cycles pass; boot with nodes off → `ALARM_NODE_FAULT`, nodes on then
 `unalarm` → IDLE. Remaining hardware checks: bad blob (`CFG_NACK_SCHEMA`),
 power cut mid-push, partial `axis_map`, motion after a config write.
