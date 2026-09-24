@@ -74,13 +74,31 @@ reset still check `ALARM_CONFIG`.
 **Checks:** `pio run -e pico`, `pio test -e native`, `pnpm typecheck` and
 `pnpm test` (comment-only web edits).
 
-**Overlap:** `irq-bench` touches `platformio.ini`.
+**Overlap:** none (`platformio.ini` needed no change).
 
 **Depends on:** nothing.
 
-**Status:** not started
+**Status:** ready to merge. `pio run -e pico` passes; `pio test -e native`
+`test_parity` fails for missing untracked reference files (unrelated);
+no web code changed, so the web checks were not run.
 
 **Outcome:**
+
+* One reply change, agreed: after `stop` on an unconfigured machine the
+  reason is `ALARM_ESTOP`, and `unalarm` now answers `err unconfigured` (the
+  gate) instead of `err unmapped`.
+* `resumeOrHold()` writes the reason, a `__dmb()`, then the state, matching
+  the controller's inline write it replaced.
+* `ops/` still reads the config: `resumeOrHold()` and the axis-map ops
+  (`axisMapComplete/Retry`, `axisNodeInConfig`). Another known exception
+  until the feature branch.
+* `unalarm` keeps its inline `ALARM_CONFIG` check; the gate makes it
+  redundant with a valid config. Drop it in the feature branch.
+* Path references were updated only inside `src/`. Follow-up: `docs/`
+  (`homing.md`, `tool_probe.md`, `node_state_ingest.md`,
+  `node_frame_ownership_migration.md`, `PLAN_rp2350_refactor.md`),
+  `include/common.h`, and web comments (`sim.ts`, `status.ts`, `blob.ts`,
+  `controller.test.ts`).
 
 ## Later (needs deliberation before planning)
 
@@ -90,7 +108,9 @@ Behaviour changes, likely one `feature/` branch once settled.
   controller commands answer `err unconfigured`. Retires an alarm reason code
   (wire change, `web/src/wire/format/status.ts`). Primitives lose their
   config checks (the exceptions above). `status cfg` becomes an ungated
-  controller command (e.g. `cfg`).
+  controller command (e.g. `cfg`). Test the config, not `alarmReason`:
+  `stop` overwrites `ALARM_CONFIG` with `ALARM_ESTOP`, after which today's
+  `ALARM_CONFIG` checks (`axes_enable`, `setorigin`, `unalarm`) miss.
 * **Unmapped is not an alarm.** Never mapped counts as nothing requested, so
   the machine is IDLE; only a failed `axis_map` raises `ALARM_NODE_FAULT`.
   Recovery in the primitive plane is re-sending `axis_map`; the controller's

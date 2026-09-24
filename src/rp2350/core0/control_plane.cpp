@@ -1,12 +1,16 @@
 // Core 0 control plane: text command dispatch (docs/wire_protocol.md).
 // One command per line; replies with exactly one text line.
 //
-// The handlers live in cmd/. What is left here is the lookup -- see cmd/table.h
-// for why it is a table and not the chain of startsWith() it replaced.
+// Two tables: primitives (cmd/), atomic and config-free, and controller
+// commands (controller/cmd/), which read the config and are refused without
+// one. What is left here is the lookup -- see cmd/table.h for why it is a
+// table and not the chain of startsWith() it replaced.
 
 #include <Arduino.h>
 #include "control_plane.h"
 #include "cmd/table.h"
+#include "controller/cmd/table.h"
+#include "config/machine_cfg.h"
 #include <string.h>
 
 // Order is irrelevant: the match is the whole command word, so no row can
@@ -30,7 +34,6 @@ static const Cmd kCommands[] = {
     { "pause",        cmdPause       },
     { "resume",       cmdResume      },
     { "cancel",       cmdCancel      },
-    { "unalarm",      cmdUnalarm     },
     // periph.cpp
     { "vac_servo",    cmdVacServo    },
     { "vac_pump",     cmdVacPump     },
@@ -55,6 +58,18 @@ static const Cmd kCommands[] = {
     { "unprobe",      cmdUnprobe     },
 };
 
+static const Cmd kControllerCommands[] = {
+    { "unalarm",      cmdUnalarm     },
+};
+
+template <size_t N>
+static const Cmd* lookup(const Cmd (&table)[N], const char* s, size_t wordLen) {
+    for (size_t i = 0; i < N; i++)
+        if (strlen(table[i].name) == wordLen && strncmp(s, table[i].name, wordLen) == 0)
+            return &table[i];
+    return nullptr;
+}
+
 // Handle one control-plane text line. Replies with exactly one line per the wire
 // contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
 // Returns false if the line names no command -- the caller decides what to say.
@@ -69,13 +84,14 @@ bool handleCommand(const String& input) {
     while (s[wordLen] && s[wordLen] != ' ') wordLen++;
     if (wordLen == 0) return false;
 
-    for (size_t i = 0; i < sizeof(kCommands) / sizeof(kCommands[0]); i++) {
-        const Cmd& c = kCommands[i];
-        if (strlen(c.name) != wordLen || strncmp(s, c.name, wordLen) != 0) continue;
-
-        const char* args = s + wordLen;    // hand the handler its arguments
-        while (*args == ' ') args++;       // already positioned -- no offsets
-        return c.fn(args);
+    const Cmd* c = lookup(kCommands, s, wordLen);
+    if (!c) {
+        c = lookup(kControllerCommands, s, wordLen);
+        if (!c) return false;
+        if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
     }
-    return false;
+
+    const char* args = s + wordLen;        // hand the handler its arguments
+    while (*args == ' ') args++;           // already positioned -- no offsets
+    return c->fn(args);
 }

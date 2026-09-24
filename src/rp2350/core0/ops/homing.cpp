@@ -1,10 +1,9 @@
 #include <Arduino.h>
 #include "homing.h"
 #include "position.h"
-#include "cmd/axis_map.h"
-#include "../config/machine_cfg.h"
-#include "../ipc/shared_state.h"
-#include "../ipc/core1_rpc.h"
+#include "state.h"
+#include "../../ipc/shared_state.h"
+#include "../../ipc/core1_rpc.h"
 
 // Poll cadence. This does NOT set accuracy: the node's gate stops the axis at
 // the trip point whatever Core 0 is doing, so the counter is exact whenever it
@@ -59,22 +58,6 @@ static uint8_t  failWhy = HOMEFAIL_NONE;
 bool homingActive(void) { return claimed; }
 
 uint8_t homingFailWhy(void) { return failWhy; }
-
-void resumeOrHold(void) {
-    if (!machineCfgValid()) {
-        alarmReason  = ALARM_CONFIG;
-        machineState = STATE_ALARM;
-    } else if (!axisMapComplete()) {
-        alarmReason  = ALARM_NODE_FAULT;
-        machineState = STATE_ALARM;
-    } else if (homingLatched) {
-        alarmReason  = ALARM_LIMIT_LATCHED;
-        machineState = STATE_ALARM;
-    } else {
-        alarmReason  = ALARM_NONE;
-        machineState = STATE_IDLE;
-    }
-}
 
 // The home is over, one way or the other. Both exits invalidate the origin, and
 // that is not conservatism -- it is required. A home moves the axis with the

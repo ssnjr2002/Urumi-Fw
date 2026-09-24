@@ -125,8 +125,8 @@ enum MachineState : uint8_t {
     STATE_ESTOP   = 2,   // transient — Core 0 → Core 1 flush signal
     STATE_ALARM   = 3,
     STATE_PAUSED  = 4,
-    STATE_HOMING  = 5,   // a node-run home is in progress (core0/homing.cpp)
-    // A tool-height probe session is open (core0/probe.cpp, docs/tool_probe.md).
+    STATE_HOMING  = 5,   // a node-run home is in progress (core0/ops/homing.cpp)
+    // A tool-height probe session is open (core0/ops/probe.cpp, docs/tool_probe.md).
     // A SESSION state, not a motion state: it is entered by `probe_map`, spans
     // several legs with the host deciding between them, and is left only by an
     // explicit exit. Like HOMING it is neither IDLE nor RUNNING, so the data
@@ -246,7 +246,7 @@ extern volatile int32_t machinePos[4];
 // `axes_enabled` is DERIVED, not commanded: reconcileValidity() rebuilds it each
 // Core 0 loop pass by projecting `nodeEnabled` (below) through the axis map. No
 // command handler writes it. Same shape as axes_homed ← nodeHomed and
-// homingLatched ← nodeLatched (core0/position.h), which is the standing rule
+// homingLatched ← nodeLatched (core0/ops/position.h), which is the standing rule
 // here: the NODE frame is the truth, the SLOT frame is a view of it.
 extern volatile uint8_t axes_homed;
 extern volatile uint8_t axes_enabled;
@@ -257,7 +257,7 @@ extern volatile uint8_t axes_enabled;
 // actually completed — an ack in rpc_server.cpp, or the safe-off sweep in
 // bus/packet.cpp. Core 0 reads it and never writes it.
 //
-// It lives here rather than beside its siblings in core0/position.cpp because it
+// It lives here rather than beside its siblings in core0/ops/position.cpp because it
 // is the one node-frame mask with an ASYNCHRONOUS writer: Core 1 sweeps the bus
 // on estop and soft reset without being asked, so Core 0 cannot own it without
 // racing its own read-modify-writes (which is what it used to do — Core 0's
@@ -266,7 +266,7 @@ extern volatile uint8_t axes_enabled;
 // unprompted.
 //
 // Node-framed, not slot-framed, for the same reason nodeLatched is
-// (core0/position.h): energisation is a fact about a motor, and it survives a
+// (core0/ops/position.h): energisation is a fact about a motor, and it survives a
 // rebind. Unbinding a slot does not de-energise anything.
 extern volatile uint16_t nodeEnabled;
 

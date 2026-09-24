@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include "../ipc/core1_rpc.h"    // NodeStatus
+#include "../../ipc/core1_rpc.h"    // NodeStatus
 
 // position.h — the axis map and the node-frame position datum.
 //
@@ -46,7 +46,7 @@
 // ─── Axis map ─────────────────────────────────────────────────────────────────
 
 // All slots unbound. Boot state, until the controller commits the config's
-// defaultHead map (controller/controller.h).
+// defaultHead map (controller/seq/controller.h).
 void axisMapReset(void);
 
 // The bus id bound to slot `s`, or SLOT_NONE. Slot indices are 0..MOTION_SLOTS-1.

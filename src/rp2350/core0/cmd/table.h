@@ -38,7 +38,6 @@ bool cmdSeqReset(const char*);
 bool cmdPause(const char*);
 bool cmdResume(const char*);
 bool cmdCancel(const char*);
-bool cmdUnalarm(const char*);
 
 // ─── periph.cpp — one generic relay behind five rows ──────────────────────────
 bool cmdVacServo(const char*);
@@ -47,7 +46,7 @@ bool cmdKnifeOsc(const char*);
 bool cmdKnifeBlower(const char*);
 bool cmdLaser(const char*);
 
-// ─── axis.cpp — the only file that WRITES the position model ──────────────────
+// ─── axis.cpp — the only command file that WRITES the position model ──────────
 bool cmdAxisMap(const char*);
 bool cmdSetOrigin(const char*);
 bool cmdStep(const char*);
@@ -59,10 +58,10 @@ bool cmdBusEnable(const char*);
 bool cmdEnable(const char*);
 bool cmdDisable(const char*);
 
-// ─── the probe session (core0/probe.cpp) ──────────────────────────────────────
+// ─── the probe session (core0/ops/probe.cpp) ──────────────────────────────────
 // Here rather than in a file of their own because probe_map writes the axis map
-// and axis.cpp is the only file that writes the position model. The session
-// state and its supervisor live in core0/probe.cpp; these are the three
+// and axis.cpp is the only command file that writes the position model. The
+// session state and its supervisor live in core0/ops/probe.cpp; these are the three
 // handlers that reach it.
 bool cmdProbeMap(const char*);
 bool cmdProbeLeg(const char*);

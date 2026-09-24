@@ -8,14 +8,14 @@
 #include "table.h"
 #include "parse.h"
 #include "gate.h"
-#include "../position.h"
-#include "../homing.h"
-#include "../probe.h"
+#include "../ops/position.h"
+#include "../ops/homing.h"
+#include "../ops/probe.h"
 #include "../status.h"                  // getBufCount (status alias)
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
-#include "../../config/config_store.h"  // g_cfg (status cfg)
-#include "../../config/machine_cfg.h"
+#include "../config/config_store.h"  // g_cfg (status cfg)
+#include "../config/machine_cfg.h"
 
 bool cmdPing(const char*) { Serial.println("pong"); return true; }
 

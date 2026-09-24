@@ -6,8 +6,8 @@
 // operations.
 
 #include "position.h"
-#include "../ipc/shared_state.h"
-#include "usb_protocol.h"      // NODE_FLAG_*, BUS_ADDR_MAX
+#include "../../ipc/shared_state.h"
+#include "../usb_protocol.h"   // NODE_FLAG_*, BUS_ADDR_MAX
 #include "hardware/sync.h"     // __dmb
 
 // ─── Axis map (docs/engage_and_axis_map.md §5) ────────────────────────────────

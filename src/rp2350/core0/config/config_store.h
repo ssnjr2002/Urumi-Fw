@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
-#include "../ipc/shared_state.h"    // flash-quiesce handshake flags
-#include "../core0/usb_protocol.h"  // CFG_MAX_BYTES, CFG_NACK_*
+#include "../../ipc/shared_state.h"    // flash-quiesce handshake flags
+#include "../usb_protocol.h"  // CFG_MAX_BYTES, CFG_NACK_*
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config blob store — one opaque msgpack blob kept in LittleFS as /config.bin.

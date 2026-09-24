@@ -2,17 +2,14 @@
 
 #include <Arduino.h>
 #include "controller.h"
-#include "../config/machine_cfg.h"
-#include "../core0/position.h"      // SLOT_NONE
-#include "../core0/cmd/axis_map.h"
-#include "../ipc/shared_state.h"
-#include "hardware/sync.h"          // __dmb
+#include "../../config/machine_cfg.h"
+#include "../../ops/position.h"      // SLOT_NONE
+#include "../../ops/axis_map.h"
+#include "../../ops/state.h"
 
 void controllerApplyDefaultMap() {
     if (!machineCfgValid()) {
-        alarmReason  = ALARM_CONFIG;
-        __dmb();
-        machineState = STATE_ALARM;
+        resumeOrHold();                    // ALARM_CONFIG
         return;
     }
     const MachineCfg& cfg = machineCfg();

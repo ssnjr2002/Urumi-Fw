@@ -22,9 +22,9 @@
 #include "usb_protocol.h"
 #include "hardware/sync.h"
 #include "data_plane.h"
-#include "../config/config_store.h"
-#include "../config/machine_cfg.h"
-#include "../controller/controller.h"
+#include "config/config_store.h"
+#include "config/machine_cfg.h"
+#include "controller/seq/controller.h"
 
 // ─── Receiver dispatch ────────────────────────────────────────────────────────
 

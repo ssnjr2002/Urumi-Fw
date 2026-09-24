@@ -14,7 +14,7 @@
 #include <vector>
 
 // Unity build: the decoder lives under src/, which native tests do not compile.
-#include "../../src/rp2350/config/config_decode.cpp"
+#include "../../src/rp2350/core0/config/config_decode.cpp"
 
 static std::vector<uint8_t> readBlob(const std::string& name) {
     static const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};

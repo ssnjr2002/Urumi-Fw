@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include "machine_cfg.h"
 #include "config_store.h"
-#include "../ipc/shared_state.h"
+#include "../../ipc/shared_state.h"
 
 static_assert(CFG_BUS_ADDR_MAX == BUS_ADDR_MAX, "decoder node-id range must match the bus");
 

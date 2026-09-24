@@ -3,10 +3,10 @@
 #include <string.h>
 #include "probe.h"
 #include "position.h"
-#include "cmd/axis_map.h"
-#include "homing.h"            // resumeOrHold
-#include "../ipc/shared_state.h"
-#include "../ipc/core1_rpc.h"
+#include "axis_map.h"
+#include "state.h"
+#include "../../ipc/shared_state.h"
+#include "../../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
 
 // Z takes slot 2 (SLOT_Z); the vacuum takes slot 3.

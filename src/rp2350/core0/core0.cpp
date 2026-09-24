@@ -12,14 +12,14 @@
 #include "../ipc/core1_rpc.h"
 #include "hardware/sync.h"
 #include "control_plane.h"
-#include "position.h"
-#include "homing.h"
-#include "probe.h"
+#include "ops/position.h"
+#include "ops/homing.h"
+#include "ops/probe.h"
 #include "data_plane.h"
 #include "status.h"
-#include "../config/config_store.h"
-#include "../config/machine_cfg.h"
-#include "../controller/controller.h"
+#include "config/config_store.h"
+#include "config/machine_cfg.h"
+#include "controller/seq/controller.h"
 
 // ─── Text line assembly ───────────────────────────────────────────────────────
 

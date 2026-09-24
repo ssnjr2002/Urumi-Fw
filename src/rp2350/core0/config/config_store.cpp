@@ -5,8 +5,8 @@
 #include <LittleFS.h>
 #include <string.h>
 #include "hardware/sync.h"
-#include "../ipc/shared_state.h"
-#include "../core0/usb_protocol.h"
+#include "../../ipc/shared_state.h"
+#include "../usb_protocol.h"
 #include "config_store.h"
 
 static const char* const CFG_PATH = "/config.bin";
