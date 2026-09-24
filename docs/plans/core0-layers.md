@@ -78,7 +78,8 @@ reset still check `ALARM_CONFIG`.
 
 **Depends on:** nothing.
 
-**Status:** ready to merge. `pio run -e pico` passes; `pio test -e native`
+**Status:** merged (c0be523). Not yet run on hardware. Unblocks the Later
+items. `pio run -e pico` passes; `pio test -e native`
 `test_parity` fails for missing untracked reference files (unrelated);
 no web code changed, so the web checks were not run.
 
