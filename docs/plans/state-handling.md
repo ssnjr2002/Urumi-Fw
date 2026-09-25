@@ -243,7 +243,9 @@ no slot, as it does today after `axis_map - - - -`).
 
 **Depends on:** nothing.
 
-**Status:** ready to merge. Not yet run on hardware. `pio run -e pico` passes;
+**Status:** merged (993972a..899e50b). Checked on hardware: unconfigured
+boot, `cfg`, `axes_enable` unbound, default map, `unalarm` retry. Unblocks
+branches 2 and 3. `pio run -e pico` passes;
 `pnpm typecheck` and `pnpm test` pass.
 
 **Outcome:**
