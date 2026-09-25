@@ -101,51 +101,6 @@ no web code changed, so the web checks were not run.
   `include/common.h`, and web comments (`sim.ts`, `status.ts`, `blob.ts`,
   `controller.test.ts`).
 
-## Later (needs deliberation before planning)
+## Later
 
-Behaviour changes, likely one `feature/` branch once settled.
-
-* **No config boots to IDLE.** `ALARM_CONFIG` stops being a machine alarm;
-  controller commands answer `err unconfigured`. Retires an alarm reason code
-  (wire change, `web/src/wire/format/status.ts`). Primitives lose their
-  config checks (the exceptions above). `status cfg` becomes an ungated
-  controller command (e.g. `cfg`). Test the config, not `alarmReason`:
-  `stop` overwrites `ALARM_CONFIG` with `ALARM_ESTOP`, after which today's
-  `ALARM_CONFIG` checks (`axes_enable`, `setorigin`, `unalarm`) miss.
-* **Unmapped is not an alarm.** Never mapped counts as nothing requested, so
-  the machine is IDLE; only a failed `axis_map` raises `ALARM_NODE_FAULT`.
-  Recovery in the primitive plane is re-sending `axis_map`; the controller's
-  `unalarm` is a wrapper that re-sends it. The data plane would accept
-  segments with nothing bound until the new planner gates them (the planner
-  overhaul strips the job and jog paths).
-* **Motion gating.** Motion primitives refuse when unmapped (`err unmapped` /
-  NACK, no state change); motion controller commands run `axis_map` first.
-  Map state in `STATUS_RSP`. Deferred until the planner overhaul lands.
-* **Alarm exits in the primitive plane.** Found in the code:
-
-  | Reason | Reached by | Left today by |
-  |---|---|---|
-  | `ESTOP` | `stop`, poison pill; bus de-energised, origins void | `setorigin`, `unalarm`, a leg, `reset` |
-  | `HOMING_FAIL` | `homingFail()`: `BUDGET`, `DEADLINE`, `POLL` (node stopped answering), rotary index causes | another leg, `setorigin`, `unalarm` |
-  | `PROBE_FAIL` | `probeFail()`: `POLL`, `DEADLINE`, `NOT_CLEARED`, `ALREADY_OPEN`, `POS_MISMATCH`, leg causes | `unalarm`, `setorigin`, a leg |
-  | `LIMIT_LATCHED` | seek ended on its switch | a reverse leg |
-  | `NODE_FAULT` | failed `axis_map` | `axis_map`, `unalarm` |
-  | `SOFT_LIMIT` | job segment out of bounds | `setorigin`, `unalarm` (goes with the job path) |
-
-  A node dropping mid-home or mid-probe is `HOMING_FAIL`/`PROBE_FAIL` with
-  `POLL`, not `NODE_FAULT`.
-  * Loose exits: any successful leg clears any alarm (`homingBegin` clears the
-    reason at arm), and `setorigin` clears almost any alarm via
-    `resumeOrHold()`. Decide whether each primitive clears only the reason it
-    fixes.
-  * `ESTOP`: `reset` is the plain exit (position is gone anyway); the fixing
-    path is `axes_enable on` then `setorigin` or a home.
-  * `PROBE_FAIL` has no clean primitive exit: `probe_map` refuses in ALARM by
-    design. Options: admit `probe_map` from `PROBE_FAIL`, or a plain
-    acknowledge.
-  * A failed probe can hide an incomplete map: the restore runs while still
-    PROBING (gate skipped), then `PROBE_FAIL` is written over it.
-* **Handler bodies into ops.** `setorigin`, the enables, `step` and the leg
-  start still live in their `cmd/` handlers. Extract them when a controller
-  sequence needs them (the homing recipes).
-* **Production builds** may compile out or restrict the primitive table.
+Moved to docs/plans/state-handling.md.
