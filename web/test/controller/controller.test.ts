@@ -4,8 +4,8 @@
  * Deliberately an integration test over a real Link and a real SimTransport
  * rather than a mock. The Controller exists precisely because the join between
  * config and transport is where the mistakes live, and a mocked Link would let
- * every one of them through — the Sim boots into ALARM_CONFIG with no axis map,
- * exactly like the firmware, which is what makes the reconciliation tests mean
+ * every one of them through — the Sim boots IDLE with no axis map, exactly like
+ * the unconfigured firmware, which is what makes the reconciliation tests mean
  * anything.
  */
 

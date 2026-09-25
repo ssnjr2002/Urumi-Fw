@@ -3,7 +3,7 @@
  * backed by the in-process Sim. Exercises the live verbs (ping / getstate /
  * getpos / enable / disable / setorigin / pause / resume / cancel / stop /
  * unalarm / pingnode all / the proactive nodepos / vac_servo / vac_pump) and
- * axis_map with the ALARM_CONFIG boot gate it clears.
+ * axis_map on an unmapped boot.
  */
 
 import { describe, it, expect } from "vitest";
@@ -234,8 +234,8 @@ describe("wire/link/commands: peripheral relays (knife + vacuum)", () => {
     });
 });
 
-describe("wire/link/commands: axis_map + the ALARM_CONFIG gate", () => {
-    /** An UNCONFIGURED sim — the firmware's real boot state. */
+describe("wire/link/commands: axis_map on an unmapped boot", () => {
+    /** An UNCONFIGURED sim: IDLE, nothing bound. */
     async function withUnconfigured<T>(fn: (link: Link, sim: SimTransport) => Promise<T>): Promise<T> {
         const sim = new SimTransport({ busNodes: [1, 2, 3, 4, 5, 6] });
         const link = new Link(sim);
@@ -246,16 +246,16 @@ describe("wire/link/commands: axis_map + the ALARM_CONFIG gate", () => {
         }
     }
 
-    it("boots into ALARM/ALARM_CONFIG with an empty map", async () => {
+    it("boots IDLE with an empty map: unmapped is not an alarm", async () => {
         await withUnconfigured(async (link) => {
             const st = await getStatus(link);
-            expect(st.state).toBe(MachineState.ALARM);
-            expect(st.alarm).toBe(AlarmReason.CONFIG);
+            expect(st.state).toBe(MachineState.IDLE);
+            expect(st.alarm).toBe(AlarmReason.NONE);
             expect(await readAxisMap(link)).toEqual([null, null, null, null]);
         });
     });
 
-    it("committing a map clears the gate → IDLE", async () => {
+    it("committing a map stays IDLE", async () => {
         await withUnconfigured(async (link) => {
             expect(await axisMap(link, 1, 2, 3, 4)).toBe(true);
             const st = await getStatus(link);
@@ -265,17 +265,15 @@ describe("wire/link/commands: axis_map + the ALARM_CONFIG gate", () => {
         });
     });
 
-    it("unalarm cannot clear the config gate", async () => {
+    it("unalarm has nothing to clear", async () => {
         await withUnconfigured(async (link) => {
-            expect(await link.command("unalarm")).toBe("err unconfigured");
-            expect((await getStatus(link)).state).toBe(MachineState.ALARM);
+            expect(await link.command("unalarm")).toBe("err bad_state");
         });
     });
 
-    it("setorigin does not clear the config gate either", async () => {
+    it("axes_enable refuses with nothing bound", async () => {
         await withUnconfigured(async (link) => {
-            expect(await setOrigin(link)).toBe(true); // the datum IS set
-            expect((await getStatus(link)).state).toBe(MachineState.ALARM);
+            expect(await link.command("axes_enable on")).toBe("err unbound");
         });
     });
 

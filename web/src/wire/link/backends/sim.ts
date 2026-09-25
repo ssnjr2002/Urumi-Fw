@@ -58,9 +58,9 @@ interface SimOptions {
      */
     busNodes?: readonly number[];
     /**
-     * Skip the ALARM_CONFIG boot gate by committing this map immediately, as if
-     * `axis_map` had already run. For tests that are not about the gate; real
-     * firmware always boots unconfigured (core0.cpp).
+     * Commit this map at boot, as the firmware's controller does with the
+     * config's defaultHead map. Without it the sim boots IDLE and unmapped, as
+     * the firmware does with no config (core0.cpp).
      */
     axisMap?: readonly (number | null)[];
 }
@@ -79,13 +79,9 @@ export class SimTransport implements Transport {
     /** Ids that answer a relay (everything else times out). */
     readonly busNodes: ReadonlySet<number>;
 
-    /**
-     * Boot state is the ALARM_CONFIG gate, not IDLE (core0.cpp): the axis map
-     * is empty, and since motion ingest gates on machineState alone, every
-     * job/jog is refused until `axis_map` commits a binding.
-     */
-    state: MachineState = MachineState.ALARM;
-    alarm: AlarmReason = AlarmReason.CONFIG;
+    /** Unmapped is not an alarm: an empty map boots IDLE (core0.cpp). */
+    state: MachineState = MachineState.IDLE;
+    alarm: AlarmReason = AlarmReason.NONE;
     running: RunningReason = RunningReason.JOB;
     /**
      * DERIVED, per slot. Never assign it directly — call `_rederiveHomed()`.
@@ -334,8 +330,8 @@ export class SimTransport implements Transport {
         //     itself a jog. Packet 2+ of a multi-packet jog arrives after the
         //     machine already flipped to RUNNING for packet 1; rejecting those
         //     would NACK every jog after the first, forever.
-        // ALARM lands here too, which is how the ALARM_CONFIG boot gate refuses
-        // all motion without a separate predicate.
+        // ALARM lands here too, which is how every alarm refuses all motion
+        // without a separate predicate.
         const isJog = data[0] === MAGIC_JOG;
         const st = this.state;
         if (!isJog) {
@@ -533,22 +529,6 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 // Same for the latch: an incoming node standing on its switch
                 // brings that with it, and gates the machine again.
                 S._rederiveLatched();
-
-                // The gate condition is "every slot ACK-confirmed", not "a
-                // string parsed" — reaching here means it held.
-                //
-                // Bidirectional: `axis_map - - - -` commits an EMPTY map, and a
-                // machine with no axis bound is not configured. Re-enter the gate
-                // rather than merely fail to clear it — the previous map may have
-                // been valid. Still answers `ok`; the unconfigured result is a
-                // state fact, carried by the reason code (cmd/axis.cpp).
-                if (S.slotNode.every((n) => n === null)) {
-                    S.state = MachineState.ALARM;
-                    S.alarm = AlarmReason.CONFIG;
-                } else if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
-                    S.state = MachineState.IDLE;
-                    S.alarm = AlarmReason.NONE;
-                }
                 return "ok";
             }
             // `lin_leg <node> <dir> <startUs> <floorUs> <rampSteps> <maxSteps> <intent>`
@@ -654,12 +634,8 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             case "axes_enable":
                 if (isIdlePausedAlarm(S.state)) {
                     if (args.length === 0) return "err usage";
-                    // No committed map means nothing to enable (cmd/axis.cpp).
-                    // The ALARM_ESTOP recovery path (axes_enable on -> setorigin
-                    // -> unalarm) is unaffected: it runs under a different reason.
-                    if (S.state === MachineState.ALARM && S.alarm === AlarmReason.CONFIG) {
-                        return "err unconfigured";
-                    }
+                    // Nothing bound means nothing to enable (cmd/axis.cpp).
+                    if (S.slotNode.every((n) => n === null)) return "err unbound";
                     const on = args[0] === "1" || args[0]!.toLowerCase() === "on";
                     for (let i = 0; i < MOTION_SLOTS; i++) {
                         if (S.slotNode[i] === null) continue;
@@ -716,9 +692,8 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                     S.pos[i] = 0;
                 }
                 S._rederiveHomed();
-                // setorigin recovers from an ESTOP-alarm, but NOT from the
-                // config gate — only a committed axis_map leaves that (§6.1).
-                if (S.state === MachineState.ALARM && S.alarm !== AlarmReason.CONFIG) {
+                // setorigin recovers from an ESTOP-alarm.
+                if (S.state === MachineState.ALARM) {
                     S.state = MachineState.IDLE;
                     S.alarm = AlarmReason.NONE;
                 }
@@ -750,8 +725,6 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 return "err bad_state";
             case "unalarm":
                 if (S.state === MachineState.ALARM) {
-                    // The config gate is not a clearable fault (§6.1).
-                    if (S.alarm === AlarmReason.CONFIG) return "err unconfigured";
                     // A latched limit is not cleared by asking: `unalarm` moves
                     // nothing, so the condition still holds afterwards. Answers
                     // `ok` and stays in ALARM — a retract is the way out.

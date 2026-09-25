@@ -49,7 +49,7 @@ describe("wire/format/status: enums", () => {
     it("AlarmReason mirrors the firmware values", () => {
         expect(AlarmReason.NONE).toBe(0);
         expect(AlarmReason.ESTOP).toBe(1);
-        expect(AlarmReason.CONFIG).toBe(2);
+        expect("CONFIG" in AlarmReason).toBe(false); // 2 is reserved
         expect(AlarmReason.SOFT_LIMIT).toBe(3);
         expect(AlarmReason.HOMING_FAIL).toBe(4);
     });

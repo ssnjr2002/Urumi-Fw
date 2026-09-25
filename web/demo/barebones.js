@@ -89,7 +89,7 @@ connectBtn.addEventListener('click', async () => {
 });
 
 async function statusCfg() {
-    const reply = await link.command('status cfg');
+    const reply = await link.command('cfg');
     console.info(TAG, '<', reply ?? '(no reply)');
 }
 

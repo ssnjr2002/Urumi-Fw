@@ -45,10 +45,9 @@ async function withLink<T>(
         axisMap?: readonly (number | null)[];
     },
 ): Promise<T> {
-    // Boot into a COMMITTED map by default: the firmware boots into the
-    // ALARM_CONFIG gate and refuses all motion until `axis_map` commits, so
-    // every test that is not about the gate needs a configured machine. A gate
-    // test passes `{ axisMap: undefined }` to get the unconfigured boot.
+    // Boot into a COMMITTED map by default, as the firmware's controller does
+    // with a config. A test passes `{ axisMap: undefined }` to get the
+    // unconfigured, unmapped boot.
     const sim = new SimTransport({ axisMap: [1, 2, 3, 4], ...simOpts });
     const link = new Link(sim);
     try {
@@ -164,14 +163,13 @@ describe("wire/link/backends/sim: control plane", () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 20;
             expect(await link.command("axis_map - - - -")).toBe("ok");
-            expect((await link.getStatus()).alarm).toBe(AlarmReason.CONFIG);
+            expect((await link.getStatus()).alarm).toBe(AlarmReason.NONE);
 
             expect(await link.command("lin_leg 3 1 2500 500 400 88000")).toBe("ok");
             await tick(60);
 
             // Node 3 is standing on its switch, and no slot claims it, so the
-            // per-slot view is empty while the node-framed truth is not. The
-            // machine stays in the config alarm it was already in.
+            // per-slot view is empty while the node-framed truth is not.
             expect(await link.command("getstate")).toContain("latched=0x00");
             expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
             expect(await link.command("getstate")).toContain("latched=0x04");
@@ -382,26 +380,19 @@ describe("wire/link/backends/sim: MSEG_FLAG_PAUSE", () => {
         });
     });
 });
-describe("wire/link/backends/sim: the ALARM_CONFIG boot gate", () => {
-    it("refuses a stream until axis_map commits", async () => {
+describe("wire/link/backends/sim: the unmapped boot", () => {
+    it("boots IDLE with nothing bound; axis_map binds without an alarm", async () => {
         await withLink(
             async (link, sim) => {
-                expect(sim.state).toBe(MachineState.ALARM);
-                expect(sim.alarm).toBe(AlarmReason.CONFIG);
-
-                // Motion ingest gates on machineState alone, so the config
-                // ALARM refuses the stream with no separate predicate.
-                const refused = await link.stream([mseg()], 4);
-                expect(refused.ok).toBe(false);
-                expect(sim.pos[0]).toBe(0);
+                expect(sim.state).toBe(MachineState.IDLE);
+                expect(sim.alarm).toBe(AlarmReason.NONE);
+                expect(await link.command("axes_enable on")).toBe("err unbound");
 
                 expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
                 expect(sim.state).toBe(MachineState.IDLE);
-
-                const accepted = await link.stream([mseg()], 4);
-                expect(accepted.ok).toBe(true);
+                expect(await link.command("axes_enable on")).toBe("ok");
             },
-            { axisMap: undefined }, // the real, unconfigured boot
+            { axisMap: undefined }, // the unconfigured boot
         );
     });
 

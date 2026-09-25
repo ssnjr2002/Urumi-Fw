@@ -49,8 +49,7 @@ const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
 export const AlarmReason = {
     NONE: 0,
     ESTOP: 1,
-    /** No valid config stored on the Pico. Cleared only by an accepted CFG_SET. */
-    CONFIG: 2,
+    // 2 reserved: was CONFIG. No config boots to IDLE.
     SOFT_LIMIT: 3,
     HOMING_FAIL: 4,
     /**
