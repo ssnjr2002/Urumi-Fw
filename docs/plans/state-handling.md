@@ -184,6 +184,67 @@ Proposed order. Each gets a full Plan section when its turn comes.
 5. After the planner overhaul: motion gating (motion primitives refuse when
    unmapped, motion controller commands map first) and no jobs without homing.
 
+## Branch 1: `feature/config-unmapped`
+
+**Type:** feature. Changes boot state, alarm reasons and replies.
+
+**Purpose:** no config boots to IDLE; never mapped is not an alarm; the
+remaining config checks read the config (or the map), not `alarmReason`.
+`ALARM_CONFIG` is retired.
+
+**Files** (under `src/rp2350/core0/` unless noted):
+
+1. State writes:
+   * `core0.cpp:113-116`: the wipe stops choosing `ALARM_CONFIG`. It keeps
+     `STATE_ALARM` + `ALARM_NODE_FAULT` until `controllerApplyDefaultMap`
+     settles it; with no config that call's `resumeOrHold()` now lands IDLE.
+   * `ops/state.cpp:12`: drop the `!machineCfgValid()` branch.
+   * `ops/axis_map.cpp:103-107`: `axisMapComplete()` returns true when no map
+     was ever requested (`!haveRequest`) and stops reading the config;
+     `axisMapRetry()` (`:110`) follows. `:124`: `axisMapGate` always raises
+     `ALARM_NODE_FAULT`. `axisNodeInConfig` stays (it serves `axis_map`'s
+     `not_in_config`).
+   * `controller/seq/controller.cpp:11-12`, `controller.h:11`: comments.
+2. Checks that read `alarmReason == ALARM_CONFIG`:
+   * `cmd/axis.cpp:45-51` (`axes_enable`): refuse when no slot is bound,
+     `err unmapped`, instead of testing the reason. Keeps the primitive
+     config-free; without a config nothing can be bound.
+   * `cmd/axis.cpp:271-276` (`setorigin`): drop the `ALARM_CONFIG` clause.
+     Its alarm clearing goes in branch 3.
+   * `controller/cmd/unalarm.cpp:13`: drop; the dispatch gate covers it.
+3. `cfg`: a new command replacing `status cfg` (`cmd/query.cpp:89-104`), same
+   reply. Ungated, so it lives in the primitive table (`cmd/table.h`), not the
+   controller table, whose one gate is the config. `status cfg` is removed;
+   nothing in `web/` sends it.
+4. `ipc/shared_state.h:142`: `ALARM_CONFIG = 2` retired; the value stays
+   reserved.
+5. Web (wire change):
+   * `web/src/wire/format/status.ts:53`: `CONFIG` removed, value 2 reserved.
+   * `web/src/wire/link/backends/sim.ts` (`:61`, `:83-88`, `:337`,
+     `:547-548`, `:660`, `:721`, `:754`): unconfigured boot is IDLE and
+     unmapped; `axes_enable` answers `err unmapped` with nothing bound.
+   * `web/src/wire/link/commands.ts:450`: doc comment.
+   * Tests: `web/test/wire/format/status.test.ts:52`,
+     `web/test/wire/link/backends/sim.test.ts:167,390,404`,
+     `web/test/wire/link/commands.test.ts:253,270`.
+6. Docs describing the boot gate: `docs/engage_and_axis_map.md` (§6.1),
+   `docs/config_storage.md`, `docs/tool_probe.md`. The historical plans
+   (`PLAN_*`, `state_redesign.md`, the premortem, `node_session_and_datum.md`)
+   stay as written.
+
+**Out of scope:** the bus sweep, `CFG_SET` → reset, and motion gating on an
+unmapped machine (branch 5; until then motion from IDLE-unmapped streams to
+no slot, as it does today after `axis_map - - - -`).
+
+**Checks:** `pio run -e pico`, `pio test -e native`, `pnpm typecheck` and
+`pnpm test`.
+
+**Overlap:** none (`irq-bench` has no branch type).
+
+**Depends on:** nothing.
+
+**Status:** planned.
+
 ## Open questions
 
 * **Node side** (its own session): docs/node_session_and_datum.md §3 and §7
