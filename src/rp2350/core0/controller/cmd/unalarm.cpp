@@ -8,9 +8,7 @@
 
 bool cmdUnalarm(const char*) {
     if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
-    // Missing config is not cleared by asking: an accepted CFG_SET leaves it.
     // An incomplete axis map is retried once (docs/engage_and_axis_map.md §6.1).
-    if (alarmReason == ALARM_CONFIG) { Serial.println("err unconfigured"); return true; }
     if (!axisMapComplete() && !axisMapRetry()) {
         Serial.println("err unmapped");
         return true;

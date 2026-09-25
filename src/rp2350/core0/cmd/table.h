@@ -25,7 +25,8 @@ struct Cmd {
 bool cmdPing(const char*);
 bool cmdGetState(const char*);
 bool cmdGetPos(const char*);
-bool cmdStatus(const char*);        // also serves `status cfg` and the `?` alias
+bool cmdStatus(const char*);        // also serves the `?` alias
+bool cmdCfg(const char*);
 bool cmdPingNode(const char*);
 bool cmdNodePos(const char*);
 bool cmdNodeStat(const char*);

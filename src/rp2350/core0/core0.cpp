@@ -13,6 +13,7 @@
 #include "hardware/sync.h"
 #include "control_plane.h"
 #include "ops/position.h"
+#include "ops/axis_map.h"
 #include "ops/homing.h"
 #include "ops/probe.h"
 #include "data_plane.h"
@@ -106,14 +107,13 @@ void loop() {
     mBufTail = 0;
     queuedUsIn = 0;
     queuedUsOut = 0;
-    // The axis map is empty, so nothing may stream until one commits
-    // (docs/engage_and_axis_map.md §6). ALARM ⇒ non-IDLE/RUNNING ⇒ every motion
-    // ingest is refused for free. With a valid config the controller commits
-    // the defaultHead map as soon as Core 1 is released (section B), which
-    // clears ALARM_NODE_FAULT; without one the machine stays in ALARM_CONFIG.
+    // Held in ALARM until section B settles it: with a valid config the
+    // controller commits the defaultHead map as soon as Core 1 is released;
+    // without one nothing is requested and the machine lands IDLE, unmapped.
     axisMapReset();
+    axisMapForget();
     machineState = STATE_ALARM;
-    alarmReason = machineCfgValid() ? ALARM_NODE_FAULT : ALARM_CONFIG;
+    alarmReason = ALARM_NODE_FAULT;
     runningReason = RUNNING_JOB;
     probingReason = PROBING_CLEAR;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;

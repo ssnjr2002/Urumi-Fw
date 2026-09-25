@@ -24,5 +24,5 @@ bool              machineCfgValid();
 const MachineCfg& machineCfg();       // meaningful only when machineCfgValid()
 
 // The most recent rejection — of the stored blob at boot, or of a CFG_SET —
-// or CFG_DEC_OK once a config is adopted. For `status cfg`.
+// or CFG_DEC_OK once a config is adopted. For `cfg`.
 CfgDecodeError    machineCfgError();

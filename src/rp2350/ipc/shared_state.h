@@ -139,7 +139,7 @@ enum MachineState : uint8_t {
 enum AlarmReason : uint8_t {
     ALARM_NONE       = 0,
     ALARM_ESTOP      = 1,   // stop command or poison pill
-    ALARM_CONFIG     = 2,   // no valid config stored; cleared by an accepted CFG_SET
+    // 2 reserved: was ALARM_CONFIG. No config boots to IDLE.
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
     ALARM_HOMING_FAIL= 4,   // home ended wrong: no switch found, or none cleared
     // A node failed to answer, leaving the axis map incomplete (axisMapComplete).

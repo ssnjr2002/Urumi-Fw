@@ -100,15 +100,19 @@ bool axisNodeInConfig(uint8_t node) {
     return false;
 }
 
+void axisMapForget(void) {
+    haveRequest = false;
+}
+
 bool axisMapComplete(void) {
-    if (!machineCfgValid() || !haveRequest) return false;
+    if (!haveRequest) return true;         // nothing requested, nothing missing
     for (uint8_t i = 0; i < MOTION_SLOTS; i++)
         if (slotNodeAt(i) != requested[i]) return false;
     return true;
 }
 
 bool axisMapRetry(void) {
-    if (!machineCfgValid() || !haveRequest) return false;
+    if (!haveRequest) return true;
     axisMapApply(requested, /*quiet=*/true);
     return axisMapComplete();
 }
@@ -121,7 +125,7 @@ void axisMapGate(void) {
     if (machineState == STATE_PROBING) return;
     if (!axisMapComplete()) {
         // Reason before state, matching how Core 1 publishes the pair.
-        alarmReason  = machineCfgValid() ? ALARM_NODE_FAULT : ALARM_CONFIG;
+        alarmReason  = ALARM_NODE_FAULT;
         __dmb();
         machineState = STATE_ALARM;
     } else if (machineState == STATE_ALARM && alarmReason == ALARM_NODE_FAULT) {

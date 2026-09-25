@@ -42,17 +42,16 @@ static inline bool busGateDenies() {
 bool cmdAxesEnable(const char* args) {
     if (busGateDenies()) return true;
     if (*args == '\0') { Serial.println("err usage"); return true; }
-    // ALARM_CONFIG refuses: this command's target IS the axis map, and without a
-    // config there is no committed map to operate on. Walking zero slots and
-    // answering `ok` would read as "the axes are now off" on a machine that has
-    // no axes. Same string as `unalarm`, which refuses the same state.
-    if (machineState == STATE_ALARM && alarmReason == ALARM_CONFIG) {
-        Serial.println("err unconfigured"); return true;
-    }
-    // Still NOT gated by alarmDeniesOn, and not by ALARM generally: ALARM is
-    // where axis recovery happens, and the post-estop flow is axes_enable on →
-    // setorigin → unalarm. That path runs under ALARM_ESTOP, so the refusal
-    // above does not touch it. `enable <id>` stays ungated in every alarm —
+    // Nothing bound refuses: this command's target IS the axis map. Walking zero
+    // slots and answering `ok` would read as "the axes are now off" on a
+    // machine that has no axes. Same string as setorigin.
+    bool bound = false;
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
+        if (slotNodeAt(i) != SLOT_NONE) bound = true;
+    if (!bound) { Serial.println("err unbound"); return true; }
+    // NOT gated by alarmDeniesOn, and not by ALARM generally: ALARM is where
+    // axis recovery happens, and the post-estop flow is axes_enable on →
+    // setorigin → unalarm. `enable <id>` stays ungated in every alarm —
     // it addresses a bus node directly rather than through the map, which is how
     // peripherals are reached and does not depend on a map existing at all. The
     // peripheral commands gate because energising a pump under alarm has no
@@ -134,7 +133,7 @@ bool cmdDisable(const char* args) {
 // node the config marks present. The map becomes the requested one: if every
 // node in it engages, ALARM_NODE_FAULT clears; otherwise it is raised
 // (axisMapComplete). A partial map is accepted as asked for.
-// Refused under ALARM_CONFIG. Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING
+// Refused without a config. Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING
 // corrupts motion (§6.2).
 bool cmdAxisMap(const char* args) {
     if (*args == '\0') {                          // read-back form
@@ -268,14 +267,10 @@ bool cmdSetOrigin(const char* args) {
     if (alarmReason != alarmAtEntry || machineState == STATE_ESTOP) {
         Serial.println("err estop"); return true;
     }
-    // setorigin recovers from an ESTOP-alarm, but NOT from ALARM_CONFIG — only
-    // an accepted CFG_SET clears that (docs/engage_and_axis_map.md §6.1).
-    // resumeOrHold() also holds an incomplete map in ALARM_NODE_FAULT and a
-    // latched limit in ALARM, for the same reason unalarm cannot clear them:
-    // recording a datum fixes neither.
-    if (machineState == STATE_ALARM && alarmReason != ALARM_CONFIG) {
-        resumeOrHold();
-    }
+    // setorigin recovers from an ESTOP-alarm. resumeOrHold() still holds an
+    // incomplete map in ALARM_NODE_FAULT and a latched limit in ALARM, for the
+    // same reason unalarm cannot clear them: recording a datum fixes neither.
+    if (machineState == STATE_ALARM) resumeOrHold();
     Serial.println("ok");
     return true;
 }

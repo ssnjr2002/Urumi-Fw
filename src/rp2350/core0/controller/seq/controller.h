@@ -8,8 +8,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Commit the config's defaultHead axis map through axisMapApply, as a host
-// `axis_map` would. Without a valid config the machine is put in ALARM_CONFIG;
-// a node that does not answer leaves it in ALARM_NODE_FAULT. Needs Core 1
+// `axis_map` would. Without a valid config nothing is requested and the machine
+// settles IDLE, unmapped; a node that does not answer leaves it in
+// ALARM_NODE_FAULT. Needs Core 1
 // running (it goes to the bus), so it runs after a soft reset has released
 // Core 1, and after an accepted CFG_SET.
 void controllerApplyDefaultMap();

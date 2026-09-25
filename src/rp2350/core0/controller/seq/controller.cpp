@@ -9,7 +9,7 @@
 
 void controllerApplyDefaultMap() {
     if (!machineCfgValid()) {
-        resumeOrHold();                    // ALARM_CONFIG
+        resumeOrHold();                    // nothing requested: IDLE
         return;
     }
     const MachineCfg& cfg = machineCfg();

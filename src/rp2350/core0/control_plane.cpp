@@ -20,7 +20,8 @@ static const Cmd kCommands[] = {
     { "ping",         cmdPing        },
     { "getstate",     cmdGetState    },
     { "getpos",       cmdGetPos      },
-    { "status",       cmdStatus      },   // also `status cfg`
+    { "status",       cmdStatus      },
+    { "cfg",          cmdCfg         },
     { "?",            cmdStatus      },   // human alias, not host-facing
     { "pingnode",     cmdPingNode    },
     { "nodepos",      cmdNodePos     },

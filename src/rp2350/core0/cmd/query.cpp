@@ -14,7 +14,7 @@
 #include "../status.h"                  // getBufCount (status alias)
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
-#include "../config/config_store.h"  // g_cfg (status cfg)
+#include "../config/config_store.h"  // g_cfg (cfg)
 #include "../config/machine_cfg.h"
 
 bool cmdPing(const char*) { Serial.println("pong"); return true; }
@@ -81,29 +81,29 @@ bool cmdGetPos(const char*) {
     return true;
 }
 
-// `status` / `?` — human-readable, not host-facing. `status cfg` reports the
-// committed config blob, whether it decoded, and the most recent rejection.
-// One handler because they share a command word: the table matches words, so
-// the sub-verb has to be dispatched here.
-bool cmdStatus(const char* args) {
-    if (strcmp(args, "cfg") == 0) {
-        if (!g_cfg.mounted) {
-            Serial.print("cfg fs=unmounted");
-        } else if (!g_cfg.valid) {
-            Serial.print("cfg none");
-        } else {
-            Serial.printf("cfg seq=%lu len=%lu crc=0x%08lx",
-                          (unsigned long)g_cfg.seq,
-                          (unsigned long)g_cfg.length,
-                          (unsigned long)g_cfg.crc32);
-            if (machineCfgValid()) Serial.printf(" schema=%u", machineCfg().version);
-            else                   Serial.print(" decoded=0");
-        }
-        if (machineCfgError() != CFG_DEC_OK)
-            Serial.printf(" rejected=%s", configDecodeErrorName(machineCfgError()));
-        Serial.println();
-        return true;
+// `cfg` — the committed config blob, whether it decoded, and the most recent
+// rejection. Answers with or without a config, so it is a primitive.
+bool cmdCfg(const char*) {
+    if (!g_cfg.mounted) {
+        Serial.print("cfg fs=unmounted");
+    } else if (!g_cfg.valid) {
+        Serial.print("cfg none");
+    } else {
+        Serial.printf("cfg seq=%lu len=%lu crc=0x%08lx",
+                      (unsigned long)g_cfg.seq,
+                      (unsigned long)g_cfg.length,
+                      (unsigned long)g_cfg.crc32);
+        if (machineCfgValid()) Serial.printf(" schema=%u", machineCfg().version);
+        else                   Serial.print(" decoded=0");
     }
+    if (machineCfgError() != CFG_DEC_OK)
+        Serial.printf(" rejected=%s", configDecodeErrorName(machineCfgError()));
+    Serial.println();
+    return true;
+}
+
+// `status` / `?` — human-readable, not host-facing.
+bool cmdStatus(const char*) {
     Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u\n",
                   stateName(machineState),
                   (long)machinePos[0], (long)machinePos[1],
