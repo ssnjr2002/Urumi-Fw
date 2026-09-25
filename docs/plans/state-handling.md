@@ -226,6 +226,9 @@ All touch `web/src/wire/` and the Sim (`web/src/wire/link/backends/sim.ts`).
 * Errors: `err excluded`, `err node <id> …` from `setorigin`.
 * `CFG_SET`: the host waits for the boot banner after the ACK.
 * Config: the strictness field.
+* Node bus (`include/common.h`, branches 1a and 1b): `CMD_MAKE_SAFE`,
+  `CMD_BUS_STATS`, a keepalive broadcast, `NODE_FLAG_BUS_NOISY`. Not on the
+  host wire; the host sees them through `nodestat` text only.
 
 ## Branches
 
@@ -233,11 +236,15 @@ Proposed order. Each gets a full Plan section when its turn comes.
 
 1. `feature/config-unmapped`: no config boots to IDLE, unmapped is not an
    alarm, config checks read the config. Depends on nothing.
+1a. `feature/bus-noise`: nodes drop framing-error bytes, count bus errors,
+   latch a stream refusal on noise; `CMD_BUS_STATS`. Depends on nothing.
+1b. `feature/node-make-safe`: `CMD_MAKE_SAFE` answered with a status payload;
+   a node makes itself safe after bus silence; Core 1 keepalive. Depends on
+   1a.
 2. `feature/bus-sweep`: boot sequence sweep, mute and taint,
    degraded bus and `bus_exclude`, the fence, `CFG_SET` → reset, confirmed slot release, estop
-   disengage, `unstop`. Uses the existing disable and disengage commands, kept
-   behind one per-node "make safe" step so the node-side claim (Open
-   questions) can replace it without changing states or exits. Depends on 1.
+   make-safe, `unstop`. Make safe is one `CMD_MAKE_SAFE` per node. Depends on
+   1 and 1b.
 3. `feature/homing-session`: session states and exits, `home_end`, the new
    `setorigin`, legs only from `LIMIT_LATCHED`. Depends on 1.
 4. `feature/alarm-exits`: `unalarm` dispatcher, the strictness config
@@ -332,6 +339,135 @@ branches 2 and 3. `pio run -e pico` passes;
   (`err unbound`) already refuse. Homing legs ran under `ALARM_CONFIG` before
   and still run; branch 3 restricts where legs start.
 
+## Branch 1a: `feature/bus-noise`
+
+**Type:** feature. New node behaviour, one new node command.
+
+**Purpose:** a node never acts on a byte the UART flagged as corrupt, keeps
+count of bus errors, and stops following the stream when noise is sustained,
+leaving the decision to the Pico. Branch 1b's silence timeout depends on it:
+without the filter, noise on an undriven bus (no fail-safe biasing is known)
+would keep the timeout fed.
+
+**Settled in planning:**
+
+* One check at the top of both RX ISRs (`src/node/rs485/isr_generic.cpp:20`,
+  `src/node/types/stepper/stepper.cpp:731`): a byte with `USART_FERR_bm` set
+  in `RXDATAH` (already read there) is dropped, resets framing
+  (`frame_stream_reset`) and counts. One bit test; stream bytes included, so a
+  corrupt byte loses a step instead of taking a random one.
+* Counters (`uint16_t`, wrapping): FERR, BUFOVF (`RXDATAH` bit 6), and CRC
+  failures of frames addressed to this node (`src/node/main.cpp:62`). Never
+  cleared; readers take differences, and only power-on resets them.
+* **Noise latch** (every type that acts on stream bytes: the stepper, and the
+  vacuum's probe reply, `NODE_HAS_PROBE_REPLY`): trips when
+  `(uint16_t)(ferrCount - ferrBase) >= NOISE_TRIP`. The cast matters: C
+  promotes to `int`, and unsigned 16-bit arithmetic is what makes the wrap
+  harmless. `ferrBase` moves only on an explicit clear, so the trip is "N
+  errors since the last clear"; no clock and no run detection. A clean bus
+  could in principle reach N over a very long uptime; accepted.
+* While latched the node ignores stream bytes and sets
+  `NODE_FLAG_BUS_NOISY` (0x10) in the status flags. The stepper refuses
+  steps as the limit latch does (`stepper.cpp:777-783`), so its counter stays
+  true to the shaft and the Pico can see how far a job got; the vacuum stops
+  answering probe reply slots. Framed commands are always obeyed.
+* `CMD_BUS_STATS`, generic: no payload reads the counters and the latch;
+  a clear argument sets `ferrBase = ferrCount` and unlatches, and the reply
+  confirms it. Clearing is only ever the Pico's decision; this branch adds no
+  Pico policy.
+* The status payload shape is unchanged (a new field would shift every
+  type's tail); the counters travel only in `CMD_BUS_STATS`.
+
+**Files:**
+
+1. `include/common.h`: `CMD_BUS_STATS` and its reply layout,
+   `NODE_FLAG_BUS_NOISY`, `NOISE_TRIP`.
+2. `src/node/rs485/isr_generic.cpp`, `src/node/types/stepper/stepper.cpp`
+   (RX ISR): the FERR check and counts; the latch and stream refusal in the
+   stepper ISR and the probe reply path (`types/vacuum/probe_slot.h`).
+3. `src/node/rs485/rs485.{h,cpp}` or `dispatch.cpp`: the counters;
+   `src/node/main.cpp:62`: the CRC count; `src/node/dispatch.cpp`: the
+   `CMD_BUS_STATS` handler (generic).
+4. Pico: `core1/rpc_server.cpp` (payload for `CMD_BUS_STATS`),
+   `core0/cmd/` `nodestat` prints the counters and the noisy flag.
+5. Docs: `docs/wire_protocol.md` or the node bus doc for the command and flag.
+
+**Read phase settles:** `NOISE_TRIP` against the stream rate; whether any
+host decoder reads the flags byte and needs the new bit named.
+
+**Checks:** `pio run` for every node env, `pio run -e pico`. Human scope:
+reflash every node; `nodestat` counters on a healthy bus; a noisy-bus trip
+(or a forced one) refusing stream steps and probe replies, and clearing on
+command.
+
+**Depends on:** nothing.
+
+**Status:** planned.
+
+## Branch 1b: `feature/node-make-safe`
+
+**Type:** feature. New node command and node behaviour, Pico keepalive.
+
+**Purpose:** one node command every type answers that leaves the node
+de-energised and disengaged and says so, and a node that makes itself safe
+when the Pico goes quiet. Branch 2's make safe becomes one transaction whose
+reply is proof, not an ack to interpret.
+
+**Settled in planning:**
+
+* `CMD_MAKE_SAFE`, generic, in `src/node/dispatch.cpp` beside `CMD_DISABLE`
+  (`:85`): `node_set_enabled(false)`, clear `ENABLED | DATUM`, call a new
+  per-type `node_release()` hook, reply with `buildNodeStatus` (`:56`). Not
+  broadcastable: the reply is the point.
+* `node_release()`: the stepper drops its slot (as `CMD_ENGAGE` with
+  `SLOT_NONE`); knife and vacuum have no slot, and their outputs are already
+  switched off by `node_set_enabled(false)` (checked in Read).
+* No new flag: the status payload already carries the stepper's slot
+  (`stepper.cpp:534`, `NodeStatus.slot`). Released = `!hasStepperTail ||
+  slot == SLOT_NONE`; enabled = `NODE_FLAG_ENABLED`.
+* **Silence timeout:** any byte that passes 1a's FERR check sets a flag in the
+  ISR (one store); `loop()` turns it into a timestamp. No bytes for
+  `BUS_SILENCE_MS` (~1 s) runs the same routine as `CMD_MAKE_SAFE`. The node
+  stays up and answers the next frame. Z drops on timeout, as on estop; it
+  loses at most a few steps.
+* **Keepalive:** Core 1 broadcasts a no-reply keepalive when it has sent no
+  broadcast and no stream byte for ~`BUS_SILENCE_MS / 3`, from `processBus`
+  with the queue empty, so never mid-job. Addressed polls do not count: the
+  other nodes hear only foreign frames then.
+* A hardware WDT fed from the node's `loop()` catches a hung node; it is
+  separate from the silence timeout.
+* The Pico's rules do not change: a mute node may be cut off (and safe) or
+  deaf-but-listening (TX broken, still following its slot), and the Pico
+  cannot tell which. Branch 2 still fences every mute node; this is defence
+  in depth.
+* Relation to `SET_SESSION` (Open questions): this is its self-safe half;
+  the session token can be added to it later.
+
+**Files:**
+
+1. `include/common.h`: `CMD_MAKE_SAFE`, the keepalive opcode (broadcast
+   allowed, no reply), `BUS_SILENCE_MS`.
+2. `src/node/dispatch.cpp`, `src/node/node_hooks.h`, each type's
+   `node_release()` (`types/stepper`, `types/knife`, `types/vacuum`).
+3. `src/node/main.cpp`, both RX ISRs: the heard flag, the timeout, the WDT.
+4. Pico: `core1/core1.cpp` (`processBus`) keepalive and last-send time;
+   `core1/bus/packet.cpp` (`sendBroadcast`, stream path) stamps it;
+   `core1/rpc_server.cpp:45` `answersWithStatus` gains `CMD_MAKE_SAFE`.
+5. Docs: `docs/engage_and_axis_map.md` (make safe, silence), the node bus doc.
+
+**Read phase settles:** the longest gap Core 1 can go without sending
+(`core1FlashPark` during a `CFG_SET` commit is unmeasured), which sets
+`BUS_SILENCE_MS`; the WDT period per MCU.
+
+**Checks:** `pio run` for every node env, `pio run -e pico`. Human scope:
+reflash every node; make-safe to each type; unplug the Pico end of the bus
+and see every node go safe; a job and a home run without a timeout; a
+`CFG_SET` commit without a timeout.
+
+**Depends on:** 1a.
+
+**Status:** planned.
+
 ## Branch 2: `feature/bus-sweep`
 
 **Type:** feature. New alarm reason, commands, replies and boot behaviour.
@@ -342,15 +478,18 @@ confirmation: the fence" and "Estop", except strictness and session endings
 
 **Settled in planning:**
 
-* Make safe is `busMakeSafe(node)` in `core1/bus/packet.cpp`; the node-side
-  claim later replaces its body only.
+* Make safe is `busMakeSafe(node)` in `core1/bus/packet.cpp`: one
+  `CMD_MAKE_SAFE` (branch 1b). Its status reply sets both masks; a timeout
+  confirms nothing. No NACK case: every type answers it.
 * `nodeReleased` is cleared when an engage is sent (a lost ack must not leave
-  it set) and set on a confirmed disengage. Core 1 sends both, so it stays the
-  sole writer.
+  it set) and set from a reply that shows no slot (make-safe, or a disengage
+  ack). Core 1 sends both, so it stays the sole writer.
+* A node reporting `NODE_FLAG_BUS_NOISY` (branch 1a) is reported beside mute
+  in `status`; what the Pico does about it beyond that is branch 4.
 * `mute` and `excluded` are Core 0 masks in a new `ops/bus.*`, beside
   `busSweep()`, which the boot sequence calls. Participants (config nodes not mute) are derived, for `status` only.
 * The sweep runs from Core 0 as RPCs, after the wipe releases Core 1. Worst
-  case 8 × `RESPONSE_TIMEOUT_MS` (20 ms) = 160 ms. With no config it still
+  case 8 × `RESPONSE_TIMEOUT_MS` (20 ms) = 160 ms, one transaction per id. With no config it still
   runs; only tainted nodes can then be mute.
 * Exclusion is checked once, in Core 0's RPC call path: a node-addressed call
   to an excluded node returns a new `RPC_EXCLUDED` (`err excluded`).
@@ -369,18 +508,24 @@ confirmation: the fence" and "Estop", except strictness and session endings
    * `core1/core1.cpp:37-67` (estop): make-safe; fix the stale
      `axes_enabled` comment at `:52-54`. `:148` (reset park): its sweep moves
      to the boot sequence.
-   * `core1/rpc_server.cpp`: engage sent clears `nodeReleased`, confirmed
-     disengage sets it.
+   * `core1/rpc_server.cpp`: engage sent clears `nodeReleased`, a reply
+     showing no slot sets it (`noteEnabled`, `:94`, which today folds only
+     `RPC_OK` replies).
    * `ipc/shared_state.h:254-283`: `nodeReleased`; `ALARM_BUS_DEGRADED = 8`.
 2. Confirmed release:
    * `core0/ops/axis_map.cpp:34-45`: a park with no reply fences the slot
      (keeps the id, voids position, homed and origin); `:52-74`: no engage
      into a fenced slot; `:76-79`: only confirmed slots are freed;
      `axisMapComplete` (`:107`): a fenced slot of an excluded node satisfies
-     `-`.
-   * `core0/data_plane.cpp:118-141`: ingest refuses steps for a fenced slot.
-   * `core0/ops/position.cpp:234` (`reconcileValidity`): on the estop edge,
-     unbind the slots whose node is released.
+     `-`. The failed-engage path (`:60`) unbinds every later slot
+     unconditionally; it must free only confirmed ones too.
+   * `core0/data_plane.cpp:165-170`: ingest refuses steps for a fenced slot,
+     checked after the deltas are decoded, before the enqueue
+     (`MSEG_NACK_BAD_STATE`).
+   * `core0/ops/position.cpp:234` (`reconcileValidity`): unbind the slots
+     whose node is released, on its own rising edge of `STATE_ALARM` +
+     `ALARM_ESTOP`. The existing origin edge also fires on `STATE_ESTOP`,
+     before Core 1's sweep has written `nodeReleased`.
    * `core0/core0.cpp:113` + `core0/ops/position.cpp`: the wipe replaces
      `axisMapReset()` with a clear that keeps slot ids (positions and homed
      bits go); the sweep frees confirmed slots.
@@ -389,7 +534,9 @@ confirmation: the fence" and "Estop", except strictness and session endings
 3. Sweep, degraded, `bus_exclude`:
    * New `core0/ops/bus.{h,cpp}`: `busSweep()`, `mute`, `excluded`, taint.
    * `core0/core0.cpp:147-149`: `busSweep()`, then the default map unless
-     degraded.
+     degraded, then the banner, so "banner seen" means ready.
+   * `ipc/core1_rpc.cpp:64` (`rpcCall`): the one path for every node call,
+     so the exclusion check goes here; make-safe passes a request flag.
    * `core0/ops/state.cpp`: `resumeOrHold` settles `ALARM_BUS_DEGRADED` first.
    * `core0/cmd/` + `cmd/table.h`: `bus_exclude`.
    * `ipc/core1_rpc.{h,cpp}`: `RPC_EXCLUDED`, the check, its text.
@@ -399,8 +546,9 @@ confirmation: the fence" and "Estop", except strictness and session endings
    `core0/controller/cmd/unalarm.cpp` (`err estop`).
 5. `CFG_SET` → reset: `core0/data_plane.cpp:228-240` sends the ACK, then
    raises `soft_reset_requested` instead of applying the map. Web
-   `src/wire/link/link.ts:205-226`: after `CFG_ACK`, wait for the boot banner
-   (with a timeout) before resolving.
+   `src/wire/link/link.ts:210-226` (`pushConfig`): after `CFG_ACK`, wait on
+   the text sink for the banner line (prefix match, with a timeout), not
+   counted as a desync. The Sim has no `CFG_SET` (Follow-ups).
 6. Web wire and Sim: `src/wire/format/status.ts` (`BUS_DEGRADED`),
    `src/wire/link/commands.ts` (`unstop`, `bus_exclude`), `sim.ts` (`stop`
    at `:617`, `unstop`, `bus_exclude` answering `err not_mute` since the Sim
@@ -425,7 +573,16 @@ keeping its datums, `CFG_SET` then banner, sweep timing on the bus.
 **Overlap:** none (`irq-bench` has no branch type). Touches
 `core0/cmd/table.h` and `web/src/wire/`.
 
-**Depends on:** branch 1 (merged).
+**Depends on:** branch 1 (merged), branch 1b.
+
+**Read findings (first Read, before 1a/1b were split out):**
+
+* `core1.cpp:148`: the reset park's `busDisableAll()` runs during the wipe;
+  with the sweep on Core 0 after release, the park only parks.
+* `noteEnabled` (`rpc_server.cpp:94`) writes only on `RPC_OK`; with
+  `CMD_MAKE_SAFE` that is enough.
+* The host has no banner detection; a banner arrives as an unrequested text
+  line and the next `command()` drains it as a desync.
 
 **Status:** planned.
 
@@ -439,7 +596,9 @@ keeping its datums, `CFG_SET` then banner, sweep timing on the bus.
   nodes that do not answer the claim. Also there: detecting a node that reboots
   mid-job. Still open beyond it: a node unbinding itself after bus silence,
   which closes the last hole (a mute node holding a slot the Pico has
-  forgotten). That doc's §2 (node-frame datum) is built, and its §6 and "no NAK"
+  forgotten): branch 1b's silence timeout covers it for a node cut off from
+  the Pico, not for one that hears but cannot answer. That doc's §2
+  (node-frame datum) is built, and its §6 and "no NAK"
   prerequisite are superseded.
 * **`alarmReason` has two writers.** Core 1 writes `ALARM_ESTOP`
   (`core1/core1.cpp`) and `ALARM_SOFT_LIMIT` (`core1/emit/microsegment.cpp`);
@@ -450,8 +609,6 @@ keeping its datums, `CFG_SET` then banner, sweep timing on the bus.
   (docs/node_state_ingest.md §7) becomes worth building when soft limits give
   Core 1 a second path that ends motion abruptly. Not needed here: the estop
   keeps `ALARM_ESTOP`.
-* Whether a boot-time broadcast disengage is worth adding before the node-side
-  work.
 * The homing recipe on the Pico: the controller sequence that holds the
   session, and the handler bodies (`setorigin`'s datum loop, the enables) that
   move into ops for it. The probe session may later follow the same shape.
