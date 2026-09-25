@@ -258,7 +258,7 @@ fine, it is a cold path (connect / head-switch, never hot).
 ### 5.3 Partial failure is safe by idempotency — no rollback
 
 If an `ENGAGE` mid-diff times out, Core 0 **does not commit**: `slotNode` keeps
-its old value, the machine stays `ALARM_CONFIG`, and the offending node is
+its old value, the machine stays alarmed, and the offending node is
 reported. The engages already sent stay applied on their nodes, but since the
 committed map is unchanged, a **retry re-diffs against the old map and re-sends
 the same packets** — and re-engaging a node to the slot it already holds is
@@ -270,30 +270,33 @@ no cross-core hazard.
 
 ---
 
-## 6. Gating: the machine is not ready until the map is committed
+## 6. Gating: a requested map must be complete
 
-At boot the map is empty, so nothing can stream. We gate on it through the **one
-true motion gate on the Pico — `machineState`** (see §8; the `axes_*` bitmasks
-are advisory and enforce nothing). The map comes from the stored config
+A requested map that did not fully engage must not stream. We gate on it through
+the **one true motion gate on the Pico — `machineState`** (see §8; the `axes_*`
+bitmasks are advisory and enforce nothing). Unmapped is not an alarm: with no map
+requested since the last soft reset the machine is IDLE with nothing bound.
+Motion gating on an unmapped machine is later work
+(docs/plans/state-handling.md). The map comes from the stored config
 (docs/plans/pico-config.md): the Pico's controller commits the config's
 `defaultHead` map itself, through the same `axisMapApply` path as a host
 `axis_map`.
 
 ```
-boot / soft reset, no valid config → STATE_ALARM, ALARM_CONFIG
+boot / soft reset, no valid config → nothing requested → IDLE, unmapped
 boot / soft reset, valid config    → STATE_ALARM, ALARM_NODE_FAULT, then the
                                      controller commits the defaultHead map
    map complete                    → resumeOrHold() → IDLE (or LIMIT_LATCHED)
    a node did not ACK              → stay ALARM_NODE_FAULT, map incomplete
 accepted CFG_SET                   → re-derive the defaultHead map the same way
-axis_map x y z a                   → refused under ALARM_CONFIG; each id must be
+axis_map x y z a                   → refused without a config; each id must be
                                      an axis node the config marks present
    map complete                    → clears ALARM_NODE_FAULT
    map incomplete                  → raises ALARM_NODE_FAULT
 ```
 
 **Complete** means the bound map equals the **requested** map, the one last
-passed to `axisMapApply` (`axisMapComplete`). The controller requests the
+passed to `axisMapApply` (`axisMapComplete`); with none requested it is complete. The controller requests the
 config's `[x, y, head.z, head.a]` for `defaultHead`; a host `axis_map` replaces
 the request, and may be partial (`axis_map 1 - - -` to bench one node): once
 every node it names engages, the alarm clears. A node that fails to engage
@@ -311,15 +314,13 @@ predicate threaded through each ingest site.
 ### 6.1 The exit-guard wrinkle
 
 The exit rule checks state, not history. Every path back to IDLE goes through
-`resumeOrHold()`, which holds `ALARM_CONFIG` without a valid config and
-`ALARM_NODE_FAULT` while the map is incomplete, before it considers a latched
-limit. On top of that:
+`resumeOrHold()`, which holds `ALARM_NODE_FAULT` while the map is incomplete,
+before it considers a latched limit. On top of that:
 
-- `unalarm` answers `err unconfigured` under `ALARM_CONFIG`. With the map
-  incomplete it re-applies the requested map once (`axisMapRetry`), and answers
-  `err unmapped` if a node still does not engage.
-- `setorigin`'s ALARM→IDLE recovery skips `ALARM_CONFIG` and otherwise defers
-  to `resumeOrHold()`.
+- `unalarm` answers `err unconfigured` without a config (the controller-command
+  gate). With the map incomplete it re-applies the requested map once
+  (`axisMapRetry`), and answers `err unmapped` if a node still does not engage.
+- `setorigin`'s ALARM→IDLE recovery defers to `resumeOrHold()`.
 - Probe teardown restores the map and lands in `resumeOrHold()` if the restore
   left it incomplete.
 
@@ -371,7 +372,7 @@ A split worth stating explicitly, because it decides where `axis_map` lives:
 periodic criterion and does **not** belong in `STATUS_RSP`. Adding it would be the
 host echoing back what it just said, on the hottest frame. The only
 status-relevant *projection* of the map — "is the machine ready to move?" — is
-already carried by `machineState`/`alarmReason` (`ALARM_CONFIG` ⇔ not committed).
+already carried by `machineState`/`alarmReason` (`ALARM_NODE_FAULT` ⇔ incomplete).
 Zero new status bytes.
 
 The host-restart-while-Pico-runs case (fresh host, empty map; Pico still holds
@@ -413,7 +414,7 @@ a type, the move the node side deliberately avoided).
 |---|---|---|---|
 | `common.h` | `CMD_ENGAGE` | `0x20` | stepper type-specific; payload `[slot]`, `0xFF` = disengage |
 | `stepper.cpp` | `SLOT_NONE` | `0xFF` | disengaged sentinel |
-| `shared.h` | `ALARM_CONFIG` | `2` (exists, reserved) | boot / map-not-ready gate |
+| `shared_state.h` | (was `ALARM_CONFIG`) | `2` (reserved) | retired: no config boots to IDLE |
 | `control_plane.cpp` | `slotNode[4]` | Core-0-local | committed node↔slot map; diffed per `axis_map` |
 | CLI (`control_plane.cpp`) | `axis_map <x> <y> <z> <a>` | — | setter; IDLE/PAUSED/ALARM |
 | CLI | `axis_map` (no-arg) | — | optional read-back (§8) |

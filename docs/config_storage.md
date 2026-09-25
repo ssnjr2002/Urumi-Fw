@@ -71,9 +71,10 @@ metadata consistent across power loss.
 `machineCfgLoad()` then decodes the stored blob. A blob that is missing or does
 not decode leaves the active config invalid.
 
-**No-config policy: gated.** Without a valid config the machine sits in
-`ALARM_CONFIG` and refuses all motion; an accepted `CFG_SET` is the way out.
-With one, the controller commits the config's `defaultHead` axis map after
+**No-config policy: primitives only.** Without a valid config the machine boots
+IDLE with nothing mapped; controller commands answer `err unconfigured` and
+`axis_map` refuses, so nothing can be bound. An accepted `CFG_SET` is the way
+out. With one, the controller commits the config's `defaultHead` axis map after
 every soft reset (docs/engage_and_axis_map.md §6).
 
 `g_cfg` is updated **only** by the boot check and a successful commit. It is
@@ -236,7 +237,7 @@ treated as an idle-time operation.
 
 ## 8. Control-plane inspection
 
-`status cfg` (text command, always available) prints the active blob metadata
+`cfg` (text command, always available) prints the active blob metadata
 from `g_cfg` and the decode result, without touching flash:
 
 ```
@@ -251,7 +252,7 @@ cfg seq=1 len=1374 crc=0x1c291ca3 schema=1
 | `len` | Payload byte count of the active blob |
 | `crc` | Payload CRC32 |
 | `schema` | Payload schema version of the decoded active config |
-| `decoded=0` | The stored blob is intact but did not decode (`ALARM_CONFIG`) |
+| `decoded=0` | The stored blob is intact but did not decode (no active config) |
 | `rejected=<name>` | The most recent rejection, at boot or of a `CFG_SET` (`configDecodeErrorName`) |
 
 This is a human-readable diagnostic, not a host-facing binary response. The binary

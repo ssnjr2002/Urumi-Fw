@@ -243,7 +243,30 @@ no slot, as it does today after `axis_map - - - -`).
 
 **Depends on:** nothing.
 
-**Status:** planned.
+**Status:** ready to merge. Not yet run on hardware. `pio run -e pico` passes;
+`pnpm typecheck` and `pnpm test` pass.
+
+**Outcome:**
+
+* `axes_enable` with nothing bound answers `err unbound`, not `err unmapped`:
+  the string `setorigin` and `setprobe` already use for the same condition.
+* New `axisMapForget()` (`ops/axis_map`): the wipe drops the requested map
+  with the slot table, so a map requested before `reset` cannot outlive it.
+  "Never mapped is complete" is keyed on it.
+* `status cfg` also had a caller in `web/demo/barebones.js`; it now sends
+  `cfg`. A worktree needs `pnpm build` and a `node_modules/urumi-host` link to
+  `web/` before `pnpm demo` resolves the package.
+* `commands.ts:450` needed no change: `axis_map` still answers
+  `err unconfigured`.
+* The Sim has no config, so "unconfigured" there means `axisMap: undefined`.
+  Its `setorigin` answers `ok` with nothing bound where the firmware answers
+  `err unbound` (predates this branch).
+* The staging history in `engage_and_axis_map.md` (lines 30, 431, 437) still
+  names `ALARM_CONFIG`; left as a record.
+* For branch 5: an unconfigured machine is now IDLE, so motion ingest accepts
+  a job that streams to no slot. `probe_map` (`err no_z`) and `setprobe`
+  (`err unbound`) already refuse. Homing legs ran under `ALARM_CONFIG` before
+  and still run; branch 3 restricts where legs start.
 
 ## Open questions
 

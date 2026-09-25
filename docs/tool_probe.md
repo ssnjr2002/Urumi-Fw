@@ -413,8 +413,8 @@ about, reintroduced in the command that warns about it.
 Requiring a committed map is not a new restriction, only an enforced one: §5.5's
 teardown replays `savedMap`, so a session begun without a map had nothing
 coherent to go back to. `probe_map` is refused outside `IDLE`/`PAUSED` for the
-same reason — entering from `ALARM_CONFIG` would clear the state, strand the
-reason, and let `probe_end` land an unconfigured machine in `IDLE`.
+same reason — entering from an ALARM would clear the state, strand the reason,
+and let `probe_end` land an alarmed machine in `IDLE`.
 
 The operator consequence is a fixed order: **`axis_map` first, then
 `probe_map`.** Refusals are `err no_z` (slot 2 unbound), `err vac_mapped` (the
@@ -476,8 +476,8 @@ than something the Pico infers.
   exists so that committing a map is never *refused* in `STATE_PROBING`, not
   because it is the expected way out.
 
-Admitting `axis_map` is not an overload; it is the `ALARM_CONFIG` parallel below
-taken seriously. Any committed map ends the session, and `probe_end` is sugar for
+Admitting `axis_map` is not an overload; it is the `ALARM_NODE_FAULT` parallel
+below taken seriously. Any committed map ends the session, and `probe_end` is sugar for
 committing the one that was already there.
 
 Exit-by-flag on `probe_leg` was considered and rejected. `max_steps` cannot be
@@ -502,7 +502,7 @@ a diff" and rebuilds every one of those fields from ENGAGE acks rather than from
 anything remembered, so it is correct even if a node reset mid-probe. A second
 binder restoring from saved state is precisely where this would go wrong.
 
-The parallel is `ALARM_CONFIG`: during a probe the machine genuinely has no
+The parallel is `ALARM_NODE_FAULT`: during a probe the machine genuinely has no
 working axis map, and the way out of that condition has always been to commit
 one.
 
@@ -962,10 +962,6 @@ conclusion is safe in a way the reverse is not.
   alarm at all. Parsing §5.12's fields is still to do.
 - Retract distance, and whether it is per-leg or one constant.
 - Retry limit for §5.9.
-- **Reason precedence when a failure restore lands an empty map.** `cmdAxisMap`
-  re-enters `ALARM_CONFIG` on an empty commit, which would collide with the
-  probe-fail reason §5.11.2 says to preserve. An unconfigured machine is the more
-  urgent gate; the probe failure is the more useful diagnosis. Not resolved.
 
 **Settled by the implementation** (kept here because the reasoning is worth
 finding again, not because anything is open):
