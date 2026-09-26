@@ -67,6 +67,8 @@ static inline bool frame_rx_reject(uint8_t status) {
         return true;
 #endif
     }
+#ifdef NODE_HAS_SILENCE_TIMEOUT
     busHeard = true;
+#endif
     return false;
 }

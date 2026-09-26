@@ -63,9 +63,10 @@
 // the node's stream slot (stepper, probe vacuum) and closes the vacuum's servos.
 // Released = no slot in the status tail, or slot 0xFF.
 //
-// A node that hears no byte for BUS_SILENCE_MS runs the same routine by itself
-// and stays up to answer the next frame. The Pico keeps an idle bus alive with
-// a zero stream byte after BUS_KEEPALIVE_MS without sending.
+// A node built with NODE_HAS_SILENCE_TIMEOUT that hears no byte for
+// BUS_SILENCE_MS runs the same routine by itself and stays up to answer the
+// next frame. The Pico keeps an idle bus alive with a zero stream byte after
+// BUS_KEEPALIVE_MS without sending.
 #define CMD_MAKE_SAFE 0x09
 #define BUS_SILENCE_MS   1000
 #define BUS_KEEPALIVE_MS (BUS_SILENCE_MS / 3)

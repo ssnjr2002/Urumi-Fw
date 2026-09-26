@@ -16,7 +16,9 @@ volatile bool    discardCmd = false;
 volatile uint16_t busFerrCount = 0;
 volatile uint16_t busOvfCount  = 0;
 uint16_t          busCrcCount  = 0;
+#ifdef NODE_HAS_SILENCE_TIMEOUT
 volatile bool     busHeard     = false;
+#endif
 
 // ─── TX ─────────────────────────────────────────────────────────────────────
 void sendCommandPacket(uint8_t* packet, uint8_t len) {

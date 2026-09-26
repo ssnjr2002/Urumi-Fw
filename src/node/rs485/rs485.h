@@ -24,9 +24,14 @@ extern volatile uint16_t busFerrCount;
 extern volatile uint16_t busOvfCount;
 extern uint16_t          busCrcCount;
 
+#ifdef NODE_HAS_SILENCE_TIMEOUT
+#ifdef NODE_DEBUG_CONSOLE
+#error "NODE_HAS_SILENCE_TIMEOUT and NODE_DEBUG_CONSOLE: pick one; console input does not feed the timeout"
+#endif
 // Set by the RX ISR on every byte that passes the FERR check; loop() clears it
 // and restarts the bus-silence timeout (main.cpp).
 extern volatile bool     busHeard;
+#endif
 
 // Transmit a command packet: appends CRC8 into packet[len-1], drives DE, and
 // sends each byte with the 9th bit = 1 behind a stream-byte sync preamble.

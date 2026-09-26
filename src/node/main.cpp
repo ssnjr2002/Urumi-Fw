@@ -39,9 +39,8 @@ void setup() {
 
 }
 
-#ifndef NODE_DEBUG_CONSOLE
+#ifdef NODE_HAS_SILENCE_TIMEOUT
 // Make safe once after BUS_SILENCE_MS without a byte; the next byte re-arms it.
-// Not on console builds, which are driven over USART0 with the bus often idle.
 static void busSilenceCheck(void) {
     static uint32_t lastHeardMs = 0;
     static bool     safe        = false;
@@ -59,7 +58,7 @@ static void busSilenceCheck(void) {
 void loop() {
     node_loop();               // type-specific per-iteration work (non-blocking)
 
-#ifndef NODE_DEBUG_CONSOLE
+#ifdef NODE_HAS_SILENCE_TIMEOUT
     busSilenceCheck();
 #endif
 
