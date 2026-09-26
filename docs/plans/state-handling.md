@@ -391,7 +391,18 @@ a probe run unchanged.
 
 **Depends on:** nothing.
 
-**Status:** in progress.
+**Status:** done.
+
+**Outcome:**
+
+* As planned, plus a Core 0 wrapper `rpcBusStats()` in
+  `ipc/core1_rpc.{h,cpp}` (not in the file list) and the `busstat` row in
+  `core0/control_plane.cpp`'s table.
+* `frame_rx_reject(status)` (`src/node/rs485/frame.h`) is the one check both
+  ISRs call; 1b's silence timeout feeds from bytes it lets through.
+* Merged with a merge commit at the user's request, though under 10 commits.
+* Human scope open: reflash every node; `busstat` zero on a healthy bus; a
+  job, a home and a probe unchanged.
 
 ## Branch 1b: `feature/node-make-safe`
 
