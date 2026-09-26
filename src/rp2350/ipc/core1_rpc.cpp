@@ -279,6 +279,23 @@ RpcResult rpcSwitchGet(uint8_t node, uint8_t* level) {
     return RPC_OK;
 }
 
+RpcResult rpcBusStats(uint8_t node, BusStats* out) {
+    RpcRequest req = {};
+    req.op   = RPC_OP_NODE;
+    req.cmd  = CMD_BUS_STATS;
+    req.node = node;
+
+    RpcReply rep;
+    RpcResult r = rpcCall(&req, &rep, RPC_CALL_TIMEOUT_MS);
+    if (r != RPC_OK) return r;
+    if (rep.len < CMD_BUS_STATS_REPLY_LEN) return RPC_BAD_REPLY;
+    const uint8_t* p = rep.payload;
+    out->ferr = (uint16_t)((p[0] << 8) | p[1]);
+    out->ovf  = (uint16_t)((p[2] << 8) | p[3]);
+    out->crc  = (uint16_t)((p[4] << 8) | p[5]);
+    return RPC_OK;
+}
+
 RpcResult rpcHome(uint8_t node, uint8_t dir, bool intendedRetract,
                   uint16_t startIntervalUs, uint16_t floorIntervalUs,
                   uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out) {

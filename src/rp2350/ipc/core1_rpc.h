@@ -295,6 +295,10 @@ RpcResult rpcNodeStatus(uint8_t cmd, uint8_t node, uint8_t arg, NodeStatus* out)
 // CMD_SWITCH_GET — replies with a single level byte.
 RpcResult rpcSwitchGet(uint8_t node, uint8_t* level);
 
+// CMD_BUS_STATS — the node's receive-error counters (include/common.h).
+struct BusStats { uint16_t ferr, ovf, crc; };
+RpcResult rpcBusStats(uint8_t node, BusStats* out);
+
 // CMD_HOME_LEG. Core 1 only marshals: it does not know seek from retract, does not
 // interpret the reply and runs no supervision. The node decides the mode from
 // its own limit pin; Core 0 polls for the outcome. `intendedRetract` rides

@@ -30,6 +30,7 @@ bool cmdCfg(const char*);
 bool cmdPingNode(const char*);
 bool cmdNodePos(const char*);
 bool cmdNodeStat(const char*);
+bool cmdBusStat(const char*);
 bool cmdVacSwitch(const char*);
 
 // ─── lifecycle.cpp — state transitions only; no transport, no position ────────
