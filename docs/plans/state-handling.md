@@ -20,7 +20,7 @@ the states mean, how each is entered, and how each is left.
   `axis_map - - - -` already clears `ALARM_NODE_FAULT` today (the empty map is
   complete), which is the bench escape until this lands.
 
-### Bus sweep: mute, taint, exclusion
+### Bus sweep: mute, touched, exclusion
 
 * **One boot sequence** for cold boot and `reset`: `loop()`'s wipe
   (`core0.cpp`, "A: THE SOFT RESET SEQUENCE"; cold boot enters it too,
@@ -41,30 +41,34 @@ the states mean, how each is entered, and how each is left.
 * **`nodeEnabled`** (Core 1, bit per bus id, survives the wipe): confirmed
   energised. Power-on starts it clear, which is true only when the nodes power
   up with the Pico.
-* **Taint** is derived, not stored: the node is in `nodeEnabled`, or holds a
-  slot (bound or fenced, see below). After a sweep a tainted node is one whose
+* **Touched** is derived, not stored: since power-on or its last confirmed
+  make-safe, the Pico may have energised the node or bound it to a slot. The
+  node is in `nodeEnabled`, or holds a
+  slot (bound or fenced, see below). After a sweep a touched node is one whose
   make-safe went unconfirmed, so it may still hold torque or follow its slot.
 * **Mute:** no answer to the sweep, and either named by the config or
-  tainted. An id nobody expects is an empty address.
-* **The silence timeout (1b, opt-in since 1c) does not change taint.** When
+  touched. An id nobody expects is an empty address.
+* **The silence timeout (1b, opt-in since 1c) does not change what counts as touched.** When
   built in, a node cut off from the Pico is likely safe already, but a node
   that hears the bus and cannot answer looks the same to the Pico, and keeps
   being fed by the keepalive.
 * **Degraded bus** is its own alarm, `ALARM_BUS_DEGRADED`, held while any mute
   node is not excluded; the default map is not applied. Exits: `bus_exclude`,
   `reset` (a recovered node answers), a `CFG_SET` without the node, power
-  cycle.
+  cycle. `axis_map` is refused while degraded (`err degraded`): the mute node
+  is decided first, and nothing could run on the map anyway.
 * **`bus_exclude <id> …`** is a config-free primitive for running on a
   degraded bus. It takes mute ids only (`err not_mute` otherwise). Commands to
   an excluded node answer `err excluded`; make-safe is exempt. When no
   unexcluded mute node is left the machine settles IDLE, unmapped. Exclusion
-  lasts until the next sweep. It is for leaving `BUS_DEGRADED` and keeping
+  lasts until the next sweep. It is not gated by state (in `NODE_FAULT` it
+  may exclude a node left mute by the last sweep). It is for leaving `BUS_DEGRADED` and keeping
   commands off a node we cannot hear; a fenced slot needs no exclusion to
   satisfy `-`. `unalarm` (branch 4) picks the ids from the strictness level.
 * **Strictness** is a machine-config field, so bench work needs no reflash:
   * `strict`: no mute node may be excluded.
   * `peripherals`: mute peripherals may be excluded; a mute stepper may not.
-  * `any`: any mute node may be excluded, taint included. Bench only: with
+  * `any`: any mute node may be excluded, touched ones included. Bench only: with
     separate node supplies the power-on state cannot be trusted.
   With the fence (below) strictness is policy only: whether to run without a
   node, not whether that is safe.
@@ -142,7 +146,7 @@ axis_map 1 2 3 4 (head change)        1,2,4 park and re-engage, keep datums;
      axis_map 1 2 - 4                 -> IDLE; cmds to 3: err excluded
      later reset                      exclusion gone -> ALARM_BUS_DEGRADED
                                       again unless 3 answers
-power cycle                           clean: no ids, no fences, no taint
+power cycle                           clean: no ids, no fences, nothing touched
 ```
 
 ### Estop
@@ -162,7 +166,7 @@ power cycle                           clean: no ids, no fences, no taint
 * The estop's make-safe parks the bus but is not a sweep: `mute` and
   `excluded` are left as they were. `reset` refreshes them.
 * **`unstop`** is the primitive exit from `ALARM_ESTOP`. It sends make-safe to
-  every tainted node that is not excluded and refuses to leave until all
+  every touched node that is not excluded and refuses to leave until all
   confirm; each confirmation frees that node's slot and clears its fence (an
   excluded node's slot stays fenced). It forgets the requested map, then
   settles: `ALARM_BUS_DEGRADED` if unexcluded mute nodes remain, else IDLE,
@@ -239,7 +243,7 @@ power cycle                           clean: no ids, no fences, no taint
 
 * Estop while probing becomes `PROBE_FAIL`: replaced by the estop disengaging.
 * Reset-reason or scratch registers for "can a mute node hold a slot":
-  `reset` keeps RAM, and per-node taint is more precise.
+  `reset` keeps RAM, and per-node touched state is more precise.
 * A delay after the `CFG_SET` ACK: moves the gap, does not close it.
 * Node-addressed `setorigin`: slot form kept (see above).
 * `nodeReleased`: derived from the slot table (bound or fenced).
@@ -256,7 +260,7 @@ All touch `web/src/wire/` and the Sim (`web/src/wire/link/backends/sim.ts`).
 
 * Alarm reasons: `ALARM_CONFIG` retired; `ALARM_BUS_DEGRADED` added.
 * Commands: `unstop`, `bus_exclude`, `home_end`, `cfg`; `setorigin` syntax.
-* Errors: `err excluded`, `err fenced <s0> <s1> <s2> <s3>`, `err node <id> …`
+* Errors: `err excluded`, `err degraded`, `err fenced <s0> <s1> <s2> <s3>`, `err node <id> …`
   from `setorigin`.
 * `axis_map` readback marks fenced slots (`3!`) and shows the request beside
   the binding when they differ.
@@ -280,7 +284,7 @@ Proposed order. Each gets a full Plan section when its turn comes.
    1a.
 1c. `feature/silence-opt-in`: the node silence timeout becomes opt-in
    (`NODE_HAS_SILENCE_TIMEOUT`), off by default. Depends on 1b.
-2. `feature/bus-sweep`: boot sequence sweep, mute and taint, degraded bus
+2. `feature/bus-sweep`: boot sequence sweep, mute and touched nodes, degraded bus
    and `bus_exclude`, the fence, `CFG_SET` → reset and `ready`, confirmed slot
    release, estop make-safe, `unstop`. Make safe is one `CMD_MAKE_SAFE` per
    node. Depends on 1 and 1b.
@@ -579,7 +583,7 @@ with the Pico unplugged; a node built with it still goes safe.
 
 * `NODE_HAS_SILENCE_TIMEOUT` with `NODE_DEBUG_CONSOLE` is an `#error`
   (`rs485/rs485.h`) rather than console builds skipping the timeout.
-* Also touched: the keepalive comment in `src/rp2350/core1/core1.cpp`.
+* Also changed: the keepalive comment in `src/rp2350/core1/core1.cpp`.
 * Checked with the flag forced on (`PLATFORMIO_BUILD_FLAGS`): `db_node4`,
   `vac_db_node7`, `knife_node8` build; `db_node4_dbg` stops at the `#error`.
 * Human scope open: without the flag a node stays enabled with the Pico
@@ -601,7 +605,7 @@ confirmation: the fence" and "Estop", except strictness and session endings
   (`core0/cmd/periph.cpp`) moves onto it.
 * Core 1 keeps only `nodeEnabled`, already folded from status replies by
   `noteEnabled` (`core1/rpc_server.cpp:96-107`); no change there.
-* The fence is a flag beside `slotNode[]` (`core0/ops/position.cpp:17`). Taint
+* The fence is a flag beside `slotNode[]` (`core0/ops/position.cpp:17`). Touched
   is `nodeEnabled` or holding a slot.
 * `mute` and `excluded` are Core 0 masks in a new `ops/bus.*`, beside
   `busSweep()`, which the boot sequence calls. Participants (config nodes not
@@ -609,7 +613,7 @@ confirmation: the fence" and "Estop", except strictness and session endings
 * The sweep runs from Core 0 as RPCs (`rpcNodeStatus(CMD_MAKE_SAFE, …)`, as
   `makesafe` does), after the wipe releases Core 1. Worst case 8 ×
   `RESPONSE_TIMEOUT_MS` (20 ms) = 160 ms. With no config it still runs; only
-  tainted nodes can then be mute.
+  touched nodes can then be mute.
 * Exclusion is checked once, in Core 0's RPC call path: a node-addressed call
   to an excluded node returns a new `RPC_EXCLUDED` (`err excluded`).
   Make-safe is exempt.
@@ -643,15 +647,16 @@ confirmation: the fence" and "Estop", except strictness and session endings
 2. `unstop`: `core0/cmd/lifecycle.cpp`, `core0/cmd/table.h`;
    `core0/controller/cmd/unalarm.cpp` (`err estop`).
 3. Sweep, degraded, `bus_exclude`:
-   * New `core0/ops/bus.{h,cpp}`: `busSweep()`, `mute`, `excluded`, taint.
+   * New `core0/ops/bus.{h,cpp}`: `busSweep()`, `mute`, `excluded`, touched.
    * `core0/core0.cpp:146-149`: banner, `busSweep()`, the default map unless
      degraded, then `ready`.
    * `ipc/core1_rpc.cpp` (`rpcCall`): the exclusion check, with make-safe
      exempt; `RPC_EXCLUDED` and its text.
    * `ipc/shared_state.h`: `ALARM_BUS_DEGRADED = 8`.
    * `core0/ops/state.cpp`: `resumeOrHold` settles `ALARM_BUS_DEGRADED` first.
-   * `core0/cmd/` + `cmd/table.h`: `bus_exclude`.
-   * `core0/cmd/query.cpp`: `status` reports mute, excluded and tainted (text
+   * `core0/cmd/` + `cmd/table.h`: `bus_exclude`; `axis_map`
+     (`cmd/axis.cpp`) answers `err degraded` in `ALARM_BUS_DEGRADED`.
+   * `core0/cmd/query.cpp`: `status` reports mute, excluded and touched (text
      plane only; STATUS_RSP layout unchanged).
 4. `CFG_SET` → reset: `core0/data_plane.cpp:233-238` sends the ACK, then
    raises `soft_reset_requested` instead of applying the map. Web
@@ -678,7 +683,7 @@ and `ready`. Web and docs travel with the unit they describe.
 
 **Checks:** `pio run -e pico`, `pio test -e native`, `pnpm typecheck`,
 `pnpm test`. Human scope: estop with a node unplugged, `reset` with a mute
-tainted node, the walkthrough (fence, `-`, fence retry, degraded, exclude), a
+touched node, the walkthrough (fence, `-`, fence retry, degraded, exclude), a
 head switch keeping its datums, `CFG_SET` then `ready`, sweep timing on the
 bus.
 
@@ -703,7 +708,7 @@ goes first as the smaller branch.
   already design most of it. `SET_SESSION` claims a node with a Pico-chosen
   token and self-safes it (disengage, de-energise, laser off): that is the one
   command every node supports, and ping → claim → engage is the boot sweep.
-  A token of 0 means "never configured by this Pico", so taint shrinks to the
+  A token of 0 means "never configured by this Pico", so the touched set shrinks to the
   nodes that do not answer the claim. Also there: detecting a node that reboots
   mid-job. Still open beyond it: a node unbinding itself after bus silence,
   which closes the last hole (a mute node holding a slot the Pico has
