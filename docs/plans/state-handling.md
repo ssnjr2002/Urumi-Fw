@@ -413,29 +413,38 @@ de-energised and disengaged and says so, and a node that makes itself safe
 when the Pico goes quiet. Branch 2's make safe becomes one transaction whose
 reply is proof, not an ack to interpret.
 
-**Settled in planning:**
+**Settled in planning (revised in Read):**
 
-* `CMD_MAKE_SAFE`, generic, in `src/node/dispatch.cpp` beside `CMD_DISABLE`
-  (`:85`): `node_set_enabled(false)`, clear `ENABLED | DATUM`, call a new
-  per-type `node_release()` hook, reply with `buildNodeStatus` (`:56`). Not
-  broadcastable: the reply is the point.
-* `node_release()`: the stepper drops its slot (as `CMD_ENGAGE` with
-  `SLOT_NONE`); knife and vacuum have no slot, and their outputs are already
-  switched off by `node_set_enabled(false)` (checked in Read).
-* No new flag: the status payload already carries the stepper's slot
-  (`stepper.cpp:534`, `NodeStatus.slot`). Released = `!hasStepperTail ||
-  slot == SLOT_NONE`; enabled = `NODE_FLAG_ENABLED`.
-* **Silence timeout:** any byte that passes 1a's FERR check sets a flag in the
-  ISR (one store); `loop()` turns it into a timestamp. No bytes for
-  `BUS_SILENCE_MS` (~1 s) runs the same routine as `CMD_MAKE_SAFE`. The node
-  stays up and answers the next frame. Z drops on timeout, as on estop; it
-  loses at most a few steps.
-* **Keepalive:** Core 1 broadcasts a no-reply keepalive when it has sent no
-  broadcast and no stream byte for ~`BUS_SILENCE_MS / 3`, from `processBus`
-  with the queue empty, so never mid-job. Addressed polls do not count: the
-  other nodes hear only foreign frames then.
-* A hardware WDT fed from the node's `loop()` catches a hung node; it is
-  separate from the silence timeout.
+* `CMD_MAKE_SAFE`, generic, in `src/node/dispatch.cpp` beside `CMD_DISABLE`:
+  `node_set_enabled(false)`, clear `ENABLED | DATUM`, call a new per-type
+  `node_release()` hook, reply with `buildNodeStatus`. Not broadcastable: the
+  reply is the point.
+* `node_release()`, the type-specific half of make safe:
+  * stepper: drops its slot (as `CMD_ENGAGE` with `SLOT_NONE`). The laser
+    (`NODE_HAS_LASER`, a 5 mW crosshair) is left alone.
+  * vacuum: parks every servo at 0° (closed, as at boot); with
+    `NODE_HAS_PROBE_REPLY`, drops `probeSlot`. The pump is already stopped by
+    `node_set_enabled(false)`.
+  * knife: nothing; `node_set_enabled(false)` already stops both outputs.
+* The vacuum status tail gains `[slot]` on `NODE_HAS_PROBE_REPLY` builds only
+  (`[servo bits][ssr][slot]`), appended like the stepper's homing span; the
+  Pico decodes on minimum length. Released = no slot in the tail, or slot ==
+  `0xFF`; enabled = `NODE_FLAG_ENABLED`. No new flag.
+* **Silence timeout:** any byte that passes 1a's FERR check (stream or command,
+  any address) sets a flag in the ISR; `loop()` turns it into a timestamp. No
+  bytes for `BUS_SILENCE_MS` (~1 s) runs the same routine as `CMD_MAKE_SAFE`.
+  The node stays up and answers the next frame. Z drops on timeout, as on
+  estop. A CRC-gated feed is not possible: foreign frames are dropped at the
+  address byte (`rs485/frame.h:32`), and stream bytes carry no CRC.
+* **Keepalive:** Core 1 sends one zero stream byte (`writeStream(0)`, the
+  byte `busQuiesce` already sends before every transaction) from `processBus`
+  when the queue is empty and it has sent nothing for ~`BUS_SILENCE_MS / 3`.
+  Every Pico transmission counts as a send. No new opcode: a zero byte steps
+  nothing, leaves DIR alone, and gets no probe reply.
+* No keepalive during `core1FlashPark`: a `CFG_SET` commit longer than
+  `BUS_SILENCE_MS` makes every node safe (IDLE/ALARM only), which costs a
+  re-home.
+* No hardware WDT.
 * The Pico's rules do not change: a mute node may be cut off (and safe) or
   deaf-but-listening (TX broken, still following its slot), and the Pico
   cannot tell which. Branch 2 still fences every mute node; this is defence
@@ -445,28 +454,24 @@ reply is proof, not an ack to interpret.
 
 **Files:**
 
-1. `include/common.h`: `CMD_MAKE_SAFE`, the keepalive opcode (broadcast
-   allowed, no reply), `BUS_SILENCE_MS`.
+1. `include/common.h`: `CMD_MAKE_SAFE`, `BUS_SILENCE_MS`, the vacuum tail.
 2. `src/node/dispatch.cpp`, `src/node/node_hooks.h`, each type's
-   `node_release()` (`types/stepper`, `types/knife`, `types/vacuum`).
-3. `src/node/main.cpp`, both RX ISRs: the heard flag, the timeout, the WDT.
-4. Pico: `core1/core1.cpp` (`processBus`) keepalive and last-send time;
-   `core1/bus/packet.cpp` (`sendBroadcast`, stream path) stamps it;
-   `core1/rpc_server.cpp:45` `answersWithStatus` gains `CMD_MAKE_SAFE`.
+   `node_release()` (`types/stepper`, `types/knife`, `types/vacuum`); the
+   vacuum `node_status` slot byte.
+3. `src/node/main.cpp`, both RX ISRs (or `rs485/frame.h`): the heard flag and
+   the timeout.
+4. Pico: `core1/core1.cpp` (`processBus`) keepalive; `core1/bus/` stamps the
+   last send time; `core1/rpc_server.cpp` `answersWithStatus` gains
+   `CMD_MAKE_SAFE`.
 5. Docs: `docs/engage_and_axis_map.md` (make safe, silence), the node bus doc.
-
-**Read phase settles:** the longest gap Core 1 can go without sending
-(`core1FlashPark` during a `CFG_SET` commit is unmeasured), which sets
-`BUS_SILENCE_MS`; the WDT period per MCU.
 
 **Checks:** `pio run` for every node env, `pio run -e pico`. Human scope:
 reflash every node; make-safe to each type; unplug the Pico end of the bus
-and see every node go safe; a job and a home run without a timeout; a
-`CFG_SET` commit without a timeout.
+and see every node go safe; a job and a home run without a timeout.
 
 **Depends on:** 1a.
 
-**Status:** planned.
+**Status:** in progress.
 
 ## Branch 2: `feature/bus-sweep`
 
