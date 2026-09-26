@@ -284,10 +284,14 @@ Proposed order. Each gets a full Plan section when its turn comes.
    1a.
 1c. `feature/silence-opt-in`: the node silence timeout becomes opt-in
    (`NODE_HAS_SILENCE_TIMEOUT`), off by default. Depends on 1b.
+1d. `feature/slot-map`: slots and axes split. `slot_map` binds any node to
+   the four stream slots; `axes_map` (renamed from `axis_map`) is the stored
+   axis request; an axis is bound when the two agree. Fixes the probe vacuum
+   never being released. Depends on nothing.
 2. `feature/bus-sweep`: boot sequence sweep, mute and touched nodes, degraded bus
    and `bus_exclude`, the fence, `CFG_SET` → reset and `ready`, confirmed slot
    release, estop make-safe, `unstop`. Make safe is one `CMD_MAKE_SAFE` per
-   node. Depends on 1 and 1b.
+   node. Its slot rules live in `slot_map`. Depends on 1, 1b and 1d.
 3. `feature/homing-session`: session states and exits, `home_end`, the new
    `setorigin`, legs only from `LIMIT_LATCHED`. Depends on 1.
 4. `feature/alarm-exits`: `unalarm` dispatcher, the strictness config
@@ -589,6 +593,115 @@ with the Pico unplugged; a node built with it still goes safe.
 * Human scope open: without the flag a node stays enabled with the Pico
   unplugged; with it the node still goes safe.
 
+## Branch 1d: `feature/slot-map`
+
+**Type:** feature. New primitive, a renamed command, new ingest refusal.
+
+**Purpose:** the slot table does two jobs: which node listens on a stream slot
+(any type), and which axis that slot is (position, homed, latched, enabled).
+`slotBind` writes both, so the probe vacuum is kept out of the table, and
+nothing ever releases it: `probeRestore` is `axisMapApply(savedMap)`, whose
+park loop reads only the table (`core0/ops/probe.cpp:90-95`, `:202-222`;
+`ops/axis_map.cpp:34-45`). After `probe_end`, `probeFail` or a failed
+`probe_map` the vacuum still holds slot 3 and answers every A step byte
+(`src/node/types/vacuum/probe_slot.h:35-46`), colliding with the stream.
+`docs/tool_probe.md:499` says the exit disengages everything. Splitting the
+layers fixes this by construction and gives branch 2 one place for its rules.
+
+**Model:**
+
+```
+axes_map   the last axis request:    X=1 Y=2 Z=3 A=4   (stored)
+slot_map   who holds each slot:      1 2 3 4           (binding, from the bus)
+axis k is bound  <=>  slot_map[k] == axes_map[k]
+```
+
+A probe is `slot_map - - 3 6`: only Z is bound, slot 3 is lent to the vacuum.
+The stream stays `dx dy dz da` into slots 0..3: axis k is slot k.
+
+**Settled in planning:**
+
+* **`slot_map <n0> <n1> <n2> <n3>`**, a config-free primitive (`cmd/`,
+  IDLE/PAUSED/ALARM). Binds any node type: parks every node that holds a slot,
+  engages the requested ones, stores the slot request. `-`/`0` = empty;
+  `err dup` for a node twice. No-arg: readback. It knows nothing about axes.
+* **`axes_map <x> <y> <z> <a>`** replaces `axis_map` (renamed: matches
+  `axes_enable`, `axes_homed`). Keeps today's config checks (`err
+  unconfigured`, `not_in_config`): it is the production command, `slot_map`
+  the config-free bench one. A node whose engage reply is not a stepper is
+  refused (`err node <id> not_stepper`), from the reply's type. Stores the axis
+  request, then applies it as a `slot_map`. No-arg: readback. The
+  re-apply (`unalarm`'s retry, the probe exit, the boot default map) is the
+  internal `axesMapApply()` with the stored request.
+* **Two comparisons:**
+  * slot request vs binding: a node that did not do what was asked, so
+    `ALARM_NODE_FAULT`. A bus fact.
+  * `axes_map` vs binding: which axes are bound. Information, not an alarm.
+  The `STATE_PROBING` exemption in `axisMapGate` goes: `NODE_FAULT` never
+  reads axes.
+* **Axis state only for bound axes:** `machinePos`, `axes_homed`,
+  `homingLatched` and `axes_enabled` are derived for axis k only while it is
+  bound. An unbound axis reads unbound, not "at 0". The node-frame datum
+  (`nodeOrigin`, `nodeHomed`) is unchanged.
+* **Ingest refuses a nonzero delta for an unbound axis** (`MSEG_NACK_BAD_STATE`,
+  jobs and jogs, `core0/data_plane.cpp:133-171`). Otherwise a job's `da` would
+  reach a vacuum in slot 3 as probe queries. Probe legs are Core 1's own
+  emitter and do not pass ingest.
+* **Probe:** `probe_map <vac>` is `slot_map - - <z> <vac>` plus the session;
+  `probe_end` (and `axes_map` during `STATE_PROBING`) re-applies `axes_map`
+  plus the teardown. The vacuum is an ordinary slot entry, so the park loop
+  releases it. `err vac_mapped` becomes "the vacuum is an axis in
+  `axes_map`".
+* `setorigin` and `step` stay slot-framed (axis k = slot k); branch 3 decides
+  `setorigin`'s form.
+* `slot_map` is a primitive and `axes_map` stays in the primitive table as
+  today (`control_plane.cpp:47`), gated on the config inside; moving it to the
+  controller table is not needed for this branch.
+
+**Files** (under `src/rp2350/` unless noted):
+
+1. `core0/ops/axis_map.{h,cpp}` → the slot layer (`slotMapApply`, slot
+   request, `slotMapComplete`, gate) and the axis layer (`axesMapApply`, axis
+   request, `axisBound(k)`); `core0/ops/position.{h,cpp}`: `slotBind` binds any
+   type, axis state derived for bound axes only (`slotAdoptStatus`,
+   `reconcileValidity`'s projection at `:234`).
+2. `core0/cmd/axis.cpp:130-189` (`cmdAxisMap` → `cmdAxesMap`), a new
+   `cmdSlotMap`; `cmd/table.h`, `core0/control_plane.cpp:47`.
+3. `core0/ops/probe.{h,cpp}`: `probeBegin`/`probeRestore`/`probeExit` onto
+   `slot_map` and `axesMapApply`; `cmd/table.h:65` comment.
+4. `core0/data_plane.cpp`: the unbound-axis refusal.
+5. Callers: `core0/ops/state.cpp` (`resumeOrHold`),
+   `core0/controller/cmd/unalarm.cpp`, `core0/controller/seq/controller.{h,cpp}`
+   (default map), `core0/core0.cpp:113-114` (wipe), `ops/homing.h`,
+   `ipc/shared_state.h` comments.
+6. Web: `src/wire/link/commands.ts:433-485` (`axisMap` → `axesMap`, new
+   `slotMap`, readbacks), `src/wire/link/backends/sim.ts`,
+   `src/machine/slots.ts`, `src/homing/sequence.ts:232,334`,
+   `src/wire/link/settled.ts`, `src/wire/format/status.ts` (comments), demo
+   `comms.{html,js}`; tests `test/wire/link/commands.test.ts`,
+   `test/wire/link/backends/sim.test.ts`, `test/controller/controller.test.ts`.
+7. Docs: `docs/engage_and_axis_map.md` (the two layers), `docs/tool_probe.md`
+   (§5, the exit), `docs/wire_protocol.md`, `docs/homing.md`,
+   `docs/config_storage.md`. Historical plans stay as written.
+
+**Out of scope:** the fence, touched, sweep and `err fenced` (branch 2, built
+on `slot_map`); `setorigin`'s form (branch 3); a stream format not fixed to
+four axes (planner overhaul).
+
+**Checks:** `pio run -e pico`, `pio test -e native`, `pnpm typecheck`,
+`pnpm test`. Human scope: `nodestat <vac>` after `probe_end` shows no slot
+(before: slot 3); a probe session then an A jog with the vacuum on the bus
+runs clean (`busstat` unchanged); `slot_map` binding a vacuum with no config;
+a head switch through `axes_map` keeping its datums; a job refused while an
+axis is unbound.
+
+**Overlap:** none among open typed branches. Touches `core0/cmd/table.h` and
+`web/src/wire/`.
+
+**Depends on:** nothing (1, 1a, 1b merged).
+
+**Status:** planned.
+
 ## Branch 2: `feature/bus-sweep`
 
 **Type:** feature. New alarm reason, commands, replies and boot behaviour.
@@ -690,8 +803,35 @@ bus.
 **Overlap:** none (`irq-bench` has no branch type). Touches
 `core0/cmd/table.h` and `web/src/wire/`.
 
-**Depends on:** branch 1 (merged), branch 1b (merged). Independent of 1c; 1c
-goes first as the smaller branch.
+**Depends on:** branch 1 (merged), branch 1b (merged), branch 1d. The
+Decisions above say `axis_map`; after 1d the slot rules (park, fence, `-`,
+`err fenced`, the `3!` readback, the fence retry) belong to `slot_map`, and
+`axes_map` inherits them by applying through it. "Holds a slot" in touched
+then includes the probe vacuum with no special case.
+
+**Read findings (second Read, after 1a/1b/1c):**
+
+* The probe vacuum is outside the slot table and never released: moved to
+  branch 1d.
+* `bus_enable off` (`cmd/axis.cpp:92`) broadcasts `CMD_DISABLE` and Core 1
+  clears all of `nodeEnabled` on send (`core1/rpc_server.cpp:132`), unconfirmed.
+  Settled: it becomes broadcast then a per-node confirmed sweep, one routine in
+  `core1/bus/packet.cpp` shared with the estop (per-node command as a
+  parameter; make-safe for the estop). The broadcast clears nothing. Reply
+  `ok` or `err unconfirmed <ids>`. `bus_enable on` is unchanged.
+* A fenced node confirming an engage into another slot also clears the fence
+  on its old slot (the reply shows its slot).
+* Late replies: `busQuiesce` flushes RX before every transaction and
+  `receivePacket` filters node and opcode; node `loop()` has no blocking call
+  but the boot blink. A late `CMD_NAK` passes the opcode filter but is too
+  short to confirm a status command.
+* `step` needs no fence check: `step <node>` resolves the node's own slot
+  (`cmd/axis.cpp:411`), and a fenced slot holds no other node.
+* For the Outcome, out of scope: `receivePacket` (`core1/bus/packet.cpp:24-38`)
+  writes `rxBuf[32]` without a bound; a garbage length byte on a noisy bus
+  overruns it.
+* Cold boot never sweeps today (Core 1 sweeps only on leaving its loop,
+  `core1.cpp:160`); the Core 0 sweep covers it.
 
 **Read findings (first Read, before 1a/1b were split out):**
 
