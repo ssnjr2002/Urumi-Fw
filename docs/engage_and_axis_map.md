@@ -203,6 +203,28 @@ This realizes the node-type doc's "ENGAGE ⊥ ENABLE": `ENABLE` = holding torque
 
 ---
 
+### 4.4 Make safe and bus silence
+
+`CMD_MAKE_SAFE` (generic, `0x09`) is disable plus disengage in one transaction:
+the node de-energises, clears `ENABLED | DATUM`, and calls its `node_release()`.
+The stepper drops its slot (as `CMD_ENGAGE 0xFF`); a vacuum closes its servos
+and, with `NODE_HAS_PROBE_REPLY`, drops its probe slot. The reply is the status
+payload, so it proves the result: released = no slot in the tail, or slot
+`0xFF`, and `NODE_FLAG_ENABLED` clear. The probe vacuum's tail carries its slot
+as a third byte for this.
+
+A node that hears no byte for `BUS_SILENCE_MS` (1 s) runs the same routine by
+itself. Any byte that passes the FERR check feeds the timer, stream or command,
+to any address. Core 1 sends a zero stream byte after `BUS_KEEPALIVE_MS`
+without sending, between segments only; during a job every step sends a byte.
+It does not send during `core1FlashPark`, so a config commit longer than the
+timeout leaves every node safe and the machine needs a re-home.
+
+The Pico's map is not changed by either path: a released node stays mapped
+until it is engaged again.
+
+---
+
 ## 5. Pico side
 
 ### 5.1 The packer is unchanged
@@ -414,6 +436,9 @@ a type, the move the node side deliberately avoided).
 |---|---|---|---|
 | `common.h` | `CMD_ENGAGE` | `0x20` | stepper type-specific; payload `[slot]`, `0xFF` = disengage |
 | `stepper.cpp` | `SLOT_NONE` | `0xFF` | disengaged sentinel |
+| `common.h` | `CMD_MAKE_SAFE` | `0x09` | generic; no payload; reply = status payload (§4.4) |
+| `common.h` | `BUS_SILENCE_MS` / `BUS_KEEPALIVE_MS` | `1000` / `333` | node timeout; Pico keepalive (§4.4) |
+| CLI | `makesafe <id>` | — | relays `CMD_MAKE_SAFE`; IDLE/PAUSED/ALARM |
 | `shared_state.h` | (was `ALARM_CONFIG`) | `2` (reserved) | retired: no config boots to IDLE |
 | `control_plane.cpp` | `slotNode[4]` | Core-0-local | committed node↔slot map; diffed per `axis_map` |
 | CLI (`control_plane.cpp`) | `axis_map <x> <y> <z> <a>` | — | setter; IDLE/PAUSED/ALARM |

@@ -179,6 +179,7 @@ One shared header both sides include, so declaration and definition cannot drift
 uint8_t node_type(void);                 // returns NODE_TYPE_*
 void    node_setup(void);                // type-specific init, called from setup()
 void    node_set_enabled(bool on);       // ENABLE/DISABLE *effect* (motor vs pump …)
+void    node_release(void);              // CMD_MAKE_SAFE's type half: drop slot, park
 bool    node_handle_command(const uint8_t* pkt, uint8_t len,
                             uint8_t* reply, uint8_t* replyLen);
 // NOTE: node_on_stream_byte() was originally listed here but is NOT in the
@@ -319,6 +320,14 @@ and dropped before its 9th bit is looked at (`frame_rx_reject`, `rs485/frame.h`)
 since the 9th bit is no more trustworthy than the data. `NODE_IGNORE_FERR`
 keeps the count but processes the byte. BUFOVF and CRC failures are counted
 too; `CMD_BUS_STATS` reads all three.
+
+Every byte that passes the FERR check also sets `busHeard`. `loop()` turns it
+into a timestamp, and after `BUS_SILENCE_MS` with no byte runs
+`node_make_safe()`, the routine behind `CMD_MAKE_SAFE`: `node_set_enabled(false)`,
+clear `ENABLED | DATUM`, `node_release()`. It runs once per silence; the node
+stays up and answers the next frame. The Pico keeps an idle bus fed with a zero
+stream byte every `BUS_KEEPALIVE_MS`. `NODE_DEBUG_CONSOLE` builds have no
+timeout, since they are driven over USART0 with the bus idle.
 | Reply | yes (ACK/PONG/…) | none |
 
 #### The stream byte is handled in the ISR — so the ISR itself is per-type

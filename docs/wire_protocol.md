@@ -281,6 +281,7 @@ prefixed `0x`.
 | `ping` | — | `pong` | Is the Pico alive (USB link)? |
 | `pingnode` | `[all\|<id>]` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
 | `busstat` | `<id>` | `node <id> ferr <n> ovf <n> crc <n>` / `node <id> timeout` | A node's receive-error counters (CMD_BUS_STATS): framing errors, buffer overflows, CRC failures. Wrapping 16-bit counts since the node powered on; diff successive reads |
+| `makesafe` | `<id>` | `node <id> en <0\|1> datum <0\|1> slot <n\|->` / `node <id> timeout` | Relay CMD_MAKE_SAFE: the node de-energises, clears its datum, drops its stream slot (stepper, probe vacuum) and closes its servos (vacuum). The line is the node's own report after the release; `slot -` = the node has none. The Pico's axis map is not changed |
 | `getstate` | — | `state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r>` | Operational status snapshot (see below) |
 | `getpos` | — | `pos <x> <y> <z> <a>` | Absolute machinePos in steps (signed) |
 | `enable` | `[all\|<id>]` | `ok` / `err <reason>` | Energise motors (per allowed-state matrix). Bare / `all` energises every present node; `enable <id>` relays CMD_ENABLE to that node only (mirrors `pingnode <id>`) |
@@ -348,7 +349,7 @@ Phase 2.
 | `STATUS_REQ` (binary) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `ping` / `getstate` / `getpos` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `pingnode` / `busstat` | ✓ | ✗ | ✓ | ✓ | ✗ |
-| `enable` / `disable` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| `enable` / `disable` / `makesafe` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `setorigin` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `pause` | ✗ | ✓ | ✗ | ✗ | ✗ |
 | `resume` / `cancel` | ✗ | ✗ | ✓ | ✗ | ✗ |
