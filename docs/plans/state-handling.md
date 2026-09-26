@@ -573,7 +573,17 @@ with the Pico unplugged; a node built with it still goes safe.
 
 **Depends on:** 1b.
 
-**Status:** in progress.
+**Status:** done.
+
+**Outcome:**
+
+* `NODE_HAS_SILENCE_TIMEOUT` with `NODE_DEBUG_CONSOLE` is an `#error`
+  (`rs485/rs485.h`) rather than console builds skipping the timeout.
+* Also touched: the keepalive comment in `src/rp2350/core1/core1.cpp`.
+* Checked with the flag forced on (`PLATFORMIO_BUILD_FLAGS`): `db_node4`,
+  `vac_db_node7`, `knife_node8` build; `db_node4_dbg` stops at the `#error`.
+* Human scope open: without the flag a node stays enabled with the Pico
+  unplugged; with it the node still goes safe.
 
 ## Branch 2: `feature/bus-sweep`
 
