@@ -13,6 +13,10 @@ volatile bool    inCommand  = false;
 volatile uint8_t rxIdx      = 0;
 volatile bool    discardCmd = false;
 
+volatile uint16_t busFerrCount = 0;
+volatile uint16_t busOvfCount  = 0;
+uint16_t          busCrcCount  = 0;
+
 // ─── TX ─────────────────────────────────────────────────────────────────────
 void sendCommandPacket(uint8_t* packet, uint8_t len) {
     packet[len - 1] = crc8(packet, len - 1);

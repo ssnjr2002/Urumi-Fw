@@ -2,6 +2,7 @@
 // Core handles the generic command table; anything it doesn't recognise falls
 // through to the node type's node_handle_command().
 #include <Arduino.h>
+#include <util/atomic.h>
 #include "common.h"
 #include "protocol.h"
 #include "node_hooks.h"
@@ -73,6 +74,23 @@ static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
             reply[3] = node_type();
             *replyLen = 5;
             return true;
+
+        case CMD_BUS_STATS: {
+            uint16_t ferr, ovf;
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+                ferr = busFerrCount;
+                ovf  = busOvfCount;
+            }
+            const uint16_t v[3] = { ferr, ovf, busCrcCount };
+            reply[0] = NODE_ID; reply[1] = CMD_BUS_STATS;
+            reply[2] = CMD_BUS_STATS_REPLY_LEN;
+            for (uint8_t i = 0; i < 3; i++) {
+                reply[3 + 2 * i] = (uint8_t)(v[i] >> 8);
+                reply[4 + 2 * i] = (uint8_t)v[i];
+            }
+            *replyLen = 3 + CMD_BUS_STATS_REPLY_LEN + 1;
+            return true;
+        }
 
         case CMD_ENABLE:
             node_set_enabled(true);
