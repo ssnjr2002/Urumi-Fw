@@ -47,6 +47,7 @@ bool cmdVacPump(const char*);
 bool cmdKnifeOsc(const char*);
 bool cmdKnifeBlower(const char*);
 bool cmdLaser(const char*);
+bool cmdMakeSafe(const char*);
 
 // ─── axis.cpp — the only command file that WRITES the position model ──────────
 bool cmdAxisMap(const char*);

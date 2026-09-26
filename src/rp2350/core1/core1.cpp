@@ -15,6 +15,7 @@
 #include "emit/emit.h"
 #include "bus/RS485Bus.h"
 #include "bus/packet.h"
+#include "common.h"
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
 
@@ -23,6 +24,15 @@
 // setting core1_parked_for_flash, spin until Core 0 clears flash_op_requested,
 // then release. Only entered in IDLE/ALARM (Core 0 gates config writes there),
 // so no motion is ever interrupted. See ipc/shared_state.h for the handshake.
+// Keep every node's bus-silence timeout (common.h) fed while Core 1 is idle.
+// Runs between segments only; an emitting segment sends a byte per step.
+static void busKeepalive() {
+    static uint32_t lastSentMs = 0;
+    const uint32_t now = millis();
+    if (rs485.takeSent()) lastSentMs = now;
+    else if (now - lastSentMs >= BUS_KEEPALIVE_MS) rs485.writeStream(0);
+}
+
 static void __not_in_flash_func(core1FlashPark)() {
     core1_parked_for_flash = true;
     __dmb();
@@ -83,6 +93,8 @@ void processBus() {
         if (machineState == STATE_RUNNING || machineState == STATE_PAUSED)
             machineState = STATE_IDLE;
     }
+
+    busKeepalive();
 
     // 3. Service one channel-1 request (ipc/core1_rpc.h).
     //

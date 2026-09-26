@@ -34,8 +34,12 @@ public:
     // --- Status ---
     // Check if the TX FIFO is empty
     bool txEmpty();
-    
+
+    // True once since the last call if anything was written (keepalive).
+    bool takeSent() { bool s = _sent; _sent = false; return s; }
+
 private:
+    bool _sent = false;
     PIO _pio;
     uint _sm_tx;
     uint _sm_rx;

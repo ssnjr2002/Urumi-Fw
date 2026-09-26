@@ -44,7 +44,8 @@ static void replyWith(const RpcRequest* req, RpcResult result,
 // property of the command, not a per-command reply shape.
 static bool answersWithStatus(uint8_t cmd) {
     return cmd == CMD_NODE_STATUS || cmd == CMD_DATUM_SET ||
-           cmd == CMD_ENGAGE      || cmd == CMD_HOME_LEG;
+           cmd == CMD_ENGAGE      || cmd == CMD_HOME_LEG ||
+           cmd == CMD_MAKE_SAFE;
 }
 
 // Expand a request's argument bytes into the node's on-wire payload.
@@ -59,12 +60,11 @@ static uint8_t buildPayload(const RpcRequest* req, uint8_t* out) {
         out[1] = (req->args[0] & 0x01) ? SERVO_ON_ANGLE : 0;       // angle
         return 2;
     }
-    // CMD_PING, CMD_NODE_STATUS, CMD_DATUM_SET, CMD_SWITCH_GET and CMD_BUS_STATS
-    // are queries and carry nothing; the rest carry their argument bytes
-    // verbatim.
+    // CMD_PING, CMD_NODE_STATUS, CMD_DATUM_SET, CMD_SWITCH_GET, CMD_BUS_STATS and
+    // CMD_MAKE_SAFE carry nothing; the rest carry their argument bytes verbatim.
     if (req->cmd == CMD_PING || req->cmd == CMD_NODE_STATUS ||
         req->cmd == CMD_DATUM_SET || req->cmd == CMD_SWITCH_GET ||
-        req->cmd == CMD_BUS_STATS) {
+        req->cmd == CMD_BUS_STATS || req->cmd == CMD_MAKE_SAFE) {
         return 0;
     }
     uint8_t n = req->argLen;

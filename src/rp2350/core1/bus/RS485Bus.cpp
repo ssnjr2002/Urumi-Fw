@@ -19,15 +19,18 @@ void RS485Bus::begin(uint32_t baud, uint tx_pin, uint rx_pin, uint de_pin) {
 void RS485Bus::writeCommand(uint8_t data) {
     // 9th bit = 1
     pio_sm_put_blocking(_pio, _sm_tx, (uint32_t)data | (1 << 8));
+    _sent = true;
 }
 
 void RS485Bus::writeStream(uint8_t data) {
     // 9th bit = 0
     pio_sm_put_blocking(_pio, _sm_tx, (uint32_t)data);
+    _sent = true;
 }
 
 void RS485Bus::writeRaw(uint16_t data) {
     pio_sm_put_blocking(_pio, _sm_tx, (uint32_t)data);
+    _sent = true;
 }
 
 bool RS485Bus::available() {

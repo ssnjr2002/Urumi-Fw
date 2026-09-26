@@ -1,4 +1,4 @@
-// periph.cpp — the five peripheral actuator commands.
+// periph.cpp — the five peripheral actuator commands, and makesafe.
 //
 // They were five near-identical 28-line handlers: same gate, the same six-line
 // gate comment pasted verbatim four times, same parse, same relay, same printf.
@@ -93,3 +93,27 @@ bool cmdKnifeOsc(const char* args) { return relayOnOff(args, CMD_KNIFE_OSC); }
 // of what the opcode buys, since the wrong-firmware node is otherwise
 // indistinguishable from an absent one.
 bool cmdLaser(const char* args) { return relayOnOff(args, CMD_LASER); }
+
+// ── makesafe <node> — CMD_MAKE_SAFE: disable and disengage one node ──────────
+// Prints the node's own report from the reply. slot is the stepper's, or the
+// probe vacuum's (third tail byte); `-` where the node has none. The Pico's axis
+// map is not touched: a released node stays mapped until the next engage.
+bool cmdMakeSafe(const char* args) {
+    if (periphGateDenies()) return true;
+    uint8_t node = parseNode(args, nullptr);
+    if (!node) { Serial.println("err usage"); return true; }
+    NodeStatus st;
+    RpcResult r = rpcNodeStatus(CMD_MAKE_SAFE, node, 0, &st);
+    if (r != RPC_OK) {
+        Serial.printf("node %d %s\n", node, rpcResultText(r)); return true;
+    }
+    int slot = -1;
+    if (st.hasStepperTail)                               slot = st.slot;
+    else if (st.type == NODE_TYPE_VACUUM && st.tailLen >= 3) slot = st.tail[2];
+    Serial.printf("node %d en %d datum %d slot ", node,
+                  (st.flags & NODE_FLAG_ENABLED) ? 1 : 0,
+                  (st.flags & NODE_FLAG_DATUM)   ? 1 : 0);
+    if (slot < 0) Serial.println("-");
+    else          Serial.println(slot);
+    return true;
+}

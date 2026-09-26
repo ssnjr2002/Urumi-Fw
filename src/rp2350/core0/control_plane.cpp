@@ -42,6 +42,7 @@ static const Cmd kCommands[] = {
     { "knife_osc",    cmdKnifeOsc    },
     { "knife_blower", cmdKnifeBlower },
     { "laser",        cmdLaser       },
+    { "makesafe",     cmdMakeSafe    },
     // axis.cpp
     { "axis_map",     cmdAxisMap     },
     { "setorigin",    cmdSetOrigin   },
