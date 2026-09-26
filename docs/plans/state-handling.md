@@ -549,8 +549,8 @@ questions); the flag keeps it available.
 **Settled in planning:**
 
 * New node flag `NODE_HAS_SILENCE_TIMEOUT`. Without it, `busHeard` and
-  `busSilenceCheck` compile out; the existing `NODE_DEBUG_CONSOLE` exclusion
-  folds into the same condition. No env sets it.
+  `busSilenceCheck` compile out. It is an `#error` with `NODE_DEBUG_CONSOLE`
+  (`rs485/rs485.h`): console input does not feed the timer. No env sets it.
 * The Pico keepalive stays: one byte per `BUS_KEEPALIVE_MS`, so a node built
   with the flag needs no Pico change.
 * `CMD_MAKE_SAFE`, `node_release()` and `makesafe` are unchanged; branch 2
@@ -561,7 +561,8 @@ questions); the flag keeps it available.
 1. `src/node/main.cpp` (`busSilenceCheck`), `src/node/rs485/frame.h`
    (`frame_rx_reject` sets `busHeard`), `src/node/rs485/rs485.{h,cpp}`
    (`busHeard`).
-2. `include/common.h`: the `CMD_MAKE_SAFE` / `BUS_SILENCE_MS` comment.
+2. `include/common.h`: the `CMD_MAKE_SAFE` / `BUS_SILENCE_MS` comment;
+   `src/rp2350/core1/core1.cpp`: the keepalive comment.
 3. `AGENTS.md`: the flag in the node build flag list.
 4. Docs: `docs/node_type_architecture.md` (the silence paragraph),
    `docs/engage_and_axis_map.md` §4.4.
@@ -572,7 +573,7 @@ with the Pico unplugged; a node built with it still goes safe.
 
 **Depends on:** 1b.
 
-**Status:** planned.
+**Status:** in progress.
 
 ## Branch 2: `feature/bus-sweep`
 
