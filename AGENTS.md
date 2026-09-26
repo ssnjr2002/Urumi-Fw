@@ -50,6 +50,7 @@ Node Build Flags:
     * `RS485_USE_XDIR`: Turn on XDIR, an automatic hardware direction switch for half duplex RS485 buses. 
     * `NODE_HAS_LASER`: Node has a laser attached to it which can be toggled on or off.
     * `NODE_IGNORE_FERR`: Process bytes with a UART framing error instead of dropping them (they are still counted).
+    * `NODE_HAS_SILENCE_TIMEOUT`: Make the node safe (as `CMD_MAKE_SAFE`) after `BUS_SILENCE_MS` without a bus byte. Not with `NODE_DEBUG_CONSOLE`.
 * Stepper nodes:
     * `DM542`: Specify the stepper driver as a DM542 driver.
     * `TMC_2660`: Specify the stepper driver as a TMC 2660 driver.

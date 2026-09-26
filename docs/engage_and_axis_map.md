@@ -213,8 +213,8 @@ payload, so it proves the result: released = no slot in the tail, or slot
 `0xFF`, and `NODE_FLAG_ENABLED` clear. The probe vacuum's tail carries its slot
 as a third byte for this.
 
-A node that hears no byte for `BUS_SILENCE_MS` (1 s) runs the same routine by
-itself. Any byte that passes the FERR check feeds the timer, stream or command,
+A node built with `NODE_HAS_SILENCE_TIMEOUT` (off by default) that hears no
+byte for `BUS_SILENCE_MS` (1 s) runs the same routine by itself. Any byte that passes the FERR check feeds the timer, stream or command,
 to any address. Core 1 sends a zero stream byte after `BUS_KEEPALIVE_MS`
 without sending, between segments only; during a job every step sends a byte.
 It does not send during `core1FlashPark`, so a config commit longer than the
@@ -437,7 +437,7 @@ a type, the move the node side deliberately avoided).
 | `common.h` | `CMD_ENGAGE` | `0x20` | stepper type-specific; payload `[slot]`, `0xFF` = disengage |
 | `stepper.cpp` | `SLOT_NONE` | `0xFF` | disengaged sentinel |
 | `common.h` | `CMD_MAKE_SAFE` | `0x09` | generic; no payload; reply = status payload (§4.4) |
-| `common.h` | `BUS_SILENCE_MS` / `BUS_KEEPALIVE_MS` | `1000` / `333` | node timeout; Pico keepalive (§4.4) |
+| `common.h` | `BUS_SILENCE_MS` / `BUS_KEEPALIVE_MS` | `1000` / `333` | node timeout (opt-in); Pico keepalive (§4.4) |
 | CLI | `makesafe <id>` | — | relays `CMD_MAKE_SAFE`; IDLE/PAUSED/ALARM |
 | `shared_state.h` | (was `ALARM_CONFIG`) | `2` (reserved) | retired: no config boots to IDLE |
 | `control_plane.cpp` | `slotNode[4]` | Core-0-local | committed node↔slot map; diffed per `axis_map` |

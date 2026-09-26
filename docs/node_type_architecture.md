@@ -321,13 +321,20 @@ since the 9th bit is no more trustworthy than the data. `NODE_IGNORE_FERR`
 keeps the count but processes the byte. BUFOVF and CRC failures are counted
 too; `CMD_BUS_STATS` reads all three.
 
-Every byte that passes the FERR check also sets `busHeard`. `loop()` turns it
-into a timestamp, and after `BUS_SILENCE_MS` with no byte runs
-`node_make_safe()`, the routine behind `CMD_MAKE_SAFE`: `node_set_enabled(false)`,
-clear `ENABLED | DATUM`, `node_release()`. It runs once per silence; the node
-stays up and answers the next frame. The Pico keeps an idle bus fed with a zero
-stream byte every `BUS_KEEPALIVE_MS`. `NODE_DEBUG_CONSOLE` builds have no
-timeout, since they are driven over USART0 with the bus idle.
+With `NODE_HAS_SILENCE_TIMEOUT` (off by default), every byte that passes the
+FERR check also sets `busHeard`. `loop()` turns it into a timestamp, and after
+`BUS_SILENCE_MS` with no byte runs `node_make_safe()`, the routine behind
+`CMD_MAKE_SAFE`: `node_set_enabled(false)`, clear `ENABLED | DATUM`,
+`node_release()`. It runs once per silence; the node stays up and answers the
+next frame. The Pico keeps an idle bus fed with a zero stream byte every
+`BUS_KEEPALIVE_MS`. The flag is an `#error` with `NODE_DEBUG_CONSOLE`, whose
+input arrives over USART0 and would not feed the timer.
+
+It is off by default because the Pico does not learn that a node made itself
+safe: on a flaky bus the node drops its slot and datum while the Pico still
+counts it bound. It also does not catch a hung `loop()`: the RX ISR keeps
+stepping, and the timer runs in `loop()`. A hardware WDT fed from `loop()`
+would; none is built.
 | Reply | yes (ACK/PONG/…) | none |
 
 #### The stream byte is handled in the ISR — so the ISR itself is per-type

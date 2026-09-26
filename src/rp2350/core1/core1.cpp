@@ -24,7 +24,8 @@
 // setting core1_parked_for_flash, spin until Core 0 clears flash_op_requested,
 // then release. Only entered in IDLE/ALARM (Core 0 gates config writes there),
 // so no motion is ever interrupted. See ipc/shared_state.h for the handshake.
-// Keep every node's bus-silence timeout (common.h) fed while Core 1 is idle.
+// Keep the bus-silence timeout (common.h) of nodes that have one fed while
+// Core 1 is idle.
 // Runs between segments only; an emitting segment sends a byte per step.
 static void busKeepalive() {
     static uint32_t lastSentMs = 0;
