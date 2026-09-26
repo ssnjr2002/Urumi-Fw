@@ -59,10 +59,12 @@ static uint8_t buildPayload(const RpcRequest* req, uint8_t* out) {
         out[1] = (req->args[0] & 0x01) ? SERVO_ON_ANGLE : 0;       // angle
         return 2;
     }
-    // CMD_PING, CMD_NODE_STATUS, CMD_DATUM_SET and CMD_SWITCH_GET are queries and
-    // carry nothing; the rest carry their argument bytes verbatim.
+    // CMD_PING, CMD_NODE_STATUS, CMD_DATUM_SET, CMD_SWITCH_GET and CMD_BUS_STATS
+    // are queries and carry nothing; the rest carry their argument bytes
+    // verbatim.
     if (req->cmd == CMD_PING || req->cmd == CMD_NODE_STATUS ||
-        req->cmd == CMD_DATUM_SET || req->cmd == CMD_SWITCH_GET) {
+        req->cmd == CMD_DATUM_SET || req->cmd == CMD_SWITCH_GET ||
+        req->cmd == CMD_BUS_STATS) {
         return 0;
     }
     uint8_t n = req->argLen;

@@ -312,6 +312,13 @@ because the two have opposite timing requirements:
 | Path | RX ISR → `cmdQueue` → `loop()` → `dispatchCommand` | RX ISR → step *inline*, in the ISR |
 | Timing | deferred, latency-tolerant | synchronous — must step *now* |
 | Integrity | CRC-checked in `loop()` | none (per-step, no room) |
+| Framing error | byte dropped, frame fails its CRC | byte dropped: a lost step, not a random one |
+
+Both paths start the same way: a byte whose `RXDATAH` has FERR set is counted
+and dropped before its 9th bit is looked at (`frame_rx_reject`, `rs485/frame.h`),
+since the 9th bit is no more trustworthy than the data. `NODE_IGNORE_FERR`
+keeps the count but processes the byte. BUFOVF and CRC failures are counted
+too; `CMD_BUS_STATS` reads all three.
 | Reply | yes (ACK/PONG/…) | none |
 
 #### The stream byte is handled in the ISR — so the ISR itself is per-type

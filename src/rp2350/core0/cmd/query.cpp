@@ -170,6 +170,24 @@ bool cmdNodePos(const char* args) {
     return true;
 }
 
+// ── busstat <node> — a node's receive-error counters ─────────────────────────
+// Raw, wrapping 16-bit counts since the node powered on; the reader diffs them.
+bool cmdBusStat(const char* args) {
+    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+        Serial.println("err bad_state"); return true;
+    }
+    uint8_t node = parseNode(args, nullptr);
+    if (!node) { Serial.println("err usage"); return true; }
+    BusStats bs;
+    RpcResult r = rpcBusStats(node, &bs);
+    if (r != RPC_OK) {
+        Serial.printf("node %d %s\n", node, rpcResultText(r)); return true;
+    }
+    Serial.printf("node %d ferr %u ovf %u crc %u\n", node,
+                  (unsigned)bs.ferr, (unsigned)bs.ovf, (unsigned)bs.crc);
+    return true;
+}
+
 // ── nodestat <node> — any node's generic + type-specific state ───────────────
 // One round-trip (CMD_NODE_STATUS). The payload is [type][flags][tail]; the tail
 // is decoded by type.

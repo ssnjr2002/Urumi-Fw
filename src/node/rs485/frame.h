@@ -52,3 +52,20 @@ static inline void frame_stream_reset(void) {
     inCommand  = false;
     discardCmd = false;
 }
+
+// Count receive errors from RXDATAH and say whether to drop the byte. Called
+// first in every RX ISR, after RXDATAL has been read: on a framing error the
+// 9th bit is as untrustworthy as the data, so the byte is neither a command
+// nor a stream byte. Dropping resets framing; the frame it belonged to then
+// fails its CRC.
+static inline bool frame_rx_reject(uint8_t status) {
+    if (status & USART_BUFOVF_bm) busOvfCount++;
+    if (!(status & USART_FERR_bm)) return false;
+    busFerrCount++;
+#ifdef NODE_IGNORE_FERR
+    return false;
+#else
+    frame_stream_reset();
+    return true;
+#endif
+}

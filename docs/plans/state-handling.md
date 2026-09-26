@@ -227,8 +227,8 @@ All touch `web/src/wire/` and the Sim (`web/src/wire/link/backends/sim.ts`).
 * `CFG_SET`: the host waits for the boot banner after the ACK.
 * Config: the strictness field.
 * Node bus (`include/common.h`, branches 1a and 1b): `CMD_MAKE_SAFE`,
-  `CMD_BUS_STATS`, a keepalive broadcast, `NODE_FLAG_BUS_NOISY`. Not on the
-  host wire; the host sees them through `nodestat` text only.
+  `CMD_BUS_STATS`, a keepalive broadcast. Not on the host wire; the host sees
+  the counters through the `busstat` text command only.
 
 ## Branches
 
@@ -236,8 +236,8 @@ Proposed order. Each gets a full Plan section when its turn comes.
 
 1. `feature/config-unmapped`: no config boots to IDLE, unmapped is not an
    alarm, config checks read the config. Depends on nothing.
-1a. `feature/bus-noise`: nodes drop framing-error bytes, count bus errors,
-   latch a stream refusal on noise; `CMD_BUS_STATS`. Depends on nothing.
+1a. `feature/bus-noise`: nodes drop framing-error bytes and count bus
+   errors; `CMD_BUS_STATS`, `busstat`. Depends on nothing.
 1b. `feature/node-make-safe`: `CMD_MAKE_SAFE` answered with a status payload;
    a node makes itself safe after bus silence; Core 1 keepalive. Depends on
    1a.
@@ -341,68 +341,68 @@ branches 2 and 3. `pio run -e pico` passes;
 
 ## Branch 1a: `feature/bus-noise`
 
-**Type:** feature. New node behaviour, one new node command.
+**Type:** feature. New node behaviour, one new node command, one Pico
+primitive.
 
-**Purpose:** a node never acts on a byte the UART flagged as corrupt, keeps
-count of bus errors, and stops following the stream when noise is sustained,
-leaving the decision to the Pico. Branch 1b's silence timeout depends on it:
-without the filter, noise on an undriven bus (no fail-safe biasing is known)
-would keep the timeout fed.
+**Purpose:** a node never acts on a byte the UART flagged as corrupt, and
+keeps count of bus errors for diagnostics. Branch 1b's silence timeout depends
+on it: without the filter, noise on an undriven bus (no fail-safe biasing is
+known) would keep the timeout fed.
 
 **Settled in planning:**
 
 * One check at the top of both RX ISRs (`src/node/rs485/isr_generic.cpp:20`,
   `src/node/types/stepper/stepper.cpp:731`): a byte with `USART_FERR_bm` set
   in `RXDATAH` (already read there) is dropped, resets framing
-  (`frame_stream_reset`) and counts. One bit test; stream bytes included, so a
-  corrupt byte loses a step instead of taking a random one.
+  (`frame_stream_reset`) and counts. Before the 9th-bit test, since `DATA8`
+  is not trustworthy on a framing error. Stream bytes included: a corrupt
+  byte loses a step instead of taking a random one, and a dropped probe
+  reply reads as "open" on the Pico (`probe_slot.h`).
+* Build flag `NODE_IGNORE_FERR`: framing-error bytes are counted but processed
+  as before (bench comparison, or a bus that needs it). Listed in AGENTS.md
+  with the other node flags.
 * Counters (`uint16_t`, wrapping): FERR, BUFOVF (`RXDATAH` bit 6), and CRC
   failures of frames addressed to this node (`src/node/main.cpp:62`). Never
-  cleared; readers take differences, and only power-on resets them.
-* **Noise latch** (every type that acts on stream bytes: the stepper, and the
-  vacuum's probe reply, `NODE_HAS_PROBE_REPLY`): trips when
-  `(uint16_t)(ferrCount - ferrBase) >= NOISE_TRIP`. The cast matters: C
-  promotes to `int`, and unsigned 16-bit arithmetic is what makes the wrap
-  harmless. `ferrBase` moves only on an explicit clear, so the trip is "N
-  errors since the last clear"; no clock and no run detection. A clean bus
-  could in principle reach N over a very long uptime; accepted.
-* While latched the node ignores stream bytes and sets
-  `NODE_FLAG_BUS_NOISY` (0x10) in the status flags. The stepper refuses
-  steps as the limit latch does (`stepper.cpp:777-783`), so its counter stays
-  true to the shaft and the Pico can see how far a job got; the vacuum stops
-  answering probe reply slots. Framed commands are always obeyed.
-* `CMD_BUS_STATS`, generic: no payload reads the counters and the latch;
-  a clear argument sets `ferrBase = ferrCount` and unlatches, and the reply
-  confirms it. Clearing is only ever the Pico's decision; this branch adds no
-  Pico policy.
-* The status payload shape is unchanged (a new field would shift every
-  type's tail); the counters travel only in `CMD_BUS_STATS`.
+  cleared; readers take differences, and only power-on resets them. Written
+  in the ISR (FERR, BUFOVF), so `loop()` reads them under `ATOMIC_BLOCK`.
+* No threshold, latch or flag: rejection is per byte, and the counters are
+  diagnostics only. The status payload is unchanged.
+* `CMD_BUS_STATS` (0x08), generic, no payload, not broadcastable; the reply
+  is the three counters.
+* Pico: a new primitive `busstat <node>` prints
+  `node <id> ferr <n> ovf <n> crc <n>`. `nodestat` is unchanged (the web
+  parses it with an anchored regex, `web/src/wire/link/commands.ts:138`).
 
 **Files:**
 
-1. `include/common.h`: `CMD_BUS_STATS` and its reply layout,
-   `NODE_FLAG_BUS_NOISY`, `NOISE_TRIP`.
+1. `include/common.h`: `CMD_BUS_STATS` and its reply layout.
 2. `src/node/rs485/isr_generic.cpp`, `src/node/types/stepper/stepper.cpp`
-   (RX ISR): the FERR check and counts; the latch and stream refusal in the
-   stepper ISR and the probe reply path (`types/vacuum/probe_slot.h`).
-3. `src/node/rs485/rs485.{h,cpp}` or `dispatch.cpp`: the counters;
-   `src/node/main.cpp:62`: the CRC count; `src/node/dispatch.cpp`: the
-   `CMD_BUS_STATS` handler (generic).
-4. Pico: `core1/rpc_server.cpp` (payload for `CMD_BUS_STATS`),
-   `core0/cmd/` `nodestat` prints the counters and the noisy flag.
-5. Docs: `docs/wire_protocol.md` or the node bus doc for the command and flag.
-
-**Read phase settles:** `NOISE_TRIP` against the stream rate; whether any
-host decoder reads the flags byte and needs the new bit named.
+   (RX ISR): the FERR check and counts.
+3. `src/node/rs485/rs485.{h,cpp}`: the counters; `src/node/main.cpp:62`: the
+   CRC count; `src/node/dispatch.cpp`: the `CMD_BUS_STATS` handler.
+4. Pico: `core1/rpc_server.cpp` (`buildPayload` sends none),
+   `core0/cmd/query.cpp` + `cmd/table.h`: `busstat`.
+5. Docs: `docs/wire_protocol.md` (`busstat`), the node bus doc
+   (`CMD_BUS_STATS`, FERR rejection).
 
 **Checks:** `pio run` for every node env, `pio run -e pico`. Human scope:
-reflash every node; `nodestat` counters on a healthy bus; a noisy-bus trip
-(or a forced one) refusing stream steps and probe replies, and clearing on
-command.
+reflash every node; `busstat` on a healthy bus reads zero; a job, a home and
+a probe run unchanged.
 
 **Depends on:** nothing.
 
-**Status:** planned.
+**Status:** done.
+
+**Outcome:**
+
+* As planned, plus a Core 0 wrapper `rpcBusStats()` in
+  `ipc/core1_rpc.{h,cpp}` (not in the file list) and the `busstat` row in
+  `core0/control_plane.cpp`'s table.
+* `frame_rx_reject(status)` (`src/node/rs485/frame.h`) is the one check both
+  ISRs call; 1b's silence timeout feeds from bytes it lets through.
+* Merged with a merge commit at the user's request, though under 10 commits.
+* Human scope open: reflash every node; `busstat` zero on a healthy bus; a
+  job, a home and a probe unchanged.
 
 ## Branch 1b: `feature/node-make-safe`
 
@@ -484,8 +484,6 @@ confirmation: the fence" and "Estop", except strictness and session endings
 * `nodeReleased` is cleared when an engage is sent (a lost ack must not leave
   it set) and set from a reply that shows no slot (make-safe, or a disengage
   ack). Core 1 sends both, so it stays the sole writer.
-* A node reporting `NODE_FLAG_BUS_NOISY` (branch 1a) is reported beside mute
-  in `status`; what the Pico does about it beyond that is branch 4.
 * `mute` and `excluded` are Core 0 masks in a new `ops/bus.*`, beside
   `busSweep()`, which the boot sequence calls. Participants (config nodes not mute) are derived, for `status` only.
 * The sweep runs from Core 0 as RPCs, after the wipe releases Core 1. Worst

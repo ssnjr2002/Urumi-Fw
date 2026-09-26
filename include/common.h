@@ -46,6 +46,16 @@
 // That is the intended migration: the two firmwares are distinguishable on the
 // wire by exactly this, and neither confuses the other.
 #define CMD_NAK      0x07
+
+// CMD_BUS_STATS — the node's receive-error counters. No payload; not
+// broadcastable.
+//     reply: [ID][CMD_BUS_STATS][len=6][ferr u16 BE][ovf u16 BE][crc u16 BE][crc8]
+// ferr: bytes with a framing error, dropped unless built with NODE_IGNORE_FERR.
+// ovf:  receive buffer overflows (bytes lost before the ISR read them).
+// crc:  frames addressed to this node that failed their CRC.
+// Each wraps at 16 bits and is never cleared; take differences between reads.
+#define CMD_BUS_STATS 0x08
+#define CMD_BUS_STATS_REPLY_LEN 6
 #define NAK_UNSUPPORTED 0x01  // this node does not implement that opcode
 #define NAK_BAD_TOKEN   0x02  // session token mismatch (plan section 8.2)
 #define NAK_BAD_ARG     0x03  // opcode known, payload rejected

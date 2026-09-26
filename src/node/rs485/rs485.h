@@ -18,6 +18,12 @@ extern volatile bool    inCommand;
 extern volatile uint8_t rxIdx;
 extern volatile bool    discardCmd;
 
+// Receive-error counters (CMD_BUS_STATS). ferr/ovf are written by the RX ISR,
+// so loop() reads them under ATOMIC_BLOCK; crc is loop-only.
+extern volatile uint16_t busFerrCount;
+extern volatile uint16_t busOvfCount;
+extern uint16_t          busCrcCount;
+
 // Transmit a command packet: appends CRC8 into packet[len-1], drives DE, and
 // sends each byte with the 9th bit = 1 behind a stream-byte sync preamble.
 void sendCommandPacket(uint8_t* packet, uint8_t len);

@@ -57,6 +57,8 @@ void loop() {
 
     if (validNode && validCrc)
         dispatchCommand(pkt->data, len, broadcast);
+    else if (validNode)
+        busCrcCount++;
 
     cmdTail = (cmdTail + 1) % MAX_COMMANDS;
 }

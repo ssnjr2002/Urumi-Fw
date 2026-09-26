@@ -49,6 +49,7 @@ Node Build Flags:
     * `NODE_HAS_PROBE_REPLY`: Allow a special stream reply mode which relays probe switch state. 
     * `RS485_USE_XDIR`: Turn on XDIR, an automatic hardware direction switch for half duplex RS485 buses. 
     * `NODE_HAS_LASER`: Node has a laser attached to it which can be toggled on or off.
+    * `NODE_IGNORE_FERR`: Process bytes with a UART framing error instead of dropping them (they are still counted).
 * Stepper nodes:
     * `DM542`: Specify the stepper driver as a DM542 driver.
     * `TMC_2660`: Specify the stepper driver as a TMC 2660 driver.

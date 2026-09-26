@@ -26,6 +26,7 @@ static const Cmd kCommands[] = {
     { "pingnode",     cmdPingNode    },
     { "nodepos",      cmdNodePos     },
     { "nodestat",     cmdNodeStat    },
+    { "busstat",      cmdBusStat     },
     { "vac_switch",   cmdVacSwitch   },
     // lifecycle.cpp
     { "stop",         cmdStop        },

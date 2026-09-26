@@ -731,6 +731,7 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
 ISR(HAL_USART_RXC_vect) {
     uint8_t status = HAL_USART_INST.RXDATAH;
     uint8_t b      = HAL_USART_INST.RXDATAL;
+    if (frame_rx_reject(status)) return;
 
     if (status & 0x01) {            // 9th bit = 1 → command frame
         frame_command_byte(b);
