@@ -471,7 +471,31 @@ and see every node go safe; a job and a home run without a timeout.
 
 **Depends on:** 1a.
 
-**Status:** in progress.
+**Status:** done.
+
+**Outcome:**
+
+* Added a Pico primitive `makesafe <node>` (`core0/cmd/periph.cpp`), gated
+  IDLE/PAUSED/ALARM, printing `node <id> en <0|1> datum <0|1> slot <n|->`. It
+  leaves the axis map alone; branch 2 decides what a released node means for
+  the map.
+* `CMD_MAKE_SAFE` is `0x09`; `BUS_KEEPALIVE_MS` = `BUS_SILENCE_MS / 3` (333 ms).
+  The node routine is `node_make_safe()` (core-provided, `node_hooks.h`).
+* The feed flag is set in `frame_rx_reject` itself, so both RX ISRs share it.
+  `NODE_IGNORE_FERR` builds feed on FERR bytes too.
+* The Pico side is a flag in `RS485Bus`'s writes, read once per `processBus`
+  pass; the keepalive does not need the queue empty, since `processBus` only
+  runs between segments.
+* `NODE_DEBUG_CONSOLE` builds have no silence timeout (bench use over USART0
+  with no Pico on the bus).
+* A segment slower than one step per `BUS_KEEPALIVE_MS` would starve the
+  timer mid-job; no real feed rate is that slow.
+* For branch 2 (out of scope here): soft reset after a `CFG_SET` commit, so a
+  commit leaves every node safe every time rather than only when the flash
+  write outlasts the timeout.
+* Bench: `makesafe 4` dropped node 4's slot; pulling the Pico off the bus
+  dropped it too. Still open: vacuum and knife make-safe, a job, a home and a
+  probe without a timeout, a pause longer than 1 s.
 
 ## Branch 2: `feature/bus-sweep`
 
