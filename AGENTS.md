@@ -224,9 +224,7 @@ Work has two phases.
 * Allowed: merge a branch whose Work session handed it back as ready, when the
   user says so; remove its worktree; update the plan doc's Status for that
   branch.
-* Not allowed: code edits, including resolving code conflicts.
-* Plan doc conflicts are the exception: deliberate with the user and resolve
-  them here.
+* Not allowed: code edits, including resolving conflicts.
 
 #### Planning to Work Transition
 
@@ -247,9 +245,10 @@ Work has two phases.
 
 When the branch is finished, in the Work session:
 
-1. Rebase onto current `main` (ask first; see Branching).
-2. With 10 or more commits, propose commit groups; rewrite only once the user
-   approves.
+1. Rebase onto current `main` (ask first; see Branching). Resolve conflicts
+   here; for a plan doc conflict, deliberate with the user first.
+2. Propose commit groups (see Merging); rewrite only once the user approves,
+   and verify the tree is unchanged.
 3. Run the Agent Scope checks. Any failure is named, with a follow-up.
 4. Write the Outcome in the plan doc (or summarise it in chat if there is no
    plan doc), and commit when told.
@@ -267,9 +266,9 @@ When the branch is finished, in the Work session:
 
 #### Merge to Work Transition
 
-If the merge conflicts in code, `main` moved after the branch's rebase. Abort
-the merge (`git merge --abort`) and send the branch back to its worktree to
-rebase onto current `main`, then return through Work to Merge.
+If `git merge --ff-only` refuses, `main` moved after the branch's rebase.
+Send the branch back to its worktree to rebase onto current `main`, then
+return through Work to Merge.
 
 #### Work to Planning Transition
 
@@ -324,14 +323,26 @@ refactor/<component-name>         # Code refactoring
 Merge from the main folder on `main`. The branch doesn't need to be checked
 out; it can stay in its worktree.
 
-| Branch             | Before merging (in the Work session)                                                             | Merge as                 |
-| ------------------ | ------------------------------------------------------------------------------------------------ | ------------------------ |
-| Under 10 commits   | rebase onto `main`                                                                               | squash                   |
-| 10 or more commits | rebase onto `main`, group into logical commits; agent proposes the groups, user approves first   | merge commit (`--no-ff`) |
+Before merging, in the Work session, rebase onto `main` and group the commits:
+
+* One commit per `type(scope)`. Scopeless commits group by type.
+* Plan doc and Outcome commits stay separate from other `docs:` commits.
+* Groups keep the order of their first commit.
+* If moving a commit into its group conflicts, leave it as its own commit
+  and tell the user.
+* The agent proposes the groups; the user approves before the rewrite.
+* Keep the old tip until the merge:
+  `git branch backup/<branch> <old-tip>`.
+* Verify: `git diff backup/<branch> <branch>` must be empty. If any groups
+  touch the same files, run each group's Agent Scope checks on its commit.
+
+Merge as a fast-forward: `git merge --ff-only <branch>`. If it refuses,
+`main` moved after the rebase; see Merge to Work Transition.
 
 * Merge order: dependencies first; refactors and protocol changes before
   features; the smaller of two overlapping branches first.
 * A known failing check may merge only if it is named, with a follow-up.
+* After the merge, delete `backup/<branch>`.
 
 ### Commits
 
