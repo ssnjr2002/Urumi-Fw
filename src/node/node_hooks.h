@@ -25,6 +25,10 @@ void    node_loop(void);
 // stream; vacuum: run pump; …).
 void    node_set_enabled(bool on);
 
+// The type's half of CMD_MAKE_SAFE, called after node_set_enabled(false): drop
+// the stream slot and park whatever disable leaves in place (vacuum servos).
+void    node_release(void);
+
 // Type-specific command dispatch. Called by the core only after a command is
 // NOT recognised as generic. Returns true if handled (reply staged in `reply`,
 // `replyLen` set through the trailing CRC slot); false → unknown, silently
@@ -50,6 +54,10 @@ uint8_t node_status(uint8_t* buf);
 // rather than a bind followed by a separate read that could straddle a reboot.
 // One place to extend when new generic state (e.g. a session token) arrives.
 uint8_t buildNodeStatus(uint8_t* buf);
+
+// CMD_MAKE_SAFE without the reply: disable, clear ENABLED | DATUM, then
+// node_release(). Also run by the bus-silence timeout. Loop context only.
+void    node_make_safe(void);
 
 // Set or clear one bit of the generic flags byte from a type. LOOP CONTEXT ONLY
 // — it read-modify-writes a byte the core also touches, so an ISR caller could

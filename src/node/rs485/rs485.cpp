@@ -16,6 +16,7 @@ volatile bool    discardCmd = false;
 volatile uint16_t busFerrCount = 0;
 volatile uint16_t busOvfCount  = 0;
 uint16_t          busCrcCount  = 0;
+volatile bool     busHeard     = false;
 
 // ─── TX ─────────────────────────────────────────────────────────────────────
 void sendCommandPacket(uint8_t* packet, uint8_t len) {

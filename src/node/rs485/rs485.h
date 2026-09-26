@@ -24,6 +24,10 @@ extern volatile uint16_t busFerrCount;
 extern volatile uint16_t busOvfCount;
 extern uint16_t          busCrcCount;
 
+// Set by the RX ISR on every byte that passes the FERR check; loop() clears it
+// and restarts the bus-silence timeout (main.cpp).
+extern volatile bool     busHeard;
+
 // Transmit a command packet: appends CRC8 into packet[len-1], drives DE, and
 // sends each byte with the 9th bit = 1 behind a stream-byte sync preamble.
 void sendCommandPacket(uint8_t* packet, uint8_t len);

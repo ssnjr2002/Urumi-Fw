@@ -180,21 +180,40 @@ void node_set_enabled(bool on) {
     else    ssrStop();
 }
 
+// Close every servo (0°, as at boot) and drop the probe slot. Disable already
+// stopped the pump.
+void node_release(void) {
+    for (uint8_t i = 1; i <= HAL_VACUUM_SERVO_COUNT; i++)
+        servoWriteAngle(i, 0);
+    servoUpdateLed();
+#ifdef NODE_HAS_PROBE_REPLY
+    probeStepMask = 0;
+    probeDirMask  = 0;
+    probeSlot     = 0xFF;
+#endif
+}
+
 // ─── Hooks: per-loop tick ───────────────────────────────────────────────────
 void node_loop(void) {
     ssrUpdate();
 }
 
-// Type-specific status tail: [servo-active bits][ssr state]. Bit i of the first
-// byte = servo (i+1) is off-park (angle > 0); second byte = ssrState (0 off,
-// 1 ramp, 2 full).
+// Type-specific status tail: [servo-active bits][ssr state][slot]. Bit i of the
+// first byte = servo (i+1) is off-park (angle > 0); second byte = ssrState (0
+// off, 1 ramp, 2 full); slot only on NODE_HAS_PROBE_REPLY builds (0xFF =
+// disengaged).
 uint8_t node_status(uint8_t* buf) {
     uint8_t bits = 0;
     for (uint8_t i = 1; i <= HAL_VACUUM_SERVO_COUNT; i++)
         if (servoAngle[i]) bits |= (1 << (i - 1));
     buf[0] = bits;
     buf[1] = (uint8_t)ssrState;
+#ifdef NODE_HAS_PROBE_REPLY
+    buf[2] = probeSlot;
+    return 3;
+#else
     return 2;
+#endif
 }
 
 // ─── Hooks: type-specific commands ──────────────────────────────────────────

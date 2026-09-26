@@ -60,12 +60,13 @@ static inline void frame_stream_reset(void) {
 // fails its CRC.
 static inline bool frame_rx_reject(uint8_t status) {
     if (status & USART_BUFOVF_bm) busOvfCount++;
-    if (!(status & USART_FERR_bm)) return false;
-    busFerrCount++;
-#ifdef NODE_IGNORE_FERR
-    return false;
-#else
-    frame_stream_reset();
-    return true;
+    if (status & USART_FERR_bm) {
+        busFerrCount++;
+#ifndef NODE_IGNORE_FERR
+        frame_stream_reset();
+        return true;
 #endif
+    }
+    busHeard = true;
+    return false;
 }

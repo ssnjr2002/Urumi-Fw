@@ -250,6 +250,14 @@ void node_set_enabled(bool on) {
     }
 }
 
+// Disengage, as CMD_ENGAGE with SLOT_NONE. The laser is a crosshair and stays
+// as commanded.
+void node_release(void) {
+    slot        = SLOT_NONE;
+    stepBitMask = 0;
+    dirBitMask  = 0;
+}
+
 // Stepper does all its work in the RX ISR. The one thing left for loop context
 // is publishing the limit state into the shared flags byte: node_set_flag()
 // read-modify-writes a byte the core also owns, so it must not be called from

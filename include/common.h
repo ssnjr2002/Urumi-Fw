@@ -56,6 +56,19 @@
 // Each wraps at 16 bits and is never cleared; take differences between reads.
 #define CMD_BUS_STATS 0x08
 #define CMD_BUS_STATS_REPLY_LEN 6
+
+// CMD_MAKE_SAFE — de-energise and disengage. No payload; not broadcastable.
+//     reply: the status payload, sampled after the release.
+// Clears NODE_FLAG_ENABLED and NODE_FLAG_DATUM as CMD_DISABLE does, then drops
+// the node's stream slot (stepper, probe vacuum) and closes the vacuum's servos.
+// Released = no slot in the status tail, or slot 0xFF.
+//
+// A node that hears no byte for BUS_SILENCE_MS runs the same routine by itself
+// and stays up to answer the next frame. The Pico keeps an idle bus alive with
+// a zero stream byte after BUS_KEEPALIVE_MS without sending.
+#define CMD_MAKE_SAFE 0x09
+#define BUS_SILENCE_MS   1000
+#define BUS_KEEPALIVE_MS (BUS_SILENCE_MS / 3)
 #define NAK_UNSUPPORTED 0x01  // this node does not implement that opcode
 #define NAK_BAD_TOKEN   0x02  // session token mismatch (plan section 8.2)
 #define NAK_BAD_ARG     0x03  // opcode known, payload rejected
@@ -106,6 +119,8 @@
 // Status payload — ONE shape, from one serializer on the node (buildNodeStatus):
 //     [node_type][flags][type-specific tail…]        flags: NODE_FLAG_*
 //     stepper tail: [pos int32 BE][slot]             slot 0xFF = disengaged
+//     vacuum tail:  [servo bits][ssr state][slot]    slot only with
+//                                                    NODE_HAS_PROBE_REPLY
 // CMD_NODE_STATUS, CMD_GET_POS and the CMD_ENGAGE ack all reply with it, so the
 // host has one parser and there is one place to extend. Notably the ENGAGE ack
 // makes a bind a single atomic observation of (bound, position, enabled): a

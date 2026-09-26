@@ -59,6 +59,9 @@ void node_set_enabled(bool on) {
     }
 }
 
+// No slot, and disable already stopped both outputs.
+void node_release(void) {}
+
 // ─── Hooks: per-loop tick ───────────────────────────────────────────────────
 // Both outputs are level-driven (digital pin / hardware PWM), so there is no
 // state machine to advance between commands.

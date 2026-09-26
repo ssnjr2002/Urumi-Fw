@@ -39,8 +39,29 @@ void setup() {
 
 }
 
+#ifndef NODE_DEBUG_CONSOLE
+// Make safe once after BUS_SILENCE_MS without a byte; the next byte re-arms it.
+// Not on console builds, which are driven over USART0 with the bus often idle.
+static void busSilenceCheck(void) {
+    static uint32_t lastHeardMs = 0;
+    static bool     safe        = false;
+    if (busHeard) {
+        busHeard    = false;
+        lastHeardMs = millis();
+        safe        = false;
+    } else if (!safe && millis() - lastHeardMs >= BUS_SILENCE_MS) {
+        node_make_safe();
+        safe = true;
+    }
+}
+#endif
+
 void loop() {
     node_loop();               // type-specific per-iteration work (non-blocking)
+
+#ifndef NODE_DEBUG_CONSOLE
+    busSilenceCheck();
+#endif
 
 #ifdef NODE_DEBUG_CONSOLE
     debugConsolePoll();        // drain any bench-console command line

@@ -60,6 +60,12 @@ uint8_t buildNodeStatus(uint8_t* buf) {
     return 2 + node_status(&buf[2]);
 }
 
+void node_make_safe(void) {
+    node_set_enabled(false);
+    g_nodeFlags &= ~(NODE_FLAG_ENABLED | NODE_FLAG_DATUM);
+    node_release();
+}
+
 // Returns true iff this was a generic command (reply staged in `reply`).
 static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
                                  uint8_t* replyLen) {
@@ -107,6 +113,16 @@ static bool handleGenericCommand(const uint8_t* pkt, uint8_t* reply,
             g_nodeFlags &= ~(NODE_FLAG_ENABLED | NODE_FLAG_DATUM);
             replyAck(CMD_DISABLE, reply, replyLen);
             return true;
+
+        case CMD_MAKE_SAFE: {
+            node_make_safe();
+            reply[0] = NODE_ID;
+            reply[1] = CMD_MAKE_SAFE;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;
+            *replyLen = 3 + n + 1;
+            return true;
+        }
 
         case CMD_DATUM_SET: {
             // The master is datuming this node right now. Arm the witness and
