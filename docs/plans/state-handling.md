@@ -108,8 +108,9 @@ the states mean, how each is entered, and how each is left.
   ahead. Unconfirmed: the map fails, `ALARM_NODE_FAULT`, with
   `err fenced <s0> <s1> <s2> <s3>` naming the fenced node of each slot the
   request collides with (`-` elsewhere), e.g. `err fenced - - 3 -`.
-* **Readback:** `axis_map` with no argument prints the binding with fenced
-  slots marked, `1 2 3! 4`, and the request beside it when they differ.
+* **Readback:** `slot_map` with no argument prints the binding with fenced
+  slots marked, `slot_map 1 2 !3 4`; `axes_map` prints the request (branch
+  1d).
 * **`makesafe <id>`**: confirmed, the node's slot is unbound and dropped from
   the request, so no alarm follows; unconfirmed, the slot is fenced
   (`NODE_FAULT`).
@@ -133,7 +134,7 @@ X = node 1, Y = 2, Z = 3, A = 4 in slots 0..3; vacuum = 5. Homed, IDLE.
 ```
 node 3's cable works loose            nothing polls; still IDLE
 axis_map 1 2 3 4 (head change)        1,2,4 park and re-engage, keep datums;
-                                      3 silent: slot 2 fenced, 1 2 3! 4
+                                      3 silent: slot 2 fenced, 1 2 !3 4
                                       -> ALARM_NODE_FAULT, err fenced - - 3 -
   axis_map 1 2 - 4                    fenced slot 2 satisfies - -> IDLE
                                       Z steps NACKed; X, Y, A keep datums
@@ -142,7 +143,7 @@ axis_map 1 2 3 4 (head change)        1,2,4 park and re-engage, keep datums;
   or reset                            wipe; sweep: 1,2,4,5 answer, slots
                                       0,1,3 freed; 3 mute (holds slot 2)
                                       -> ALARM_BUS_DEGRADED, no map
-     bus_exclude 3                    -> IDLE unmapped; slot 2 still 3!
+     bus_exclude 3                    -> IDLE unmapped; slot 2 still !3
      axis_map 1 2 - 4                 -> IDLE; cmds to 3: err excluded
      later reset                      exclusion gone -> ALARM_BUS_DEGRADED
                                       again unless 3 answers
@@ -256,14 +257,15 @@ power cycle                           clean: no ids, no fences, nothing touched
 
 ## Wire changes
 
-All touch `web/src/wire/` and the Sim (`web/src/wire/link/backends/sim.ts`).
+The host wire. The web host's side (`web/src/wire/`, the Sim) is deferred from
+branch 1d on (see 1d, Web deferred).
 
 * Alarm reasons: `ALARM_CONFIG` retired; `ALARM_BUS_DEGRADED` added.
 * Commands: `unstop`, `bus_exclude`, `home_end`, `cfg`; `setorigin` syntax.
 * Errors: `err excluded`, `err degraded`, `err fenced <s0> <s1> <s2> <s3>`, `err node <id> …`
   from `setorigin`.
-* `axis_map` readback marks fenced slots (`3!`) and shows the request beside
-  the binding when they differ.
+* `slot_map` readback marks fenced slots (`!3`); `axes_map` and `slot_map`
+  readbacks (branch 1d).
 * Boot: a `ready` line after the banner. `CFG_SET`: the host waits for it
   after the ACK.
 * Config: the strictness field.
@@ -624,13 +626,32 @@ The stream stays `dx dy dz da` into slots 0..3: axis k is slot k.
 * **`slot_map <n0> <n1> <n2> <n3>`**, a config-free primitive (`cmd/`,
   IDLE/PAUSED/ALARM). Binds any node type: parks every node that holds a slot,
   engages the requested ones, stores the slot request. `-`/`0` = empty;
-  `err dup` for a node twice. No-arg: readback. It knows nothing about axes.
+  `err dup` for a node twice. It knows nothing about axes. Refused in RUNNING
+  (as `axis_map`) and in `STATE_PROBING` (`err bad_state`), so a probe's
+  binding cannot change underneath it.
+* **Readbacks:** `slot_map` prints the binding (`slot_map - - 3 6`), `axes_map`
+  the request (`axes_map 1 2 3 4`). A slot token is `-`, `n` or `!n` (fenced,
+  branch 2; 1d never prints it); an axes token is `-`, `n` or `?n` (pending).
+  `slot_map` is a firmware and console primitive; a host needs only
+  `axes_map`.
 * **`axes_map <x> <y> <z> <a>`** replaces `axis_map` (renamed: matches
   `axes_enable`, `axes_homed`). Keeps today's config checks (`err
   unconfigured`, `not_in_config`): it is the production command, `slot_map`
-  the config-free bench one. A node whose engage reply is not a stepper is
-  refused (`err node <id> not_stepper`), from the reply's type. Stores the axis
-  request, then applies it as a `slot_map`. No-arg: readback. The
+  the config-free bench one. The axes request is `{node, pending}` per axis;
+  pending = not yet confirmed a stepper. `axes_map` stages the request with
+  every named axis pending, then sends `CMD_NODE_STATUS` to each pending node:
+  * stepper: pending clears;
+  * confirmed non-stepper: `err node <id> not_stepper`, the stage is thrown
+    away, nothing changes;
+  * silent: stays pending, `err node <id> timeout`.
+  Otherwise the stage is committed and the slot request set to its ids;
+  applied (park, engage) only when nothing is pending, else the binding no
+  longer matches and the machine goes `NODE_FAULT`. The boot default map keeps
+  a wrong type as pending instead of throwing the stage away, so a wrong config
+  boots into `NODE_FAULT`. An axis is bound when its slot holds the requested
+  node and it is not pending. `unalarm` re-checks only the pending axes, then
+  applies; a pending node that answers as a non-stepper loops there, accepted.
+  Readback marks pending as `?n` (`axes_map 1 2 ?5 4`). The
   re-apply (`unalarm`'s retry, the probe exit, the boot default map) is the
   internal `axesMapApply()` with the stored request.
 * **Two comparisons:**
@@ -639,6 +660,10 @@ The stream stays `dx dy dz da` into slots 0..3: axis k is slot k.
   * `axes_map` vs binding: which axes are bound. Information, not an alarm.
   The `STATE_PROBING` exemption in `axisMapGate` goes: `NODE_FAULT` never
   reads axes.
+* **No request, no axes:** with no `axes_map` since the last wipe (no config,
+  or a bench `slot_map` only) no axis is bound, so ingest refuses motion.
+  Today no config binds nothing either; `slot_map` on the bench binds nodes
+  for `enable`, `nodestat`, `makesafe` and `step`, not for jobs.
 * **Axis state only for bound axes:** `machinePos`, `axes_homed`,
   `homingLatched` and `axes_enabled` are derived for axis k only while it is
   bound. An unbound axis reads unbound, not "at 0". The node-frame datum
@@ -652,11 +677,29 @@ The stream stays `dx dy dz da` into slots 0..3: axis k is slot k.
   plus the teardown. The vacuum is an ordinary slot entry, so the park loop
   releases it. `err vac_mapped` becomes "the vacuum is an axis in
   `axes_map`".
+* `unalarm`'s retry re-applies the slot request, not `axes_map`:
+  `NODE_FAULT` is about the last `slot_map`, which may be a bench one. When
+  the slot request came from `axes_map`, the pending axes are re-checked
+  first.
+* Callers that mean "the axis" (`axes_enable`, `setorigin`, the Z lookups,
+  `status`) read a new `axisNode(k)`, the node only while axis k is bound, so a
+  vacuum in slot 3 is never enabled or datumed as an axis. `step` and the hall
+  scan look up by node and stay.
 * `setorigin` and `step` stay slot-framed (axis k = slot k); branch 3 decides
   `setorigin`'s form.
 * `slot_map` is a primitive and `axes_map` stays in the primitive table as
   today (`control_plane.cpp:47`), gated on the config inside; moving it to the
   controller table is not needed for this branch.
+* **Web deferred.** The controller is moving onto the Pico, so the web host is
+  not ported to this layer yet: it waits until the Pico controller settles, at
+  the earliest after branch 3. Until then the web host against 1d firmware
+  cannot bind a head or home (it sends `axis_map`, now unknown); the Sim still
+  accepts `axis_map`, so `pnpm test` stays green. No `axis_map` alias: its
+  readback would still fail `readAxisMap`. Web to port: `src/wire/link/
+  commands.ts:433-485` (`axisMap`, `readAxisMap`), `backends/sim.ts`,
+  `src/controller/controller.ts:62,368,424`, `src/homing/sequence.ts:227,329`,
+  `src/index.ts`, comments in `slots.ts`, `status.ts`, `settled.ts`, demo
+  `comms.{html,js}`, and their tests.
 
 **Files** (under `src/rp2350/` unless noted):
 
@@ -674,13 +717,7 @@ The stream stays `dx dy dz da` into slots 0..3: axis k is slot k.
    `core0/controller/cmd/unalarm.cpp`, `core0/controller/seq/controller.{h,cpp}`
    (default map), `core0/core0.cpp:113-114` (wipe), `ops/homing.h`,
    `ipc/shared_state.h` comments.
-6. Web: `src/wire/link/commands.ts:433-485` (`axisMap` → `axesMap`, new
-   `slotMap`, readbacks), `src/wire/link/backends/sim.ts`,
-   `src/machine/slots.ts`, `src/homing/sequence.ts:232,334`,
-   `src/wire/link/settled.ts`, `src/wire/format/status.ts` (comments), demo
-   `comms.{html,js}`; tests `test/wire/link/commands.test.ts`,
-   `test/wire/link/backends/sim.test.ts`, `test/controller/controller.test.ts`.
-7. Docs: `docs/engage_and_axis_map.md` (the two layers), `docs/tool_probe.md`
+6. Docs: `docs/engage_and_axis_map.md` (the two layers), `docs/tool_probe.md`
    (§5, the exit), `docs/wire_protocol.md`, `docs/homing.md`,
    `docs/config_storage.md`. Historical plans stay as written.
 
@@ -688,19 +725,17 @@ The stream stays `dx dy dz da` into slots 0..3: axis k is slot k.
 on `slot_map`); `setorigin`'s form (branch 3); a stream format not fixed to
 four axes (planner overhaul).
 
-**Checks:** `pio run -e pico`, `pio test -e native`, `pnpm typecheck`,
-`pnpm test`. Human scope: `nodestat <vac>` after `probe_end` shows no slot
+**Checks:** `pio run -e pico`. Human scope: `nodestat <vac>` after `probe_end` shows no slot
 (before: slot 3); a probe session then an A jog with the vacuum on the bus
 runs clean (`busstat` unchanged); `slot_map` binding a vacuum with no config;
 a head switch through `axes_map` keeping its datums; a job refused while an
 axis is unbound.
 
-**Overlap:** none among open typed branches. Touches `core0/cmd/table.h` and
-`web/src/wire/`.
+**Overlap:** none among open typed branches. Touches `core0/cmd/table.h`.
 
 **Depends on:** nothing (1, 1a, 1b merged).
 
-**Status:** planned.
+**Status:** in progress.
 
 ## Branch 2: `feature/bus-sweep`
 
@@ -772,14 +807,13 @@ confirmation: the fence" and "Estop", except strictness and session endings
    * `core0/cmd/query.cpp`: `status` reports mute, excluded and touched (text
      plane only; STATUS_RSP layout unchanged).
 4. `CFG_SET` → reset: `core0/data_plane.cpp:233-238` sends the ACK, then
-   raises `soft_reset_requested` instead of applying the map. Web
-   `src/wire/link/link.ts:212-226` (`pushConfig`): after `CFG_ACK`, wait on
-   the text sink for `ready` (with a timeout), not counted as a desync; the
-   banner before it is drained. The Sim has no `CFG_SET` (Follow-ups).
-5. Web wire and Sim: `src/wire/format/status.ts` (`BUS_DEGRADED`),
-   `src/wire/link/commands.ts` (`unstop`, `bus_exclude`, `err fenced`, the
-   readback's `!`), `sim.ts` (`stop`, `unstop`, `bus_exclude` answering
-   `err not_mute` since the Sim has no mute nodes). Tests beside each.
+   raises `soft_reset_requested` instead of applying the map.
+5. Web: deferred with 1d's (see 1d, Web deferred). When ported:
+   `src/wire/link/link.ts:212-226` (`pushConfig`) waits for `ready` after
+   `CFG_ACK` (with a timeout, not a desync, banner drained);
+   `src/wire/format/status.ts` (`BUS_DEGRADED`); `commands.ts` (`unstop`,
+   `bus_exclude`, `err fenced`); `sim.ts` (`stop`, `unstop`, `bus_exclude`).
+   A host reads `axes_map`, so the `!` readback stays console-only.
 6. Docs: `docs/engage_and_axis_map.md` (release rule, fence, estop,
    `makesafe`), `docs/wire_protocol.md` (commands, errors, readback, `ready`),
    `docs/config_storage.md` (reset after commit),
@@ -792,20 +826,20 @@ estop and `claimed` (branch 4); `setorigin` (branch 3; it still clears
 
 **Commit units (proposed):** 1 release rule, fence, estop make-safe and
 `makesafe`; 2 `unstop`; 3 sweep, degraded, `bus_exclude`; 4 `CFG_SET` reset
-and `ready`. Web and docs travel with the unit they describe.
+and `ready`. Docs travel with the unit they describe.
 
-**Checks:** `pio run -e pico`, `pio test -e native`, `pnpm typecheck`,
-`pnpm test`. Human scope: estop with a node unplugged, `reset` with a mute
+**Checks:** `pio run -e pico`, `pio test -e native`. Human scope: estop with
+a node unplugged, `reset` with a mute
 touched node, the walkthrough (fence, `-`, fence retry, degraded, exclude), a
 head switch keeping its datums, `CFG_SET` then `ready`, sweep timing on the
 bus.
 
 **Overlap:** none (`irq-bench` has no branch type). Touches
-`core0/cmd/table.h` and `web/src/wire/`.
+`core0/cmd/table.h`.
 
 **Depends on:** branch 1 (merged), branch 1b (merged), branch 1d. The
 Decisions above say `axis_map`; after 1d the slot rules (park, fence, `-`,
-`err fenced`, the `3!` readback, the fence retry) belong to `slot_map`, and
+`err fenced`, the `!3` readback, the fence retry) belong to `slot_map`, and
 `axes_map` inherits them by applying through it. "Holds a slot" in touched
 then includes the probe vacuum with no special case.
 
