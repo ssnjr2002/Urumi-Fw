@@ -735,7 +735,39 @@ axis is unbound.
 
 **Depends on:** nothing (1, 1a, 1b merged).
 
-**Status:** in progress.
+**Status:** ready to merge.
+
+**Outcome:**
+
+* Modules: `core0/ops/axis_map.*` is gone. `ops/slot_map.{h,cpp}` holds the
+  slot request, the apply, `slotMapComplete` and the `NODE_FAULT` gate, and
+  knows nothing about axes; `ops/axes_map.{h,cpp}` holds the type checks and
+  applies through `slotMapCommit(req, fromAxes, parkOnly, &res)`. The axes
+  request (`axesReqSet`, `axesReqAt`, `axesReqPending`, `axisNode`,
+  `nodeAxis`) lives in `position.{h,cpp}` beside the views it decides.
+  `unalarm` picks the retry (`slotMapFromAxes()`). Branch 2's fence, touched
+  and `err fenced` go in `slot_map.cpp`.
+* Deviation: while an axis is pending, `axes_map` parks every slot holder and
+  binds nothing, rather than leaving the old binding. Otherwise a probe exit
+  that hits a timeout would leave the vacuum in slot 3.
+* `step` and `hallscan` check the node's own `nodeEnabled` bit instead of
+  `axes_enabled`, so a node bound by `slot_map` alone can step.
+* `CFG_SET` re-commits the default map through the same routine as boot, so
+  it also keeps a wrong type pending (`NODE_FAULT`) instead of refusing.
+* `probeBegin` checks types by `CMD_NODE_STATUS` before rebinding, then
+  applies `slot_map - - z vac` (`probeBind`); `savedMap` is gone. A `newMap`
+  refused for a wrong type on the exit falls back to the stored request.
+* Web deferred (see Settled): the web host sends `axis_map`, now unknown, so
+  against this firmware it cannot bind a head or home. Its Sim still accepts
+  `axis_map`, so `pnpm test` is green and proves nothing about 1d.
+* Out of scope: the `axes_map`-as-probe-exit route (`cmd/axis.cpp`,
+  `probeExit(newMap)`) is unreachable, as it was for `axis_map` on main:
+  `busGateDenies()` refuses `STATE_PROBING` first. `probe_end` is the only exit.
+* Checks: `pio run -e pico` clean. Human scope open, as listed in Checks, plus
+  `axes_map` with a silent node (`err node <id> timeout`, `NODE_FAULT`, then
+  `unalarm` once it answers) and with a config axis id that answers as a
+  non-stepper (`not_stepper`, nothing changes; a vacuum id is already
+  `not_in_config`).
 
 ## Branch 2: `feature/bus-sweep`
 
