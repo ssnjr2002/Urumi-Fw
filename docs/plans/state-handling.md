@@ -735,7 +735,7 @@ axis is unbound.
 
 **Depends on:** nothing (1, 1a, 1b merged).
 
-**Status:** ready to merge.
+**Status:** done. Unblocks branch 2.
 
 **Outcome:**
 
