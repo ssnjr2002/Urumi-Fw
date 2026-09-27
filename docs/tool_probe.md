@@ -308,8 +308,8 @@ Three commands, one session:
 |---|---|---|
 | `probe_map <switch-id>` | 5.3 | enter the session, rebind slots |
 | `probe_leg <dir> <ceil_us> …` | 5.7 | run one leg |
-| `probe_end` | 5.5 | exit, restore the saved axis map |
-| `axis_map …` | 5.5 | exit, committing a new map instead |
+| `probe_end` | 5.5 | exit, re-apply the axes request |
+| `axes_map …` | 5.5 | exit, committing a new axes request instead |
 
 ### 5.1 `STATE_PROBING`
 
@@ -330,7 +330,7 @@ A new `MachineState` is refused by all three relevant gates with **zero edits**:
 |---|---|---|
 | MSEG | `data_plane.cpp` | admits `IDLE`/`RUNNING` only |
 | JOG | `data_plane.cpp` | admits `IDLE`/`PAUSED`/continuing-jog only |
-| `axis_map` | `busGateDenies()` | admits `IDLE`/`PAUSED`/`ALARM` only |
+| `slot_map` / `axes_map` | `busGateDenies()` | admits `IDLE`/`PAUSED`/`ALARM` only |
 
 That default-deny is the entire argument for a state over a reason. A
 `RUNNING_PROBE` reason would need each of those amended by hand, and would still
@@ -395,7 +395,7 @@ Two things fall out of exposing it, and both were previously obligations with
 nowhere to live:
 
 - `probe_end` in `PROBING_CONTACT` is refused, not quietly honoured. Exiting there
-  restores the axis map and leaves the tool pressed into the bed. It reports
+  restores the axes and leaves the tool pressed into the bed. It reports
   `NOT_CLEARED` (§5.10).
 - A console operator can see what the machine is sitting on without issuing a
   command. The host has the same fact from the last leg result (§5.11); the
@@ -403,51 +403,40 @@ nowhere to live:
 
 ### 5.3 `probe_map <switch-id>`
 
-**Deviation — one argument, not two, and a committed axis map is a
-precondition.** This section originally passed both ids. Z is now read from the
-committed map's slot 2, because passing it made `probe_map` a *second binder*
-whose answer could disagree with the very map it saves and later restores — the
-"two commands writing one slot table" failure this section opens by warning
-about, reintroduced in the command that warns about it.
+**Deviation — one argument, not two, and a bound Z is a precondition.** This
+section originally passed both ids. Z is now the node bound as axis Z, because
+passing it made `probe_map` a *second binder* whose answer could disagree with
+the axes request the exit restores.
 
-Requiring a committed map is not a new restriction, only an enforced one: §5.5's
-teardown replays `savedMap`, so a session begun without a map had nothing
-coherent to go back to. `probe_map` is refused outside `IDLE`/`PAUSED` for the
+Requiring a bound Z is not a new restriction, only an enforced one: §5.5's
+teardown re-applies the axes request, so a session begun without one had
+nothing coherent to go back to. `probe_map` is refused outside `IDLE`/`PAUSED` for the
 same reason — entering from an ALARM would clear the state, strand the reason,
 and let `probe_end` land an alarmed machine in `IDLE`.
 
-The operator consequence is a fixed order: **`axis_map` first, then
-`probe_map`.** Refusals are `err no_z` (slot 2 unbound), `err vac_mapped` (the
-switch node holds a motion slot) and `err bad_state`.
+The operator consequence is a fixed order: **`axes_map` first, then
+`probe_map`.** Refusals are `err no_z` (axis Z unbound), `err vac_mapped` (the
+switch node is an axis in the axes request), `err node <id> not_stepper` /
+`not_vacuum` / `no_ack` and `err bad_state`.
 
-A **full alternative binding**, not an overlay. Two commands writing one slot
-table is the "updated one frame, forgot the other" class that
-[axis.cpp](../src/rp2350/core0/cmd/axis.cpp) says cost a 1000-line file once
-already.
+A **full alternative binding**, not an overlay, and an ordinary one: the probe
+binding is the slot map `- - <z> <vac>`
+([engage_and_axis_map.md](engage_and_axis_map.md) §5.4). The axes request is
+untouched.
 
-1. Save the committed axis map — the **ids**, not the derived state. This is
-   also where Z comes from (slot 2), so the save and the binding cannot disagree. Both exits
-   rebuild everything else from ENGAGE acks (§5.5), and the `axis_map` exit does
-   not use the saved ids at all; it commits the host's. What the save is really
-   for is `probe_end` and the failure teardown, which need *some* map to replay
-   and have no other source for one.
-2. Disengage every bound node. Each `CMD_ENGAGE` ack carries `node_type()` as its
-   first status byte, so the disengage pass **verifies types for free**: the id
-   called a stepper is a stepper, the id called a vacuum is a vacuum.
-3. Refuse to proceed if any node fails to ack.
-4. Engage Z to slot 2, vacuum to its slot. **`slotBind()` only Z.** The vacuum
-   is engaged — it must be, or it would not answer polls — but binding it would
-   write `machinePos`, `axes_homed` and `homingLatched` for a node with no
-   stepper tail, and the host would see slot 3 as an enabled, unhomed axis at
-   zero (§5.5). Engaged and bound are not the same thing, and this is the one
-   place in the codebase where they come apart. Every slot the probe does not
-   use is explicitly **unbound**, not merely left alone: a slot bound before the
-   session would otherwise survive into it.
+1. Check both types with `CMD_NODE_STATUS` while nothing has been rebound, so a
+   refusal leaves the binding as it was.
+2. Apply `slot_map - - <z> <vac>`: park every slot holder, engage Z to slot 2
+   and the vacuum to slot 3. A refused engage re-applies the axes request.
+3. Only Z is an axis: slot 2 holds the node the axes request names for Z. The
+   vacuum is engaged — it must be, or it would not answer polls — but it is no
+   axis, so slot 3 carries no position, datum or energised bit. Slots 0 and 1
+   are empty, so X and Y are unbound and ingest refuses their steps.
 
-Step 3 is the safety property, not a nicety. The Pico requests a poll by setting
-the vacuum slot's **step** bit — so a stepper still engaged in that slot would
-take one step per poll, a phantom axis tracking Z's entire descent. Verified
-teardown makes that impossible by construction.
+The park in step 2 is the safety property, not a nicety. The Pico requests a
+poll by setting the vacuum slot's **step** bit — so a stepper still engaged in
+that slot would take one step per poll, a phantom axis tracking Z's entire
+descent.
 
 ### 5.4 Which slot for the vacuum
 
@@ -469,14 +458,14 @@ than something the Pico infers.
 - `probe_end` — "put it back the way it was." Needs no arguments, so it works
   from a console and in the bail-out case, where the operator is already unsure
   what state things are in.
-- `axis_map …`, admitted in `STATE_PROBING` — "here is the binding, and that ends
+- `axes_map …`, admitted in `STATE_PROBING` — "here is the binding, and that ends
   the probe." For a host that ends a session by committing a new binding, this
   saves a round trip and the window in between where the machine is bound to
   nothing useful. A host that exits with `probe_end` never needs it — the route
   exists so that committing a map is never *refused* in `STATE_PROBING`, not
   because it is the expected way out.
 
-Admitting `axis_map` is not an overload; it is the `ALARM_NODE_FAULT` parallel
+Admitting `axes_map` is not an overload; it is the `ALARM_NODE_FAULT` parallel
 below taken seriously. Any committed map ends the session, and `probe_end` is sugar for
 committing the one that was already there.
 
@@ -489,22 +478,17 @@ want to bail. It would also move the teardown's ~160 ms of blocking bus work
 Either route must save `returnState` (IDLE or PAUSED) at `probe_map` time;
 neither can infer where the session started.
 
-Binding a vacuum into a motion slot **pollutes the position model**. `slotBind()`
-writes `machinePos[s]`, `axes_homed` and `homingLatched` for whatever slot is
-bound; the vacuum has no stepper tail, so the slot lands at position 0 with the
-datum cleared, while `reconcileValidity()` still projects `nodeEnabled` through
-the map into `axes_enabled`. The host would see a slot reading as an enabled,
-unhomed axis at zero.
-
-So exit disengages everything and **replays the saved ids through `cmdAxisMap`**
-— the existing path, not a restore routine. That path is "deliberately dumb, not
+Exit **re-applies the axes request** (or the host's, for the `axes_map` route)
+through the ordinary path, not a restore routine. It parks every slot holder
+first, the vacuum included, so nothing of the probe binding survives. A new
+request refused for a wrong type falls back to the stored one. That path is "deliberately dumb, not
 a diff" and rebuilds every one of those fields from ENGAGE acks rather than from
 anything remembered, so it is correct even if a node reset mid-probe. A second
 binder restoring from saved state is precisely where this would go wrong.
 
 The parallel is `ALARM_NODE_FAULT`: during a probe the machine genuinely has no
-working axis map, and the way out of that condition has always been to commit
-one.
+working axis binding, and the way out of that condition has always been to
+commit one.
 
 ### 5.6 The emit path
 
@@ -811,9 +795,9 @@ is never entered with a probe binding live**, the same shape as the estop sweep'
 guarantee that "once you observe ALARM, everything on the bus is already parked."
 
 The restore is **best-effort**. If the bus is what failed, some engages will time
-out — but `cmdAxisMap` already handles that (`parkForget(n)` with no answer,
+out — but the apply already handles that (`parkForget(n)` with no answer,
 `slotBind` from acks), so a partial restore is the same defined degradation any
-`axis_map` produces on a flaky bus, not garbage.
+`axes_map` produces on a flaky bus, not garbage.
 
 **Capture the probe failure reason before restoring, and do not let the restore
 overwrite it.** Otherwise a `POLL` failure whose restore also fails reports as a

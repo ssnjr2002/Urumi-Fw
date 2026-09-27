@@ -73,7 +73,8 @@ not decode leaves the active config invalid.
 
 **No-config policy: primitives only.** Without a valid config the machine boots
 IDLE with nothing mapped; controller commands answer `err unconfigured` and
-`axis_map` refuses, so nothing can be bound. An accepted `CFG_SET` is the way
+`axes_map` refuses, so no axis can be bound (`slot_map` still binds nodes for
+the bench). An accepted `CFG_SET` is the way
 out. With one, the controller commits the config's `defaultHead` axis map after
 every soft reset (docs/engage_and_axis_map.md §6).
 

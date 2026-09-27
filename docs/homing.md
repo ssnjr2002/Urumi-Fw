@@ -1069,7 +1069,7 @@ feeds.
 The datum machinery, the axis map and `ENGAGE`, the stream byte format, and the
 MSEG path are all untouched. Homing bolts on beside them.
 
-**In particular, `axis_map` does not cost a re-home.** This gets asked, because
+**In particular, `axes_map` does not cost a re-home.** This gets asked, because
 the slot view of `axes_homed` visibly changes when a head is swapped. But the
 datum is node-framed — `nodeOrigin[]` and `nodeHomed` are indexed by bus id — and
 `slotAdoptStatus()` recomputes both `machinePos[s]` and the `axes_homed` bit from

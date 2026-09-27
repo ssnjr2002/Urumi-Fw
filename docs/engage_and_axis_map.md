@@ -1,4 +1,4 @@
-# ENGAGE, axis_map, and Dual-Head Slot Binding
+# ENGAGE, slot_map / axes_map, and Dual-Head Slot Binding
 
 **Branch:** `node-types`
 **Date:** 2026-07-23
@@ -17,7 +17,9 @@ sketched `CMD_ENGAGE` and left it as an open decision. Cross-links:
 
 ## 0. Current state & migration tasklist
 
-Partial: the §9 relay-bound cleanup has started; nothing else is built.
+Stages 1–3 are built. `axis_map` has since split into `slot_map` and
+`axes_map` (§5.4, docs/plans/state-handling.md branch 1d); the stage notes
+below keep the names they were written with.
 
 - [x] §9 relay bounds — `BUS_ADDR_MAX`(8)/`AXIS_NODE_MAX`(4)/`node_isAxis()`;
   `enable`/`disable`/`pingnode`/`nodepos` widened, axis bookkeeping gated
@@ -103,12 +105,12 @@ Keep them named apart.
 
 | Link | Verb | Granularity | Semantics |
 |---|---|---|---|
-| **host ↔ Pico** | `axis_map <x> <y> <z> <a>` | whole map (≤4 ids) | *intent*: "these bus nodes are my X/Y/Z/A" |
+| **host ↔ Pico** | `axes_map <x> <y> <z> <a>` | whole map (≤4 ids) | *intent*: "these bus nodes are my X/Y/Z/A" |
+| **host ↔ Pico** | `slot_map <n0> <n1> <n2> <n3>` | whole map (≤4 ids) | *primitive*: "these nodes listen on slots 0..3", any type |
 | **Pico ↔ node** | `CMD_ENGAGE <slot>` / disengage | one node | *mechanism*: "you occupy stream slot N" (or none) |
 
 The host declares the **full binding**; the Pico owns the **current map** and
-**diffs** each new `axis_map` into the minimal set of per-node engage/disengage
-packets. This is the "single source of truth on the Pico" the node-type doc §7
+turns each new map into per-node engage/disengage packets (§5.2). This is the "single source of truth on the Pico" the node-type doc §7
 already assigns to the master — made concrete.
 
 Why the wire is unavoidably granular (never a broadcast): each engage must be
@@ -220,8 +222,8 @@ without sending, between segments only; during a job every step sends a byte.
 It does not send during `core1FlashPark`, so a config commit longer than the
 timeout leaves every node safe and the machine needs a re-home.
 
-The Pico's map is not changed by either path: a released node stays mapped
-until it is engaged again.
+The Pico's slot binding is not changed by either path: a released node stays
+bound until it is engaged again.
 
 ---
 
@@ -241,26 +243,26 @@ exists; it only speaks the granular `CMD_ENGAGE` verb. This is the clean split:
 
 | Core | Role |
 |---|---|
-| **Core 0** (USB) | owns `slotNode[4]`, parses `axis_map`, diffs, gates on the result |
+| **Core 0** (USB) | owns `slotNode[4]` and the axes request, parses `slot_map` / `axes_map`, applies, gates on the result |
 | **Core 1** (bus) | dumb relay — sends one `CMD_ENGAGE` packet, ACKs back |
 
 `slotNode[4]` — the node id currently engaged to each slot (or `SLOT_NONE`) — is
-**local to Core 0**; nothing is shared across cores. `axis_map <x> <y> <z> <a>`
-is a *desired* map; applying it is deliberately **not a diff** — it always
-re-sends every engage:
+**local to Core 0**; nothing is shared across cores. A slot map is a *desired*
+binding; applying it (`ops/slot_map.cpp`) is deliberately **not a diff** — it
+always re-sends every engage:
 
 ```
-for slot i in 0..3:  if slotNode[i] != NONE: ENGAGE(slotNode[i], SLOT_NONE)  # clear old (best-effort)
+for slot i in 0..3:  if slotNode[i] != NONE: ENGAGE(slotNode[i], SLOT_NONE)  # park every holder (best-effort)
 for slot i in 0..3:  if desired[i]  != NONE: ENGAGE(desired[i], i)           # bind every desired slot
-commit slotNode = desired  iff every desired ENGAGE ACKed
+a refused engage unbinds that slot and every later one
 ```
 
 **Why not a diff.** A skip-if-unchanged diff was tried and removed: because the
 Pico's `slotNode` persists while nodes can independently reset/reflash, a re-issued
-identical `axis_map` diffed to *nothing* and sent no engage — so a node that had
+identical map diffed to *nothing* and sent no engage — so a node that had
 silently dropped to `SLOT_NONE` stayed disengaged while the map claimed it was
 bound, and motion streamed into a slot nobody listened to (confirmed on the
-bench). Always re-sending every engage makes `axis_map` self-correcting: the node
+bench). Always re-sending every engage makes a map self-correcting: the node
 state can never drift from what the map claims. It costs a few extra cold-path
 round-trips (connect / head-switch), which do not matter.
 
@@ -274,21 +276,57 @@ push:  ((uint32_t)slot << 16) | (CMD_ENGAGE << 8) | node   # slot 0..3, or 0xFF 
 core1: slot = (word >> 16) & 0xFF → send [node][CMD_ENGAGE][1][slot][crc], await ACK, push result
 ```
 
-A diff is up to 8 sequential blocking round-trips (≤4 disengage + ≤4 engage) —
-fine, it is a cold path (connect / head-switch, never hot).
+An apply is up to 8 sequential blocking round-trips (≤4 disengage + ≤4
+engage) — fine, it is a cold path (connect / head-switch, never hot).
 
 ### 5.3 Partial failure is safe by idempotency — no rollback
 
-If an `ENGAGE` mid-diff times out, Core 0 **does not commit**: `slotNode` keeps
-its old value, the machine stays alarmed, and the offending node is
-reported. The engages already sent stay applied on their nodes, but since the
-committed map is unchanged, a **retry re-diffs against the old map and re-sends
-the same packets** — and re-engaging a node to the slot it already holds is
-idempotent. So retry-after-partial-failure needs no rollback logic.
+If an `ENGAGE` times out, that slot and the later ones are left unbound, the
+request stays unmet and the machine goes `ALARM_NODE_FAULT` (§6). A retry
+re-applies the same request and re-sends the same packets, and re-engaging a
+node to the slot it already holds is idempotent. So retry-after-partial-failure
+needs no rollback logic.
 
-Because `slotNode[]` is Core-0-local, both the no-arg `axis_map` read-back (§8)
-and the §9 `node_isAxis()` membership test are plain local reads — no query path,
-no cross-core hazard.
+Because `slotNode[]` and the axes request are Core-0-local, the read-backs (§8)
+and `node_isAxis()` are plain local reads — no query path, no cross-core hazard.
+
+### 5.4 Two layers: `slot_map` and `axes_map`
+
+```
+axes_map   the axis request:   X=1 Y=2 Z=3 A=4   (ops/axes_map.cpp, request in position.cpp)
+slot_map   the slot binding:   1 2 3 4           (ops/slot_map.cpp)
+axis k is bound  <=>  slot k holds the node axes_map names for k, and it is not pending
+```
+
+* **`slot_map <n0> <n1> <n2> <n3>`** binds any node type to the slots, with no
+  config. `-`/`0` = empty, `err dup` for a node twice. It stores the **slot
+  request** and applies it. No-arg: read back the binding
+  (`slot_map - - 3 6`). Refused in RUNNING and PROBING.
+* **`axes_map <x> <y> <z> <a>`** is the axis request. Refused without a config
+  (`err unconfigured`); every id must be an axis node the config marks present
+  (`err node <id> not_in_config`). Every named axis starts **pending** and gets
+  a `CMD_NODE_STATUS`:
+  * a stepper clears pending;
+  * a confirmed non-stepper refuses the map, nothing changes
+    (`err node <id> not_stepper`);
+  * no answer keeps it pending (`err node <id> timeout`).
+
+  The request is then the slot request. It is applied only once nothing is
+  pending; while an axis is pending every slot holder is parked and the machine
+  is `ALARM_NODE_FAULT` until `unalarm` re-checks. The config's default map
+  keeps a wrong type pending rather than refusing, so a wrong config boots into
+  `NODE_FAULT`. No-arg: read back the request, pending as `?n`
+  (`axes_map 1 2 ?5 4`).
+* **Axis state is for bound axes only.** `machinePos`, `axes_homed`,
+  `homingLatched` and `axes_enabled` read 0/clear for an unbound axis; the
+  node-frame datum is untouched. `axes_enable`, `setorigin` and the Z lookups
+  address bound axes; `step` and `hallscan` address a node in any slot.
+* **Ingest refuses** a nonzero delta for an unbound axis (`NACK_BAD_STATE`), so
+  a job's `da` cannot reach a vacuum lent slot 3. No `axes_map` since the last
+  wipe means no axis is bound.
+* A probe is the slot map `- - <z> <vac>`: only Z stays bound. Its exit
+  re-applies the axes request, which parks the vacuum like any slot holder
+  ([tool_probe.md](tool_probe.md) §5).
 
 ---
 
@@ -301,8 +339,8 @@ requested since the last soft reset the machine is IDLE with nothing bound.
 Motion gating on an unmapped machine is later work
 (docs/plans/state-handling.md). The map comes from the stored config
 (docs/plans/pico-config.md): the Pico's controller commits the config's
-`defaultHead` map itself, through the same `axisMapApply` path as a host
-`axis_map`.
+`defaultHead` map itself, through the same `axesMapApply` path as a host
+`axes_map`.
 
 ```
 boot / soft reset, no valid config → nothing requested → IDLE, unmapped
@@ -311,17 +349,20 @@ boot / soft reset, valid config    → STATE_ALARM, ALARM_NODE_FAULT, then the
    map complete                    → resumeOrHold() → IDLE (or LIMIT_LATCHED)
    a node did not ACK              → stay ALARM_NODE_FAULT, map incomplete
 accepted CFG_SET                   → re-derive the defaultHead map the same way
-axis_map x y z a                   → refused without a config; each id must be
-                                     an axis node the config marks present
-   map complete                    → clears ALARM_NODE_FAULT
-   map incomplete                  → raises ALARM_NODE_FAULT
+axes_map x y z a                   → refused without a config; each id must be
+                                     a stepper axis node the config marks present
+slot_map n0 n1 n2 n3               → any node, no config
+   binding = request               → clears ALARM_NODE_FAULT
+   binding ≠ request               → raises ALARM_NODE_FAULT
 ```
 
-**Complete** means the bound map equals the **requested** map, the one last
-passed to `axisMapApply` (`axisMapComplete`); with none requested it is complete. The controller requests the
-config's `[x, y, head.z, head.a]` for `defaultHead`; a host `axis_map` replaces
-the request, and may be partial (`axis_map 1 - - -` to bench one node): once
-every node it names engages, the alarm clears. A node that fails to engage
+**Complete** means the binding equals the **slot request**, the one last
+written by `slot_map` or `axes_map` (`slotMapComplete`); with none requested it
+is complete. `NODE_FAULT` never reads axes, so a probe's binding is complete
+like any other. The controller requests the config's `[x, y, head.z, head.a]`
+for `defaultHead`; a host map replaces the request, and may be partial
+(`slot_map 1 - - -` to bench one node): once every node it names engages, the
+alarm clears. A node that fails to engage
 leaves its slot and every later slot unbound, so a stale id can never make a
 map read as complete.
 The command still answers `ok` when the result is incomplete: committing the
@@ -340,17 +381,18 @@ The exit rule checks state, not history. Every path back to IDLE goes through
 before it considers a latched limit. On top of that:
 
 - `unalarm` answers `err unconfigured` without a config (the controller-command
-  gate). With the map incomplete it re-applies the requested map once
-  (`axisMapRetry`), and answers `err unmapped` if a node still does not engage.
+  gate). With the request unmet it retries once — the slot request, or for one
+  from `axes_map` the pending type checks and then the apply — and answers
+  `err unmapped` if it is still unmet.
 - `setorigin`'s ALARM→IDLE recovery defers to `resumeOrHold()`.
-- Probe teardown restores the map and lands in `resumeOrHold()` if the restore
-  left it incomplete.
+- Probe teardown re-applies the axes request and lands in `resumeOrHold()` if
+  that left the request unmet.
 
 (Alternative considered: a dedicated `STATE_UNCONFIGURED`. Rejected — it keeps
 `ALARM`'s exits pristine but costs a new state in every state switch /
 `stateName` / ingest check.)
 
-### 6.2 `axis_map` allowed states
+### 6.2 `slot_map` / `axes_map` allowed states
 
 Valid in **IDLE / PAUSED / ALARM**: ALARM covers boot, PAUSED covers head
 switches (§7), IDLE covers reconfiguration between jobs. **Rejected during
@@ -364,12 +406,10 @@ Shared X,Y gantry + two heads (A: Z_a,A_a on nodes 5,6 — B: Z_b,A_b on nodes
 7,8). The slot map is fixed; the head switch rebinds slots 2,3:
 
 ```
-cut with head A:   axis_map 1 2 5 6      # X=1 Y=2 Z=node5 A=node6 → slots 0..3
+cut with head A:   axes_map 1 2 5 6      # X=1 Y=2 Z=node5 A=node6 → slots 0..3
 switch to head B (at the PAUSED tool-change boundary):
-   axis_map 1 2 7 8
-   Pico diff: slots 0,1 unchanged (no packet)
-              slot 2: disengage 5, engage 7
-              slot 3: disengage 6, engage 8
+   axes_map 1 2 7 8
+   Pico: status 1 2 7 8 (steppers), park 1 2 5 6, engage 1 2 7 8
    all four ACK → resume
 ```
 
@@ -381,7 +421,7 @@ switch happens only at the PAUSED boundary the protocol already defines
 
 ## 8. The handshake / periodic boundary — what the Pico reports
 
-A split worth stating explicitly, because it decides where `axis_map` lives:
+A split worth stating explicitly, because it decides where the map lives:
 
 - **Periodic** (`STATUS_RSP`, polled hot) carries **state the Pico evolves on its
   own that the host cannot derive** — `machineState`, `axes_enabled/homed`
@@ -399,14 +439,14 @@ Zero new status bytes.
 
 The host-restart-while-Pico-runs case (fresh host, empty map; Pico still holds
 its committed one) is a **handshake** concern, resolved by **re-asserting
-`axis_map` on connect** (the Pico diffs; unchanged ⇒ near no-op). This is the same
+`axes_map` on connect** (the Pico re-applies it). This is the same
 future connect handshake that would carry the **config pull** if the host ever
 needs to read back the stored config blob. Both are deferred with the handshake;
 this doc does not implement them.
 
-Optional, independent of the handshake: a **pull-only `axis_map` (no-arg)** that
-prints the current committed binding — a bring-up/debug affordance, off the hot
-path, pairing naturally with the setter. Recommended, not required.
+Independent of the handshake: the no-arg forms read back without the hot path.
+`axes_map` prints the axis request, pending as `?n`; `slot_map` prints the
+binding. A host needs only `axes_map`; `slot_map` is for the console.
 
 ---
 
@@ -440,9 +480,9 @@ a type, the move the node side deliberately avoided).
 | `common.h` | `BUS_SILENCE_MS` / `BUS_KEEPALIVE_MS` | `1000` / `333` | node timeout (opt-in); Pico keepalive (§4.4) |
 | CLI | `makesafe <id>` | — | relays `CMD_MAKE_SAFE`; IDLE/PAUSED/ALARM |
 | `shared_state.h` | (was `ALARM_CONFIG`) | `2` (reserved) | retired: no config boots to IDLE |
-| `control_plane.cpp` | `slotNode[4]` | Core-0-local | committed node↔slot map; diffed per `axis_map` |
-| CLI (`control_plane.cpp`) | `axis_map <x> <y> <z> <a>` | — | setter; IDLE/PAUSED/ALARM |
-| CLI | `axis_map` (no-arg) | — | optional read-back (§8) |
+| `position.cpp` | `slotNode[4]`, axes request | Core-0-local | slot binding; axis request with pending (§5.4) |
+| CLI | `slot_map <n0> <n1> <n2> <n3>` | — | any node, no config; IDLE/PAUSED/ALARM; no-arg reads the binding |
+| CLI | `axes_map <x> <y> <z> <a>` | — | axis request; IDLE/PAUSED/ALARM; no-arg reads the request |
 | CLI | `disengage` | — | global safe-state clear (§5.3) |
 
 ---
