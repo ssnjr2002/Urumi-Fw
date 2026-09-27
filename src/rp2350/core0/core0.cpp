@@ -110,8 +110,8 @@ void loop() {
     // Held in ALARM until section B settles it: with a valid config the
     // controller commits the defaultHead map as soon as Core 1 is released;
     // without one nothing is requested and the machine lands IDLE, unmapped.
-    axisMapReset();
-    axisMapForget();
+    slotMapReset();
+    slotMapForget();
     machineState = STATE_ALARM;
     alarmReason = ALARM_NODE_FAULT;
     runningReason = RUNNING_JOB;

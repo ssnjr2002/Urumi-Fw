@@ -2,7 +2,8 @@
 #include <stdint.h>
 #include "../../ipc/core1_rpc.h"    // NodeStatus
 
-// position.h — the axis map and the node-frame position datum.
+// position.h — the slot binding, the axes request and the node-frame position
+// datum.
 //
 // One module, not two, and deliberately so. "Which bus id occupies stream slot
 // i" and "where is that node, in whose frame" are the same fact stated twice —
@@ -29,7 +30,7 @@
 // The state itself stays private to position.cpp. Callers get named operations
 // instead of the arrays, because every historical bug in this area was a caller
 // updating one frame and forgetting the other -- clearing axes_homed but leaving
-// nodeOrigin, so the next axis_map cheerfully resurrected a dead datum. There is
+// nodeOrigin, so the next map cheerfully resurrected a dead datum. There is
 // no way to express that mistake through this header.
 //
 // Core-0-private by design. Core 1 never sees the map; when the probe supervisor
@@ -43,18 +44,18 @@
 #define SLOT_Z        2
 #define SLOT_A        3
 
-// ─── Axis map ─────────────────────────────────────────────────────────────────
+// ─── Slot binding ─────────────────────────────────────────────────────────────
+// Which node listens on each stream slot, of any type (slot_map).
 
-// All slots unbound. Boot state, until the controller commits the config's
-// defaultHead map (controller/seq/controller.h).
-void axisMapReset(void);
+// All slots unbound and no axes requested. Boot state, until the controller
+// commits the config's defaultHead map (controller/seq/controller.h).
+void slotMapReset(void);
 
 // The bus id bound to slot `s`, or SLOT_NONE. Slot indices are 0..MOTION_SLOTS-1.
 uint8_t slotNodeAt(uint8_t s);
 
-// The slot holding bus id `n`, or SLOT_NONE if `n` is not an axis node.
+// The slot holding bus id `n`, or SLOT_NONE.
 uint8_t nodeSlot(uint8_t n);
-static inline bool node_isAxis(uint8_t n) { return nodeSlot(n) != SLOT_NONE; }
 
 // Bind slot `s` to node `n` and adopt that node's reported state in one step;
 // `st` is the ENGAGE ack. Binding without adopting is not offered: the two were
@@ -65,6 +66,27 @@ void slotBind(uint8_t s, uint8_t n, const NodeStatus* st);
 // Unbind slot `s`. A slot that holds no node holds no position either, so this
 // also zeroes machinePos[s] and clears its homed and enabled bits.
 void slotUnbind(uint8_t s);
+
+// ─── Axes request ─────────────────────────────────────────────────────────────
+// The node each axis should be (axes_map), and which of them are pending: named
+// but not yet confirmed a stepper. Axis k is BOUND while slot k holds its
+// requested node and it is not pending. machinePos, axes_homed, homingLatched
+// and axes_enabled are derived for bound axes only; an unbound axis reads 0,
+// unhomed, unlatched, disabled. No request means no axis is bound.
+
+// Store the request: four bus ids or SLOT_NONE, and a pending mask (bit k).
+void axesReqSet(const uint8_t* ids, uint8_t pending);
+uint8_t axesReqAt(uint8_t k);
+uint8_t axesReqPending(void);
+void axesReqClearPending(uint8_t k);
+void axesReqForget(void);
+
+// The node bound as axis k, or SLOT_NONE.
+uint8_t axisNode(uint8_t k);
+
+// The axis node `n` is bound as, or SLOT_NONE.
+uint8_t nodeAxis(uint8_t n);
+static inline bool node_isAxis(uint8_t n) { return nodeAxis(n) != SLOT_NONE; }
 
 // ─── Limit latch, in the NODE frame ───────────────────────────────────────────
 //
@@ -85,7 +107,7 @@ void slotUnbind(uint8_t s);
 // stream steps.
 void nodeLatchSet(uint8_t n, bool latched);
 
-// Per-SLOT view of the above (bit0=X .. bit3=A), rebuilt by slotBind/slotUnbind.
+// Per-AXIS view of the above (bit0=X .. bit3=A), bound axes only.
 // Read-only to everything but position.cpp.
 extern uint8_t homingLatched;
 
@@ -124,7 +146,7 @@ bool originValid(uint8_t n);
 
 // ─── Tool probe, in the NODE frame ────────────────────────────────────────────
 // The machine-frame Z at which node n's tool opened the bed switch. Keyed by bus
-// id like the origin, so a parked head keeps its probe across axis_map swaps.
+// id like the origin, so a parked head keeps its probe across axes_map swaps.
 // Only valid while the origin it was measured against is: originRecord and both
 // originInvalidate variants clear it.
 

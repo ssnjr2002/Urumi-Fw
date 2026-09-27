@@ -8,7 +8,7 @@
 
 void resumeOrHold(void) {
     uint8_t reason;
-    if      (!axisMapComplete())  reason = ALARM_NODE_FAULT;
+    if      (!slotMapComplete())  reason = ALARM_NODE_FAULT;
     else if (homingLatched)       reason = ALARM_LIMIT_LATCHED;
     else                          reason = ALARM_NONE;
     // Reason before state, matching how Core 1 publishes the pair.

@@ -3,7 +3,7 @@
 // state.h — settle the machine state from the conditions that still hold.
 
 // Leave a completed leg (or a cleared alarm) in the right state:
-// ALARM_NODE_FAULT while the axis map is incomplete,
+// ALARM_NODE_FAULT while the slot request is unmet,
 // ALARM/LIMIT_LATCHED while any axis is still standing on a switch, IDLE once
 // none of those hold.
 //

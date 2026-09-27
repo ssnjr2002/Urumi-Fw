@@ -142,8 +142,9 @@ enum AlarmReason : uint8_t {
     // 2 reserved: was ALARM_CONFIG. No config boots to IDLE.
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
     ALARM_HOMING_FAIL= 4,   // home ended wrong: no switch found, or none cleared
-    // A node failed to answer, leaving the axis map incomplete (axisMapComplete).
-    // Held while the map is incomplete; a complete axis_map clears it.
+    // The slot binding does not match the slot request (slotMapComplete): a
+    // node failed to engage, or an axes_map axis is pending. Held until a map
+    // that is met, or `unalarm`'s retry, clears it.
     ALARM_NODE_FAULT = 5,
     // A limit switch is held down. Not a failure: it is where a SEEK is
     // supposed to end, and legs 1 and 3 of a home both finish here
@@ -244,7 +245,7 @@ extern volatile int32_t machinePos[4];
 // setorigin sets homed bits + zeros pos; estop clears both.
 //
 // `axes_enabled` is DERIVED, not commanded: reconcileValidity() rebuilds it each
-// Core 0 loop pass by projecting `nodeEnabled` (below) through the axis map. No
+// Core 0 loop pass by projecting `nodeEnabled` (below) through the bound axes. No
 // command handler writes it. Same shape as axes_homed ← nodeHomed and
 // homingLatched ← nodeLatched (core0/ops/position.h), which is the standing rule
 // here: the NODE frame is the truth, the SLOT frame is a view of it.

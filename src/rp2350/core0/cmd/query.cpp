@@ -47,7 +47,7 @@ bool cmdGetState(const char*) {
 
     // The contact height of the Z in slot 2, when it holds one.
     int32_t pz;
-    if (probeValid(slotNodeAt(SLOT_Z), &pz)) Serial.printf(" probed=1 pz=%ld", (long)pz);
+    if (probeValid(axisNode(SLOT_Z), &pz)) Serial.printf(" probed=1 pz=%ld", (long)pz);
     else                                     Serial.print(" probed=0");
 #ifdef DEBUG_TIMING
     // texp/tmeas = expected vs measured duration (us) of the last completed

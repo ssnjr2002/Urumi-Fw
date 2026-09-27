@@ -8,8 +8,9 @@
 
 bool cmdUnalarm(const char*) {
     if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
-    // An incomplete axis map is retried once (docs/engage_and_axis_map.md §6.1).
-    if (!axisMapComplete() && !axisMapRetry()) {
+    // An unmet slot request is retried once (docs/engage_and_axis_map.md §6.1);
+    // one from axes_map re-checks its pending axes first.
+    if (!slotMapComplete() && !slotMapRetry()) {
         Serial.println("err unmapped");
         return true;
     }

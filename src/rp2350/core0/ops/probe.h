@@ -19,26 +19,20 @@
 // `getstate` and `stop` shut for the whole descent, on the one command that is
 // driving a tool into a bed.
 
-// Open a session: save the committed axis map, disengage everything, verify
-// both nodes' types out of the disengage acks, then bind Z and the vacuum.
+// Open a session: verify both nodes' types by status, then apply the slot map
+// `- - <z> <vac>`, which parks every slot holder and engages the two.
 //
-// A FULL ALTERNATIVE BINDING, not an overlay on the committed map. Two commands
-// writing one slot table is the "updated one frame, forgot the other" class that
-// cmd/axis.cpp says cost a 1000-line file once already.
+// A FULL ALTERNATIVE BINDING, not an overlay: the axes request is untouched and
+// only Z stays bound as an axis (position.h). The exit re-applies the axes
+// request, which parks the vacuum like any other slot holder.
 //
-// Refuses if any node fails to ack the disengage, and that is the safety
-// property rather than a nicety: a poll is requested by setting the VACUUM
-// slot's step bit, so a stepper still engaged in that slot would take one step
-// per poll — a phantom axis tracking Z's entire descent. Verified teardown makes
-// that impossible by construction.
+// The park is the safety property rather than a nicety: a poll is requested by
+// setting the VACUUM slot's step bit, so a stepper still engaged in that slot
+// would take one step per poll — a phantom axis tracking Z's entire descent.
 //
-// Z is NOT an argument. It is read out of the committed axis map's slot 2, so
-// there is exactly one place that says which node is Z. Taking it as an argument
-// made probe_map a second binder whose answer could disagree with the map it
-// then saves and later restores -- the "two commands writing one slot table"
-// failure axis.cpp already paid for once. It also means a probe requires a
-// committed map, which is not a new restriction: probeExit restores savedMap,
-// so a session begun without one had nothing coherent to go back to.
+// Z is NOT an argument. It is the node bound as axis Z, so there is exactly one
+// place that says which node is Z. It also means a probe requires an axes
+// request, which the exit restores.
 //
 // Prints exactly one reply line on every path.
 bool probeBegin(uint8_t vacNode);
@@ -50,8 +44,8 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
                  uint16_t rampSteps, uint8_t pollDiv, uint32_t maxSteps,
                  uint16_t deadlineUs, uint8_t intent);
 
-// Close the session, restoring the saved map. `newMap` is the four bus ids to
-// commit instead of the saved ones (the `axis_map`-as-exit route), or nullptr
+// Close the session, re-applying the axes request. `newMap` is four bus ids to
+// commit as the axes request instead (the `axes_map`-as-exit route), or nullptr
 // for `probe_end`'s "put it back the way it was".
 //
 // Refuses ONLY while a leg is in flight, which is a real conflict: Core 1 is

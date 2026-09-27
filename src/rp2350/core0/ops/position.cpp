@@ -10,15 +10,20 @@
 #include "../usb_protocol.h"   // NODE_FLAG_*, BUS_ADDR_MAX
 #include "hardware/sync.h"     // __dmb
 
-// ─── Axis map (docs/engage_and_axis_map.md §5) ────────────────────────────────
+// ─── Slot binding (docs/engage_and_axis_map.md §5) ────────────────────────────
 // slotNode[i] = the bus id currently ENGAGE-bound to stream slot i, or
 // SLOT_NONE. Core 0 owns this map and the abstraction; Core 1 only ever sees
 // granular per-node CMD_ENGAGE.
 static uint8_t slotNode[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
 
+// The axes request (position.h): axesReq[k] = the node axis k should be,
+// axesPending bit k = named but not yet confirmed a stepper.
+static uint8_t axesReq[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
+static uint8_t axesPending = 0;
+
 // ─── Position datum, in the NODE frame (docs/node_session_and_datum.md §2) ────
-// machinePos[] is indexed by SLOT, so it goes stale the moment axis_map rebinds
-// a slot to a different node. The datum therefore lives with the NODE instead:
+// machinePos[] is indexed by SLOT, so it goes stale the moment a slot is rebound to
+// a different node. The datum therefore lives with the NODE instead:
 // nodeOrigin[id] is that node's own step counter at the instant it was datumed,
 // and machinePos[slot] = <node counter now> - nodeOrigin[node]. A parked node
 // can neither move nor count, so the offset stays valid across an arbitrary
@@ -38,7 +43,7 @@ void nodeLatchSet(uint8_t n, bool latched) {
     if (n > BUS_ADDR_MAX) return;
     if (latched) nodeLatched |=  (1u << n);
     else         nodeLatched &= ~(1u << n);
-    const uint8_t s = nodeSlot(n);
+    const uint8_t s = nodeAxis(n);
     if (s != SLOT_NONE) {
         if (latched) homingLatched |=  (1 << s);
         else         homingLatched &= ~(1 << s);
@@ -48,10 +53,10 @@ void nodeLatchSet(uint8_t n, bool latched) {
 // parkPos[n] is node n's counter as reported by the ack of the CMD_ENGAGE that
 // DISENGAGED it; parkSeen marks which entries are live.
 //
-// These MUST outlive one axis_map invocation: a park lasts until some later
+// These MUST outlive one slot-map apply: a park lasts until some later
 // command re-engages the node, which is the entire point. As locals they only
 // ever checked nodes that stayed bound across a single command -- i.e. the ones
-// that were never really parked. Every axis_map disengages all bound nodes
+// that were never really parked. Every apply disengages all bound nodes
 // before engaging any, so an entry is always refreshed before it is used.
 static int32_t  parkPos[BUS_ADDR_MAX + 1] = {0};
 static uint16_t parkSeen = 0;
@@ -63,10 +68,11 @@ static uint16_t parkSeen = 0;
 static int32_t  probeZ[BUS_ADDR_MAX + 1] = {0};
 static uint16_t nodeProbed = 0;              // bit n = probeZ[n] is valid
 
-// ─── Axis map ─────────────────────────────────────────────────────────────────
+// ─── Slot binding and axes request ────────────────────────────────────────────
 
-void axisMapReset(void) {
+void slotMapReset(void) {
     for (int i = 0; i < MOTION_SLOTS; i++) slotNode[i] = SLOT_NONE;
+    axesReqForget();
 }
 
 uint8_t slotNodeAt(uint8_t s) {
@@ -78,6 +84,52 @@ uint8_t nodeSlot(uint8_t n) {
     return SLOT_NONE;
 }
 
+uint8_t axisNode(uint8_t k) {
+    if (k >= MOTION_SLOTS || (axesPending & (1 << k))) return SLOT_NONE;
+    const uint8_t n = slotNode[k];
+    return (n != SLOT_NONE && n == axesReq[k]) ? n : SLOT_NONE;
+}
+
+uint8_t nodeAxis(uint8_t n) {
+    if (n == SLOT_NONE) return SLOT_NONE;
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++) if (axisNode(k) == n) return k;
+    return SLOT_NONE;
+}
+
+// An axis that stopped being bound without a rebind drops its views. One that
+// became bound this way reads unbound-clean until its next bind adopts it; the
+// callers always rebind right after.
+static void axisViewsDrop(void) {
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++) {
+        if (axisNode(k) != SLOT_NONE) continue;
+        machinePos[k]  = 0;
+        axes_homed    &= ~(1 << k);
+        homingLatched &= ~(1 << k);
+    }
+}
+
+void axesReqSet(const uint8_t* ids, uint8_t pending) {
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++) axesReq[k] = ids[k];
+    axesPending = pending & 0x0F;
+    axisViewsDrop();
+}
+
+uint8_t axesReqAt(uint8_t k) {
+    return (k < MOTION_SLOTS) ? axesReq[k] : SLOT_NONE;
+}
+
+uint8_t axesReqPending(void) { return axesPending; }
+
+void axesReqClearPending(uint8_t k) {
+    if (k < MOTION_SLOTS) axesPending &= ~(1 << k);
+}
+
+void axesReqForget(void) {
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++) axesReq[k] = SLOT_NONE;
+    axesPending = 0;
+    axisViewsDrop();
+}
+
 // ─── The one place a position reference dies ──────────────────────────────────
 
 void originInvalidate(uint8_t node) {
@@ -85,7 +137,7 @@ void originInvalidate(uint8_t node) {
     nodeHomed  &= ~(1u << node);
     parkSeen   &= ~(1u << node);       // its parked counter means nothing now
     nodeProbed &= ~(1u << node);
-    uint8_t s = nodeSlot(node);
+    uint8_t s = nodeAxis(node);
     if (s != SLOT_NONE) axes_homed &= ~(1 << s);
 }
 
@@ -105,7 +157,7 @@ void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps) {
     nodeOrigin[n] = nodePos - machineSteps;
     nodeHomed    |= (1u << n);
     nodeProbed   &= ~(1u << n);        // measured against the origin just replaced
-    uint8_t s = nodeSlot(n);
+    uint8_t s = nodeAxis(n);
     if (s != SLOT_NONE) { machinePos[s] = machineSteps; axes_homed |= (1 << s); }
 }
 
@@ -180,6 +232,15 @@ static void slotAdoptStatus(uint8_t s, uint8_t n, const NodeStatus* st) {
     // point) -- whatever origin we hold for it no longer refers to anything.
     if (!(flags & NODE_FLAG_DATUM)) originInvalidate(n);
 
+    // A node in a slot that is not its axis (a probe's vacuum, a bench
+    // slot_map) has no axis views.
+    if (axisNode(s) != n) {
+        machinePos[s]  = 0;
+        axes_homed    &= ~(1 << s);
+        homingLatched &= ~(1 << s);
+        return;
+    }
+
     // Adopted, not assumed. The node has been sitting on (or off) its switch
     // the whole time it was parked, so the fact travels with the node and the
     // incoming slot inherits it rather than the outgoing node's.
@@ -225,7 +286,7 @@ void slotUnbind(uint8_t s) {
 // SIGNALS, by entering ALARM with a reason, and this folds the signal in.
 //
 // It also reaches nodeOrigin/nodeHomed, which are Core-0 statics Core 1 could
-// never have cleared -- without that, the next axis_map would happily resurrect
+// never have cleared -- without that, the next axes_map would happily resurrect
 // a datum an estop had destroyed.
 //
 // Both the text plane and STATUS_RSP are answered from Core 0's loop, so the
@@ -275,7 +336,7 @@ void reconcileValidity(void) {
     // frame says right now is what the slot frame says right now.
     uint8_t e = 0;
     for (uint8_t s = 0; s < MOTION_SLOTS; s++) {
-        const uint8_t n = slotNodeAt(s);
+        const uint8_t n = axisNode(s);
         if (n != SLOT_NONE && (nodeEnabled & (1u << n))) e |= (1 << s);
     }
     axes_enabled = e;

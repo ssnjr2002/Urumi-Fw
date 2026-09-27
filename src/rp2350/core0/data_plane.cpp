@@ -25,6 +25,7 @@
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "controller/seq/controller.h"
+#include "ops/position.h"          // axisNode
 
 // ─── Receiver dispatch ────────────────────────────────────────────────────────
 
@@ -171,6 +172,12 @@ static void feedFixed26(uint8_t b) {
     memcpy(&ms.interval, p,      4); p += 4;
     ms.flags  = *p++;
     ms.pad[0] = ms.pad[1] = ms.pad[2] = 0;
+
+    // Steps for an unbound axis would reach whatever holds its slot (a probe's
+    // vacuum reads them as poll requests), or no one.
+    const int32_t d[MOTION_SLOTS] = { ms.dx, ms.dy, ms.dz, ms.da };
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++)
+        if (d[k] != 0 && axisNode(k) == SLOT_NONE) { sendNack(MSEG_NACK_BAD_STATE); return; }
 
     masterBuf[mBufTail] = ms;
     // Queued-time accounting (§4.6) — must land BEFORE the tail publishes the

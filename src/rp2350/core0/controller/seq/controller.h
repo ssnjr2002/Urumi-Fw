@@ -7,10 +7,10 @@
 // web/src/controller does moves here over time (docs/plans/pico-config.md).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Commit the config's defaultHead axis map through axisMapApply, as a host
-// `axis_map` would. Without a valid config nothing is requested and the machine
-// settles IDLE, unmapped; a node that does not answer leaves it in
-// ALARM_NODE_FAULT. Needs Core 1
+// Commit the config's defaultHead axis map through axesMapApply, as a host
+// `axes_map` would. Without a valid config nothing is requested and the machine
+// settles IDLE, unmapped; a node that does not answer, or is not a stepper,
+// leaves it in ALARM_NODE_FAULT. Needs Core 1
 // running (it goes to the bus), so it runs after a soft reset has released
 // Core 1, and after an accepted CFG_SET.
 void controllerApplyDefaultMap();

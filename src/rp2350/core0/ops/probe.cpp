@@ -36,7 +36,6 @@ static bool     claimed     = false;
 static bool     legInFlight = false;
 static uint8_t  zNodeId     = 0;
 static uint8_t  vacNodeId   = 0;
-static uint8_t  savedMap[MOTION_SLOTS];
 static uint8_t  returnState = STATE_IDLE;
 // Which mode the in-flight leg was armed in. Kept because the retract's verdict
 // is taken at the NEXT boundary, by which time the arm-time read is gone.
@@ -75,23 +74,37 @@ static bool readSwitch(bool* openOut) {
 }
 
 // ── Teardown ─────────────────────────────────────────────────────────────────
-// Disengage everything, then replay a map through the EXISTING axis_map path.
+// Re-apply the axes request (or `map`, the axes_map-as-exit route) through the
+// ordinary path, which parks every slot holder first, the vacuum included.
 //
-// Not a restore routine, deliberately. axisMapApply is "deliberately dumb, not a
+// Not a restore routine, deliberately. The apply is "deliberately dumb, not a
 // diff": it rebuilds machinePos, axes_homed and homingLatched from ENGAGE acks
 // rather than from anything remembered, so it is correct even if a node reset
-// mid-probe. A second binder restoring from saved state is precisely where this
-// would go wrong.
+// mid-probe.
 //
 // BEST-EFFORT. If the bus is what failed, some engages time out — but that path
 // already handles it (parkForget with no answer, slotBind from acks), so a
-// partial restore is the same defined degradation any axis_map produces on a
-// flaky bus, not garbage.
+// partial restore is the same defined degradation any axes_map produces on a
+// flaky bus, not garbage. A `map` refused for a wrong type falls back to the
+// stored request, so the session never ends with the vacuum still bound.
 static void probeRestore(const uint8_t* map) {
-    axisMapApply(map, /*quiet=*/true);
+    if (!map || axesMapApply(map, /*quiet=*/true, /*keepWrongType=*/false) == AXES_NOT_STEPPER)
+        axesMapRetry(/*quiet=*/true);
     claimed     = false;
     legInFlight = false;
     haveNodePos = false;
+}
+
+// Back to wherever the session started. A jog during pause returns to PAUSED
+// because the job is still suspended, and a mid-job tool swap is that case
+// exactly — so the session cannot simply land in IDLE. A restore that left the
+// slot request unmet lands in ALARM_NODE_FAULT instead (resumeOrHold).
+static void probeSettle(void) {
+    __dmb();
+    if (!slotMapComplete())
+        resumeOrHold();
+    else
+        machineState = (returnState == STATE_PAUSED) ? STATE_PAUSED : STATE_IDLE;
 }
 
 // A failed leg tears the session down ITSELF, then alarms.
@@ -131,7 +144,7 @@ static void probeFail(uint8_t cause) {
     // generally — so a probe-fail alarm must not use either of those reasons.
     if (probeCauseVoidsDatum(cause)) originInvalidate(zNodeId);
 
-    probeRestore(savedMap);
+    probeRestore(nullptr);
 
     if (cause == PROBE_ESTOP) return;   // Core 1 owns this transition
 
@@ -144,20 +157,15 @@ static void probeFail(uint8_t cause) {
 bool probeBegin(uint8_t vacNode) {
     if (claimed) { Serial.println("err busy"); return true; }
 
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++) savedMap[i] = slotNodeAt(i);
-
-    // Z comes from the committed map, not from the operator. One source of truth
-    // for "which node is Z", and the map is already that source everywhere else.
-    const uint8_t zNode = savedMap[PROBE_Z_SLOT];
+    // Z is the node bound as axis Z. One source of truth for "which node is Z",
+    // and the axes request is already that source everywhere else.
+    const uint8_t zNode = axisNode(PROBE_Z_SLOT);
     if (zNode == SLOT_NONE) { Serial.println("err no_z"); return true; }
 
-    // The vacuum must not hold a motion slot. It would be caught anyway -- the
-    // disengage pass below type-checks every mapped node and a vacuum in a
-    // motion slot fails as not_stepper -- but that reports a confusing thing
-    // about the wrong command, and a map that bound a vacuum as an axis is a
+    // The vacuum must not be an axis. A map that names a vacuum as an axis is a
     // problem to fix in the map rather than to work around here.
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
-        if (savedMap[i] == vacNode) { Serial.println("err vac_mapped"); return true; }
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++)
+        if (axesReqAt(k) == vacNode) { Serial.println("err vac_mapped"); return true; }
 
     // A de-energised Z accepts every leg and cannot turn, so the terminator is
     // never reached, the budget burns out, and the result reads as a broken
@@ -168,54 +176,38 @@ bool probeBegin(uint8_t vacNode) {
                                        // must land back in PAUSED, and neither
                                        // exit route can infer where it started
 
-    // Disengage every bound node, and verify types out of the acks. Each ENGAGE
-    // ack's first status byte is node_type(), so the pass that has to happen
-    // anyway proves the id called a stepper is a stepper and the id called a
-    // vacuum is a vacuum — free.
-    bool zSeen = false, vacSeen = false;
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
-        const uint8_t n = savedMap[i];
-        if (n == SLOT_NONE) continue;
-        NodeStatus st;
-        if (rpcNodeStatus(CMD_ENGAGE, n, SLOT_NONE, &st) != RPC_OK) {
-            Serial.printf("err node %d no_ack\n", n);
-            return true;               // map untouched: nothing has been rebound
-        }
-        if (st.hasStepperTail) parkRecord(n, st.pos); else parkForget(n);
-        if (n == zNode)   { zSeen   = true; if (st.type != NODE_TYPE_STEPPER) {
-            Serial.printf("err node %d not_stepper\n", n); return true; } }
-        if (n == vacNode) { vacSeen = true; if (st.type != NODE_TYPE_VACUUM) {
-            Serial.printf("err node %d not_vacuum\n", n); return true; } }
-    }
-
-    // The vacuum is normally NOT in the committed map — it holds no motion slot
-    // — so its type is verified by its own engage below instead.
-    (void)zSeen;
-
+    // Types first, while nothing has been rebound: a refusal here leaves the
+    // binding untouched.
     NodeStatus zst, vst;
-    if (rpcNodeStatus(CMD_ENGAGE, zNode, PROBE_Z_SLOT, &zst) != RPC_OK ||
-        zst.type != NODE_TYPE_STEPPER) {
-        Serial.printf("err node %d engage\n", zNode);
-        axisMapApply(savedMap, /*quiet=*/true);
-        return true;
+    if (rpcNodeStatus(CMD_NODE_STATUS, zNode, 0, &zst) != RPC_OK) {
+        Serial.printf("err node %d no_ack\n", zNode); return true;
     }
-    if (rpcNodeStatus(CMD_ENGAGE, vacNode, PROBE_VAC_SLOT, &vst) != RPC_OK ||
-        vst.type != NODE_TYPE_VACUUM) {
-        Serial.printf("err node %d engage\n", vacNode);
-        axisMapApply(savedMap, /*quiet=*/true);
-        return true;
+    if (zst.type != NODE_TYPE_STEPPER) {
+        Serial.printf("err node %d not_stepper\n", zNode); return true;
     }
-    (void)vacSeen;
+    if (rpcNodeStatus(CMD_NODE_STATUS, vacNode, 0, &vst) != RPC_OK) {
+        Serial.printf("err node %d no_ack\n", vacNode); return true;
+    }
+    if (vst.type != NODE_TYPE_VACUUM) {
+        Serial.printf("err node %d not_vacuum\n", vacNode); return true;
+    }
 
-    slotBind(PROBE_Z_SLOT, zNode, &zst);
-    // The vacuum is deliberately NOT slotBind()'d. slotBind writes machinePos,
-    // axes_homed and homingLatched for the slot, and the vacuum has no stepper
-    // tail — the slot would land at position 0 with the datum cleared while
-    // reconcileValidity still projected nodeEnabled through the map, so the host
-    // would see slot 3 as an enabled, unhomed axis at zero. The probe emitter
-    // takes the vacuum's slot as a number, not from the map.
-    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
-        if (i != PROBE_Z_SLOT) slotUnbind(i);
+    // The probe binding is an ordinary slot map: every slot holder is parked,
+    // then Z and the vacuum are engaged. A poll is requested by setting the
+    // vacuum slot's step bit, so a stepper left engaged in that slot would take
+    // one step per poll; the park is what makes that impossible. The vacuum is
+    // no axis (position.h), so slot 3 carries no position, datum or energised
+    // bit, and the next apply parks it like any other slot holder.
+    uint8_t map[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
+    map[PROBE_Z_SLOT]   = zNode;
+    map[PROBE_VAC_SLOT] = vacNode;
+    uint8_t failed;
+    if (!slotMapApply(map, /*quiet=*/true, &failed)) {
+        Serial.printf("err node %d engage\n", failed);
+        probeRestore(nullptr);
+        probeSettle();
+        return true;
+    }
 
     probeForget(zNode);                  // a new measurement replaces the old
     zNodeId     = zNode;
@@ -225,13 +217,15 @@ bool probeBegin(uint8_t vacNode) {
     lastCause   = PROBE_OK;
     lastRetries = 0;
     lastSteps   = 0;
+    // Parked and engaged since the status read, neither of which steps.
     haveNodePos = zst.hasStepperTail;
     lastNodePos = zst.pos;
 
     bool open = false;
     if (!readSwitch(&open)) {
         Serial.printf("err node %d no_switch\n", vacNode);
-        probeRestore(savedMap);
+        probeRestore(nullptr);
+        probeSettle();
         return true;
     }
 
@@ -336,7 +330,7 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
     return true;
 }
 
-// ── probe_end / axis_map-as-exit ─────────────────────────────────────────────
+// ── probe_end / axes_map-as-exit ─────────────────────────────────────────────
 bool probeExit(const uint8_t* newMap) {
     if (!claimed)    { Serial.println("err not_probing"); return true; }
     if (legInFlight) { Serial.println("err busy");        return true; }
@@ -366,17 +360,8 @@ bool probeExit(const uint8_t* newMap) {
     bool open = false;
     const bool known = readSwitch(&open);
 
-    probeRestore(newMap ? newMap : savedMap);
-
-    // Back to wherever the session started. A jog during pause returns to PAUSED
-    // because the job is still suspended, and a mid-job tool swap is that case
-    // exactly — so the session cannot simply land in IDLE. A restore that left
-    // the map incomplete lands in ALARM_NODE_FAULT instead (resumeOrHold).
-    __dmb();
-    if (!axisMapComplete())
-        resumeOrHold();
-    else
-        machineState = (returnState == STATE_PAUSED) ? STATE_PAUSED : STATE_IDLE;
+    probeRestore(newMap);
+    probeSettle();
 
     // `switch=1` on the way out is worth an operator's attention -- the tool may
     // be resting on the bed, or the far switch may be stuck -- but it is

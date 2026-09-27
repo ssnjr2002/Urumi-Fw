@@ -50,7 +50,8 @@ bool cmdLaser(const char*);
 bool cmdMakeSafe(const char*);
 
 // ─── axis.cpp — the only command file that WRITES the position model ──────────
-bool cmdAxisMap(const char*);
+bool cmdSlotMap(const char*);
+bool cmdAxesMap(const char*);
 bool cmdSetOrigin(const char*);
 bool cmdStep(const char*);
 bool cmdHallScan(const char*);
@@ -62,7 +63,7 @@ bool cmdEnable(const char*);
 bool cmdDisable(const char*);
 
 // ─── the probe session (core0/ops/probe.cpp) ──────────────────────────────────
-// Here rather than in a file of their own because probe_map writes the axis map
+// Here rather than in a file of their own because probe_map writes the slot map
 // and axis.cpp is the only command file that writes the position model. The
 // session state and its supervisor live in core0/ops/probe.cpp; these are the three
 // handlers that reach it.

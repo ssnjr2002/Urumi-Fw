@@ -34,8 +34,8 @@ static inline bool busGateDenies() {
 }
 
 // ── axes_enable <on|off> (IDLE/PAUSED/ALARM) ─────────────────────────────────
-// Targets the axis map: every node currently bound to a motion slot, and no one
-// else. This replaces the old `enable all` / `disable all`, whose name read
+// Targets the bound axes (position.h), and no one else: a node lent a slot by
+// slot_map is not an axis. This replaces the old `enable all` / `disable all`, whose name read
 // bus-wide while the code always walked the axis map — a distinction that
 // stopped being academic once vacuum and knife nodes joined the bus.
 // Peripherals hold no slot, so they are addressed only by `enable <id>`.
@@ -47,7 +47,7 @@ bool cmdAxesEnable(const char* args) {
     // machine that has no axes. Same string as setorigin.
     bool bound = false;
     for (uint8_t i = 0; i < MOTION_SLOTS; i++)
-        if (slotNodeAt(i) != SLOT_NONE) bound = true;
+        if (axisNode(i) != SLOT_NONE) bound = true;
     if (!bound) { Serial.println("err unbound"); return true; }
     // NOT gated by alarmDeniesOn, and not by ALARM generally: ALARM is where
     // axis recovery happens, and the post-estop flow is axes_enable on →
@@ -58,7 +58,7 @@ bool cmdAxesEnable(const char* args) {
     // recovery role.
     bool on = parseState(args);       // accepts "1"/"on" and "0"/"off"
     for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
-        uint8_t n = slotNodeAt(i);
+        uint8_t n = axisNode(i);
         if (n == SLOT_NONE) continue;
         // No bookkeeping here: Core 1 folds each ack into nodeEnabled as it
         // relays, and reconcileValidity projects that onto the slots before the
@@ -70,7 +70,7 @@ bool cmdAxesEnable(const char* args) {
     // still loses its origin (see originInvalidate).
     if (!on)
         for (uint8_t i = 0; i < MOTION_SLOTS; i++)
-            if (slotNodeAt(i) != SLOT_NONE) originInvalidate(slotNodeAt(i));
+            if (axisNode(i) != SLOT_NONE) originInvalidate(axisNode(i));
     Serial.println("ok");
     return true;
 }
@@ -127,20 +127,69 @@ bool cmdDisable(const char* args) {
     return true;
 }
 
-// ── axis_map [<x> <y> <z> <a>] — bind bus nodes to stream slots ──────────────
-// No-arg: read back the committed map in setter syntax ('-' = unbound slot).
-// Four tokens (a bus id, or '-'/'0' = unbound). Every bound id must be an axis
-// node the config marks present. The map becomes the requested one: if every
-// node in it engages, ALARM_NODE_FAULT clears; otherwise it is raised
-// (axisMapComplete). A partial map is accepted as asked for.
-// Refused without a config. Valid IDLE/PAUSED/ALARM; rebinding mid-RUNNING
-// corrupts motion (§6.2).
-bool cmdAxisMap(const char* args) {
+// Parse exactly four slot tokens: a bus id, or '-'/'0' = empty. Prints the
+// error and returns false on a bad token or a node named twice.
+static bool parseFourNodes(const char* args, uint8_t* out) {
+    const char* p = args;
+    for (int i = 0; i < 4; i++) {
+        while (*p == ' ') p++;
+        if (*p == '\0') { Serial.println("err usage"); return false; }
+        if (*p == '-') { out[i] = SLOT_NONE; p++; continue; }
+        char* endPtr;
+        unsigned long v = strtoul(p, &endPtr, 10);
+        if (endPtr == p) { Serial.println("err usage"); return false; }
+        p = endPtr;
+        if (v == 0)                 out[i] = SLOT_NONE;
+        else if (v <= BUS_ADDR_MAX) out[i] = (uint8_t)v;
+        else { Serial.println("err bad_node"); return false; }
+    }
+    // A bus id can occupy only one slot.
+    for (int i = 0; i < 4; i++)
+        for (int j = i + 1; j < 4; j++)
+            if (out[i] != SLOT_NONE && out[i] == out[j]) {
+                Serial.println("err dup"); return false;
+            }
+    return true;
+}
+
+// ── slot_map [<n0> <n1> <n2> <n3>] — bind bus nodes to stream slots ──────────
+// The primitive under axes_map: any node type, no config. No-arg: read back
+// the binding ('-' = empty slot). The four ids become the slot request; if
+// every node engages ALARM_NODE_FAULT clears, otherwise it is raised
+// (slotMapComplete). It knows nothing about axes: a node in a slot other than
+// its axes_map one is not an axis (position.h). Valid IDLE/PAUSED/ALARM;
+// rebinding mid-RUNNING corrupts motion (§6.2), and a probe owns its binding.
+bool cmdSlotMap(const char* args) {
     if (*args == '\0') {                          // read-back form
-        Serial.print("axis_map");
-        for (int i = 0; i < 4; i++) {
+        Serial.print("slot_map");
+        for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
             if (slotNodeAt(i) == SLOT_NONE) Serial.print(" -");
             else                            Serial.printf(" %d", slotNodeAt(i));
+        }
+        Serial.println();
+        return true;
+    }
+    if (busGateDenies()) return true;
+    uint8_t desired[4];
+    if (!parseFourNodes(args, desired)) return true;
+    slotMapApply(desired, /*quiet=*/false);
+    return true;
+}
+
+// ── axes_map [<x> <y> <z> <a>] — the axis request ────────────────────────────
+// No-arg: read back the request ('-' = no axis, '?n' = pending). Every named
+// id must be an axis node the config marks present and answer as a stepper
+// (axis_map.h's axesMapApply); the request is then applied as a slot_map of the
+// same ids. A partial map is accepted as asked for. Refused without a config.
+// Valid IDLE/PAUSED/ALARM.
+bool cmdAxesMap(const char* args) {
+    if (*args == '\0') {                          // read-back form
+        Serial.print("axes_map");
+        for (uint8_t k = 0; k < MOTION_SLOTS; k++) {
+            const uint8_t n = axesReqAt(k);
+            if (n == SLOT_NONE)                         Serial.print(" -");
+            else if (axesReqPending() & (1 << k))       Serial.printf(" ?%d", n);
+            else                                        Serial.printf(" %d", n);
         }
         Serial.println();
         return true;
@@ -149,40 +198,19 @@ bool cmdAxisMap(const char* args) {
     if (busGateDenies()) return true;
     if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
 
-    // Parse exactly four tokens into desired[]: a bus id, or '-'/'0' = unbound.
     uint8_t desired[4];
-    const char* p = args;
-    for (int i = 0; i < 4; i++) {
-        while (*p == ' ') p++;
-        if (*p == '\0') { Serial.println("err usage"); return true; }
-        if (*p == '-') { desired[i] = SLOT_NONE; p++; continue; }
-        char* endPtr;
-        unsigned long v = strtoul(p, &endPtr, 10);
-        if (endPtr == p) { Serial.println("err usage"); return true; }
-        p = endPtr;
-        if (v == 0)                 desired[i] = SLOT_NONE;
-        else if (v <= BUS_ADDR_MAX) desired[i] = (uint8_t)v;
-        else { Serial.println("err bad_node"); return true; }
-    }
-    // A bus id can occupy only one slot — reject a node bound twice.
-    for (int i = 0; i < 4; i++)
-        for (int j = i + 1; j < 4; j++)
-            if (desired[i] != SLOT_NONE && desired[i] == desired[j]) {
-                Serial.println("err dup"); return true;
-            }
+    if (!parseFourNodes(args, desired)) return true;
     for (int i = 0; i < 4; i++)
         if (desired[i] != SLOT_NONE && !axisNodeInConfig(desired[i])) {
             Serial.printf("err node %d not_in_config\n", desired[i]); return true;
         }
 
     // Committing a map is also the OTHER way out of a probe session (§5.5):
-    // during a probe the machine genuinely has no working axis map, and the way
-    // out of that condition has always been to commit one. Any committed map
-    // ends the session, and `probe_end` is sugar for committing the one that
-    // was already there.
+    // any committed map ends the session, and `probe_end` is sugar for
+    // committing the one that was already there.
     if (machineState == STATE_PROBING) return probeExit(desired);
 
-    axisMapApply(desired, /*quiet=*/false);
+    axesMapApply(desired, /*quiet=*/false, /*keepWrongType=*/false);
     return true;
 }
 
@@ -243,7 +271,7 @@ bool cmdSetOrigin(const char* args) {
     uint8_t bound = 0;
     for (int i = 0; i < 4; i++) {
         if (!(m & (1 << i))) continue;
-        uint8_t n = slotNodeAt(i);
+        uint8_t n = axisNode(i);
         if (n == SLOT_NONE) { axes_homed &= ~(1 << i); continue; }
         bound++;
 
@@ -385,8 +413,8 @@ bool cmdRotLeg(const char* args) {
 }
 
 // ── step <node> <count> [sps] — debug stepping (bring-up only) ───────────────
-// <node> is a BUS id resolved to its ENGAGE-bound stream slot via the axis map,
-// so the node must be in a committed axis_map first. count is a full int32, its
+// <node> is a BUS id resolved to its ENGAGE-bound stream slot, so the node must
+// hold a slot first (slot_map or axes_map); it need not be an axis. count is a full int32, its
 // sign the direction, clamped to STEP_DEBUG_MAX. [sps] defaults to
 // STEP_DEBUG_SPS and is clamped to STEP_DEBUG_SPS_MAX.
 //
@@ -411,7 +439,8 @@ bool cmdStep(const char* args) {
     if (sps > STEP_DEBUG_SPS_MAX) sps = STEP_DEBUG_SPS_MAX;
     uint8_t slot = nodeSlot(node);
     if (slot == SLOT_NONE) { Serial.println("err not_engaged"); return true; }
-    if (!(axes_enabled & (1 << slot))) {
+    // Node-framed: a node bound by slot_map alone is no axis, but steps.
+    if (!(nodeEnabled & (1u << node))) {
         Serial.println("err not_enabled"); return true;
     }
     // Both parameters ride the request so back-to-back `step`s cannot steal
@@ -457,7 +486,7 @@ bool cmdHallScan(const char* args) {
     // Same reason as cmdStep: a de-energised node still counts stream bytes, so
     // an unenabled scan would advance the count while the shaft -- and therefore
     // the field -- stayed put, drawing a flat line that looks like a dead sensor.
-    if (!(axes_enabled & (1 << slot))) { Serial.println("err not_enabled"); return true; }
+    if (!(nodeEnabled & (1u << node))) { Serial.println("err not_enabled"); return true; }
 
     NodeStatus st;
     if (rpcNodeStatus(CMD_NODE_STATUS, node, 0, &st) != RPC_OK || !st.hasIndex) {
@@ -497,7 +526,7 @@ bool cmdHallScan(const char* args) {
 bool cmdProbeMap(const char* args) {
     if (probeActive()) { Serial.println("err busy"); return true; }
     // NOT busGateDenies(). That gate admits STATE_ALARM, correctly, because
-    // `axis_map` is how a machine LEAVES ALARM_NODE_FAULT -- but a probe session
+    // `slot_map` / `axes_map` is how a machine LEAVES ALARM_NODE_FAULT -- but a probe session
     // is not an alarm exit. probeBegin writes STATE_PROBING unconditionally, so
     // entering from ALARM would clear the state while leaving alarmReason set,
     // and probe_end would then land an alarmed machine in IDLE reading as ready.
@@ -577,7 +606,7 @@ bool cmdSetProbe(const char* args) {
     char* end;
     const long z = strtol(args, &end, 10);
     if (end == args) { Serial.println("err usage"); return true; }
-    const uint8_t zNode = slotNodeAt(SLOT_Z);
+    const uint8_t zNode = axisNode(SLOT_Z);
     if (zNode == SLOT_NONE) { Serial.println("err unbound"); return true; }
     if (!originValid(zNode)) { Serial.println("err not_homed"); return true; }
     probeRecord(zNode, (int32_t)z);
@@ -594,7 +623,7 @@ bool cmdUnprobe(const char* args) {
         node = parseNode(args, nullptr);
         if (!node) { Serial.println("err bad_node"); return true; }
     } else {
-        node = slotNodeAt(SLOT_Z);
+        node = axisNode(SLOT_Z);
         if (node == SLOT_NONE) { Serial.println("err unbound"); return true; }
     }
     probeForget(node);

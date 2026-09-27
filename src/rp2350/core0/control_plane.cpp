@@ -44,7 +44,8 @@ static const Cmd kCommands[] = {
     { "laser",        cmdLaser       },
     { "makesafe",     cmdMakeSafe    },
     // axis.cpp
-    { "axis_map",     cmdAxisMap     },
+    { "slot_map",     cmdSlotMap     },
+    { "axes_map",     cmdAxesMap     },
     { "setorigin",    cmdSetOrigin   },
     { "step",         cmdStep        },
     { "hallscan",     cmdHallScan    },
