@@ -4,7 +4,7 @@
 #include "controller.h"
 #include "../../config/machine_cfg.h"
 #include "../../ops/position.h"      // SLOT_NONE
-#include "../../ops/axis_map.h"
+#include "../../ops/axes_map.h"
 #include "../../ops/state.h"
 
 void controllerApplyDefaultMap() {

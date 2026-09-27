@@ -16,7 +16,8 @@
 #include "../ops/homing.h"
 #include "../ops/state.h"
 #include "../ops/probe.h"
-#include "../ops/axis_map.h"
+#include "../ops/slot_map.h"
+#include "../ops/axes_map.h"
 #include "../config/machine_cfg.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -179,7 +180,7 @@ bool cmdSlotMap(const char* args) {
 // ── axes_map [<x> <y> <z> <a>] — the axis request ────────────────────────────
 // No-arg: read back the request ('-' = no axis, '?n' = pending). Every named
 // id must be an axis node the config marks present and answer as a stepper
-// (axis_map.h's axesMapApply); the request is then applied as a slot_map of the
+// (axes_map.h's axesMapApply); the request is then applied as a slot_map of the
 // same ids. A partial map is accepted as asked for. Refused without a config.
 // Valid IDLE/PAUSED/ALARM.
 bool cmdAxesMap(const char* args) {

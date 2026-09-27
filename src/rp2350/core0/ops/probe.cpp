@@ -3,7 +3,8 @@
 #include <string.h>
 #include "probe.h"
 #include "position.h"
-#include "axis_map.h"
+#include "slot_map.h"
+#include "axes_map.h"
 #include "state.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -70,6 +71,49 @@ static bool readSwitch(bool* openOut) {
     if (rpcSwitchGet(vacNodeId, &level) != RPC_OK) return false;
     *openOut = (level != 0);
     probingReason = level ? PROBING_CONTACT : PROBING_CLEAR;
+    return true;
+}
+
+// ── Binding ──────────────────────────────────────────────────────────────────
+// Verify both types by status, then apply the slot map `- - <z> <vac>`. Types
+// first, while nothing has been rebound, so a refusal leaves the binding
+// untouched. `*zst` gets Z's status, for the leg cross-check. Prints the error
+// and returns false on refusal; a failed engage has already been restored.
+//
+// The probe binding is an ordinary slot map: every slot holder is parked, then
+// Z and the vacuum are engaged. A poll is requested by setting the vacuum
+// slot's step bit, so a stepper left engaged in that slot would take one step
+// per poll; the park is what makes that impossible. The vacuum is no axis
+// (position.h), so slot 3 carries no position, datum or energised bit, and the
+// teardown parks it like any other slot holder.
+static void probeRestore(const uint8_t* map);
+static void probeSettle(void);
+
+static bool probeBind(uint8_t zNode, uint8_t vacNode, NodeStatus* zst) {
+    NodeStatus vst;
+    if (rpcNodeStatus(CMD_NODE_STATUS, zNode, 0, zst) != RPC_OK) {
+        Serial.printf("err node %d no_ack\n", zNode); return false;
+    }
+    if (zst->type != NODE_TYPE_STEPPER) {
+        Serial.printf("err node %d not_stepper\n", zNode); return false;
+    }
+    if (rpcNodeStatus(CMD_NODE_STATUS, vacNode, 0, &vst) != RPC_OK) {
+        Serial.printf("err node %d no_ack\n", vacNode); return false;
+    }
+    if (vst.type != NODE_TYPE_VACUUM) {
+        Serial.printf("err node %d not_vacuum\n", vacNode); return false;
+    }
+
+    uint8_t map[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
+    map[PROBE_Z_SLOT]   = zNode;
+    map[PROBE_VAC_SLOT] = vacNode;
+    uint8_t failed;
+    if (!slotMapApply(map, /*quiet=*/true, &failed)) {
+        Serial.printf("err node %d engage\n", failed);
+        probeRestore(nullptr);
+        probeSettle();
+        return false;
+    }
     return true;
 }
 
@@ -176,38 +220,8 @@ bool probeBegin(uint8_t vacNode) {
                                        // must land back in PAUSED, and neither
                                        // exit route can infer where it started
 
-    // Types first, while nothing has been rebound: a refusal here leaves the
-    // binding untouched.
-    NodeStatus zst, vst;
-    if (rpcNodeStatus(CMD_NODE_STATUS, zNode, 0, &zst) != RPC_OK) {
-        Serial.printf("err node %d no_ack\n", zNode); return true;
-    }
-    if (zst.type != NODE_TYPE_STEPPER) {
-        Serial.printf("err node %d not_stepper\n", zNode); return true;
-    }
-    if (rpcNodeStatus(CMD_NODE_STATUS, vacNode, 0, &vst) != RPC_OK) {
-        Serial.printf("err node %d no_ack\n", vacNode); return true;
-    }
-    if (vst.type != NODE_TYPE_VACUUM) {
-        Serial.printf("err node %d not_vacuum\n", vacNode); return true;
-    }
-
-    // The probe binding is an ordinary slot map: every slot holder is parked,
-    // then Z and the vacuum are engaged. A poll is requested by setting the
-    // vacuum slot's step bit, so a stepper left engaged in that slot would take
-    // one step per poll; the park is what makes that impossible. The vacuum is
-    // no axis (position.h), so slot 3 carries no position, datum or energised
-    // bit, and the next apply parks it like any other slot holder.
-    uint8_t map[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
-    map[PROBE_Z_SLOT]   = zNode;
-    map[PROBE_VAC_SLOT] = vacNode;
-    uint8_t failed;
-    if (!slotMapApply(map, /*quiet=*/true, &failed)) {
-        Serial.printf("err node %d engage\n", failed);
-        probeRestore(nullptr);
-        probeSettle();
-        return true;
-    }
+    NodeStatus zst;
+    if (!probeBind(zNode, vacNode, &zst)) return true;
 
     probeForget(zNode);                  // a new measurement replaces the old
     zNodeId     = zNode;

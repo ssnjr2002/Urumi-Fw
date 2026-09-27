@@ -2,7 +2,7 @@
 
 #include "state.h"
 #include "position.h"          // homingLatched
-#include "axis_map.h"
+#include "slot_map.h"
 #include "../../ipc/shared_state.h"
 #include "hardware/sync.h"     // __dmb
 

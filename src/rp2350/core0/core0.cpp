@@ -13,7 +13,7 @@
 #include "hardware/sync.h"
 #include "control_plane.h"
 #include "ops/position.h"
-#include "ops/axis_map.h"
+#include "ops/slot_map.h"
 #include "ops/homing.h"
 #include "ops/probe.h"
 #include "data_plane.h"

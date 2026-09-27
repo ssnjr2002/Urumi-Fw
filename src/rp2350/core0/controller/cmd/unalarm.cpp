@@ -3,14 +3,20 @@
 #include <Arduino.h>
 #include "table.h"
 #include "../../ops/state.h"
-#include "../../ops/axis_map.h"
+#include "../../ops/slot_map.h"
+#include "../../ops/axes_map.h"
 #include "../../../ipc/shared_state.h"
 
 bool cmdUnalarm(const char*) {
     if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
     // An unmet slot request is retried once (docs/engage_and_axis_map.md §6.1);
     // one from axes_map re-checks its pending axes first.
-    if (!slotMapComplete() && !slotMapRetry()) {
+    bool met = slotMapComplete();
+    if (!met) {
+        if (slotMapFromAxes()) { axesMapRetry(/*quiet=*/true); met = slotMapComplete(); }
+        else                   met = slotMapRetry();
+    }
+    if (!met) {
         Serial.println("err unmapped");
         return true;
     }
