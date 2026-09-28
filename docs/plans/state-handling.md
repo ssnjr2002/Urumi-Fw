@@ -132,10 +132,11 @@ the states mean, how each is entered, and how each is left.
 * **`nodeReleased` is not needed:** a node is released when it holds no slot,
   bound or fenced.
 * **A pending axis is handled per slot.** While axis k is pending (1d:
-  `axes_map` could not confirm its type), slot k is requested as `-` and the
-  other slots bind as requested. Replaces 1d's "pending parks every holder":
-  healthy axes are not parked and re-engaged, so only the slots that change
-  risk a fence. Still `NODE_FAULT` until k clears.
+  `axes_map` could not confirm its type), slot k keeps its node in the slot
+  request but is parked, not engaged; the other slots bind as requested.
+  Replaces 1d's "pending parks every holder": healthy axes are not parked and
+  re-engaged, so only the slots that change risk a fence. The request is
+  unmet, so `NODE_FAULT` holds until k clears.
 * **A head switch keeps its datums.** `slot_map` parks with a disengage only
   (`ops/slot_map.cpp:34`, `applySlots`), never a disable, so parked and re-engaged nodes
   keep their witness (`parkRecord`/`parkMoved`). Only make-safe (estop, the
@@ -149,7 +150,7 @@ X = node 1, Y = 2, Z = 3, A = 4 in slots 0..3; vacuum = 5. Homed, IDLE.
 ```
 node 3's cable works loose            nothing polls; still IDLE
 axes_map 1 2 3 4 (head change)        type check: 3 silent, axis Z pending,
-                                      slot 2 requested as -; 1,2,4 park and
+                                      slot 2 skipped; 1,2,4 park and
                                       re-engage, keep datums; 3's park
                                       unconfirmed: slot 2 fenced
                                       -> ALARM_NODE_FAULT, err node 3 timeout
@@ -311,10 +312,13 @@ Proposed order. Each gets a full Plan section when its turn comes.
    the four stream slots; `axes_map` (renamed from `axis_map`) is the stored
    axis request; an axis is bound when the two agree. Fixes the probe vacuum
    never being released. Depends on nothing.
+1e. `refactor/rpc-start-finish`: the Core 0 → Core 1 call split into a
+   non-blocking start and finish; `rpcCall` becomes a loop over them. Gives
+   branch 2's exclusion check one home. Depends on nothing.
 2. `feature/bus-sweep`: boot sequence sweep, mute and touched nodes, degraded bus
    and `bus_exclude`, the fence, `CFG_SET` → reset and `ready`, confirmed slot
    release, estop make-safe, `unstop`. Make safe is one `CMD_MAKE_SAFE` per
-   node. Its slot rules live in `slot_map`. Depends on 1, 1b and 1d.
+   node. Its slot rules live in `slot_map`. Depends on 1, 1b, 1d and 1e.
 3. `feature/homing-session`: session states and exits, `home_end`, the new
    `setorigin`, legs only from `LIMIT_LATCHED`. Depends on 1.
 4. `feature/alarm-exits`: `unalarm` dispatcher, the strictness config
@@ -790,6 +794,50 @@ axis is unbound.
   non-stepper (`not_stepper`, nothing changes; a vacuum id is already
   `not_in_config`).
 
+## Branch 1e: `refactor/rpc-start-finish`
+
+**Type:** refactor. Same behaviour, the call API reshaped.
+
+**Purpose:** one entry point every Core 0 → Core 1 request passes through,
+with a result, so branch 2 checks exclusion once. Today `rpcCall`
+(`ipc/core1_rpc.cpp:64`) is the only path that stamps an id, waits and checks
+the reply's echo; `rpcStepDebug` (`:329`) and `rpcProbeLegPost` (`:367`) call
+`rpcPost` (`:31`) directly and get a bool, and `probeTick`
+(`core0/ops/probe.cpp:389-399`) polls with `rpcPoll` and checks the id only.
+
+**Shape:**
+
+* `rpcStart(req, &id)`: stamps the id (0 stays fire-and-forget), posts.
+  Returns an `RpcResult`; busy or a full queue is `RPC_TIMEOUT`, as
+  `rpcCall` reports it today.
+* `rpcFinish(id, out)`: never blocks. `RPC_PENDING` (new) until a reply is
+  collected, then the echo check (id, cmd, node) and the NAK reason that
+  `rpcCall` does now.
+* `rpcCall`: `rpcStart`, then `rpcFinish` in a loop until
+  `RPC_CALL_TIMEOUT_MS`. Its signature and every caller unchanged.
+* `rpcPost` and `rpcPoll` become file-static in `core1_rpc.cpp`.
+* `rpcStepDebug` and `rpcProbeLegPost` return an `RpcResult` through
+  `rpcStart`; `probeTick` finishes with `rpcFinish`. Their callers print what
+  they print today.
+
+**Files:** `ipc/core1_rpc.{h,cpp}` (API and its header comments, `:150-160`,
+`:260-275`); `core0/ops/probe.cpp:329,389-399`; `core0/cmd/axis.cpp:449,502`
+(`rpcStepDebug`'s result); the file-header notes naming `rpcPost/rpcPoll`.
+
+**Out of scope:** the exclusion check itself (branch 2); a Core 0 deadline on
+a probe leg; converting other blocking callers.
+
+**Checks:** `pio run -e pico`. Human scope: a probe session start to end, and
+`step`, on the machine; a `nodestat` and an `axes_map` to show `rpcCall`
+unchanged.
+
+**Overlap:** none among open typed branches. `feature/bus-sweep`'s worktree
+exists with no commits; it rebases onto `main` after this merges.
+
+**Depends on:** nothing.
+
+**Status:** planned.
+
 ## Branch 2: `feature/bus-sweep`
 
 **Type:** feature. New alarm reason, commands, replies and boot behaviour.
@@ -815,9 +863,9 @@ confirmation: the fence" and "Estop", except strictness and session endings
   `makesafe` does), after the wipe releases Core 1. Worst case 8 ×
   `RESPONSE_TIMEOUT_MS` (20 ms) = 160 ms. With no config it still runs; only
   touched nodes can then be mute.
-* Exclusion is checked once, in Core 0's RPC call path: a node-addressed call
-  to an excluded node returns a new `RPC_EXCLUDED` (`err excluded`).
-  Make-safe is exempt.
+* Exclusion is checked once, in `rpcStart` (branch 1e), which every request
+  passes through: a node-addressed request to an excluded node returns a new
+  `RPC_EXCLUDED` (`err excluded`). Make-safe is exempt.
 * `unstop` waits only on nodes that are not excluded.
 * Until branch 4, `unalarm` in `ALARM_ESTOP` answers `err estop` (its map
   retry would leave the estop unconfirmed).
@@ -832,8 +880,10 @@ confirmation: the fence" and "Estop", except strictness and session endings
 * `err degraded` refuses `slot_map`, `axes_map` and `probe`.
 * Confirmed `makesafe <id>` drops the node from both requests: the slot
   request, and for an axis node the axes request (`-`, not pending).
-* A pending axis is requested as `-` in its own slot; the other slots bind as
-  requested (Decisions). Replaces 1d's "pending parks every holder".
+* A pending axis keeps its id in the slot request, and `slotMapCommit`'s
+  `parkOnly` flag becomes a skip mask: skipped slots are parked, not engaged,
+  so the request stays unmet and `NODE_FAULT` follows from `slotMapComplete`
+  alone (Decisions). Replaces 1d's "pending parks every holder".
 * `axes_map`'s type check uses the fence retry's make-safe reply for a fenced
   node, and `CMD_NODE_STATUS` for every other node. Read confirms the
   make-safe reply carries the node type.
@@ -872,7 +922,7 @@ confirmation: the fence" and "Estop", except strictness and session endings
    * New `core0/ops/bus.{h,cpp}`: `busSweep()`, `mute`, `excluded`, touched.
    * `core0/core0.cpp:146-149`: banner, `busSweep()`, the default map unless
      degraded, then `ready`.
-   * `ipc/core1_rpc.cpp` (`rpcCall`): the exclusion check, with make-safe
+   * `ipc/core1_rpc.cpp` (`rpcStart`): the exclusion check, with make-safe
      exempt; `RPC_EXCLUDED` and its text.
    * `ipc/shared_state.h`: `ALARM_BUS_DEGRADED = 8`.
    * `core0/ops/state.cpp`: `resumeOrHold` settles `ALARM_BUS_DEGRADED` first.
@@ -912,7 +962,7 @@ bus.
 **Overlap:** none (`irq-bench` has no branch type). Touches
 `core0/cmd/table.h`.
 
-**Depends on:** branches 1, 1b, 1d (merged). "Holds a slot" in touched
+**Depends on:** branches 1, 1b, 1d (merged), 1e. "Holds a slot" in touched
 includes the probe vacuum with no special case.
 
 **Read findings (second Read, after 1a/1b/1c):**
