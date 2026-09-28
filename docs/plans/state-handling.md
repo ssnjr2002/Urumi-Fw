@@ -860,7 +860,22 @@ exists with no commits; it rebases onto `main` after this merges.
 
 **Depends on:** nothing.
 
-**Status:** planned.
+**Status:** ready to merge.
+
+**Outcome:**
+
+* Added `rpcAbandon(id)`: gives up on a request and releases the claim;
+  `rpcFinish` drops its late reply by id. `rpcCall` uses it on timeout,
+  `probeTick` on a leg deadline, so the restore's calls queue behind a leg
+  Core 1 is still running instead of failing busy.
+* `rpcProbeLegPost` is renamed `rpcProbeLegStart`; `rpcStepDebug` returns an
+  `RpcResult` (its callers still ignore it). `rpcFinish` keeps the live
+  request's cmd and node itself, so its signature is `(id, out)` as planned.
+* `rpcBusy` kept, still unused. `RPC_PENDING` prints as `pending`.
+* For branch 2: every request passes through `rpcStart`, so the exclusion
+  check goes there; `RPC_EXCLUDED` joins the enum beside `RPC_PENDING`.
+* Checks: `pio run -e pico` clean. No automated test (no `ipc/` harness).
+  Human scope open, as listed in Checks.
 
 ## Branch 2: `feature/bus-sweep`
 
