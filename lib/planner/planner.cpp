@@ -1,0 +1,96 @@
+#include "planner/planner.h"
+
+#include <math.h>
+
+namespace planner {
+
+void Planner::reset(Vec2 pos) {
+    tail_ = 0;
+    count_ = 0;
+    claimed_ = false;
+    end_ = pos;
+    pinned_entry_sqr_ = 0;
+    plan_valid_ = false;
+}
+
+bool Planner::push(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
+    const Line ln = makeLine(end_, target, feed, limits);
+    if (ln.length <= 0) return true;
+    if (full()) return false;
+
+    Block& b = ring_[index(count_)];
+    b.line = ln;
+    b.max_entry_sqr = count_ > 0
+        ? junctionMaxSqr(ring_[index(count_ - 1)].line, ln, deviation)
+        : 0;
+    // Committed at rest on both ends until the next commit: still consistent
+    // with its predecessor, whose committed exit is also rest.
+    b.entry_sqr = 0;
+    b.exit_sqr = 0;
+    b.profile = makeTrapezoid(ln.length, ln.accel, 0, ln.v_max_sqr, 0);
+
+    count_++;
+    epoch_++;
+    end_ = target;
+    return true;
+}
+
+void Planner::replan() {
+    const int first = firstUnclaimed();
+
+    // Reverse: the newest block stops; each entry is what can still stop in time.
+    float next_entry = 0;
+    for (int i = count_ - 1; i >= first; i--) {
+        const Block& b = ring_[index(i)];
+        plan_exit_sqr_[i] = next_entry;
+        const float reachable = next_entry + 2.0f * b.line.accel * b.line.length;
+        plan_entry_sqr_[i] = fminf(fminf(b.max_entry_sqr, b.line.v_max_sqr), reachable);
+        next_entry = plan_entry_sqr_[i];
+    }
+
+    // Forward: from the pinned entry, each exit is what can be reached.
+    float entry = pinned_entry_sqr_;
+    for (int i = first; i < count_; i++) {
+        const Block& b = ring_[index(i)];
+        plan_entry_sqr_[i] = entry;
+        const float reachable = entry + 2.0f * b.line.accel * b.line.length;
+        plan_exit_sqr_[i] = fminf(plan_exit_sqr_[i], reachable);
+        plan_profile_[i] = makeTrapezoid(b.line.length, b.line.accel, entry,
+                                         b.line.v_max_sqr, plan_exit_sqr_[i]);
+        entry = plan_exit_sqr_[i];
+    }
+
+    plan_epoch_ = epoch_;
+    plan_valid_ = true;
+}
+
+bool Planner::commit() {
+    if (!plan_valid_ || plan_epoch_ != epoch_) return false;
+    for (int i = firstUnclaimed(); i < count_; i++) {
+        Block& b = ring_[index(i)];
+        b.entry_sqr = plan_entry_sqr_[i];
+        b.exit_sqr = plan_exit_sqr_[i];
+        b.profile = plan_profile_[i];
+    }
+    plan_valid_ = false;
+    return true;
+}
+
+const Block* Planner::claim() {
+    if (claimed_ || count_ == 0) return nullptr;
+    claimed_ = true;
+    epoch_++;
+    const Block& b = ring_[tail_];
+    pinned_entry_sqr_ = b.exit_sqr;
+    return &b;
+}
+
+void Planner::release() {
+    if (!claimed_) return;
+    claimed_ = false;
+    tail_ = (tail_ + 1) % kSize;
+    count_--;
+    epoch_++;
+}
+
+}  // namespace planner
