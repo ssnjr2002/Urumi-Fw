@@ -1,18 +1,50 @@
-// lifecycle.cpp — the job lifecycle: stop, reset, pause, resume, cancel, and
-// the data-plane sequence reset.
+// lifecycle.cpp — the job lifecycle: stop, unstop, reset, pause, resume,
+// cancel, and the data-plane sequence reset.
 //
-// The estop and pause paths have no transport coupling and no position coupling
-// to audit. Every one of these commands is a state write that Core 1 observes on
-// its next pass -- none of them touches the bus.
+// All but unstop are state writes that Core 1 observes on its next pass, with
+// no bus traffic. unstop is the estop's exit, and it has to hear every node.
 
 #include <Arduino.h>
 #include "table.h"
 #include "gate.h"
 #include "../data_plane.h"   // dataPlaneResetSeq (seqreset)
+#include "../ops/slot_map.h"
+#include "../ops/position.h"
+#include "../ops/state.h"
+#include "../usb_protocol.h" // BUS_ADDR_MAX
 #include "../../ipc/shared_state.h"
 
 bool cmdStop(const char*) {
     machineState = STATE_ESTOP;            // Core 1 flushes, clears axes, → ALARM
+    Serial.println("ok");
+    return true;
+}
+
+// Make safe every touched node (energised, or holding a slot). Each
+// confirmation frees that node's slot and clears its fence. Refused, with the
+// unconfirmed ids, until all confirm; then the requests are forgotten and the
+// machine settles IDLE, unmapped, de-energised, un-homed.
+bool cmdUnstop(const char*) {
+    if (machineState != STATE_ALARM || alarmReason != ALARM_ESTOP) {
+        Serial.println("err bad_state"); return true;
+    }
+    uint16_t unconfirmed = 0;
+    for (uint8_t n = 1; n <= BUS_ADDR_MAX; n++) {
+        if (!(nodeEnabled & (1u << n)) && nodeSlot(n) == SLOT_NONE) continue;
+        NodeStatus st;
+        if (slotMakeSafe(n, &st) != RPC_OK || (st.flags & NODE_FLAG_ENABLED))
+            unconfirmed |= (1u << n);
+    }
+    if (unconfirmed) {
+        Serial.print("err unconfirmed");
+        for (uint8_t n = 1; n <= BUS_ADDR_MAX; n++)
+            if (unconfirmed & (1u << n)) Serial.printf(" %d", n);
+        Serial.println();
+        return true;
+    }
+    slotMapForget();
+    axesReqForget();
+    resumeOrHold();
     Serial.println("ok");
     return true;
 }

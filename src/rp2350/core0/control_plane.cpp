@@ -30,6 +30,7 @@ static const Cmd kCommands[] = {
     { "vac_switch",   cmdVacSwitch   },
     // lifecycle.cpp
     { "stop",         cmdStop        },
+    { "unstop",       cmdUnstop      },
     { "reset",        cmdReset       },
     { "rst",          cmdReset       },
     { "seqreset",     cmdSeqReset    },

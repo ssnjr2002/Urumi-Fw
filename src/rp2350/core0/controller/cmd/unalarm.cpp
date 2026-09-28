@@ -9,6 +9,9 @@
 
 bool cmdUnalarm(const char*) {
     if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
+    // The estop's exit is `unstop`: a map retry here would leave its nodes
+    // unconfirmed.
+    if (alarmReason == ALARM_ESTOP) { Serial.println("err estop"); return true; }
     // An unmet slot request is retried once (docs/engage_and_axis_map.md §6.1);
     // one from axes_map re-checks its pending axes first.
     bool met = slotMapComplete();

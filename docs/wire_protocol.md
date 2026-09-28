@@ -287,13 +287,14 @@ prefixed `0x`.
 | `enable` | `[all\|<id>]` | `ok` / `err <reason>` | Energise motors (per allowed-state matrix). Bare / `all` energises every present node; `enable <id>` relays CMD_ENABLE to that node only (mirrors `pingnode <id>`) |
 | `disable` | `[all\|<id>]` | `ok` / `err <reason>` | De-energise. Bare / `all` de-energises every node and clears `axes_homed`/`axisBounds` for all axes; `disable <id>` relays CMD_DISABLE to that node only and clears homing/bounds for that axis alone |
 | `setorigin` | `[axes]` | `ok` / `err <reason>` | Set datum for given axes (default all): home bits + zero pos + real bounds |
-| `axes_map` | `[<x> <y> <z> <a>]` | `ok` / `err unconfigured` / `err node <id> not_in_config\|not_stepper\|timeout\|<rpc>` / `err dup` / `err bad_node` | The axis request: `-`/`0` = no axis. Each id must be a stepper axis node the config marks present; applied as a `slot_map` of the same ids once all are confirmed. A silent node stays pending and the machine goes `ALARM_NODE_FAULT`. No-arg: `axes_map <t> <t> <t> <t>`, `t` = `-`, `n` or `?n` (pending). See engage_and_axis_map.md §5.4 |
-| `slot_map` | `[<n0> <n1> <n2> <n3>]` | `ok` / `err node <id> <rpc>` / `err dup` / `err bad_node` | Console primitive: bind any node to stream slots 0..3, no config. A node that does not engage leaves the request unmet (`ALARM_NODE_FAULT`). No-arg: `slot_map <t> <t> <t> <t>`, `t` = `-` or `n` |
+| `axes_map` | `[<x> <y> <z> <a>]` | `ok` / `err unconfigured` / `err node <id> not_in_config\|not_stepper\|timeout\|<rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | The axis request: `-`/`0` = no axis. Each id must be a stepper axis node the config marks present; applied as a `slot_map` of the same ids once all are confirmed. A silent node stays pending, its slot parked, and the machine goes `ALARM_NODE_FAULT`. No-arg: `axes_map <t> <t> <t> <t>`, `t` = `-`, `n` or `?n` (pending). See engage_and_axis_map.md §5.4 |
+| `slot_map` | `[<n0> <n1> <n2> <n3>]` | `ok` / `err node <id> <rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | Console primitive: bind any node to stream slots 0..3, no config. A node that does not engage leaves the request unmet (`ALARM_NODE_FAULT`). `err fenced` names the node of each requested fenced slot whose make-safe went unconfirmed, `-` elsewhere. No-arg: `slot_map <t> <t> <t> <t>`, `t` = `-`, `n` or `!n` (fenced). See engage_and_axis_map.md §5.5 |
 | `pause` | — | `ok` / `err <reason>` | Request pause of the running job (Core 0 sets flag, Core 1 drains) |
 | `resume` | — | `ok` / `err <reason>` | Continue a paused job (gated on `axes_homed & required_axes`) |
 | `cancel` | — | `ok` | Abandon the paused job → IDLE |
 | `stop` | — | `ok` | Emergency stop — flush, ALARM(ESTOP); always available |
-| `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved) |
+| `unstop` | — | `ok` / `err unconfirmed <ids>` / `err bad_state` | Leave `ALARM_ESTOP`: make safe every touched node (energised or holding a slot); refused until all confirm. Forgets the requested maps → IDLE, unmapped, de-energised, un-homed |
+| `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved). `err estop` in `ALARM_ESTOP`: use `unstop` |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value. Host sends this before each MSEG/jog stream so packet index 0 lines up. See "Duplicate guard" below. |
 
 ### `getstate` reply fields
@@ -358,6 +359,7 @@ Phase 2.
 | `resume` / `cancel` | ✗ | ✗ | ✓ | ✗ | ✗ |
 | `stop` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `unalarm` | ✗ | ✗ | ✗ | ✓ | ✗ |
+| `unstop` (`ALARM_ESTOP` only) | ✗ | ✗ | ✗ | ✓ | ✗ |
 
 `pingnode` is blocked in RUNNING because the RS485 bus is saturated with stream
 traffic; node presence is checked at pre-flight (IDLE) and tool change (PAUSED).

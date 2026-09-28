@@ -33,8 +33,9 @@ bool cmdNodeStat(const char*);
 bool cmdBusStat(const char*);
 bool cmdVacSwitch(const char*);
 
-// ─── lifecycle.cpp — state transitions only; no transport, no position ────────
+// ─── lifecycle.cpp — state transitions; unstop also makes the bus safe ─────────
 bool cmdStop(const char*);
+bool cmdUnstop(const char*);
 bool cmdReset(const char*);
 bool cmdSeqReset(const char*);
 bool cmdPause(const char*);
