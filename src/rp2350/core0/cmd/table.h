@@ -60,6 +60,7 @@ bool cmdLinLeg(const char*);
 bool cmdRotLeg(const char*);
 bool cmdAxesEnable(const char*);
 bool cmdBusEnable(const char*);
+bool cmdBusExclude(const char*);
 bool cmdEnable(const char*);
 bool cmdDisable(const char*);
 

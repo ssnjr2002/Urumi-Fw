@@ -174,6 +174,7 @@ typedef enum {
                      // to remove, and "it is there but talking nonsense" wants a
                      // different response from "it is not there".
     RPC_PENDING,     // rpcFinish only: no reply yet
+    RPC_EXCLUDED,    // rpcStart only: the node is excluded (rpcSetExcluded)
 } RpcResult;
 
 typedef struct {
@@ -266,7 +267,13 @@ void rpcReset(void);
 // out of order, and the existing alarmAtEntry compare stays sufficient (Core 0
 // cannot process the command that would clear an alarm while another command is
 // outstanding). Do not relax this without revisiting both.
+//
+// A request addressed to an excluded node returns RPC_EXCLUDED without being
+// posted; CMD_MAKE_SAFE is exempt.
 RpcResult rpcStart(const RpcRequest* req, uint16_t* idOut);
+
+// Bit n = bus id n is excluded (core0/ops/bus.h).
+void rpcSetExcluded(uint16_t ids);
 
 // Collect the reply to `id`. Never blocks: RPC_PENDING until it arrives, then
 // the reply's result, or RPC_BAD_REPLY if its echo does not match the request.

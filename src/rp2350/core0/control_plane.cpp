@@ -54,6 +54,7 @@ static const Cmd kCommands[] = {
     { "rot_leg",      cmdRotLeg      },
     { "axes_enable",  cmdAxesEnable  },
     { "bus_enable",   cmdBusEnable   },
+    { "bus_exclude",  cmdBusExclude  },
     { "enable",       cmdEnable      },
     { "disable",      cmdDisable     },
     { "probe_map",    cmdProbeMap    },

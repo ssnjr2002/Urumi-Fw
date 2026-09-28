@@ -358,7 +358,9 @@ missing whole frames while bytes still feed its silence timer.
 `makesafe <id>` confirmed unbinds the node's slot and drops the node from the
 slot and axes requests (`-`, not pending), so no alarm follows; unconfirmed,
 its slot is fenced and `NODE_FAULT` follows. A soft reset forgets the requests
-but keeps the slot table, bindings and fences: only power-on clears it.
+but keeps the slot table, bindings and fences: only power-on clears it. The
+boot sweep then frees every slot whose node confirms; a node that does not
+stays fenced and mute (`ALARM_BUS_DEGRADED`).
 
 ---
 
@@ -375,8 +377,10 @@ Motion gating on an unmapped machine is later work
 `axes_map`.
 
 ```
-boot / soft reset, no valid config → nothing requested → IDLE, unmapped
-boot / soft reset, valid config    → STATE_ALARM, ALARM_NODE_FAULT, then the
+boot / soft reset                  → sweep: make-safe to every bus id
+   a mute node, not excluded       → ALARM_BUS_DEGRADED, no map (bus_exclude)
+   no valid config                 → nothing requested → IDLE, unmapped
+   valid config                    → STATE_ALARM, ALARM_NODE_FAULT, then the
                                      controller commits the defaultHead map
    map complete                    → resumeOrHold() → IDLE (or LIMIT_LATCHED)
    a node did not ACK              → stay ALARM_NODE_FAULT, map incomplete

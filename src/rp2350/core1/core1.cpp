@@ -150,16 +150,8 @@ void setup1() {
             processBus();
         }
 
-        // ══════════════════════════════════════════════════════════
-        // ─── 4: DISABLE NODES ───────────────────────────────
-        // ══════════════════════════════════════════════════════════
-        // We only reach this line if soft_reset_requested became true!
-        // TODO: deliberate if a proper reset handler should be put in
-        // the node side
-        //
-        // Was 1..4 — the axis range — which left peripherals running across a
-        // reset. Same sweep as the estop path now, for the same reason.
-        busStopAll(CMD_DISABLE);
+        // No sweep here: Core 0's boot sweep makes every node safe once this
+        // core is released (core0/ops/bus.h).
 
         // Loop back to the parking lot.
     }

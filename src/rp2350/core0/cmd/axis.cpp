@@ -18,6 +18,7 @@
 #include "../ops/probe.h"
 #include "../ops/slot_map.h"
 #include "../ops/axes_map.h"
+#include "../ops/bus.h"
 #include "../config/machine_cfg.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -26,6 +27,16 @@
 // The gate shared by every command here that goes to the bus: Core 1 services
 // channel 1 only after draining the ring, so a request issued mid-stream waits
 // out the whole queue while Core 0 blocks and stops reading serial.
+// A mute node is decided (bus_exclude, or reset) before any map: nothing could
+// run on one anyway.
+static bool degradedDenies() {
+    if (machineState == STATE_ALARM && alarmReason == ALARM_BUS_DEGRADED) {
+        Serial.println("err degraded");
+        return true;
+    }
+    return false;
+}
+
 static inline bool busGateDenies() {
     if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
         Serial.println("err bad_state");
@@ -171,10 +182,32 @@ bool cmdSlotMap(const char* args) {
         Serial.println();
         return true;
     }
-    if (busGateDenies()) return true;
+    if (busGateDenies() || degradedDenies()) return true;
     uint8_t desired[4];
     if (!parseFourNodes(args, desired)) return true;
     slotMapApply(desired, /*quiet=*/false);
+    return true;
+}
+
+// ── bus_exclude <id> … — run without mute nodes ──────────────────────────────
+// Mute ids only (`err not_mute`). Commands to an excluded node then answer
+// `excluded`, make-safe exempt, until the next sweep. Not state-gated. With no
+// unexcluded mute node left, ALARM_BUS_DEGRADED settles to IDLE, unmapped.
+bool cmdBusExclude(const char* args) {
+    uint16_t ids = 0;
+    const char* p = args;
+    while (*p) {
+        char* end;
+        const uint8_t n = parseNode(p, &end);
+        if (!n) { Serial.println("err bad_node"); return true; }
+        ids |= (1u << n);
+        p = end;
+        while (*p == ' ') p++;
+    }
+    if (!ids) { Serial.println("err usage"); return true; }
+    if (!busExclude(ids)) { Serial.println("err not_mute"); return true; }
+    if (machineState == STATE_ALARM && alarmReason == ALARM_BUS_DEGRADED) resumeOrHold();
+    Serial.println("ok");
     return true;
 }
 
@@ -197,7 +230,7 @@ bool cmdAxesMap(const char* args) {
         return true;
     }
 
-    if (busGateDenies()) return true;
+    if (busGateDenies() || degradedDenies()) return true;
     if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
 
     uint8_t desired[4];
@@ -527,6 +560,7 @@ bool cmdHallScan(const char* args) {
 // binding rather than an overlay.
 bool cmdProbeMap(const char* args) {
     if (probeActive()) { Serial.println("err busy"); return true; }
+    if (degradedDenies()) return true;
     // NOT busGateDenies(). That gate admits STATE_ALARM, correctly, because
     // `slot_map` / `axes_map` is how a machine LEAVES ALARM_NODE_FAULT -- but a probe session
     // is not an alarm exit. probeBegin writes STATE_PROBING unconditionally, so

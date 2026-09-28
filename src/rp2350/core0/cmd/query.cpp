@@ -11,6 +11,7 @@
 #include "../ops/position.h"
 #include "../ops/homing.h"
 #include "../ops/probe.h"
+#include "../ops/bus.h"
 #include "../status.h"                  // getBufCount (status alias)
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -104,11 +105,14 @@ bool cmdCfg(const char*) {
 
 // `status` / `?` — human-readable, not host-facing.
 bool cmdStatus(const char*) {
-    Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u\n",
+    // mute / excluded / touched: bit n = bus id n (ops/bus.h).
+    Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u"
+                  " mute=0x%03x excluded=0x%03x touched=0x%03x\n",
                   stateName(machineState),
                   (long)machinePos[0], (long)machinePos[1],
                   (long)machinePos[2], (long)machinePos[3],
-                  axes_homed, axes_enabled, getBufCount(), MASTER_BUF_SIZE);
+                  axes_homed, axes_enabled, getBufCount(), MASTER_BUF_SIZE,
+                  busMute(), busExcluded(), busTouched());
     return true;
 }
 

@@ -14,6 +14,8 @@
 #include "control_plane.h"
 #include "ops/position.h"
 #include "ops/slot_map.h"
+#include "ops/bus.h"
+#include "ops/state.h"
 #include "ops/homing.h"
 #include "ops/probe.h"
 #include "data_plane.h"
@@ -122,8 +124,8 @@ void loop() {
     // axes_enabled is DERIVED and deliberately not wiped here: reconcileValidity
     // rebuilds it from nodeEnabled at the top of the loop below, before anything
     // host-observable runs. nodeEnabled itself is Core 1's — Core 0 must not
-    // write it — and the reset path's own busStopAll() sweep is what clears
-    // it, per node, as each one confirms (core1/core1.cpp, bus/packet.cpp).
+    // write it — and the boot sweep below clears it, per node, as each one
+    // confirms its make-safe (ops/bus.h).
     // Zeroing the projection here would just assert a value one pass early, and
     // give a derived byte a second writer.
     jobActive = false;
@@ -147,7 +149,9 @@ void loop() {
     // ══════════════════════════════════════════════════════════
     Serial.printf("RS485 MicroSegment Host Drive (%d baud)\n", RS485_BAUD);
 
-    controllerApplyDefaultMap();
+    busSweep();
+    if (busDegraded()) resumeOrHold();     // ALARM_BUS_DEGRADED, no map
+    else               controllerApplyDefaultMap();
 
     while (!soft_reset_requested) {
         // Fold Core 1's ALARM signals into the validity masks BEFORE serving the

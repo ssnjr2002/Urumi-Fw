@@ -58,7 +58,15 @@ static uint16_t rpcNextId(void) {
 // admits one reply-bearing transaction at a time.
 static uint8_t s_lastNakReason = 0;
 
+static uint16_t s_excluded = 0;
+
+void rpcSetExcluded(uint16_t ids) { s_excluded = ids; }
+
 RpcResult rpcStart(const RpcRequest* req, uint16_t* idOut) {
+    if (req->op != RPC_OP_STEP_DEBUG && req->node <= BUS_ADDR_MAX &&
+        (s_excluded & (1u << req->node)) &&
+        !(req->op == RPC_OP_NODE && req->cmd == CMD_MAKE_SAFE))
+        return RPC_EXCLUDED;
     RpcRequest r = *req;
     r.id = (r.op == RPC_OP_STEP_DEBUG) ? 0 : rpcNextId();
     if (!rpcPost(&r)) return RPC_TIMEOUT;     // queue full or one already in flight
@@ -124,6 +132,7 @@ const char* rpcResultText(RpcResult r) {
         case RPC_TIMEOUT:   return "timeout";
         case RPC_BAD_REPLY: return "bad_reply";
         case RPC_PENDING:   return "pending";
+        case RPC_EXCLUDED:  return "excluded";
         case RPC_NAK: break;
     }
     switch (s_lastNakReason) {

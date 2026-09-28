@@ -3,12 +3,14 @@
 #include "state.h"
 #include "position.h"          // homingLatched
 #include "slot_map.h"
+#include "bus.h"
 #include "../../ipc/shared_state.h"
 #include "hardware/sync.h"     // __dmb
 
 void resumeOrHold(void) {
     uint8_t reason;
-    if      (!slotMapComplete())  reason = ALARM_NODE_FAULT;
+    if      (busDegraded())       reason = ALARM_BUS_DEGRADED;
+    else if (!slotMapComplete())  reason = ALARM_NODE_FAULT;
     else if (homingLatched)       reason = ALARM_LIMIT_LATCHED;
     else                          reason = ALARM_NONE;
     // Reason before state, matching how Core 1 publishes the pair.

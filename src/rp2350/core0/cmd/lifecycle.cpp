@@ -11,6 +11,7 @@
 #include "../ops/slot_map.h"
 #include "../ops/position.h"
 #include "../ops/state.h"
+#include "../ops/bus.h"
 #include "../usb_protocol.h" // BUS_ADDR_MAX
 #include "../../ipc/shared_state.h"
 
@@ -20,17 +21,19 @@ bool cmdStop(const char*) {
     return true;
 }
 
-// Make safe every touched node (energised, or holding a slot). Each
+// Make safe every touched node (energised, or holding a slot) that is not
+// excluded; an excluded node's slot stays fenced. Each
 // confirmation frees that node's slot and clears its fence. Refused, with the
 // unconfirmed ids, until all confirm; then the requests are forgotten and the
-// machine settles IDLE, unmapped, de-energised, un-homed.
+// machine settles IDLE (or ALARM_BUS_DEGRADED), unmapped, de-energised,
+// un-homed.
 bool cmdUnstop(const char*) {
     if (machineState != STATE_ALARM || alarmReason != ALARM_ESTOP) {
         Serial.println("err bad_state"); return true;
     }
     uint16_t unconfirmed = 0;
     for (uint8_t n = 1; n <= BUS_ADDR_MAX; n++) {
-        if (!(nodeEnabled & (1u << n)) && nodeSlot(n) == SLOT_NONE) continue;
+        if (!(busTouched() & ~busExcluded() & (1u << n))) continue;
         NodeStatus st;
         if (slotMakeSafe(n, &st) != RPC_OK || (st.flags & NODE_FLAG_ENABLED))
             unconfirmed |= (1u << n);

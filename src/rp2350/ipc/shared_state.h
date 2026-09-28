@@ -165,6 +165,10 @@ enum AlarmReason : uint8_t {
     // web host currently degrades an unrecognised AlarmReason silently, so it
     // needs teaching alongside this.
     ALARM_PROBE_FAIL = 7,
+    // The boot sweep left a node mute (core0/ops/bus.h) that is not excluded.
+    // The default map is not applied. Held until `bus_exclude`, or a `reset`
+    // the node answers. Same host caveat as above.
+    ALARM_BUS_DEGRADED = 8,
 };
 
 enum RunningReason : uint8_t {
