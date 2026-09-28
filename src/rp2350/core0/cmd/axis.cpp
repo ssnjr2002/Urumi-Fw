@@ -162,9 +162,10 @@ static bool parseFourNodes(const char* args, uint8_t* out) {
 // rebinding mid-RUNNING corrupts motion (§6.2), and a probe owns its binding.
 bool cmdSlotMap(const char* args) {
     if (*args == '\0') {                          // read-back form
-        Serial.print("slot_map");
+        Serial.print("slot_map");                 // `!n` = fenced on node n
         for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
             if (slotNodeAt(i) == SLOT_NONE) Serial.print(" -");
+            else if (slotFencedAt(i))       Serial.printf(" !%d", slotNodeAt(i));
             else                            Serial.printf(" %d", slotNodeAt(i));
         }
         Serial.println();

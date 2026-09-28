@@ -42,9 +42,10 @@ uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
 bool sendBroadcast(uint8_t cmd);
 
 // ─── Whole-bus safe-off ──────────────────────────────────────────────────────
-// CMD_DISABLE to every address, replies consumed and discarded.
+// `cmd` (CMD_MAKE_SAFE on estop, CMD_DISABLE on the reset park) to every
+// address; each node's bit in nodeEnabled is cleared only on its confirmation.
 //
-// The sweep covers the WHOLE bus, not the axis map, because CMD_DISABLE is the
+// The sweep covers the WHOLE bus, not the axis map, because both are the
 // generic "park yourself" hook and each node type implements it as its own safe
 // state: a stepper de-energises, a vacuum node stops the pump, a knife node
 // kills the oscillator and the blower. Peripherals hold no motion slot, so
@@ -64,4 +65,4 @@ bool sendBroadcast(uint8_t cmd);
 // is that every node starts within one loop() of every other — not that the stop
 // is instantaneous. The serial sweep pays that same per-node latency anyway, plus
 // the round trips.
-void busDisableAll(void);
+void busStopAll(uint8_t cmd);

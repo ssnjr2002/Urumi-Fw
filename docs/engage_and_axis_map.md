@@ -222,8 +222,8 @@ without sending, between segments only; during a job every step sends a byte.
 It does not send during `core1FlashPark`, so a config commit longer than the
 timeout leaves every node safe and the machine needs a re-home.
 
-The Pico's slot binding is not changed by either path: a released node stays
-bound until it is engaged again.
+A node's silence release leaves the Pico's binding as it was: the Pico cannot
+see it. A `makesafe` or estop release changes the binding only as §5.5 says.
 
 ---
 
@@ -252,9 +252,10 @@ binding; applying it (`ops/slot_map.cpp`) is deliberately **not a diff** — it
 always re-sends every engage:
 
 ```
-for slot i in 0..3:  if slotNode[i] != NONE: ENGAGE(slotNode[i], SLOT_NONE)  # park every holder (best-effort)
-for slot i in 0..3:  if desired[i]  != NONE: ENGAGE(desired[i], i)           # bind every desired slot
-a refused engage unbinds that slot and every later one
+for slot i fenced, desired[i] != NONE:  MAKE_SAFE(slotNode[i])     # fence retry (§5.5)
+for slot i bound, not fenced:          ENGAGE(slotNode[i], NONE)  # park; unconfirmed fences
+for slot i in 0..3 not fenced/skipped: ENGAGE(desired[i], i)     # bind; no answer fences
+a failed engage stops the apply: later slots stay unbound
 ```
 
 **Why not a diff.** A skip-if-unchanged diff was tried and removed: because the
@@ -281,8 +282,8 @@ engage) — fine, it is a cold path (connect / head-switch, never hot).
 
 ### 5.3 Partial failure is safe by idempotency — no rollback
 
-If an `ENGAGE` times out, that slot and the later ones are left unbound, the
-request stays unmet and the machine goes `ALARM_NODE_FAULT` (§6). A retry
+If an `ENGAGE` times out, that slot is fenced (§5.5) and the later ones are
+left unbound, the request stays unmet and the machine goes `ALARM_NODE_FAULT` (§6). A retry
 re-applies the same request and re-sends the same packets, and re-engaging a
 node to the slot it already holds is idempotent. So retry-after-partial-failure
 needs no rollback logic.
@@ -311,9 +312,13 @@ axis k is bound  <=>  slot k holds the node axes_map names for k, and it is not 
     (`err node <id> not_stepper`);
   * no answer keeps it pending (`err node <id> timeout`).
 
-  The request is then the slot request. It is applied only once nothing is
-  pending; while an axis is pending every slot holder is parked and the machine
-  is `ALARM_NODE_FAULT` until `unalarm` re-checks. The config's default map
+  A node holding a fenced slot gets make-safe instead, whose status reply is
+  the type check (§5.5); unconfirmed, it stays pending with `err fenced …`.
+
+  The request is then the slot request, applied per slot: a pending axis's
+  slot is parked, not engaged, and the other slots bind as requested. The
+  request stays unmet, so the machine is `ALARM_NODE_FAULT` until `unalarm`
+  re-checks. The config's default map
   keeps a wrong type pending rather than refusing, so a wrong config boots into
   `NODE_FAULT`. No-arg: read back the request, pending as `?n`
   (`axes_map 1 2 ?5 4`).
@@ -327,6 +332,33 @@ axis k is bound  <=>  slot k holds the node axes_map names for k, and it is not 
 * A probe is the slot map `- - <z> <vac>`: only Z stays bound. Its exit
   re-applies the axes request, which parks the vacuum like any slot holder
   ([tool_probe.md](tool_probe.md) §5).
+
+### 5.5 Slots are freed only by confirmation: the fence
+
+A slot is left only on its node's word. A park that is not confirmed, or an
+engage with no answer (a NAK is a confirmed refusal), **fences** the slot: it
+keeps the node's id, and since nothing is known about that node its origin is
+invalidated and the slot's views are cleared. On the `ALARM_ESTOP` edge every
+bound slot is fenced, since the estop sweep's make-safe replies stay on Core 1.
+
+A fenced slot:
+
+* takes no engage, and satisfies a request of `-` only;
+* unbinds its axis (`axisNode` is `-`), so ingest refuses steps for it (§5.4);
+* reads back as `!n` in `slot_map` (`slot_map 1 2 !3 4`).
+
+A fence clears only on a confirmed release from its node: a make-safe whose
+reply shows no slot, or an engage that shows the node in another slot. A map
+that requests a fenced slot, for its own node or another, first sends
+make-safe to the fenced node; unconfirmed, the map answers `err fenced <s0>
+<s1> <s2> <s3>` naming the fenced node of each such slot (`-` elsewhere) and
+the rest of the map still applies. Never on time or silence: a node can keep
+missing whole frames while bytes still feed its silence timer.
+
+`makesafe <id>` confirmed unbinds the node's slot and drops the node from the
+slot and axes requests (`-`, not pending), so no alarm follows; unconfirmed,
+its slot is fenced and `NODE_FAULT` follows. A soft reset forgets the requests
+but keeps the slot table, bindings and fences: only power-on clears it.
 
 ---
 
@@ -362,9 +394,9 @@ is complete. `NODE_FAULT` never reads axes, so a probe's binding is complete
 like any other. The controller requests the config's `[x, y, head.z, head.a]`
 for `defaultHead`; a host map replaces the request, and may be partial
 (`slot_map 1 - - -` to bench one node): once every node it names engages, the
-alarm clears. A node that fails to engage
-leaves its slot and every later slot unbound, so a stale id can never make a
-map read as complete.
+alarm clears. A node that fails to engage fences its slot and leaves every
+later slot unbound, so a stale id can never make a map read as complete. A
+fenced slot counts as `-` (§5.5).
 The command still answers `ok` when the result is incomplete: committing the
 map is what was asked for — the resulting machine being alarmed is a state
 fact, carried by the reason code.
@@ -446,7 +478,7 @@ this doc does not implement them.
 
 Independent of the handshake: the no-arg forms read back without the hot path.
 `axes_map` prints the axis request, pending as `?n`; `slot_map` prints the
-binding. A host needs only `axes_map`; `slot_map` is for the console.
+binding, fenced as `!n`. A host needs only `axes_map`; `slot_map` is for the console.
 
 ---
 
@@ -478,7 +510,7 @@ a type, the move the node side deliberately avoided).
 | `stepper.cpp` | `SLOT_NONE` | `0xFF` | disengaged sentinel |
 | `common.h` | `CMD_MAKE_SAFE` | `0x09` | generic; no payload; reply = status payload (§4.4) |
 | `common.h` | `BUS_SILENCE_MS` / `BUS_KEEPALIVE_MS` | `1000` / `333` | node timeout (opt-in); Pico keepalive (§4.4) |
-| CLI | `makesafe <id>` | — | relays `CMD_MAKE_SAFE`; IDLE/PAUSED/ALARM |
+| CLI | `makesafe <id>` | — | relays `CMD_MAKE_SAFE`; confirmed releases the slot and drops the node from both requests, else fences (§5.5); IDLE/PAUSED/ALARM |
 | `shared_state.h` | (was `ALARM_CONFIG`) | `2` (reserved) | retired: no config boots to IDLE |
 | `position.cpp` | `slotNode[4]`, axes request | Core-0-local | slot binding; axis request with pending (§5.4) |
 | CLI | `slot_map <n0> <n1> <n2> <n3>` | — | any node, no config; IDLE/PAUSED/ALARM; no-arg reads the binding |

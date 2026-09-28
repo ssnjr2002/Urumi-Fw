@@ -12,13 +12,15 @@ enum AxesMapResult : uint8_t {
     AXES_ENGAGE,        // applied, a node refused to engage: NODE_FAULT
 };
 
-// Check every named node's type (CMD_NODE_STATUS), then commit `ids` as the
-// axes request and the slot request. Every named axis starts pending; a
-// confirmed stepper clears it. A confirmed non-stepper refuses the whole map
-// (`err node <id> not_stepper`) unless `keepWrongType`, when it stays pending
-// like a node that did not answer (`err node <id> timeout`). The slot request is
-// applied only once nothing is pending; until then every slot holder is parked
-// and the machine is in ALARM_NODE_FAULT, and `unalarm` re-checks.
+// Check every named node's type (CMD_NODE_STATUS, or make-safe for a node
+// holding a fenced slot), then commit `ids` as the axes request and the slot
+// request. Every named axis starts pending; a confirmed stepper clears it. A
+// confirmed non-stepper refuses the whole map (`err node <id> not_stepper`)
+// unless `keepWrongType`, when it stays pending like a node that did not answer
+// (`err node <id> timeout`); a fenced node that does not confirm stays pending
+// with `err fenced …`. A pending axis's slot is parked, not engaged, the other
+// slots bind as requested, and the machine is in ALARM_NODE_FAULT until
+// `unalarm` re-checks.
 // `keepWrongType` is for the config's default map only, which has no one to
 // refuse. `quiet` as in slot_map.h.
 AxesMapResult axesMapApply(const uint8_t* ids, bool quiet, bool keepWrongType);

@@ -110,6 +110,7 @@ void loop() {
     // Held in ALARM until section B settles it: with a valid config the
     // controller commits the defaultHead map as soon as Core 1 is released;
     // without one nothing is requested and the machine lands IDLE, unmapped.
+    // The slot table (bindings and fences) survives: only power-on clears it.
     slotMapReset();
     slotMapForget();
     machineState = STATE_ALARM;
@@ -121,7 +122,7 @@ void loop() {
     // axes_enabled is DERIVED and deliberately not wiped here: reconcileValidity
     // rebuilds it from nodeEnabled at the top of the loop below, before anything
     // host-observable runs. nodeEnabled itself is Core 1's — Core 0 must not
-    // write it — and the reset path's own busDisableAll() sweep is what clears
+    // write it — and the reset path's own busStopAll() sweep is what clears
     // it, per node, as each one confirms (core1/core1.cpp, bus/packet.cpp).
     // Zeroing the projection here would just assert a value one pass early, and
     // give a derived byte a second writer.

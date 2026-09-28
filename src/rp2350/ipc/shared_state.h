@@ -280,7 +280,7 @@ extern volatile uint16_t nodeEnabled;
 // just the axis map: peripherals (vacuum, knife) hold no motion slot, so
 // `slotNode[]` cannot reach them, and they are exactly the nodes that must not
 // keep running after an estop. Core 0 range-checks operator input against this;
-// Core 1 sweeps it in busDisableAll().
+// Core 1 sweeps it in busStopAll().
 #define BUS_ADDR_MAX 8
 
 // Paused-job context (state_redesign: PausedJobContext, slimmed for Phase 1).

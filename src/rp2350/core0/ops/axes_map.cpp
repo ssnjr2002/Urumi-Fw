@@ -9,44 +9,65 @@
 #include "../config/machine_cfg.h"
 #include "../../ipc/core1_rpc.h"
 
-// Confirm the pending axes' types. Returns the first node that failed the check
-// (SLOT_NONE if none), preferring one that answered as a non-stepper.
-static uint8_t checkPending(bool* wrongType) {
+// What checkPending found wrong, worst first.
+enum PendingFault : uint8_t { PF_NONE, PF_TIMEOUT, PF_FENCED, PF_WRONG_TYPE };
+
+// True when node `n` holds a fenced slot.
+static bool nodeFenced(uint8_t n) {
+    for (uint8_t i = 0; i < MOTION_SLOTS; i++)
+        if (slotNodeAt(i) == n && slotFencedAt(i)) return true;
+    return false;
+}
+
+// Confirm the pending axes' types. A fenced node's make-safe reply is its type
+// check (it answers with status), since clearing the fence costs it the datum
+// anyway; every other node gets the non-destructive CMD_NODE_STATUS. Returns
+// the node behind the worst fault in `*fault`; bit i of `*fenced` = slot i's
+// fence could not be cleared.
+static uint8_t checkPending(PendingFault* fault, uint8_t* fenced) {
     uint8_t bad = SLOT_NONE;
-    *wrongType = false;
+    *fault  = PF_NONE;
+    *fenced = 0;
     for (uint8_t k = 0; k < MOTION_SLOTS; k++) {
         if (!(axesReqPending() & (1 << k))) continue;
         const uint8_t n = axesReqAt(k);
         NodeStatus st;
-        if (rpcNodeStatus(CMD_NODE_STATUS, n, 0, &st) != RPC_OK) {
-            if (bad == SLOT_NONE) bad = n;
-            continue;
+        PendingFault f = PF_NONE;
+        if (nodeFenced(n)) {
+            const uint8_t s = nodeSlot(n);
+            if (slotMakeSafe(n, &st) != RPC_OK) { f = PF_FENCED; *fenced |= (1 << s); }
+        } else if (rpcNodeStatus(CMD_NODE_STATUS, n, 0, &st) != RPC_OK) {
+            f = PF_TIMEOUT;
         }
-        if (st.type != NODE_TYPE_STEPPER) {
-            if (!*wrongType) { bad = n; *wrongType = true; }
-            continue;
-        }
-        axesReqClearPending(k);
+        if (f == PF_NONE && st.type != NODE_TYPE_STEPPER) f = PF_WRONG_TYPE;
+        if (f == PF_NONE) { axesReqClearPending(k); continue; }
+        if (f > *fault) { *fault = f; bad = n; }
     }
     return bad;
 }
 
-// Commit the axes request as the slot request and apply it, or park everything
-// while an axis is pending. `bad` / `wrongType` are checkPending's report.
-static AxesMapResult axesCommit(bool quiet, uint8_t bad, bool wrongType) {
+// Commit the axes request as the slot request and apply it. A pending axis's
+// slot is parked, not engaged. `bad`, `fault` and `fenced` are checkPending's
+// report.
+static AxesMapResult axesCommit(bool quiet, uint8_t bad, PendingFault fault,
+                                uint8_t fenced) {
     uint8_t req[MOTION_SLOTS];
     for (uint8_t k = 0; k < MOTION_SLOTS; k++) req[k] = axesReqAt(k);
 
     RpcResult r = RPC_OK;
-    if (axesReqPending()) {
-        // Park, so a slot lent to another node (a probe's vacuum) is released
-        // even when the request cannot be met yet.
-        slotMapCommit(req, /*fromAxes=*/true, /*parkOnly=*/true, &r);
+    uint8_t mapFenced;
+    const uint8_t pending = axesReqPending();
+    const uint8_t failed = slotMapCommit(req, /*fromAxes=*/true, pending, &r, &mapFenced);
+    fenced |= mapFenced;
+    if (fenced) {
+        if (!quiet) slotMapPrintFenced(fenced);
+        return pending ? AXES_PENDING : AXES_ENGAGE;
+    }
+    if (pending) {
         if (!quiet) Serial.printf("err node %d %s\n", bad,
-                                  wrongType ? "not_stepper" : "timeout");
+                                  fault == PF_WRONG_TYPE ? "not_stepper" : "timeout");
         return AXES_PENDING;
     }
-    const uint8_t failed = slotMapCommit(req, /*fromAxes=*/true, /*parkOnly=*/false, &r);
     if (failed != SLOT_NONE) {
         if (!quiet) Serial.printf("err node %d %s\n", failed, rpcResultText(r));
         return AXES_ENGAGE;
@@ -70,20 +91,22 @@ AxesMapResult axesMapApply(const uint8_t* in, bool quiet, bool keepWrongType) {
         if (ids[k] != SLOT_NONE) pending |= (1 << k);
     axesReqSet(ids, pending);
 
-    bool wrongType;
-    const uint8_t bad = checkPending(&wrongType);
-    if (wrongType && !keepWrongType) {
+    PendingFault fault;
+    uint8_t fenced;
+    const uint8_t bad = checkPending(&fault, &fenced);
+    if (fault == PF_WRONG_TYPE && !keepWrongType) {
         axesReqSet(oldIds, oldPending);
         if (!quiet) Serial.printf("err node %d not_stepper\n", bad);
         return AXES_NOT_STEPPER;
     }
-    return axesCommit(quiet, bad, wrongType);
+    return axesCommit(quiet, bad, fault, fenced);
 }
 
 AxesMapResult axesMapRetry(bool quiet) {
-    bool wrongType;
-    const uint8_t bad = checkPending(&wrongType);
-    return axesCommit(quiet, bad, wrongType);
+    PendingFault fault;
+    uint8_t fenced;
+    const uint8_t bad = checkPending(&fault, &fenced);
+    return axesCommit(quiet, bad, fault, fenced);
 }
 
 bool axisNodeInConfig(uint8_t node) {

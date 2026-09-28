@@ -15,6 +15,8 @@
 // SLOT_NONE. Core 0 owns this map and the abstraction; Core 1 only ever sees
 // granular per-node CMD_ENGAGE.
 static uint8_t slotNode[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
+// bit s = slot s is fenced: slotNode[s] did not confirm leaving it (position.h).
+static uint8_t slotFenced = 0;
 
 // The axes request (position.h): axesReq[k] = the node axis k should be,
 // axesPending bit k = named but not yet confirmed a stepper.
@@ -71,12 +73,15 @@ static uint16_t nodeProbed = 0;              // bit n = probeZ[n] is valid
 // ─── Slot binding and axes request ────────────────────────────────────────────
 
 void slotMapReset(void) {
-    for (int i = 0; i < MOTION_SLOTS; i++) slotNode[i] = SLOT_NONE;
     axesReqForget();
 }
 
 uint8_t slotNodeAt(uint8_t s) {
     return (s < MOTION_SLOTS) ? slotNode[s] : SLOT_NONE;
+}
+
+bool slotFencedAt(uint8_t s) {
+    return s < MOTION_SLOTS && (slotFenced & (1 << s));
 }
 
 uint8_t nodeSlot(uint8_t n) {
@@ -85,7 +90,7 @@ uint8_t nodeSlot(uint8_t n) {
 }
 
 uint8_t axisNode(uint8_t k) {
-    if (k >= MOTION_SLOTS || (axesPending & (1 << k))) return SLOT_NONE;
+    if (k >= MOTION_SLOTS || ((axesPending | slotFenced) & (1 << k))) return SLOT_NONE;
     const uint8_t n = slotNode[k];
     return (n != SLOT_NONE && n == axesReq[k]) ? n : SLOT_NONE;
 }
@@ -122,6 +127,12 @@ uint8_t axesReqPending(void) { return axesPending; }
 
 void axesReqClearPending(uint8_t k) {
     if (k < MOTION_SLOTS) axesPending &= ~(1 << k);
+}
+
+void axesReqDrop(uint8_t n) {
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++)
+        if (axesReq[k] == n) { axesReq[k] = SLOT_NONE; axesPending &= ~(1 << k); }
+    axisViewsDrop();
 }
 
 void axesReqForget(void) {
@@ -262,9 +273,20 @@ void slotBind(uint8_t s, uint8_t n, const NodeStatus* st) {
     slotAdoptStatus(s, n, st);
 }
 
+void slotFence(uint8_t s, uint8_t n) {
+    if (s >= MOTION_SLOTS || n == SLOT_NONE) return;
+    originInvalidate(n);               // while its axis bit still points here
+    slotNode[s]    = n;
+    slotFenced    |= (1 << s);
+    machinePos[s]  = 0;
+    axes_homed    &= ~(1 << s);
+    homingLatched &= ~(1 << s);
+}
+
 void slotUnbind(uint8_t s) {
     if (s >= MOTION_SLOTS) return;
     slotNode[s]    = SLOT_NONE;
+    slotFenced    &= ~(1 << s);
     machinePos[s]  = 0;
     axes_homed    &= ~(1 << s);
     // axes_enabled needs no clear: the projection in reconcileValidity reads
@@ -320,6 +342,18 @@ void reconcileValidity(void) {
         originLatched = true;
     } else if (!originActive) {
         originLatched = false;
+    }
+
+    // An estop fences every bound slot: its make-safe replies stay on Core 1,
+    // so no node here is confirmed released until `unstop` asks again.
+    static bool fenceLatched = false;
+    const bool fenceActive = (st == STATE_ESTOP || ar == ALARM_ESTOP);
+    if (fenceActive && !fenceLatched) {
+        for (uint8_t s = 0; s < MOTION_SLOTS; s++)
+            if (slotNode[s] != SLOT_NONE) slotFence(s, slotNode[s]);
+        fenceLatched = true;
+    } else if (!fenceActive) {
+        fenceLatched = false;
     }
 
     // Energisation is not folded in from a state signal at all any more -- it is

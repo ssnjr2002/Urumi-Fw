@@ -47,8 +47,8 @@
 // ─── Slot binding ─────────────────────────────────────────────────────────────
 // Which node listens on each stream slot, of any type (slot_map).
 
-// All slots unbound and no axes requested. Boot state, until the controller
-// commits the config's defaultHead map (controller/seq/controller.h).
+// Forget the axes request. The slot table itself (bindings and fences) is kept:
+// it records what the nodes may still be doing, so only power-on clears it.
 void slotMapReset(void);
 
 // The bus id bound to slot `s`, or SLOT_NONE. Slot indices are 0..MOTION_SLOTS-1.
@@ -63,9 +63,17 @@ uint8_t nodeSlot(uint8_t n);
 // is a state no caller should be able to name.
 void slotBind(uint8_t s, uint8_t n, const NodeStatus* st);
 
-// Unbind slot `s`. A slot that holds no node holds no position either, so this
-// also zeroes machinePos[s] and clears its homed and enabled bits.
+// Unbind slot `s`, clearing any fence: the caller has its node's confirmation.
+// A slot that holds no node holds no position either, so this also zeroes
+// machinePos[s] and clears its homed and enabled bits.
 void slotUnbind(uint8_t s);
+
+// Fence slot `s` on node `n`, which did not confirm leaving it. Nothing is known
+// about `n` any more: its origin is invalidated and the slot's views cleared. A
+// fenced slot keeps `n`, takes no engage, and unbinds its axis. Only a
+// confirmed make-safe (or an engage elsewhere) from `n` frees it: slotUnbind.
+void slotFence(uint8_t s, uint8_t n);
+bool slotFencedAt(uint8_t s);
 
 // ─── Axes request ─────────────────────────────────────────────────────────────
 // The node each axis should be (axes_map), and which of them are pending: named
@@ -79,9 +87,11 @@ void axesReqSet(const uint8_t* ids, uint8_t pending);
 uint8_t axesReqAt(uint8_t k);
 uint8_t axesReqPending(void);
 void axesReqClearPending(uint8_t k);
+// Drop node `n` from the request: its axes become `-`, not pending.
+void axesReqDrop(uint8_t n);
 void axesReqForget(void);
 
-// The node bound as axis k, or SLOT_NONE.
+// The node bound as axis k, or SLOT_NONE (also while slot k is fenced).
 uint8_t axisNode(uint8_t k);
 
 // The axis node `n` is bound as, or SLOT_NONE.

@@ -3,6 +3,7 @@
 #include "packet.h"
 #include "common.h"
 #include "../../ipc/shared_state.h"
+#include "../../ipc/core1_rpc.h"      // nodeStatusDecode
 
 RS485Bus rs485;
 
@@ -62,27 +63,20 @@ bool sendBroadcast(uint8_t cmd) {
     return true;
 }
 
-void busDisableAll(void) {
+void busStopAll(uint8_t cmd) {
     for (uint8_t node = 1; node <= BUS_ADDR_MAX; node++) {
-        uint8_t pkt[4] = {node, CMD_DISABLE, 0, 0};
+        uint8_t pkt[4] = {node, cmd, 0, 0};
         sendPacket(pkt, 4);
-        const uint8_t rx = receivePacket(node, CMD_DISABLE, nullptr,
-                                         RESPONSE_TIMEOUT_MS);
-        // Each leg of the sweep is ADDRESSED and gets an addressed answer, so
-        // this does not have to guess the way the broadcast does -- clear only
-        // what a node confirmed. A node that did not answer keeps its bit, which
-        // is the truthful reading: we could not confirm it is off, and it may
-        // still be holding torque.
-        //
-        // CONCERN, unresolved: `axes_enabled` then reports a bit that means
-        // "unconfirmed" while every reader takes it to mean "confirmed
-        // energised", and the only gate on it (`step`, cmd/axis.cpp) admits
-        // ALARM -- so a debug step to an unconfirmed node is currently
-        // permitted. Left alone deliberately: `step` is a debug command, and
-        // encoding "could not confirm" into a mask that means something else is
-        // the wrong fix. The right home for it is a distinct fault --
-        // ALARM_NODE_FAULT is already reserved (ipc/shared_state.h) -- which is
-        // a separate change from this one.
-        if (rx != 0xFF) nodeEnabled &= ~(1u << node);
+        uint8_t buf[RPC_PAYLOAD_MAX];
+        uint8_t rxCmd;
+        const uint8_t rx = receivePacket(node, cmd, buf, RESPONSE_TIMEOUT_MS, &rxCmd);
+        // Clear only what a node confirmed. One that did not answer keeps its
+        // bit: it may still be holding torque. Core 0 fences its slot on the
+        // estop edge and `unstop` asks it again.
+        if (rx == 0xFF || rxCmd != cmd) continue;
+        if (cmd == CMD_DISABLE) { nodeEnabled &= ~(1u << node); continue; }
+        NodeStatus st;
+        if (nodeStatusDecode(buf, rx, &st) && !(st.flags & NODE_FLAG_ENABLED))
+            nodeEnabled &= ~(1u << node);
     }
 }

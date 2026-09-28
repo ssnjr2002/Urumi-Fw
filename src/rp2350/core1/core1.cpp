@@ -60,9 +60,10 @@ void processBus() {
         // invariant the host can rely on is: once you observe ALARM, everything
         // on the bus is already parked.
         //
-        // Core 0 clears axes_enabled, keyed on exactly that transition (ALARM +
-        // ALARM_ESTOP), so the invariant is unchanged while the mask keeps a
-        // single writer. Clearing it here raced Core 0's read-modify-writes.
+        // axes_enabled is Core 0's projection of nodeEnabled, which this sweep
+        // clears per confirming node. The sweep is make-safe, so it also
+        // disengages; Core 0 fences every bound slot on the ALARM_ESTOP edge,
+        // since these replies are not handed over.
         //
         // Broadcast first so the stop is parallel, then confirm it serially. Both
         // run before the ALARM transition, so the invariant above is unchanged:
@@ -70,7 +71,7 @@ void processBus() {
         // one extra frame that buys every node an earlier start; if it is missed,
         // the sweep behind it still parks that node before ALARM is published.
         sendBroadcast(CMD_DISABLE);
-        busDisableAll();
+        busStopAll(CMD_MAKE_SAFE);
 
         __dmb();
         machineState = STATE_ALARM;
@@ -158,7 +159,7 @@ void setup1() {
         //
         // Was 1..4 — the axis range — which left peripherals running across a
         // reset. Same sweep as the estop path now, for the same reason.
-        busDisableAll();
+        busStopAll(CMD_DISABLE);
 
         // Loop back to the parking lot.
     }

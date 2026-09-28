@@ -6,13 +6,16 @@
 // rows: vac_servo carries an extra index, knife_blower takes a range instead of
 // on/off, and the other three are the bare on/off form.
 //
-// This file needs the transport and the parser. It does NOT touch the position
-// model -- a peripheral holds no slot and has no datum.
+// The actuator commands need only the transport and the parser -- a peripheral
+// holds no slot and has no datum. makesafe releases a slot, so it goes through
+// the slot layer.
 
 #include <Arduino.h>
 #include "table.h"
 #include "parse.h"
 #include "gate.h"
+#include "../ops/slot_map.h"
+#include "../ops/position.h"
 #include "../../ipc/core1_rpc.h"
 
 // The shared gate, and the reason is Core 1's, not Core 0's. Core 0 no longer
@@ -95,25 +98,25 @@ bool cmdKnifeOsc(const char* args) { return relayOnOff(args, CMD_KNIFE_OSC); }
 bool cmdLaser(const char* args) { return relayOnOff(args, CMD_LASER); }
 
 // ── makesafe <node> — CMD_MAKE_SAFE: disable and disengage one node ──────────
-// Prints the node's own report from the reply. slot is the stepper's, or the
-// probe vacuum's (third tail byte); `-` where the node has none. The Pico's axis
-// map is not touched: a released node stays mapped until the next engage.
+// Prints the node's own report from the reply; slot is `-` where it holds none.
+// Confirmed, the node's slot is unbound and the node dropped from the slot and
+// axes requests, so no alarm follows. Unconfirmed, its slot is fenced.
 bool cmdMakeSafe(const char* args) {
     if (periphGateDenies()) return true;
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err usage"); return true; }
     NodeStatus st;
-    RpcResult r = rpcNodeStatus(CMD_MAKE_SAFE, node, 0, &st);
+    RpcResult r = slotMakeSafe(node, &st);
+    if (r == RPC_OK) {
+        slotMapDrop(node);
+        axesReqDrop(node);
+    }
+    slotMapGate();
     if (r != RPC_OK) {
         Serial.printf("node %d %s\n", node, rpcResultText(r)); return true;
     }
-    int slot = -1;
-    if (st.hasStepperTail)                               slot = st.slot;
-    else if (st.type == NODE_TYPE_VACUUM && st.tailLen >= 3) slot = st.tail[2];
-    Serial.printf("node %d en %d datum %d slot ", node,
+    Serial.printf("node %d en %d datum %d slot -\n", node,
                   (st.flags & NODE_FLAG_ENABLED) ? 1 : 0,
                   (st.flags & NODE_FLAG_DATUM)   ? 1 : 0);
-    if (slot < 0) Serial.println("-");
-    else          Serial.println(slot);
     return true;
 }

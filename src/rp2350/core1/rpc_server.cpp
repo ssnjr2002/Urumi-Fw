@@ -88,7 +88,7 @@ static uint8_t buildPayload(const RpcRequest* req, uint8_t* out) {
 //   status  -> read NODE_FLAG_ENABLED, the node's own live self-report
 //
 // ONLY CONFIRMED REPLIES WRITE. A timeout or a NAK leaves the mask alone rather
-// than guessing in either direction -- see busDisableAll() in bus/packet.cpp for
+// than guessing in either direction -- see busStopAll() in bus/packet.cpp for
 // what that costs and why it is still the honest choice.
 //
 // Decoded rather than peeking buf[1]: core1_rpc.h keeps the NS_* offsets inside
