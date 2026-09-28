@@ -24,7 +24,6 @@
 #include "data_plane.h"
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
-#include "controller/seq/controller.h"
 #include "ops/position.h"          // axisNode
 
 // ─── Receiver dispatch ────────────────────────────────────────────────────────
@@ -239,11 +238,11 @@ static void feedCfg(uint8_t b) {
     uint8_t nack;
     if (!configStoreCommit(cfgLen, cfgCrc, &nack)) { sendCfgNack(nack); return; }
     machineCfgAdopt();
-    // The new config may bind different nodes, so the committed map is re-derived
-    // from it. A node that does not answer leaves ALARM_NODE_FAULT, not a NACK:
-    // the config itself was stored.
-    controllerApplyDefaultMap();
     sendCfgAck();
+    // The boot sequence applies the new config: sweep, default map, `ready`.
+    // Every push voids the datums, so no field has to be judged for whether it
+    // invalidates one.
+    soft_reset_requested = true;
 }
 
 // ─── CFG_GET responder ────────────────────────────────────────────────────────

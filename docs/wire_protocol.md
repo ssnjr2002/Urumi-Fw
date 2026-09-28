@@ -28,6 +28,12 @@ RUNNING) is recognised at the next boundary between MSEG packets, not byte-wise
 inside one. The data-plane magics all have bit 7 set (0xA?/0xB?) and the text
 commands are lowercase ASCII, so the two never collide at a boundary.
 
+**Boot sequence.** Cold boot, `reset` and an accepted `CFG_SET` all run it:
+wipe (serial input discarded), a banner line, the bus sweep, the config's
+default map, then an unrequested `ready` line. `ready` means the sequence is
+done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
+`ready`. USB stays up throughout.
+
 ---
 
 ## Magic Bytes — Packet Type Dispatch (data plane)

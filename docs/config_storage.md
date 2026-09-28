@@ -76,7 +76,7 @@ IDLE with nothing mapped; controller commands answer `err unconfigured` and
 `axes_map` refuses, so no axis can be bound (`slot_map` still binds nodes for
 the bench). An accepted `CFG_SET` is the way
 out. With one, the controller commits the config's `defaultHead` axis map after
-every soft reset (docs/engage_and_axis_map.md §6).
+every soft reset's bus sweep (docs/engage_and_axis_map.md §6).
 
 `g_cfg` is updated **only** by the boot check and a successful commit. It is
 deliberately **not** cleared by soft reset — the blob lives in flash, which soft
@@ -104,9 +104,12 @@ Then `configStoreCommit(len, crc, &nack)`:
 9. On success, update `g_cfg`.
 
 After a successful commit the decoded config becomes active
-(`machineCfgAdopt`) and the controller re-commits the `defaultHead` axis map
-from it before `CFG_ACK` is sent. A node that does not answer leaves
-`ALARM_NODE_FAULT`, not a NACK: the config itself was stored.
+(`machineCfgAdopt`), `CFG_ACK` is sent, and the Pico runs the soft reset boot
+sequence: wipe, bus sweep, the `defaultHead` map, then a `ready` text line.
+The host sends nothing after `CFG_ACK` until `ready`; the wipe discards serial
+input. Every push voids the datums (the sweep makes every node safe). A node
+that does not answer shows in the resulting state, not as a NACK: the config
+itself was stored.
 
 **Why the rename is the commit point:** LittleFS renames atomically. A power cut
 before it leaves `/config.bin` untouched (a stray `/config.tmp` is ignored and
@@ -174,7 +177,8 @@ Pico validates `length` (size) and machine state (§6) *before any payload*:
 The receiver stages the payload into a 32 KB RAM buffer, folding CRC32
 **incrementally** as bytes arrive (one pass — the transfer-integrity check),
 then calls `configStoreCommit`. Final reply:
-- `CFG_ACK` (0xB3) — stored; `g_cfg` now serves the new blob.
+- `CFG_ACK` (0xB3) — stored; `g_cfg` now serves the new blob. A soft reset
+  follows; wait for `ready` (§3).
 - `CFG_NACK` (0xB4) + reason — rejected (CRC / state / flash).
 
 Because the host waits for `CFG_RDY` before sending payload, an early phase-1

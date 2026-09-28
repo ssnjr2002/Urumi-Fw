@@ -152,6 +152,8 @@ void loop() {
     busSweep();
     if (busDegraded()) resumeOrHold();     // ALARM_BUS_DEGRADED, no map
     else               controllerApplyDefaultMap();
+    // The boot sequence is done; the banner above is informational.
+    Serial.println("ready");
 
     while (!soft_reset_requested) {
         // Fold Core 1's ALARM signals into the validity masks BEFORE serving the
