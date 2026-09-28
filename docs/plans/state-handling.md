@@ -55,8 +55,9 @@ the states mean, how each is entered, and how each is left.
 * **Degraded bus** is its own alarm, `ALARM_BUS_DEGRADED`, held while any mute
   node is not excluded; the default map is not applied. Exits: `bus_exclude`,
   `reset` (a recovered node answers), a `CFG_SET` without the node, power
-  cycle. `axis_map` is refused while degraded (`err degraded`): the mute node
-  is decided first, and nothing could run on the map anyway.
+  cycle. `slot_map`, `axes_map` and `probe` are refused while degraded
+  (`err degraded`): the mute node is decided first, and nothing could run on
+  the map anyway.
 * **`bus_exclude <id> …`** is a config-free primitive for running on a
   degraded bus. It takes mute ids only (`err not_mute` otherwise). Commands to
   an excluded node answer `err excluded`; make-safe is exempt. When no
@@ -84,11 +85,14 @@ the states mean, how each is entered, and how each is left.
 ### Slots are freed only by confirmation: the fence
 
 * **Each slot is `{node id, fenced}`.** The **binding** says who holds the
-  slot; the **request** (`axis_map`'s argument) says what is wanted. A fenced
-  slot always keeps its node id: nothing writes `{-, fenced}`.
+  slot; the **slot request** (`slot_map`'s argument, or the one `axes_map`
+  derives) says what is wanted. A fenced slot always keeps its node id:
+  nothing writes `{-, fenced}`. The rules below live in the slot layer
+  (`ops/slot_map.cpp`); `axes_map` and the probe inherit them by applying
+  through it.
 * **A slot is fenced** when a node holding it, or being engaged into it, does
-  not confirm: `axisMapApply`'s park and failed engage, the probe restore
-  (through `axisMapApply`), `makesafe` with no reply, and, on the estop edge,
+  not confirm: `slot_map`'s park and failed engage (so `axes_map` and the probe
+  bind and restore too), `makesafe` with no reply, and, on the estop edge,
   every bound slot.
 * **A fenced slot:**
   * has its position and homed bit cleared and its node's origin invalidated
@@ -99,20 +103,26 @@ the states mean, how each is entered, and how each is left.
     follow them. Motion gating in general is branch 5;
   * satisfies a request of `-`, so the rest of the map can complete.
 * **A fence clears** only on a confirmed make-safe from its node (the sweep,
-  `makesafe`, `unstop`, or `axis_map` retrying it, below), or a power cycle.
+  `makesafe`, `unstop`, or `slot_map` retrying it, below), or a power cycle.
   Never on time or silence: the silence timer is fed by any byte that passes
   the FERR check, while a park needs a whole frame with a good CRC, so a node
   can keep missing its park and still be fed.
-* **`axis_map` into a fenced slot** (for its own node or another) first sends
-  make-safe to the fenced node. Confirmed: the fence clears and the engage goes
-  ahead. Unconfirmed: the map fails, `ALARM_NODE_FAULT`, with
-  `err fenced <s0> <s1> <s2> <s3>` naming the fenced node of each slot the
-  request collides with (`-` elsewhere), e.g. `err fenced - - 3 -`.
+* **A map into a fenced slot** (`slot_map` or `axes_map`, for its own node or
+  another) first sends make-safe to the fenced node. Confirmed: the fence
+  clears and the engage goes ahead. Unconfirmed: the map fails,
+  `ALARM_NODE_FAULT`, with `err fenced <s0> <s1> <s2> <s3>` naming the fenced
+  node of each slot the request collides with (`-` elsewhere), e.g.
+  `err fenced - - 3 -`. For `axes_map`, that make-safe reply is also the
+  node's type check (no separate `CMD_NODE_STATUS`); every unfenced node keeps
+  the non-destructive `CMD_NODE_STATUS` check, since make-safe costs its datum.
+* **A fenced slot's axis is unbound** (`axisNode(k)` is `-`), so its views
+  drop and ingest's unbound-axis refusal (1d) covers it.
 * **Readback:** `slot_map` with no argument prints the binding with fenced
-  slots marked, `slot_map 1 2 !3 4`; `axes_map` prints the request (branch
-  1d).
-* **`makesafe <id>`**: confirmed, the node's slot is unbound and dropped from
-  the request, so no alarm follows; unconfirmed, the slot is fenced
+  slots marked, `slot_map 1 2 !3 4`; `axes_map` prints the request with
+  pending axes marked, `axes_map 1 2 ?3 4` (1d).
+* **`makesafe <id>`**: confirmed, the node's slot is unbound and the node is
+  dropped from the slot request and, for an axis node, from the axes request
+  (as `-`, not pending), so no alarm follows; unconfirmed, the slot is fenced
   (`NODE_FAULT`).
 * **The slot table survives the wipe**, bindings and fences both. It records
   what the nodes may still be doing, so only power-on clears it. The wipe
@@ -121,8 +131,13 @@ the states mean, how each is entered, and how each is left.
   fenced until a power cycle; `reset` and `CFG_SET` do not clear it.
 * **`nodeReleased` is not needed:** a node is released when it holds no slot,
   bound or fenced.
-* **A head switch keeps its datums.** `axis_map` parks with a disengage only
-  (`ops/axis_map.cpp:38`), never a disable, so parked and re-engaged nodes
+* **A pending axis is handled per slot.** While axis k is pending (1d:
+  `axes_map` could not confirm its type), slot k is requested as `-` and the
+  other slots bind as requested. Replaces 1d's "pending parks every holder":
+  healthy axes are not parked and re-engaged, so only the slots that change
+  risk a fence. Still `NODE_FAULT` until k clears.
+* **A head switch keeps its datums.** `slot_map` parks with a disengage only
+  (`ops/slot_map.cpp:34`, `applySlots`), never a disable, so parked and re-engaged nodes
   keep their witness (`parkRecord`/`parkMoved`). Only make-safe (estop, the
   boot sweep, `unstop`, `makesafe`, a fence retry) costs the homing. A park
   that is not confirmed fences the slot and ends the switch in `NODE_FAULT`.
@@ -133,18 +148,24 @@ X = node 1, Y = 2, Z = 3, A = 4 in slots 0..3; vacuum = 5. Homed, IDLE.
 
 ```
 node 3's cable works loose            nothing polls; still IDLE
-axis_map 1 2 3 4 (head change)        1,2,4 park and re-engage, keep datums;
-                                      3 silent: slot 2 fenced, 1 2 !3 4
-                                      -> ALARM_NODE_FAULT, err fenced - - 3 -
-  axis_map 1 2 - 4                    fenced slot 2 satisfies - -> IDLE
+axes_map 1 2 3 4 (head change)        type check: 3 silent, axis Z pending,
+                                      slot 2 requested as -; 1,2,4 park and
+                                      re-engage, keep datums; 3's park
+                                      unconfirmed: slot 2 fenced
+                                      -> ALARM_NODE_FAULT, err node 3 timeout
+                                      slot_map 1 2 !3 4, axes_map 1 2 ?3 4
+  axes_map 1 2 - 4                    fenced slot 2 satisfies - -> IDLE
                                       Z steps NACKed; X, Y, A keep datums
-  cable fixed, axis_map 1 2 3 4       make-safe to 3 confirmed, fence cleared,
+  cable fixed, axes_map 1 2 3 4       3 fenced: make-safe instead of the type
+                                      check; confirmed, stepper, fence cleared,
                                       3 engaged -> IDLE; home Z
+  (still broken: axes_map 1 2 3 4     make-safe unconfirmed -> NODE_FAULT,
+                                      err fenced - - 3 -)
   or reset                            wipe; sweep: 1,2,4,5 answer, slots
                                       0,1,3 freed; 3 mute (holds slot 2)
                                       -> ALARM_BUS_DEGRADED, no map
      bus_exclude 3                    -> IDLE unmapped; slot 2 still !3
-     axis_map 1 2 - 4                 -> IDLE; cmds to 3: err excluded
+     axes_map 1 2 - 4                 -> IDLE; cmds to 3: err excluded
      later reset                      exclusion gone -> ALARM_BUS_DEGRADED
                                       again unless 3 answers
 power cycle                           clean: no ids, no fences, nothing touched
@@ -801,29 +822,50 @@ confirmation: the fence" and "Estop", except strictness and session endings
 * Until branch 4, `unalarm` in `ALARM_ESTOP` answers `err estop` (its map
   retry would leave the estop unconfirmed).
 
+**Settled in planning (revised after 1d):**
+
+* The slot rules (park, fence, `-`, `err fenced`, the `!` readback, the fence
+  retry) go in `ops/slot_map.cpp`; the fence flag beside `slotNode[]` in
+  `position.cpp`; `ops/bus.*` holds only the sweep and the `mute`/`excluded`
+  masks. `axes_map` and the probe inherit the rules by applying through
+  `slotMapCommit`.
+* `err degraded` refuses `slot_map`, `axes_map` and `probe`.
+* Confirmed `makesafe <id>` drops the node from both requests: the slot
+  request, and for an axis node the axes request (`-`, not pending).
+* A pending axis is requested as `-` in its own slot; the other slots bind as
+  requested (Decisions). Replaces 1d's "pending parks every holder".
+* `axes_map`'s type check uses the fence retry's make-safe reply for a fenced
+  node, and `CMD_NODE_STATUS` for every other node. Read confirms the
+  make-safe reply carries the node type.
+* `axisNode(k)` is `-` for a fenced slot, so 1d's unbound-axis refusal in
+  ingest (`data_plane.cpp:180`) covers fenced slots with no new check.
+* With `CFG_SET` going through reset, `keepWrongType` is used only by the boot
+  default map; the Outcome records it.
+
 **Files** (under `src/rp2350/` unless noted):
 
 1. Release rule, fence, estop, `makesafe`:
-   * `core0/ops/position.cpp:14-77`: the fenced flag beside `slotNode[]`;
-     `:69` (`axisMapReset`'s clear) keeps ids and fences; `:234`
-     (`reconcileValidity`): fence every bound slot on the rising edge of
-     `STATE_ALARM` + `ALARM_ESTOP`.
-   * `core0/ops/axis_map.cpp:18-87`: a park or engage with no confirmation
-     fences the slot; an engage into a fenced slot first retries make-safe on
-     its node; only confirmed slots are freed (the failed-engage path included);
-     `err fenced`. `axisMapComplete` (`:107`): a fenced slot satisfies `-`.
-     Readback marks `!`.
-   * `core0/core0.cpp:113`: the wipe's `axisMapReset()` keeps the slot table.
-   * `core0/data_plane.cpp:136-170`: ingest refuses steps for a fenced slot,
-     after the deltas are decoded, before the enqueue (`MSEG_NACK_BAD_STATE`).
-   * `core0/ops/probe.cpp`: the restore goes through `axisMapApply`; checked,
-     not changed.
+   * `core0/ops/position.cpp:13-90`: the fenced flag beside `slotNode[]`
+     (`:17`); `slotMapReset` (`:73`) keeps ids and fences; `axisNode` (`:87`)
+     unbinds a fenced slot; `reconcileValidity` (`:295`): fence every bound
+     slot on the rising edge of `STATE_ALARM` + `ALARM_ESTOP`.
+   * `core0/ops/slot_map.cpp:20-68` (`applySlots`): a park or engage with no
+     confirmation fences the slot; an engage into a fenced slot first retries
+     make-safe on its node; only confirmed slots are freed (the failed-engage
+     path included); `err fenced`. `slotMapComplete` (`:94`): a fenced slot
+     satisfies `-`. `cmd/axis.cpp` (`cmdSlotMap`): readback marks `!`.
+   * `core0/ops/axes_map.cpp:14-87`: `checkPending` takes the fence retry's
+     reply as the type check for a fenced node; `axesCommit` requests `-` for a
+     pending axis instead of parking every holder.
+   * `core0/core0.cpp:113`: the wipe's `slotMapReset()` keeps the slot table.
+   * `core0/ops/probe.cpp`: bind and restore go through `slotMapCommit` and
+     `axesMapApply`; checked, not changed.
    * `core1/bus/packet.cpp:65-88`: `busDisableAll` becomes `busMakeSafeAll`;
      its CONCERN comment is answered by `unstop`.
    * `core1/core1.cpp:44-80` (estop): broadcast disable, then `busMakeSafeAll`;
      fix the stale `axes_enabled` comment. `:160` (reset park): no sweep.
-   * `core0/cmd/periph.cpp` (`makesafe`): unbind and drop from the request on
-     confirmation, fence otherwise; the shared "released" helper.
+   * `core0/cmd/periph.cpp` (`makesafe`): unbind and drop from both requests
+     on confirmation, fence otherwise; the shared "released" helper.
 2. `unstop`: `core0/cmd/lifecycle.cpp`, `core0/cmd/table.h`;
    `core0/controller/cmd/unalarm.cpp` (`err estop`).
 3. Sweep, degraded, `bus_exclude`:
@@ -834,12 +876,13 @@ confirmation: the fence" and "Estop", except strictness and session endings
      exempt; `RPC_EXCLUDED` and its text.
    * `ipc/shared_state.h`: `ALARM_BUS_DEGRADED = 8`.
    * `core0/ops/state.cpp`: `resumeOrHold` settles `ALARM_BUS_DEGRADED` first.
-   * `core0/cmd/` + `cmd/table.h`: `bus_exclude`; `axis_map`
-     (`cmd/axis.cpp`) answers `err degraded` in `ALARM_BUS_DEGRADED`.
+   * `core0/cmd/` + `cmd/table.h`: `bus_exclude`; `slot_map`, `axes_map`
+     (`cmd/axis.cpp`) and `probe` answer `err degraded` in
+     `ALARM_BUS_DEGRADED`.
    * `core0/cmd/query.cpp`: `status` reports mute, excluded and touched (text
      plane only; STATUS_RSP layout unchanged).
-4. `CFG_SET` → reset: `core0/data_plane.cpp:233-238` sends the ACK, then
-   raises `soft_reset_requested` instead of applying the map.
+4. `CFG_SET` → reset: `core0/data_plane.cpp:245` sends the ACK, then raises
+   `soft_reset_requested` instead of `controllerApplyDefaultMap()`.
 5. Web: deferred with 1d's (see 1d, Web deferred). When ported:
    `src/wire/link/link.ts:212-226` (`pushConfig`) waits for `ready` after
    `CFG_ACK` (with a timeout, not a desync, banner drained);
@@ -847,7 +890,7 @@ confirmation: the fence" and "Estop", except strictness and session endings
    `bus_exclude`, `err fenced`); `sim.ts` (`stop`, `unstop`, `bus_exclude`).
    A host reads `axes_map`, so the `!` readback stays console-only.
 6. Docs: `docs/engage_and_axis_map.md` (release rule, fence, estop,
-   `makesafe`), `docs/wire_protocol.md` (commands, errors, readback, `ready`),
+   `makesafe`; §5.4's pending rule becomes per slot), `docs/wire_protocol.md` (commands, errors, readback, `ready`),
    `docs/config_storage.md` (reset after commit),
    `docs/node_type_architecture.md` (a hung `loop()` is not caught by the
    silence timeout; see Follow-ups).
@@ -869,11 +912,8 @@ bus.
 **Overlap:** none (`irq-bench` has no branch type). Touches
 `core0/cmd/table.h`.
 
-**Depends on:** branch 1 (merged), branch 1b (merged), branch 1d. The
-Decisions above say `axis_map`; after 1d the slot rules (park, fence, `-`,
-`err fenced`, the `!3` readback, the fence retry) belong to `slot_map`, and
-`axes_map` inherits them by applying through it. "Holds a slot" in touched
-then includes the probe vacuum with no special case.
+**Depends on:** branches 1, 1b, 1d (merged). "Holds a slot" in touched
+includes the probe vacuum with no special case.
 
 **Read findings (second Read, after 1a/1b/1c):**
 
