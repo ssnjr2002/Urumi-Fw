@@ -1,0 +1,45 @@
+#include "planner/line.h"
+
+#include <math.h>
+
+namespace planner {
+
+Line makeLine(Vec2 p0, Vec2 p1, float feed, const AxisLimits& limits) {
+    Line ln;
+    ln.p0 = p0;
+    ln.p1 = p1;
+    const float dx = p1.x - p0.x;
+    const float dy = p1.y - p0.y;
+    ln.length = sqrtf(dx * dx + dy * dy);
+    if (ln.length <= 0) return ln;
+
+    ln.dir = {dx / ln.length, dy / ln.length};
+    const float u[2] = {fabsf(ln.dir.x), fabsf(ln.dir.y)};
+
+    float v = feed;
+    float a = INFINITY;
+    for (int i = 0; i < 2; i++) {
+        if (u[i] <= 0) continue;
+        v = fminf(v, limits.max_feed[i] / u[i]);
+        a = fminf(a, limits.max_accel[i] / u[i]);
+    }
+    ln.v_max_sqr = v * v;
+    ln.accel = a;
+    return ln;
+}
+
+float junctionMaxSqr(const Line& prev, const Line& next, float deviation) {
+    const float cap = fminf(prev.v_max_sqr, next.v_max_sqr);
+    // Cosine of the angle between the incoming reversed and the outgoing
+    // direction: -1 is straight on, +1 is a full reversal.
+    const float cos_theta = -(prev.dir.x * next.dir.x + prev.dir.y * next.dir.y);
+    if (cos_theta < -0.999999f) return cap;
+    if (cos_theta > 0.999999f) return 0;
+
+    const float sin_half = sqrtf(0.5f * (1.0f - cos_theta));
+    const float a = fminf(prev.accel, next.accel);
+    const float v_sqr = a * deviation * sin_half / (1.0f - sin_half);
+    return fminf(cap, v_sqr);
+}
+
+}  // namespace planner
