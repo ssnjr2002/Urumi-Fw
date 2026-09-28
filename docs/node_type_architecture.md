@@ -330,6 +330,12 @@ next frame. The Pico keeps an idle bus fed with a zero stream byte every
 `BUS_KEEPALIVE_MS`. The flag is an `#error` with `NODE_DEBUG_CONSOLE`, whose
 input arrives over USART0 and would not feed the timer.
 
+The timer runs in `loop()`, so it does not catch a hung `loop()`: the RX ISR
+keeps stepping from stream bytes while commands go unanswered. The Pico then
+fences the node's slot (docs/engage_and_axis_map.md §5.5), which stops the
+Pico relying on it but does not stop the node. Only a hardware watchdog fed
+from `loop()` would.
+
 It is off by default because the Pico does not learn that a node made itself
 safe: on a flaky bus the node drops its slot and datum while the Pico still
 counts it bound. It also does not catch a hung `loop()`: the RX ISR keeps
