@@ -70,7 +70,7 @@ Z, A, tool profiles and duty breaks come after, in later plans.
 * Overlap: `platformio.ini`.
 * Checks: `pio test -e native`.
 
-**Status:** ready to merge.
+**Status:** done (merged at `32d7248`). Unblocks branch 2.
 
 **Outcome:**
 
