@@ -1010,10 +1010,8 @@ includes the probe vacuum with no special case.
   branch 1d.
 * `bus_enable off` (`cmd/axis.cpp:92`) broadcasts `CMD_DISABLE` and Core 1
   clears all of `nodeEnabled` on send (`core1/rpc_server.cpp:132`), unconfirmed.
-  Settled: it becomes broadcast then a per-node confirmed sweep, one routine in
-  `core1/bus/packet.cpp` shared with the estop (per-node command as a
-  parameter; make-safe for the estop). The broadcast clears nothing. Reply
-  `ok` or `err unconfirmed <ids>`. `bus_enable on` is unchanged.
+  Dropped in Write: it stays a plain broadcast (under-claiming armed is the
+  safe direction).
 * A fenced node confirming an engage into another slot also clears the fence
   on its old slot (the reply shows its slot).
 * Late replies: `busQuiesce` flushes RX before every transaction and
@@ -1035,7 +1033,46 @@ includes the probe vacuum with no special case.
 * The host has no banner detection; a banner arrives as an unrequested text
   line and the next `command()` drains it as a desync.
 
-**Status:** planned.
+**Status:** ready to merge.
+
+**Outcome:**
+
+* Deviations:
+  * The estop sweep is `busStopAll(cmd)` (`core1/bus/packet.cpp`), called
+    with `CMD_MAKE_SAFE`; the reset park no longer sweeps (Core 0's boot sweep
+    replaces it).
+  * A failed fence retry does not stop the map: the fenced slot stays unmet
+    and the other slots apply, as for a pending axis. A failed engage still
+    stops the apply at that slot.
+  * An engage answered with a NAK does not fence (a confirmed refusal).
+  * One reply line per map: `err fenced` over the pending error over an
+    engage error.
+  * A make-safe reply still showing `NODE_FLAG_ENABLED` is unconfirmed, for
+    `unstop` and the sweep (so such a node can be mute).
+  * `unstop` is a primitive (main command table), usable without a config.
+  * The exclusion mask lives in the RPC layer (`rpcSetExcluded`), kept in
+    step by `ops/bus.cpp`, so `ipc/` does not depend on `core0/ops`.
+  * `probe_map` answers `err degraded` (it is the `probe` entry).
+* Interfaces later branches rely on:
+  * `slotFence`, `slotFencedAt`, `axesReqDrop` (`position.h`);
+    `slotMakeSafe`, `nodeStatusSlot`, `slotMapDrop`, `slotMapPrintFenced`,
+    `slotMapCommit(req, fromAxes, skip, &res, &fenced)` (`slot_map.h`).
+  * `busSweep`, `busDegraded`, `busMute`, `busExcluded`, `busTouched`,
+    `busExclude` (`ops/bus.h`); `RPC_EXCLUDED`; `ALARM_BUS_DEGRADED = 8`.
+  * `ready` ends every boot sequence, `CFG_SET` included.
+  * `keepWrongType` is used only by the boot default map.
+* Checks: `pio run -e pico` clean. `pio test -e native` not required
+  (`lib/motion/` untouched); in this worktree the parity fixtures
+  (`test/data/*_ref.txt`, gitignored, generated from `web/`) are absent, and on
+  `main` 1 of 5 fails (`discretize` size): the fixtures need regenerating.
+* Out of scope, found:
+  * `receivePacket` (`core1/bus/packet.cpp`) writes `rxBuf[32]` without a
+    bound; a garbage length byte overruns it.
+  * The web host desyncs on a config push until item 5 is ported: it does
+    not wait for `ready` after `CFG_ACK`.
+  * Follow-up "stale comment in `core1.cpp`'s estop path" is fixed here.
+  * `status` gained `mute=`, `excluded=`, `touched=`; any host parser of
+    that line needs to allow extra fields.
 
 ## Open questions
 
@@ -1088,6 +1125,3 @@ includes the probe vacuum with no special case.
   hung `loop()` keeps its RX ISR stepping and is caught neither by the silence
   timeout nor by the Pico (the fence covers the slot, not the node). Not
   planned; documented for whoever wants it.
-* Stale comment in `core1/core1.cpp`'s estop path: it says Core 0 clears
-  `axes_enabled` on ALARM + `ALARM_ESTOP`; `reconcileValidity` now recomputes
-  it from `nodeEnabled` every pass.
