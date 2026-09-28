@@ -312,8 +312,9 @@ Proposed order. Each gets a full Plan section when its turn comes.
    the four stream slots; `axes_map` (renamed from `axis_map`) is the stored
    axis request; an axis is bound when the two agree. Fixes the probe vacuum
    never being released. Depends on nothing.
-1e. `refactor/rpc-start-finish`: the Core 0 → Core 1 call split into a
-   non-blocking start and finish; `rpcCall` becomes a loop over them. Gives
+1e. `fix/rpc-stale-reply`: the Core 0 → Core 1 call split into a
+   non-blocking start and finish; `rpcCall` becomes a loop over them. Fixes a
+   call collecting another's reply (the probe leg's, or a late one). Gives
    branch 2's exclusion check one home. Depends on nothing.
 2. `feature/bus-sweep`: boot sequence sweep, mute and touched nodes, degraded bus
    and `bus_exclude`, the fence, `CFG_SET` → reset and `ready`, confirmed slot
@@ -794,42 +795,65 @@ axis is unbound.
   non-stepper (`not_stepper`, nothing changes; a vacuum id is already
   `not_in_config`).
 
-## Branch 1e: `refactor/rpc-start-finish`
+## Branch 1e: `fix/rpc-stale-reply`
 
-**Type:** refactor. Same behaviour, the call API reshaped.
+**Type:** fix. The Core 0 → Core 1 call split into start and finish, which
+fixes two ways a call collects a reply that is not its own. Retyped from
+`refactor/rpc-start-finish` after its Read (below).
 
 **Purpose:** one entry point every Core 0 → Core 1 request passes through,
-with a result, so branch 2 checks exclusion once. Today `rpcCall`
-(`ipc/core1_rpc.cpp:64`) is the only path that stamps an id, waits and checks
-the reply's echo; `rpcStepDebug` (`:329`) and `rpcProbeLegPost` (`:367`) call
-`rpcPost` (`:31`) directly and get a bool, and `probeTick`
-(`core0/ops/probe.cpp:389-399`) polls with `rpcPoll` and checks the id only.
+with a result, so branch 2 checks exclusion once; and every reply matched to
+its own request. Today `rpcCall` (`ipc/core1_rpc.cpp:64`) is the only path
+that stamps an id, waits and checks the reply's echo; `rpcStepDebug` (`:329`)
+and `rpcProbeLegPost` (`:367`) call `rpcPost` (`:31`) directly and get a bool,
+and `probeTick` (`core0/ops/probe.cpp:389-399`) polls with `rpcPoll` and checks
+the id only.
+
+**The bugs (Read findings):**
+
+1. **The probe leg is posted with id 0.** `rpcProbeLegPost` never sets
+   `req.id`, so `rpcPost` treats it as fire-and-forget and takes no in-flight
+   claim, while Core 1 still replies (echoing id 0, `core1/rpc_server.cpp:27`)
+   and `probeTick` matches 0 against `legId` 0. An `rpcCall` issued while a
+   leg runs queues behind it and collects the leg's reply: echo mismatch,
+   `RPC_BAD_REPLY`. The path that does this: the leg deadline
+   (`probe.cpp:431`) → `probeFail` → `probeRestore` → `axesMapApply`'s status
+   and engage calls, while Core 1 may still be finishing the leg.
+2. **A late reply poisons the next call.** `rpcCall` drops the in-flight
+   claim on timeout, but Core 1's reply can still arrive; the next caller's
+   `rpcPoll` takes it and fails the echo check. Same after a leg deadline.
 
 **Shape:**
 
-* `rpcStart(req, &id)`: stamps the id (0 stays fire-and-forget), posts.
-  Returns an `RpcResult`; busy or a full queue is `RPC_TIMEOUT`, as
-  `rpcCall` reports it today.
-* `rpcFinish(id, out)`: never blocks. `RPC_PENDING` (new) until a reply is
-  collected, then the echo check (id, cmd, node) and the NAK reason that
-  `rpcCall` does now.
+* `rpcStart(req, &id)`: stamps an id on every reply-bearing request (the
+  probe leg included; fix 1), takes the in-flight claim, posts. Only
+  `RPC_OP_STEP_DEBUG` stays id 0. Returns an `RpcResult`; busy or a full
+  queue is `RPC_TIMEOUT`, as `rpcCall` reports it today.
+* `rpcFinish(id, out)`: never blocks. `RPC_PENDING` (new) until its reply is
+  collected; a reply with another id is discarded, not failed on (fix 2).
+  Then the echo check (cmd, node) and the NAK reason that `rpcCall` does now.
 * `rpcCall`: `rpcStart`, then `rpcFinish` in a loop until
   `RPC_CALL_TIMEOUT_MS`. Its signature and every caller unchanged.
 * `rpcPost` and `rpcPoll` become file-static in `core1_rpc.cpp`.
 * `rpcStepDebug` and `rpcProbeLegPost` return an `RpcResult` through
   `rpcStart`; `probeTick` finishes with `rpcFinish`. Their callers print what
-  they print today.
+  they print today, except that a call made during a leg now answers busy
+  instead of reading the leg's reply.
 
 **Files:** `ipc/core1_rpc.{h,cpp}` (API and its header comments, `:150-160`,
 `:260-275`); `core0/ops/probe.cpp:329,389-399`; `core0/cmd/axis.cpp:449,502`
 (`rpcStepDebug`'s result); the file-header notes naming `rpcPost/rpcPoll`.
 
-**Out of scope:** the exclusion check itself (branch 2); a Core 0 deadline on
-a probe leg; converting other blocking callers.
+**Out of scope:** the exclusion check itself (branch 2); converting other
+blocking callers (`rpcHome` blocks a whole homing leg in `rpcCall`); what a
+leg deadline should do about a leg Core 1 is still running.
 
-**Checks:** `pio run -e pico`. Human scope: a probe session start to end, and
-`step`, on the machine; a `nodestat` and an `axes_map` to show `rpcCall`
-unchanged.
+**Checks:** `pio run -e pico`. No failing test first: there is no test
+harness for `ipc/`, and both bugs need Core 1 running. Human scope: a probe
+session start to end, and `step`, on the machine; a `nodestat` and an
+`axes_map` to show `rpcCall` unchanged; bug 1 on the bench, a leg whose
+deadline fires (a short `deadlineUs`) with the restore then binding cleanly
+(before: `err`/`NODE_FAULT` from a `bad_reply`).
 
 **Overlap:** none among open typed branches. `feature/bus-sweep`'s worktree
 exists with no commits; it rebases onto `main` after this merges.
