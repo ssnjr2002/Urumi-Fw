@@ -93,4 +93,28 @@ void Planner::release() {
     epoch_++;
 }
 
+void Planner::restartFrom(float s) {
+    if (claimed_) {
+        claimed_ = false;
+        Block& b = ring_[tail_];
+        if (s >= b.line.length) {
+            tail_ = (tail_ + 1) % kSize;
+            count_--;
+        } else if (s > 0) {
+            b.line.p0 = {b.line.p0.x + b.line.dir.x * s, b.line.p0.y + b.line.dir.y * s};
+            b.line.length -= s;
+        }
+    }
+    if (count_ > 0) {
+        Block& b = ring_[tail_];
+        b.max_entry_sqr = 0;
+        b.entry_sqr = 0;
+        b.exit_sqr = 0;
+        b.profile = makeTrapezoid(b.line.length, b.line.accel, 0, b.line.v_max_sqr, 0);
+    }
+    pinned_entry_sqr_ = 0;
+    plan_valid_ = false;
+    epoch_++;
+}
+
 }  // namespace planner

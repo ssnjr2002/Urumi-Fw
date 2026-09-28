@@ -63,6 +63,14 @@ public:
     /** Free the claimed block. */
     void release();
 
+    /**
+     * The machine stopped `s` mm into the claimed block, or at the start of
+     * the oldest block if none is claimed. The claimed block is unclaimed and
+     * trimmed to start there, and the next plan enters from rest. Replan and
+     * commit before claiming again.
+     */
+    void restartFrom(float s);
+
     int count() const { return count_; }
     bool full() const { return count_ == kSize; }
     bool claimed() const { return claimed_; }
