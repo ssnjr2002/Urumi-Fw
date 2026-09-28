@@ -70,9 +70,31 @@ Z, A, tool profiles and duty breaks come after, in later plans.
 * Overlap: `platformio.ini`.
 * Checks: `pio test -e native`.
 
-**Status:** in progress.
+**Status:** ready to merge.
 
 **Outcome:**
+
+* Interface for branch 2 (`planner/planner.h`, `planner/executor.h`):
+  * One shared `Planner`. Lock around `push()`, `commit()`, `claim()` and
+    `release()`; `replan()` runs unlocked. A single epoch, bumped by every
+    push, claim and release, makes a stale `commit()` refuse.
+  * `Executor` runs on core 1: `tick(planner, dt)` returns XY; `hold()`,
+    `resume(planner)`, `abort()`. `resume()` and `abort()` call planner methods
+    that touch the ring (`restartFrom()`, `replan()`, `commit()`, `reset()`),
+    so branch 2 must lock around them or route them to core 0.
+  * `Planner::restartFrom(s)` added (not in the plan) for resume: trims the
+    claimed block to the stop point and replans from rest.
+  * `reset(pos)` on both declares the machine at rest at `pos`; call it after
+    homing, probing, jogging on the old path, or anything else that moves
+    outside the planner.
+* Deviation stays a `push()` argument so it can later vary per tool.
+* Zero-length moves are no-ops. `maxAccel = 0` is not handled (no
+  validation, as agreed); branch 2 decides whether 0 means uncapped.
+* Not done: the seed's early stop in the reverse pass; `replan()` always
+  walks the whole ring (at most 64 blocks, outside the lock).
+* `pio test -e native`: `test_parity` fails in a fresh worktree because its
+  reference files (`constrain_ref.txt` etc.) are untracked and must be
+  generated from `web/`. Not caused by this branch; the other suites pass.
 
 ## Branch 2: `feature/pico-follower`
 
