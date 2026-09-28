@@ -1033,7 +1033,7 @@ includes the probe vacuum with no special case.
 * The host has no banner detection; a banner arrives as an unrequested text
   line and the next `command()` drains it as a desync.
 
-**Status:** ready to merge.
+**Status:** done (9709472..c6e3723). Unblocks branch 4 (with 3); branch 3 was already unblocked.
 
 **Outcome:**
 
