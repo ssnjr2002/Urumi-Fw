@@ -3,15 +3,21 @@
 #include "pico/util/queue.h"
 #include "core1_rpc.h"
 
-// Depth 4, though rpcPost admits one reply-bearing transaction at a time: the
+// Depth 4, though rpcStart admits one reply-bearing transaction at a time: the
 // spare entries are for fire-and-forget requests (debug step), which do not
-// occupy the in-flight slot and can therefore stack up behind a live one.
+// occupy the in-flight slot, and for requests posted behind an abandoned one.
 #define RPC_QUEUE_DEPTH 4
 
 static queue_t  s_reqQ;
 static queue_t  s_repQ;
 static uint16_t s_nextId  = 1;      // 0 is reserved for fire-and-forget
 static bool     s_inFlight = false;
+
+// The reply-bearing request last started: what rpcFinish matches replies
+// against. Kept past an abandon, so a late reply is still recognised as stale.
+static uint16_t s_liveId   = 0;
+static uint8_t  s_liveCmd  = 0;
+static uint8_t  s_liveNode = 0;
 
 void rpcInit(void) {
     queue_init(&s_reqQ, sizeof(RpcRequest), RPC_QUEUE_DEPTH);
@@ -28,7 +34,7 @@ void rpcReset(void) {
     s_inFlight = false;
 }
 
-bool rpcPost(const RpcRequest* req, uint16_t* idOut) {
+static bool rpcPost(const RpcRequest* req) {
     const bool wantsReply = (req->id != 0);
     if (wantsReply && s_inFlight) return false;
 
@@ -36,59 +42,74 @@ bool rpcPost(const RpcRequest* req, uint16_t* idOut) {
     if (!queue_try_add(&s_reqQ, &r)) return false;
 
     if (wantsReply) s_inFlight = true;
-    if (idOut) *idOut = r.id;
     return true;
 }
 
 bool rpcServerTake(RpcRequest* out)   { return queue_try_remove(&s_reqQ, out); }
 bool rpcServerReply(const RpcReply* rep) { return queue_try_add(&s_repQ, rep); }
 
-bool rpcPoll(RpcReply* out) {
-    if (!queue_try_remove(&s_repQ, out)) return false;
-    s_inFlight = false;
-    return true;
-}
-
-// Allocate an id and stamp the request. Fire-and-forget callers pass id 0 and
-// never reach here.
 static uint16_t rpcNextId(void) {
     uint16_t id = s_nextId++;
     if (s_nextId == 0) s_nextId = 1;      // wrap past the reserved value
     return id;
 }
 
-// Reason from the last completed call. Safe as a single global because rpcPost
+// Reason from the last completed call. Safe as a single global because rpcStart
 // admits one reply-bearing transaction at a time.
 static uint8_t s_lastNakReason = 0;
 
-RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs) {
+RpcResult rpcStart(const RpcRequest* req, uint16_t* idOut) {
     RpcRequest r = *req;
-    r.id = rpcNextId();
+    r.id = (r.op == RPC_OP_STEP_DEBUG) ? 0 : rpcNextId();
+    if (!rpcPost(&r)) return RPC_TIMEOUT;     // queue full or one already in flight
+    if (r.id != 0) {
+        s_liveId   = r.id;
+        s_liveCmd  = r.cmd;
+        s_liveNode = r.node;
+    }
+    if (idOut) *idOut = r.id;
+    return RPC_OK;
+}
 
-    if (!rpcPost(&r, nullptr)) {
-        out->result = RPC_TIMEOUT;        // queue full or one already in flight
+RpcResult rpcFinish(uint16_t id, RpcReply* out) {
+    for (;;) {
+        if (!queue_try_remove(&s_repQ, out)) return RPC_PENDING;
+        // A reply to an abandoned request, arriving late: not ours, drop it.
+        if (out->id != id) continue;
+        s_inFlight = false;
+        // A mismatch means the two sides disagree about what is on the wire,
+        // which is a bug, not a bus condition.
+        if (id != s_liveId || out->cmd != s_liveCmd || out->node != s_liveNode) {
+            out->result = RPC_BAD_REPLY;
+            out->len = 0;
+            return RPC_BAD_REPLY;
+        }
+        s_lastNakReason = (out->result == RPC_NAK) ? out->nakReason : 0;
+        return out->result;
+    }
+}
+
+void rpcAbandon(uint16_t id) {
+    // Its reply may still come; rpcFinish drops it by id. Keeping the claim
+    // instead would let one wedge lock out every later command.
+    if (id != 0 && id == s_liveId) s_inFlight = false;
+}
+
+RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs) {
+    uint16_t id;
+    RpcResult r = rpcStart(req, &id);
+    if (r != RPC_OK) {
+        out->result = r;
         out->len = 0;
-        return RPC_TIMEOUT;
+        return r;
     }
 
     const absolute_time_t deadline = make_timeout_time_ms(timeoutMs);
     for (;;) {
-        if (rpcPoll(out)) {
-            // The old encoding threw the echo away (`resp & 0xFFFF`). Keep it and
-            // check it: a mismatch means the two sides disagree about what is on
-            // the wire, which is a bug, not a bus condition.
-            if (out->id != r.id || out->cmd != r.cmd || out->node != r.node) {
-                out->result = RPC_BAD_REPLY;
-                out->len = 0;
-                return RPC_BAD_REPLY;
-            }
-            s_lastNakReason = (out->result == RPC_NAK) ? out->nakReason : 0;
-            return out->result;
-        }
+        r = rpcFinish(id, out);
+        if (r != RPC_PENDING) return r;
         if (time_reached(deadline)) {
-            // Core 1 never answered. Drop the in-flight claim, or one wedge would
-            // lock out every later command.
-            s_inFlight  = false;
+            rpcAbandon(id);                   // Core 1 never answered
             out->result = RPC_TIMEOUT;
             out->len    = 0;
             return RPC_TIMEOUT;
@@ -102,6 +123,7 @@ const char* rpcResultText(RpcResult r) {
         case RPC_OK:        return "ok";
         case RPC_TIMEOUT:   return "timeout";
         case RPC_BAD_REPLY: return "bad_reply";
+        case RPC_PENDING:   return "pending";
         case RPC_NAK: break;
     }
     switch (s_lastNakReason) {
@@ -326,10 +348,10 @@ RpcResult rpcHome(uint8_t node, uint8_t dir, bool intendedRetract,
     return RPC_OK;
 }
 
-bool rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps) {
+RpcResult rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps) {
     RpcRequest req = {};
-    req.op = RPC_OP_STEP_DEBUG;      // not a node command — Core 1 acts locally
-    req.id = 0;                      // fire-and-forget: no reply, no in-flight slot
+    req.op = RPC_OP_STEP_DEBUG;      // not a node command — Core 1 acts locally;
+                                     // rpcStart leaves its id 0: no reply
     req.argLen = 7;
     req.args[0] = slot;
     req.args[1] = (uint8_t)(sps >> 8);
@@ -341,7 +363,7 @@ bool rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps) {
     req.args[4] = (uint8_t)((uint32_t)steps >> 16);
     req.args[5] = (uint8_t)((uint32_t)steps >>  8);
     req.args[6] = (uint8_t)((uint32_t)steps);
-    return rpcPost(&req, nullptr);
+    return rpcStart(&req, nullptr);
 }
 
 // ─── Probe leg (docs/tool_probe.md §5.6) ─────────────────────────────────────
@@ -364,7 +386,7 @@ const char* probeCauseText(uint8_t c) {
     }
 }
 
-bool rpcProbeLegPost(const ProbeLegReq* rq, uint16_t* idOut) {
+RpcResult rpcProbeLegStart(const ProbeLegReq* rq, uint16_t* idOut) {
     RpcRequest req = {};
     req.op     = RPC_OP_PROBE_LEG;   // not a node command — Core 1 acts locally
     req.argLen = RPC_PROBE_LEG_ARGLEN;
@@ -383,7 +405,7 @@ bool rpcProbeLegPost(const ProbeLegReq* rq, uint16_t* idOut) {
     a[17] = rq->confirmPolls;
     a[18] = rq->retryLimit;
     a[19] = rq->retract;
-    return rpcPost(&req, idOut);
+    return rpcStart(&req, idOut);
 }
 
 bool rpcProbeLegDecode(const RpcReply* rep, ProbeLegOut* out) {

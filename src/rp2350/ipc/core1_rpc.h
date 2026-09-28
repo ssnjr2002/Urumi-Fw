@@ -39,7 +39,7 @@ static_assert(RPC_ARG_MAX >= CMD_HOME_LEG_PAYLOAD_LEN,
               "RPC_ARG_MAX must still hold the largest node command payload");
 
 // The probe leg is the largest LOCAL op, and it now fills the buffer exactly.
-// Asserted because argLen is written by hand in rpcProbeLegPost: adding a field
+// Asserted because argLen is written by hand in rpcProbeLegStart: adding a field
 // there and forgetting this would overflow args[] with no diagnostic at all.
 #define RPC_PROBE_LEG_ARGLEN  20
 static_assert(RPC_ARG_MAX >= RPC_PROBE_LEG_ARGLEN,
@@ -150,7 +150,7 @@ typedef struct {
 // above any honest wait; what it buys over multicore_fifo_pop_blocking() is
 // that it RETURNS, so a wedged Core 1 can no longer hang Core 0 forever.
 //
-// Callers that must stay responsive mid-job should use rpcPost/rpcPoll and
+// Callers that must stay responsive mid-job should use rpcStart/rpcFinish and
 // keep running their loop, not shorten this.
 #define RPC_CALL_TIMEOUT_MS 6000
 
@@ -173,6 +173,7 @@ typedef enum {
                      // exactly the nak_or_timeout conflation this module exists
                      // to remove, and "it is there but talking nonsense" wants a
                      // different response from "it is not there".
+    RPC_PENDING,     // rpcFinish only: no reply yet
 } RpcResult;
 
 typedef struct {
@@ -190,8 +191,8 @@ typedef struct {
 // "timeout" for every non-OK result and each would otherwise have to learn the
 // new cases separately.
 //
-// Reads the reason from the LAST completed rpcCall, which is sound only because
-// one transaction is in flight at a time (see rpcPost). Call it on the result
+// Reads the reason from the LAST completed call, which is sound only because
+// one transaction is in flight at a time (see rpcStart). Call it on the result
 // you just received, before issuing another.
 const char* rpcResultText(RpcResult r);
 
@@ -255,25 +256,32 @@ void rpcInit(void);
 // locking here, and none is needed while the far side cannot run.
 void rpcReset(void);
 
-// Post a request without waiting. Returns false if a transaction is already in
-// flight or the queue is full; *idOut receives the request id.
+// Stamp an id and post a request without waiting; `req->id` is ignored. Every
+// op that replies gets a fresh id and the in-flight claim; RPC_OP_STEP_DEBUG
+// gets 0 (fire-and-forget). *idOut receives the id to pass to rpcFinish.
+// RPC_TIMEOUT if a transaction is already in flight or the queue is full.
 //
 // ONE TRANSACTION IN FLIGHT AT A TIME. The RS485 bus is serial, so serialising
 // requests costs no throughput, and it buys two things: replies cannot arrive
 // out of order, and the existing alarmAtEntry compare stays sufficient (Core 0
 // cannot process the command that would clear an alarm while another command is
 // outstanding). Do not relax this without revisiting both.
-bool rpcPost(const RpcRequest* req, uint16_t* idOut);
+RpcResult rpcStart(const RpcRequest* req, uint16_t* idOut);
 
-// Collect a reply if one is ready. Never blocks. false = nothing yet.
-bool rpcPoll(RpcReply* out);
+// Collect the reply to `id`. Never blocks: RPC_PENDING until it arrives, then
+// the reply's result, or RPC_BAD_REPLY if its echo does not match the request.
+// Replies to other ids (late ones to an abandoned request) are discarded.
+RpcResult rpcFinish(uint16_t id, RpcReply* out);
 
-// True while a posted request has not been collected.
+// Give up waiting on `id` and release the in-flight claim. Its reply, if it
+// ever comes, is discarded by the next rpcFinish.
+void rpcAbandon(uint16_t id);
+
+// True while a started request has not been finished or abandoned.
 bool rpcBusy(void);
 
-// Post and wait. Convenience over post/poll for callers that have nothing else
-// to do; every one of them can be converted to the async pair without touching
-// this module. Returns RPC_TIMEOUT if Core 1 does not answer within timeoutMs
+// Start and wait. Convenience over start/finish for callers that have nothing
+// else to do. Returns RPC_TIMEOUT if Core 1 does not answer within timeoutMs
 // — which, unlike multicore_fifo_pop_blocking(), actually returns.
 RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs);
 
@@ -326,14 +334,13 @@ bool rpcServerReply(const RpcReply* rep);
 // that is not tidiness: a second burst issued before Core 1 picked up the first
 // would otherwise have overwritten a shared rate and run burst #1 at burst #2's
 // speed. Queued, each burst carries its own.
-bool rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps);
+RpcResult rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps);
 
-// ─── Probe leg — posted, then collected by the Core 0 supervisor ─────────────
-// Post/poll rather than rpcCall, and for the reason rpcCall's own comment gives:
-// a leg runs for seconds and Core 0 must keep serving `getstate` and `stop`
-// throughout. Same shape as the homing supervisor, which exists for exactly
-// this. *idOut receives the request id to match the reply against.
-bool rpcProbeLegPost(const ProbeLegReq* rq, uint16_t* idOut);
+// ─── Probe leg — started, then finished by the Core 0 supervisor ─────────────
+// Start/finish rather than rpcCall, and for the reason rpcCall's own comment
+// gives: a leg runs for seconds and Core 0 must keep serving `getstate` and
+// `stop` throughout. *idOut receives the id to pass to rpcFinish.
+RpcResult rpcProbeLegStart(const ProbeLegReq* rq, uint16_t* idOut);
 
 // Decode a collected reply's payload back into a result. False if the payload is
 // not the shape this decoder knows.

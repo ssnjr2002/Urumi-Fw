@@ -326,7 +326,7 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
     rq.confirmPolls = PROBE_CONFIRM_POLLS;
     rq.retryLimit   = PROBE_RETRY_LIMIT;
 
-    if (!rpcProbeLegPost(&rq, &legId)) { Serial.println("err busy"); return true; }
+    if (rpcProbeLegStart(&rq, &legId) != RPC_OK) { Serial.println("err busy"); return true; }
 
     // Worst case: every step at its slowest interval, plus a full poll deadline
     // for each poll, plus a margin. Generous on purpose — this bound exists to
@@ -390,10 +390,11 @@ void probeTick(void) {
     if (!legInFlight) return;
 
     RpcReply rep;
-    if (rpcPoll(&rep)) {
+    const RpcResult r = rpcFinish(legId, &rep);
+    if (r != RPC_PENDING) {
         legInFlight = false;
         ProbeLegOut res;
-        if (rep.id != legId || rep.result != RPC_OK || !rpcProbeLegDecode(&rep, &res)) {
+        if (r != RPC_OK || !rpcProbeLegDecode(&rep, &res)) {
             probeFail(PROBE_DEADLINE);   // Core 1 answered something we cannot
             return;                      // read: the emitter, not the switch
         }
@@ -430,6 +431,9 @@ void probeTick(void) {
     }
 
     if ((int32_t)(millis() - legDeadline) >= 0) {
+        // The restore's calls queue behind the leg if Core 1 is still running
+        // it; its late reply is dropped by id.
+        rpcAbandon(legId);
         legInFlight = false;
         probeFail(PROBE_DEADLINE);
     }
