@@ -135,7 +135,7 @@ core0: rpcCall returns                               ← blocked until reply lan
 core0: ingestReply(...)                              ← reads nodeEnabled
 ```
 
-`rpcServerReply`/`rpcPoll` are `queue_try_add`/`queue_try_remove` on
+`rpcServerReply`/`rpcFinish` are `queue_try_add`/`queue_try_remove` on
 `pico/util/queue.h`, which take a hardware spinlock internally: `spin_lock_blocking`
 fences on acquire, `spin_unlock` does `__mem_fence_release()`. Full release/acquire
 pair on every reply.
@@ -208,7 +208,7 @@ command?
 
 1. **The poison pill** is detected by Core 1 mid-emit. Routing through Core 0
    adds two hops gated by a loop cadence nothing bounds.
-2. **Core 0 can be stuck mid-RPC.** `rpcPost` admits one reply-bearing
+2. **Core 0 can be stuck mid-RPC.** `rpcStart` admits one reply-bearing
    transaction at a time and `rpcCall` spins to `RPC_CALL_TIMEOUT_MS`, so an
    estop arriving mid-call cannot be relayed until that call resolves. The
    likeliest cause of a slow RPC is a node that stopped answering — the
