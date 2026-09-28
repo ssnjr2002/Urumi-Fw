@@ -46,11 +46,16 @@ Z, A, tool profiles and duty breaks come after, in later plans.
   headers, contract-tested on the host.
 * Files:
   * New `lib/planner/` (headers under `lib/planner/planner/`):
-    * block type and ring (fixed capacity, no heap), with the seed §15
-      single-producer/single-consumer indices and a pinned entry for the block
-      after the executing one (seed §10).
+    * block type and ring (fixed capacity, no heap), single-threaded. Look-ahead
+      is split so branch 2 can lock around the short half (seed §15):
+      `replan()` computes speeds into scratch without touching the ring,
+      `commit()` writes them and refuses if a block was claimed since. `claim()`
+      records the executing block's exit speed, which pins the next block's
+      entry (seed §10). Barriers and the spinlock live in branch 2.
     * limits from per-axis `maxFeed` / `maxAccel` projected onto the line
-      direction; junction deviation at line corners.
+      direction; junction deviation at line corners, the deviation a parameter
+      (branch 2 passes a firmware constant). No input validation: limits are
+      trusted, validation comes later at the config level.
     * look-ahead reverse/forward passes; last queued block exits at 0.
     * trapezoid build and closed-form `s(t)` (seed §12).
     * feed hold: from the current `(s, v)`, decelerate along the same block
@@ -65,7 +70,7 @@ Z, A, tool profiles and duty breaks come after, in later plans.
 * Overlap: `platformio.ini`.
 * Checks: `pio test -e native`.
 
-**Status:** not started.
+**Status:** in progress.
 
 **Outcome:**
 
