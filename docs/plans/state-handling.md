@@ -860,7 +860,7 @@ exists with no commits; it rebases onto `main` after this merges.
 
 **Depends on:** nothing.
 
-**Status:** ready to merge.
+**Status:** done. Unblocks branch 2.
 
 **Outcome:**
 
