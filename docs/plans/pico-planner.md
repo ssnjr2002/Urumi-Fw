@@ -217,9 +217,40 @@ branch 2.
   counters; abort; estop; a line is refused on a zero `maxFeed`/`maxAccel`;
   MicroSegment jobs still run after planner motion.
 
-**Status:** not started.
+**Status:** ready to merge.
 
 **Outcome:**
+
+* Deviations:
+  * `resume` of a held planner job answers `err moved` if X or Y left the
+    held position (e.g. a jog while paused): the followers would otherwise
+    jump at full step rate to the executor's position.
+  * `line` is accepted in IDLE or while planner motion runs. The ring starts
+    from `machinePos`, so it cannot be queued behind other motion.
+  * Added `src/rp2350/core1/cycles.h` (`cycleCount()`, DWT CYCCNT, a drop-in
+    for `rp2040.getCycleCount()` that is inline and interrupt-free) and put
+    `RS485Bus::writeStream` in RAM. The slot loop makes no flash calls; only
+    `hold`/`abort`/`resume` and the resets stay in flash.
+* Interfaces for branch 3: `plannerQueueLine(x, y, feed)` → `PlannerQueueResult`
+  (`src/rp2350/core0/planner/queue.h`), `plannerQueueDepth()`; `PQ_FULL`
+  means retry as the ring drains. Junction deviation is `kDeviation` = 0.02 mm
+  in `queue.cpp`. `RUNNING_PLANNER` = 3; `bufCount` / `buf=` count planner
+  blocks (of 64) while a planner job runs or is held.
+* Bench (X/Y at 160 steps/mm): single, diagonal and square lines land on their
+  step targets, nodes agree; feed 30 mm/s measured 30.9 mm/s; pause holds and
+  keeps the ring, resume finishes on target; cancel, abort (`0xA9`) and `stop`
+  behave as planned. Open human checks: the 50 kHz stream on a scope; a zero
+  `maxFeed`/`maxAccel` refusal and MicroSegment-after-planner were not run.
+* Out of scope:
+  * `invert` is not applied to planner motion.
+  * `queuedUs` does not include planner time.
+  * The MicroSegment and debug-step emitters still use `getCycleCount()`;
+    `cycleCount()` drops in.
+  * Channel-1 requests wait until planner motion stops, as for MicroSegment.
+  * `test_parity` fails in a fresh worktree: its `*_ref.txt` vectors are
+    generated from `web/`, not tracked.
+  * After the `stop` test, `nodestat 2` showed `slot 1` while node 1 showed
+    `slot none`; main's estop-sweep quiesce fix (`a5e8d80`) likely covers it.
 
 ## Branch 3: `feature/pico-jog`
 
