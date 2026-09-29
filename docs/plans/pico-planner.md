@@ -128,9 +128,43 @@ Z, A, tool profiles and duty breaks come after, in later plans.
 * Depends on: branch 1.
 * Checks: `pio run -e <bench env>`.
 
-**Status:** not started.
+**Status:** done (branch `bench/planner` at `2230c1e`, not merged). Unblocks
+branch 2.
 
 **Outcome:**
+
+* Env `pico_plannerbench`, `src/scratch/planner_bench.cpp`. Timed with the DWT
+  cycle counter: `rp2040.getCycleCount()` misses wraps while core 0 holds the
+  lock with interrupts off.
+* `Executor::needsRing(dt)` was added to `lib/planner` on the bench branch
+  (`f3a770d`, `feat(planner)`, with a native test); branch 2 cherry-picks it.
+* Results, RP2350 at 150 MHz, 64-block ring, code running from flash:
+  * Executor tick: 1.1 µs without the lock, 2.0 µs at a block change.
+    Cold-cache outliers up to 26 µs on the first ticks.
+  * `commit()` lock hold: ~0.3 µs per block, 19.3 µs at 64 blocks.
+  * `replan()`: ~16 µs per block, 1.0 ms at 64 blocks (the resume stall, and
+    core 0's cost per push with a full ring).
+  * Stress (0.5 mm lines, ~470 blocks/s): try-lock found the lock busy 98
+    times in 10 s, deferring at most 2 slots, with no late slots; spin waited
+    up to 19.1 µs and made 12 slots late (all < 4 µs). Commits refused: 7-8
+    of ~9400.
+* For branch 2: core 1 uses try-lock and retries next slot. Put the tick path
+  in RAM (`__time_critical_func`) or warm the cache before motion, to remove
+  the cold outliers.
+* Later, out of scope:
+  * The reverse pass's early stop (seed) and a commit that copies only
+    changed blocks would cut both the 1 ms replan and the 19 µs lock hold.
+  * Batching: push everything that has arrived, then replan once. Safe, since
+    a pushed block sits at rest until the next commit. No batch size to
+    choose; it settles at arrival rate × replan cost. Two constraints:
+    throughput (replan cost < one block's run time; per-push replan falls
+    behind below ~0.7 ms blocks, e.g. 0.2 mm at 300 mm/s) and a deadline
+    (commit before the machine enters the old plan's final braking ramp;
+    ~30 ms of slack in the stress case).
+  * Ring depth in distance must exceed the braking distance (22.5 mm at
+    300 mm/s, 2000 mm/s²) or full feed is never reached; 64 × 0.2 mm is not.
+  * Bench before the Bézier work, on `bench/planner`: batching, early stop and
+    dense blocks, at realistic Bézier block lengths.
 
 ## Branch 2: `feature/pico-follower`
 
