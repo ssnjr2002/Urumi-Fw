@@ -74,13 +74,29 @@ bool cmdPause(const char*) {
     // resumePos and enters PAUSED (§4.5). It no longer finishes the segment
     // and drains — resume re-plans from position, so stopping early is safe.
     // Gated on RUNNING, so unlike abort this flag can never strand.
+    // Planner motion instead holds and keeps its ring, for `resume`.
     pauseRequested = true;
     Serial.println("ok");
     return true;
 }
 
+// A held planner job resumes where it stopped, so the head must still be there.
+static bool resumePlanner() {
+    if (machinePos[0] != resumePos[0] || machinePos[1] != resumePos[1]) {
+        Serial.println("err moved");
+        return true;
+    }
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const bool held = plannerActive && machineState == STATE_PAUSED;
+    if (held) resumeRequested = true;
+    spin_unlock(plannerLock, s);
+    Serial.println(held ? "ok" : "err bad_state");
+    return true;
+}
+
 bool cmdResume(const char*) {
     if (machineState != STATE_PAUSED) { Serial.println("err bad_state"); return true; }
+    if (plannerActive) return resumePlanner();
     // Phase 1: the host has already pre-positioned the head, so resume simply
     // leaves PAUSED. The next operation streams in fresh (IDLE accepts MSEG).
     jobActive    = false;
@@ -91,6 +107,20 @@ bool cmdResume(const char*) {
 
 bool cmdCancel(const char*) {
     if (machineState != STATE_PAUSED) { Serial.println("err bad_state"); return true; }
+    if (plannerActive) {
+        // Core 1 leaves PAUSED for a resume only under the lock.
+        const uint32_t s = spin_lock_blocking(plannerLock);
+        const bool held = plannerActive && machineState == STATE_PAUSED;
+        if (held) {
+            const planner::Vec2 at = plannerExec.position();
+            plannerRing.reset(at);
+            plannerExec.reset(at);
+            plannerActive   = false;
+            resumeRequested = false;
+        }
+        spin_unlock(plannerLock, s);
+        if (!held) { Serial.println("err bad_state"); return true; }
+    }
     mBufHead = mBufTail;                   // buffer already drained at pause; defensive
     queuedUsOut = queuedUsIn;              // …and its queued time with it (§4.6)
     jobActive    = false;

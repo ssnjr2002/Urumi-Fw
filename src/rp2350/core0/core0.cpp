@@ -69,6 +69,7 @@ void processSerial() {
 void setup() {
     Serial.begin(115200);
     rpcInit();           // channel-1 queues, before Core 1 can service them
+    plannerLock = spin_lock_instance(spin_lock_claim_unused(true));
     while (!Serial && millis() < 10000) {}
     configStoreInit();   // mount LittleFS, verify /config.bin into g_cfg
     machineCfgLoad();    // decode it; the axis map follows once Core 1 runs
@@ -133,6 +134,10 @@ void loop() {
     pauseRequested = false;
     abortRequested = false;
     streamIsJog = false;
+    plannerRing.reset({0, 0});
+    plannerExec.reset({0, 0});
+    plannerActive = false;
+    resumeRequested = false;
     __dmb();
 
     // 5b. WIPE LOCAL INGEST STATE

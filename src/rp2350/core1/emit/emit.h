@@ -28,6 +28,13 @@ enum EmitResult : uint8_t {
 // still publish the RUNNING transition.
 void processMicroSegments(void);
 
+// ─── Planner follower ─────────────────────────────────────────────────────────
+// Runs lib/planner motion (plannerRing): from IDLE with lines queued, or from
+// PAUSED once `resume` set resumeRequested. Owns the RUNNING transition and the
+// way out: IDLE when the ring drains or an abort finishes, PAUSED when a pause
+// hold stops. Returns at once if there is nothing to run, and on estop.
+void processPlanner(void);
+
 // ─── Debug step burst ─────────────────────────────────────────────────────────
 // Emits `count` raw stream bytes into one stream SLOT at debugStepSps steps/sec.
 // Bypasses the MicroSegment path entirely — used to verify the Pico→node stream

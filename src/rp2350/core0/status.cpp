@@ -8,6 +8,7 @@
 #include "data_plane.h"
 
 uint16_t getBufCount() {
+    if (plannerActive) return (uint16_t)plannerRing.count();   // blocks, while planner motion owns Core 1
     uint16_t h = mBufHead, t = mBufTail;
     if (t >= h) return t - h;
     return MASTER_BUF_SIZE - h + t;

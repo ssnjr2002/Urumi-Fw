@@ -2,6 +2,9 @@
 #include <Arduino.h>
 #include <stdint.h>
 #include "common.h"
+#include "hardware/sync.h"
+#include <planner/executor.h>
+#include <planner/planner.h>
 
 // shared_state.h — channels 2 and 3 of the core boundary.
 //
@@ -104,10 +107,11 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 //   PAUSED suspends a job mid-stream; only resume / cancel / stop exit it.
 //
 // Transition map:
-//   IDLE    → RUNNING   Core 1, queue non-empty
+//   IDLE    → RUNNING   Core 1, queue or planner ring non-empty
 //   RUNNING → IDLE      Core 1, queue drained
 //   RUNNING → PAUSED    Core 1, on MSEG_FLAG_PAUSE or pauseRequested (drain first)
 //   PAUSED  → RUNNING   Core 1, jog burst arrives (runningReason = JOG)
+//   PAUSED  → RUNNING   Core 1, held planner job on `resume` (resumeRequested)
 //   PAUSED  → IDLE      Core 0 `resume` (Phase 1: host pre-positioned) or `cancel`
 //   any     → ESTOP     Core 0 `stop`, or MSEG_FLAG_ESTOP poison pill
 //   ESTOP   → ALARM     Core 1, after flushing the queue (position now invalid)
@@ -179,6 +183,7 @@ enum RunningReason : uint8_t {
     // IS running, so every existing IDLE/RUNNING/PAUSED gate stays correct
     // untouched, and an un-updated host reads it as plain RUNNING — which is true.
     RUNNING_ABORT_DECEL = 2,
+    RUNNING_PLANNER = 3,    // running lib/planner lines (core1/emit/follower.cpp)
 };
 
 // Why we are in STATE_PROBING (docs/tool_probe.md §5.2). Activity, plus the one
@@ -313,6 +318,23 @@ extern volatile int32_t resumePos[4];
 extern volatile bool    pauseRequested;
 extern volatile bool    abortRequested;
 extern volatile bool    streamIsJog;
+
+// ─── Planner motion (docs/plans/pico-planner.md) ──────────────────────────────
+// One lib/planner ring and its executor, shared by both cores: Core 0 pushes
+// and commits (core0/planner/), Core 1 ticks (core1/emit/follower.cpp). Every
+// ring edit is made holding plannerLock; planner/planner.h lists which calls.
+//
+// plannerActive — Core 1 owns planner motion, running or held in PAUSED. Core 0
+//   resets the ring and executor only while it is false. Written under the lock.
+// plannerSpm — X and Y steps/mm, set by Core 0 with that reset.
+// resumeRequested — `resume` of a held planner job; Core 1 replans from where
+//   it stopped and returns to RUNNING. Set and cleared under the lock.
+extern planner::Planner  plannerRing;
+extern planner::Executor plannerExec;
+extern spin_lock_t*      plannerLock;
+extern volatile bool     plannerActive;
+extern float             plannerSpm[2];
+extern volatile bool     resumeRequested;
 
 // Soft-Reset Handshake Flags
 extern volatile bool    soft_reset_requested;

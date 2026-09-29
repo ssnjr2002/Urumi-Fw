@@ -22,7 +22,8 @@ void RS485Bus::writeCommand(uint8_t data) {
     _sent = true;
 }
 
-void RS485Bus::writeStream(uint8_t data) {
+// RAM-resident: the step emitters call it once per stream byte.
+void __not_in_flash_func(RS485Bus::writeStream)(uint8_t data) {
     // 9th bit = 0
     pio_sm_put_blocking(_pio, _sm_tx, (uint32_t)data);
     _sent = true;

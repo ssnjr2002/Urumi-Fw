@@ -49,6 +49,7 @@ static const Cmd kCommands[] = {
     { "axes_map",     cmdAxesMap     },
     { "setorigin",    cmdSetOrigin   },
     { "step",         cmdStep        },
+    { "line",         cmdLine        },
     { "hallscan",     cmdHallScan    },
     { "lin_leg",      cmdLinLeg      },
     { "rot_leg",      cmdRotLeg      },

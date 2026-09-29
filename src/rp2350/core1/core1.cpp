@@ -13,6 +13,7 @@
 #include "../ipc/core1_rpc.h"
 #include "../board.h"
 #include "emit/emit.h"
+#include "cycles.h"
 #include "bus/RS485Bus.h"
 #include "bus/packet.h"
 #include "common.h"
@@ -42,6 +43,17 @@ static void __not_in_flash_func(core1FlashPark)() {
     __dmb();
 }
 
+// Discard planner motion that is not running: after estop, or a held job aborted.
+static void dropPlanner() {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const planner::Vec2 at = plannerExec.position();
+    plannerRing.reset(at);
+    plannerExec.reset(at);
+    plannerActive   = false;
+    resumeRequested = false;
+    spin_unlock(plannerLock, s);
+}
+
 void processBus() {
     // 1. Estop — flush the queue, invalidate position, settle into ALARM.
     //    ALARM is sticky until Core 0 issues setorigin / unalarm.
@@ -51,6 +63,7 @@ void processBus() {
         pauseRequested = abortRequested = false;  // estop outranks a pending ramp
         runningReason  = RUNNING_JOB;
         jobActive    = false;          // any suspended job is unrecoverable
+        dropPlanner();
         alarmReason  = ALARM_ESTOP;    // set reason before the ALARM transition
 
         // Actually de-energise, rather than only claiming to. axes_enabled is
@@ -79,8 +92,11 @@ void processBus() {
         return;
     }
 
-    // 2. Emit any queued MicroSegments
+    // 2. Emit any queued MicroSegments, else any planner motion
     if (mBufHead != mBufTail) processMicroSegments();
+    else if ((machineState == STATE_IDLE && plannerRing.count() > 0) ||
+             (machineState == STATE_PAUSED && resumeRequested))
+        processPlanner();
 
     // An abort with nothing to stop still has to be consumed. The ramp lives
     // inside the emitter, so a request arriving while the ring is empty would
@@ -92,6 +108,7 @@ void processBus() {
         abortRequested = false;
         jobActive      = false;
         runningReason  = RUNNING_JOB;
+        if (plannerActive) dropPlanner();   // a held planner job
         __dmb();
         if (machineState == STATE_RUNNING || machineState == STATE_PAUSED)
             machineState = STATE_IDLE;
@@ -118,6 +135,7 @@ void processBus() {
 // exist; it will never actually run.
 void setup1() {
     rs485.begin(RS485_BAUD, RS485_TX_PIN, RS485_RX_PIN, RS485_EN_PIN);
+    cyclesInit();
 
     for (;;) {
         // ══════════════════════════════════════════════════════════

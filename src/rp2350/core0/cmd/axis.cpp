@@ -20,6 +20,7 @@
 #include "../ops/axes_map.h"
 #include "../ops/bus.h"
 #include "../config/machine_cfg.h"
+#include "../planner/queue.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
@@ -482,6 +483,28 @@ bool cmdStep(const char* args) {
     // each other's rate — see ipc/core1_rpc.h.
     rpcStepDebug(slot, (uint16_t)sps, (int32_t)count);
     Serial.printf("ok %ld steps %lu sps\n", count, (unsigned long)sps);
+    return true;
+}
+
+// ── line <x> <y> <feed> — debug planner move (bring-up only) ─────────────────
+// Queues one line through plannerQueueLine: machine mm, feed in mm/s. Lines sent
+// back to back join at their junction speed. No homing, soft-limit or
+// enabled-axis check.
+bool cmdLine(const char* args) {
+    char* end;
+    const float x = strtof(args, &end);
+    if (end == args) { Serial.println("err usage"); return true; }
+    const char* p = end;
+    const float y = strtof(p, &end);
+    if (end == p) { Serial.println("err usage"); return true; }
+    p = end;
+    const float feed = strtof(p, &end);
+    if (end == p || !(feed > 0)) { Serial.println("err usage"); return true; }
+
+    static const char* const kErr[] = {"", "bad_state", "no_config", "no_limits", "full"};
+    const PlannerQueueResult r = plannerQueueLine(x, y, feed);
+    if (r == PQ_OK) Serial.printf("ok %d\n", plannerQueueDepth());
+    else Serial.printf("err %s\n", kErr[r]);
     return true;
 }
 

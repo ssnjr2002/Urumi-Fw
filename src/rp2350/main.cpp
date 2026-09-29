@@ -44,6 +44,14 @@ volatile bool    pauseRequested = false;
 volatile bool    abortRequested = false;
 volatile bool    streamIsJog    = false;
 
+// Planner motion (see shared.h) — plannerLock is claimed in setup()
+planner::Planner  plannerRing;
+planner::Executor plannerExec;
+spin_lock_t*      plannerLock     = nullptr;
+volatile bool     plannerActive   = false;
+float             plannerSpm[2]   = {0, 0};
+volatile bool     resumeRequested = false;
+
 // Soft-Reset Handshake Flags
 volatile bool    soft_reset_requested = true;  // Starts true so Core 1 parks on cold boot
                                                 // and waits for Core 0's first wipe-and-release;

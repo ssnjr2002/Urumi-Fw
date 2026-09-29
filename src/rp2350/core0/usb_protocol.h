@@ -58,7 +58,9 @@
 //     [3]      axes_homed
 //     [4]      alarmReason
 //     [5]      runningReason
-//     [6..7]   bufCount   u16 LE   — segments queued in masterBuf
+//     [6..7]   bufCount   u16 LE   — segments queued in masterBuf; planner
+//                                   blocks instead while runningReason = PLANNER
+//                                   or a planner job is held in PAUSED
 //     [8..23]  pos[4]     i32 LE   — machinePos, x/y/z/a
 //     [24]     expectedSeq         — next wire seq the data plane will execute
 //     [25..28] queuedUs   u32 LE   — motion time queued, microseconds

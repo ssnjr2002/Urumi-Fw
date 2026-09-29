@@ -106,12 +106,14 @@ bool cmdCfg(const char*) {
 // `status` / `?` — human-readable, not host-facing.
 bool cmdStatus(const char*) {
     // mute / excluded / touched: bit n = bus id n (ops/bus.h).
+    // buf= counts planner blocks, of planner::Planner::kSize, while planner motion runs or is held.
     Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u"
                   " mute=0x%03x excluded=0x%03x touched=0x%03x\n",
                   stateName(machineState),
                   (long)machinePos[0], (long)machinePos[1],
                   (long)machinePos[2], (long)machinePos[3],
-                  axes_homed, axes_enabled, getBufCount(), MASTER_BUF_SIZE,
+                  axes_homed, axes_enabled, getBufCount(),
+                  plannerActive ? planner::Planner::kSize : MASTER_BUF_SIZE,
                   busMute(), busExcluded(), busTouched());
     return true;
 }
