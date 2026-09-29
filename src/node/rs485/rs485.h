@@ -15,7 +15,7 @@ extern volatile uint8_t cmdTail;
 
 // Framing-parser state, shared between the ISR framer (frame.h) and resets.
 extern volatile bool    inCommand;
-extern volatile uint8_t rxIdx;
+extern volatile uint16_t rxIdx;    // counts past 255: a frame is up to 259 bytes
 extern volatile bool    discardCmd;
 
 // Receive-error counters (CMD_BUS_STATS). ferr/ovf are written by the RX ISR,

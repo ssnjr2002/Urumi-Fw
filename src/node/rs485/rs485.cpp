@@ -10,7 +10,7 @@ CommandPacket    cmdQueue[MAX_COMMANDS];
 volatile uint8_t cmdHead    = 0;
 volatile uint8_t cmdTail    = 0;
 volatile bool    inCommand  = false;
-volatile uint8_t rxIdx      = 0;
+volatile uint16_t rxIdx     = 0;
 volatile bool    discardCmd = false;
 
 volatile uint16_t busFerrCount = 0;
