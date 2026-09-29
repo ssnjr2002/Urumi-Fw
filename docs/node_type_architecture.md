@@ -306,7 +306,8 @@ reason) in `dispatchCommand` when both handlers decline.
 
 `dispatchCommand` is only *half* the story — it handles **command frames
 (9th bit = 1)**. **Stream bytes (9th bit = 0)** take a completely separate path,
-because the two have opposite timing requirements:
+because the two have opposite timing requirements. How a node finds command
+frame boundaries is in [plans/bus-frame.md](plans/bus-frame.md).
 
 | | Command frame (9th bit = 1) | Stream byte (9th bit = 0) |
 |---|---|---|
