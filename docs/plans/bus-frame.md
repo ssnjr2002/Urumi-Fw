@@ -57,7 +57,7 @@ first dropped its own make-safe.
 every node reads `slot none`; a node parses its own frame straight after a
 foreign one with no stream byte between.
 
-**Status:** ready to merge.
+**Status:** done (e982918..b76e496). Unblocks nothing.
 
 **Outcome:**
 
