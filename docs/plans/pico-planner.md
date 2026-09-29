@@ -31,6 +31,13 @@ Z, A, tool profiles and duty breaks come after, in later plans.
   testing only, like the step-debug burst (`src/rp2350/core0/cmd/axis.cpp:453`).
 * **Coexistence.** MicroSegment jobs and planner motion are two Core 1 modes
   that never overlap; nothing but the planner API reaches the new path.
+* **Locking: the caller locks, core 1 only at block changes.** `lib/planner`
+  stays platform-free and single-threaded; its two callers (`plannerQueueLine`
+  on Core 0, the follower on Core 1) hold one hardware spinlock around ring
+  edits: `push()` and `commit()` on Core 0; on Core 1 only ticks that claim or
+  release a block (`Executor::needsRing(dt)`), and `resume()` / `abort()`.
+  `replan()` runs unlocked. Resume runs on Core 1: the machine is at rest, so
+  its replan stall costs no steps.
 * **Rejected: node-side interpolation** (per-tick increments, node runs its own
   accumulator). It needs a shared time base across nodes, which was tried early
   on over the half-duplex bus without an acceptable solution.
@@ -96,6 +103,35 @@ Z, A, tool profiles and duty breaks come after, in later plans.
   reference files (`constrain_ref.txt` etc.) are untracked and must be
   generated from `web/`. Not caused by this branch; the other suites pass.
 
+## Branch 2a: `bench/planner`
+
+**Plan**
+
+* Type: bench.
+* Purpose: measure `lib/planner` on the RP2350 before the follower is built,
+  to choose Core 1's lock behaviour (try-and-retry-next-slot vs. spin-wait).
+* Files:
+  * `platformio.ini`: a scratch env linking `lib/planner`.
+  * New `src/scratch/planner_bench.cpp`:
+    * Core 0 loops: push random lines, `replan()`, `commit()` under the lock.
+    * Core 1 runs a 20 µs cycle-counter slot loop like the MicroSegment
+      emitter (`src/rp2350/core1/emit/microsegment.cpp:123`), with
+      `executor.tick()` every 50 slots; it takes the lock only at block
+      changes. No bus traffic needed.
+    * Results over USB serial.
+* Measures:
+  * `executor.tick()` cost, typical and at a block change.
+  * `commit()` lock hold time at 1, 16 and 64 queued blocks.
+  * `replan()` cost at 64 blocks (the resume stall).
+  * How often Core 1 finds the lock busy, and for how many slots.
+  * Slot lateness histogram under each lock behaviour.
+* Depends on: branch 1.
+* Checks: `pio run -e <bench env>`.
+
+**Status:** not started.
+
+**Outcome:**
+
 ## Branch 2: `feature/pico-follower`
 
 **Plan**
@@ -105,14 +141,20 @@ Z, A, tool profiles and duty breaks come after, in later plans.
   the ring, Core 1 streams them at 50 kHz through position followers.
 * Files:
   * `platformio.ini` `[env:pico]`: link `lib/planner`.
-  * New `src/rp2350/core0/planner/`: `plannerQueueLine(x, y, feed)`, limits
-    from `MachineCfg` (`src/rp2350/core0/config/config_decode.h:30-45`:
-    `stepsPerUnit`, `maxFeed`, `maxAccel`); soft-limit check against
-    `maxTravel` (0 = none) on homed axes, refuse on unhomed axes.
-  * New `src/rp2350/core1/emit/follower.cpp`: the 1 kHz tick (claims blocks,
-    evaluates position, converts to Q32.32 step targets) and the 50 kHz step
-    routine (accumulators → one stream byte per tick, seed §13-14), both
-    `__time_critical_func`. Publishes `machinePos`.
+  * `lib/planner`: `Executor::needsRing(dt)`, true when a tick will claim or
+    release a block.
+  * New `src/rp2350/core0/planner/`: `plannerQueueLine(x, y, feed)`, `feed` in
+    mm/s; limits from `MachineCfg` (`src/rp2350/core0/config/config_decode.h:30-45`:
+    `stepsPerUnit`, `maxFeed`, `maxAccel`). Refuses a line when `maxFeed` or
+    `maxAccel` is 0 on X or Y. No homing requirement and no soft-limit check
+    for now. On an empty ring it resets the planner and executor at
+    `machinePos` in mm. Replan and commit retry until `commit()` succeeds.
+  * New `src/rp2350/core1/emit/follower.cpp`: the 20 µs slot loop (followers →
+    one stream byte per slot, seed §13-14) with the executor tick every 50
+    slots, locking per the Decisions entry; the lock behaviour on a busy lock
+    is whatever branch 2a's numbers chose. Publishes `machinePos`.
+  * No guard between planner motion and MicroSegment jobs; the two paths stay
+    independent.
   * `src/rp2350/core1/core1.cpp` `processBus()` (`:45`, `:82`): a planner
     branch next to `processMicroSegments()`; estop and abort handling for it.
   * `src/rp2350/ipc/shared_state.h`: the planner ring, pause/abort request
@@ -123,13 +165,13 @@ Z, A, tool profiles and duty breaks come after, in later plans.
     the planner ring while it is the active mode.
   * `web/src/wire/format/status.ts`: the new `runningReason`.
   * Docs: `docs/wire_protocol.md` (the debug command, the running reason).
-* Depends on: branch 1.
+* Depends on: branch 1, branch 2a's Outcome.
 * Overlap: `platformio.ini`, `src/rp2350/core0/cmd/table.h`, `web/src/wire/`.
 * Checks: `pio run -e pico`, `pio test -e native`, `pnpm typecheck` and
   `pnpm test` in `web/`. Human: stream rate on a scope (50 kHz, jitter); a
   single line lands on its target step count; a square of lines corners at the
   junction speed; hold mid-line stops smoothly and `getpos` matches the node
-  counters; abort; estop; soft limit refuses a line past `maxTravel`;
+  counters; abort; estop; a line is refused on a zero `maxFeed`/`maxAccel`;
   MicroSegment jobs still run after planner motion.
 
 **Status:** not started.
