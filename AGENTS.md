@@ -231,7 +231,8 @@ Work has two phases.
 
 1. The user agrees to the plan.
 2. If there is a plan doc, commit it to `main`.
-3. Check other open branches for overlapping files (if they belong to a type; see Branch Types):
+3. Check other open `feature/`, `fix/` and `refactor/` branches for
+   overlapping files:
    `git diff --name-only main...<other-branch>`
    Report overlap to the user, especially in: `platformio.ini`,
    `src/rp2350/core0/cmd/table.h`, `web/src/wire/`, `web/src/machine/schema.ts`,
@@ -255,6 +256,10 @@ When the branch is finished, in the Work session:
    plan doc), and commit when told.
 5. Hand back: tell the user the branch is ready to merge. A parallel Work
    session ends here; in Single Session, move to the main folder.
+
+A `bench/` branch stops after step 4: its Outcome is committed to `main`
+instead of the branch, and there is no merge. Remove its worktree when done;
+the branch stays.
 
 #### Merge to Planning Transition
 
@@ -301,6 +306,11 @@ branch's purpose or type, or affects other branches:
   where one is practical
 * `refactor/`: same behaviour, different structure; existing tests should pass
   unchanged
+* `bench/`: scratch firmware or scripts that measure something on the bench.
+  Code lives in `src/scratch/` and its own scratch env, and touches no
+  production code. Commits use `chore(bench)`. A bench branch never merges:
+  its numbers go in the plan doc's Outcome, committed to `main` as `docs:`
+  (or in chat, without a plan doc), and the branch stays for re-running.
 
 There is no docs-only branch type; docs go in the branch of the code they
 describe.
@@ -311,6 +321,7 @@ describe.
 feature/<short-description>       # New features
 fix/<issue-number>-<description>  # Bug fixes
 refactor/<component-name>         # Code refactoring
+bench/<what-is-measured>          # Bench measurements
 ```
 
 **Examples**:
@@ -318,6 +329,7 @@ refactor/<component-name>         # Code refactoring
 - `feature/tool-duty-limits`
 - `fix/soft-limits`
 - `refactor/config-storage`
+- `bench/planner`
 
 #### Merging
 
