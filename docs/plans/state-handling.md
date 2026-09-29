@@ -1125,3 +1125,11 @@ includes the probe vacuum with no special case.
   hung `loop()` keeps its RX ISR stepping and is caught neither by the silence
   timeout nor by the Pico (the fence covers the slot, not the node). Not
   planned; documented for whoever wants it.
+* `bus_exclude` of any node, not only mute ones (drops `err not_mute`). A
+  mute node is excluded as now (the sweep already made it safe and fenced
+  its slots). A responsive node gets a make-safe first: untouched, excluded
+  without waiting for the reply; touched (`busTouched`), a confirmed release
+  unbinds its slots, otherwise they are fenced (`slotMakeSafe`) and the reply
+  names it (`ok unconfirmed <ids>`). Either way the node is excluded.
+  Exclusion blocks RPCs only, so an excluded node gets no slot again until
+  the next sweep. Its own small branch.
