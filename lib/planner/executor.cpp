@@ -1,4 +1,5 @@
 #include "planner/executor.h"
+#include "planner/ram.h"
 
 #include <math.h>
 
@@ -14,7 +15,7 @@ void Executor::reset(Vec2 pos) {
     pos_ = pos;
 }
 
-void Executor::finishBlock(Planner& p) {
+PLANNER_RAM void Executor::finishBlock(Planner& p) {
     pos_ = cur_->line.p1;
     p.release();
     cur_ = nullptr;
@@ -22,7 +23,7 @@ void Executor::finishBlock(Planner& p) {
     s_ = 0;
 }
 
-Vec2 Executor::tick(Planner& p, float dt) {
+PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {
     while (dt > 0 && state_ != State::Held) {
         if (!cur_) {
             // At rest between blocks, a hold is already complete.
@@ -88,7 +89,7 @@ Vec2 Executor::tick(Planner& p, float dt) {
     return pos_;
 }
 
-bool Executor::needsRing(float dt) const {
+PLANNER_RAM bool Executor::needsRing(float dt) const {
     if (aborting_) return true;
     if (!cur_) return state_ != State::Held;
     if (state_ == State::Running) return dt >= cur_->profile.duration() - t_;

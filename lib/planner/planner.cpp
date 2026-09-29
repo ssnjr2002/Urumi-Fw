@@ -1,4 +1,5 @@
 #include "planner/planner.h"
+#include "planner/ram.h"
 
 #include <math.h>
 
@@ -76,7 +77,7 @@ bool Planner::commit() {
     return true;
 }
 
-const Block* Planner::claim() {
+PLANNER_RAM const Block* Planner::claim() {
     if (claimed_ || count_ == 0) return nullptr;
     claimed_ = true;
     epoch_++;
@@ -85,7 +86,7 @@ const Block* Planner::claim() {
     return &b;
 }
 
-void Planner::release() {
+PLANNER_RAM void Planner::release() {
     if (!claimed_) return;
     claimed_ = false;
     tail_ = (tail_ + 1) % kSize;

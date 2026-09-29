@@ -1,10 +1,11 @@
 #include "planner/trapezoid.h"
+#include "planner/ram.h"
 
 #include <math.h>
 
 namespace planner {
 
-static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
+PLANNER_RAM static float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
 Trapezoid makeTrapezoid(float length, float accel, float v_entry_sqr,
                         float v_max_sqr, float v_exit_sqr) {
@@ -38,7 +39,7 @@ Trapezoid makeTrapezoid(float length, float accel, float v_entry_sqr,
     return tr;
 }
 
-float Trapezoid::position(float t) const {
+PLANNER_RAM float Trapezoid::position(float t) const {
     if (t <= 0) return 0;
     if (t < t_acc) return v_entry * t + 0.5f * accel * t * t;
     t -= t_acc;
@@ -49,7 +50,7 @@ float Trapezoid::position(float t) const {
     return clampf(s, 0, length);
 }
 
-float Trapezoid::velocity(float t) const {
+PLANNER_RAM float Trapezoid::velocity(float t) const {
     if (t <= 0) return v_entry;
     if (t < t_acc) return v_entry + accel * t;
     t -= t_acc;
