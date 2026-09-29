@@ -192,9 +192,18 @@ branch 2.
   * `src/rp2350/core1/core1.cpp` `processBus()` (`:45`, `:82`): a planner
     branch next to `processMicroSegments()`; estop and abort handling for it.
   * `src/rp2350/ipc/shared_state.h`: the planner ring, pause/abort request
-    reuse, a new `runningReason` for planner motion.
+    reuse, a new `resumeRequested` flag, `RUNNING_PLANNER = 3` for planner
+    motion. Braking to a hold or abort shows `RUNNING_ABORT_DECEL`, as the
+    MicroSegment path does.
+  * Pause, resume, cancel for planner motion (`cmd/lifecycle.cpp`): `pause`
+    holds and keeps the ring, then PAUSED; `resume` in PAUSED with a planner
+    ring sets `resumeRequested`, Core 1 calls `executor.resume()` and goes back
+    to RUNNING; `cancel` in PAUSED drops the ring, then IDLE; abort holds, drops
+    the ring, then IDLE. MicroSegment pause/resume is unchanged.
+  * `lib/planner`: a `PLANNER_RAM` function attribute, empty by default; the
+    Pico build defines it as `__not_in_flash_func` for the tick path.
   * `src/rp2350/core0/cmd/axis.cpp` / `table.h`: a debug `line x y feed`
-    command calling `plannerQueueLine`.
+    command calling `plannerQueueLine`. No engaged/enabled preflight for now.
   * `src/rp2350/core0/status.cpp`, `cmd/query.cpp:104`: queue depth reports
     the planner ring while it is the active mode.
   * `web/src/wire/format/status.ts`: the new `runningReason`.
