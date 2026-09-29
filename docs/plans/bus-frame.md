@@ -57,4 +57,19 @@ first dropped its own make-safe.
 every node reads `slot none`; a node parses its own frame straight after a
 foreign one with no stream byte between.
 
-**Status:** in progress.
+**Status:** ready to merge.
+
+**Outcome:**
+
+* No deviations from the plan. `rxIdx` became `uint16_t`: a frame is up to
+  259 bytes.
+* Checks: `pio run -e pico` and all 19 node envs clean, no warnings.
+* Bench: with the fix, every node reads `slot none` after `stop`. With the
+  unfixed Pico (no quiesce) and only node 2 on the fixed parser, nodes 1 and 2
+  released and 3, 4 kept their slots: the node fix alone recovers the frame
+  after a foreign one. Still to flash: every other node.
+* Out of scope:
+  * `core1/bus/packet.h`: the `busStopAll` comment still names
+    "CMD_DISABLE on the reset park"; estop is its only caller.
+  * `docs/node_type_architecture.md:345`: a stray `| Reply | … |` table row,
+    split from the command/stream table above it.
