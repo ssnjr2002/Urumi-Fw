@@ -30,6 +30,13 @@ public:
 
     Vec2 tick(Planner& p, float dt);
 
+    /**
+     * True if tick(dt) may claim, release or reset the ring, so the caller
+     * must hold its lock. Every other tick touches only the executor and the
+     * claimed block, which the producer never writes.
+     */
+    bool needsRing(float dt) const;
+
     /** Start braking. No effect unless running. */
     void hold();
     /** Leave a finished hold: replan from rest and run again. */

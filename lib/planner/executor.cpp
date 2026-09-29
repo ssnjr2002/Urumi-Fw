@@ -88,6 +88,20 @@ Vec2 Executor::tick(Planner& p, float dt) {
     return pos_;
 }
 
+bool Executor::needsRing(float dt) const {
+    if (aborting_) return true;
+    if (!cur_) return state_ != State::Held;
+    if (state_ == State::Running) return dt >= cur_->profile.duration() - t_;
+    if (state_ == State::Held) return false;
+
+    // Holding: does the braking curve reach the block end within dt?
+    const float a = cur_->line.accel;
+    const float rem_s = cur_->line.length - s_;
+    if (v_ * v_ / (2 * a) <= rem_s) return false;
+    const float v_end = sqrtf(fmaxf(0.0f, v_ * v_ - 2 * a * rem_s));
+    return (v_ - v_end) / a <= dt;
+}
+
 void Executor::hold() {
     if (state_ == State::Running) state_ = State::Holding;
 }

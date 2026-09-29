@@ -185,3 +185,32 @@ TEST_CASE("hold and abort while idle") {
     CHECK(r.e.state() == Executor::State::Running);
     CHECK(r.e.position().x == 5);
 }
+
+TEST_CASE("needsRing is true whenever a tick touches the ring") {
+    int ring_ticks = 0, ticks = 0;
+    for (uint32_t trial = 0; trial < 20; trial++) {
+        Rig r;
+        uint32_t seed = 500 + trial;
+        randomPolyline(r, seed, 30);
+        r.plan();
+        const int hold_at = 50 + int(trial * 53 % 300);
+        for (int i = 0; i < 20000; i++) {
+            if (i == hold_at) r.e.hold();
+            if (i == hold_at + 400) r.e.resume(r.p);
+            if (trial % 4 == 3 && i == hold_at + 600) r.e.abort();
+            const bool needs = r.e.needsRing(kDt);
+            const int count = r.p.count();
+            const bool claimed = r.p.claimed();
+            r.tick();
+            if (!needs) {
+                CHECK(r.p.count() == count);
+                CHECK(r.p.claimed() == claimed);
+            }
+            ring_ticks += needs;
+            ticks++;
+            if (r.p.count() == 0 && !r.p.claimed() && i > hold_at + 600) break;
+        }
+    }
+    // Only block changes need the lock, not every tick.
+    CHECK(ring_ticks * 10 < ticks);
+}
