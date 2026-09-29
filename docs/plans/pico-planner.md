@@ -217,7 +217,7 @@ branch 2.
   counters; abort; estop; a line is refused on a zero `maxFeed`/`maxAccel`;
   MicroSegment jobs still run after planner motion.
 
-**Status:** ready to merge.
+**Status:** done. Unblocks branch 3.
 
 **Outcome:**
 
