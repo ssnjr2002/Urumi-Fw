@@ -70,6 +70,7 @@ void processBus() {
         // the sweep, not the broadcast, is what makes it true. The broadcast is
         // one extra frame that buys every node an earlier start; if it is missed,
         // the sweep behind it still parks that node before ALARM is published.
+        busQuiesce();
         sendBroadcast(CMD_DISABLE);
         busStopAll(CMD_MAKE_SAFE);
 

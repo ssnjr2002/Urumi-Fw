@@ -66,6 +66,7 @@ bool sendBroadcast(uint8_t cmd) {
 void busStopAll(uint8_t cmd) {
     for (uint8_t node = 1; node <= BUS_ADDR_MAX; node++) {
         uint8_t pkt[4] = {node, cmd, 0, 0};
+        busQuiesce();
         sendPacket(pkt, 4);
         uint8_t buf[RPC_PAYLOAD_MAX];
         uint8_t rxCmd;
