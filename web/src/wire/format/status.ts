@@ -95,6 +95,9 @@ export const RunningReason = {
     // IDLE/RUNNING/PAUSED gate stays correct, and an older host reads it as
     // plain RUNNING.
     ABORT_DECEL: 2,
+    // Running lines planned on the Pico (debug `line`); bufCount then counts
+    // planner blocks.
+    PLANNER: 3,
 } as const;
 export type RunningReason = (typeof RunningReason)[keyof typeof RunningReason];
 const RUNNING_REASON_VALUES = Object.values(RunningReason) as readonly number[];
