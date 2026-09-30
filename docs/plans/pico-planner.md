@@ -37,7 +37,9 @@ profiles and duty breaks come after, in later plans.
   edits: `push()` and `commit()` on Core 0; on Core 1 only ticks that claim or
   release a block (`Executor::needsRing(dt)`), and `resume()` / `abort()`.
   `replan()` runs unlocked. Resume runs on Core 1: the machine is at rest, so
-  its replan stall costs no steps.
+  its replan stall costs no steps. The running block's profile is the one
+  exception to "Core 0 never writes what Core 1 runs": a raised exit reaches
+  Core 1 as a staged piece it takes without the lock (branch 5c).
 * **Rejected: node-side interpolation** (per-tick increments, node runs its own
   accumulator). It needs a shared time base across nodes, which was tried early
   on over the half-duplex bus without an acceptable solution.
