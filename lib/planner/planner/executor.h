@@ -61,6 +61,9 @@ public:
     float clock() const { return clock_; }
     /** Pieces found only after their t0 had passed; each started a hold. */
     uint32_t lateAdoptions() const { return late_; }
+#ifdef PLANNER_BENCH
+    uint32_t adoptions = 0;
+#endif
 
 private:
     void finishBlock(Planner& p);

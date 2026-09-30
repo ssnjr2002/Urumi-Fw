@@ -106,6 +106,12 @@ public:
      */
     void restartFrom(float s);
 
+#ifdef PLANNER_BENCH
+    // Commits that staged a piece, and refusals by cause.
+    struct Counts { uint32_t offers, waits, untaken, too_close; };
+    Counts counts = {};
+#endif
+
     int count() const { return count_; }
     bool full() const { return count_ == kSize; }
     bool claimed() const { return claimed_; }

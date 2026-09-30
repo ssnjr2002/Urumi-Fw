@@ -44,6 +44,9 @@ PLANNER_RAM void Executor::adopt(Planner& p) {
     }
     next_ = in;
     has_next_ = true;
+#ifdef PLANNER_BENCH
+    adoptions++;
+#endif
 }
 
 PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {

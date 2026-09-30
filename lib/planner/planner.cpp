@@ -135,6 +135,11 @@ bool Planner::commit(float t) {
     // The consumer must take an offer before it reaches t0, and may still be
     // copying the last one.
     if (plan_wait_ || (plan_offer_ && (staged_flag_ || !(t + guard_ < plan_piece_.t0)))) {
+#ifdef PLANNER_BENCH
+        if (plan_wait_) counts.waits++;
+        else if (staged_flag_) counts.untaken++;
+        else counts.too_close++;
+#endif
         plan_valid_ = false;
         return false;
     }
@@ -142,6 +147,9 @@ bool Planner::commit(float t) {
         staged_ = plan_piece_;
         fence();
         staged_flag_ = true;
+#ifdef PLANNER_BENCH
+        counts.offers++;
+#endif
         offer_ = plan_piece_;
         has_offer_ = true;
         ring_[tail_].exit_sqr = plan_exit_sqr_[0];
