@@ -8,7 +8,9 @@
 //
 // A tick holds plannerLock only when needsRing() says it will claim, release or
 // reset, and only with a try-lock: a busy lock defers the tick to the next slot,
-// its time carried over, while the followers keep their increments.
+// its time carried over, while the followers keep their increments. Before it,
+// adopt() takes a raised profile Core 0 staged for the running block; it may end
+// the block sooner, so needsRing() must see it.
 //
 // Everything the slot loop calls runs from RAM: the helpers here are always
 // inlined, and lib/planner's tick path is placed by PLANNER_RAM (platformio.ini).
@@ -119,6 +121,7 @@ void __time_critical_func(processPlanner)() {
     for (int i = 0; i < 2; i++) accum[i] = (int64_t)machinePos[i] * kOne + kHalf;
 
     bool holding = false, aborting = false;
+    uint32_t late = plannerExec.lateAdoptions();
     int slot = 0;
     float pending = 0;
     uint32_t t0 = cycleCount();
@@ -149,6 +152,14 @@ void __time_critical_func(processPlanner)() {
 
         pending += kSlotS;
         if (++slot < kSlotsPerTick) continue;
+
+        // One found after its switch time is refused and the executor holds:
+        // land PAUSED as for `pause`, resumable from rest.
+        plannerExec.adopt(plannerRing);
+        if (plannerExec.lateAdoptions() != late) {
+            late = plannerExec.lateAdoptions();
+            pauseRequested = true;
+        }
 
         if (abortRequested && !aborting) {
             plannerExec.abort();

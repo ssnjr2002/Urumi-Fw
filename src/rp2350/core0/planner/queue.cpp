@@ -1,6 +1,7 @@
 // queue.cpp — plannerQueueLine: push under plannerLock, replan without it,
 // commit under it again. A commit refused because Core 1 claimed or released a
-// block meanwhile is replanned and retried.
+// block meanwhile, or came too close to the running block's horizon, is
+// replanned and retried with Core 1's clock read again.
 
 #include <Arduino.h>
 #include "queue.h"
@@ -12,9 +13,9 @@ static constexpr float kDeviation = 0.02f;
 
 static void replanAndCommit() {
     for (;;) {
-        plannerRing.replan();
+        plannerRing.replan(plannerExec.clock());
         const uint32_t s = spin_lock_blocking(plannerLock);
-        const bool ok = plannerRing.commit();
+        const bool ok = plannerRing.commit(plannerExec.clock());
         spin_unlock(plannerLock, s);
         if (ok) return;
     }

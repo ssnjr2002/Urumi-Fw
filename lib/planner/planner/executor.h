@@ -12,6 +12,10 @@
  *
  * Runs on the consumer side: it calls claim() and release(), and only calls
  * restartFrom(), replan() and commit() from resume() and abort(), once stopped.
+ *
+ * The claimed block runs from the executor's own copy of its profile. adopt()
+ * takes a Piece the planner staged; it takes over at its t0, and the block
+ * then ends where that piece does.
  */
 
 #ifndef PLANNER_EXECUTOR_H
@@ -27,6 +31,12 @@ public:
 
     /** At rest at `pos`; call alongside Planner::reset(). */
     void reset(Vec2 pos);
+
+    /**
+     * Take a staged Piece, without the lock. Call before needsRing(): the piece
+     * may end the block sooner.
+     */
+    void adopt(Planner& p);
 
     Vec2 tick(Planner& p, float dt);
 
@@ -47,6 +57,10 @@ public:
     State state() const { return state_; }
     Vec2 position() const { return pos_; }
     float speed() const { return v_; }   // mm/s along the path
+    /** Seconds into the claimed block, published after each tick. */
+    float clock() const { return clock_; }
+    /** Pieces found only after their t0 had passed; each started a hold. */
+    uint32_t lateAdoptions() const { return late_; }
 
 private:
     void finishBlock(Planner& p);
@@ -54,10 +68,15 @@ private:
     State state_ = State::Running;
     bool aborting_ = false;
     const Block* cur_ = nullptr;
-    float t_ = 0;   // s into cur_'s profile, while running
+    Piece piece_;          // what runs now
+    Piece next_;           // takes over at next_.t0
+    bool has_next_ = false;
+    float t_ = 0;   // s since cur_ was claimed, while running
     float s_ = 0;   // mm into cur_
     float v_ = 0;
     Vec2 pos_;
+    volatile float clock_ = 0;
+    uint32_t late_ = 0;
 };
 
 }  // namespace planner

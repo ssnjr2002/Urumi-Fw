@@ -1,7 +1,7 @@
 /**
  * Planner contract: every committed plan is continuous and feasible, respects
- * junction limits, ends at rest, never touches the claimed block, and only
- * rises as more blocks arrive.
+ * junction limits, ends at rest, raises the claimed block's exit only through
+ * a staged piece, and only rises as more blocks arrive.
  */
 
 #include "doctest.h"
@@ -101,23 +101,119 @@ TEST_CASE("reversal stops at the join") {
     CHECK(p.claim()->exit_sqr == 0);
 }
 
-TEST_CASE("claimed block is untouched and pins the next entry") {
+TEST_CASE("claimed block's exit rises; the next entry follows") {
     Planner p;
     p.reset({0, 0});
-    for (int i = 1; i <= 3; i++) REQUIRE(p.push({10.0f * i, 0}, 300, lim(), kDev));
+    REQUIRE(p.push({10, 0}, 300, lim(), kDev));
     replanCommit(p);
     const Block* running = p.claim();
-    const Block before = *running;
+    const Trapezoid before = running->profile;
+    REQUIRE(running->exit_sqr == 0);
 
-    for (int i = 4; i <= 20; i++) REQUIRE(p.push({10.0f * i, 0}, 300, lim(), kDev));
-    replanCommit(p);
+    for (int i = 2; i <= 20; i++) REQUIRE(p.push({10.0f * i, 0}, 300, lim(), kDev));
+    const float t = 0.01f;
+    p.replan(t);
+    REQUIRE(p.commit(t));
 
-    CHECK(running->entry_sqr == before.entry_sqr);
-    CHECK(running->exit_sqr == before.exit_sqr);
-    CHECK(running->profile.duration() == before.profile.duration());
+    // The block's own profile is kept; the rise travels as a staged piece.
+    CHECK(running->profile.duration() == before.duration());
+    CHECK(running->exit_sqr > 0);
+    Piece piece;
+    REQUIRE(p.takeStaged(piece));
+    CHECK_FALSE(p.takeStaged(piece));
+    CHECK(piece.t0 > t);
+    CHECK(piece.s0 == doctest::Approx(before.position(piece.t0)));
+    CHECK(piece.profile.v_entry == doctest::Approx(before.velocity(piece.t0)).epsilon(1e-4));
+    CHECK(piece.profile.v_exit * piece.profile.v_exit == doctest::Approx(running->exit_sqr).epsilon(1e-4));
+    CHECK(piece.s0 + piece.profile.length == doctest::Approx(10));
 
+    const float exit_sqr = running->exit_sqr;
     p.release();
-    CHECK(p.claim()->entry_sqr == before.exit_sqr);
+    CHECK(p.claim()->entry_sqr == doctest::Approx(exit_sqr));
+}
+
+TEST_CASE("the horizon: replace, wait, then a fresh horizon") {
+    Planner p;
+    p.reset({0, 0});
+    p.setTiming(0.005f, 0.0012f);
+    REQUIRE(p.push({50, 0}, 300, lim(), kDev));
+    replanCommit(p);
+    REQUIRE(p.claim());
+
+    // First offer at t + 5 ms.
+    REQUIRE(p.push({60, 0}, 300, lim(), kDev));
+    p.replan(0.100f);
+    REQUIRE(p.commit(0.100f));
+    Piece first;
+    REQUIRE(p.takeStaged(first));
+    CHECK(first.t0 == doctest::Approx(0.105f));
+
+    // Case 1: well before the switch, replaced from the same horizon.
+    REQUIRE(p.push({70, 0}, 300, lim(), kDev));
+    p.replan(0.101f);
+    REQUIRE(p.commit(0.101f));
+    Piece second;
+    REQUIRE(p.takeStaged(second));
+    CHECK(second.t0 == first.t0);
+    CHECK(second.s0 == first.s0);
+    CHECK(second.profile.v_exit > first.profile.v_exit);
+
+    // Case 2: within the guard of the switch, refused.
+    REQUIRE(p.push({80, 0}, 300, lim(), kDev));
+    p.replan(0.104f);
+    CHECK_FALSE(p.commit(0.104f));
+
+    // Case 3: past the switch, a fresh horizon on the piece now running.
+    p.replan(0.106f);
+    REQUIRE(p.commit(0.106f));
+    Piece third;
+    REQUIRE(p.takeStaged(third));
+    CHECK(third.t0 == doctest::Approx(0.111f));
+    const float u = third.t0 - second.t0;
+    CHECK(third.s0 == doctest::Approx(second.s0 + second.profile.position(u)));
+}
+
+TEST_CASE("an offer is refused while the last is untaken or too close") {
+    Planner p;
+    p.reset({0, 0});
+    REQUIRE(p.push({50, 0}, 300, lim(), kDev));
+    replanCommit(p);
+    REQUIRE(p.claim());
+    REQUIRE(p.push({60, 0}, 300, lim(), kDev));
+    p.replan(0.1f);
+    REQUIRE(p.commit(0.1f));
+
+    // Not taken yet: a replacement must wait.
+    REQUIRE(p.push({70, 0}, 300, lim(), kDev));
+    p.replan(0.1f);
+    CHECK_FALSE(p.commit(0.1f));
+    Piece piece;
+    REQUIRE(p.takeStaged(piece));
+    p.replan(0.1f);
+    CHECK(p.commit(0.1f));
+
+    // The consumer's clock passed the horizon during replan.
+    REQUIRE(p.push({80, 0}, 300, lim(), kDev));
+    REQUIRE(p.takeStaged(piece));
+    p.replan(0.2f);
+    CHECK_FALSE(p.commit(0.2f + 0.005f));
+}
+
+TEST_CASE("no offer once the rest of the block cannot use more speed") {
+    Planner p;
+    p.reset({0, 0});
+    REQUIRE(p.push({10, 0}, 300, lim(), kDev));
+    replanCommit(p);
+    const Block* running = p.claim();
+    const float end = running->profile.duration();
+    REQUIRE(p.push({20, 0}, 300, lim(), kDev));
+    p.replan(end - 0.001f);   // horizon past the block's end
+    REQUIRE(p.commit(end - 0.001f));
+    Piece piece;
+    CHECK_FALSE(p.takeStaged(piece));
+    CHECK(running->exit_sqr == 0);
+    p.release();
+    CHECK(p.claim()->entry_sqr == 0);
 }
 
 TEST_CASE("commit refuses a plan made stale by claim, release or push") {

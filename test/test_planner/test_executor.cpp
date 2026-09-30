@@ -38,11 +38,20 @@ struct Rig {
         planned_length += dist(p.end(), to);
         REQUIRE(p.push(to, feed, lim(), kDev));
     }
-    void plan() { p.replan(); REQUIRE(p.commit()); }
+    // Replan and commit as the producer does, retrying a refused commit.
+    void plan() {
+        for (int i = 0; i < 100; i++) {
+            p.replan(e.clock());
+            if (p.commit(e.clock())) return;
+            if (p.claimed()) tick();   // refused near a switch: let time pass
+        }
+        FAIL("commit never accepted");
+    }
 
     void tick(float dt = kDt) {
         const Vec2 before = e.position();
         const float v0 = e.speed();
+        e.adopt(p);
         e.tick(p, dt);
         travelled += dist(before, e.position());
         max_dv = fmaxf(max_dv, fabsf(e.speed() - v0));
@@ -198,6 +207,7 @@ TEST_CASE("needsRing is true whenever a tick touches the ring") {
             if (i == hold_at) r.e.hold();
             if (i == hold_at + 400) r.e.resume(r.p);
             if (trial % 4 == 3 && i == hold_at + 600) r.e.abort();
+            r.e.adopt(r.p);
             const bool needs = r.e.needsRing(kDt);
             const int count = r.p.count();
             const bool claimed = r.p.claimed();
@@ -213,4 +223,142 @@ TEST_CASE("needsRing is true whenever a tick touches the ring") {
     }
     // Only block changes need the lock, not every tick.
     CHECK(ring_ticks * 10 < ticks);
+}
+
+// The running block's exit rises while more blocks arrive.
+
+TEST_CASE("the first move from rest does not stop when more arrive while it runs") {
+    Rig r;
+    r.push({20, 0}, 300);
+    r.plan();
+    for (int i = 0; i < 5; i++) r.tick();   // claimed and accelerating
+    REQUIRE(r.p.claimed());
+    r.push({40, 0}, 300);
+    r.plan();
+    r.push({60, 0}, 300);
+    r.plan();
+
+    float min_v = 1e9f;
+    while (r.p.count() > 0 || r.p.claimed()) {
+        r.tick();
+        const float x = r.e.position().x;
+        // Cruise, 300 mm/s, spans 22.5 mm to 37.5 mm, across the first join.
+        if (x > 23 && x < 37) min_v = fminf(min_v, r.e.speed());
+        REQUIRE(r.time < 5);
+    }
+    CHECK(r.e.position().x == doctest::Approx(60));
+    CHECK(min_v == doctest::Approx(300).epsilon(1e-3));
+    CHECK(r.max_dv <= 2000 * kDt * 1.01f);
+    CHECK(r.travelled == doctest::Approx(60).epsilon(1e-3));
+    CHECK(r.e.lateAdoptions() == 0);
+}
+
+TEST_CASE("a raise late in braking is capped by the distance left") {
+    Rig r;
+    r.push({20, 0}, 300);
+    r.plan();
+    // A 20 mm block alone peaks below 300 mm/s and brakes over its second half.
+    while (r.e.position().x < 17) r.tick();
+    const float v = r.e.speed();
+    r.push({40, 0}, 300);
+    r.plan();
+    float v_join = 0;
+    while (r.p.count() > 0 || r.p.claimed()) {
+        const float x0 = r.e.position().x;
+        r.tick();
+        if (x0 < 20 && r.e.position().x >= 20) v_join = r.e.speed();
+    }
+    CHECK(v_join > 0);
+    // No faster than accelerating from 17 mm to 20 mm allows.
+    CHECK(v_join * v_join <= v * v + 2 * 2000 * 3 * 1.01f);
+    CHECK(r.max_dv <= 2000 * kDt * 1.01f);
+    CHECK(r.e.position().x == doctest::Approx(40));
+    CHECK(r.e.lateAdoptions() == 0);
+}
+
+TEST_CASE("needsRing sees a block end brought forward by an adopted piece") {
+    int ends = 0;
+    for (int k = 0; k < 20; k++) {
+        Rig r;
+        r.push({5, 0}, 300);
+        r.plan();
+        const int gap = 3 + k * 7;
+        for (int i = 0; i < 4000 && (i <= 2 * gap || r.p.count() > 0 || r.p.claimed()); i++) {
+            if (i == gap || i == 2 * gap) { r.push({r.p.end().x + 5, 0}, 300); r.plan(); }
+            r.e.adopt(r.p);
+            const bool needs = r.e.needsRing(kDt);
+            const int count = r.p.count();
+            const bool claimed = r.p.claimed();
+            r.e.tick(r.p, kDt);
+            if (!needs) {
+                CHECK(r.p.count() == count);
+                CHECK(r.p.claimed() == claimed);
+            } else if (r.p.count() != count) {
+                ends++;
+            }
+        }
+        CHECK(r.e.position().x == doctest::Approx(15));
+        CHECK(r.e.lateAdoptions() == 0);
+    }
+    CHECK(ends > 0);
+}
+
+TEST_CASE("a hold ignores a pending piece, and resume finishes the path") {
+    Rig r;
+    r.push({20, 0}, 300);
+    r.plan();
+    for (int i = 0; i < 20; i++) r.tick();
+    r.push({40, 0}, 300);
+    r.plan();              // staged, not yet adopted
+    r.e.hold();
+    r.run();
+    REQUIRE(r.e.state() == Executor::State::Held);
+    CHECK(r.e.speed() == 0);
+    r.e.resume(r.p);
+    r.run();
+    CHECK(r.e.position().x == doctest::Approx(40));
+    CHECK(r.e.lateAdoptions() == 0);
+}
+
+TEST_CASE("random polylines typed while running keep speed continuous") {
+    for (uint32_t trial = 0; trial < 20; trial++) {
+        Rig r;
+        uint32_t seed = 900 + trial;
+        auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return (seed >> 8) / 16777216.0f; };
+        Vec2 at{0, 0};
+        int pushed = 0, i = 0;
+        while (pushed < 40 || r.p.count() > 0 || r.p.claimed()) {
+            if (pushed < 40 && (i % (1 + int(rnd() * 30))) == 0) {
+                at = {at.x + (rnd() - 0.5f) * 30 * rnd(), at.y + (rnd() - 0.5f) * 30 * rnd()};
+                r.push(at, 50 + rnd() * 450);
+                r.plan();
+                pushed++;
+            }
+            r.tick();
+            REQUIRE(++i < 200000);
+        }
+        CHECK(dist(r.e.position(), at) < 1e-3f);
+        CHECK(r.travelled == doctest::Approx(r.planned_length).epsilon(1e-3));
+        CHECK(r.max_dv <= 2000 * 1.4143f * kDt * 1.01f);
+        CHECK(r.e.lateAdoptions() == 0);
+    }
+}
+
+TEST_CASE("a piece found after its switch time is refused and holds") {
+    Rig r;
+    r.push({20, 0}, 300);
+    r.plan();
+    for (int i = 0; i < 20; i++) r.tick();
+    r.push({40, 0}, 300);
+    r.plan();
+    // Tick past the piece's t0 without taking it.
+    for (int i = 0; i < 10; i++) r.e.tick(r.p, kDt);
+    r.e.adopt(r.p);
+    CHECK(r.e.lateAdoptions() == 1);
+    CHECK(r.e.state() == Executor::State::Holding);
+    r.run();
+    REQUIRE(r.e.state() == Executor::State::Held);
+    r.e.resume(r.p);
+    r.run();
+    CHECK(r.e.position().x == doctest::Approx(40));
 }

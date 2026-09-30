@@ -9,10 +9,12 @@ void Executor::reset(Vec2 pos) {
     state_ = State::Running;
     aborting_ = false;
     cur_ = nullptr;
+    has_next_ = false;
     t_ = 0;
     s_ = 0;
     v_ = 0;
     pos_ = pos;
+    clock_ = 0;
 }
 
 // `s` mm into what remains of the block.
@@ -26,8 +28,22 @@ PLANNER_RAM void Executor::finishBlock(Planner& p) {
     pos_ = cur_->path.end;
     p.release();
     cur_ = nullptr;
+    has_next_ = false;
     t_ = 0;
     s_ = 0;
+}
+
+PLANNER_RAM void Executor::adopt(Planner& p) {
+    Piece in;
+    if (!p.takeStaged(in)) return;
+    if (!cur_ || state_ != State::Running) return;   // a hold ignores it
+    if (t_ >= in.t0) {
+        late_++;
+        hold();
+        return;
+    }
+    next_ = in;
+    has_next_ = true;
 }
 
 PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {
@@ -37,21 +53,34 @@ PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {
             if (state_ == State::Holding && v_ <= 0) { state_ = State::Held; break; }
             cur_ = p.claim();
             if (!cur_) { v_ = 0; if (state_ == State::Holding) state_ = State::Held; break; }
+            piece_.t0 = 0;
+            piece_.s0 = 0;
+            piece_.profile = cur_->profile;
+            has_next_ = false;
             t_ = 0;
             s_ = 0;
         }
 
         if (state_ == State::Running) {
-            const Trapezoid& pr = cur_->profile;
-            const float rem = pr.duration() - t_;
+            if (has_next_ && t_ + dt >= next_.t0) {
+                dt -= next_.t0 - t_;
+                t_ = next_.t0;
+                piece_ = next_;
+                has_next_ = false;
+                s_ = piece_.s0;
+                v_ = piece_.profile.v_entry;
+                continue;
+            }
+            const float rem = piece_.end() - t_;
             if (dt < rem) {
                 t_ += dt;
-                s_ = pr.position(t_);
-                v_ = pr.velocity(t_);
+                const float u = t_ - piece_.t0;
+                s_ = piece_.s0 + piece_.profile.position(u);
+                v_ = piece_.profile.velocity(u);
                 dt = 0;
             } else {
                 dt -= rem;
-                v_ = pr.v_exit;
+                v_ = piece_.profile.v_exit;
                 finishBlock(p);
             }
             continue;
@@ -90,13 +119,14 @@ PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {
         p.reset(pos_);
         reset(pos_);
     }
+    clock_ = cur_ ? t_ : 0;
     return pos_;
 }
 
 PLANNER_RAM bool Executor::needsRing(float dt) const {
     if (aborting_) return true;
     if (!cur_) return state_ != State::Held;
-    if (state_ == State::Running) return dt >= cur_->profile.duration() - t_;
+    if (state_ == State::Running) return dt >= (has_next_ ? next_.end() : piece_.end()) - t_;
     if (state_ == State::Held) return false;
 
     // Holding: does the braking curve reach the block end within dt?
@@ -115,6 +145,7 @@ void Executor::resume(Planner& p) {
     if (state_ != State::Held) return;
     p.restartFrom(cur_ ? s_ : 0);
     cur_ = nullptr;
+    has_next_ = false;
     t_ = 0;
     s_ = 0;
     v_ = 0;

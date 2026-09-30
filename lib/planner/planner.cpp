@@ -5,6 +5,9 @@
 
 namespace planner {
 
+// Orders the staging slot against its flag between the two sides.
+PLANNER_RAM static inline void fence() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
+
 void Planner::reset(Vec2 pos) {
     tail_ = 0;
     count_ = 0;
@@ -12,6 +15,12 @@ void Planner::reset(Vec2 pos) {
     end_ = pos;
     pinned_entry_sqr_ = 0;
     plan_valid_ = false;
+    clearOffer();
+}
+
+PLANNER_RAM void Planner::clearOffer() {
+    has_offer_ = false;
+    staged_flag_ = false;
 }
 
 bool Planner::push(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
@@ -48,8 +57,39 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, float deviation) {
     return true;
 }
 
-void Planner::replan() {
+void Planner::replan(float t) {
+    // The epoch before anything else is read: a claim or release from here on
+    // makes commit() refuse.
+    plan_epoch_ = epoch_;
+    plan_valid_ = true;
+    plan_wait_ = false;
+    plan_offer_ = false;
     const int first = firstUnclaimed();
+
+    // The claimed block's rest, from a horizon: at the pending offer's start
+    // while there is still time to replace it, else `ahead_` past `t` on
+    // whichever piece is running then.
+    bool from_horizon = false;
+    float t_h = 0, s_h = 0, v_h_sqr = 0;
+    if (claimed_) {
+        if (has_offer_ && t < offer_.t0) {
+            if (t + guard_ >= offer_.t0) { plan_wait_ = true; return; }
+            t_h = offer_.t0;
+            s_h = offer_.s0;
+            v_h_sqr = offer_.profile.v_entry * offer_.profile.v_entry;
+            from_horizon = true;
+        } else {
+            const Piece& base = has_offer_ ? offer_ : run_;
+            t_h = t + ahead_;
+            if (t_h < base.end()) {
+                const float u = t_h - base.t0;
+                s_h = base.s0 + base.profile.position(u);
+                const float v = base.profile.velocity(u);
+                v_h_sqr = v * v;
+                from_horizon = true;
+            }
+        }
+    }
 
     // Reverse: the newest block stops; each entry is what can still stop in time.
     float next_entry = 0;
@@ -61,8 +101,24 @@ void Planner::replan() {
         next_entry = plan_entry_sqr_[i];
     }
 
-    // Forward: from the pinned entry, each exit is what can be reached.
+    // The claimed block's exit rises to what its rest can reach, or stays.
     float entry = pinned_entry_sqr_;
+    if (from_horizon) {
+        const Block& c = ring_[tail_];
+        const float rest = c.path.length - s_h;
+        const float exit_sqr = fminf(fminf(next_entry, c.path.v_max_sqr),
+                                     v_h_sqr + 2.0f * c.path.accel * fmaxf(rest, 0.0f));
+        if (rest > 0 && exit_sqr > c.exit_sqr * (1 + 1e-5f) + 1e-6f) {
+            plan_offer_ = true;
+            plan_exit_sqr_[0] = exit_sqr;
+            plan_piece_.t0 = t_h;
+            plan_piece_.s0 = s_h;
+            plan_piece_.profile = makeTrapezoid(rest, c.path.accel, v_h_sqr, c.path.v_max_sqr, exit_sqr);
+            entry = exit_sqr;
+        }
+    }
+
+    // Forward: from the claimed block's exit, each exit is what can be reached.
     for (int i = first; i < count_; i++) {
         const Block& b = ring_[index(i)];
         plan_entry_sqr_[i] = entry;
@@ -72,13 +128,25 @@ void Planner::replan() {
                                          b.path.v_max_sqr, plan_exit_sqr_[i]);
         entry = plan_exit_sqr_[i];
     }
-
-    plan_epoch_ = epoch_;
-    plan_valid_ = true;
 }
 
-bool Planner::commit() {
+bool Planner::commit(float t) {
     if (!plan_valid_ || plan_epoch_ != epoch_) return false;
+    // The consumer must take an offer before it reaches t0, and may still be
+    // copying the last one.
+    if (plan_wait_ || (plan_offer_ && (staged_flag_ || !(t + guard_ < plan_piece_.t0)))) {
+        plan_valid_ = false;
+        return false;
+    }
+    if (plan_offer_) {
+        staged_ = plan_piece_;
+        fence();
+        staged_flag_ = true;
+        offer_ = plan_piece_;
+        has_offer_ = true;
+        ring_[tail_].exit_sqr = plan_exit_sqr_[0];
+        pinned_entry_sqr_ = plan_exit_sqr_[0];
+    }
     for (int i = firstUnclaimed(); i < count_; i++) {
         Block& b = ring_[index(i)];
         b.entry_sqr = plan_entry_sqr_[i];
@@ -95,6 +163,10 @@ PLANNER_RAM const Block* Planner::claim() {
     epoch_++;
     const Block& b = ring_[tail_];
     pinned_entry_sqr_ = b.exit_sqr;
+    run_.t0 = 0;
+    run_.s0 = 0;
+    run_.profile = b.profile;
+    clearOffer();
     return &b;
 }
 
@@ -104,6 +176,16 @@ PLANNER_RAM void Planner::release() {
     tail_ = (tail_ + 1) % kSize;
     count_--;
     epoch_++;
+    clearOffer();
+}
+
+PLANNER_RAM bool Planner::takeStaged(Piece& out) {
+    if (!staged_flag_) return false;
+    fence();
+    out = staged_;
+    fence();
+    staged_flag_ = false;
+    return true;
 }
 
 void Planner::restartFrom(float s) {
@@ -128,6 +210,7 @@ void Planner::restartFrom(float s) {
     pinned_entry_sqr_ = 0;
     plan_valid_ = false;
     epoch_++;
+    clearOffer();
 }
 
 }  // namespace planner
