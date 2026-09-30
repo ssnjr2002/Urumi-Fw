@@ -315,9 +315,25 @@ for continuous jog.
 * Overlap: none outside `lib/planner` and `test/test_planner`.
 * Checks: `pio test -e native`.
 
-**Status:** not started.
+**Status:** done (merged at `a4d3f2e`). Unblocks branch 5a.
 
 **Outcome:**
+
+* Interface: `Planner::pushBezier(bezier, feed, limits, deviation)` next to
+  the line `push`; `analyzeBezier(p0, p1, p2, p3, out)` returns
+  `BezierError::{None, DegenerateHandle, Cusp, NonMonotonic}`. A block holds a
+  `Path` (what look-ahead reads) plus its geometry; a resume trim is an offset
+  `s0`, so both kinds trim alike.
+* Deviations: inflections are allowed (they matter only for A). Planned motion
+  checks the vector acceleration stays within the inscribed circle, the √2
+  split holding.
+* RAM: `pio run -e pico` 73,144 → 78,560 B (+5.4 KB); every ring slot carries
+  a Bézier. Branch 5a revisits ring size.
+* Follow-ups:
+  * Rename `push` to `pushLine` (lib, tests, `core0/planner/queue.cpp`); fits
+    at the start of branch 5.
+  * Find out what the firmware's other ~73 KB of RAM is (map file), not
+    urgent.
 
 ## Branch 5a: `bench/bezier`
 
