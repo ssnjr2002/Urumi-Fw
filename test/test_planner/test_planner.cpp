@@ -57,7 +57,7 @@ static void checkPlan(Planner p, float entry_sqr) {
 TEST_CASE("single line plans to rest at both ends") {
     Planner p;
     p.reset({0, 0});
-    REQUIRE(p.push({100, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({100, 0}, 300, lim(), kDev));
     replanCommit(p);
     checkPlan(p, 0);
     const Block* b = p.claim();
@@ -67,7 +67,7 @@ TEST_CASE("single line plans to rest at both ends") {
 TEST_CASE("collinear chain of short lines cruises through its joins") {
     Planner p;
     p.reset({0, 0});
-    for (int i = 1; i <= 50; i++) REQUIRE(p.push({float(i), 0}, 300, lim(), kDev));
+    for (int i = 1; i <= 50; i++) REQUIRE(p.pushLine({float(i), 0}, 300, lim(), kDev));
     replanCommit(p);
     checkPlan(p, 0);
     // Mid-chain speed reaches the feed, which one 1 mm block alone never could.
@@ -80,7 +80,7 @@ TEST_CASE("square corners are held to the junction limit") {
     Planner p;
     p.reset({0, 0});
     const Vec2 pts[] = {{50, 0}, {50, 50}, {0, 50}, {0, 0}};
-    for (const Vec2& v : pts) REQUIRE(p.push(v, 300, lim(), kDev));
+    for (const Vec2& v : pts) REQUIRE(p.pushLine(v, 300, lim(), kDev));
     replanCommit(p);
     checkPlan(p, 0);
     Planner q = p;
@@ -94,8 +94,8 @@ TEST_CASE("square corners are held to the junction limit") {
 TEST_CASE("reversal stops at the join") {
     Planner p;
     p.reset({0, 0});
-    REQUIRE(p.push({20, 0}, 300, lim(), kDev));
-    REQUIRE(p.push({0, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({20, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({0, 0}, 300, lim(), kDev));
     replanCommit(p);
     checkPlan(p, 0);
     CHECK(p.claim()->exit_sqr == 0);
@@ -104,13 +104,13 @@ TEST_CASE("reversal stops at the join") {
 TEST_CASE("claimed block's exit rises; the next entry follows") {
     Planner p;
     p.reset({0, 0});
-    REQUIRE(p.push({10, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({10, 0}, 300, lim(), kDev));
     replanCommit(p);
     const Block* running = p.claim();
     const Trapezoid before = running->profile;
     REQUIRE(running->exit_sqr == 0);
 
-    for (int i = 2; i <= 20; i++) REQUIRE(p.push({10.0f * i, 0}, 300, lim(), kDev));
+    for (int i = 2; i <= 20; i++) REQUIRE(p.pushLine({10.0f * i, 0}, 300, lim(), kDev));
     const float t = 0.01f;
     p.replan(t);
     REQUIRE(p.commit(t));
@@ -136,12 +136,12 @@ TEST_CASE("the horizon: replace, wait, then a fresh horizon") {
     Planner p;
     p.reset({0, 0});
     p.setTiming(0.005f, 0.0012f);
-    REQUIRE(p.push({50, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({50, 0}, 300, lim(), kDev));
     replanCommit(p);
     REQUIRE(p.claim());
 
     // First offer at t + 5 ms.
-    REQUIRE(p.push({60, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({60, 0}, 300, lim(), kDev));
     p.replan(0.100f);
     REQUIRE(p.commit(0.100f));
     Piece first;
@@ -149,7 +149,7 @@ TEST_CASE("the horizon: replace, wait, then a fresh horizon") {
     CHECK(first.t0 == doctest::Approx(0.105f));
 
     // Case 1: well before the switch, replaced from the same horizon.
-    REQUIRE(p.push({70, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({70, 0}, 300, lim(), kDev));
     p.replan(0.101f);
     REQUIRE(p.commit(0.101f));
     Piece second;
@@ -159,7 +159,7 @@ TEST_CASE("the horizon: replace, wait, then a fresh horizon") {
     CHECK(second.profile.v_exit > first.profile.v_exit);
 
     // Case 2: within the guard of the switch, refused.
-    REQUIRE(p.push({80, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({80, 0}, 300, lim(), kDev));
     p.replan(0.104f);
     CHECK_FALSE(p.commit(0.104f));
 
@@ -176,15 +176,15 @@ TEST_CASE("the horizon: replace, wait, then a fresh horizon") {
 TEST_CASE("an offer is refused while the last is untaken or too close") {
     Planner p;
     p.reset({0, 0});
-    REQUIRE(p.push({50, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({50, 0}, 300, lim(), kDev));
     replanCommit(p);
     REQUIRE(p.claim());
-    REQUIRE(p.push({60, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({60, 0}, 300, lim(), kDev));
     p.replan(0.1f);
     REQUIRE(p.commit(0.1f));
 
     // Not taken yet: a replacement must wait.
-    REQUIRE(p.push({70, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({70, 0}, 300, lim(), kDev));
     p.replan(0.1f);
     CHECK_FALSE(p.commit(0.1f));
     Piece piece;
@@ -193,7 +193,7 @@ TEST_CASE("an offer is refused while the last is untaken or too close") {
     CHECK(p.commit(0.1f));
 
     // The consumer's clock passed the horizon during replan.
-    REQUIRE(p.push({80, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({80, 0}, 300, lim(), kDev));
     REQUIRE(p.takeStaged(piece));
     p.replan(0.2f);
     CHECK_FALSE(p.commit(0.2f + 0.005f));
@@ -202,11 +202,11 @@ TEST_CASE("an offer is refused while the last is untaken or too close") {
 TEST_CASE("no offer once the rest of the block cannot use more speed") {
     Planner p;
     p.reset({0, 0});
-    REQUIRE(p.push({10, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({10, 0}, 300, lim(), kDev));
     replanCommit(p);
     const Block* running = p.claim();
     const float end = running->profile.duration();
-    REQUIRE(p.push({20, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({20, 0}, 300, lim(), kDev));
     p.replan(end - 0.001f);   // horizon past the block's end
     REQUIRE(p.commit(end - 0.001f));
     Piece piece;
@@ -219,7 +219,7 @@ TEST_CASE("no offer once the rest of the block cannot use more speed") {
 TEST_CASE("commit refuses a plan made stale by claim, release or push") {
     Planner p;
     p.reset({0, 0});
-    for (int i = 1; i <= 5; i++) REQUIRE(p.push({10.0f * i, 0}, 300, lim(), kDev));
+    for (int i = 1; i <= 5; i++) REQUIRE(p.pushLine({10.0f * i, 0}, 300, lim(), kDev));
 
     p.replan();
     p.claim();
@@ -230,7 +230,7 @@ TEST_CASE("commit refuses a plan made stale by claim, release or push") {
     CHECK_FALSE(p.commit());
 
     p.replan();
-    REQUIRE(p.push({60, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({60, 0}, 300, lim(), kDev));
     CHECK_FALSE(p.commit());
 
     p.replan();
@@ -244,7 +244,7 @@ TEST_CASE("more look-ahead only raises speeds") {
     const Vec2 pts[] = {{10, 0}, {20, 3}, {30, 0}, {40, 5}, {50, 0}, {60, 2}, {70, 0}};
     float prev[8] = {};
     for (int k = 0; k < 7; k++) {
-        REQUIRE(p.push(pts[k], 300, lim(), kDev));
+        REQUIRE(p.pushLine(pts[k], 300, lim(), kDev));
         replanCommit(p);
         Planner q = p;
         for (int i = 0; i < k; i++) {
@@ -267,7 +267,7 @@ TEST_CASE("random polylines always plan feasibly") {
         const int n = 5 + int(rnd() * 58);
         for (int i = 0; i < n; i++) {
             at = {at.x + (rnd() - 0.5f) * 40 * rnd(), at.y + (rnd() - 0.5f) * 40 * rnd()};
-            REQUIRE(p.push(at, 50 + rnd() * 450, lim(), kDev));
+            REQUIRE(p.pushLine(at, 50 + rnd() * 450, lim(), kDev));
         }
         replanCommit(p);
         checkPlan(p, 0);
@@ -277,11 +277,11 @@ TEST_CASE("random polylines always plan feasibly") {
 TEST_CASE("ring capacity and zero-length moves") {
     Planner p;
     p.reset({0, 0});
-    CHECK(p.push({0, 0}, 300, lim(), kDev));
+    CHECK(p.pushLine({0, 0}, 300, lim(), kDev));
     CHECK(p.count() == 0);
-    for (int i = 1; i <= Planner::kSize; i++) REQUIRE(p.push({float(i), 0}, 300, lim(), kDev));
+    for (int i = 1; i <= Planner::kSize; i++) REQUIRE(p.pushLine({float(i), 0}, 300, lim(), kDev));
     CHECK(p.full());
-    CHECK_FALSE(p.push({1000, 0}, 300, lim(), kDev));
+    CHECK_FALSE(p.pushLine({1000, 0}, 300, lim(), kDev));
     CHECK(p.end().x == Planner::kSize);
 }
 
@@ -290,7 +290,7 @@ TEST_CASE("ring wraps around") {
     p.reset({0, 0});
     float x = 0;
     for (int round = 0; round < 5; round++) {
-        while (!p.full()) { x += 1; REQUIRE(p.push({x, 0}, 300, lim(), kDev)); }
+        while (!p.full()) { x += 1; REQUIRE(p.pushLine({x, 0}, 300, lim(), kDev)); }
         replanCommit(p);
         for (int i = 0; i < 40; i++) { REQUIRE(p.claim()); p.release(); }
         replanCommit(p);

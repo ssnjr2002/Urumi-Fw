@@ -3,10 +3,10 @@
  *
  * The producer pushes lines or Béziers and replans; the consumer claims the oldest block,
  * runs it, and releases it. Single-threaded: a caller that splits producer and
- * consumer across cores shares one Planner and locks around push(), commit(),
- * claim() and release(). replan() needs no lock: it reads only block paths,
- * which the consumer never writes, and a claim or release during it makes the
- * following commit() refuse.
+ * consumer across cores shares one Planner and locks around pushLine(),
+ * pushBezier(), commit(), claim() and release(). replan() needs no lock: it
+ * reads only block paths, which the consumer never writes, and a claim or
+ * release during it makes the following commit() refuse.
  *
  * Look-ahead is two calls so the lock can stay short (seed §15). replan()
  * computes the speeds into scratch and touches nothing the consumer reads.
@@ -76,7 +76,7 @@ public:
      * Queue a line from the end of the last one to `target`. Returns false if
      * the ring is full. A zero-length move queues nothing and returns true.
      */
-    bool push(Vec2 target, float feed, const AxisLimits& limits, float deviation);
+    bool pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation);
     /** Queue an analysed Bézier; `b.p[0]` must be end(). False if full. */
     bool pushBezier(const Bezier& b, float feed, const AxisLimits& limits, float deviation);
 

@@ -34,9 +34,9 @@ struct Rig {
 
     explicit Rig(Vec2 start = {0, 0}) { p.reset(start); e.reset(start); }
 
-    void push(Vec2 to, float feed) {
+    void pushLine(Vec2 to, float feed) {
         planned_length += dist(p.end(), to);
-        REQUIRE(p.push(to, feed, lim(), kDev));
+        REQUIRE(p.pushLine(to, feed, lim(), kDev));
     }
     // Replan and commit as the producer does, retrying a refused commit.
     void plan() {
@@ -72,14 +72,14 @@ static Vec2 randomPolyline(Rig& r, uint32_t& seed, int n) {
     Vec2 at = r.p.end();
     for (int i = 0; i < n; i++) {
         at = {at.x + (rnd() - 0.5f) * 40 * rnd(), at.y + (rnd() - 0.5f) * 40 * rnd()};
-        r.push(at, 50 + rnd() * 450);
+        r.pushLine(at, 50 + rnd() * 450);
     }
     return at;
 }
 
 TEST_CASE("single line runs to its end in the profile's time") {
     Rig r;
-    r.push({100, 0}, 300);
+    r.pushLine({100, 0}, 300);
     r.plan();
     const float expected = Planner(r.p).claim()->profile.duration();
     r.run();
@@ -103,7 +103,7 @@ TEST_CASE("speed never jumps, including across block joins") {
 
 TEST_CASE("large dt spills across several blocks") {
     Rig r;
-    for (int i = 1; i <= 20; i++) r.push({float(i), 0}, 300);
+    for (int i = 1; i <= 20; i++) r.pushLine({float(i), 0}, 300);
     r.plan();
     for (int i = 0; i < 10 && r.p.count() > 0; i++) r.tick(0.05f);
     CHECK(r.e.position().x == doctest::Approx(20));
@@ -147,7 +147,7 @@ TEST_CASE("a hold stops no later than the plan, and resume finishes the path") {
 
 TEST_CASE("hold across a block join brakes through it") {
     Rig r;
-    for (int i = 1; i <= 50; i++) r.push({float(i), 0}, 300);
+    for (int i = 1; i <= 50; i++) r.pushLine({float(i), 0}, 300);
     r.plan();
     while (r.e.speed() < 299) r.tick();
     r.e.hold();
@@ -176,7 +176,7 @@ TEST_CASE("abort stops, empties the ring, and restarts from where it stopped") {
     CHECK(dist(r.p.end(), stopped) == 0);
 
     // A new move starts from there.
-    REQUIRE(r.p.push({stopped.x + 10, stopped.y}, 100, lim(), kDev));
+    REQUIRE(r.p.pushLine({stopped.x + 10, stopped.y}, 100, lim(), kDev));
     r.plan();
     r.run();
     CHECK(r.e.position().x == doctest::Approx(stopped.x + 10));
@@ -229,13 +229,13 @@ TEST_CASE("needsRing is true whenever a tick touches the ring") {
 
 TEST_CASE("the first move from rest does not stop when more arrive while it runs") {
     Rig r;
-    r.push({20, 0}, 300);
+    r.pushLine({20, 0}, 300);
     r.plan();
     for (int i = 0; i < 5; i++) r.tick();   // claimed and accelerating
     REQUIRE(r.p.claimed());
-    r.push({40, 0}, 300);
+    r.pushLine({40, 0}, 300);
     r.plan();
-    r.push({60, 0}, 300);
+    r.pushLine({60, 0}, 300);
     r.plan();
 
     float min_v = 1e9f;
@@ -255,12 +255,12 @@ TEST_CASE("the first move from rest does not stop when more arrive while it runs
 
 TEST_CASE("a raise late in braking is capped by the distance left") {
     Rig r;
-    r.push({20, 0}, 300);
+    r.pushLine({20, 0}, 300);
     r.plan();
     // A 20 mm block alone peaks below 300 mm/s and brakes over its second half.
     while (r.e.position().x < 17) r.tick();
     const float v = r.e.speed();
-    r.push({40, 0}, 300);
+    r.pushLine({40, 0}, 300);
     r.plan();
     float v_join = 0;
     while (r.p.count() > 0 || r.p.claimed()) {
@@ -280,11 +280,11 @@ TEST_CASE("needsRing sees a block end brought forward by an adopted piece") {
     int ends = 0;
     for (int k = 0; k < 20; k++) {
         Rig r;
-        r.push({5, 0}, 300);
+        r.pushLine({5, 0}, 300);
         r.plan();
         const int gap = 3 + k * 7;
         for (int i = 0; i < 4000 && (i <= 2 * gap || r.p.count() > 0 || r.p.claimed()); i++) {
-            if (i == gap || i == 2 * gap) { r.push({r.p.end().x + 5, 0}, 300); r.plan(); }
+            if (i == gap || i == 2 * gap) { r.pushLine({r.p.end().x + 5, 0}, 300); r.plan(); }
             r.e.adopt(r.p);
             const bool needs = r.e.needsRing(kDt);
             const int count = r.p.count();
@@ -305,10 +305,10 @@ TEST_CASE("needsRing sees a block end brought forward by an adopted piece") {
 
 TEST_CASE("a hold ignores a pending piece, and resume finishes the path") {
     Rig r;
-    r.push({20, 0}, 300);
+    r.pushLine({20, 0}, 300);
     r.plan();
     for (int i = 0; i < 20; i++) r.tick();
-    r.push({40, 0}, 300);
+    r.pushLine({40, 0}, 300);
     r.plan();              // staged, not yet adopted
     r.e.hold();
     r.run();
@@ -330,7 +330,7 @@ TEST_CASE("random polylines typed while running keep speed continuous") {
         while (pushed < 40 || r.p.count() > 0 || r.p.claimed()) {
             if (pushed < 40 && (i % (1 + int(rnd() * 30))) == 0) {
                 at = {at.x + (rnd() - 0.5f) * 30 * rnd(), at.y + (rnd() - 0.5f) * 30 * rnd()};
-                r.push(at, 50 + rnd() * 450);
+                r.pushLine(at, 50 + rnd() * 450);
                 r.plan();
                 pushed++;
             }
@@ -346,10 +346,10 @@ TEST_CASE("random polylines typed while running keep speed continuous") {
 
 TEST_CASE("a piece found after its switch time is refused and holds") {
     Rig r;
-    r.push({20, 0}, 300);
+    r.pushLine({20, 0}, 300);
     r.plan();
     for (int i = 0; i < 20; i++) r.tick();
-    r.push({40, 0}, 300);
+    r.pushLine({40, 0}, 300);
     r.plan();
     // Tick past the piece's t0 without taking it.
     for (int i = 0; i < 10; i++) r.e.tick(r.p, kDt);

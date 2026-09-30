@@ -132,9 +132,9 @@ struct Track {
     Track() {
         p.reset({0, 0});
         e.reset({0, 0});
-        REQUIRE(p.push({50, 0}, 500, lim(), kDev));
+        REQUIRE(p.pushLine({50, 0}, 500, lim(), kDev));
         REQUIRE(p.pushBezier(quarter(centre, r, -kPi / 2), 500, lim(), kDev));
-        REQUIRE(p.push({70, 80}, 500, lim(), kDev));
+        REQUIRE(p.pushLine({70, 80}, 500, lim(), kDev));
         p.replan();
         REQUIRE(p.commit());
     }

@@ -23,7 +23,7 @@ PLANNER_RAM void Planner::clearOffer() {
     staged_flag_ = false;
 }
 
-bool Planner::push(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
+bool Planner::pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
     const Line ln = makeLine(end_, target, feed, limits);
     if (ln.length <= 0) return true;
     if (full()) return false;

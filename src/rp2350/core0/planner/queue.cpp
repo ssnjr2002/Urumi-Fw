@@ -58,7 +58,7 @@ PlannerQueueResult plannerQueueLine(float x, float y, float feed) {
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     resetIfIdle();
-    const bool pushed = plannerRing.push({x, y}, feed, limits, kDeviation);
+    const bool pushed = plannerRing.pushLine({x, y}, feed, limits, kDeviation);
     spin_unlock(plannerLock, s);
     if (!pushed) return PQ_FULL;
 
