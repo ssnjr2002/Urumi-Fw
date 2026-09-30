@@ -580,14 +580,90 @@ for continuous jog.
   is not the previous end answers `err bad_curve` as intended.
 * Known: `test_parity` fails as on `main`.
 
-## Branch 6: `BEZIER` wire record and host stage 4
+## Branch 6: Bézier jobs from the host
 
-Planned when branch 5 is done. Scope: the `BEZIER` wire record (56 B: flags
-`START` / `BREAK` / `END`, p0-p3, `length`, `κ_max`, `dκ_max`, `t(s)` `c2`,
-`c3`; `κ_start`/`κ_end` and `c1` derived on the Pico), `TOOL` record, job
-header with per-tool bounding boxes. Host stage 4 (split and annotate)
-replaces `flatten`; `repair.ts` fixes (degenerate handles, cusp → `BREAK`).
-The Pico's analysis helper then serves checks only.
+Split into a dependent chain (decided after branch 5):
+
+* 6a `feature/host-bezier-annotate`: host stage 4, split and annotate.
+* 6b `feature/bezier-wire`: the `BEZIER` record, Pico and host wire.
+* 6c: the host sends a layer as Bézier records, XY only. Planned after 6b.
+
+Decisions:
+
+* **`flatten` stays.** Its samples feed the whole MicroSegment path
+  (`web/src/production/compileBlock.ts:168` on: constrain, plan, discretize,
+  duty breaks), still the only path with Z, A and tools. Annotate sits beside
+  it; `flatten` goes when MicroSegments are retired.
+* **`TOOL` record and job header deferred** to the tool-profile plan. Without
+  Z, A or profiles on the Pico a `TOOL` record carries only feed. 6c may
+  check the job's bounding box against the soft limits on the host.
+* **`BEZIER` takes magic `0xAD`**, retiring the unimplemented SplineTile
+  (`web/src/wire/format/constants.ts:8`, `docs/wire_protocol.md:45`).
+* **Record, 56 B:** magic, flags (`START` / `BREAK` / `END`), seq, CRC8
+  (4 B); p0-p3 (32 B); length, κ_max, dκ_max (12 B); c2, c3 (8 B). p0 gives
+  the Pico a continuity check and an absolute anchor on every record. c1,
+  κ_start and κ_end are derived on the Pico, which checks the rest instead of
+  running `analyzeBezier` (~1,600 curves/s, branch 5a). Shares `expectedSeq`
+  and the cumulative ACK with MicroSegments (`src/rp2350/core0/data_plane.cpp:100-197`);
+  the host session's seq offset, fixed at byte 22 today
+  (`web/src/wire/link/session.ts:395`, `stampSeq`), becomes a parameter.
+* Overlap: `feature/pico-config-read` and `refactor/core-boundary` touch
+  `data_plane.cpp`, `usb_protocol.h` and `web/src/wire/link/commands.ts`; both
+  are 98+ commits behind and would conflict with 6b if revived.
+  `feature/spline-streaming` is an abandoned earlier attempt.
+
+## Branch 6a: `feature/host-bezier-annotate`
+
+* Type: feature (web only).
+* Purpose: turn repaired subpaths into annotated Béziers the Pico can queue
+  without analysing them: split where the seed says (§2), then measure each
+  piece the way `lib/planner/bezier.cpp:52` does.
+* Interface, `web/src/toolpath/annotate.ts`:
+  * `annotate(subpaths, options): AnnotatedBezier[]`, pure, options passed
+    in like every stage (`repair.ts:16`).
+  * `AnnotatedBezier`: p0-p3, `flags` (`START` / `BREAK` / `END`), `length`,
+    `kappaMax`, `dkappaMax`, `ts` (c1, c2, c3), `kappaStart`, `kappaEnd`
+    (signed). The wire record drops c1 and the κ ends; the host keeps them
+    for checks and tests.
+  * Split, by exact de Casteljau, in this order:
+    1. cusps: a stop inside the curve (the |B'| test of `bezier.cpp:78`);
+       the piece after the cusp is flagged `BREAK`.
+    2. inflections: roots of `B' × B''` (quadratic in t, closed form); a
+       G2 split, no flag.
+    3. curvature ratio: while `κ_max / κ_min > kappaRatio` (seed: 2), split
+       at the parameter that balances it; depth-limited.
+    4. `t(s)` fit: while the fit error exceeds `fitTol`, or the fit is not
+       monotonic, halve; depth-limited.
+  * Joins between input curves: `BREAK` when the tangent turns more than
+    `angleTolDeg` (the rule `repair.ts:112-116` logs as a cusp today); `START` on
+    a subpath's first piece, `END` on its last.
+  * Analysis: 128 intervals of 3-point Gauss-Legendre, κ extremes and
+    dκ/ds from the samples, the constrained least-squares `t(u)` fit exact
+    at both ends: the same method as `bezier.cpp:52-129`, in doubles.
+* Degenerate handles (p1 on p0 or p2 on p3, e.g. SVG `S` with no previous
+  curve, `web/src/svg/ingest.ts:151-153`): annotate moves the handle a third
+  of the way to the next distinct control point, so every piece has defined
+  end tangents (`bezier.cpp` refuses them). Repair's own handling of them is
+  fixed first, in `fix/repair-degenerate-tangent`.
+* Options (`kappaRatio`, `fitTol`, `maxSplitDepth`) default in annotate.ts;
+  not added to `QualityConfig` (`web/src/machine/schema.ts:628`) until a
+  caller needs them (6c).
+* Tests, `web/test/toolpath/annotate.test.ts`: the cases of
+  `test/test_planner/test_bezier.cpp` (quarter circle: length πR/2, κ = 1/R,
+  small dκ; a line as a cubic: c2 = c3 = 0), an S-curve splits at its
+  inflection, a cusp splits with `BREAK`, a sharp join is `BREAK`, every
+  piece's κ ratio and fit error within the options, pieces rejoin the input
+  exactly (endpoints to 1e-9 mm). Reuses `repair.cases.ts` and
+  `curves.cases.ts`.
+* Not in 6a: the wire record, anything on the Pico, any change to
+  `compileBlock.ts`. Cross-checking against the C++ analysis happens in 6b,
+  where the Pico checks host numbers.
+* Depends on: branch 5, `fix/repair-degenerate-tangent`.
+* Checks: `pnpm typecheck` and `pnpm test` in `web/`.
+
+**Status:** not started.
+
+**Outcome:**
 
 ## Later (not planned here)
 
