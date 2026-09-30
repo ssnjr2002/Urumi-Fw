@@ -330,10 +330,10 @@ for continuous jog.
 * RAM: `pio run -e pico` 73,144 → 78,560 B (+5.4 KB); every ring slot carries
   a Bézier. Branch 5a revisits ring size.
 * Follow-ups:
-  * Rename `push` to `pushLine` (lib, tests, `core0/planner/queue.cpp`); fits
-    at the start of branch 5.
-  * Find out what the firmware's other ~73 KB of RAM is (map file), not
-    urgent.
+  * Rename `push` to `pushLine` (lib, tests, `core0/planner/queue.cpp`),
+    after branch 5.
+  * Find out what the firmware's other ~73 KB of RAM is (map file), after
+    branch 5.
 
 ## Branch 5a: `bench/bezier`
 
@@ -355,8 +355,7 @@ for continuous jog.
 * Depends on: branch 4.
 * Checks: `pio run -e pico_plannerbench`.
 
-**Status:** done (branch `bench/bezier`, not merged). Unblocks branches 5b
-and 5.
+**Status:** done (branch `bench/bezier`, not merged). Unblocks branch 5.
 
 **Outcome:**
 
@@ -367,7 +366,7 @@ and 5.
 * `sqrtf` is newlib's software routine unless GCC may skip `errno`
   (`-fno-math-errno`); then it is one `vsqrt.f32`. The Pico SDK wraps
   `sinf`, `cosf` etc. but leaves `sqrtf` to the compiler. `env:pico` lacks
-  the flag, so the firmware pays this today (branch 5b).
+  the flag, so the firmware pays this today (branch 5 adds it).
 * Results, 150 MHz, 64-block ring, try-lock, 10 s per phase:
 
   | | default flags | `-fno-math-errno` |
@@ -389,27 +388,6 @@ and 5.
   ~32 mm, 64 × 0.6 mm is ~38 mm. At 500 mm/s it is ~88 mm, so dense short
   curves would cap feed below target (safely). Revisit with real jobs.
 
-## Branch 5b: `chore/fast-sqrt`
-
-**Plan**
-
-* Type: chore.
-* Purpose: hardware square root in the firmware (branch 5a's Outcome).
-* Files:
-  * `platformio.ini` `[env:pico]`: add `-fno-math-errno`; the bench env
-    inherits it.
-  * Check first that nothing in `src/rp2350` or `lib/` reads `errno` after a
-    maths call.
-* Depends on: branch 5a.
-* Overlap: `platformio.ini`.
-* Checks: `pio run -e pico`; the disassembly shows `vsqrt.f32` in
-  `makeTrapezoid` and no call to newlib's `sqrtf`. Human: a `line` square and
-  pause/resume still behave as in branch 2.
-
-**Status:** not started.
-
-**Outcome:**
-
 ## Branch 5: `feature/pico-bezier`
 
 **Plan**
@@ -421,15 +399,17 @@ and 5.
   * `src/rp2350/core0/planner/queue.*`: `plannerQueueBezier(p1, p2, p3,
     feed)`, p0 = the previous block's end; same state, config and limit rules
     as `plannerQueueLine`. Per-push replan, 64-block ring (branch 5a).
-  * First, rename `Planner::push` to `pushLine` (lib, tests, `queue.cpp`),
-    branch 4's follow-up.
+  * `platformio.ini` `[env:pico]`: `-fno-math-errno` for the hardware square
+    root (branch 5a); first check nothing in `src/rp2350` or `lib/` reads
+    `errno` after a maths call. The disassembly shows `vsqrt.f32` in
+    `makeTrapezoid` and no call to newlib's `sqrtf`.
   * `src/rp2350/core0/cmd/axis.cpp` / `table.h`: a debug
     `bez p1x p1y p2x p2y p3x p3y feed` command, bench only like `line`,
     analysing on the Pico. `line` and `bez` answer `err unconfigured` like the
     other controller commands (today `line` says `err no_config`).
   * Core 1: nothing new expected beyond what branch 4 puts in the executor.
   * Docs: `docs/wire_protocol.md` (the debug command).
-* Depends on: branch 4, branch 5b.
+* Depends on: branch 4, branch 5a.
 * Overlap: `src/rp2350/core0/cmd/table.h`, `src/rp2350/core0/planner/`.
 * Checks: `pio run -e pico`, `pio test -e native`. Human: a quarter circle and
   a full circle (four Béziers) close on their start step count; feed on a large
