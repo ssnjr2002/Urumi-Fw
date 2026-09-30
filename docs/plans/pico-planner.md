@@ -355,6 +355,57 @@ for continuous jog.
 * Depends on: branch 4.
 * Checks: `pio run -e pico_plannerbench`.
 
+**Status:** done (branch `bench/bezier`, not merged). Unblocks branches 5b
+and 5.
+
+**Outcome:**
+
+* Env `pico_plannerbench` now inherits `env:pico`'s flags: it had been
+  dropping `PLANNER_RAM`, so branch 2a's tick numbers were from flash. The
+  bench's slot loop runs from RAM too; spin-lock phases dropped (branch 2
+  chose try-lock).
+* `sqrtf` is newlib's software routine unless GCC may skip `errno`
+  (`-fno-math-errno`); then it is one `vsqrt.f32`. The Pico SDK wraps
+  `sinf`, `cosf` etc. but leaves `sqrtf` to the compiler. `env:pico` lacks
+  the flag, so the firmware pays this today (branch 5b).
+* Results, 150 MHz, 64-block ring, try-lock, 10 s per phase:
+
+  | | default flags | `-fno-math-errno` |
+  |---|---|---|
+  | `replan()`, 64 blocks | 1.04 ms | 0.11 ms |
+  | `analyzeBezier` | 3.79 ms | 0.63 ms |
+  | tick, line / Bézier | 1.24 / 1.93 µs | 1.17 / 1.79 µs |
+  | `commit()` lock hold, 64 blocks | 19.2 µs | 19.2 µs |
+
+  With the flag: Bézier tick under the lock at most 3.7 µs; no late slot in
+  2 M; lock deferral at most 1 slot; dense 0.2-1 mm Béziers (~350 blocks/s)
+  keep the ring full with no starved tick. Without it the dense ring sat at
+  13-20 blocks.
+* Decisions for branch 5: no early stop and no batching; per-push replan
+  keeps up, and batching measured no different. Core 0's limit is
+  `analyzeBezier` (~1,600 curves/s), which goes away when the host analyses
+  (branch 6). Ring stays at 64: `Block` is 168 B, `Planner` 13.9 KB.
+* Ring depth in distance: braking at 300 mm/s on curves (a/√2 of 2000) is
+  ~32 mm, 64 × 0.6 mm is ~38 mm. At 500 mm/s it is ~88 mm, so dense short
+  curves would cap feed below target (safely). Revisit with real jobs.
+
+## Branch 5b: `chore/fast-sqrt`
+
+**Plan**
+
+* Type: chore.
+* Purpose: hardware square root in the firmware (branch 5a's Outcome).
+* Files:
+  * `platformio.ini` `[env:pico]`: add `-fno-math-errno`; the bench env
+    inherits it.
+  * Check first that nothing in `src/rp2350` or `lib/` reads `errno` after a
+    maths call.
+* Depends on: branch 5a.
+* Overlap: `platformio.ini`.
+* Checks: `pio run -e pico`; the disassembly shows `vsqrt.f32` in
+  `makeTrapezoid` and no call to newlib's `sqrtf`. Human: a `line` square and
+  pause/resume still behave as in branch 2.
+
 **Status:** not started.
 
 **Outcome:**
@@ -369,15 +420,16 @@ for continuous jog.
 * Files:
   * `src/rp2350/core0/planner/queue.*`: `plannerQueueBezier(p1, p2, p3,
     feed)`, p0 = the previous block's end; same state, config and limit rules
-    as `plannerQueueLine`. Adopts branch 5a's choices (early stop, batching,
-    ring size).
+    as `plannerQueueLine`. Per-push replan, 64-block ring (branch 5a).
+  * First, rename `Planner::push` to `pushLine` (lib, tests, `queue.cpp`),
+    branch 4's follow-up.
   * `src/rp2350/core0/cmd/axis.cpp` / `table.h`: a debug
     `bez p1x p1y p2x p2y p3x p3y feed` command, bench only like `line`,
     analysing on the Pico. `line` and `bez` answer `err unconfigured` like the
     other controller commands (today `line` says `err no_config`).
   * Core 1: nothing new expected beyond what branch 4 puts in the executor.
   * Docs: `docs/wire_protocol.md` (the debug command).
-* Depends on: branch 4, branch 5a's Outcome.
+* Depends on: branch 4, branch 5b.
 * Overlap: `src/rp2350/core0/cmd/table.h`, `src/rp2350/core0/planner/`.
 * Checks: `pio run -e pico`, `pio test -e native`. Human: a quarter circle and
   a full circle (four Béziers) close on their start step count; feed on a large
