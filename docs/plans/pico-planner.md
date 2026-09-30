@@ -2,8 +2,8 @@
 
 First steps of moving motion planning from `web/src/toolpath` onto the Pico,
 following `docs/generic_planner_firmware_design.md` (the seed). This plan covers
-X and Y and straight lines only, entirely on the Pico. Béziers, the host side,
-Z, A, tool profiles and duty breaks come after, in later plans.
+X and Y: straight lines, then Béziers, then the Bézier wire record. Z, A, tool
+profiles and duty breaks come after, in later plans.
 
 ## Decisions
 
@@ -275,17 +275,115 @@ branch 2.
   within the hold distance; jog refused past soft limits and when unhomed where
   that applies; jog during pause returns to PAUSED.
 
+**Status:** deferred (after branch 6). Open: jog while PAUSED needs the job's
+ring kept while the jog runs (second ring or set-aside); command shape
+(`jog` / `jogstop`, relative on the Pico, `RUNNING_JOG`); deadman keepalive
+for continuous jog.
+
+**Outcome:**
+
+## Branch 4: `feature/planner-bezier`
+
+**Plan**
+
+* Type: feature.
+* Purpose: a cubic Bézier block in `lib/planner`, X and Y only, next to the
+  line block. Platform-free, contract-tested on the host, like branch 1.
+* Files:
+  * `lib/planner/planner/bezier.h` (new): the block data (p0-p3, `length`,
+    `κ_max`, `dκ_max`, `κ_start`, `κ_end`, `t(s)` c1-c3, seed §2, §6) and
+    evaluation: `t = clamp01(poly(ts, s))`, `B(t)`, `B'(t)` (seed §12).
+  * An analysis helper: arc length (Gauss-Legendre), `κ` extrema, `dκ_max`,
+    end curvatures, and a least-squares fit of `t(s)`. The host does this
+    later (branch 6); until then tests and the bench command use this one.
+    Refuses degenerate input (control point on an endpoint, cusp,
+    inflection inside the piece); splitting stays a host job.
+  * `planner.h`: a tagged block (line or Bézier); `push` gains a Bézier
+    overload. The executor evaluates by type. Trapezoids and look-ahead are
+    unchanged: both work on `length`.
+  * Speed cap without A: `v_cap = min(feed, √(a_xy / κ_max))` (seed §7). The
+    A terms (`ω_max`, `α_max`, `dκ`) wait for A.
+  * Junctions: junction deviation on the end tangents for every join, lines
+    and Béziers alike. A tangent-continuous join then costs nothing; the
+    neighbours' caps limit it. The seed's Δκ limit waits for A.
+  * `test/test_planner/`: Bézier contract tests (evaluator hits p0/p3
+    exactly, `t(s)` monotonic and ≈ 1 at `length`, a line written as a
+    Bézier with handles at 1/3 and 2/3 plans the same as the line block,
+    centripetal `v²·κ ≤ a` along a quarter circle, hold stops within
+    `v²/2a` inside a curve).
+* Depends on: branch 2.
+* Overlap: none outside `lib/planner` and `test/test_planner`.
+* Checks: `pio test -e native`.
+
 **Status:** not started.
 
 **Outcome:**
 
+## Branch 5a: `bench/bezier`
+
+**Plan**
+
+* Type: bench.
+* Purpose: measure the Bézier path on the RP2350 before firmware uses it,
+  like branch 2a. Built on `bench/planner` (rebased onto branch 4).
+* Measures:
+  * `executor.tick()` with Bézier evaluation, from RAM: typical, at a block
+    change, worst case. Budget: well inside one 1 ms tick without disturbing
+    the 20 µs slots.
+  * `push` + `replan()` cost at realistic Bézier block lengths (dense short
+    blocks, e.g. 0.2-2 mm), and whether Core 0 keeps up.
+  * The items branch 2a left open: the reverse pass's early stop and
+    batching (push everything pending, replan once).
+  * The analysis helper's cost on the Pico (only the bench command uses it).
+  * RAM: ring size with the larger block.
+* Depends on: branch 4.
+* Checks: `pio run -e pico_plannerbench`.
+
+**Status:** not started.
+
+**Outcome:**
+
+## Branch 5: `feature/pico-bezier`
+
+**Plan**
+
+* Type: feature.
+* Purpose: Bézier motion on the Pico: Core 0 queues Bézier blocks into the
+  ring, Core 1 streams them through the branch 2 followers.
+* Files:
+  * `src/rp2350/core0/planner/queue.*`: `plannerQueueBezier(p1, p2, p3,
+    feed)`, p0 = the previous block's end; same state, config and limit rules
+    as `plannerQueueLine`. Adopts branch 5a's choices (early stop, batching,
+    ring size).
+  * `src/rp2350/core0/cmd/axis.cpp` / `table.h`: a debug
+    `bez p1x p1y p2x p2y p3x p3y feed` command, bench only like `line`,
+    analysing on the Pico. `line` and `bez` answer `err unconfigured` like the
+    other controller commands (today `line` says `err no_config`).
+  * Core 1: nothing new expected beyond what branch 4 puts in the executor.
+  * Docs: `docs/wire_protocol.md` (the debug command).
+* Depends on: branch 4, branch 5a's Outcome.
+* Overlap: `src/rp2350/core0/cmd/table.h`, `src/rp2350/core0/planner/`.
+* Checks: `pio run -e pico`, `pio test -e native`. Human: a quarter circle and
+  a full circle (four Béziers) close on their start step count; feed on a large
+  arc matches the request; a tight arc slows to its centripetal cap; line →
+  arc → line runs without a stop at tangent joins; hold, resume, cancel and
+  abort mid-curve.
+
+**Status:** not started.
+
+**Outcome:**
+
+## Branch 6: `BEZIER` wire record and host stage 4
+
+Planned when branch 5 is done. Scope: the `BEZIER` wire record (56 B: flags
+`START` / `BREAK` / `END`, p0-p3, `length`, `κ_max`, `dκ_max`, `t(s)` `c2`,
+`c3`; `κ_start`/`κ_end` and `c1` derived on the Pico), `TOOL` record, job
+header with per-tool bounding boxes. Host stage 4 (split and annotate)
+replaces `flatten`; `repair.ts` fixes (degenerate handles, cusp → `BREAK`).
+The Pico's analysis helper then serves checks only.
+
 ## Later (not planned here)
 
-* Bézier block type and the `BEZIER` wire record (56 B: flags `START` /
-  `BREAK` / `END`, p0-p3, `length`, `κ_max`, `dκ_max`, `t(s)` `c2`, `c3`;
-  `κ_start`/`κ_end` and `c1` derived on the Pico), `TOOL` record, job header
-  with per-tool bounding boxes. Host stage 4 (split and annotate) replaces
-  `flatten`; `repair.ts` fixes (degenerate handles, cusp → `BREAK`).
 * Z and A, blade offset, tool profiles (swivel band, overcut), duty breaks
   (reset at lifts, forced break otherwise), mesh.
 * Retire the MicroSegment job path and `lib/motion`.
