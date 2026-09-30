@@ -500,9 +500,29 @@ for continuous jog.
   * Sweep `H` (1, 2, 5 ms) on bez-dense and hand-typed lines; choose `H` from
     the refusal rate.
 
-**Status:** not started.
+**Status:** done, awaiting merge.
 
 **Outcome:**
+
+* Hardware (X/Y, 160 steps/mm, feed 30): one 60 mm line 2.306 s; three
+  20 mm lines back to back 2.306 s, 150 ms apart 2.309 s (before: 3.12 s,
+  one stop each); 32-gon R20 lap 5.20 s, closed exactly. No PAUSED.
+* Bench on `bench/running-exit` (off this branch; 5a harness cherry-picked,
+  plus trickle phases that push only when the ring is down to the running
+  block): replan 0.11 ms and commit hold 19.5 µs (max 23.4) at 64 blocks;
+  tick max 2.6 µs unlocked, 5.05 µs under the lock (5a: 3.7; `claim()` now
+  copies the profile). No late slot in any phase; deferral at most 1 slot.
+* Trickle, H 2 / 3 / 5 ms: every offer adopted (lines 48-51, bez-real
+  61-70), 0 late, 0 refused, 0 stops mid-run. Full-ring phases: 0-1 offers,
+  3 case-2 waits.
+* `H` stays 5 ms: the sweep cannot separate 2-5 ms, and 5 ms leaves the most
+  slack for a Core 0 delayed by USB. H 1 ms is impossible: it is below the
+  1.2 ms guard, so every offer is refused.
+* Also fixed: `replan()` read the ring before recording `plan_epoch_`, so a
+  claim during replan could slip past commit's check.
+* Known: `test_parity` fails (on `main` too, discretize; here also missing
+  fixtures). A bare `enable` answers `err bad_node` while a node is
+  excluded; out of scope, follow-up.
 
 ## Branch 5: `feature/pico-bezier`
 
