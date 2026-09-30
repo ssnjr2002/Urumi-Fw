@@ -334,8 +334,13 @@ for continuous jog.
 * Follow-ups:
   * Rename `push` to `pushLine` (lib, tests, `core0/planner/queue.cpp`),
     after branch 5.
-  * Find out what the firmware's other ~73 KB of RAM is (map file), after
-    branch 5.
+  * RAM map, done after branch 5 (`main` at `7349ad4`, 75,484 B static of
+    512 KB): `cfgStage` 32 KB (config blob staging), `plannerRing` 14 KB,
+    `masterBuf` 12 KB (512 microsegments), code in RAM 10 KB (planner and
+    microsegment paths, SDK flash, float and divide routines, USB IRQ), stacks
+    4 KB, USB, newlib and small variables ~6 KB. All deliberate; no change.
+    `masterBuf` is reclaimed when microsegments are retired. `cfgStage` could
+    come from the heap during an upload (32 KB) if RAM ever gets tight.
 
 ## Branch 5a: `bench/bezier`
 
