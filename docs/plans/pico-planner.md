@@ -388,6 +388,40 @@ for continuous jog.
   ~32 mm, 64 × 0.6 mm is ~38 mm. At 500 mm/s it is ~88 mm, so dense short
   curves would cap feed below target (safely). Revisit with real jobs.
 
+## Branch 5c: `fix/planner-running-exit`
+
+**Plan**
+
+* Type: fix (branch 2 behaviour, lines and Béziers alike).
+* Purpose: the first move from rest no longer stops at its end. Core 1 claims
+  a block the moment it is queued and `claim()` pins its committed exit, 0
+  while nothing follows, so the next push arrives too late. Found on the
+  branch 5 bench: a four-Bézier circle ran ¼, stopped, ran ¾; three
+  collinear 20 mm lines took 0.30 s (one stop, v/a) longer than one 60 mm line.
+* Rule: the running block's exit may still rise until Core 1 reaches its
+  deceleration. Before that point a higher exit leaves the profile unchanged
+  up to `t` (same entry, accel and cruise; decel starts later, a triangle
+  peaks higher), so the executor keeps its clock and reads the new profile.
+  Once decelerating, the block is pinned as today.
+* Files:
+  * `lib/planner/planner.cpp` / `planner.h`: `replan()` includes the claimed
+    block, entry fixed; `commit(t)` rewrites it only if `t` is before its
+    committed decel start, otherwise the plan must start from its pinned exit
+    or the commit is refused and retried.
+  * `lib/planner/executor.*`: expose the time into the claimed block. The
+    tick path is unchanged.
+  * `src/rp2350/core0/planner/queue.cpp`: pass it to `commit` under
+    `plannerLock`.
+  * `test/test_planner`: raise during accel (continuity, higher exit); no
+    change once decelerating; hold on a raised block.
+* Depends on: branch 2. Branch 5 rebases on it.
+* Checks: `pio test -e native`, `pio run -e pico`. Human: three collinear
+  20 mm lines take the time of one 60 mm line; the circle runs without a stop.
+
+**Status:** not started.
+
+**Outcome:**
+
 ## Branch 5: `feature/pico-bezier`
 
 **Plan**
@@ -409,7 +443,7 @@ for continuous jog.
     other controller commands (today `line` says `err no_config`).
   * Core 1: nothing new expected beyond what branch 4 puts in the executor.
   * Docs: `docs/wire_protocol.md` (the debug command).
-* Depends on: branch 4, branch 5a.
+* Depends on: branch 4, branch 5a, branch 5c.
 * Overlap: `src/rp2350/core0/cmd/table.h`, `src/rp2350/core0/planner/`.
 * Checks: `pio run -e pico`, `pio test -e native`. Human: a quarter circle and
   a full circle (four Béziers) close on their start step count; feed on a large
