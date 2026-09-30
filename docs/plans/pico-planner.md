@@ -521,8 +521,7 @@ for continuous jog.
 * Also fixed: `replan()` read the ring before recording `plan_epoch_`, so a
   claim during replan could slip past commit's check.
 * Known: `test_parity` fails (on `main` too, discretize; here also missing
-  fixtures). A bare `enable` answers `err bad_node` while a node is
-  excluded; out of scope, follow-up.
+  fixtures).
 
 ## Branch 5: `feature/pico-bezier`
 
