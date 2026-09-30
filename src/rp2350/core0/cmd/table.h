@@ -56,6 +56,7 @@ bool cmdAxesMap(const char*);
 bool cmdSetOrigin(const char*);
 bool cmdStep(const char*);
 bool cmdLine(const char*);
+bool cmdBez(const char*);
 bool cmdHallScan(const char*);
 bool cmdLinLeg(const char*);
 bool cmdRotLeg(const char*);

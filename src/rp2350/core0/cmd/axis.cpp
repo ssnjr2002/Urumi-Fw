@@ -490,21 +490,38 @@ bool cmdStep(const char* args) {
 // Queues one line through plannerQueueLine: machine mm, feed in mm/s. Lines sent
 // back to back join at their junction speed. No homing, soft-limit or
 // enabled-axis check.
-bool cmdLine(const char* args) {
-    char* end;
-    const float x = strtof(args, &end);
-    if (end == args) { Serial.println("err usage"); return true; }
-    const char* p = end;
-    const float y = strtof(p, &end);
-    if (end == p) { Serial.println("err usage"); return true; }
-    p = end;
-    const float feed = strtof(p, &end);
-    if (end == p || !(feed > 0)) { Serial.println("err usage"); return true; }
+// Parse `n` floats; the last is a feed and must be positive.
+static bool parseFloats(const char* args, float* out, int n) {
+    const char* p = args;
+    for (int i = 0; i < n; i++) {
+        char* end;
+        out[i] = strtof(p, &end);
+        if (end == p) return false;
+        p = end;
+    }
+    return out[n - 1] > 0;
+}
 
-    static const char* const kErr[] = {"", "bad_state", "no_config", "no_limits", "full"};
-    const PlannerQueueResult r = plannerQueueLine(x, y, feed);
+static void replyQueued(PlannerQueueResult r) {
+    static const char* const kErr[] = {"", "bad_state", "unconfigured", "no_limits", "full", "bad_curve"};
     if (r == PQ_OK) Serial.printf("ok %d\n", plannerQueueDepth());
     else Serial.printf("err %s\n", kErr[r]);
+}
+
+bool cmdLine(const char* args) {
+    float v[3];
+    if (!parseFloats(args, v, 3)) { Serial.println("err usage"); return true; }
+    replyQueued(plannerQueueLine(v[0], v[1], v[2]));
+    return true;
+}
+
+// ── bez <p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed> — debug Bézier (bring-up) ──
+// Queues one cubic through plannerQueueBezier: p0 is where the last move ends,
+// machine mm, feed in mm/s. The Pico analyses the curve itself (~0.6 ms).
+bool cmdBez(const char* args) {
+    float v[7];
+    if (!parseFloats(args, v, 7)) { Serial.println("err usage"); return true; }
+    replyQueued(plannerQueueBezier(v[0], v[1], v[2], v[3], v[4], v[5], v[6]));
     return true;
 }
 
