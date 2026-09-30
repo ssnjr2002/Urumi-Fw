@@ -19,11 +19,18 @@ bool Planner::push(Vec2 target, float feed, const AxisLimits& limits, float devi
     if (ln.length <= 0) return true;
     if (full()) return false;
     ring_[index(count_)].origin = ln.p0;
-    return pushBlock(pathOf(ln), deviation);
+    return pushBlock(Block::LINE, pathOf(ln), deviation);
 }
 
-bool Planner::pushBlock(const Path& path, float deviation) {
+bool Planner::pushBezier(const Bezier& bz, float feed, const AxisLimits& limits, float deviation) {
+    if (full()) return false;
+    ring_[index(count_)].bez = bz;
+    return pushBlock(Block::BEZIER, pathOf(bz, feed, limits), deviation);
+}
+
+bool Planner::pushBlock(Block::Kind kind, const Path& path, float deviation) {
     Block& b = ring_[index(count_)];
+    b.kind = kind;
     b.path = path;
     b.s0 = 0;
     b.max_entry_sqr = count_ > 0

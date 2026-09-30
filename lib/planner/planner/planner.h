@@ -1,7 +1,7 @@
 /**
  * planner.h — the block ring and its look-ahead.
  *
- * The producer pushes lines and replans; the consumer claims the oldest block,
+ * The producer pushes lines or Béziers and replans; the consumer claims the oldest block,
  * runs it, and releases it. Single-threaded: a caller that splits producer and
  * consumer across cores shares one Planner and locks around push(), commit(),
  * claim() and release(). replan() needs no lock: it reads only block paths,
@@ -22,6 +22,7 @@
 #ifndef PLANNER_PLANNER_H
 #define PLANNER_PLANNER_H
 
+#include "planner/bezier.h"
 #include "planner/line.h"
 #include "planner/trapezoid.h"
 
@@ -34,9 +35,12 @@
 namespace planner {
 
 struct Block {
+    enum Kind : uint8_t { LINE, BEZIER };
+    Kind kind = LINE;
     Path path;                 // length is what remains after s0
     float s0 = 0;              // mm of the geometry already run (a resume trim)
-    Vec2 origin;               // start point
+    Vec2 origin;               // LINE: start point
+    Bezier bez;                // BEZIER: the curve
     float max_entry_sqr = 0;   // junction limit with the previous block
     float entry_sqr = 0;       // committed plan
     float exit_sqr = 0;
@@ -55,6 +59,8 @@ public:
      * the ring is full. A zero-length move queues nothing and returns true.
      */
     bool push(Vec2 target, float feed, const AxisLimits& limits, float deviation);
+    /** Queue an analysed Bézier; `b.p[0]` must be end(). False if full. */
+    bool pushBezier(const Bezier& b, float feed, const AxisLimits& limits, float deviation);
 
     void replan();
     /** False if the plan is stale; the caller replans and commits again. */
@@ -82,7 +88,7 @@ public:
 private:
     int index(int i) const { return (tail_ + i) % kSize; }
     int firstUnclaimed() const { return claimed_ ? 1 : 0; }
-    bool pushBlock(const Path& path, float deviation);
+    bool pushBlock(Block::Kind kind, const Path& path, float deviation);
 
     Block ring_[kSize];
     int tail_ = 0;

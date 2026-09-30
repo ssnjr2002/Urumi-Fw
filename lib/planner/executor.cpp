@@ -18,6 +18,7 @@ void Executor::reset(Vec2 pos) {
 // `s` mm into what remains of the block.
 PLANNER_RAM static Vec2 pointAt(const Block& b, float s) {
     const float g = b.s0 + s;
+    if (b.kind == Block::BEZIER) return bezierPoint(b.bez, bezierT(b.bez, g));
     return {b.origin.x + b.path.dir_start.x * g, b.origin.y + b.path.dir_start.y * g};
 }
 
