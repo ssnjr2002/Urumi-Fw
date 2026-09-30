@@ -507,7 +507,7 @@ for continuous jog.
 * Hardware (X/Y, 160 steps/mm, feed 30): one 60 mm line 2.306 s; three
   20 mm lines back to back 2.306 s, 150 ms apart 2.309 s (before: 3.12 s,
   one stop each); 32-gon R20 lap 5.20 s, closed exactly. No PAUSED.
-* Bench on `bench/running-exit` (off this branch; 5a harness cherry-picked,
+* Bench on `bench/running-exit` (off this branch, never merged; 5a harness cherry-picked,
   plus trickle phases that push only when the ring is down to the running
   block): replan 0.11 ms and commit hold 19.5 µs (max 23.4) at 64 blocks;
   tick max 2.6 µs unlocked, 5.05 µs under the lock (5a: 3.7; `claim()` now
