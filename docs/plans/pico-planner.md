@@ -553,9 +553,28 @@ for continuous jog.
   arc → line runs without a stop at tangent joins; hold, resume, cancel and
   abort mid-curve.
 
-**Status:** not started.
+**Status:** done.
 
 **Outcome:**
+
+* First hardware run showed a pause at every quarter of a circle: a block
+  pushed while another ran could not raise the running block's exit. Fixed in
+  branch 5c; this branch rebased on it (one comment conflict in `queue.cpp`).
+* Hardware (X/Y, 160 steps/mm, `maxAccel` 100), after the rebase:
+
+  | check | result |
+  |---|---|
+  | circle R20, four Béziers, feed 30 | 4.61 s, slowest mid-lap 20.2 mm/s, closed on its start step |
+  | same, feed 80 | 3.88 s, peak 43 mm/s (centripetal cap), closed |
+  | arc R3, feed 80 | 0.85 s at ~14.5 mm/s, the cap; exact end |
+  | line → arc R10 → line | 2.23 s, slowest 25.4 mm/s, no stop at the joins |
+  | pause, resume mid-circle | PAUSED 0.43 s after the request, resumed, lap closed |
+  | pause, cancel | IDLE at the hold point |
+  | stop mid-circle | ESTOP → ALARM, drives off; `unstop` recovers |
+
+* `stop` zeroes the position model (un-homed), by design. A `bez` whose start
+  is not the previous end answers `err bad_curve` as intended.
+* Known: `test_parity` fails as on `main`.
 
 ## Branch 6: `BEZIER` wire record and host stage 4
 
