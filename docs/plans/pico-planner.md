@@ -582,18 +582,34 @@ for continuous jog.
 
 ## Branch 6: Bézier jobs from the host
 
-Split into a dependent chain (decided after branch 5):
+A dependent chain (decided after branch 5, revised while planning 6a):
 
-* 6a `feature/host-bezier-annotate`: host stage 4, split and annotate.
+* 6-ingest `fix/svg-ingest`: stages 1-2 stop losing or misplacing geometry.
+* 6-clean `feature/host-bezier-clean`: a new stage 3 for the Bézier path.
+* 6a `feature/host-bezier-annotate`: stage 4, split and annotate.
 * 6b `feature/bezier-wire`: the `BEZIER` record, Pico and host wire.
-* 6c: the host sends a layer as Bézier records, XY only. Planned after 6b.
+* 6c: the host streams a layer as Bézier records, XY only.
 
 Decisions:
 
-* **`flatten` stays.** Its samples feed the whole MicroSegment path
-  (`web/src/production/compileBlock.ts:168` on: constrain, plan, discretize,
-  duty breaks), still the only path with Z, A and tools. Annotate sits beside
-  it; `flatten` goes when MicroSegments are retired.
+* **`flatten` and `enforceC1` stay** for the MicroSegment path
+  (`web/src/production/compileBlock.ts:163-176`), still the only path with Z,
+  A and tools. The Bézier path gets its own stages 3 and 4; the old ones go
+  when MicroSegments are retired.
+* **Why a new stage 3.** `enforceC1` (`web/src/toolpath/repair.ts:75`) was
+  written for sampling: it bridges gaps with invented curves, and its join
+  classification ends up in logs, not data. The Bézier path needs the join
+  kinds (they become `BREAK`) and must not invent geometry.
+* **Known, not fixed:** on the MicroSegment path a degenerate end handle
+  (SVG `S` with no previous curve, `web/src/svg/ingest.ts:151-153`) makes
+  `enforceC1` insert a blend with `(1, 0)` tangents (`repair.ts:96-102`), a
+  ~1 mm loop. 6-ingest removes the one case the fixtures have (a zero-length
+  `Z` line in `fish.svg`); the rest goes with MicroSegments.
+* **Travel: the host orders, the Pico moves.** The host decides the contour
+  order and each contour's start (the p0 of a `START` record). When a
+  `START` record's p0 is not the ring's end, the Pico queues the travel
+  itself (`pushLine` at travel feed; later lift and plunge from its tool
+  profiles). Seed §3: travel is implicit. Lands in 6b.
 * **`TOOL` record and job header deferred** to the tool-profile plan. Without
   Z, A or profiles on the Pico a `TOOL` record carries only feed. 6c may
   check the job's bounding box against the soft limits on the host.
@@ -612,14 +628,61 @@ Decisions:
   are 98+ commits behind and would conflict with 6b if revived.
   `feature/spline-streaming` is an abandoned earlier attempt.
 
+## Branch 6-ingest: `fix/svg-ingest`
+
+* Type: fix (web only). Wrong today on both paths.
+* Purpose: stages 1-2 (`web/src/svg/ingest.ts`) drop or misplace geometry:
+  * `transform` on elements and groups is ignored: geometry lands in the
+    wrong place. One document walk with a matrix stack (element × parents ×
+    viewBox-to-mm), replacing the three walks (`subpathsFromRoot:426`,
+    `loadSvgLayers:392`, `loadSvgMmLayers:564`).
+  * Path commands `A` and `T` are not parsed; an unknown command ends its
+    chunk (`ingest.ts:177`), so the rest of the path is lost. `A` becomes
+    cubics of at most 90°.
+  * `Z` adds a closing line whenever the point differs from the start at all
+    (`ingest.ts:171`), making zero-length curves; skip it below a tolerance.
+* Tests that fail before the fix, in `web/test/svg/`: a translated and a
+  rotated group, nested transforms, an arc path (endpoints and radius), `T`
+  after `Q`, `Z` after a rounding-level miss.
+* Golden: `fish_knife_golden.bin` changes (its zero-length `Z` line made
+  two `(1, 0)` loops); regenerate after the decoded diff is reviewed.
+  `test_circle` must not change.
+* Not in: `preserveAspectRatio`, `<use>` (follow-ups).
+* Depends on: branch 5.
+* Checks: `pnpm typecheck` and `pnpm test` in `web/`.
+
+**Status:** not started.
+
+**Outcome:**
+
+## Branch 6-clean: `feature/host-bezier-clean`
+
+* Type: feature (web only).
+* Purpose: stage 3 for the Bézier path, `web/src/toolpath/clean.ts`, pure,
+  options passed in. Output per subpath: its curves, a join kind for each
+  join (`smooth` / `corner`, by `angleTol`), and whether it is closed.
+  * drops zero-length curves;
+  * moves a degenerate handle (p1 on p0, p2 on p3) a third of the way to the
+    next distinct control point, so every curve has defined end tangents
+    (`lib/planner/bezier.cpp` refuses them);
+  * snaps gaps under `gapTol` shut; splits the subpath at a larger gap (the
+    Pico travels across it).
+* Tests in `web/test/toolpath/clean.test.ts`, reusing `repair.cases.ts`.
+* Depends on: 6-ingest.
+* Checks: `pnpm typecheck` and `pnpm test` in `web/`.
+
+**Status:** not started.
+
+**Outcome:**
+
 ## Branch 6a: `feature/host-bezier-annotate`
 
 * Type: feature (web only).
-* Purpose: turn repaired subpaths into annotated Béziers the Pico can queue
+* Purpose: turn cleaned subpaths into annotated Béziers the Pico can queue
   without analysing them: split where the seed says (§2), then measure each
   piece the way `lib/planner/bezier.cpp:52` does.
 * Interface, `web/src/toolpath/annotate.ts`:
-  * `annotate(subpaths, options): AnnotatedBezier[]`, pure, options passed
+  * `annotate(cleaned, options): AnnotatedBezier[]`, pure, options passed
     in like every stage (`repair.ts:16`).
   * `AnnotatedBezier`: p0-p3, `flags` (`START` / `BREAK` / `END`), `length`,
     `kappaMax`, `dkappaMax`, `ts` (c1, c2, c3), `kappaStart`, `kappaEnd`
@@ -634,31 +697,25 @@ Decisions:
        at the parameter that balances it; depth-limited.
     4. `t(s)` fit: while the fit error exceeds `fitTol`, or the fit is not
        monotonic, halve; depth-limited.
-  * Joins between input curves: `BREAK` when the tangent turns more than
-    `angleTolDeg` (the rule `repair.ts:112-116` logs as a cusp today); `START` on
-    a subpath's first piece, `END` on its last.
+  * Joins: a `corner` join from clean starts a `BREAK` piece; `START` on a
+    subpath's first piece, `END` on its last.
   * Analysis: 128 intervals of 3-point Gauss-Legendre, κ extremes and
     dκ/ds from the samples, the constrained least-squares `t(u)` fit exact
     at both ends: the same method as `bezier.cpp:52-129`, in doubles.
-* Degenerate handles (p1 on p0 or p2 on p3, e.g. SVG `S` with no previous
-  curve, `web/src/svg/ingest.ts:151-153`): annotate moves the handle a third
-  of the way to the next distinct control point, so every piece has defined
-  end tangents (`bezier.cpp` refuses them). Repair's own handling of them is
-  fixed first, in `fix/repair-degenerate-tangent`.
 * Options (`kappaRatio`, `fitTol`, `maxSplitDepth`) default in annotate.ts;
   not added to `QualityConfig` (`web/src/machine/schema.ts:628`) until a
   caller needs them (6c).
 * Tests, `web/test/toolpath/annotate.test.ts`: the cases of
   `test/test_planner/test_bezier.cpp` (quarter circle: length πR/2, κ = 1/R,
   small dκ; a line as a cubic: c2 = c3 = 0), an S-curve splits at its
-  inflection, a cusp splits with `BREAK`, a sharp join is `BREAK`, every
+  inflection, a cusp splits with `BREAK`, a corner join is `BREAK`, every
   piece's κ ratio and fit error within the options, pieces rejoin the input
   exactly (endpoints to 1e-9 mm). Reuses `repair.cases.ts` and
   `curves.cases.ts`.
 * Not in 6a: the wire record, anything on the Pico, any change to
   `compileBlock.ts`. Cross-checking against the C++ analysis happens in 6b,
   where the Pico checks host numbers.
-* Depends on: branch 5, `fix/repair-degenerate-tangent`.
+* Depends on: 6-clean.
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
 **Status:** not started.
