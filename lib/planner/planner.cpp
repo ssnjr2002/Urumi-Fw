@@ -18,21 +18,26 @@ bool Planner::push(Vec2 target, float feed, const AxisLimits& limits, float devi
     const Line ln = makeLine(end_, target, feed, limits);
     if (ln.length <= 0) return true;
     if (full()) return false;
+    ring_[index(count_)].origin = ln.p0;
+    return pushBlock(pathOf(ln), deviation);
+}
 
+bool Planner::pushBlock(const Path& path, float deviation) {
     Block& b = ring_[index(count_)];
-    b.line = ln;
+    b.path = path;
+    b.s0 = 0;
     b.max_entry_sqr = count_ > 0
-        ? junctionMaxSqr(ring_[index(count_ - 1)].line, ln, deviation)
+        ? junctionMaxSqr(ring_[index(count_ - 1)].path, path, deviation)
         : 0;
     // Committed at rest on both ends until the next commit: still consistent
     // with its predecessor, whose committed exit is also rest.
     b.entry_sqr = 0;
     b.exit_sqr = 0;
-    b.profile = makeTrapezoid(ln.length, ln.accel, 0, ln.v_max_sqr, 0);
+    b.profile = makeTrapezoid(path.length, path.accel, 0, path.v_max_sqr, 0);
 
     count_++;
     epoch_++;
-    end_ = target;
+    end_ = path.end;
     return true;
 }
 
@@ -44,8 +49,8 @@ void Planner::replan() {
     for (int i = count_ - 1; i >= first; i--) {
         const Block& b = ring_[index(i)];
         plan_exit_sqr_[i] = next_entry;
-        const float reachable = next_entry + 2.0f * b.line.accel * b.line.length;
-        plan_entry_sqr_[i] = fminf(fminf(b.max_entry_sqr, b.line.v_max_sqr), reachable);
+        const float reachable = next_entry + 2.0f * b.path.accel * b.path.length;
+        plan_entry_sqr_[i] = fminf(fminf(b.max_entry_sqr, b.path.v_max_sqr), reachable);
         next_entry = plan_entry_sqr_[i];
     }
 
@@ -54,10 +59,10 @@ void Planner::replan() {
     for (int i = first; i < count_; i++) {
         const Block& b = ring_[index(i)];
         plan_entry_sqr_[i] = entry;
-        const float reachable = entry + 2.0f * b.line.accel * b.line.length;
+        const float reachable = entry + 2.0f * b.path.accel * b.path.length;
         plan_exit_sqr_[i] = fminf(plan_exit_sqr_[i], reachable);
-        plan_profile_[i] = makeTrapezoid(b.line.length, b.line.accel, entry,
-                                         b.line.v_max_sqr, plan_exit_sqr_[i]);
+        plan_profile_[i] = makeTrapezoid(b.path.length, b.path.accel, entry,
+                                         b.path.v_max_sqr, plan_exit_sqr_[i]);
         entry = plan_exit_sqr_[i];
     }
 
@@ -98,12 +103,12 @@ void Planner::restartFrom(float s) {
     if (claimed_) {
         claimed_ = false;
         Block& b = ring_[tail_];
-        if (s >= b.line.length) {
+        if (s >= b.path.length) {
             tail_ = (tail_ + 1) % kSize;
             count_--;
         } else if (s > 0) {
-            b.line.p0 = {b.line.p0.x + b.line.dir.x * s, b.line.p0.y + b.line.dir.y * s};
-            b.line.length -= s;
+            b.s0 += s;
+            b.path.length -= s;
         }
     }
     if (count_ > 0) {
@@ -111,7 +116,7 @@ void Planner::restartFrom(float s) {
         b.max_entry_sqr = 0;
         b.entry_sqr = 0;
         b.exit_sqr = 0;
-        b.profile = makeTrapezoid(b.line.length, b.line.accel, 0, b.line.v_max_sqr, 0);
+        b.profile = makeTrapezoid(b.path.length, b.path.accel, 0, b.path.v_max_sqr, 0);
     }
     pinned_entry_sqr_ = 0;
     plan_valid_ = false;

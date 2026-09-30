@@ -40,13 +40,13 @@ static void checkPlan(Planner p, float entry_sqr) {
     int n = 0;
     while ((b = p.claim()) != nullptr) {
         CHECK(b->entry_sqr == doctest::Approx(prev_exit).epsilon(rel));
-        CHECK(b->entry_sqr <= b->line.v_max_sqr * (1 + rel));
-        CHECK(b->exit_sqr <= b->line.v_max_sqr * (1 + rel));
+        CHECK(b->entry_sqr <= b->path.v_max_sqr * (1 + rel));
+        CHECK(b->exit_sqr <= b->path.v_max_sqr * (1 + rel));
         if (n > 0) CHECK(b->entry_sqr <= b->max_entry_sqr * (1 + rel) + 1e-3f);
-        const float span = 2 * b->line.accel * b->line.length;
+        const float span = 2 * b->path.accel * b->path.length;
         CHECK(fabsf(b->entry_sqr - b->exit_sqr) <= span * (1 + rel) + 1e-3f);
         CHECK(b->profile.position(b->profile.duration()) ==
-              doctest::Approx(b->line.length).epsilon(1e-4));
+              doctest::Approx(b->path.length).epsilon(1e-4));
         prev_exit = b->exit_sqr;
         p.release();
         n++;

@@ -15,8 +15,14 @@ void Executor::reset(Vec2 pos) {
     pos_ = pos;
 }
 
+// `s` mm into what remains of the block.
+PLANNER_RAM static Vec2 pointAt(const Block& b, float s) {
+    const float g = b.s0 + s;
+    return {b.origin.x + b.path.dir_start.x * g, b.origin.y + b.path.dir_start.y * g};
+}
+
 PLANNER_RAM void Executor::finishBlock(Planner& p) {
-    pos_ = cur_->line.p1;
+    pos_ = cur_->path.end;
     p.release();
     cur_ = nullptr;
     t_ = 0;
@@ -51,8 +57,8 @@ PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {
         }
 
         // Holding: constant deceleration at this block's accel.
-        const float a = cur_->line.accel;
-        const float rem_s = cur_->line.length - s_;
+        const float a = cur_->path.accel;
+        const float rem_s = cur_->path.length - s_;
         const float s_stop = v_ * v_ / (2 * a);
         if (s_stop <= rem_s) {
             const float t_stop = v_ / a;
@@ -78,10 +84,7 @@ PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {
         dt = 0;
     }
 
-    if (cur_) {
-        const Line& ln = cur_->line;
-        pos_ = {ln.p0.x + ln.dir.x * s_, ln.p0.y + ln.dir.y * s_};
-    }
+    if (cur_) pos_ = pointAt(*cur_, s_);
     if (state_ == State::Held && aborting_) {
         p.reset(pos_);
         reset(pos_);
@@ -96,8 +99,8 @@ PLANNER_RAM bool Executor::needsRing(float dt) const {
     if (state_ == State::Held) return false;
 
     // Holding: does the braking curve reach the block end within dt?
-    const float a = cur_->line.accel;
-    const float rem_s = cur_->line.length - s_;
+    const float a = cur_->path.accel;
+    const float rem_s = cur_->path.length - s_;
     if (v_ * v_ / (2 * a) <= rem_s) return false;
     const float v_end = sqrtf(fmaxf(0.0f, v_ * v_ - 2 * a * rem_s));
     return (v_ - v_end) / a <= dt;

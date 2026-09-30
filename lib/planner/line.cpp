@@ -28,11 +28,22 @@ Line makeLine(Vec2 p0, Vec2 p1, float feed, const AxisLimits& limits) {
     return ln;
 }
 
-float junctionMaxSqr(const Line& prev, const Line& next, float deviation) {
+Path pathOf(const Line& ln) {
+    Path p;
+    p.length = ln.length;
+    p.accel = ln.accel;
+    p.v_max_sqr = ln.v_max_sqr;
+    p.dir_start = ln.dir;
+    p.dir_end = ln.dir;
+    p.end = ln.p1;
+    return p;
+}
+
+float junctionMaxSqr(const Path& prev, const Path& next, float deviation) {
     const float cap = fminf(prev.v_max_sqr, next.v_max_sqr);
     // Cosine of the angle between the incoming reversed and the outgoing
     // direction: -1 is straight on, +1 is a full reversal.
-    const float cos_theta = -(prev.dir.x * next.dir.x + prev.dir.y * next.dir.y);
+    const float cos_theta = -(prev.dir_end.x * next.dir_start.x + prev.dir_end.y * next.dir_start.y);
     if (cos_theta < -0.999999f) return cap;
     if (cos_theta > 0.999999f) return 0;
 
@@ -40,6 +51,10 @@ float junctionMaxSqr(const Line& prev, const Line& next, float deviation) {
     const float a = fminf(prev.accel, next.accel);
     const float v_sqr = a * deviation * sin_half / (1.0f - sin_half);
     return fminf(cap, v_sqr);
+}
+
+float junctionMaxSqr(const Line& prev, const Line& next, float deviation) {
+    return junctionMaxSqr(pathOf(prev), pathOf(next), deviation);
 }
 
 }  // namespace planner

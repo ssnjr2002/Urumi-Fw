@@ -4,7 +4,7 @@
  * The producer pushes lines and replans; the consumer claims the oldest block,
  * runs it, and releases it. Single-threaded: a caller that splits producer and
  * consumer across cores shares one Planner and locks around push(), commit(),
- * claim() and release(). replan() needs no lock: it reads only block lines,
+ * claim() and release(). replan() needs no lock: it reads only block paths,
  * which the consumer never writes, and a claim or release during it makes the
  * following commit() refuse.
  *
@@ -34,7 +34,9 @@
 namespace planner {
 
 struct Block {
-    Line line;
+    Path path;                 // length is what remains after s0
+    float s0 = 0;              // mm of the geometry already run (a resume trim)
+    Vec2 origin;               // start point
     float max_entry_sqr = 0;   // junction limit with the previous block
     float entry_sqr = 0;       // committed plan
     float exit_sqr = 0;
@@ -74,12 +76,13 @@ public:
     int count() const { return count_; }
     bool full() const { return count_ == kSize; }
     bool claimed() const { return claimed_; }
-    /** Where the last queued line ends. */
+    /** Where the last queued block ends. */
     Vec2 end() const { return end_; }
 
 private:
     int index(int i) const { return (tail_ + i) % kSize; }
     int firstUnclaimed() const { return claimed_ ? 1 : 0; }
+    bool pushBlock(const Path& path, float deviation);
 
     Block ring_[kSize];
     int tail_ = 0;
