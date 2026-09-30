@@ -422,45 +422,65 @@ for continuous jog.
   * One clock per block. `t` counts from the claim and is never reset; a
     rebuilt profile starts at `t_h` on that clock. Core 1 publishes `t` after
     each tick (one word, single writer).
-  * Horizon. Core 0 reads `t`, sets `t_h = t + H` and evaluates its latest
-    offer there for `(s_h, v_h)`. Replan treats the rest of the running block
-    as a block of `length − s_h` entering at `v_h²`; the forward pass caps its
-    exit at `v_h² + 2a·(length − s_h)`. `H` (a few ms) only trades retries
-    against how early a raise lands; correctness does not depend on it.
+  * Pieces. The executor runs at most two: the current profile, and one
+    pending piece `{t_h, s_h, profile}` that takes over at `t_h`; from there
+    `s = s_h + piece.position(t − t_h)`. It also keeps `t_end`, the block's end
+    on the clock: `duration()` at claim, `t_h + piece.duration()` once a piece
+    is adopted.
+  * Horizon. At commit, Core 0 compares Core 1's `t` with a pending `t_h`:
+    1. `t + tick < t_h`: rebuild the pending piece from the same
+       `(s_h, v_h)` and replace it.
+    2. `t_h − tick ≤ t < t_h`: refuse and retry; within a tick Core 1 has
+       switched.
+    3. `t ≥ t_h`, or nothing pending: fresh horizon `t_h = t + H`, with
+       `(s_h, v_h)` evaluated on the piece now running.
+    Replan treats the rest of the running block as a block of `length − s_h`
+    entering at `v_h²`; the forward pass caps its exit at
+    `v_h² + 2a·(length − s_h)`. `H` (a few ms) trades case 2 refusals against
+    how early a raise lands; correctness does not depend on it.
   * Offer. If the new exit differs from the committed one, Core 0 builds the
-    profile from `(s_h, v_h)` to the new exit, writes it and `t_h` into a
-    staging slot, then sets a flag (barrier between). The rest of the ring
-    commits as today, entering at the new exit.
-  * Commit check, under `plannerLock` (interrupts off, bounded): re-read `t`;
-    accept only if `t + dt_max < t_h`, `dt_max` being the largest step a
-    follower tick can take (1 ms plus deferred slots). Otherwise refuse and
-    retry from a fresh `t` (the existing `replanAndCommit` loop). A slow Core 0
-    replan therefore costs a retry, never a broken promise.
-  * Adoption, at the start of a Core 1 tick: flag set → barrier, copy the
-    staged profile, clear the flag. The check guarantees `t < t_h`, where the
-    new and old profiles agree in position and speed; reaching `t_h` without
-    having adopted is a bug and raises an alarm rather than a speed jump.
+    piece from `(s_h, v_h)` to the new exit, writes it into a staging slot in
+    `Planner`, then sets a flag (barrier between). The rest of the ring commits
+    as today, entering at the new exit.
+  * Tick. Mid-block ticks run without the lock exactly every 50 slots; a tick
+    is only deferred at a block boundary, where the claim or release refuses
+    the commit by epoch anyway. So `tick` in the check is 1 ms plus a small
+    margin, and the check runs under `plannerLock` (interrupts off, bounded).
+    A slow Core 0 replan costs a retry, never a broken promise.
+  * Adoption, `Executor::adopt()`, called by the follower before `needsRing`
+    every tick without the lock: flag set → barrier, copy the staged piece,
+    update `t_end`, clear the flag. It must precede `needsRing`: a raised exit
+    can end the block sooner, and `needsRing` (running: `t + dt ≥ t_end`) must
+    see that end to take the lock for the release. The check guarantees
+    `t < t_h` at adoption; a flag found set at `t ≥ t_h` is a bug and raises
+    an alarm rather than a speed jump.
   * Termination. Pushes come only from Core 0's command handler, so none
-    arrive during the retry loop. Each retry moves the horizon on; once the
-    remaining distance cannot use more speed, the new exit equals the
-    committed one, nothing is staged and the commit succeeds. A claim or
-    release meanwhile refuses by epoch, as today.
-  * Hold, resume, abort: a hold brakes from the executor's own state and
-    ignores a staged profile; `restartFrom` and `reset` clear the staging slot.
+    arrive during the retry loop. Case 2 lasts at most a tick, then case 3
+    applies. Once the remaining distance cannot use more speed, the new exit
+    equals the committed one, nothing is staged and the commit succeeds. A
+    claim or release meanwhile refuses by epoch, as today.
+  * Hold, resume, abort: a hold brakes from the executor's own `s`, `v` and
+    ignores a pending piece; a commit racing a pause stages a piece the hold
+    ignores, and `restartFrom` replans from rest. `restartFrom` and `reset`
+    clear the staging slot and the pending piece.
 * Files:
   * `lib/planner/planner.*`: horizon replan of the claimed block, staging
-    slot and flag, `commit(t)` check; the header invariants rewritten.
-  * `lib/planner/executor.*`: own profile copy, block clock, published `t`,
-    adoption at tick start. `needsRing` is unchanged: adoption touches only
-    the executor and the staging slot.
-  * `src/rp2350/core0/planner/queue.cpp`, `src/rp2350/core1/emit/follower.cpp`:
-    pass `t` and `dt_max`; barriers on the RP2350.
-  * `test/test_planner`: raise during accel and cruise (position and speed
-    continuous across adoption); raise late in braking (exit capped at what the
-    remaining distance allows, next block entering there); commit refused when
-    `t` passes `t_h − dt_max`, then accepted on retry; no offer once nothing is
-    gained; hold with a staged profile pending; the first move from rest does
-    not stop.
+    slot and flag, the three-case commit check; the header invariants
+    rewritten.
+  * `lib/planner/executor.*`: own profile copy, pending piece, `t_end`, `t`
+    published as a volatile word, `adopt()`. `needsRing` keeps its meaning,
+    reading `t_end`.
+  * `src/rp2350/core0/planner/queue.cpp`: the retry loop covers horizon
+    refusals. `src/rp2350/core1/emit/follower.cpp`: `adopt()` before
+    `needsRing`; barriers on the RP2350.
+  * `test/test_planner`: "claimed block is untouched and pins the next entry"
+    becomes "claimed block's exit rises; the next entry follows" (fails before
+    the fix); raise during accel and cruise (position and speed continuous
+    across the switch); replace a pending piece (case 1); refuse then accept
+    (case 2 → 3); raise late in braking (exit capped by the remaining
+    distance, next block entering there); no offer once nothing is gained;
+    `needsRing` true when an adopted piece ends the block within `dt`; hold
+    with a piece pending; the first move from rest does not stop.
   * Docs: the Decisions bullet "Locking" (the claimed block's profile may be
     replaced through the staging slot), `planner.h` header.
 * Depends on: branch 2. Branch 5 rebases on it.
