@@ -393,30 +393,90 @@ for continuous jog.
 **Plan**
 
 * Type: fix (branch 2 behaviour, lines and Béziers alike).
-* Purpose: the first move from rest no longer stops at its end. Core 1 claims
-  a block the moment it is queued and `claim()` pins its committed exit, 0
-  while nothing follows, so the next push arrives too late. Found on the
-  branch 5 bench: a four-Bézier circle ran ¼, stopped, ran ¾; three
-  collinear 20 mm lines took 0.30 s (one stop, v/a) longer than one 60 mm line.
-* Rule: the running block's exit may still rise until Core 1 reaches its
-  deceleration. Before that point a higher exit leaves the profile unchanged
-  up to `t` (same entry, accel and cruise; decel starts later, a triangle
-  peaks higher), so the executor keeps its clock and reads the new profile.
-  Once decelerating, the block is pinned as today.
+* Purpose: a block pushed while another runs can still raise the running
+  block's exit, so the first move from rest, and a stream that briefly runs
+  dry, no longer stop at a block end.
+* Problem: Core 1 claims a block the moment it is queued, and `claim()` pins
+  its committed exit, 0 while nothing follows. The next push, about 1 ms later,
+  can only plan from rest. Found on the branch 5 bench: a four-Bézier circle
+  ran ¼, stopped, ran ¾; three collinear 20 mm lines took 0.30 s (one stop,
+  v/a) longer than one 60 mm line.
+* Prior art:
+  * Marlin and Klipper never modify a running block; they delay the first
+    move (Marlin `BLOCK_DELAY_FOR_1ST_MOVE`, 100 ms or 3 blocks; Klipper
+    `BUFFER_TIME_START`, 250 ms). A stream that runs dry still stops.
+  * grbl replans the running block: `planner_recalculate` calls
+    `st_update_plan_block_parameters`, which sets its entry to
+    `prep.current_speed` over its remaining millimetres, and `st_prep_buffer`
+    rebuilds the rest of the block from there, up or down. It is safe because
+    that speed is at the prep horizon, the end of the segments already
+    buffered, which the stepper ISR cannot pass. We take this design; the
+    horizon is a time Core 1 is checked not to have reached, since Core 1
+    evaluates the profile directly and has no segment buffer.
+* Design:
+  * Only the running block's profile changes. Its geometry (path, Bézier,
+    length, `s0`) is fixed once pushed, as for every block.
+  * Two profiles. The ring block holds Core 0's latest offer. The executor
+    copies the profile at claim and runs only its copy, so Core 1 never reads
+    a profile Core 0 writes, and ticks stay lock-free between blocks.
+  * One clock per block. `t` counts from the claim and is never reset; a
+    rebuilt profile starts at `t_h` on that clock. Core 1 publishes `t` after
+    each tick (one word, single writer).
+  * Horizon. Core 0 reads `t`, sets `t_h = t + H` and evaluates its latest
+    offer there for `(s_h, v_h)`. Replan treats the rest of the running block
+    as a block of `length − s_h` entering at `v_h²`; the forward pass caps its
+    exit at `v_h² + 2a·(length − s_h)`. `H` (a few ms) only trades retries
+    against how early a raise lands; correctness does not depend on it.
+  * Offer. If the new exit differs from the committed one, Core 0 builds the
+    profile from `(s_h, v_h)` to the new exit, writes it and `t_h` into a
+    staging slot, then sets a flag (barrier between). The rest of the ring
+    commits as today, entering at the new exit.
+  * Commit check, under `plannerLock` (interrupts off, bounded): re-read `t`;
+    accept only if `t + dt_max < t_h`, `dt_max` being the largest step a
+    follower tick can take (1 ms plus deferred slots). Otherwise refuse and
+    retry from a fresh `t` (the existing `replanAndCommit` loop). A slow Core 0
+    replan therefore costs a retry, never a broken promise.
+  * Adoption, at the start of a Core 1 tick: flag set → barrier, copy the
+    staged profile, clear the flag. The check guarantees `t < t_h`, where the
+    new and old profiles agree in position and speed; reaching `t_h` without
+    having adopted is a bug and raises an alarm rather than a speed jump.
+  * Termination. Pushes come only from Core 0's command handler, so none
+    arrive during the retry loop. Each retry moves the horizon on; once the
+    remaining distance cannot use more speed, the new exit equals the
+    committed one, nothing is staged and the commit succeeds. A claim or
+    release meanwhile refuses by epoch, as today.
+  * Hold, resume, abort: a hold brakes from the executor's own state and
+    ignores a staged profile; `restartFrom` and `reset` clear the staging slot.
 * Files:
-  * `lib/planner/planner.cpp` / `planner.h`: `replan()` includes the claimed
-    block, entry fixed; `commit(t)` rewrites it only if `t` is before its
-    committed decel start, otherwise the plan must start from its pinned exit
-    or the commit is refused and retried.
-  * `lib/planner/executor.*`: expose the time into the claimed block. The
-    tick path is unchanged.
-  * `src/rp2350/core0/planner/queue.cpp`: pass it to `commit` under
-    `plannerLock`.
-  * `test/test_planner`: raise during accel (continuity, higher exit); no
-    change once decelerating; hold on a raised block.
+  * `lib/planner/planner.*`: horizon replan of the claimed block, staging
+    slot and flag, `commit(t)` check; the header invariants rewritten.
+  * `lib/planner/executor.*`: own profile copy, block clock, published `t`,
+    adoption at tick start. `needsRing` is unchanged: adoption touches only
+    the executor and the staging slot.
+  * `src/rp2350/core0/planner/queue.cpp`, `src/rp2350/core1/emit/follower.cpp`:
+    pass `t` and `dt_max`; barriers on the RP2350.
+  * `test/test_planner`: raise during accel and cruise (position and speed
+    continuous across adoption); raise late in braking (exit capped at what the
+    remaining distance allows, next block entering there); commit refused when
+    `t` passes `t_h − dt_max`, then accepted on retry; no offer once nothing is
+    gained; hold with a staged profile pending; the first move from rest does
+    not stop.
+  * Docs: the Decisions bullet "Locking" (the claimed block's profile may be
+    replaced through the staging slot), `planner.h` header.
 * Depends on: branch 2. Branch 5 rebases on it.
 * Checks: `pio test -e native`, `pio run -e pico`. Human: three collinear
-  20 mm lines take the time of one 60 mm line; the circle runs without a stop.
+  20 mm lines take the time of one 60 mm line; the four-Bézier circle runs
+  without a stop; lines typed one by one while moving join without a stop when
+  sent before the running one brakes.
+* Bench, after implementing (no separate bench branch: nothing here can
+  change the design; Core 1 gains a flag check and a word write per tick):
+  * Counters in bench builds: offers, adoptions, refused commits, largest
+    tick `dt`.
+  * Rerun the branch 5a harness (`urumi-bench-bezier`, lines, bez-real,
+    bez-dense, batched) against this branch's `lib/planner`: tick max, late
+    slots and commit hold against the 5a numbers.
+  * Sweep `H` (1, 2, 5 ms) on bez-dense and hand-typed lines; choose `H` from
+    the refusal rate.
 
 **Status:** not started.
 
