@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-// Core 0 data plane — binary MicroSegment / jog packet ingest.
+// Core 0 data plane — binary MicroSegment / jog / BEZIER packet ingest.
 // Framing and duplicate-guard semantics: docs/wire_protocol.md.
 
 // Try to consume one USB byte as data-plane (binary) input. Returns true if the

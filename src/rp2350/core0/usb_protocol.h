@@ -21,15 +21,30 @@
 
 #define MSEG_MAGIC       0xAB   // host production  — pre-computed step events
 #define JOG_MAGIC        0xAE   // host-driven jog burst (same 26-byte layout as MSEG)
-#define TILE_MAGIC       0xAD   // local production — SplineTile geometry packets
 #define TOOL_MAGIC       0xAC   // local production — ToolConfig packets
 #define MSEG_PACKET_SIZE 26     // magic(1) + MicroSegment(24) + CRC8(1)
+#define MSEG_SEQ_OFFSET  22
 
-// Inter-byte timeout for a half-received fixed-26 packet. A whole packet
-// arrives in microseconds over USB CDC, so a gap this long means the host
-// died or desynced mid-frame — orders of magnitude below CFG_RX_TIMEOUT_MS,
-// which covers a multi-kilobyte transfer.
-#define FIXED26_RX_TIMEOUT_MS 50u
+// BEZIER record (56 bytes, little-endian, floats in machine mm):
+//   [0]      magic = 0xAD
+//   [1]      flags  BEZIER_FLAG_*
+//   [2]      seq
+//   [3..34]  p0-p3 (x, y each)
+//   [35..46] length, kappa_max, dkappa_max
+//   [47..54] c2, c3 (t(s) coefficients; c1 is derived)
+//   [55]     CRC8 over bytes [0..54]
+#define BEZIER_MAGIC       0xAD
+#define BEZIER_PACKET_SIZE 56
+#define BEZIER_SEQ_OFFSET  2
+#define BEZIER_FLAG_START  0x01   // opens a contour; travel to p0 if elsewhere
+#define BEZIER_FLAG_BREAK  0x02   // corner or cusp before this piece
+#define BEZIER_FLAG_END    0x04   // closes the contour
+
+// Inter-byte timeout for a half-received MSEG/jog/BEZIER packet. A whole
+// packet arrives in microseconds over USB CDC, so a gap this long means the
+// host died or desynced mid-frame — orders of magnitude below
+// CFG_RX_TIMEOUT_MS, which covers a multi-kilobyte transfer.
+#define PACKET_RX_TIMEOUT_MS 50u
 
 // ACK/NACK responses (Pico → Host, 3 bytes each):
 //   ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
@@ -133,3 +148,5 @@
 // into a deceleration and ramping back up from an arbitrary velocity, at which
 // point abort stops meaning anything definite.
 #define MSEG_NACK_ABORTING  0x07
+// A BEZIER record failed checkBezier, or broke contour framing or the chain.
+#define MSEG_NACK_BAD_CURVE 0x08

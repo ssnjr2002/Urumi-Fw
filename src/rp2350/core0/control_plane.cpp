@@ -51,6 +51,7 @@ static const Cmd kCommands[] = {
     { "step",         cmdStep        },
     { "line",         cmdLine        },
     { "bez",          cmdBez         },
+    { "feed",         cmdFeed        },
     { "hallscan",     cmdHallScan    },
     { "lin_leg",      cmdLinLeg      },
     { "rot_leg",      cmdRotLeg      },

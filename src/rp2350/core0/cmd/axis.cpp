@@ -503,7 +503,7 @@ static bool parseFloats(const char* args, float* out, int n) {
 }
 
 static void replyQueued(PlannerQueueResult r) {
-    static const char* const kErr[] = {"", "bad_state", "unconfigured", "no_limits", "full", "bad_curve"};
+    static const char* const kErr[] = {"", "bad_state", "unconfigured", "no_limits", "full", "bad_curve", "no_feed"};
     if (r == PQ_OK) Serial.printf("ok %d\n", plannerQueueDepth());
     else Serial.printf("err %s\n", kErr[r]);
 }
@@ -522,6 +522,17 @@ bool cmdBez(const char* args) {
     float v[7];
     if (!parseFloats(args, v, 7)) { Serial.println("err usage"); return true; }
     replyQueued(plannerQueueBezier(v[0], v[1], v[2], v[3], v[4], v[5], v[6]));
+    return true;
+}
+
+// ── feed <cut> <travel> — feeds for streamed BEZIER records (testing) ────────
+// mm/s, held until reboot. Records are refused until this is sent; the TOOL
+// record replaces it.
+bool cmdFeed(const char* args) {
+    float v[2];
+    if (!parseFloats(args, v, 2) || !(v[0] > 0)) { Serial.println("err usage"); return true; }
+    plannerSetFeed(v[0], v[1]);
+    Serial.println("ok");
     return true;
 }
 

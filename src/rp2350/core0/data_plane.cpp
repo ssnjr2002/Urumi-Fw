@@ -1,15 +1,13 @@
 // Core 0 data plane: binary ingest for the USB CDC stream.
 //
-// One byte-dispatcher (dataPlaneConsume) serves three receivers, selected by the
+// One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_FIXED26 — MSEG (0xAB) / jog (0xAE), a fixed 26-byte packet
+//   RX_PACKET  — MSEG (0xAB) / jog (0xAE), 26 bytes; BEZIER (0xAD), 56 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
 //
-// Fixed-26 packet layout (MSEG_PACKET_SIZE = 26 bytes):
-//   [0]      magic  0xAB (MSEG) / 0xAE (JOG)
-//   [1..24]  MicroSegment (24 bytes, little-endian; byte [22] = rolling seq)
-//   [25]     CRC8 over bytes [0..24]
+// Packet layouts: usb_protocol.h. Every packet is magic first, CRC8 last over
+// the rest, with a rolling seq byte at a per-magic offset.
 //
 // CFG_SET transfer layout (after the 0xB0 magic):
 //   [0..3]   length  uint32 LE  (1..CFG_MAX_BYTES)
@@ -25,18 +23,21 @@
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "ops/position.h"          // axisNode
+#include "planner/queue.h"
+#include <planner/bezier.h>
 
 // ─── Receiver dispatch ────────────────────────────────────────────────────────
 
-enum RxKind : uint8_t { RX_NONE, RX_FIXED26, RX_CFG };
+enum RxKind : uint8_t { RX_NONE, RX_PACKET, RX_CFG };
 static RxKind rxKind = RX_NONE;
 
-// ─── Fixed-26 (MSEG / jog) state ──────────────────────────────────────────────
+// ─── Packet (MSEG / jog / BEZIER) state ───────────────────────────────────────
 
-static uint8_t  pktBuf[MSEG_PACKET_SIZE];
+static uint8_t  pktBuf[BEZIER_PACKET_SIZE];   // the largest packet
 static uint8_t  pktIdx      = 0;
-static uint32_t pktLastMs   = 0;   // millis() of last fixed-26 byte — inter-byte timeout
-static uint8_t  expectedSeq = 0;   // next wire seq (pktBuf[22]) we will execute;
+static uint8_t  pktSize     = 0;   // set from the magic by the dispatcher
+static uint32_t pktLastMs   = 0;   // millis() of last packet byte — inter-byte timeout
+static uint8_t  expectedSeq = 0;   // next wire seq we will execute;
                                    // also the cumulative ACK value (see sendAck)
 static uint8_t  pendingAcks = 0;   // accepted packets not yet confirmed on the wire
 
@@ -94,20 +95,23 @@ static void sendCfgRdy()           { Serial.write(CFG_RDY); }   // header ok —
 static void sendCfgAck()           { Serial.write(CFG_ACK); }   // committed
 static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
-// ─── Fixed-26 packet state machine ────────────────────────────────────────────
-// Receives bytes [1..25]; byte [0] (magic) was stored by the dispatcher.
+static void acceptMseg();
+static void acceptBezier();
 
-static void feedFixed26(uint8_t b) {
+// ─── Packet state machine ─────────────────────────────────────────────────────
+// Receives bytes [1..pktSize-1]; byte [0] (magic) was stored by the dispatcher.
+
+static void feedPacket(uint8_t b) {
     pktBuf[pktIdx++] = b;
     pktLastMs = millis();
 
-    if (pktIdx < MSEG_PACKET_SIZE) return;      // still accumulating
+    if (pktIdx < pktSize) return;               // still accumulating
 
     rxKind = RX_NONE;                           // packet complete (any outcome)
     pktIdx = 0;
 
-    uint8_t expected = crc8(pktBuf, MSEG_PACKET_SIZE - 1);
-    if (pktBuf[MSEG_PACKET_SIZE - 1] != expected) {
+    uint8_t expected = crc8(pktBuf, pktSize - 1);
+    if (pktBuf[pktSize - 1] != expected) {
         sendNack(MSEG_NACK_CRC);
         return;
     }
@@ -116,6 +120,7 @@ static void feedFixed26(uint8_t b) {
     // the stream type; we record it as the streamIsJog intent so Core 1 sets
     // runningReason together with the RUNNING transition it owns.
     //   MSEG job stream — IDLE/RUNNING; NACK_PAUSED while paused, else bad_state.
+    //   BEZIER records  — the same; the planner's admit narrows RUNNING to its own.
     //   JOG burst       — IDLE/PAUSED, or RUNNING if the in-progress burst is
     //                     itself a jog (packet 2+ of the same multi-packet burst
     //                     arrives after Core 1 has already flipped the state to
@@ -131,10 +136,10 @@ static void feedFixed26(uint8_t b) {
     }
 
     uint8_t st = machineState;
-    if (pktBuf[0] == MSEG_MAGIC) {
+    if (pktBuf[0] == MSEG_MAGIC || pktBuf[0] == BEZIER_MAGIC) {
         if (st == STATE_PAUSED)                      { sendNack(MSEG_NACK_PAUSED);    return; }
         if (st != STATE_IDLE && st != STATE_RUNNING) { sendNack(MSEG_NACK_BAD_STATE); return; }
-        streamIsJog = false;
+        if (pktBuf[0] == MSEG_MAGIC) streamIsJog = false;
     } else { // JOG_MAGIC
         bool continuingJog = (st == STATE_RUNNING && runningReason == RUNNING_JOG);
         if (st != STATE_IDLE && st != STATE_PAUSED && !continuingJog) {
@@ -143,17 +148,23 @@ static void feedFixed26(uint8_t b) {
         streamIsJog = true;
     }
 
-    // Duplicate guard: byte [22] carries the host's rolling 8-bit seq. After a
+    // Duplicate guard: the seq byte carries the host's rolling 8-bit seq. After a
     // NACK the host rewinds (Go-Back-N) and may resend packets we already
     // accepted; executing them again would duplicate motion — a permanent
     // position offset. A seq we are not expecting is a stale retransmit: ACK it
     // (so the host's window advances) but do not execute. The host resets this
     // counter with the "seqreset" text command before each stream.
-    if (pktBuf[22] != expectedSeq) {
+    const uint8_t seqAt = pktBuf[0] == BEZIER_MAGIC ? BEZIER_SEQ_OFFSET : MSEG_SEQ_OFFSET;
+    if (pktBuf[seqAt] != expectedSeq) {
         flushAck();     // immediate: this duplicate ACK is the host's resync signal
         return;
     }
 
+    if (pktBuf[0] == BEZIER_MAGIC) acceptBezier();
+    else acceptMseg();
+}
+
+static void acceptMseg() {
     // Check buffer space
     uint16_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
     if (next == mBufHead) {
@@ -186,6 +197,32 @@ static void feedFixed26(uint8_t b) {
     __dmb();
     mBufTail = next;
 
+    expectedSeq++;
+    markAck();
+}
+
+static void acceptBezier() {
+    if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
+
+    planner::Bezier bz;
+    const uint8_t* p = &pktBuf[3];
+    for (int i = 0; i < 4; i++) {
+        memcpy(&bz.p[i].x, p, 4); p += 4;
+        memcpy(&bz.p[i].y, p, 4); p += 4;
+    }
+    memcpy(&bz.length,     p, 4); p += 4;
+    memcpy(&bz.kappa_max,  p, 4); p += 4;
+    memcpy(&bz.dkappa_max, p, 4); p += 4;
+    memcpy(&bz.ts[1],      p, 4); p += 4;
+    memcpy(&bz.ts[2],      p, 4);
+
+    const uint8_t flags = pktBuf[1];
+    switch (plannerQueueRecord(bz, flags & BEZIER_FLAG_START, flags & BEZIER_FLAG_END)) {
+        case PQ_OK:        break;
+        case PQ_FULL:      sendNack(MSEG_NACK_FULL);      return;
+        case PQ_BAD_CURVE: sendNack(MSEG_NACK_BAD_CURVE); return;
+        default:           sendNack(MSEG_NACK_BAD_STATE); return;   // state, config, limits, feed
+    }
     expectedSeq++;
     markAck();
 }
@@ -272,17 +309,18 @@ static void handleCfgGet() {
 
 bool dataPlaneConsume(uint8_t b) {
     switch (rxKind) {
-        case RX_FIXED26: feedFixed26(b); return true;
+        case RX_PACKET:  feedPacket(b);  return true;
         case RX_CFG:     feedCfg(b);     return true;
         case RX_NONE:    break;
     }
 
     // Idle — dispatch on the leading magic byte.
-    if (b == MSEG_MAGIC || b == JOG_MAGIC) {
+    if (b == MSEG_MAGIC || b == JOG_MAGIC || b == BEZIER_MAGIC) {
         pktBuf[0] = b;                          // remember stream type for the state gate
         pktIdx    = 1;
+        pktSize   = b == BEZIER_MAGIC ? BEZIER_PACKET_SIZE : MSEG_PACKET_SIZE;
         pktLastMs = millis();
-        rxKind    = RX_FIXED26;
+        rxKind    = RX_PACKET;
         return true;
     }
     if (b == CFG_SET_MAGIC) {
@@ -301,6 +339,7 @@ bool dataPlaneConsume(uint8_t b) {
         // arrives on the status plane as the state settles to IDLE.
         abortRequested = true;
         __dmb();
+        plannerEndContour();
         return true;
     }
     if (b == SEQRESET_MAGIC) {                   // synchronous — no receive state
@@ -329,7 +368,7 @@ void dataPlaneTick() {
     // whatever arrives next would be consumed as packet body and then fail CRC.
     // Drop it silently — the host is not waiting on a reply for a frame it never
     // finished sending, and its own ACK timeout will retransmit.
-    if (rxKind == RX_FIXED26 && (millis() - pktLastMs) > FIXED26_RX_TIMEOUT_MS) {
+    if (rxKind == RX_PACKET && (millis() - pktLastMs) > PACKET_RX_TIMEOUT_MS) {
         rxKind = RX_NONE;
         pktIdx = 0;
     }
@@ -342,11 +381,13 @@ void dataPlaneReset() {
     pendingAcks = 0;
     cfgHdrIdx   = 0;
     cfgRxCnt    = 0;
+    plannerEndContour();
 }
 
 void dataPlaneResetSeq() {
     expectedSeq = 0;
     pendingAcks = 0;    // any deferred ACK names the pre-reset numbering
+    plannerEndContour();
 }
 
 uint8_t dataPlaneExpectedSeq() {
