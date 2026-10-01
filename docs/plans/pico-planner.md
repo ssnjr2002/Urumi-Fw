@@ -804,6 +804,22 @@ Decisions:
 
 **Outcome:**
 
+* `fitTol` defaults to 1e-3 (in t); the plan left it open.
+* `fixStops` runs on every piece end slower than the Pico's stop
+  threshold, not only at split cusps: clean fixes handles under 1e-4 mm,
+  but the Pico also refuses one shorter than about length/3000. A handle
+  with a direction is lengthened along it (tangent kept); one under
+  1e-4 mm uses clean's 1/3 rule.
+* A κ-ratio split goes where κ crosses √(κ_max·max(κ_min, floor)); half
+  when it never does.
+* Flags are bits, `BezierFlag = { START: 1, BREAK: 2, END: 4 }`; 6b maps
+  them to the wire.
+* For 6b: a line with both handles bunched at one end (`0.1`, `0.3` of
+  100 mm) is `NonMonotonic`; annotate halves it, but the Pico refuses it
+  raw.
+* `fish.svg` through load, clean, annotate: 79 curves → 210 pieces, 13
+  `BREAK`; fit error ≤ 9.7e-4, κ ratio ≤ 1.97, nothing at the depth limit.
+
 ## Later (not planned here)
 
 * Z and A, blade offset, tool profiles (swivel band, overcut), duty breaks
