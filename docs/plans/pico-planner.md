@@ -692,9 +692,23 @@ Decisions:
 * Depends on: branch 5.
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
-**Status:** not started.
+**Status:** ready to merge.
 
 **Outcome:**
+
+* Entry point `loadSvgPaths(svgText, { zTol })` →
+  `{ layers: Map<string, Subpath[]>, viewport }`,
+  `Subpath = { curves, closed }`; 6-clean takes this. Not exported from
+  `web/src/index.ts` (it would clash with `ingest`'s `loadSvg`); 6c adds it.
+* Malformed path data (unknown command, missing number, numbers before a
+  command) throws and rejects the file; the SVG spec draws up to the error,
+  but a partial cut is worse than none.
+* Rounded rect corners are arcs (`arcToCubics`). Arc error bound is
+  3e-4·r: a 90° cubic strays up to 2.7e-4·r.
+* `fish.svg`: same layer and 7 subpaths as `ingest`, all closed; two `Z`
+  lines under 1e-6 mm are dropped (subpaths 2 and 6).
+* Out of scope: `load.ts` uses the global `DOMParser`, not `ingest`'s
+  `setDOMParser`; Node use outside the tests needs a polyfill.
 
 ## Branch 6-clean: `feature/host-bezier-clean`
 
