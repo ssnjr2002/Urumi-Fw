@@ -916,6 +916,42 @@ Decisions:
   build-checked only; a bench run (`feed`, `seqreset`, a streamed contour)
   is still to do.
 
+## Branch 6c: `feature/host-bezier-job`
+
+* Type: feature (web, plus a native test).
+* Purpose: an SVG layer becomes a stream of `BEZIER` packets, run from the
+  barebones demo.
+* `web/src/toolpath/job.ts`, pure:
+  `prepareBezierJob(svgText, layer, { offset, quality })` →
+  `{ pieces, packets, bbox }` or an error (no such layer, nothing left).
+  * `loadSvgPaths` → the layer's subpaths, translated by the X/Y offset (mm,
+    machine coordinates; the drawing's origin lands on the offset) →
+    `cleanSubpath` with `angleTol`, `gapTol` from `QualityConfig`
+    (`web/src/machine/schema.ts:634-635`) → `annotate` (defaults; its options
+    stay out of `QualityConfig`) → `packBezier`.
+  * Contours in document order.
+  * `bbox` is reported, not checked: no soft limits exist yet
+    (`ALARM_SOFT_LIMIT` reserved, `src/rp2350/ipc/shared_state.h:147`).
+* `web/src/index.ts` exports `loadSvgPaths`, `cleanSubpath`, `annotate`,
+  `packBezier`, `prepareBezierJob`.
+* Demo, `web/demo/barebones.html` / `.js`, a Job section: SVG file, layer
+  picker, cut and travel feeds prefilled from `machine.path` /
+  `machine.rapid`, X/Y offset; Prepare logs pieces, `BREAK`s and the bbox;
+  Run sends `feed <cut> <travel>` then `link.stream`
+  (`web/src/wire/link/link.ts:296`) and logs the `StreamResult`; Abort calls
+  `link.abort()` (`link.ts:197`).
+* Host-to-Pico cross-check (deferred from 6b): a web script packs the
+  `fish.svg` pieces into a generated C header under `test/test_planner/`;
+  a native test runs `checkBezier` on every record and expects none refused.
+* Tests, `web/test/toolpath/job.test.ts`, inline SVG, one case per rule:
+  offset moves the bbox; missing layer; flags framed per subpath; packets
+  match the pieces.
+* Depends on: 6b.
+* Checks: `pnpm typecheck` and `pnpm test` in `web/`, `pio test -e native`.
+* Human scope: the 6b bench run, through this demo.
+
+**Status:** planned.
+
 ## Later (not planned here)
 
 * Z and A, blade offset, tool profiles (swivel band, overcut), duty breaks
@@ -931,3 +967,6 @@ Decisions:
   tangential knife stops, rotates A (lifting for a large angle) and
   plunges; a pen, laser or router takes the join at junction speed. The
   tool profiles decide; the flags only mark the geometry.
+* A host bounding-box check against `maxTravel`, decided with the Pico's
+  soft limits (which also cover jog and travel).
+* Contour ordering on the host (6c streams in document order).
