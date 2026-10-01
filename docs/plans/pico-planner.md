@@ -1001,8 +1001,24 @@ analysis in doubles but fail `checkBezier` (`lib/planner/bezier.cpp:137`) as
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 * Human scope: the 6b bench run, through this demo.
 
-**Status:** paused for 6-fix; `job.ts`, its tests and the exports written,
-uncommitted, in `../urumi-host-bezier-job`.
+**Status:** ready to merge.
+
+**Outcome:**
+
+* `prepareBezierJob` returns `{ contours, packets, bbox }`: pieces per
+  contour, not a flat `pieces`.
+* Abort in the demo truncates the session before `link.abort()`: on its
+  own the session waits out `NACK_ABORTING` and resends from base, which
+  restarts the job. Abort stays enabled while connected, since a stream
+  ends once its packets are in the ring, long before the motion does.
+* The simulator answers `feed` with `err unknown`; it was not taught the
+  command in 6b.
+* Bench (human scope, done): fish.svg, test_rect.svg and test_circle.svg
+  cut through the demo with clean motion; `feed`, contour framing and
+  travel work on the Pico. Abort not yet tried mid-motion.
+* Out of scope: the fish stream sent 6,318 packets for 171: on
+  `NACK_FULL` the session resends its whole window every 50 ms until the
+  ring drains. Pacing sends by ring space goes in Later.
 
 ## Later (not planned here)
 
@@ -1022,3 +1038,5 @@ uncommitted, in `../urumi-host-bezier-job`.
 * A host bounding-box check against `maxTravel`, decided with the Pico's
   soft limits (which also cover jog and travel).
 * Contour ordering on the host (6c streams in document order).
+* Stream pacing: send by free ring space (status or credits) instead of
+  resending the window on `NACK_FULL`.
