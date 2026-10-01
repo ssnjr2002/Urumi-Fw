@@ -680,10 +680,13 @@ Decisions:
 * Reuses `cubic`, `lineToCubic`, `quadToCubic`, `KAPPA` and the vector
   helpers. Units and viewport-to-matrix are `load.ts`'s own (~40 lines);
   `ingest.ts` keeps its copy until it is retired.
-* Tests in `web/test/svg/load.test.ts`: translated, rotated and nested
-  transforms; `<defs>` skipped; arcs (endpoints, radius, packed flags); `T`;
-  `Z` near the start; parity with `loadSvgMmLayers` on the fixtures that
-  have none of these.
+* Tests: one case per rule, table-driven, inline SVG, no new fixture files,
+  no parity with `ingest.ts` (it is known wrong and retires).
+  * `web/test/toolpath/geometry.test.ts` (+3): `Affine`; `arcToCubics`
+    geometry (endpoints, pieces ≤ 90°, radial error); its edge cases.
+  * `web/test/svg/load.test.ts` (~10): path grammar, reflection (`S`, `T`),
+    `Z` and `closed`, shapes, paint, viewport, transforms, walk, layers, an
+    arc under skew.
 * Not in: `preserveAspectRatio`, `<use>`, `%` sizes, comma `viewBox`,
   `display`/`visibility` (follow-ups).
 * Depends on: branch 5.
