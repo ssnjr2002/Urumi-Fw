@@ -210,3 +210,47 @@ TEST_CASE("bezier: a hold inside the arc stops on the curve within v²/2a, and r
     }
     CHECK(dist(tr.e.position(), {70, 80}) < 1e-4f);
 }
+
+// What the host sends: the analysis without c1 and the end curvatures.
+static Bezier hostRecord(const Bezier& a) {
+    Bezier r;
+    for (int i = 0; i < 4; i++) r.p[i] = a.p[i];
+    r.length = a.length;
+    r.kappa_max = a.kappa_max;
+    r.dkappa_max = a.dkappa_max;
+    r.ts[1] = a.ts[1];
+    r.ts[2] = a.ts[2];
+    return r;
+}
+
+TEST_CASE("bezier: a host-analysed curve is accepted, and c1 and the end curvatures derived") {
+    Bezier s;
+    REQUIRE(analyzeBezier({0, 0}, {20, 40}, {40, 40}, {60, 0}, s) == BezierError::None);
+    for (const Bezier& a : {quarter({10, -3}, 30, 0.4f), s}) {
+        Bezier r = hostRecord(a);
+        REQUIRE(checkBezier(r) == BezierError::None);
+        CHECK(r.ts[0] == doctest::Approx(a.ts[0]).epsilon(1e-5));
+        CHECK(r.kappa_start == doctest::Approx(a.kappa_start).epsilon(1e-5));
+        CHECK(r.kappa_end == doctest::Approx(a.kappa_end).epsilon(1e-5));
+    }
+}
+
+TEST_CASE("bezier: host numbers that disagree with the control points are refused") {
+    const Bezier a = quarter({0, 0}, 30, 0);
+    struct Case { const char* name; void (*bad)(Bezier&); BezierError err; };
+    const Case cases[] = {
+        {"handle on its end", [](Bezier& r) { r.p[1] = r.p[0]; }, BezierError::DegenerateHandle},
+        {"shorter than the chord", [](Bezier& r) { r.length = 30; }, BezierError::Inconsistent},
+        {"longer than the polygon", [](Bezier& r) { r.length = 100; }, BezierError::Inconsistent},
+        {"not a number", [](Bezier& r) { r.length = NAN; }, BezierError::Inconsistent},
+        {"negative dkappa", [](Bezier& r) { r.dkappa_max = -1; }, BezierError::Inconsistent},
+        {"kappa_max below an end", [](Bezier& r) { r.kappa_max = 0.5f / 30; }, BezierError::Inconsistent},
+        {"fit runs backwards", [](Bezier& r) { r.ts[1] = 3 / (r.length * r.length); }, BezierError::NonMonotonic},
+    };
+    for (const Case& c : cases) {
+        CAPTURE(c.name);
+        Bezier r = hostRecord(a);
+        c.bad(r);
+        CHECK(checkBezier(r) == c.err);
+    }
+}

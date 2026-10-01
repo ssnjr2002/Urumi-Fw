@@ -26,6 +26,19 @@ float curvature(const Bezier& b, float t) {
     return (d.x * dd.y - d.y * dd.x) / (n * n * n);
 }
 
+constexpr float kHandleEps = 1e-4f;   // mm
+
+// t(u) = u + d2·(u² − u) + d3·(u³ − u): dt/du = 1 + d2·(2u − 1) + d3·(3u² − 1)
+// must stay positive on [0, 1].
+bool monotonic(float d2, float d3) {
+    float slope_min = fminf(1 - d2 - d3, 1 + d2 + 2 * d3);
+    if (d3 != 0) {
+        const float uv = -d2 / (3 * d3);
+        if (uv > 0 && uv < 1) slope_min = fminf(slope_min, 1 + d2 * (2 * uv - 1) + d3 * (3 * uv * uv - 1));
+    }
+    return slope_min > 0;
+}
+
 }  // namespace
 
 PLANNER_RAM Vec2 bezierPoint(const Bezier& b, float t) {
@@ -56,8 +69,7 @@ BezierError analyzeBezier(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Bezier& out,
     b.p[1] = p1;
     b.p[2] = p2;
     b.p[3] = p3;
-    const float kEps = 1e-4f;   // mm
-    if (norm(sub(p1, p0)) < kEps || norm(sub(p3, p2)) < kEps) return BezierError::DegenerateHandle;
+    if (norm(sub(p1, p0)) < kHandleEps || norm(sub(p3, p2)) < kHandleEps) return BezierError::DegenerateHandle;
 
     // Cumulative arc length at t_i = i/kN.
     static const float gx[3] = {-0.7745966692f, 0, 0.7745966692f};
@@ -106,13 +118,7 @@ BezierError analyzeBezier(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Bezier& out,
     const float d2 = det != 0 ? (r2 * a33 - r3 * a23) / det : 0;
     const float d3 = det != 0 ? (a22 * r3 - a23 * r2) / det : 0;
 
-    // dt/du = 1 + d2·(2u − 1) + d3·(3u² − 1) must stay positive on [0, 1].
-    float slope_min = fminf(1 - d2 - d3, 1 + d2 + 2 * d3);
-    if (d3 != 0) {
-        const float uv = -d2 / (3 * d3);
-        if (uv > 0 && uv < 1) slope_min = fminf(slope_min, 1 + d2 * (2 * uv - 1) + d3 * (3 * uv * uv - 1));
-    }
-    if (!(slope_min > 0)) return BezierError::NonMonotonic;
+    if (!monotonic(d2, d3)) return BezierError::NonMonotonic;
 
     const float L = b.length;
     b.ts[0] = (1 - d2 - d3) / L;
@@ -125,6 +131,31 @@ BezierError analyzeBezier(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Bezier& out,
         *fit_error = e;
     }
     out = b;
+    return BezierError::None;
+}
+
+BezierError checkBezier(Bezier& b) {
+    const Vec2* p = b.p;
+    if (norm(sub(p[1], p[0])) < kHandleEps || norm(sub(p[3], p[2])) < kHandleEps)
+        return BezierError::DegenerateHandle;
+
+    // Float slack for host doubles rounded to the wire's floats.
+    constexpr float kRel = 1e-4f;
+    const float L = b.length;
+    const float chord = norm(sub(p[3], p[0]));
+    const float polygon = norm(sub(p[1], p[0])) + norm(sub(p[2], p[1])) + norm(sub(p[3], p[2]));
+    // Written so a NaN anywhere fails.
+    if (!(L >= chord * (1 - kRel) && L <= polygon * (1 + kRel))) return BezierError::Inconsistent;
+    if (!(b.dkappa_max >= 0)) return BezierError::Inconsistent;
+
+    const float d2 = b.ts[1] * L * L, d3 = b.ts[2] * L * L * L;
+    if (!monotonic(d2, d3)) return BezierError::NonMonotonic;
+    b.ts[0] = (1 - d2 - d3) / L;
+
+    b.kappa_start = curvature(b, 0);
+    b.kappa_end = curvature(b, 1);
+    const float k_end = fmaxf(fabsf(b.kappa_start), fabsf(b.kappa_end));
+    if (!(b.kappa_max >= k_end * (1 - kRel))) return BezierError::Inconsistent;
     return BezierError::None;
 }
 

@@ -33,6 +33,7 @@ enum class BezierError {
     DegenerateHandle,   // p1 on p0 or p2 on p3: no end tangent
     Cusp,               // the curve stops somewhere inside
     NonMonotonic,       // the t(s) fit runs backwards
+    Inconsistent,       // host numbers that cannot belong to these control points
 };
 
 /**
@@ -41,6 +42,13 @@ enum class BezierError {
  */
 BezierError analyzeBezier(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Bezier& out,
                           float* fit_error = nullptr);
+
+/**
+ * Accept a curve the host analysed: `b` holds p, length, kappa_max,
+ * dkappa_max, ts[1] and ts[2]. Derives ts[0] and the end curvatures, and
+ * checks the rest against the control points cheaply instead of analysing.
+ */
+BezierError checkBezier(Bezier& b);
 
 float bezierT(const Bezier& b, float s);        // clamped to [0, 1]
 Vec2 bezierPoint(const Bezier& b, float t);
