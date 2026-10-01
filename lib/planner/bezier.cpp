@@ -19,11 +19,18 @@ Vec2 deriv2(const Vec2* p, float t) {
             6 * (u * (p[2].y - 2 * p[1].y + p[0].y) + t * (p[3].y - 2 * p[2].y + p[1].y))};
 }
 
-float curvature(const Bezier& b, float t) {
-    const Vec2 d = bezierDeriv(b, t);
-    const Vec2 dd = deriv2(b.p, t);
+float curvature(Vec2 d, Vec2 dd) {
     const float n = norm(d);
     return (d.x * dd.y - d.y * dd.x) / (n * n * n);
+}
+
+float curvature(const Bezier& b, float t) { return curvature(bezierDeriv(b, t), deriv2(b.p, t)); }
+
+// How far κ = d × dd / |d|³ can move when every control point moves by up to
+// delta: d moves by up to 6·delta, dd by up to 24·delta.
+float curvatureSlack(Vec2 d, Vec2 dd, float k, float delta) {
+    const float n = norm(d);
+    return delta * (24 * n + 6 * norm(dd)) / (n * n * n) + 18 * fabsf(k) * delta / n;
 }
 
 constexpr float kHandleEps = 1e-4f;   // mm
@@ -139,23 +146,38 @@ BezierError checkBezier(Bezier& b) {
     if (norm(sub(p[1], p[0])) < kHandleEps || norm(sub(p[3], p[2])) < kHandleEps)
         return BezierError::DegenerateHandle;
 
-    // Float slack for host doubles rounded to the wire's floats.
+    // Slack for host doubles rounded to the wire's floats: relative for the
+    // scalars, and delta (four float steps of the largest coordinate) for
+    // anything derived from the points.
     constexpr float kRel = 1e-4f;
+    float extent = 1;
+    for (int i = 0; i < 4; i++) extent = fmaxf(extent, fmaxf(fabsf(p[i].x), fabsf(p[i].y)));
+    const float delta = extent * 2.4e-7f;
+
     const float L = b.length;
     const float chord = norm(sub(p[3], p[0]));
     const float polygon = norm(sub(p[1], p[0])) + norm(sub(p[2], p[1])) + norm(sub(p[3], p[2]));
     // Written so a NaN anywhere fails.
-    if (!(L >= chord * (1 - kRel) && L <= polygon * (1 + kRel))) return BezierError::Inconsistent;
+    if (!(L >= chord * (1 - kRel) - 3 * delta && L <= polygon * (1 + kRel) + 9 * delta))
+        return BezierError::Inconsistent;
     if (!(b.dkappa_max >= 0)) return BezierError::Inconsistent;
 
     const float d2 = b.ts[1] * L * L, d3 = b.ts[2] * L * L * L;
     if (!monotonic(d2, d3)) return BezierError::NonMonotonic;
     b.ts[0] = (1 - d2 - d3) / L;
 
-    b.kappa_start = curvature(b, 0);
-    b.kappa_end = curvature(b, 1);
-    const float k_end = fmaxf(fabsf(b.kappa_start), fabsf(b.kappa_end));
-    if (!(b.kappa_max >= k_end * (1 - kRel))) return BezierError::Inconsistent;
+    // A kappa_max short of an end by no more than the slack is raised to it,
+    // so the planner never runs below the curvature it derives.
+    const Vec2 ends[2][2] = {{bezierDeriv(b, 0), deriv2(p, 0)}, {bezierDeriv(b, 1), deriv2(p, 1)}};
+    float* const k_ends[2] = {&b.kappa_start, &b.kappa_end};
+    for (int i = 0; i < 2; i++) {
+        const float k = curvature(ends[i][0], ends[i][1]);
+        const float k_abs = fabsf(k);
+        *k_ends[i] = k;
+        if (!(b.kappa_max >= k_abs * (1 - kRel) - curvatureSlack(ends[i][0], ends[i][1], k, delta)))
+            return BezierError::Inconsistent;
+        b.kappa_max = fmaxf(b.kappa_max, k_abs);
+    }
     return BezierError::None;
 }
 

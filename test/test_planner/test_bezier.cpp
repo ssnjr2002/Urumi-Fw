@@ -239,6 +239,16 @@ TEST_CASE("bezier: a host-analysed curve is accepted, and c1 and the end curvatu
     }
 }
 
+TEST_CASE("bezier: a kappa_max just short of an end is raised to it") {
+    Bezier r = hostRecord(quarter({150, 150}, 0.5f, 0));
+    REQUIRE(checkBezier(r) == BezierError::None);
+    const float k_end = fmaxf(fabsf(r.kappa_start), fabsf(r.kappa_end));
+    r = hostRecord(r);
+    r.kappa_max = k_end * 0.9995f;   // past the relative slack, within the float slack
+    REQUIRE(checkBezier(r) == BezierError::None);
+    CHECK(r.kappa_max == k_end);
+}
+
 TEST_CASE("bezier: host numbers that disagree with the control points are refused") {
     const Bezier a = quarter({0, 0}, 30, 0);
     struct Case { const char* name; void (*bad)(Bezier&); BezierError err; };
