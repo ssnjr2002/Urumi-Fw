@@ -720,9 +720,14 @@ Decisions:
   * moves a degenerate handle (p1 on p0, p2 on p3) a third of the way to the
     next distinct control point, so every curve has defined end tangents
     (`lib/planner/bezier.cpp` refuses them);
-  * snaps gaps under `gapTol` shut; splits the subpath at a larger gap (the
-    Pico travels across it).
-* Tests in `web/test/toolpath/clean.test.ts`, reusing `repair.cases.ts`.
+  * snaps the closure: a closed subpath ending within `gapTol` of its start
+    ends on it exactly; an open one that does is snapped and marked closed.
+    (6-load's subpaths have no gaps between curves; gaps between subpaths
+    are contour joining, not cleaning.)
+* Options `angleTol` (5°), `gapTol` (0.01 mm), `handleTol` (1e-4 mm, as
+  `bezier.cpp:59`) default in clean.ts; 6c wires them to the config.
+* Tests in `web/test/toolpath/clean.test.ts`, inline tables (not
+  `repair.cases.ts`, which retires with `repair`).
 * Depends on: 6-load (its output is the input).
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
