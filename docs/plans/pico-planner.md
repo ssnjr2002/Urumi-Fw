@@ -820,6 +820,66 @@ Decisions:
 * `fish.svg` through load, clean, annotate: 79 curves → 210 pieces, 13
   `BREAK`; fit error ≤ 9.7e-4, κ ratio ≤ 1.97, nothing at the depth limit.
 
+## Branch 6b: `feature/bezier-wire`
+
+* Type: feature (Pico, `lib/planner`, web wire).
+* Purpose: a `BEZIER` record (magic `0xAD`, 56 B, layout in Branch 6's
+  decisions) carries 6a's pieces to the Pico, which checks them cheaply and
+  queues them on the planner ring.
+* Pico receive, `src/rp2350/core0/data_plane.cpp`:
+  * The fixed-26 receiver (`:100`, `RX_FIXED26` at `:31`, `:275`, `:285`,
+    timeout `:332`) becomes size-by-magic: 26 B for MSEG/jog, 56 B for
+    `BEZIER`. The seq byte's offset comes with the size; `expectedSeq`, the
+    duplicate guard and the cumulative ACK are shared.
+  * State gate as for MSEG (paused → `NACK_PAUSED`, aborting →
+    `NACK_ABORTING`), then the planner's own admit
+    (`core0/planner/queue.cpp:26`).
+* Contour framing, a Pico flag "in a contour":
+  * `START` sets it (refused if set); `END` clears it; a record without
+    `START` while it is clear is refused.
+  * Without `START`, p0 must equal the ring's end; with `START` and p0 not
+    at the ring's end, the Pico queues a travel line (`pushLine`) at the
+    travel feed first.
+  * Refusals take a new `MSEG_NACK_BAD_CURVE` (`usb_protocol.h:125-135`),
+    as does a failed check below.
+* Checks instead of `analyzeBezier` (~0.6 ms): derive c1 =
+  (1 − c2·L² − c3·L³)/L and κ_start, κ_end from the control points; refuse
+  a handle under 1e-4 mm, a non-monotonic fit (slope test of
+  `bezier.cpp:111-117` from c2, c3), length outside [chord, control
+  polygon], or κ_max below |κ| at either end. Queued through a
+  `plannerQueueBezier` variant taking a filled `Bezier`
+  (`queue.cpp:67`); `PQ_FULL` → `NACK_FULL`, `PQ_BAD_CURVE` →
+  `NACK_BAD_CURVE`.
+* `BREAK`, `lib/planner`: `pushBezier` (`planner/planner.h:81`) takes a
+  stop flag; the junction before the block gets speed 0 instead of the
+  junction-deviation speed. Native test in `test/test_planner/`.
+* `feed <cut> <travel>` text command (mm/s, held until changed), next to
+  `bezier` (`cmd/axis.cpp:519`). Testing primitive; the `TOOL` record
+  replaces it.
+* Host, `web/src/wire/`:
+  * `format/bezier.ts`: pack an `AnnotatedBezier` (6a flag bits are the wire
+    bits) with CRC8; `MAGIC_BEZIER = 0xad` in `format/constants.ts:10`,
+    retiring SPLINE.
+  * `link/session.ts:395`: `stampSeq` takes the seq offset from the record.
+* dκ_max is carried though nothing reads it yet: it bounds A's angular
+  acceleration (α = dκ/ds·v² + κ·a_t) when the tangential A axis lands.
+* Docs: `docs/wire_protocol.md` (`:45`, SplineTile → `BEZIER`, the new NACK,
+  `feed`).
+* Tests:
+  * native: the `BREAK` stop; the checks accept 6a-shaped curves and refuse
+    each bad case.
+  * web: the packer's layout (one golden record), the seq offset.
+  * Cross-check: the Pico's checks pass on host-annotated curves (the
+    `fish.svg` pieces as a native fixture, or a bench run).
+* Not in 6b: streaming a layer (6c), job framing, `TOOL`.
+* Depends on: 6a.
+* Checks: `pio test -e native`, `pio run -e pico`, `pnpm typecheck` and
+  `pnpm test` in `web/`.
+
+**Status:** not started.
+
+**Outcome:**
+
 ## Later (not planned here)
 
 * Z and A, blade offset, tool profiles (swivel band, overcut), duty breaks
@@ -827,3 +887,7 @@ Decisions:
 * Retire the MicroSegment job path and `lib/motion`, once the Bézier path
   runs jobs on the machine: `svg/ingest.ts`, `repair`, `flatten`, the 26 B
   record and its goldens.
+* Job framing: a job context on the Pico beside `machineState` (like
+  `streamIsJog` / `runningReason`), set by a job header, cleared at job end
+  or abort, rather than a JOB state that would cross with PAUSED/RUNNING.
+  Record `START`/`END` frame contours, not jobs.
