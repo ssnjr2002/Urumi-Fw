@@ -731,9 +731,20 @@ Decisions:
 * Depends on: 6-load (its output is the input).
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
-**Status:** not started.
+**Status:** ready to merge.
 
 **Outcome:**
+
+* Entry point `cleanSubpath(sp, options?)` →
+  `{ curves, joins, closed } | null` (null when nothing is left); 6a takes
+  this. `joins[i]` is between `curves[i]` and the next; a closed subpath's
+  last join wraps to `curves[0]`. Defaults in `DEFAULT_CLEAN_OPTIONS`.
+* Only a handle lying on its own endpoint is fixed: p1 and p2 both on p0
+  moves p1 only, since p2 is still 1/3 of the chord from p3.
+* A closed subpath with a closing gap above `gapTol` gets a closing line;
+  this happens only if the loader's `zTol` is set above `gapTol`.
+* `fish.svg` through load and clean: 7 closed subpaths, nothing dropped, no
+  handles fixed; 14 of 72 joins are corners (fins and tail).
 
 ## Branch 6a: `feature/host-bezier-annotate`
 
