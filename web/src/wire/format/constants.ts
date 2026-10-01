@@ -4,21 +4,22 @@
  * The single source of truth for the magic-byte dispatch table the firmware
  * uses (docs/wire_protocol.md). Each data-plane frame is keyed by its first
  * byte, so the magic constants here are imported by every per-format module
- * (packet, status, tool, spline, cfg) and by the link-layer demux.
+ * (packet, bezier, status, cfg) and by the link-layer demux.
  *
  * Constants for frames the host does not yet emit land in the commits that
- * add their packers; the TOOL (0xAC) and SPLINE (0xAD) packers are
- * deliberately NOT ported — they are declared-but-unimplemented wire surface
- * (docs/comms_architecture.md §4.7) with no consumer on this branch, and a
- * speculative packer that nothing exercises could drift from whatever the
- * spline-streaming branch eventually settles on. Add them when there is a
- * caller.
+ * add their packers; TOOL (0xAC) has none yet.
  */
 
 // ── MicroSegment / Jog — 26-byte packets, shared layout ───────────────────────
 export const MAGIC_MICROSEG = 0xab; // host → Pico: pre-computed step event
 export const MAGIC_JOG = 0xae; // host → Pico: operator jog packet (same 26B layout)
 export const PACKET_SIZE = 26;
+export const MSEG_SEQ_OFFSET = 22;
+
+// ── BEZIER — 56-byte record, one annotated cubic (format/bezier.ts) ────────────
+export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planner
+export const BEZIER_SIZE = 56;
+export const BEZIER_SEQ_OFFSET = 2;
 
 // ── Status plane — binary mirror of `getstate` (+ getpos, queued time) ─────────
 // docs/wire_protocol.md "STATUS_RSP". The magic bumped from 0xA6 to 0xA7 when
@@ -58,6 +59,8 @@ export const NACK_BAD_STATE = 0x06; // command rejected — wrong machine state
 // Barrier, not an error: stream rejected because the machine is mid-abort-ramp.
 // The host waits for IDLE and reopens rather than surfacing a failure (§4.5).
 export const NACK_ABORTING = 0x07;
+// A BEZIER record failed the Pico's checks, or broke contour framing or the chain.
+export const NACK_BAD_CURVE = 0x08;
 
 // ── Config plane magics (Phase-2) — CFG blob push/pull over the data plane ──────
 // docs/wire_protocol.md "CRC Algorithms" + packets.py. CFG_SET/GET are host→Pico

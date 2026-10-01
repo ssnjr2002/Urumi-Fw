@@ -29,7 +29,15 @@
 
 import type { Sink, LatestSink } from "./sink.js";
 import type { Writer } from "./writer.js";
-import { NACK_BAD_MAGIC, NACK_PAUSED, NACK_BAD_STATE, NACK_CRC, NACK_FULL, NACK_ABORTING } from "../format/constants.js";
+import {
+    NACK_BAD_MAGIC,
+    NACK_PAUSED,
+    NACK_BAD_STATE,
+    NACK_CRC,
+    NACK_FULL,
+    NACK_ABORTING,
+    NACK_BAD_CURVE,
+} from "../format/constants.js";
 import { stampSeq } from "../format/packet.js";
 import { Ack, Nack } from "./demux.js";
 import { parseStatusRsp, type MachineStatus } from "../format/status.js";
@@ -48,7 +56,7 @@ const IDLE_WAIT_MS = 20; // bound on an open source's idle wait
 // machine that NACKed BAD_STATE vs one that simply went silent looked the same.
 // `fatalReason` is set at each fatal exit and `fatalReasonName()` renders it.
 //
-// NACK reasons (0x01..0x07) are passed through unchanged; self-inflicted ones
+// NACK reasons (0x01..0x08) are passed through unchanged; self-inflicted ones
 // use the 0xE0.. range so they never collide with a future wire NACK.
 export const FATAL_STALL = 0xe0; // no ACK/NACK past STALL_TIMEOUT_MS
 export const FATAL_CRC_LIMIT = 0xe1; // NACK_CRC count exceeded MAX_CRC_ERRORS
@@ -319,6 +327,11 @@ export class Session {
                 v?.(`FATAL: NACK_BAD_MAGIC`);
                 return false; // fatal
             }
+            if (r === NACK_BAD_CURVE) {
+                this.fatalReason = r;
+                v?.(`FATAL: the Pico refused a curve`);
+                return false; // fatal — the record or its framing is wrong
+            }
             if (r === NACK_PAUSED || r === NACK_BAD_STATE) {
                 this.fatalReason = r;
                 v?.(`FATAL: wrong machine state (${fatalReasonName(r)})`);
@@ -445,6 +458,7 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [NACK_PAUSED]: "NACK_PAUSED",
     [NACK_BAD_STATE]: "NACK_BAD_STATE",
     [NACK_ABORTING]: "NACK_ABORTING",
+    [NACK_BAD_CURVE]: "NACK_BAD_CURVE",
     [FATAL_STALL]: "FATAL_STALL",
     [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",
 };

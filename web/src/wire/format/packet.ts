@@ -23,7 +23,15 @@
  */
 
 import type { MicroSegment } from "./microsegment.js";
-import { MAGIC_JOG, MAGIC_MICROSEG, PACKET_SIZE } from "./constants.js";
+import {
+    BEZIER_SEQ_OFFSET,
+    BEZIER_SIZE,
+    MAGIC_BEZIER,
+    MAGIC_JOG,
+    MAGIC_MICROSEG,
+    MSEG_SEQ_OFFSET,
+    PACKET_SIZE,
+} from "./constants.js";
 import { crc8 } from "./crc.js";
 
 // ── .bin framing (length-prefixed) ──────────────────────────────────────────────
@@ -87,13 +95,17 @@ export function packJog(ms: MicroSegment, seq = 0): Uint8Array {
  */
 export function stampSeq(packet: Uint8Array, seq: number): Uint8Array {
     const magic = packet[0];
-    if (packet.length !== PACKET_SIZE || (magic !== MAGIC_MICROSEG && magic !== MAGIC_JOG)) {
-        throw new Error("stampSeq: not a 26-byte MicroSegment or Jog packet");
+    const [size, at] =
+        magic === MAGIC_BEZIER ? [BEZIER_SIZE, BEZIER_SEQ_OFFSET]
+        : magic === MAGIC_MICROSEG || magic === MAGIC_JOG ? [PACKET_SIZE, MSEG_SEQ_OFFSET]
+        : [0, 0];
+    if (size === 0 || packet.length !== size) {
+        throw new Error("stampSeq: not a MicroSegment, Jog or BEZIER packet");
     }
-    const out = new Uint8Array(PACKET_SIZE);
-    out.set(packet.subarray(0, PACKET_SIZE - 1));
-    out[22] = seq & 0xff;
-    out[PACKET_SIZE - 1] = crc8(out, 0, PACKET_SIZE - 1);
+    const out = new Uint8Array(size);
+    out.set(packet.subarray(0, size - 1));
+    out[at] = seq & 0xff;
+    out[size - 1] = crc8(out, 0, size - 1);
     return out;
 }
 

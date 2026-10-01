@@ -30,6 +30,11 @@ import {
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
     MAGIC_JOG,
+    MAGIC_BEZIER,
+    MAGIC_MICROSEG,
+    BEZIER_SIZE,
+    BEZIER_SEQ_OFFSET,
+    PACKET_SIZE,
     NACK_FULL,
     NACK_BAD_STATE,
     NACK_PAUSED,
@@ -42,6 +47,7 @@ import {
     packStatusRsp,
 } from "../../format/status.js";
 import { unpackMicrosegment } from "../../format/packet.js";
+import { crc8 } from "../../format/crc.js";
 import type { MicroSegment } from "../../format/microsegment.js";
 
 const MSEG_FLAG_PAUSE = 0x04; // sender-inserted at a tool-change boundary
@@ -248,9 +254,17 @@ export class SimTransport implements Transport {
             return Promise.resolve();
         }
 
-        // A batch of 26-byte packets — split and dispatch each.
-        for (let off = 0; off + 26 <= data.length; off += 26) {
-            this._writePacket(data.subarray(off, off + 26));
+        // A batch of packets — split by each one's magic and dispatch.
+        for (let off = 0; off < data.length; ) {
+            const m = data[off];
+            const size = m === MAGIC_BEZIER ? BEZIER_SIZE
+                : m === MAGIC_MICROSEG || m === MAGIC_JOG ? PACKET_SIZE
+                : 0;
+            if (size === 0 || off + size > data.length) break; // unframeable — drop the rest
+            const pkt = data.subarray(off, off + size);
+            if (m === MAGIC_BEZIER) this._writeBezier(pkt);
+            else this._writePacket(pkt);
+            off += size;
         }
         this._flushAck(); // end of batch == the firmware's drain-empty flush
         return Promise.resolve();
@@ -304,6 +318,18 @@ export class SimTransport implements Transport {
             this.pendingAcks = 0;
             this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
         }
+    }
+
+    /** BEZIER records are framed, CRC- and seq-checked, and ACKed; the sim does not move. */
+    private _writeBezier(data: Uint8Array): void {
+        if (crc8(data, 0, BEZIER_SIZE - 1) !== data[BEZIER_SIZE - 1]) return; // corrupt — drop
+        if (data[BEZIER_SEQ_OFFSET] !== this.expectedSeq) {
+            this.pendingAcks = 0; // immediate: the host's resync signal
+            this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
+            return;
+        }
+        this.expectedSeq = (this.expectedSeq + 1) & 0xff;
+        this._markAck();
     }
 
     private _writePacket(data: Uint8Array): void {

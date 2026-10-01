@@ -27,6 +27,9 @@ import {
 import { packMicrosegment, stampSeq } from "../../../../src/wire/format/packet.js";
 import { microSegment, MICRO_PAUSE } from "../../../../src/wire/format/microsegment.js";
 import { MAGIC_MICROSEG } from "../../../../src/wire/format/constants.js";
+import { packBezier } from "../../../../src/wire/format/bezier.js";
+import { BezierFlag } from "../../../../src/toolpath/annotate.js";
+import { cubic } from "../../../../src/toolpath/geometry.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -255,6 +258,23 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
             },
             { ackCoalesceMax: 8 },
         );
+    });
+});
+
+describe("wire/link/backends/sim: BEZIER records", () => {
+    it("frames a mixed stream by magic; BEZIER is ACKed without moving", async () => {
+        await withLink(async (link) => {
+            const bez = packBezier({
+                curve: cubic({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }),
+                flags: BezierFlag.START | BezierFlag.END,
+                length: 3, kappaMax: 0, dkappaMax: 0, ts: [1 / 3, 0, 0],
+                kappaStart: 0, kappaEnd: 0, fitError: 0,
+            });
+            const pkts = [mseg(1, 1000), bez, mseg(1, 1000), bez, mseg(1, 1000)];
+            expect(await link.stream(pkts, 8)).toMatchObject({ ok: true, acked: 5 });
+            await tick(50);
+            expect((await link.getStatus()).pos![0]).toBe(3);
+        });
     });
 });
 
