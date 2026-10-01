@@ -10,7 +10,7 @@
  * Pure stage: options default here; callers pass the machine's values.
  */
 
-import { bezierDeriv1, bezierDeriv2, cubic, splitAt, type CubicBezier, type Pt } from "./geometry.js";
+import { bezierDeriv1, bezierDeriv2, bezierPoint, cubic, splitAt, type CubicBezier, type Pt } from "./geometry.js";
 import type { CleanSubpath } from "./clean.js";
 
 export interface AnnotateOptions {
@@ -22,6 +22,8 @@ export interface AnnotateOptions {
     readonly fitTol: number;
     /** Halvings allowed for the κ ratio and the fit, each. */
     readonly maxSplitDepth: number;
+    /** No inflection, κ-ratio or fit split leaves a piece shorter than this (mm). */
+    readonly minLength: number;
 }
 
 export const DEFAULT_ANNOTATE_OPTIONS: AnnotateOptions = {
@@ -29,6 +31,7 @@ export const DEFAULT_ANNOTATE_OPTIONS: AnnotateOptions = {
     kappaFloor: 1e-3,
     fitTol: 1e-3,
     maxSplitDepth: 8,
+    minLength: 0.05,
 };
 
 export const BezierFlag = { START: 1, BREAK: 2, END: 4 } as const;
@@ -193,8 +196,8 @@ function fixStops(c: CubicBezier): CubicBezier {
     return p1 === c.p1 && p2 === c.p2 ? c : cubic(c.p0, p1, p2, c.p3);
 }
 
-/** Roots of B' × B'' in (0, 1), away from the ends. */
-function inflections(c: CubicBezier): number[] {
+/** Roots of B' × B'' in (0, 1) that leave no piece shorter than minLength. */
+function inflections(c: CubicBezier, minLength: number): number[] {
     // B(t) = p0 + A·t + B·t² + C·t³; B' × B'' = 2A×B + 6A×C·t + 6B×C·t².
     const A = { x: 3 * (c.p1.x - c.p0.x), y: 3 * (c.p1.y - c.p0.y) };
     const B = { x: 3 * (c.p2.x - 2 * c.p1.x + c.p0.x), y: 3 * (c.p2.y - 2 * c.p1.y + c.p0.y) };
@@ -219,7 +222,22 @@ function inflections(c: CubicBezier): number[] {
     } else {
         return [];
     }
-    return roots.filter((t) => t > 1e-3 && t < 1 - 1e-3).sort((a, b) => a - b);
+    const kept: number[] = [];
+    let from = c.p0;
+    for (const t of roots.filter((t) => t > 0 && t < 1).sort((a, b) => a - b)) {
+        const at = bezierPoint(c, t);
+        if (dist(from, at) >= minLength && dist(at, c.p3) >= minLength) {
+            kept.push(t);
+            from = at;
+        }
+    }
+    return kept;
+}
+
+/** Split c at t, or null if either piece would be shorter than minLength. */
+function splitIfLong(c: CubicBezier, t: number, o: AnnotateOptions): [CubicBezier, CubicBezier] | null {
+    const halves = splitAt(c, t);
+    return halves.every((h) => dist(h.p0, h.p3) >= o.minLength) ? halves : null;
 }
 
 /** Split while the curvature ratio is above the option; at the κ that balances it. */
@@ -236,8 +254,9 @@ function byKappaRatio(c: CubicBezier, o: AnnotateOptions, depth = 0): CubicBezie
         }
     }
     if (t <= 1e-3 || t >= 1 - 1e-3) t = 0.5;
-    const [a, b] = splitAt(c, t);
-    return [...byKappaRatio(a, o, depth + 1), ...byKappaRatio(b, o, depth + 1)];
+    const halves = splitIfLong(c, t, o);
+    if (!halves) return [c];
+    return [...byKappaRatio(halves[0], o, depth + 1), ...byKappaRatio(halves[1], o, depth + 1)];
 }
 
 /** Halve until the t(s) fit is within fitTol; analyse each piece. */
@@ -245,9 +264,9 @@ function byFit(c: CubicBezier, o: AnnotateOptions, depth = 0): { curve: CubicBez
     const a = analyzeBezier(c);
     const bad = "error" in a ? a.error : a.fitError > o.fitTol ? "fit" : null;
     if (bad === null) return [{ curve: c, a: a as BezierAnalysis }];
-    if ((bad === "NonMonotonic" || bad === "fit") && depth < o.maxSplitDepth) {
-        const [l, r] = splitAt(c, 0.5);
-        return [...byFit(l, o, depth + 1), ...byFit(r, o, depth + 1)];
+    const halves = depth < o.maxSplitDepth ? splitIfLong(c, 0.5, o) : null;
+    if ((bad === "NonMonotonic" || bad === "fit") && halves) {
+        return [...byFit(halves[0], o, depth + 1), ...byFit(halves[1], o, depth + 1)];
     }
     if (bad === "fit") return [{ curve: c, a: a as BezierAnalysis }];
     throw new Error(`annotate: the Pico would refuse a piece (${bad}) from (${c.p0.x}, ${c.p0.y})`);
@@ -262,7 +281,7 @@ export function annotate(sp: CleanSubpath, options: Partial<AnnotateOptions> = {
         const corner = i > 0 && sp.joins[i - 1] === "corner";
         splitMany(curve, cusps(curve)).forEach((piece, j) => {
             const fixed = fixStops(piece);
-            const pieces = splitMany(fixed, inflections(fixed))
+            const pieces = splitMany(fixed, inflections(fixed, o.minLength))
                 .flatMap((p) => byKappaRatio(p, o))
                 .flatMap((p) => byFit(p, o));
             pieces.forEach(({ curve: c, a }, k) => {

@@ -96,6 +96,15 @@ describe("annotate: splits", () => {
         }
     });
 
+    it("no split leaves a piece shorter than minLength", () => {
+        const spike = cubic(pt(0, 0), pt(0.02, 0), pt(30, 10), pt(50, 0));
+        // The shortest piece is kept outside fitTol rather than halved.
+        const out = annotate(sub([spike]));
+        out.forEach((p) => ok(p.curve));
+        expect(out.length).toBeGreaterThan(1);
+        expect(Math.min(...out.map((b) => b.length))).toBeGreaterThanOrEqual(DEFAULT_ANNOTATE_OPTIONS.minLength * 0.99);
+    });
+
     it("a line never splits", () => {
         expect(annotate(sub([lineToCubic(pt(0, 0), pt(100, 0))]))).toHaveLength(1);
     });
