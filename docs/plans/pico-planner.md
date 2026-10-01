@@ -692,7 +692,7 @@ Decisions:
 * Depends on: branch 5.
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
-**Status:** ready to merge.
+**Status:** done, merged to `main`. Unblocks 6-clean.
 
 **Outcome:**
 
