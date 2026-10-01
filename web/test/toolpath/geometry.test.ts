@@ -21,6 +21,12 @@ import {
     bezierDeriv1,
     bezierDeriv2,
     curvature,
+    compose,
+    applyPt,
+    applyCubic,
+    arcToCubics,
+    type Affine,
+    type CubicBezier,
     type Pt,
 } from "../../src/toolpath/geometry.js";
 
@@ -220,5 +226,71 @@ describe("geometry: curvature", () => {
         // p0=p1=p2=p3 -> B'(t) = 0 -> speed < 1e-10 -> returns 0
         const degenerate = cubic({ x: 5, y: 5 }, { x: 5, y: 5 }, { x: 5, y: 5 }, { x: 5, y: 5 });
         expect(curvature(degenerate, 0.5)).toBe(0);
+    });
+});
+
+// ── affine transforms ─────────────────────────────────────────────────────────
+
+describe("geometry: Affine", () => {
+    it("compose applies inner first; applyCubic maps each control point", () => {
+        const rot90: Affine = { a: 0, b: 1, c: -1, d: 0, e: 0, f: 0 };
+        const shift: Affine = { a: 1, b: 0, c: 0, d: 1, e: 10, f: 0 };
+        expect(approxPt(applyPt(compose(shift, rot90), { x: 1, y: 0 }), { x: 10, y: 1 })).toBe(true);
+        expect(approxPt(applyPt(compose(rot90, shift), { x: 1, y: 0 }), { x: 0, y: 11 })).toBe(true);
+
+        const skew: Affine = { a: 2, b: 0.5, c: 0.3, d: 1, e: 4, f: -2 };
+        const c = cubic({ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 3, y: -1 }, { x: 4, y: 0 });
+        const m = applyCubic(skew, c);
+        for (const k of ["p0", "p1", "p2", "p3"] as const) {
+            expect(approxPt(m[k], applyPt(skew, c[k]))).toBe(true);
+        }
+    });
+});
+
+// ── elliptical arcs ───────────────────────────────────────────────────────────
+
+/** Largest |ρ - 1| over samples, ρ the point's radius in the ellipse's unit frame. */
+function ellipseError(curves: readonly CubicBezier[], c: Pt, rx: number, ry: number, phiDeg: number): number {
+    const phi = (phiDeg * Math.PI) / 180;
+    let worst = 0;
+    for (const cv of curves) {
+        for (let i = 0; i <= 16; i++) {
+            const p = bezierPoint(cv, i / 16);
+            const dx = p.x - c.x, dy = p.y - c.y;
+            const u = (Math.cos(phi) * dx + Math.sin(phi) * dy) / rx;
+            const v = (-Math.sin(phi) * dx + Math.cos(phi) * dy) / ry;
+            worst = Math.max(worst, Math.abs(Math.hypot(u, v) - 1));
+        }
+    }
+    return worst;
+}
+
+describe("geometry: arcToCubics", () => {
+    const s30 = Math.sqrt(3) / 2;
+    // A cubic quarter circle strays up to 2.7e-4 of the radius.
+    const cases = [
+        { name: "quarter", p0: { x: 1, y: 0 }, p1: { x: 0, y: 1 }, rx: 1, ry: 1, phi: 0, large: false, sweep: true, c: { x: 0, y: 0 }, n: 1 },
+        { name: "half", p0: { x: 1, y: 0 }, p1: { x: -1, y: 0 }, rx: 1, ry: 1, phi: 0, large: false, sweep: true, c: { x: 0, y: 0 }, n: 2 },
+        { name: "large arc", p0: { x: 1, y: 0 }, p1: { x: 0, y: 1 }, rx: 1, ry: 1, phi: 0, large: true, sweep: false, c: { x: 0, y: 0 }, n: 3 },
+        { name: "sweep flipped", p0: { x: 1, y: 0 }, p1: { x: 0, y: 1 }, rx: 1, ry: 1, phi: 0, large: false, sweep: false, c: { x: 1, y: 1 }, n: 1 },
+        { name: "rotated ellipse", p0: { x: 2 * s30, y: 1 }, p1: { x: -0.5, y: s30 }, rx: 2, ry: 1, phi: 30, large: false, sweep: true, c: { x: 0, y: 0 }, n: 1 },
+    ];
+    it.each(cases)("$name: endpoints, piece count, on the ellipse", (k) => {
+        const out = arcToCubics(k.p0, k.rx, k.ry, k.phi, k.large, k.sweep, k.p1);
+        expect(out).toHaveLength(k.n);
+        expect(out[0]!.p0).toEqual(k.p0);
+        expect(out[out.length - 1]!.p3).toEqual(k.p1);
+        for (let i = 1; i < out.length; i++) expect(approxPt(out[i]!.p0, out[i - 1]!.p3)).toBe(true);
+        expect(ellipseError(out, k.c, k.rx, k.ry, k.phi)).toBeLessThan(3e-4);
+    });
+
+    it("edge cases: radii scaled up, zero radius, coincident ends", () => {
+        const small = arcToCubics({ x: 0, y: 0 }, 1, 1, 0, false, true, { x: 4, y: 0 });
+        expect(small).toHaveLength(2);
+        expect(ellipseError(small, { x: 2, y: 0 }, 2, 2, 0)).toBeLessThan(3e-4);
+
+        expect(arcToCubics({ x: 0, y: 0 }, 0, 5, 0, false, true, { x: 3, y: 0 }))
+            .toEqual([lineToCubic({ x: 0, y: 0 }, { x: 3, y: 0 })]);
+        expect(arcToCubics({ x: 2, y: 2 }, 1, 1, 0, true, true, { x: 2, y: 2 })).toEqual([]);
     });
 });
