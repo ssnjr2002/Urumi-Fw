@@ -1001,7 +1001,7 @@ analysis in doubles but fail `checkBezier` (`lib/planner/bezier.cpp:137`) as
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 * Human scope: the 6b bench run, through this demo.
 
-**Status:** ready to merge.
+**Status:** done, merged to `main`. Branch 6 is complete.
 
 **Outcome:**
 
