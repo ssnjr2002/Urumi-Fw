@@ -946,7 +946,7 @@ analysis in doubles but fail `checkBezier` (`lib/planner/bezier.cpp:137`) as
 * Checks: `pio test -e native`, `pio run -e pico`, `pnpm typecheck` and
   `pnpm test` in `web/`.
 
-**Status:** planned.
+**Status:** done, merged to `main`. Unblocks 6c.
 
 **Outcome:**
 
