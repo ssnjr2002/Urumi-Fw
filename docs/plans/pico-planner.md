@@ -899,6 +899,23 @@ Decisions:
 
 **Outcome:**
 
+* `checkBezier` adds `BezierError::Inconsistent` for numbers that cannot
+  belong to the control points; relative float slack 1e-4.
+* `PQ_NO_FEED` is new; `feed` needs both feeds positive. A `START` record
+  queues its travel line and curve together: both fit in the ring or
+  neither goes in.
+* `wire/format/bezier.ts` imports the `AnnotatedBezier` type from
+  `toolpath`, the first `wire/format` → `toolpath` dependency.
+* For 6c: the barebones job demo (SVG → load → clean → annotate → pack →
+  `feed` → stream, with an offset and abort), which needs `index.ts`
+  exports and a bounding-box check against the soft limits; and the
+  host-to-Pico cross-check deferred from 6b.
+* Out of scope: `docs/wire_protocol.md`'s NACK table was already missing
+  `0x07` (`ABORTING`).
+* Human scope: record receive, contour framing, travel and `feed` are
+  build-checked only; a bench run (`feed`, `seqreset`, a streamed contour)
+  is still to do.
+
 ## Later (not planned here)
 
 * Z and A, blade offset, tool profiles (swivel band, overcut), duty breaks
