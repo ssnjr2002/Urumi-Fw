@@ -42,7 +42,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 |---|---|---|---|
 | `MSEG_MAGIC` | `0xAB` | Host → Pico | MicroSegment — pre-computed step event |
 | `JOG_MAGIC`  | `0xAE` | Host → Pico | Jog packet (separate from MSEG) |
-| `TILE_MAGIC` | `0xAD` | Host → Pico | SplineTile — local production (future) |
+| `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
@@ -119,6 +119,37 @@ the return to `pausePos`) is one or more jog packets; the Pico runs
 PAUSED when `PausedJobContext.active`) when the burst drains. The burst ends
 when the ring drains, **not** on a flag — a sender may mark its last packet
 `MSEG_FLAG_PATH_END`, but the firmware does not read it (see the flags table).
+
+### BEZIER Record — `BEZIER_MAGIC` (0xAD, 56 bytes)
+```
+[0]      magic = 0xAD
+[1]      flags      uint8      — BEZIER_FLAG_*: START 0x01, BREAK 0x02, END 0x04
+[2]      seq        uint8      — rolling stream seq (the MSEG duplicate guard)
+[3..34]  p0..p3     float32 LE — x, y each, machine mm
+[35..38] length     float32 LE — arc length, mm
+[39..42] kappa_max  float32 LE — max |κ|, 1/mm
+[43..46] dkappa_max float32 LE — max |dκ/ds|, 1/mm² (for A's acceleration limit; unread yet)
+[47..54] c2, c3     float32 LE — t(s) = c1·s + c2·s² + c3·s³; the Pico derives c1
+[55]     CRC8 over bytes [0..54]
+```
+One piece of a host-annotated contour (`web/src/toolpath/annotate.ts`). The
+Pico does not analyse it: `checkBezier` (`lib/planner/bezier.cpp`) derives c1
+and the end curvatures and refuses numbers that cannot belong to the control
+points. Shares `expectedSeq`, the duplicate guard and the cumulative ACK with
+MSEG, and its state gate (IDLE/RUNNING, `NACK_PAUSED` while paused); in
+RUNNING only planner motion accepts more.
+
+**Contour framing.** `START` opens a contour: if p0 is not where the last move
+ends, the Pico first queues a travel line to it at the travel feed. Every
+other record must start exactly where the last one ended (after the queue
+drained to idle, within one step, snapped). `END` closes the contour. A
+`START` inside an open contour, or a record without `START` outside one, is
+`NACK_BAD_CURVE`. `seqreset` and abort forget an open contour. `BREAK` marks a
+corner or cusp; joins run on the planner's junction limit whatever the flags
+say — what a tool does at a flag is tool-profile scope.
+
+Records are refused (`NACK_BAD_STATE`) until `feed` has set the cut and travel
+feeds.
 
 ### ACK — `0xAA` (3 bytes)
 ```
@@ -264,6 +295,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_PAUSED` | `0x04` | Stream rejected — machine is PAUSED |
 | `MSEG_NACK_CONFIG_MISMATCH` | `0x05` | MCFG header CRC32 disagrees with Pico flash |
 | `MSEG_NACK_BAD_STATE` | `0x06` | Command rejected — wrong machine state |
+| `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 
@@ -304,7 +336,8 @@ prefixed `0x`.
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved). `err estop` in `ALARM_ESTOP`: use `unstop` |
 | `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full` | Bring-up only: queue a planner line to machine mm (x, y) at `feed` mm/s, planned and run on the Pico (runningReason 3). `<depth>` = blocks queued. IDLE, or while planner motion runs. Refused if X or Y has `maxFeed` or `maxAccel` 0. No homing or soft-limit check |
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, machine mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line` |
-| `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value. Host sends this before each MSEG/jog stream so packet index 0 lines up. See "Duplicate guard" below. |
+| `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot; records are refused until it is sent. The `TOOL` record replaces it |
+| `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
 ### `getstate` reply fields
 
@@ -325,9 +358,10 @@ the host parser tolerates later additions.
 
 ---
 
-### Duplicate guard (MSEG / jog seq)
+### Duplicate guard (MSEG / jog / BEZIER seq)
 
-Each MSEG/jog packet carries a rolling 8-bit seq in byte [22]. The Go-Back-N
+Each MSEG/jog packet carries a rolling 8-bit seq in byte [22], a BEZIER record
+in byte [2]. The Go-Back-N
 sender, on a NACK, rewinds to `base` and resends packets that were in flight
 behind the rejected one — packets the Pico may have already accepted. The Pico
 tracks `expectedSeq` (the next seq it will execute); a packet whose seq it has
