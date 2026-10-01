@@ -800,7 +800,7 @@ Decisions:
 * Depends on: 6-clean.
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
-**Status:** not started.
+**Status:** done, merged to `main`. Unblocks 6b.
 
 **Outcome:**
 
