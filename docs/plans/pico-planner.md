@@ -948,6 +948,26 @@ analysis in doubles but fail `checkBezier` (`lib/planner/bezier.cpp:137`) as
 
 **Status:** planned.
 
+**Outcome:**
+
+* The failing count was 101, not 102. Grouped by the check that fails:
+  22 micro-pieces, 18 length vs chord or polygon, 61 κ_max vs an end
+  (34 by over 1 %, on short or straight pieces where the absolute error
+  δ/h² dominates).
+* `checkBezier`: delta is four float steps of the largest coordinate
+  (at least 1 mm); length may undershoot the chord by 3·delta and exceed
+  the polygon by 9·delta; each end's κ by a bound on its movement when the
+  points move by delta. κ_max is raised to the larger end.
+* `minLength` (0.05 mm) also applies to inflection splits, not only κ
+  ratio and fit: an inflection at small t cut off a short piece. Cusp
+  splits always happen. Halves are measured by their end-to-end distance,
+  which the arc cannot be shorter than.
+* fish.svg: 171 pieces (was 210), 13 `BREAK`, shortest 0.056 mm; 7 pieces
+  keep a fit error above `fitTol`, at most 0.049.
+* For 6c: the job's piece counts change; `job.ts` needs no change.
+* Out of scope: `test_parity` fails in `lib/motion` discretize
+  (`test_discretize.cpp:69`, size mismatch) with or without this branch.
+
 ## Branch 6c: `feature/host-bezier-job`
 
 * Type: feature (web).
