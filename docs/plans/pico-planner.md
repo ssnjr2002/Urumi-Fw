@@ -856,6 +856,9 @@ Decisions:
 * `feed <cut> <travel>` text command (mm/s, held until changed), next to
   `bezier` (`cmd/axis.cpp:519`). Testing primitive; the `TOOL` record
   replaces it.
+  A `BEZIER` before any `feed` is refused with `NACK_BAD_STATE`; the
+  feeds live on the host (`machine.path` / `machine.rapid`,
+  `web/src/machine/schema.ts:603-605`), and 6c sends them.
 * Host, `web/src/wire/`:
   * `format/bezier.ts`: pack an `AnnotatedBezier` (6a flag bits are the wire
     bits) with CRC8; `MAGIC_BEZIER = 0xad` in `format/constants.ts:10`,
