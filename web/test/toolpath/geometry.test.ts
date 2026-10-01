@@ -25,6 +25,7 @@ import {
     applyPt,
     applyCubic,
     arcToCubics,
+    splitAt,
     type Affine,
     type CubicBezier,
     type Pt,
@@ -264,6 +265,17 @@ function ellipseError(curves: readonly CubicBezier[], c: Pt, rx: number, ry: num
     }
     return worst;
 }
+
+describe("geometry: splitAt", () => {
+    it("halves meet at B(t) and retrace the curve", () => {
+        const c = cubic({ x: 0, y: 0 }, { x: 10, y: 20 }, { x: 30, y: -5 }, { x: 40, y: 10 });
+        const [l, r] = splitAt(c, 0.3);
+        expect(approxPt(l.p3, bezierPoint(c, 0.3))).toBe(true);
+        expect(r.p0).toEqual(l.p3);
+        expect(approxPt(bezierPoint(l, 0.5), bezierPoint(c, 0.15))).toBe(true);
+        expect(approxPt(bezierPoint(r, 0.5), bezierPoint(c, 0.65))).toBe(true);
+    });
+});
 
 describe("geometry: arcToCubics", () => {
     const s30 = Math.sqrt(3) / 2;

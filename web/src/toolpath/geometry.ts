@@ -158,6 +158,15 @@ export function curvature(c: CubicBezier, t: number): number {
     return Math.abs(cross) / (speed * speed * speed);
 }
 
+/** Exact de Casteljau split at t; the halves share the point B(t). */
+export function splitAt(c: CubicBezier, t: number): [CubicBezier, CubicBezier] {
+    const lerp = (a: Pt, b: Pt): Pt => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    const a = lerp(c.p0, c.p1), b = lerp(c.p1, c.p2), d = lerp(c.p2, c.p3);
+    const ab = lerp(a, b), bd = lerp(b, d);
+    const m = lerp(ab, bd);
+    return [cubic(c.p0, a, ab, m), cubic(m, bd, d, c.p3)];
+}
+
 // ── affine transforms ─────────────────────────────────────────────────────────
 
 /** 2×3 affine matrix in SVG order: x' = a·x + c·y + e, y' = b·x + d·y + f. */
