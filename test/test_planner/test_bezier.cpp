@@ -8,8 +8,12 @@
 
 #include <planner/executor.h>
 
+#include "support/bits.h"
+
 #include <initializer_list>
 #include <math.h>
+#include <string.h>
+#include <string>
 
 using namespace planner;
 
@@ -253,4 +257,38 @@ TEST_CASE("bezier: host numbers that disagree with the control points are refuse
         c.bad(r);
         CHECK(checkBezier(r) == c.err);
     }
+}
+
+/** A BEZIER packet decoded as data_plane.cpp's acceptBezier does. */
+static Bezier fromPacket(const uint8_t* pkt) {
+    Bezier b;
+    const uint8_t* p = pkt + 3;
+    for (int i = 0; i < 4; i++) {
+        memcpy(&b.p[i].x, p, 4); p += 4;
+        memcpy(&b.p[i].y, p, 4); p += 4;
+    }
+    memcpy(&b.length,     p, 4); p += 4;
+    memcpy(&b.kappa_max,  p, 4); p += 4;
+    memcpy(&b.dkappa_max, p, 4); p += 4;
+    memcpy(&b.ts[1],      p, 4); p += 4;
+    memcpy(&b.ts[2],      p, 4);
+    return b;
+}
+
+TEST_CASE("bezier: every record the host packs from fish.svg passes checkBezier") {
+    std::ifstream f = testbits::openRef("bezier_records.txt");
+    REQUIRE_MESSAGE(f.is_open(), "test/data/bezier_records.txt missing: ", testbits::REGEN_ALL);
+    int n = 0;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.rfind("r ", 0) != 0) continue;
+        uint8_t pkt[56];
+        REQUIRE(line.size() == 2 + 2 * sizeof pkt);
+        for (size_t i = 0; i < sizeof pkt; i++) pkt[i] = (uint8_t)std::stoul(line.substr(2 + 2 * i, 2), nullptr, 16);
+        Bezier b = fromPacket(pkt);
+        CAPTURE(n);
+        CHECK(checkBezier(b) == BezierError::None);
+        n++;
+    }
+    CHECK(n > 0);
 }
