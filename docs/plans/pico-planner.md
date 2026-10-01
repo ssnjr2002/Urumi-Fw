@@ -584,7 +584,7 @@ for continuous jog.
 
 A dependent chain (decided after branch 5, revised while planning 6a):
 
-* 6-ingest `fix/svg-ingest`: stages 1-2 stop losing or misplacing geometry.
+* 6-load `feature/svg-load`: new stages 1-2 for the Bézier path.
 * 6-clean `feature/host-bezier-clean`: a new stage 3 for the Bézier path.
 * 6a `feature/host-bezier-annotate`: stage 4, split and annotate.
 * 6b `feature/bezier-wire`: the `BEZIER` record, Pico and host wire.
@@ -594,8 +594,16 @@ Decisions:
 
 * **`flatten` and `enforceC1` stay** for the MicroSegment path
   (`web/src/production/compileBlock.ts:163-176`), still the only path with Z,
-  A and tools. The Bézier path gets its own stages 3 and 4; the old ones go
+  A and tools. The Bézier path gets its own stages 1-4; the old ones go
   when MicroSegments are retired.
+* **Fork, don't fix, stages 1-2.** `web/src/svg/ingest.ts` stays frozen with
+  its known bugs: `transform` ignored; `A` and `T` throw on the whole path
+  (the tokenizer `ingest.ts:41` drops the letters, their numbers join the
+  previous command); `Z` makes zero-length lines (`:171`); the flat walk
+  (`:426`) enters `<defs>` and `<clipPath>` while the layer walks (`:392`,
+  `:564`) enter only `<g>`. Fixing it in place meant keeping its pixel-space
+  API (`bakePlan.ts:147`, `index.ts`) and regenerating goldens for a path
+  that is being retired.
 * **Why a new stage 3.** `enforceC1` (`web/src/toolpath/repair.ts:75`) was
   written for sampling: it bridges gaps with invented curves, and its join
   classification ends up in logs, not data. The Bézier path needs the join
@@ -603,8 +611,8 @@ Decisions:
 * **Known, not fixed:** on the MicroSegment path a degenerate end handle
   (SVG `S` with no previous curve, `web/src/svg/ingest.ts:151-153`) makes
   `enforceC1` insert a blend with `(1, 0)` tangents (`repair.ts:96-102`), a
-  ~1 mm loop. 6-ingest removes the one case the fixtures have (a zero-length
-  `Z` line in `fish.svg`); the rest goes with MicroSegments.
+  ~1 mm loop (`fish.svg` has one, from a zero-length `Z` line). It goes with
+  MicroSegments.
 * **Travel: the host orders, the Pico moves.** The host decides the contour
   order and each contour's start (the p0 of a `START` record). When a
   `START` record's p0 is not the ring's end, the Pico queues the travel
@@ -628,26 +636,56 @@ Decisions:
   are 98+ commits behind and would conflict with 6b if revived.
   `feature/spline-streaming` is an abandoned earlier attempt.
 
-## Branch 6-ingest: `fix/svg-ingest`
+## Branch 6-load: `feature/svg-load`
 
-* Type: fix (web only). Wrong today on both paths.
-* Purpose: stages 1-2 (`web/src/svg/ingest.ts`) drop or misplace geometry:
-  * `transform` on elements and groups is ignored: geometry lands in the
-    wrong place. One document walk with a matrix stack (element × parents ×
-    viewBox-to-mm), replacing the three walks (`subpathsFromRoot:426`,
-    `loadSvgLayers:392`, `loadSvgMmLayers:564`).
-  * Path commands `A` and `T` are not parsed; an unknown command ends its
-    chunk (`ingest.ts:177`), so the rest of the path is lost. `A` becomes
-    cubics of at most 90°.
-  * `Z` adds a closing line whenever the point differs from the start at all
-    (`ingest.ts:171`), making zero-length curves; skip it below a tolerance.
-* Tests that fail before the fix, in `web/test/svg/`: a translated and a
-  rotated group, nested transforms, an arc path (endpoints and radius), `T`
-  after `Q`, `Z` after a rounding-level miss.
-* Golden: `fish_knife_golden.bin` changes (its zero-length `Z` line made
-  two `(1, 0)` loops); regenerate after the decoded diff is reviewed.
-  `test_circle` must not change.
-* Not in: `preserveAspectRatio`, `<use>` (follow-ups).
+* Type: feature (web only). `web/src/svg/ingest.ts` and its callers are not
+  touched.
+* Purpose: stages 1-2 for the Bézier path, `web/src/svg/load.ts`: SVG text
+  to layers of subpaths in mm (Y up), no pixel-space API.
+  * One document walk carrying the transform matrix (element × parents ×
+    viewBox-to-mm) and the layer name (as `loadSvgMmLayers` names layers).
+    It enters only rendered containers (`g`, `a`, `switch`, nested `svg` with
+    its `x`/`y`), never `defs`, `clipPath`, `mask`, `symbol`, `marker`,
+    `pattern`.
+  * The full path grammar: `A` (as cubics of at most 90°, flags packed
+    without separators), `T` after `Q`/`T`, and the rest as `ingest.ts`.
+  * `Z` closes with a line only if the gap is above a tolerance; the subpath
+    reports whether it was closed.
+  * Shapes as `ingest.ts`.
+* Flow:
+
+  ```
+  SVG text → parseSvgRoot → root <svg>
+    rootMatrix = viewBox → mm, Y flipped (stage 2 is this one matrix)
+  walk(el, M, layer), document order:
+    M' = M × parse(el.transform)
+    g / a / switch / svg(x,y) → recurse; a named <g> extends the layer
+    defs, clipPath, mask, symbol, marker, pattern → skip
+    path / shape (if paintable) → stage 1, in element-local coordinates:
+      path d → tokenize → commands → { curves, closed }
+      shapes → as ingest.ts
+    applyCubic(M', …) on every control point (exact)
+  → LoadedSvg { layers: Map<layer, Subpath[]>, viewport }
+    Subpath = { curves: CubicBezier[], closed: boolean } → clean.ts
+  ```
+
+  Arcs convert in local coordinates before the matrix, so a skewed or
+  non-uniformly scaled arc stays exact. `closed` comes from `Z`, so 6-clean
+  doesn't infer it.
+* New in `web/src/toolpath/geometry.ts` (geometry, not SVG):
+  * `Affine` (2×3) with `compose`, `applyPt`, `applyCubic`.
+  * `arcToCubics(p0, rx, ry, phiDeg, largeArc, sweep, p1)`: endpoint to
+    center form, pieces of at most 90°; radii scaled up when too small, a
+    zero radius is a line, `p0 == p1` is nothing.
+* Reuses `cubic`, `lineToCubic`, `quadToCubic`, `KAPPA` and the vector
+  helpers. Units and viewport-to-matrix are `load.ts`'s own (~40 lines);
+  `ingest.ts` keeps its copy until it is retired.
+* Tests in `web/test/svg/load.test.ts`: translated, rotated and nested
+  transforms; `<defs>` skipped; arcs (endpoints, radius, packed flags); `T`;
+  `Z` near the start; parity with `loadSvgMmLayers` on the fixtures that
+  have none of these.
+* Not in: `preserveAspectRatio`, `<use>`, `%` sizes, comma `viewBox`,
+  `display`/`visibility` (follow-ups).
 * Depends on: branch 5.
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
@@ -668,7 +706,7 @@ Decisions:
   * snaps gaps under `gapTol` shut; splits the subpath at a larger gap (the
     Pico travels across it).
 * Tests in `web/test/toolpath/clean.test.ts`, reusing `repair.cases.ts`.
-* Depends on: 6-ingest.
+* Depends on: 6-load (its output is the input).
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
 **Status:** not started.
@@ -726,4 +764,6 @@ Decisions:
 
 * Z and A, blade offset, tool profiles (swivel band, overcut), duty breaks
   (reset at lifts, forced break otherwise), mesh.
-* Retire the MicroSegment job path and `lib/motion`.
+* Retire the MicroSegment job path and `lib/motion`, once the Bézier path
+  runs jobs on the machine: `svg/ingest.ts`, `repair`, `flatten`, the 26 B
+  record and its goldens.
