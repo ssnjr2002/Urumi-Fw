@@ -236,7 +236,7 @@ Work has two phases.
    `git diff --name-only main...<other-branch>`
    Report overlap to the user, especially in: `platformio.ini`,
    `src/rp2350/core0/cmd/table.h`, `web/src/wire/`, `web/src/machine/schema.ts`,
-   `lib/motion/`.
+   `lib/planner/`.
 4. For the next branch in this session: create its worktree from current
    `main`, move the session into it, and continue as Work.
    For independent branches: give the user the opening message for each one's
@@ -457,7 +457,7 @@ Run the checks for what changed, once, after the last code edit:
 | ------------------------ | ----------------------------------------------- |
 | `src/node/`, node envs   | `pio run -e <each affected env>`                |
 | `src/rp2350/`            | `pio run -e pico`                               |
-| `lib/motion/`            | `pio run -e pico` and `pio test -e native`      |
+| `lib/planner/`           | `pio run -e pico` and `pio test -e native`      |
 | `web/`                   | `pnpm typecheck` and `pnpm test` in `web/`      |
 | `platformio.ini`         | `pio run -e <each env whose section changed>`   |
 
