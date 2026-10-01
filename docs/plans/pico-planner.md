@@ -586,7 +586,7 @@ A dependent chain (decided after branch 5, revised while planning 6a):
 
 * 6-load `feature/svg-load`: new stages 1-2 for the Bézier path.
 * 6-clean `feature/host-bezier-clean`: a new stage 3 for the Bézier path.
-* 6a `feature/host-bezier-annotate`: stage 4, split and annotate.
+* 6a `feature/host-bezier-annotate`: split and annotate.
 * 6b `feature/bezier-wire`: the `BEZIER` record, Pico and host wire.
 * 6c: the host streams a layer as Bézier records, XY only.
 
@@ -749,43 +749,54 @@ Decisions:
 ## Branch 6a: `feature/host-bezier-annotate`
 
 * Type: feature (web only).
-* Purpose: turn cleaned subpaths into annotated Béziers the Pico can queue
-  without analysing them: split where the seed says (§2), then measure each
-  piece the way `lib/planner/bezier.cpp:52` does.
+* Purpose: turn one `CleanSubpath` into annotated Béziers the Pico accepts
+  and can queue without analysing them, each measured the way
+  `lib/planner/bezier.cpp:52` does.
+* Flow: loader `Subpath[]` per layer → `cleanSubpath` → `annotate` →
+  `AnnotatedBezier[]` per subpath, which 6b serialises.
+* Clean already guarantees: no zero-length curves, no handle on its own
+  endpoint, endpoints chained exactly; `joins[i]` sits between `curves[i]`
+  and the next, wrapping to `curves[0]` when closed.
 * Interface, `web/src/toolpath/annotate.ts`:
-  * `annotate(cleaned, options): AnnotatedBezier[]`, pure, options passed
-    in like every stage (`repair.ts:16`).
-  * `AnnotatedBezier`: p0-p3, `flags` (`START` / `BREAK` / `END`), `length`,
-    `kappaMax`, `dkappaMax`, `ts` (c1, c2, c3), `kappaStart`, `kappaEnd`
-    (signed). The wire record drops c1 and the κ ends; the host keeps them
-    for checks and tests.
-  * Split, by exact de Casteljau, in this order:
-    1. cusps: a stop inside the curve (the |B'| test of `bezier.cpp:78`);
-       the piece after the cusp is flagged `BREAK`.
-    2. inflections: roots of `B' × B''` (quadratic in t, closed form); a
-       G2 split, no flag.
-    3. curvature ratio: while `κ_max / κ_min > kappaRatio` (seed: 2), split
-       at the parameter that balances it; depth-limited.
-    4. `t(s)` fit: while the fit error exceeds `fitTol`, or the fit is not
-       monotonic, halve; depth-limited.
-  * Joins: a `corner` join from clean starts a `BREAK` piece; `START` on a
-    subpath's first piece, `END` on its last.
-  * Analysis: 128 intervals of 3-point Gauss-Legendre, κ extremes and
-    dκ/ds from the samples, the constrained least-squares `t(u)` fit exact
-    at both ends: the same method as `bezier.cpp:52-129`, in doubles.
-* Options (`kappaRatio`, `fitTol`, `maxSplitDepth`) default in annotate.ts;
-  not added to `QualityConfig` (`web/src/machine/schema.ts:628`) until a
-  caller needs them (6c).
-* Tests, `web/test/toolpath/annotate.test.ts`: the cases of
-  `test/test_planner/test_bezier.cpp` (quarter circle: length πR/2, κ = 1/R,
-  small dκ; a line as a cubic: c2 = c3 = 0), an S-curve splits at its
-  inflection, a cusp splits with `BREAK`, a corner join is `BREAK`, every
-  piece's κ ratio and fit error within the options, pieces rejoin the input
-  exactly (endpoints to 1e-9 mm). Reuses `repair.cases.ts` and
-  `curves.cases.ts`.
-* Not in 6a: the wire record, anything on the Pico, any change to
-  `compileBlock.ts`. Cross-checking against the C++ analysis happens in 6b,
-  where the Pico checks host numbers.
+  * `annotate(sp, options?): AnnotatedBezier[]`, pure; defaults in
+    `DEFAULT_ANNOTATE_OPTIONS`, as in clean.
+  * `AnnotatedBezier`: p0-p3, `flags` (`START` / `BREAK` / `END`),
+    `length`, `kappaMax`, `dkappaMax`, `ts` (c1, c2, c3), `kappaStart`,
+    `kappaEnd` (signed). The wire record (6b) drops c1 and the κ ends.
+  * `analyzeBezier(c)`, exported: `bezier.cpp:52-129` in doubles, same
+    errors (`DegenerateHandle`, `Cusp`, `NonMonotonic`).
+* New in `geometry.ts`: `splitAt(c, t)`, exact de Casteljau. annotate uses
+  the existing `bezierDeriv1`, `bezierDeriv2`, `curvature`.
+* Splits, per curve, in order:
+  1. cusps: a minimum of |B'| below the Pico's cusp threshold; the piece
+     after it is `BREAK`. Handles at the cusp move 1/3 toward the next
+     control point (clean's rule) so the Pico doesn't refuse them.
+  2. inflections: roots of B' × B'' in (0, 1); G2, no flag.
+  3. curvature ratio: while κ_max / max(κ_min, `kappaFloor`) > `kappaRatio`,
+     split where it balances. The floor stops pieces at an inflection, and
+     lines, from splitting forever.
+  4. `t(s)` fit: halve while the fit error exceeds `fitTol` or the fit is
+     non-monotonic.
+* Depth limit (`maxSplitDepth`) on 3 and 4: a piece still outside a
+  tolerance is emitted (the Pico accepts it); one still non-monotonic
+  throws.
+* Flags: `START` on the subpath's first piece, `END` on its last; a
+  `corner` join makes the next curve's first piece `BREAK`. The wrap join
+  of a closed subpath is ignored; `START`/`END` already stop there.
+* Options: `kappaRatio` (2), `kappaFloor` (1e-3 mm⁻¹), `fitTol`,
+  `maxSplitDepth`. Not in `QualityConfig` until 6c needs them.
+* Tests, `web/test/toolpath/annotate.test.ts`, one case per rule, inline
+  curves, tables where they fit:
+  * `analyzeBezier`: quarter circle (length πR/2, κ = 1/R); a line as a
+    cubic (c2 = c3 = 0, κ = 0); each error.
+  * `splitAt` (in `geometry.test.ts`): halves rejoin and match at t.
+  * Splits: S-curve at its inflection; cusp with `BREAK`, both pieces
+    analysable; tight-then-loose curve by κ ratio; a line never splits.
+  * Flags: `START`/`END`; corner join gives `BREAK`; wrap join ignored.
+  * Invariants: every piece passes `analyzeBezier` within the options;
+    pieces rejoin exactly (1e-9 mm).
+* Not in 6a: the wire record, the Pico, `compileBlock.ts`, the `.cases.ts`
+  files. Cross-checking against the C++ analysis is 6b.
 * Depends on: 6-clean.
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
