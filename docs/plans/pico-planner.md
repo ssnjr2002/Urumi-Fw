@@ -916,9 +916,41 @@ Decisions:
   build-checked only; a bench run (`feed`, `seqreset`, a streamed contour)
   is still to do.
 
+## Branch 6-fix: `fix/bezier-float-check`
+
+Found by 6c's cross-check: 102 of `fish.svg`'s 210 pieces pass the host's
+analysis in doubles but fail `checkBezier` (`lib/planner/bezier.cpp:137`) as
+`Inconsistent` once rounded to float32:
+
+* 35 lines: host κ_max 0, the Pico's float end curvature ~1e-9.
+* 27 curves with κ_max at an end: float moves the end κ by 1e-4 to 0.9 %,
+  past the slack `kRel` (1e-4).
+* 40 pieces of 0.6-2 µm (near x 67 mm, float step 7.6e-6 mm): the chord
+  moves ~1 %, failing length ≥ chord. annotate should not emit them.
+
+* Type: fix (`lib/planner`, web).
+* Test first, failing: a generator `web/test/port/cppRefBezier.test.ts`
+  (load → clean → annotate → pack `fish.svg`, gated by `GEN_CPP_REF`, as
+  `cppRefFixtures.test.ts`) writes the packets as hex to a tracked
+  `test/data/bezier_records.txt`; `test/test_planner/test_bezier.cpp`
+  decodes each as `data_plane.cpp`'s `acceptBezier` does and expects
+  `checkBezier` to pass.
+* Fixes:
+  * `checkBezier`: slack for float32 points, an absolute term scaled to the
+    coordinates beside the relative one, on length vs chord and on κ_max
+    vs the ends; κ_max within slack of an end is raised to it, so the
+    planner never runs below its own end curvature.
+  * `annotate.ts`: no pieces below a minimum length; find which split makes
+    them (κ ratio or `fixStops`) first.
+* Depends on: 6b. 6c waits for it.
+* Checks: `pio test -e native`, `pio run -e pico`, `pnpm typecheck` and
+  `pnpm test` in `web/`.
+
+**Status:** planned.
+
 ## Branch 6c: `feature/host-bezier-job`
 
-* Type: feature (web, plus a native test).
+* Type: feature (web).
 * Purpose: an SVG layer becomes a stream of `BEZIER` packets, run from the
   barebones demo.
 * `web/src/toolpath/job.ts`, pure:
@@ -940,17 +972,17 @@ Decisions:
   Run sends `feed <cut> <travel>` then `link.stream`
   (`web/src/wire/link/link.ts:296`) and logs the `StreamResult`; Abort calls
   `link.abort()` (`link.ts:197`).
-* Host-to-Pico cross-check (deferred from 6b): a web script packs the
-  `fish.svg` pieces into a generated C header under `test/test_planner/`;
-  a native test runs `checkBezier` on every record and expects none refused.
+* The host-to-Pico cross-check (deferred from 6b) moved to 6-fix, whose
+  failing test it is.
 * Tests, `web/test/toolpath/job.test.ts`, inline SVG, one case per rule:
   offset moves the bbox; missing layer; flags framed per subpath; packets
   match the pieces.
-* Depends on: 6b.
-* Checks: `pnpm typecheck` and `pnpm test` in `web/`, `pio test -e native`.
+* Depends on: 6-fix.
+* Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 * Human scope: the 6b bench run, through this demo.
 
-**Status:** planned.
+**Status:** paused for 6-fix; `job.ts`, its tests and the exports written,
+uncommitted, in `../urumi-host-bezier-job`.
 
 ## Later (not planned here)
 
