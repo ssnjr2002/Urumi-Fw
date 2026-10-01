@@ -1014,8 +1014,9 @@ analysis in doubles but fail `checkBezier` (`lib/planner/bezier.cpp:137`) as
 * The simulator answers `feed` with `err unknown`; it was not taught the
   command in 6b.
 * Bench (human scope, done): fish.svg, test_rect.svg and test_circle.svg
-  cut through the demo with clean motion; `feed`, contour framing and
-  travel work on the Pico. Abort not yet tried mid-motion.
+  run through the demo as XY motion in air, no tool engaged; motion is
+  clean, and `feed`, contour framing and travel work on the Pico. Abort
+  mid-motion (fish, while streaming) stopped immediately.
 * Out of scope: the fish stream sent 6,318 packets for 171: on
   `NACK_FULL` the session resends its whole window every 50 ms until the
   ring drains. Pacing sends by ring space goes in Later.
