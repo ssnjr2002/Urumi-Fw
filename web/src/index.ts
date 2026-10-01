@@ -173,6 +173,20 @@ export {
     type CubicBezier,
 } from "./toolpath/geometry.js";
 
+// ── Bézier path: SVG layer → annotated Béziers → BEZIER packets ─────────────
+export { loadSvgPaths, type Subpath, type LoadedSvg, type LoadOptions } from "./svg/load.js";
+export { cleanSubpath, DEFAULT_CLEAN_OPTIONS, type CleanSubpath, type CleanOptions, type JoinKind } from "./toolpath/clean.js";
+export {
+    annotate,
+    analyzeBezier,
+    BezierFlag,
+    DEFAULT_ANNOTATE_OPTIONS,
+    type AnnotatedBezier,
+    type AnnotateOptions,
+} from "./toolpath/annotate.js";
+export { prepareBezierJob, type BezierJob, type BezierJobOptions, type BBox } from "./toolpath/job.js";
+export { packBezier } from "./wire/format/bezier.js";
+
 // ── production bake: SVG + config → CompiledBlock[] + SwapPhase[] ───────────
 // The primary entry point most consumers want (demo/comms.js, demo/bench.js).
 export {
