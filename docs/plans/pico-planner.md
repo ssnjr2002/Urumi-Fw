@@ -731,7 +731,7 @@ Decisions:
 * Depends on: 6-load (its output is the input).
 * Checks: `pnpm typecheck` and `pnpm test` in `web/`.
 
-**Status:** ready to merge.
+**Status:** done, merged to `main`. Unblocks 6a.
 
 **Outcome:**
 
