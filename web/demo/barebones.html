@@ -15,6 +15,21 @@
   <button id="push-config" disabled>Push config</button>
   <button id="pull-config" disabled>Pull config</button>
   <button id="status-cfg" disabled>cfg</button>
+  <h2>Job</h2>
+  <label for="svg-file">SVG: </label>
+  <input type="file" id="svg-file" accept="image/svg+xml,.svg">
+  <label for="layer">Layer: </label>
+  <select id="layer" disabled></select>
+  <br><br>
+  <label>Cut feed (mm/s): <input type="number" id="cut-feed" min="0" step="any" value="80"></label>
+  <label>Travel feed (mm/s): <input type="number" id="travel-feed" min="0" step="any" value="80"></label>
+  <br><br>
+  <label>Offset X (mm): <input type="number" id="offset-x" step="any" value="0"></label>
+  <label>Offset Y (mm): <input type="number" id="offset-y" step="any" value="0"></label>
+  <br><br>
+  <button id="prepare" disabled>Prepare</button>
+  <button id="run" disabled>Run</button>
+  <button id="abort" disabled>Abort</button>
   <p>Open the devtools console to see what's happening.</p>
   <script type="module" src="./barebones.js"></script>
 </body>
