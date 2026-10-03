@@ -208,28 +208,22 @@ power cycle                           clean: no ids, no fences, nothing touched
 * **Exits:** `setorigin` commits and leaves; `home_end` abandons without a
   datum; estop and `HOMING_FAIL` leave as today. A session entered from
   `LIMIT_LATCHED` whose switch is still held settles back there.
-* **Scope is whatever `setorigin` names.** A slot that ran legs but is not
+* **Scope is whatever `setorigin` names.** A node that ran legs but is not
   named ends un-homed; each leg already invalidates its node's origin.
 * **Allowed in a session:** queries, `stop`, `home_end`, `setorigin`.
   Refused: `axis_map`, `step`, jobs, probing.
 * A leg changes no slot binding, so homing needs none of the probe's
   containment.
+* Parallel legs, cycles, the `home` command and node-addressed `setorigin`:
+  docs/plans/controller-homing.md.
 
 ### `setorigin`
 
-* **Syntax:** `setorigin <s1> <s2> <s3> <s4>`, each the slot's position in
-  steps or `-` to skip. Exactly four tokens, so every old call answers
-  `err usage`. Only `-` skips (unlike `axis_map`, `0` is a position here).
-  All four `-` is `err usage`.
-* A named slot with no node bound is an error before any bus I/O. A node that
-  does not answer `DATUM_SET` gives `err node <id> …`; the other slots still
-  go through.
+* Syntax: node-addressed (docs/plans/controller-homing.md).
 * **No longer clears alarms.** Post-estop recovery becomes `unstop` →
   `axes_enable on` → home or `setorigin`.
 * Still valid outside a session, as a manual datum. Keeps the estop-wins check
   (reason snapshot on entry).
-* Stays slot-framed: the controller commits a map at boot, and matching
-  `axis_map`'s form is worth the map dependency.
 
 ### Probe containment
 
@@ -268,7 +262,6 @@ power cycle                           clean: no ids, no fences, nothing touched
 * Reset-reason or scratch registers for "can a mute node hold a slot":
   `reset` keeps RAM, and per-node touched state is more precise.
 * A delay after the `CFG_SET` ACK: moves the gap, does not close it.
-* Node-addressed `setorigin`: slot form kept (see above).
 * `nodeReleased`: derived from the slot table (bound or fenced).
 * A cold-boot wait of `BUS_SILENCE_MS` before Core 1's first byte: a node that
   powers up with the Pico starts its timer only after its address blink, so
@@ -283,7 +276,7 @@ The host wire. The web host's side (`web/src/wire/`, the Sim) is deferred from
 branch 1d on (see 1d, Web deferred).
 
 * Alarm reasons: `ALARM_CONFIG` retired; `ALARM_BUS_DEGRADED` added.
-* Commands: `unstop`, `bus_exclude`, `home_end`, `cfg`; `setorigin` syntax.
+* Commands: `unstop`, `bus_exclude`, `home_end`, `cfg`.
 * Errors: `err excluded`, `err degraded`, `err fenced <s0> <s1> <s2> <s3>`, `err node <id> …`
   from `setorigin`.
 * `slot_map` readback marks fenced slots (`!3`); `axes_map` and `slot_map`
@@ -320,8 +313,9 @@ Proposed order. Each gets a full Plan section when its turn comes.
    and `bus_exclude`, the fence, `CFG_SET` → reset and `ready`, confirmed slot
    release, estop make-safe, `unstop`. Make safe is one `CMD_MAKE_SAFE` per
    node. Its slot rules live in `slot_map`. Depends on 1, 1b, 1d and 1e.
-3. `feature/homing-session`: session states and exits, `home_end`, the new
-   `setorigin`, legs only from `LIMIT_LATCHED`. Depends on 1.
+3. `feature/homing-session`: session states and exits, `home_end`,
+   `setorigin` no longer clearing alarms, legs only from `LIMIT_LATCHED`.
+   Depends on 1. docs/plans/controller-homing.md builds on it.
 4. `feature/alarm-exits`: `unalarm` dispatcher, the strictness config
    field that picks `bus_exclude`'s ids, probe restore at exit,
    `claimed` containment, `PROBE_ESTOP` removed. Depends on 2 and 3.
@@ -1106,9 +1100,7 @@ includes the probe vacuum with no special case.
   (docs/node_state_ingest.md §7) becomes worth building when soft limits give
   Core 1 a second path that ends motion abruptly. Not needed here: the estop
   keeps `ALARM_ESTOP`.
-* The homing recipe on the Pico: the controller sequence that holds the
-  session, and the handler bodies (`setorigin`'s datum loop, the enables) that
-  move into ops for it. The probe session may later follow the same shape.
+* The homing recipe on the Pico: moved to docs/plans/controller-homing.md.
 * `unalarm` behaviour per reason beyond the table above.
 
 ## Follow-ups
