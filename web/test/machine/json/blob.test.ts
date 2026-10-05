@@ -10,12 +10,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { encode } from "@msgpack/msgpack";
 import { FIXTURES, readFixture, readFixtureBytes } from "../../helpers.js";
 import { loadConfig } from "../../../src/machine/json/load.js";
 import { validateConfig } from "../../../src/machine/json/validate.js";
+import { stripJsonComments } from "../../../src/machine/json/image.js";
 import {
     CONFIG_BLOB_VERSION,
     decodeConfigBlob,
@@ -95,6 +96,13 @@ function checkFixture(file: string, bytes: Uint8Array): void {
 describe("config fixtures (shared with the Pico decoder test)", () => {
     it("good.msgpack is the encoded test machine", () => {
         checkFixture("good.msgpack", encodeConfigBlob(testMachine()));
+    });
+
+    it("controller.msgpack is the encoded config/controller.jsonc", () => {
+        const text = readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8");
+        const r = loadConfig(stripJsonComments(text));
+        if (!r.ok) throw new Error(r.errors.join("; "));
+        checkFixture("controller.msgpack", encodeConfigBlob(r.config));
     });
 
     for (const b of BAD) {

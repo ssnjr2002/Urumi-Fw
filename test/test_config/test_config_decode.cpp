@@ -97,6 +97,15 @@ TEST_CASE("homing blocks decode, with cycle defaults and optional parkPos") {
     CHECK(a.indexPos == doctest::Approx(90));
 }
 
+TEST_CASE("config/controller.jsonc decodes") {
+    std::vector<uint8_t> b = readBlob("controller.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    CHECK(c.headCount == 2);
+    CHECK(c.x.homing.present);
+    CHECK(c.heads[1].a.homing.present);
+}
+
 TEST_CASE("an absent node maps to none") {
     std::vector<uint8_t> b = readBlob("good.msgpack");
     MachineCfg c;

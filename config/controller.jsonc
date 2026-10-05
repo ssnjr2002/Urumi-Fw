@@ -1,0 +1,231 @@
+// The machine's config for the Pico, flashed by `pio run -e pico -t uploadfs`
+// (scripts/pio/config_image.py writes data/config.bin from this file).
+//
+// Fields marked "web only" are read by the web host alone and go when its
+// homing path is removed; the Pico reads the ones beside them
+// (docs/homing.md §3.2a, docs/plans/controller-homing.md).
+//
+// Unmeasured, check when homing works:
+//   maxTravel: estimates (old hardTravel − pullOffDist). Measure by pushing the
+//     gantry to the end opposite the switch, then homing and reading the steps
+//     to the trip.
+//   invertDir on y and z: derived from the old frames; jog + to confirm
+//     (X right, Y away, Z up).
+//   invertDir on a: unchecked; jog A+, expect counter-clockwise from above.
+{
+  "machine": {
+    "fCpu": 150000000,
+    "path": { "feed": 80 },
+    "rapid": { "feed": 80 },
+    "z": { "feed": 10 },
+    "slew": {},
+    "x": {
+      "node": { "id": 1, "present": true },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 100,
+      "maxTravel": 1195,         // estimate
+      "softLimits": false,
+      "invert": false,           // web only
+      "invertDir": false,
+      "rotary": false,
+      "homing": {
+        "kind": "linear",
+        "hardTravel": 1200,      // web only
+        "atOrigin": false,       // web only
+        "pullInFeed": 2.5,       // web only
+        "backoffMm": 2,          // web only
+        "parkMm": 5,             // web only
+        "seekPositive": true,    // switch on the right
+        "seekScaler": 1.2,
+        "startFeed": 2.5,
+        "seekFeed": 12.5,
+        "latchFeed": 0.78,
+        "rampSteps": 400,
+        "backoffDist": 2,
+        "pullOffDist": 5
+      }
+    },
+    "y": {
+      "node": { "id": 2, "present": true },
+      "stepsPerUnit": 160,
+      "maxFeed": 80,
+      "maxAccel": 100,
+      "maxTravel": 495,          // estimate
+      "softLimits": false,
+      "invert": true,            // web only
+      "invertDir": false,        // derived, unconfirmed
+      "rotary": false,
+      "homing": {
+        "kind": "linear",
+        "hardTravel": 500,       // web only
+        "atOrigin": false,       // web only
+        "pullInFeed": 2.5,       // web only
+        "backoffMm": 2,          // web only
+        "parkMm": 5,             // web only
+        "seekPositive": false,   // switch at the front
+        "seekScaler": 1.2,
+        "startFeed": 2.5,
+        "seekFeed": 12.5,
+        "latchFeed": 0.78,
+        "rampSteps": 400,
+        "backoffDist": 2,
+        "pullOffDist": 5
+      }
+    },
+    "laser": null
+  },
+  "heads": [
+    {
+      "accepts": ["knife", "crease"],
+      "xOffset": 0,
+      "yOffset": 0,
+      "z": {
+        "node": { "id": 3, "present": true },
+        "stepsPerUnit": 1200,
+        "maxFeed": 20,
+        "maxAccel": 500,
+        "maxTravel": 36,         // estimate
+        "softLimits": false,
+        "invert": false,         // web only
+        "invertDir": true,       // derived, unconfirmed
+        "rotary": false,
+        "homing": {
+          "kind": "linear",
+          "hardTravel": 40,      // web only
+          "atOrigin": true,      // web only
+          "pullInFeed": 2.5,     // web only
+          "backoffMm": 4,        // web only
+          "parkMm": 4,           // web only
+          "seekPositive": true,  // switch at the top
+          "seekScaler": 1.2,
+          "startFeed": 2.5,
+          "seekFeed": 6,
+          "latchFeed": 0.78,
+          "rampSteps": 400,
+          "backoffDist": 4,
+          "pullOffDist": 4,
+          "parkPos": 0           // ISO: 0 at the top, range [-36, 0]
+        }
+      },
+      "a": {
+        "node": { "id": 4, "present": true },
+        "stepsPerUnit": 45.9847,
+        "maxFeed": 100,
+        "maxAccel": 500,
+        "maxTravel": 0,
+        "softLimits": false,
+        "invert": false,         // web only
+        "invertDir": false,      // unchecked
+        "rotary": true,
+        "homing": {
+          "kind": "rotary",
+          "pullInFeed": 18.12,   // web only
+          "datumDeg": 0,         // web only
+          "budgetRevs": 4,
+          "startFeed": 18.12,
+          "sweepFeed": 54.37,
+          "rampSteps": 400,
+          "toleranceDeg": 2.0,
+          "indexPos": 0          // edge angle at the index; set from CAD or by jogging
+        }
+      }
+    },
+    {
+      "accepts": ["pen"],
+      "xOffset": 60,
+      "yOffset": 0,
+      "z": {
+        "node": { "id": 6, "present": true },
+        "stepsPerUnit": 600,
+        "maxFeed": 20,
+        "maxAccel": 500,
+        "maxTravel": 36,         // estimate
+        "softLimits": false,
+        "invert": false,         // web only
+        "invertDir": true,       // derived, unconfirmed
+        "rotary": false,
+        "homing": {
+          "kind": "linear",
+          "hardTravel": 40,      // web only
+          "atOrigin": true,      // web only
+          "pullInFeed": 2.5,     // web only
+          "backoffMm": 4,        // web only
+          "parkMm": 4,           // web only
+          "seekPositive": true,  // switch at the top
+          "seekScaler": 1.2,
+          "startFeed": 2.5,
+          "seekFeed": 6,
+          "latchFeed": 0.78,
+          "rampSteps": 400,
+          "backoffDist": 4,
+          "pullOffDist": 4,
+          "parkPos": 0
+        }
+      },
+      "a": {
+        "node": { "id": 5, "present": true },
+        "stepsPerUnit": 2.8611,
+        "maxFeed": 360,
+        "maxAccel": 500,
+        "maxTravel": 0,
+        "softLimits": false,
+        "invert": false,         // web only
+        "invertDir": false,      // unchecked
+        "rotary": true,
+        "homing": {
+          "kind": "rotary",
+          "pullInFeed": 174.76,  // web only
+          "datumDeg": 0,         // web only
+          "budgetRevs": 4,
+          "startFeed": 174.76,
+          "sweepFeed": 291.27,
+          "rampSteps": 400,
+          "toleranceDeg": 2.0,
+          "indexPos": 0
+        }
+      }
+    }
+  ],
+  "defaultHead": 0,
+  "peripherals": [
+    { "id": 7, "type": 2, "present": true },
+    { "id": 8, "type": 3, "present": true }
+  ],
+  "tools": {
+    "knife": {
+      "tangential": true,
+      "unwind": true,
+      "offsetMm": 0,
+      "cornerAngleDeg": 20,
+      "minRadiusMm": 0,
+      "path": { "feed": 40 },
+      "z": { "feed": 10 },
+      "toolOffset": { "xOffset": 0, "yOffset": 0 },
+      "dutyLimits": { "maxOnS": 30, "minOnS": 20, "dwellS": 2, "settleS": 0.3 }
+    },
+    "pen": {
+      "tangential": false,
+      "unwind": false,
+      "offsetMm": 0,
+      "cornerAngleDeg": 20,
+      "minRadiusMm": 0,
+      "path": { "feed": 80 },
+      "z": { "feed": 10 },
+      "toolOffset": { "xOffset": 0, "yOffset": 0 }
+    }
+  },
+  "quality": {
+    "chordTol": 0.01,
+    "dvMax": 3.0,
+    "vMin": 0.5,
+    "dtMax": 0.05,
+    "dtMin": 1e-06,
+    "angleTol": 5.0,
+    "gapTol": 0.01,
+    "nKappa": 20,
+    "junctionDeviation": 0.05,
+    "dsMax": 0.5,
+    "dthetaMax": 2.0
+  }
+}
