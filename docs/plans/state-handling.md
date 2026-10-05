@@ -1174,3 +1174,13 @@ in PAUSED.
   names it (`ok unconfirmed <ids>`). Either way the node is excluded.
   Exclusion blocks RPCs only, so an excluded node gets no slot again until
   the next sweep. Its own small branch.
+* `ALARM_CONFIG`: boot raises it when `/config.bin` fails its header,
+  version, CRC or decode, and, unless the build sets
+  `PICO_ALLOW_UNCONFIGURED`, when there is no file. `getstate` adds
+  `cfgerr=<absent|version|crc|decode…>` (`absent` only without the flag).
+  Exits: a committed `CFG_SET` (applies the default map), or, with the flag,
+  `uncfg`, which ignores the file until reboot and lands IDLE unconfigured
+  (never deletes it). `uncfg` is admitted only in `ALARM_CONFIG`; `unalarm`
+  answers `err config`. With the flag and no file, boot lands IDLE
+  unconfigured as now. The web schema needs the new `AlarmReason`. Its own
+  small branch.
