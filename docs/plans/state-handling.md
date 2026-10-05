@@ -1068,6 +1068,55 @@ includes the probe vacuum with no special case.
   * `status` gained `mute=`, `excluded=`, `touched=`; any host parser of
     that line needs to allow extra fields.
 
+## Branch 3: `feature/homing-session`
+
+**Type:** feature. **Depends on:** 1 (done).
+
+**Purpose:** the Decisions under "Homing session" and "`setorigin`", except
+the node-addressed syntax (docs/plans/controller-homing.md branch 2).
+
+**Today:** a session is one leg. `homingBegin` (`core0/ops/homing.cpp:198`)
+clears any alarm reason at arm and `homingTick` ends every leg with
+`resumeOrHold()` (`homing.cpp:310`). Legs pass `busGateDenies`
+(`core0/cmd/axis.cpp:388`), which admits PAUSED and every ALARM.
+`cmdSetOrigin` clears ALARM through `resumeOrHold()` (`axis.cpp:337`).
+
+**Plan:**
+
+* `homing.cpp`:
+  * A leg arms from IDLE, `ALARM_LIMIT_LATCHED`, or HOMING with no leg
+    running. The first enters HOMING.
+  * A finished leg records its latch (`nodeLatchSet`) and stays in HOMING;
+    no `resumeOrHold`. A failure goes to `ALARM_HOMING_FAIL` and estop
+    releases the session, as today.
+  * New `homingReason` beside `probingReason` (`ipc/shared_state.h:208`):
+    `HOMING_LEG` (a leg runs) / `HOMING_WAIT` (between legs).
+* `axis.cpp`:
+  * `legCommon` gets its own gate in place of `busGateDenies`: other ALARMs
+    and PAUSED are `err bad_state`, a running leg `err busy`.
+  * `setorigin` is admitted in `HOMING_WAIT`: records the datum and exits
+    through `resumeOrHold`. In ALARM it records the datum and keeps the
+    alarm. The estop-wins check stays.
+* `home_end` (`cmd/table.h`, `control_plane.cpp`): in `HOMING_WAIT`,
+  `resumeOrHold` with no datum (each leg already invalidated its node's
+  origin); in `HOMING_LEG` `err busy` (`stop` aborts a leg); outside a
+  session `err bad_state`.
+* `getstate` (`cmd/query.cpp`) appends `homing=<reason>` while in HOMING.
+* In a session `enable` / `axes_enable` stay refused (the bus gate): enable
+  first, then home.
+* Docs: `docs/homing.md` (session), `docs/wire_protocol.md` (`home_end`,
+  `homing=`, allowed-state matrix).
+* Web: not changed. Web homing waits for the state to leave HOMING after
+  each leg, so it hangs against this Pico; it is being retired. The sim keeps
+  the one-leg session.
+
+**Checks:** `pio run -e pico`. Human scope, at the CLI: four `lin_leg` then
+`setorigin`, with `homing=` between legs and IDLE (or `LIMIT_LATCHED`) after;
+`home_end` between legs; `stop` mid-leg; a leg refused in `ALARM_ESTOP` and
+in PAUSED.
+
+**Status:** planned.
+
 ## Open questions
 
 * **Node side** (its own session): docs/node_session_and_datum.md §3 and §7
