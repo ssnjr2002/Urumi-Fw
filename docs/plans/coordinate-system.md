@@ -12,6 +12,10 @@ frame is in docs/plans/controller-homing.md.
 * **+ is physical and fixed.** Looking at the bed from above, from the
   operator's side: X+ is right, Y+ is up (away from the operator). Z+ is up,
   away from the work (ISO 841).
+* Rotary A (a rotation about Z; ISO would name it C): + is counter-clockwise
+  seen from above (the right-hand rule about Z+), 0° is the knife's edge
+  facing X+. A is then the path heading, `atan2(dy, dx)`, with no offset or
+  sign flip.
 * **`invertDir`** per axis is the wiring fix that makes the motor obey it.
   Commissioning checks it by jogging each axis +.
 * Only the + direction can mirror a job. Where 0 sits only shifts the
@@ -109,7 +113,9 @@ Proposed; each gets a full Plan section when its turn comes.
 
 ## Open questions
 
-* Rotary A: 0 at the index plus `datumDeg`, + direction, whether angles wrap.
+* Rotary A: whether angles wrap. Whether `web/src/toolpath/flatten.ts:70`
+  takes headings before or after the y reflection (before means its angles
+  are clockwise-positive today).
 * Z: the tool length offset and the work Z0 by probing; the probe config
   (`switchXMm/YMm`, `tripMm`) restated in these frames.
 * More work offsets (G55–G59), and which stored positions besides park.

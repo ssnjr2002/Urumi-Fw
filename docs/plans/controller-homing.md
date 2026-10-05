@@ -110,12 +110,27 @@ Per linear axis (frames and directions: docs/plans/coordinate-system.md):
   `seekPositive`. Fixing a wrong + with `seekPositive` homes correctly and
   mirrors every job.
 * Replaces `hardTravel`, `atOrigin` and `invert`; renames `backoffMm`,
-  `parkMm` and `pullInFeed`. The web keeps the old fields until its homing
+  `parkMm`, `pullInFeed` and `datumDeg`. The web keeps the old fields until its homing
   path is removed; the Pico reads only the new ones.
 * **Z is ISO:** + up, `seekPositive: true`, typically `parkPos: 0`: range
   `[-maxTravel, 0]`, 0 at the top, the park position is the safe height.
-* Rotary A keeps its own block (index, sweep, `datumDeg`); shares `invertDir`
-  and `cycle`.
+* Rotary A keeps its own block; shares `invertDir` and `cycle`:
+
+  ```jsonc
+  "homing": {
+    "kind": "rotary", "cycle": 2,
+    "budgetRevs": 4,         // runaway ceiling, revolutions
+    "startFeed": 10, "sweepFeed": 60, "rampSteps": 400,
+    "toleranceDeg": 2,       // max disagreement of the two sweeps
+    "indexPos": 0            // coordinate of the index itself
+  }
+  ```
+
+  `indexPos` (was `datumDeg`) numbers the index, not a rest point: a rotary
+  home has no park. It is the angle the knife's edge points at while the axis
+  sits at the index (0° = X+, counter-clockwise +). From CAD: sensor angle
+  from X+ minus magnet angle from the edge. Check by homing, jogging the edge
+  to face X+ and subtracting the reading.
 
 ### Dropped
 
@@ -147,6 +162,61 @@ Proposed order. Each gets a full Plan section when its turn comes.
 2. `feature/homing-legs`: parallel legs with fail-all, the park leg,
    node-addressed `setorigin`. Depends on state-handling branch 3.
 3. `feature/home-command`: the `home` controller command. Depends on 1 and 2.
+
+## Branch 1: `feature/homing-config`
+
+### Plan
+
+* **Type:** `feature`. **Depends on:** nothing.
+* **Purpose:** the Pico decodes and validates the homing config above. Nothing
+  acts on it yet (branches 2 and 3 do). The web carries the new fields through
+  to the blob beside the old ones, which it alone keeps using.
+* **Pico** (`src/rp2350/core0/config/`):
+  * `config_decode.h:30-38` `CfgAxis`: `invert` → `invertDir`; add
+    `softLimits` and a `CfgHoming` (`present`, `cycle`, `seekPositive`,
+    `seekScaler`, the four feeds/ramp, `backoffDist`, `pullOffDist`,
+    `hasParkPos`, `parkPos`), and for a rotary block `budgetRevs`,
+    `startFeed`, `sweepFeed`, `rampSteps`, `toleranceDeg`, `indexPos`.
+  * `config_decode.h:18` `CFG_SCHEMA_VERSION` 1 → 2, so an old blob is
+    `version`, not `missing`.
+  * `config_decode.h:59-69` and `.cpp:152-166`: add `CFG_DEC_HOMING`
+    (`"homing"`) for an out-of-range homing field.
+  * `config_decode.cpp:15-23` `filterAxis`, `:44-55` `readAxis`, `:59-66`
+    `checkAxis`: read and check the new fields. The homing block is optional
+    (absent: not homeable); present, every field is required except `parkPos`
+    and `cycle` (default Z 1, else 2, applied by the decoder from the axis's
+    place).
+* **Web** (pass-through only, no behaviour change). The blob is built from
+  the resolved config, which the loader builds field by field, so a field it
+  does not copy never reaches the Pico. The Pico's decoder is the only check;
+  the web adds no validation for code that is about to be removed.
+  * `web/src/machine/schema.ts:122-171` `LinearHoming`, `:191-244`
+    `RotaryHoming`, `:375-` `AxisConfig`: the new fields, optional, beside
+    the old ones.
+  * `web/src/machine/json/load.ts:80-91` `JsonAxis`, `:108-125` `JsonHoming`,
+    `:437-448` axis build, `:517-585` `buildHoming`: copy the new fields
+    through when present. The rotary name check (`:545-551`) must not reject
+    them.
+  * `web/src/machine/json/blob.ts:15` `CONFIG_BLOB_VERSION` 1 → 2.
+* **Fixtures and tests:**
+  * `web/test/fixtures/test-machine.json`: homing blocks on x, y, z and a
+    rotary block on a (new and old fields), so `good.msgpack` carries them.
+  * `web/test/machine/json/blob.test.ts:55-63` `BAD`: add `bad_homing`;
+    regenerate `web/test/fixtures/config/*.msgpack`.
+  * `test/test_config/test_config_decode.cpp`: decode checks for the new
+    fields, `cycle` defaults, absent `parkPos`; `homing` in the reasons list.
+  * `web/demo/comms.json`: the new fields beside the old.
+* **Docs:** `docs/homing.md` §3.1 (schema) and §3.2 (`invert`): the new
+  fields and that the Pico reads only them.
+* **Checks:** `pio run -e pico`, `pio test -e native`, `pnpm typecheck` and
+  `pnpm test` in `web/`.
+* **Not in this branch:** the probe block keeps `pullInFeed`, `backoffMm`,
+  `parkMm`; renaming it is the Z/probe open question in
+  docs/plans/coordinate-system.md.
+
+### Status
+
+Planned.
 
 ## Open questions
 
