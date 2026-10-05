@@ -1176,7 +1176,8 @@ looks like no config).
 `pnpm test` in `web/`. Human scope: boot with the stale config, `uncfg`,
 `CFG_SET` clearing the alarm.
 
-**Status:** ready to merge. Bench: `alarm=2 cfgerr=version` on boot with the
+**Status:** done (773f018..b27bf12). Unblocks nothing new; branch 4
+still waits on nothing else. Bench: `alarm=2 cfgerr=version` on boot with the
 stale config in both builds; `uncfg` → IDLE with the flag, `err unknown`
 without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
 
