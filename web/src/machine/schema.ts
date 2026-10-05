@@ -168,6 +168,18 @@ export interface LinearHoming {
      * move of the next job would silently drop this axis.
      */
     readonly parkMm: number;
+
+    /**
+     * The Pico's homing fields (docs/plans/controller-homing.md), carried
+     * through to the config blob. Nothing on the host reads them.
+     */
+    readonly cycle?: number;
+    readonly seekPositive?: boolean;
+    readonly seekScaler?: number;
+    readonly startFeed?: number;
+    readonly backoffDist?: number;
+    readonly pullOffDist?: number;
+    readonly parkPos?: number;
 }
 
 /**
@@ -241,6 +253,11 @@ export interface RotaryHoming {
      * everywhere downstream.
      */
     readonly datumDeg: number;
+
+    /** The Pico's rotary fields, carried through to the blob; see LinearHoming. */
+    readonly cycle?: number;
+    readonly startFeed?: number;
+    readonly indexPos?: number;
 }
 
 
@@ -381,6 +398,9 @@ export interface AxisConfig {
     readonly maxAccel: number;
     readonly maxTravel: number;
     readonly invert: boolean;
+    /** The Pico's direction and soft-limit fields, carried through to the blob. */
+    readonly invertDir?: boolean;
+    readonly softLimits?: boolean;
     readonly rotary: boolean;
     /**
      * Absent = this axis has no terminator (no limit switch, no index) and

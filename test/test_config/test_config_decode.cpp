@@ -40,9 +40,11 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(c.x.node.id == 1);
     CHECK(c.x.node.present);
     CHECK(c.x.stepsPerUnit == doctest::Approx(160));
-    CHECK(c.x.invert);
+    CHECK(c.x.invertDir);
+    CHECK(c.x.softLimits);
+    CHECK(c.x.maxTravel == doctest::Approx(480));
     CHECK(c.y.node.id == 2);
-    CHECK_FALSE(c.y.invert);
+    CHECK_FALSE(c.y.invertDir);
     CHECK(c.heads[0].z.node.id == 3);
     CHECK(c.heads[0].z.stepsPerUnit == doctest::Approx(1200));
     CHECK(c.heads[0].a.node.id == 4);
@@ -57,6 +59,44 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(map[3] == 4);
 }
 
+TEST_CASE("homing blocks decode, with cycle defaults and optional parkPos") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+
+    const CfgHoming& x = c.x.homing;
+    REQUIRE(x.present);
+    CHECK(x.cycle == 2);                 // absent: not Z
+    CHECK(x.seekPositive);
+    CHECK(x.seekScaler == doctest::Approx(1.2));
+    CHECK(x.startFeed == doctest::Approx(2.5));
+    CHECK(x.seekFeed == doctest::Approx(12.5));
+    CHECK(x.latchFeed == doctest::Approx(0.78));
+    CHECK(x.rampSteps == 400);
+    CHECK(x.backoffDist == doctest::Approx(2));
+    CHECK(x.pullOffDist == doctest::Approx(5));
+    CHECK_FALSE(x.hasParkPos);
+
+    const CfgHoming& y = c.y.homing;
+    REQUIRE(y.present);
+    CHECK_FALSE(y.seekPositive);
+    CHECK(y.hasParkPos);
+    CHECK(y.parkPos == doctest::Approx(0));
+
+    const CfgHoming& z = c.heads[0].z.homing;
+    REQUIRE(z.present);
+    CHECK(z.cycle == 1);                 // absent: Z
+    CHECK(z.seekPositive);
+
+    const CfgHoming& a = c.heads[0].a.homing;
+    REQUIRE(a.present);
+    CHECK(a.cycle == 3);                 // explicit
+    CHECK(a.budgetRevs == doctest::Approx(4));
+    CHECK(a.sweepFeed == doctest::Approx(60));
+    CHECK(a.toleranceDeg == doctest::Approx(2));
+    CHECK(a.indexPos == doctest::Approx(90));
+}
+
 TEST_CASE("an absent node maps to none") {
     std::vector<uint8_t> b = readBlob("good.msgpack");
     MachineCfg c;
@@ -68,13 +108,18 @@ TEST_CASE("an absent node maps to none") {
 }
 
 TEST_CASE("each bad blob is rejected for its own reason") {
-    const char* reasons[] = {"version", "missing", "steps", "node_id",
-                             "node_type", "dup_node", "heads"};
-    for (const char* r : reasons) {
-        CAPTURE(r);
-        std::vector<uint8_t> b = readBlob(std::string("bad_") + r + ".msgpack");
+    // {fixture, expected error}
+    const char* cases[][2] = {
+        {"version", "version"}, {"missing", "missing"}, {"steps", "steps"},
+        {"node_id", "node_id"}, {"node_type", "node_type"},
+        {"dup_node", "dup_node"}, {"heads", "heads"}, {"homing", "homing"},
+        {"homing_kind", "homing"}, {"no_invert_dir", "missing"},
+    };
+    for (auto& t : cases) {
+        CAPTURE(t[0]);
+        std::vector<uint8_t> b = readBlob(std::string("bad_") + t[0] + ".msgpack");
         MachineCfg c;
-        CHECK(std::string(configDecodeErrorName(configDecode(b.data(), b.size(), &c))) == r);
+        CHECK(std::string(configDecodeErrorName(configDecode(b.data(), b.size(), &c))) == t[1]);
     }
 }
 

@@ -9,13 +9,33 @@
       "stepsPerUnit": 160,
       "maxFeed": 80,
       "maxAccel": 1000,
-      "invert": true
+      "maxTravel": 480,
+      "invert": true,
+      "invertDir": true,
+      "softLimits": true,
+      "homing": {
+        "hardTravel": 500, "atOrigin": false,
+        "pullInFeed": 2.5, "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,
+        "backoffMm": 2, "parkMm": 5,
+        "seekPositive": true, "seekScaler": 1.2, "startFeed": 2.5,
+        "backoffDist": 2, "pullOffDist": 5
+      }
     },
     "y": {
       "node": { "id": 2 },
       "stepsPerUnit": 160,
       "maxFeed": 80,
-      "maxAccel": 1000
+      "maxAccel": 1000,
+      "maxTravel": 480,
+      "invertDir": false,
+      "softLimits": true,
+      "homing": {
+        "hardTravel": 500, "atOrigin": true,
+        "pullInFeed": 2.5, "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,
+        "backoffMm": 2, "parkMm": 5,
+        "cycle": 2, "seekPositive": false, "seekScaler": 1.2, "startFeed": 2.5,
+        "backoffDist": 2, "pullOffDist": 5, "parkPos": 0
+      }
     }
   },
   "heads": [
@@ -27,7 +47,17 @@
         "node": { "id": 3 },
         "stepsPerUnit": 1200,
         "maxFeed": 10,
-        "invert": true
+        "maxTravel": 40,
+        "invert": true,
+        "invertDir": true,
+        "softLimits": true,
+        "homing": {
+          "hardTravel": 45, "atOrigin": true,
+          "pullInFeed": 1, "seekFeed": 5, "latchFeed": 0.5, "rampSteps": 200,
+          "backoffMm": 1, "parkMm": 2,
+          "seekPositive": true, "seekScaler": 1.2, "startFeed": 1,
+          "backoffDist": 1, "pullOffDist": 2, "parkPos": 0
+        }
       },
       "a": {
         "node": { "id": 4 },
@@ -35,7 +65,15 @@
         "maxFeed": 100,
         "maxAccel": 2000,
         "invert": true,
-        "rotary": true
+        "invertDir": true,
+        "softLimits": false,
+        "rotary": true,
+        "homing": {
+          "kind": "rotary",
+          "budgetRevs": 4, "pullInFeed": 10, "sweepFeed": 60, "rampSteps": 400,
+          "toleranceDeg": 2, "datumDeg": 90,
+          "cycle": 3, "startFeed": 10, "indexPos": 90
+        }
       }
     }
   ],

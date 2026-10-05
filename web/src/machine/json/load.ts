@@ -84,6 +84,8 @@ interface JsonAxis {
     readonly maxAccel?: number;
     readonly maxTravel?: number;
     readonly invert?: boolean;
+    readonly invertDir?: boolean;
+    readonly softLimits?: boolean;
     readonly rotary?: boolean;
     readonly homing?: JsonHoming;
     readonly probe?: JsonProbe;
@@ -122,6 +124,15 @@ interface JsonHoming {
     // both
     readonly pullInFeed?: number;
     readonly rampSteps?: number;
+    // the Pico's fields, carried through unchecked
+    readonly cycle?: number;
+    readonly startFeed?: number;
+    readonly seekPositive?: boolean;
+    readonly seekScaler?: number;
+    readonly backoffDist?: number;
+    readonly pullOffDist?: number;
+    readonly parkPos?: number;
+    readonly indexPos?: number;
 }
 
 interface JsonHead {
@@ -441,6 +452,7 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         maxAccel: ja.maxAccel ?? 0,
         maxTravel: ja.maxTravel ?? 0,
         invert: ja.invert ?? false,
+        ...present(ja, ["invertDir", "softLimits"]),
         rotary: ja.rotary ?? false,
         // Spread, not `homing`, so an axis without a switch has no key at all
         // rather than an explicit `undefined`. `"homing" in axis` then means
@@ -557,6 +569,7 @@ function buildHoming(
             rampSteps: num("rampSteps"),
             toleranceDeg: num("toleranceDeg"),
             datumDeg: num("datumDeg"),
+            ...present(jh, ["cycle", "startFeed", "indexPos"]),
         };
     }
     for (const k of ["budgetRevs", "sweepFeed", "toleranceDeg", "datumDeg"] as const) {
@@ -579,7 +592,25 @@ function buildHoming(
         rampSteps: num("rampSteps"),
         backoffMm: num("backoffMm"),
         parkMm: num("parkMm"),
+        ...present(jh, ["cycle", "seekPositive", "seekScaler", "startFeed",
+                        "backoffDist", "pullOffDist", "parkPos"]),
     };
+}
+
+/**
+ * The fields of `o` named in `keys` that are present. The Pico's config fields
+ * pass through this way: the Pico's decoder checks them, and the host, whose
+ * homing path is being removed, does not read them.
+ */
+function present<T extends object, K extends keyof T>(
+    o: T,
+    keys: readonly K[],
+): { [P in K]?: Exclude<T[P], undefined> } {
+    const out: { [P in K]?: Exclude<T[P], undefined> } = {};
+    for (const k of keys) {
+        if (o[k] !== undefined) out[k] = o[k] as Exclude<T[K], undefined>;
+    }
+    return out;
 }
 
 /**

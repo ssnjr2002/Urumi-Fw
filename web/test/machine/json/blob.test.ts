@@ -68,6 +68,9 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "node_type", host: false, mutate: (c) => (c.machine.heads[0].a.node.type = 2) },
     { name: "dup_node", host: true, mutate: (c) => (c.machine.y.node.id = c.machine.x.node.id) },
     { name: "heads", host: true, mutate: (c) => (c.machine.defaultHead = 3) },
+    { name: "homing", host: false, mutate: (c) => (c.machine.x.homing.seekScaler = 0.5) },
+    { name: "homing_kind", host: false, mutate: (c) => (c.machine.heads[0].z.homing = c.machine.heads[0].a.homing) },
+    { name: "no_invert_dir", host: false, mutate: (c) => delete c.machine.y.invertDir },
 ];
 
 const DIR = join(FIXTURES, "config");
