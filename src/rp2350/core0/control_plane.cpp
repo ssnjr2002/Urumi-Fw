@@ -33,6 +33,9 @@ static const Cmd kCommands[] = {
     { "unstop",       cmdUnstop      },
     { "reset",        cmdReset       },
     { "rst",          cmdReset       },
+#ifdef PICO_ALLOW_UNCONFIGURED
+    { "uncfg",        cmdUncfg       },
+#endif
     { "seqreset",     cmdSeqReset    },
     { "pause",        cmdPause       },
     { "resume",       cmdResume      },

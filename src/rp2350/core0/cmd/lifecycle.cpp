@@ -12,6 +12,7 @@
 #include "../ops/position.h"
 #include "../ops/state.h"
 #include "../ops/bus.h"
+#include "../config/machine_cfg.h"
 #include "../usb_protocol.h" // BUS_ADDR_MAX
 #include "../../ipc/shared_state.h"
 
@@ -128,3 +129,18 @@ bool cmdCancel(const char*) {
     Serial.println("ok");
     return true;
 }
+
+#ifdef PICO_ALLOW_UNCONFIGURED
+// Leave ALARM_CONFIG unconfigured: the stored file is kept, and ignored until
+// power-off.
+bool cmdUncfg(const char*) {
+    if (machineState != STATE_ALARM || alarmReason != ALARM_CONFIG) {
+        Serial.println("err bad_state");
+        return true;
+    }
+    machineCfgIgnore();
+    resumeOrHold();
+    Serial.println("ok");
+    return true;
+}
+#endif

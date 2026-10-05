@@ -26,3 +26,13 @@ const MachineCfg& machineCfg();       // meaningful only when machineCfgValid()
 // The most recent rejection — of the stored blob at boot, or of a CFG_SET —
 // or CFG_DEC_OK once a config is adopted. For `cfg`.
 CfgDecodeError    machineCfgError();
+
+// No usable config and `uncfg` has not set it aside: resumeOrHold() holds
+// ALARM_CONFIG. Cleared by an adopted CFG_SET, or by machineCfgIgnore() until
+// power-off (soft reset keeps it; the config loads only in setup()).
+bool machineCfgBlocking();
+void machineCfgIgnore();
+bool machineCfgIgnored();
+// Why boot found no usable config, for getstate cfgerr=: "absent", "fs",
+// "file", or the stored blob's decode error name.
+const char* machineCfgBlockName();

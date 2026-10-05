@@ -143,7 +143,10 @@ enum MachineState : uint8_t {
 enum AlarmReason : uint8_t {
     ALARM_NONE       = 0,
     ALARM_ESTOP      = 1,   // stop command or poison pill
-    // 2 reserved: was ALARM_CONFIG. No config boots to IDLE.
+    // Boot found no usable config: none, an unmountable filesystem, a bad file,
+    // or one that does not decode (getstate cfgerr=). Held until a CFG_SET
+    // commit, or `uncfg` with PICO_ALLOW_UNCONFIGURED.
+    ALARM_CONFIG     = 2,
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
     ALARM_HOMING_FAIL= 4,   // home ended wrong: no switch found, or none cleared
     // The slot binding does not match the slot request (slotMapComplete): a

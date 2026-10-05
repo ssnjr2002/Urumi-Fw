@@ -15,6 +15,9 @@ static const char* const TMP_PATH = "/config.tmp";
 // ─── Globals ──────────────────────────────────────────────────────────────────
 
 ConfigCache g_cfg = { false, false, 0, 0, 0 };
+static CfgFileStatus fileStatus = CFG_FILE_FS;
+
+CfgFileStatus configStoreStatus() { return fileStatus; }
 
 // RAM mirror of a blob, filled by the receiver, source for a commit. 32 KB in
 // .bss — always resident, but RP2350 has 520 KB SRAM.
@@ -65,11 +68,14 @@ static bool fileValid(const char* path, ConfigBlobHeader* out) {
 
 void configStoreInit() {
     g_cfg = { false, false, 0, 0, 0 };
+    fileStatus = CFG_FILE_FS;
     g_cfg.mounted = LittleFS.begin();   // formats on first use
     if (!g_cfg.mounted) return;
 
     ConfigBlobHeader h;
-    if (!fileValid(CFG_PATH, &h)) return;
+    if (!LittleFS.exists(CFG_PATH)) { fileStatus = CFG_FILE_ABSENT; return; }
+    if (!fileValid(CFG_PATH, &h))   { fileStatus = CFG_FILE_BAD;    return; }
+    fileStatus   = CFG_FILE_OK;
     g_cfg.valid  = true;
     g_cfg.length = h.length;
     g_cfg.seq    = h.seq;
@@ -130,6 +136,7 @@ bool configStoreCommit(uint32_t len, uint32_t crc, uint8_t* nack) {
 
     if (!ok) { *nack = CFG_NACK_FLASH; return false; }
 
+    fileStatus   = CFG_FILE_OK;
     g_cfg.valid  = true;
     g_cfg.length = len;
     g_cfg.seq    = h.seq;

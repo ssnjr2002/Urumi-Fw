@@ -34,6 +34,7 @@ bool cmdGetState(const char*) {
     if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != HOMEFAIL_NONE) {
         Serial.printf(" homefail=%d", homingFailWhy());
     }
+    if (alarmReason == ALARM_CONFIG) Serial.printf(" cfgerr=%s", machineCfgBlockName());
 
     // Appended last, after every field an existing host parses, for the same
     // reason `latched` was. `probing=` is the session phase (ProbingReason);
@@ -100,6 +101,7 @@ bool cmdCfg(const char*) {
     }
     if (machineCfgError() != CFG_DEC_OK)
         Serial.printf(" rejected=%s", configDecodeErrorName(machineCfgError()));
+    if (machineCfgIgnored()) Serial.print(" ignored=1");
     Serial.println();
     return true;
 }

@@ -5,11 +5,13 @@
 #include "slot_map.h"
 #include "bus.h"
 #include "../../ipc/shared_state.h"
+#include "../config/machine_cfg.h"
 #include "hardware/sync.h"     // __dmb
 
 void resumeOrHold(void) {
     uint8_t reason;
     if      (busDegraded())       reason = ALARM_BUS_DEGRADED;
+    else if (machineCfgBlocking()) reason = ALARM_CONFIG;
     else if (!slotMapComplete())  reason = ALARM_NODE_FAULT;
     else if (homingLatched)       reason = ALARM_LIMIT_LATCHED;
     else                          reason = ALARM_NONE;

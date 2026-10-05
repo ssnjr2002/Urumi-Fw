@@ -27,6 +27,10 @@ Contains config for 4 MCU types:
     * RP2350: `env:pico`
 * Scratch: Miscellaneous envs used for testing specific things.
 
+Controller Build Flags:
+
+* `PICO_ALLOW_UNCONFIGURED`: Compile `uncfg`, which leaves `ALARM_CONFIG` (no usable config at boot) for IDLE unconfigured until power-off. Off by default.
+
 Node Types:
 
 * Core (shared across all types): `node_core`

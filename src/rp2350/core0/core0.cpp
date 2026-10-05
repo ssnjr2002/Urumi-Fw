@@ -112,7 +112,8 @@ void loop() {
     queuedUsOut = 0;
     // Held in ALARM until section B settles it: with a valid config the
     // controller commits the defaultHead map as soon as Core 1 is released;
-    // without one nothing is requested and the machine lands IDLE, unmapped.
+    // without one nothing is requested and the machine lands in ALARM_CONFIG
+    // (IDLE, unmapped, after `uncfg`).
     // The slot table (bindings and fences) survives: only power-on clears it.
     slotMapReset();
     slotMapForget();

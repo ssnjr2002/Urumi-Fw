@@ -38,6 +38,15 @@ struct ConfigCache {
 };
 extern ConfigCache g_cfg;
 
+// Why configStoreInit() left no valid config.
+enum CfgFileStatus : uint8_t {
+    CFG_FILE_OK = 0,
+    CFG_FILE_ABSENT,    // no /config.bin
+    CFG_FILE_FS,        // LittleFS did not mount
+    CFG_FILE_BAD,       // header, length or CRC32 wrong
+};
+CfgFileStatus configStoreStatus();
+
 // Mount LittleFS (formatting it if it holds no filesystem), then verify
 // /config.bin (version/length/CRC32) and populate g_cfg. Call once from setup().
 // If the file is missing or bad, g_cfg is left invalid.

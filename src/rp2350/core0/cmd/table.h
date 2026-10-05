@@ -37,6 +37,9 @@ bool cmdVacSwitch(const char*);
 bool cmdStop(const char*);
 bool cmdUnstop(const char*);
 bool cmdReset(const char*);
+#ifdef PICO_ALLOW_UNCONFIGURED
+bool cmdUncfg(const char*);
+#endif
 bool cmdSeqReset(const char*);
 bool cmdPause(const char*);
 bool cmdResume(const char*);
