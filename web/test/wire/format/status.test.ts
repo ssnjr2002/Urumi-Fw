@@ -49,9 +49,10 @@ describe("wire/format/status: enums", () => {
     it("AlarmReason mirrors the firmware values", () => {
         expect(AlarmReason.NONE).toBe(0);
         expect(AlarmReason.ESTOP).toBe(1);
-        expect("CONFIG" in AlarmReason).toBe(false); // 2 is reserved
+        expect(AlarmReason.CONFIG).toBe(2);
         expect(AlarmReason.SOFT_LIMIT).toBe(3);
         expect(AlarmReason.HOMING_FAIL).toBe(4);
+        expect(AlarmReason.BUS_DEGRADED).toBe(8);
     });
 
     it("RunningReason mirrors the firmware values (incl. ABORT_DECEL §4.5)", () => {

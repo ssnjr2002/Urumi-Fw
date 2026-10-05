@@ -49,7 +49,12 @@ const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
 export const AlarmReason = {
     NONE: 0,
     ESTOP: 1,
-    // 2 reserved: was CONFIG. No config boots to IDLE.
+    /**
+     * Boot found no usable config (getstate `cfgerr=` says why). Left by a
+     * CFG_SET commit, or `uncfg` on a PICO_ALLOW_UNCONFIGURED build.
+     * Load-bearing, as LIMIT_LATCHED below.
+     */
+    CONFIG: 2,
     SOFT_LIMIT: 3,
     HOMING_FAIL: 4,
     /**
@@ -83,6 +88,12 @@ export const AlarmReason = {
      * failure renders as no alarm at all.
      */
     PROBE_FAIL: 7,
+    /**
+     * The boot sweep left a node mute that is not excluded; the default map is
+     * not applied. Left by `bus_exclude`, or a `reset` the node answers.
+     * Load-bearing, as LIMIT_LATCHED above.
+     */
+    BUS_DEGRADED: 8,
 } as const;
 export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
 const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];
