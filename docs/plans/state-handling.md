@@ -1102,6 +1102,11 @@ clears any alarm reason at arm and `homingTick` ends every leg with
   origin); in `HOMING_LEG` `err busy` (`stop` aborts a leg); outside a
   session `err bad_state`.
 * `getstate` (`cmd/query.cpp`) appends `homing=<reason>` while in HOMING.
+* `nodestat`, `pingnode`, `busstat` (`cmd/query.cpp`) are admitted in
+  `HOMING_WAIT`: the bus is free between legs.
+* `dummy_leg <0|1> [ms]` (`axis.cpp`, `homing.cpp`): a bench leg with no node
+  or motion, gated as a leg; after `ms` (default 1000) it succeeds or fails
+  (`homefail=7`). Touches no latch and no origin.
 * In a session `enable` / `axes_enable` stay refused (the bus gate): enable
   first, then home.
 * Docs: `docs/homing.md` (session), `docs/wire_protocol.md` (`home_end`,
@@ -1115,7 +1120,24 @@ clears any alarm reason at arm and `homingTick` ends every leg with
 `home_end` between legs; `stop` mid-leg; a leg refused in `ALARM_ESTOP` and
 in PAUSED.
 
-**Status:** planned.
+**Status:** ready to merge. Bench (dummy legs only): session, `home_end`,
+`err busy` mid-leg, `ALARM_HOMING_FAIL` then `err bad_state`, `stop`
+mid-leg. Real legs on the machine not run.
+
+**Outcome:**
+
+* Deviations:
+  * `homingReason` values are `HOMING_LEG` / `HOMING_WAIT`.
+  * Added `dummy_leg` (above) and admitted the bus queries in `HOMING_WAIT`.
+  * `ALARM_HOMING_FAIL` ends the session; `unalarm` clears it before the next
+    leg (`setorigin` no longer does).
+* Interfaces later branches rely on: `homingWaiting()` (`ops/homing.h`);
+  `legGateDenies()` in `cmd/axis.cpp` is the one leg gate.
+* Out of scope:
+  * `nodepos` still refuses HOMING, including between legs.
+  * Web homing hangs against this Pico (unchanged web).
+  * A Pico with an outdated config boots IDLE unconfigured: see the
+    `ALARM_CONFIG` follow-up.
 
 ## Open questions
 
