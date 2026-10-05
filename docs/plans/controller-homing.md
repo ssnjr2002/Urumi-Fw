@@ -216,7 +216,21 @@ Proposed order. Each gets a full Plan section when its turn comes.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* `web/demo/comms.json` not updated: its new fields describe the real machine
+  (directions, `maxTravel`), set when motion commissioning starts. Until then
+  the Pico rejects its blob as `missing` (no `invertDir`).
+* Decided in Read: `invertDir` and `softLimits` are required on every axis.
+  The web adds no validation; `load.ts` passes the fields through.
+* Errors: a missing or wrong-typed field is `missing`; a value out of range,
+  or a homing kind that does not match the axis, is the new `homing`.
+  Rejected: `cycle` 0, non-positive feeds and distances, `seekScaler` < 1,
+  linear homing with `maxTravel` 0. `rampSteps` is 16 bits; `budgetRevs`
+  is only checked positive (the 3.2 floor stays a config judgement).
+* `docs/homing.md` §3.2a lists the Pico's fields and what each replaces.
 
 ## Open questions
 
