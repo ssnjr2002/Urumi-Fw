@@ -216,7 +216,8 @@ Proposed order. Each gets a full Plan section when its turn comes.
 
 ### Status
 
-Ready to merge.
+Done, merged in ddeacb8. Unblocks branch 3 (`feature/home-command`, with
+branch 2) and coordinate-system.md branch 1 (`feature/pico-frames`).
 
 ### Outcome
 
