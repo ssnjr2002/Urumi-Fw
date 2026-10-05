@@ -120,6 +120,7 @@ void loop() {
     alarmReason = ALARM_NODE_FAULT;
     runningReason = RUNNING_JOB;
     probingReason = PROBING_CLEAR;
+    homingReason = HOMING_WAIT;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
     axes_homed = 0;
     // axes_enabled is DERIVED and deliberately not wiped here: reconcileValidity

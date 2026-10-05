@@ -11,8 +11,12 @@
 //
 // So `home` arms and returns, the machine sits in STATE_HOMING, and the polling
 // lives out here in the Core 0 loop where it cannot hold the plane shut.
+//
+// The machine stays in STATE_HOMING across legs (a session); homingReason says
+// whether a leg runs. `setorigin` and `home_end` close it, as do estop and
+// ALARM_HOMING_FAIL.
 
-// Arm ONE LEG on `node` and enter STATE_HOMING. Prints exactly one reply line in
+// Arm ONE LEG on `node`; the first opens the session. Prints exactly one reply line in
 // every path, per the control-plane contract. Returns true if the command was
 // answered at all -- which is what the handler propagates -- not whether the
 // leg found anything.
@@ -80,9 +84,21 @@ void homingTick(void);
                                  // driver, or a feature that is not
                                  // once-per-revolution.
 
+#define HOMEFAIL_DUMMY        7  // a dummy_leg told to fail
+
+// A bench leg with no node and no motion: opens or continues the session like a
+// leg, then after `ms` ends as a success (HOMING_WAIT) or as ALARM_HOMING_FAIL
+// with HOMEFAIL_DUMMY. Touches no latch and no origin. The caller gates it as a
+// leg.
+void homingDummyBegin(bool succeed, uint32_t ms);
+
 // True while this module holds a home. Lets the gates refuse a second `home`
 // without reading machineState, which anything may write.
 bool homingActive(void);
+
+// The session is open and no leg runs (HOMING_WAIT): the next leg, `setorigin`
+// or `home_end` may follow, and the bus is free.
+bool homingWaiting(void);
 
 // Why the last home failed, HOMEFAIL_*. Meaningful only while alarmReason is
 // ALARM_HOMING_FAIL; reset at the next arm.

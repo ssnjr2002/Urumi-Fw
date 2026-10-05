@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include "homing.h"
 #include "position.h"
-#include "state.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
 
@@ -39,6 +38,9 @@ static bool     wasRetract = false;
 // under, and a node that answered a poll with a different kind byte is a fault
 // to notice, not a rule change to adopt mid-flight.
 static bool     isRotary   = false;
+// A dummy leg (homingDummyBegin): no node, resolves to `dummyOk` at deadlineMs.
+static bool     isDummy    = false;
+static bool     dummyOk    = false;
 static uint8_t  hNode      = 0;
 static uint8_t  misses     = 0;
 static uint8_t  settleLeft = 0;
@@ -69,7 +71,7 @@ uint8_t homingFailWhy(void) { return failWhy; }
 // `setorigin` is what re-derives it from the node's counter.
 static void homingRelease(uint8_t node) {
     claimed = false;
-    originInvalidate(node);
+    if (!isDummy) originInvalidate(node);
 }
 
 // homingLatched is deliberately untouched here, and it is already right in both
@@ -203,23 +205,17 @@ bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
 
     const uint32_t now = millis();
     claimed      = true;
+    isDummy      = false;
     hNode        = node;
     misses       = 0;
     settleLeft   = HOMING_SETTLE_POLLS;
     nextPollMs   = now + HOMING_POLL_MS;
     deadlineMs   = now + homingTimeoutMs(startUs, floorUs, rampSteps, maxSteps);
-    // The alarm this home was started FROM is retired here, at the arm, so that
-    // STATE_HOMING never coexists with a reason describing a machine that is no
-    // longer stopped. `home` is admitted in ALARM precisely because homing is
-    // how an operator recovers from one (cmdLinLeg/cmdRotLeg), and the node has just
-    // accepted the leg and started pulsing -- that is the moment the old reason
-    // stops being true, not some later point.
-    //
-    // Leaving it set is what wedged the machine: the reason outlived the state
-    // it described, homingTick's exit refused to touch a state carrying an
-    // unrecognised reason, and STATE_HOMING was left with no way out. Clearing
-    // it at the boundary means anything found in this byte later is NEW, which
-    // is what makes the exit below a simple question rather than a list.
+    // The first leg opens the session. The only alarm a leg is admitted from is
+    // ALARM_LIMIT_LATCHED (cmdLinLeg), and the latch mask keeps that fact, so the
+    // reason is cleared here: anything found in it later is new. The exit
+    // re-derives it.
+    homingReason = HOMING_LEG;
     alarmReason  = ALARM_NONE;
     __dmb();
     machineState = STATE_HOMING;
@@ -236,6 +232,13 @@ void homingTick(void) {
     if (machineState != STATE_HOMING) { homingRelease(hNode); return; }
 
     const uint32_t now = millis();
+    if (isDummy) {
+        if ((int32_t)(now - deadlineMs) < 0) return;
+        if (!dummyOk) { homingFail(HOMEFAIL_DUMMY); return; }
+        homingRelease(hNode);
+        homingReason = HOMING_WAIT;
+        return;
+    }
     if ((int32_t)(now - nextPollMs) < 0) return;
     nextPollMs = now + HOMING_POLL_MS;
 
@@ -293,19 +296,25 @@ void homingTick(void) {
 
     homingRelease(hNode);
 
-    // Did anything take the machine while this leg ran? The arm cleared the
-    // reason byte, so the question is just "is it still ours" -- and the STATE
-    // is what answers it, not the reason. The poll above does bus I/O, so `stop`
-    // has a real window to land mid-tick; when it does, Core 1 has already swept
-    // the bus and moved the state to ESTOP/ALARM. Leave that alone: the fault
-    // owns the machine, and resumeOrHold() would announce IDLE for a machine
-    // whose nodes were just de-energised.
+    // The session stays open for the next leg, `setorigin` or `home_end`; the
+    // latch is published at that exit, not here. If `stop` landed during the
+    // poll above, the fault owns the machine and the phase is not ours to set.
     if (machineState != STATE_HOMING) return;
+    homingReason = HOMING_WAIT;
+}
 
-    // Still ours, so the leg's outcome IS the machine's condition, and
-    // resumeOrHold() states it: IDLE, or ALARM/LIMIT_LATCHED when the axis is
-    // standing on its switch. Unconditional, because it is the only exit from
-    // STATE_HOMING on this path -- a guard here can only wedge the state, never
-    // protect it. Anything that needed protecting already failed the check above.
-    resumeOrHold();
+void homingDummyBegin(bool succeed, uint32_t ms) {
+    failWhy      = HOMEFAIL_NONE;
+    claimed      = true;
+    isDummy      = true;
+    dummyOk      = succeed;
+    deadlineMs   = millis() + ms;
+    homingReason = HOMING_LEG;
+    alarmReason  = ALARM_NONE;
+    __dmb();
+    machineState = STATE_HOMING;
+}
+
+bool homingWaiting(void) {
+    return machineState == STATE_HOMING && !claimed;
 }

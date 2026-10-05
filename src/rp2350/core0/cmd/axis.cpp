@@ -250,7 +250,7 @@ bool cmdAxesMap(const char* args) {
     return true;
 }
 
-// ── setorigin [axes] [pos_steps] (IDLE/PAUSED/ALARM) ─────────────────────────
+// ── setorigin [axes] [pos_steps] (IDLE/PAUSED/ALARM, HOMING between legs) ────
 //
 // `pos_steps` is the machine position the axes are AT right now, defaulting to
 // 0. Zero is the switch-at-origin case; a far-end switch needs
@@ -262,8 +262,11 @@ bool cmdAxesMap(const char* args) {
 // purely about motion: the retract and slow re-approach passes carry no datum
 // baggage, and this inherits the estop-window handling below, which is subtle
 // enough that it should not exist twice.
+//
+// In a homing session it commits and closes the session. It clears no alarm.
 bool cmdSetOrigin(const char* args) {
-    if (busGateDenies()) return true;
+    if (homingActive()) { Serial.println("err busy"); return true; }
+    if (!homingWaiting() && busGateDenies()) return true;
 
     // Split at the first space: axisMask() scans every character it is given,
     // so handing it the whole line would let a stray letter in a later argument
@@ -331,10 +334,18 @@ bool cmdSetOrigin(const char* args) {
     if (alarmReason != alarmAtEntry || machineState == STATE_ESTOP) {
         Serial.println("err estop"); return true;
     }
-    // setorigin recovers from an ESTOP-alarm. resumeOrHold() still holds an
-    // incomplete map in ALARM_NODE_FAULT and a latched limit in ALARM, for the
-    // same reason unalarm cannot clear them: recording a datum fixes neither.
-    if (machineState == STATE_ALARM) resumeOrHold();
+    // Closing a session publishes what its legs left: IDLE, or LIMIT_LATCHED.
+    if (machineState == STATE_HOMING) resumeOrHold();
+    Serial.println("ok");
+    return true;
+}
+
+// ── home_end — close a homing session without a datum ───────────────────────
+// Every leg already dropped its node's origin, so nothing is recorded.
+bool cmdHomeEnd(const char*) {
+    if (homingActive()) { Serial.println("err busy"); return true; }
+    if (!homingWaiting()) { Serial.println("err bad_state"); return true; }
+    resumeOrHold();
     Serial.println("ok");
     return true;
 }
@@ -385,13 +396,20 @@ bool cmdSetOrigin(const char* args) {
 
 // Everything both verbs share: gates, the node token, and the six numbers.
 // `intent` is parsed by the caller because only one verb has it.
-static bool legCommon(const char* args, uint8_t expectKind, bool wantIntent) {
-    // BEFORE the bus gate, which does not admit STATE_HOMING and would answer
-    // the commonest mistake here -- a second leg while one is in flight -- with
-    // a generic `bad_state`. Same refusal either way; this one names what to
-    // wait for, and putting it second made it unreachable.
+// Which states may start a leg. Prints its own error; callers return on true.
+static bool legGateDenies() {
+    // A second leg while one is in flight: names what to wait for.
     if (homingActive()) { Serial.println("err busy"); return true; }
-    if (busGateDenies()) return true;
+    // IDLE opens a session, HOMING_WAIT continues one. LIMIT_LATCHED is the
+    // one alarm a leg leaves (by retracting); every other alarm has its own exit.
+    const bool admitted = machineState == STATE_IDLE || homingWaiting() ||
+        (machineState == STATE_ALARM && alarmReason == ALARM_LIMIT_LATCHED);
+    if (!admitted) { Serial.println("err bad_state"); return true; }
+    return false;
+}
+
+static bool legCommon(const char* args, uint8_t expectKind, bool wantIntent) {
+    if (legGateDenies()) return true;
 
     char* end;
     const unsigned long nodeV = strtoul(args, &end, 10);
@@ -405,11 +423,8 @@ static bool legCommon(const char* args, uint8_t expectKind, bool wantIntent) {
     // failure that reads as a broken switch rather than a motor nobody turned
     // on.
     //
-    // This is the gate ALARM does not provide and should not: a leg is admitted
-    // in ALARM because homing is how an operator recovers from an estop, and the
-    // estop sweep de-energises the bus on its way in. The two are separate facts
-    // -- "the machine faulted" and "this axis can move" -- and only the second
-    // decides whether a leg is worth arming.
+    // The state gate above says whether a leg may run; this says whether the
+    // axis can move.
     //
     // Reads nodeEnabled, not axes_enabled. axes_enabled is only the projection
     // of this mask through the axis map (position.cpp), so on a bound node the
@@ -446,6 +461,27 @@ bool cmdLinLeg(const char* args) {
 // the node's intent check is dead code on an index build.
 bool cmdRotLeg(const char* args) {
     return legCommon(args, HOMING_KIND_INDEX, false);
+}
+
+// ── dummy_leg <0|1> [ms] — a leg with no node, for testing the session ───────
+// 1 succeeds, 0 fails (homefail=7), after `ms` (default 1000). No bus, no
+// motion, no latch, no origin.
+bool cmdDummyLeg(const char* args) {
+    if (legGateDenies()) return true;
+    char* end;
+    const unsigned long ok = strtoul(args, &end, 10);
+    if (end == args || ok > 1) { Serial.println("err usage"); return true; }
+    unsigned long ms = 1000;
+    const char* p = end;
+    while (*p == ' ') p++;
+    if (*p) {
+        ms = strtoul(p, &end, 10);
+        if (end == p) { Serial.println("err usage"); return true; }
+        if (ms > 600000UL) { Serial.println("err range"); return true; }
+    }
+    homingDummyBegin(ok == 1, (uint32_t)ms);
+    Serial.println("ok");
+    return true;
 }
 
 // ── step <node> <count> [sps] — debug stepping (bring-up only) ───────────────

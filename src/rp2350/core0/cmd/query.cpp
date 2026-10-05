@@ -40,6 +40,7 @@ bool cmdGetState(const char*) {
     // `probe=` is the LAST LEG's outcome and is emitted alongside it, because a
     // leg boundary is not a terminal state -- the machine stays PROBING and the
     // only report of what just happened is this pair.
+    if (machineState == STATE_HOMING) Serial.printf(" homing=%d", homingReason);
     if (machineState == STATE_PROBING || alarmReason == ALARM_PROBE_FAIL) {
         Serial.printf(" probing=%d probe=%d retries=%d psteps=%ld",
                       probingReason, probeLastCause(), probeLastRetries(),
@@ -118,14 +119,20 @@ bool cmdStatus(const char*) {
     return true;
 }
 
-// ── pingnode [all|<id>] — relay an RS485 ping (IDLE/PAUSED/ALARM) ─────────────
+// The bus queries' gate: IDLE/PAUSED/ALARM, and a homing session between legs,
+// when no leg holds the bus.
+static bool busQueryDenies() {
+    if (stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM) || homingWaiting()) return false;
+    Serial.println("err bad_state");
+    return true;
+}
+
+// ── pingnode [all|<id>] — relay an RS485 ping (IDLE/PAUSED/ALARM, HOMING_WAIT) ─
 // Bare / `all` scans the whole bus 1..BUS_ADDR_MAX (one reply line, bring-up
 // convenience — surfaces peripherals, not just axes); `pingnode <id>` is the
 // single-line form the host pre-flight uses.
 bool cmdPingNode(const char* args) {
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-        Serial.println("err bad_state"); return true;
-    }
+    if (busQueryDenies()) return true;
     if (*args == '\0' || strcmp(args, "all") == 0) {
         // ONE line, not one per node. The text plane is strictly
         // request/response (D11) and the host reads exactly one line per
@@ -179,9 +186,7 @@ bool cmdNodePos(const char* args) {
 // ── busstat <node> — a node's receive-error counters ─────────────────────────
 // Raw, wrapping 16-bit counts since the node powered on; the reader diffs them.
 bool cmdBusStat(const char* args) {
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-        Serial.println("err bad_state"); return true;
-    }
+    if (busQueryDenies()) return true;
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err usage"); return true; }
     BusStats bs;
@@ -198,9 +203,7 @@ bool cmdBusStat(const char* args) {
 // One round-trip (CMD_NODE_STATUS). The payload is [type][flags][tail]; the tail
 // is decoded by type.
 bool cmdNodeStat(const char* args) {
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
-        Serial.println("err bad_state"); return true;
-    }
+    if (busQueryDenies()) return true;
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err usage"); return true; }
     NodeStatus st;

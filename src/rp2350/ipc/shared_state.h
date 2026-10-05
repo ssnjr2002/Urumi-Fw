@@ -211,6 +211,13 @@ enum ProbingReason : uint8_t {
     PROBING_CONTACT = 2,   // between legs, switch open    — tool on the surface
 };
 
+// The homing session's phase (meaningful while STATE_HOMING). The machine stays
+// in HOMING across legs, so this is what says a leg has finished.
+enum HomingReason : uint8_t {
+    HOMING_LEG  = 0,   // a leg is executing
+    HOMING_WAIT = 1,   // between legs: next leg, setorigin or home_end
+};
+
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
 extern MicroSegment masterBuf[MASTER_BUF_SIZE];
@@ -239,6 +246,7 @@ extern volatile uint8_t runningReason;    // one of RunningReason (meaningful wh
 // `running=`, and two unrelated facts in one wire field is how a host ends up
 // decoding a probe phase as a jog.
 extern volatile uint8_t probingReason;
+extern volatile uint8_t homingReason;     // one of HomingReason (meaningful while HOMING)
 
 // Machine position in steps (X,Y,Z,A), owned and accumulated by Core 1 per
 // completed segment. The consumer (Core 1) is the single source of truth so it
