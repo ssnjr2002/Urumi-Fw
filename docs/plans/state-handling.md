@@ -319,6 +319,9 @@ Proposed order. Each gets a full Plan section when its turn comes.
 4. `feature/alarm-exits`: `unalarm` dispatcher, the strictness config
    field that picks `bus_exclude`'s ids, probe restore at exit,
    `claimed` containment, `PROBE_ESTOP` removed. Depends on 2 and 3.
+3a. `feature/config-alarm`: boot without a usable config raises
+   `ALARM_CONFIG`; `uncfg` behind `PICO_ALLOW_UNCONFIGURED`. Depends on
+   nothing; lands before 4.
 5. After the planner overhaul: motion gating (motion primitives refuse when
    unmapped, motion controller commands map first) and no jobs without homing.
 
@@ -1140,6 +1143,41 @@ mid-leg. Real legs on the machine not run.
   * A Pico with an outdated config boots IDLE unconfigured: see the
     `ALARM_CONFIG` follow-up.
 
+## Branch 3a: `feature/config-alarm`
+
+**Plan:** feature. A Pico whose config is missing or unusable boots into
+`ALARM_CONFIG` instead of IDLE unconfigured (an outdated config otherwise
+looks like no config).
+
+* Boot raises `ALARM_CONFIG` (value 2, reserved until now) when the
+  filesystem does not mount, `/config.bin` is absent, fails its header, size
+  or CRC (`fileValid`, `config/config_store.cpp:37`), or fails to decode
+  (`machineCfgLoad`, `config/machine_cfg.cpp:15`). Same in every build.
+* `getstate` adds `cfgerr=<absent|fs|file|decode name>` with `ALARM_CONFIG`.
+* `resumeOrHold()` (`ops/state.cpp:10`) gives `ALARM_CONFIG` after
+  `ALARM_BUS_DEGRADED` while the config blocks, so every exit returns to it.
+* Exits: a committed `CFG_SET` (already admitted in ALARM; it soft-resets,
+  `data_plane.cpp:251,282`), or `uncfg`.
+* `uncfg`: compiled only with `PICO_ALLOW_UNCONFIGURED` (off in `env:pico`;
+  set locally on the bench), admitted only in `ALARM_CONFIG` (else
+  `err bad_state`). Ignores the file until power-off (a soft `reset` keeps
+  it; the config loads only in `setup()`), never deletes it, lands via
+  `resumeOrHold`. `cfg` shows `ignored=1`.
+* `unalarm` (`controller/cmd/unalarm.cpp`) answers `err config`.
+* Files: `ipc/shared_state.h`, `config/config_store.{h,cpp}`,
+  `config/machine_cfg.{h,cpp}`, `ops/state.cpp`, `controller/cmd/unalarm.cpp`,
+  `cmd/query.cpp`, `cmd/table.h`, `control_plane.cpp`, `platformio.ini`
+  (commented flag), `AGENTS.md` (controller flag), `docs/wire_protocol.md`,
+  `docs/plans/pico-config.md` boot notes.
+* Web: `AlarmReason` gains `CONFIG: 2` and the missing `BUS_DEGRADED: 8`
+  (`web/src/wire/format/status.ts`), else both read as no alarm.
+
+**Checks:** `pio run -e pico` with and without the flag; `pnpm typecheck`,
+`pnpm test` in `web/`. Human scope: boot with the stale config, `uncfg`,
+`CFG_SET` clearing the alarm.
+
+**Status:** planned.
+
 ## Open questions
 
 * **Node side** (its own session): docs/node_session_and_datum.md §3 and §7
@@ -1197,13 +1235,3 @@ mid-leg. Real legs on the machine not run.
   names it (`ok unconfirmed <ids>`). Either way the node is excluded.
   Exclusion blocks RPCs only, so an excluded node gets no slot again until
   the next sweep. Its own small branch.
-* `ALARM_CONFIG`: boot raises it when `/config.bin` fails its header,
-  version, CRC or decode, and, unless the build sets
-  `PICO_ALLOW_UNCONFIGURED`, when there is no file. `getstate` adds
-  `cfgerr=<absent|version|crc|decode…>` (`absent` only without the flag).
-  Exits: a committed `CFG_SET` (applies the default map), or, with the flag,
-  `uncfg`, which ignores the file until reboot and lands IDLE unconfigured
-  (never deletes it). `uncfg` is admitted only in `ALARM_CONFIG`; `unalarm`
-  answers `err config`. With the flag and no file, boot lands IDLE
-  unconfigured as now. The web schema needs the new `AlarmReason`. Its own
-  small branch.
