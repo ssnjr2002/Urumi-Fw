@@ -1259,3 +1259,12 @@ without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
   second Python one, so the schema cannot drift. `uploadfs` replaces the
   whole filesystem, overwriting a config pushed since, so make it opt-in (own
   env or target), not every upload. Its own small branch.
+  **Done** in `feature/config-image`: `config/controller.jsonc` (JSONC; the
+  machine's config, with the Pico's new homing fields), a `pre:` script on
+  `env:pico` for `buildfs`/`uploadfs` only, `vite-node` added as a web
+  devDependency to run the encoder. Bench: `uploadfs` then boot IDLE, no
+  `ALARM_CONFIG`. Outcome: `controller.jsonc`'s `maxTravel` values are
+  estimates and the y, z and a `invertDir` values unconfirmed, to check when
+  homing runs (noted in the file); `web/demo/comms.json` is unchanged and still
+  rejected by the Pico; `controller.msgpack` makes the native test decode the
+  real config.
