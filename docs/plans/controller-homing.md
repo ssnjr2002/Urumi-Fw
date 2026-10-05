@@ -1,8 +1,9 @@
 # Controller homing
 
 How the Pico homes a dual-head machine: parallel legs, cycles, the `home`
-controller command, node-addressed `setorigin`, and the axis direction config
-homing derives from. Builds on the homing session in
+controller command, node-addressed `setorigin`, and the homing config. Axis
+directions, frames and the work offset are in docs/plans/coordinate-system.md.
+Builds on the homing session in
 docs/plans/state-handling.md (entry, exits, what a session allows), which
 stays there.
 
@@ -25,9 +26,9 @@ Z and A at a time.
   `ALARM_LIMIT_LATCHED`. Only `HOMEFAIL_*` causes and estop are failures.
 * **Any failure fails the session:** the other running legs are stopped, the
   machine goes to `ALARM_HOMING_FAIL`, and the failing node is named.
-* **A switch-end leg:** the node moves to its switch end using its datum. It
-  is a leg, not a plain move, so the session still allows no motion outside
-  legs.
+* **A park leg:** a homed node moves to its park position (`parkPos`) using
+  its datum. It is a leg, not a plain move, so the session still allows no
+  motion outside legs.
 
 ### Cycles
 
@@ -35,10 +36,11 @@ Z and A at a time.
   first, equal numbers run in parallel. Default: every Z 1, everything else 2.
 * **Earlier cycles clear first.** Before any axis of cycle k homes, every
   axis of every earlier cycle is made clear, named or not: homed goes to its
-  switch end (switch-end leg, datum kept), unhomed is homed. A run naming only
+  park position (park leg, datum kept), unhomed is homed. A run naming only
   first-cycle axes moves nothing else.
-* **Clear is the switch end**, the one place every axis reaches by homing.
-  For Z it is 0 (see Axis direction config).
+* **Clear is the park position**, where every axis ends a home. Z homes up
+  (`seekPositive: true`), so its park position is the top of its soft range:
+  the safe height.
 * **Uncertain** (mute, excluded, or failed its leg) in an earlier cycle fails
   the session before any later leg runs, naming the axis.
 * The rule lives in the controller recipe (only the config knows the cycles);
@@ -46,7 +48,7 @@ Z and A at a time.
 
 ### `home`
 
-* A controller command: `home [unhomed] [solo] [<axis> …]`. Lowercase only
+* A controller command: `home [unhomed] [only] [<axis> …]`. Lowercase only
   (the control/data plane mux relies on it).
 * **Axes:** `x`, `y`, `z<n>`, `a<n>` with `n` the index into the config's
   `heads[]` (the number `select` takes); `z` and `a` alone mean every head's.
@@ -54,7 +56,7 @@ Z and A at a time.
   the head lacks is `err usage` before anything moves.
 * **Named axes** are re-homed (the default); with `unhomed`, only the unhomed
   ones are.
-* **`solo`** homes the named axes without clearing any earlier cycle: the
+* **`only`** homes the named axes without clearing any earlier cycle: the
   operator asserts the way is clear (as grbl's `$HX`). The recovery for an
   uncertain Z.
 * Each cycle runs its legs in parallel; seeks, then retracts; then the next
@@ -77,58 +79,74 @@ Z and A at a time.
 * Its state rules (no alarm clearing, estop-wins check, valid outside a
   session) are in docs/plans/state-handling.md.
 
-### Axis direction config
+### Homing config
 
-* Two raw direction bits per axis, each found by jogging on the machine:
-  * `switchDir`: the raw direction that drives the axis into its switch (or
-    toward the index, for a rotary axis).
-  * `originDir`: the raw direction toward the end chosen as 0.
-* Derived: the switch is at 0 when `switchDir == originDir`, else at
-  `hardTravel`; positive coordinates run in raw `!originDir`; the approach
-  direction is `switchDir`. An axis without homing has `originDir` only.
-* **Z has no `originDir`:** it is `switchDir`, so Z's switch end is 0. Z can
-  only seek up (with current feedback too, the bed is the other end), so 0 is
-  the top and the safe height by definition. Positive Z runs down, away from
-  the switch. The config marks which axes are Z.
-* Replaces `atOrigin` and `invert`, whose XOR gave the approach direction and
-  whose meaning depended on a chosen frame.
-* "Raw" is the direction bit the Pico sends, in the stream and in
-  `CMD_HOME_LEG`. Inversion in a node or driver is wiring, captured by the
-  jog.
-* Choosing `originDir` per axis can mirror the frame (a left-handed X/Y).
-  Firmware cannot see that; commissioning checks it (cut an asymmetric shape).
+Per linear axis (frames and directions: docs/plans/coordinate-system.md):
+
+```jsonc
+"x": {
+  "maxTravel": 480,          // usable length from the park position
+  "softLimits": true,        // enforce [park, park ± maxTravel]
+  "invertDir": false,        // wiring fix so + is physical; checked by jogging
+  "homing": {
+    "cycle": 2,              // lower homes first; equal homes in parallel
+    "seekPositive": true,    // home toward + (switch at the + end)
+    "seekScaler": 1.2,       // seek budget = (maxTravel + pullOffDist) × this
+    "startFeed": 2.5, "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,
+    "backoffDist": 2,        // retract between the fast and slow approaches
+    "pullOffDist": 5,        // final retract (FluidNC's pulloff_mm)
+    "parkPos": 0             // optional: coordinate after the pull-off
+  }
+}
+```
+
+* **`parkPos` places 0.** Absent: the trip is at the axis's 0 end (homing −)
+  or at `maxTravel + pullOffDist` (homing +), so the range is `[0, maxTravel]`
+  plus the pull-off. Given: the axis parks at that coordinate, as FluidNC's
+  `mpos_mm` (the position after the pull-off, not the trip). With an explicit
+  `parkPos`, retuning `pullOffDist` moves every point stored in machine
+  coordinates; leave it absent to keep the frame on the trip.
+* **Commissioning order:** jog + and fix `invertDir` first; then home and fix
+  `seekPositive`. Fixing a wrong + with `seekPositive` homes correctly and
+  mirrors every job.
+* Replaces `hardTravel`, `atOrigin` and `invert`; renames `backoffMm`,
+  `parkMm` and `pullInFeed`. The web keeps the old fields until its homing
+  path is removed; the Pico reads only the new ones.
+* **Z is ISO:** + up, `seekPositive: true`, typically `parkPos: 0`: range
+  `[-maxTravel, 0]`, 0 at the top, the park position is the safe height.
+* Rotary A keeps its own block (index, sweep, `datumDeg`); shares `invertDir`
+  and `cycle`.
 
 ### Dropped
 
 * Slot-framed `setorigin`: assumed every slot always has a node, which dual
   heads break.
-* A plain move inside the homing session to park Z: the switch-end leg
-  instead.
+* A plain move inside the homing session to park Z: the park leg instead.
 * Cycles as ordered groups (`[[z], [x, y, a]]`): a per-axis number instead.
-* `ignore` (skip only uncertain axes, clear the rest): `solo` skips all
+* `ignore` (skip only uncertain axes, clear the rest): `only` skips all
   clearing.
-* ISO 841 Z (+ up, Z in `[-hardTravel, 0]`), natively or as a sign flip in
-  the host UI: every Z input and output would need the flip. Z stays
-  positive-down; the safe height is 0 either way.
+* Raw `switchDir`/`originDir` bits: `originDir` tied + to the chosen origin,
+  so an origin choice could mirror the frame. Replaced by a physical +
+  (`invertDir`), `seekPositive` and `parkPos`.
+* `hardTravel`: the range comes from `maxTravel` and `parkPos`, the seek
+  budget from `seekScaler`.
+* Positive-down Z: with signed ranges, ISO Z costs nothing.
 
 ## Wire changes
 
 * Commands: `home`; `setorigin` node-addressed syntax.
-* Config: `switchDir` and `originDir` replace `atOrigin` and `invert`;
-  per-axis `cycle`.
+* Config: the homing config above, read by the Pico.
 
 ## Branches
 
 Proposed order. Each gets a full Plan section when its turn comes.
 
-1. `feature/axis-dirs`: `switchDir` and `originDir` replace `atOrigin` and
-   `invert` (`web/src/machine/schema.ts`, the homing derivation and its tests,
-   `web/demo/comms.json`, the Pico's `config_decode`, `docs/homing.md`).
-   Depends on nothing.
-2. `feature/homing-legs`: parallel legs with fail-all, the switch-end leg,
+1. `feature/homing-config`: the homing config above, decoded by the Pico
+   (`core0/config/config_decode`); added to the web schema and loader beside
+   the old fields; fixtures and `docs/homing.md`. Depends on nothing.
+2. `feature/homing-legs`: parallel legs with fail-all, the park leg,
    node-addressed `setorigin`. Depends on state-handling branch 3.
-3. `feature/home-command`: the `home` controller command and the per-axis
-   `cycle` field. Depends on 1 and 2.
+3. `feature/home-command`: the `home` controller command. Depends on 1 and 2.
 
 ## Open questions
 
