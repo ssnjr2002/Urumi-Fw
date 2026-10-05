@@ -31,6 +31,10 @@ Controller Build Flags:
 
 * `PICO_ALLOW_UNCONFIGURED`: Compile `uncfg`, which leaves `ALARM_CONFIG` (no usable config at boot) for IDLE unconfigured until power-off. Off by default.
 
+Controller Config:
+
+* `config/controller.jsonc`: the machine's config. `pio run -e pico -t uploadfs` encodes it into `data/config.bin` (generated, gitignored) and flashes it as `/config.bin`; see docs/config_storage.md.
+
 Node Types:
 
 * Core (shared across all types): `node_core`
@@ -414,7 +418,8 @@ Tested the happy path and it works.
 * Untracked files are the user's decision: list them and ask.
 * Ask before committing any single file over ~1 MB or ~5,000 lines.
 * Test fixtures live in `web/test/fixtures/` or `web/test/production/data/`.
-  Scratch code lives in `src/scratch/`. Nothing new in the repo root.
+  Scratch code lives in `src/scratch/`. Nothing new in the repo root
+  (`config/` and the generated `data/` are the exceptions).
 
 #### Direct Commits to `main`
 

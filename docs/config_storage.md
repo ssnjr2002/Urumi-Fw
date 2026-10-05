@@ -54,6 +54,25 @@ metadata consistent across power loss.
 
 `CFG_MAX_BYTES = 32768`.
 
+### Flashing a config image
+
+`pio run -e pico -t uploadfs` (or *Upload Filesystem Image* in the IDE)
+flashes `config/controller.jsonc` as `/config.bin`, without a host push:
+
+1. `scripts/pio/config_image.py` (a `pre:` script on `env:pico`) runs only for
+   `buildfs` / `uploadfs`. It calls `web/scripts/config-image.ts`, which loads
+   the config through the web loader (comments stripped), encodes it with
+   `encodeConfigBlob` and writes `data/config.bin` with the header above
+   (`seq` 0). An invalid config stops the upload.
+2. `mklittlefs` packs `data/` into the filesystem image, and `uploadfs` writes
+   it over the whole span.
+
+The input is `custom_config_json` in `env:pico`. `data/config.bin` is
+generated and gitignored; keep nothing else in `data/`, since all of it is
+packed. `uploadfs` replaces the filesystem, so it overwrites a config pushed
+since; a plain `upload` leaves the filesystem alone. Needs pnpm on PATH and
+`pnpm install` run in `web/`.
+
 ---
 
 ## 2. Boot
