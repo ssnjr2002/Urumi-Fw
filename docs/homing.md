@@ -504,12 +504,24 @@ the pre-existing `nak unsupported` / `nak bad_token` / `nak bad_arg`.
 reply line per command. A blocking leg would freeze the plane for the whole
 seek — no `getstate`, no `stop`, **no abort** — on a command that is driving an
 axis at a hard stop. So it returns immediately and the machine enters
-`STATE_HOMING` (already reserved in `shared.h`), exactly as a job does:
+`STATE_HOMING` (already reserved in `shared.h`), exactly as a job does.
 
-- success: `STATE_HOMING` → `STATE_IDLE`, **or** → `STATE_ALARM` /
-  `ALARM_LIMIT_LATCHED` if the axis ended parked on the switch (§2.6)
-- fault: `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOMING_FAIL`
+**The session.** The first leg, from IDLE or `ALARM_LIMIT_LATCHED`, opens a
+homing session; the machine stays in `STATE_HOMING` across legs. Any other
+ALARM, and PAUSED, refuse a leg (`err bad_state`). `getstate` reports the phase
+as `homing=`: `0` (LEG) while a leg runs, `1` (WAIT) between legs.
+
+- leg success: stays in `STATE_HOMING`, `homing=1`; a seek's latch is
+  recorded in the mask (§2.6) but not published as an alarm
+- leg fault: `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOMING_FAIL`;
+  the session is over, and `unalarm` must clear it before the next leg
+- `setorigin` between legs: records the datum and ends the session
+- `home_end` between legs: ends the session without a datum
 - abort: the existing `stop` works unchanged
+
+Both ends go through `resumeOrHold()`: IDLE, or `ALARM_LIMIT_LATCHED` if an
+axis is left on its switch (§2.6). Between legs `nodestat`, `pingnode` and
+`busstat` are admitted; `enable`, maps, `step`, jobs and probing are not.
 
 `STATE_HOMING` joins the data-plane allowed-state matrix, so a job stream
 arriving mid-home gets the existing `MSEG_NACK_BAD_STATE`.
@@ -593,9 +605,10 @@ fault.
 
 **The condition becomes an alarm.** A seek that ends on the switch enters
 `STATE_ALARM` with `ALARM_LIMIT_LATCHED`. This costs nothing to gate: ALARM
-already blocks the data plane, and `busGateDenies()` already admits ALARM, so
-`home` and `setorigin` keep working and the four-leg sequence runs unchanged. No
-new NACK and no new gate.
+already blocks the data plane, and a leg is admitted from
+`ALARM_LIMIT_LATCHED` to retract off the switch. Inside a homing session
+(§2.2) the latch is only recorded: the machine is in `STATE_HOMING`, which
+already refuses jobs, and the alarm is published when the session ends.
 
 It is also safe against the one thing that would have killed it:
 `reconcileValidity()` invalidates only on `STATE_ESTOP` / `ALARM_ESTOP` /
