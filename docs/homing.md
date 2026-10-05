@@ -877,6 +877,30 @@ Putting a raw approach dir in config instead would create two independent
 direction facts that can disagree — an axis that streams one way and homes the
 other, with nothing to catch it. The node never hears the word `invert`.
 
+### 3.2a The Pico's fields
+
+The Pico homes from its own fields, decoded in
+`src/rp2350/core0/config/config_decode.cpp`; design in
+docs/plans/controller-homing.md and docs/plans/coordinate-system.md. They sit
+beside the fields above, which only the host reads, until the host's homing
+path is removed.
+
+| Pico field | Replaces | Meaning |
+|---|---|---|
+| `invertDir` (axis) | `invert` | wiring fix so + is physical: X right, Y away, Z up, A counter-clockwise from above |
+| `softLimits` (axis) | — | enforce `[park, park ± maxTravel]` |
+| `cycle` | — | lower homes first; absent: Z 1, else 2 |
+| `seekPositive` | `atOrigin` | home toward + |
+| `seekScaler` | `hardTravel` | seek budget = `(maxTravel + pullOffDist) × seekScaler` |
+| `startFeed` | `pullInFeed` | |
+| `backoffDist` | `backoffMm` | |
+| `pullOffDist` | `parkMm` | |
+| `parkPos` | — | optional: coordinate after the pull-off |
+| `indexPos` (rotary) | `datumDeg` | coordinate of the index |
+
+`invertDir` and `softLimits` are required on every axis; a blob without them
+is rejected as `missing`.
+
 ### 3.3 Validation
 
 **Implemented** as one rule, `homingCoherent`, appended to `RULES` and hanging off
