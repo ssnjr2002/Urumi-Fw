@@ -24,11 +24,22 @@ Z and A at a time.
 * **A latch is not a failure.** A seek ending on its switch is a finished
   leg; inside the session the latch is recorded, not published as
   `ALARM_LIMIT_LATCHED`. Only `HOMEFAIL_*` causes and estop are failures.
-* **Any failure fails the session:** the other running legs are stopped, the
-  machine goes to `ALARM_HOMING_FAIL`, and the failing node is named.
+* **A failure fails its cycle:** the other running legs of that cycle are
+  stopped with a leg abort (per node, never a broadcast), the machine goes to
+  `ALARM_HOMING_FAIL`, the failing node is named, and no later cycle runs.
+* **A cycle commits whole or not at all.** `setorigin` runs at the end of each
+  cycle, for every node of it; nothing from a failed cycle is committed, not
+  even a sibling that finished. Earlier cycles keep their datums: a failure
+  invalidates only its own leg's node, and `home_end` touches no origin. A
+  retry (`home unhomed`) parks the earlier cycles and homes the failed one.
+* **A leg abort** stops a node's pulser and leaves it energised, so its
+  counter and `NODE_FLAG_DATUM` stay good. `CMD_MAKE_SAFE` is not used: it
+  de-energises and drops the witness.
 * **A park leg:** a homed node moves to its park position (`parkPos`) using
   its datum. It is a leg, not a plain move, so the session still allows no
-  motion outside legs.
+  motion outside legs. The node drives it: it runs to an absolute counter
+  value, ramping up and down. A switch asserting on the way stops it, and
+  ending anywhere but the target is a failure.
 
 ### Cycles
 
@@ -149,7 +160,10 @@ Per linear axis (frames and directions: docs/plans/coordinate-system.md):
 
 ## Wire changes
 
-* Commands: `home`; `setorigin` node-addressed syntax.
+* Commands: `home`; `setorigin` node-addressed syntax; `leg <node>
+  seek|retract|sweep|park …` and `leg_abort` (raw, bench) replace `lin_leg`
+  and `rot_leg`.
+* Node: `CMD_PARK_LEG`, `CMD_LEG_ABORT`.
 * Config: the homing config above, read by the Pico.
 
 ## Branches
@@ -159,8 +173,13 @@ Proposed order. Each gets a full Plan section when its turn comes.
 1. `feature/homing-config`: the homing config above, decoded by the Pico
    (`core0/config/config_decode`); added to the web schema and loader beside
    the old fields; fixtures and `docs/homing.md`. Depends on nothing.
-2. `feature/homing-legs`: parallel legs with fail-all, the park leg,
-   node-addressed `setorigin`. Depends on state-handling branch 3.
+1a. `refactor/node-legs`: a base leg on the node and the Pico, with seek,
+   retract and sweep built on it; leg names instead of homing names. Same
+   behaviour. Depends on nothing.
+1b. `feature/node-park-leg`: the park leg and leg abort, and the `leg` verbs
+   replacing `lin_leg`/`rot_leg`. Depends on 1a.
+2. `feature/homing-legs`: parallel legs with per-cycle failure, the park leg,
+   node-addressed `setorigin`. Depends on state-handling branch 3 and 1b.
 3. `feature/home-command`: the `home` controller command. Depends on 1 and 2.
 
 ## Branch 1: `feature/homing-config`
@@ -233,14 +252,109 @@ branch 2) and coordinate-system.md branch 1 (`feature/pico-frames`).
   is only checked positive (the 3.2 floor stays a config judgement).
 * `docs/homing.md` §3.2a lists the Pico's fields and what each replaces.
 
+## Branch 1a: `refactor/node-legs`
+
+### Plan
+
+* **Type:** `refactor`. **Depends on:** nothing. Existing tests pass
+  unchanged; nothing changes on the wire.
+* **Purpose:** legs stop being a homing-only thing. A base leg owns the
+  mechanics; seek, retract and sweep are modes on it, so branch 1b adds park
+  as one more mode.
+* **Node** (`src/node/types/stepper/`):
+  * New `leg.{h,cpp}`: the pulser ISR, ramp, budget, arm, halt, finish, span
+    and busy flag, from `stepper.cpp:106-181`, `:300-518`. Each mode supplies
+    its terminator (checked before the step) and finish hook.
+  * Seek and retract (switch debounce, latch write) and sweep (Hall sample
+    and resolve) stay homing code, built on the base.
+  * Renames: `HomingState` → `LegState`, `homingActive` → `legActive`,
+    `homingLegArm` → `legArm`, `homingHalt`/`homingFinish` → `legHalt`/
+    `legFinish`, `homingSpan*` → `legSpan*`.
+* **Protocol** (`include/common.h`): `NODE_FLAG_HOMING` → `NODE_FLAG_LEG`,
+  same bit; `CMD_HOME_LEG` keeps its name and opcode.
+* **Pico:**
+  * New `core0/ops/leg.{h,cpp}`: claim, poll, settle, deadline and the
+    outcome, from `core0/ops/homing.cpp`. `homing.cpp` keeps the session
+    (`STATE_HOMING`, `homingReason`, `ALARM_HOMING_FAIL`) and maps leg
+    outcomes to it.
+  * `HOMEFAIL_*` → `LEGFAIL_*` (`homing.h`, `query.cpp:34`). The `homefail=`
+    field in `?` and `ALARM_HOMING_FAIL` keep their names: they belong to the
+    session.
+  * Callers: `core0/cmd/axis.cpp` (`cmdLinLeg`, `cmdRotLeg`),
+    `core0/ops/probe.cpp`, `core1/rpc_server.cpp:47`.
+* **Web:** none (no wire change).
+* **Checks:** `pio run` for every stepper env, `pio run -e pico`,
+  `pio test -e native`.
+* **Human scope:** one seek/retract on X and one sweep on A, unchanged.
+
+### Status
+
+Planned.
+
+## Branch 1b: `feature/node-park-leg`
+
+### Plan
+
+* **Type:** `feature`. **Depends on:** 1a. Protocol change: lands before
+  branch 2, which uses both commands.
+* **Purpose:** the park leg and leg abort on the node, and the `leg` verbs on
+  the Pico. Nothing sequences them yet.
+* **Protocol** (`include/common.h`, beside `CMD_HOME_LEG` at `:135-190`):
+  * `CMD_PARK_LEG` 0x25, payload 10 bytes big-endian: `[0..3]` target
+    (signed node counter), `[4..5]` start interval µs, `[6..7]` floor
+    interval µs, `[8..9]` ramp steps. Ack: the status payload, as
+    `CMD_HOME_LEG`. Direction and step count come from target − counter; no
+    budget field, the distance is the budget.
+  * `CMD_LEG_ABORT` 0x26, no payload. Ack: the status payload. Aborting with
+    no leg running is an ack, not a NAK (idempotent, so fail-all needs no
+    state check).
+  * NAKs: `NAK_BUSY` (a leg runs), `NAK_BAD_ARG` (as `homingLegArm`), and a
+    park leg without `NODE_FLAG_DATUM` is refused (new `NAK_NO_DATUM`): a
+    counter with a broken witness is not a position.
+* **Node** (`src/node/types/stepper/`, on 1a's `leg.{h,cpp}`):
+  * Park mode: the base leg gains a ramp-down over the last `rampSteps`
+    (mirror of the ramp up, so the stop is at the start rate). Its terminator
+    is a debounced switch, as a seek; a stop on the switch sets
+    `limitLatched`, so the gate still holds. No Hall sampling, no latch clear.
+    Target == counter arms nothing and acks.
+  * Abort: `legHalt()`, then the loop's `legFinish` closes the span. The
+    motor stays enabled; `NODE_FLAG_DATUM` is untouched.
+  * Handlers in `node_handle_command` beside `CMD_HOME_LEG`, under
+    `HAS_HOMING`.
+* **Pico:**
+  * `ipc/core1_rpc.{h,cpp}`: `rpcParkLeg`, `rpcLegAbort`;
+    `core1/rpc_server.cpp:47` answers both with status.
+  * `core0/ops/leg.{h,cpp}`: a park leg uses the same claim, poll and
+    deadline; it succeeds when the node stops at the target, and fails with a
+    new `LEGFAIL_PARK` otherwise. One node at a time, as today; branch 2 makes
+    it per node.
+  * `core0/cmd/axis.cpp`: `leg <node> seek|retract|sweep|park …` and
+    `leg_abort <node>` replace `cmdLinLeg`/`cmdRotLeg`; `control_plane.cpp:60`
+    table. Seek and retract set the intent bit, so a mismatch NAKs as today.
+    `park` needs the node homed on the Pico (`originValid`), so the target is
+    in the node's frame as `setorigin` left it.
+* **Web:** `web/src/wire/link/commands.ts` (`:320-349`): `linLeg`/`rotLeg`
+  move to the `leg` verbs; `parkLeg` and `legAbort` added;
+  `web/src/homing/sequence.ts` and `web/src/wire/link/backends/sim.ts`
+  follow. No homing behaviour change.
+* **Docs:** `docs/homing.md`: §1.4 the park leg and the abort, and the bench
+  commands renamed.
+* **Checks:** `pio run` for every stepper env with `HAS_HOMING`,
+  `pio run -e pico`, `pnpm typecheck` and `pnpm test` in `web/`.
+* **Human scope:** park to a target and back on X and A, a park run into the
+  switch, abort mid-seek (motor stays energised, `datum` flag kept, counter
+  matches a `getpos`).
+
+### Status
+
+Planned.
+
 ## Open questions
 
 * Guarding earlier-cycle axes while later legs run (still enabled and unmoved
   since their leg ended, plus still latched where there is a switch), and a
   minimum seek travel to catch a stuck switch. None of grbl, Marlin or Klipper
   does either.
-* Stopping a running leg without a full `CMD_MAKE_SAFE` (needed by fail-all):
-  check the node firmware.
 * FluidNC's `cycle: 0` (homed only by name, never by a plain `home`).
 * The homing recipe on the Pico: the controller sequence that holds the
   session, and the handler bodies (`setorigin`'s datum loop, the enables) that
