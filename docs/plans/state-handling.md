@@ -1235,3 +1235,9 @@ looks like no config).
   names it (`ok unconfirmed <ids>`). Either way the node is excluded.
   Exclusion blocks RPCs only, so an excluded node gets no slot again until
   the next sweep. Its own small branch.
+* Flashed config image: a pre-upload pio script turns a `config.json` into
+  `data/config.bin` (16-byte header: `CFG_VERSION`, seq, length, CRC32) for
+  `uploadfs`. Encode through the web's encoder (a node/pnpm command), not a
+  second Python one, so the schema cannot drift. `uploadfs` replaces the
+  whole filesystem, overwriting a config pushed since, so make it opt-in (own
+  env or target), not every upload. Its own small branch.
