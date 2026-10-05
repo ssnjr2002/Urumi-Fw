@@ -71,11 +71,14 @@ metadata consistent across power loss.
 `machineCfgLoad()` then decodes the stored blob. A blob that is missing or does
 not decode leaves the active config invalid.
 
-**No-config policy: primitives only.** Without a valid config the machine boots
-IDLE with nothing mapped; controller commands answer `err unconfigured` and
-`axes_map` refuses, so no axis can be bound (`slot_map` still binds nodes for
-the bench). An accepted `CFG_SET` is the way
-out. With one, the controller commits the config's `defaultHead` axis map after
+**No-config policy: `ALARM_CONFIG`.** Without a usable config (none, an
+unmounted filesystem, a bad file, or one that does not decode) the machine
+boots into `ALARM_CONFIG`, nothing mapped; `getstate cfgerr=` says why.
+`resumeOrHold()` holds it, so no other exit leaves it. Controller commands
+answer `err unconfigured` and `axes_map` refuses. An accepted `CFG_SET` is the
+way out. A build with `PICO_ALLOW_UNCONFIGURED` adds `uncfg`, which ignores the
+file until power-off and lands IDLE unconfigured, primitives only (`slot_map`
+still binds nodes for the bench). With one, the controller commits the config's `defaultHead` axis map after
 every soft reset's bus sweep (docs/engage_and_axis_map.md §6).
 
 `g_cfg` is updated **only** by the boot check and a successful commit. It is
@@ -259,6 +262,7 @@ cfg seq=1 len=1374 crc=0x1c291ca3 schema=1
 | `schema` | Payload schema version of the decoded active config |
 | `decoded=0` | The stored blob is intact but did not decode (no active config) |
 | `rejected=<name>` | The most recent rejection, at boot or of a `CFG_SET` (`configDecodeErrorName`) |
+| `ignored=1` | `uncfg` set the stored config aside until power-off |
 
 This is a human-readable diagnostic, not a host-facing binary response. The binary
 path for reading the blob is `CFG_GET` (§5).

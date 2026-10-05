@@ -203,7 +203,7 @@ packets by inserting the byte at a packet boundary.
 [1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
 [2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
-[4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=(reserved) 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
+[4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
 [5]      runningReason uint8   — 0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER (only meaningful while state=RUNNING)
 [6..7]   bufCount      uint16 LE — MicroSegments queued in masterBuf; planner blocks while a planner job runs or is paused
 [8..23]  pos[4]        int32 LE  — machinePos: x, y, z, a (steps)
@@ -335,6 +335,7 @@ prefixed `0x`.
 | `stop` | — | `ok` | Emergency stop — flush, ALARM(ESTOP); always available |
 | `unstop` | — | `ok` / `err unconfirmed <ids>` / `err bad_state` | Leave `ALARM_ESTOP`: make safe every touched node (energised or holding a slot) that is not excluded; refused until all confirm. Forgets the requested maps → IDLE (or `ALARM_BUS_DEGRADED`), unmapped, de-energised, un-homed |
 | `bus_exclude` | `<id> …` | `ok` / `err not_mute` / `err bad_node` / `err usage` | Run without mute nodes (those the boot sweep could not make safe). Commands to an excluded node then answer `excluded` (make-safe exempt) until the next `reset`. With no unexcluded mute node left, `ALARM_BUS_DEGRADED` → IDLE, unmapped. Any state |
+| `uncfg` | — | `ok` / `err bad_state` | Builds with `PICO_ALLOW_UNCONFIGURED` only. Leave `ALARM_CONFIG` → IDLE (or the next alarm), unconfigured; the stored file is kept and ignored until power-off. The other way out is a `CFG_SET` commit |
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved). `err estop` in `ALARM_ESTOP`: use `unstop` |
 | `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full` | Bring-up only: queue a planner line to machine mm (x, y) at `feed` mm/s, planned and run on the Pico (runningReason 3). `<depth>` = blocks queued. IDLE, or while planner motion runs. Refused if X or Y has `maxFeed` or `maxAccel` 0. No homing or soft-limit check |
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, machine mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line` |
@@ -347,9 +348,10 @@ prefixed `0x`.
 state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
-alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=(reserved) 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
+alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
 running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaningful while state=RUNNING)
 homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; WAIT = between legs)
+cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with alarm=CONFIG)
 ```
 Pre-flight checks every required axis is **present** (pingnode), **enabled**
 (this mask), and **homed** — a present-but-disabled axis would drop steps.
@@ -408,6 +410,7 @@ Phase 2.
 | `stop` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `unalarm` | ✗ | ✗ | ✗ | ✓ | ✗ |
 | `unstop` (`ALARM_ESTOP` only) | ✗ | ✗ | ✗ | ✓ | ✗ |
+| `uncfg` (`ALARM_CONFIG` only) | ✗ | ✗ | ✗ | ✓ | ✗ |
 | `bus_exclude` | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 `pingnode` is blocked in RUNNING because the RS485 bus is saturated with stream

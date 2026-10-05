@@ -515,7 +515,7 @@ a type, the move the node side deliberately avoided).
 | `common.h` | `CMD_MAKE_SAFE` | `0x09` | generic; no payload; reply = status payload (§4.4) |
 | `common.h` | `BUS_SILENCE_MS` / `BUS_KEEPALIVE_MS` | `1000` / `333` | node timeout (opt-in); Pico keepalive (§4.4) |
 | CLI | `makesafe <id>` | — | relays `CMD_MAKE_SAFE`; confirmed releases the slot and drops the node from both requests, else fences (§5.5); IDLE/PAUSED/ALARM |
-| `shared_state.h` | (was `ALARM_CONFIG`) | `2` (reserved) | retired: no config boots to IDLE |
+| `shared_state.h` | `ALARM_CONFIG` | `2` | no usable config at boot; held by `resumeOrHold()` until a `CFG_SET` commit or `uncfg` (docs/config_storage.md) |
 | `position.cpp` | `slotNode[4]`, axes request | Core-0-local | slot binding; axis request with pending (§5.4) |
 | CLI | `slot_map <n0> <n1> <n2> <n3>` | — | any node, no config; IDLE/PAUSED/ALARM; no-arg reads the binding |
 | CLI | `axes_map <x> <y> <z> <a>` | — | axis request; IDLE/PAUSED/ALARM; no-arg reads the request |
