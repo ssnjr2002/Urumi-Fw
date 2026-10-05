@@ -1176,7 +1176,24 @@ looks like no config).
 `pnpm test` in `web/`. Human scope: boot with the stale config, `uncfg`,
 `CFG_SET` clearing the alarm.
 
-**Status:** planned.
+**Status:** ready to merge. Bench: `alarm=2 cfgerr=version` on boot with the
+stale config in both builds; `uncfg` → IDLE with the flag, `err unknown`
+without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
+
+**Outcome:**
+
+* Deviations:
+  * `unalarm` answers the existing `err unconfigured` (controller-command
+    gate), not `err config`; `unalarm.cpp` unchanged.
+  * The boot reason is kept apart from `machineCfgError()`, which a rejected
+    `CFG_SET` overwrites; `configStoreStatus()` gives absent/fs/file.
+  * `web/test/wire/format/status.test.ts` asserted `CONFIG` absent; now
+    checks `CONFIG` 2 and `BUS_DEGRADED` 8.
+  * `pico-config.md` left alone (old plan); `config_storage.md` and
+    `engage_and_axis_map.md` updated instead.
+* Interfaces later branches rely on: `machineCfgBlocking()`; `resumeOrHold`
+  order is `BUS_DEGRADED`, `CONFIG`, `NODE_FAULT`, `LIMIT_LATCHED`.
+* Out of scope: the flashed config image (Follow-ups).
 
 ## Open questions
 
