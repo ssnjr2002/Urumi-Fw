@@ -1120,7 +1120,8 @@ clears any alarm reason at arm and `homingTick` ends every leg with
 `home_end` between legs; `stop` mid-leg; a leg refused in `ALARM_ESTOP` and
 in PAUSED.
 
-**Status:** ready to merge. Bench (dummy legs only): session, `home_end`,
+**Status:** done (b7b4a33..b3ec1b9). Unblocks branch 4 (with 2) and
+docs/plans/controller-homing.md. Bench (dummy legs only): session, `home_end`,
 `err busy` mid-leg, `ALARM_HOMING_FAIL` then `err bad_state`, `stop`
 mid-leg. Real legs on the machine not run.
 
