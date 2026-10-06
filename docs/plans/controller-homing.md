@@ -388,7 +388,8 @@ Done, merged (d73fe25..0c1981a). Unblocks 1b.
 
 ### Status
 
-Planned.
+Done, merged (79c7a77..0201ba5). Unblocks branch 2 (`feature/homing-legs`,
+with state-handling branch 3).
 
 ### Outcome
 
