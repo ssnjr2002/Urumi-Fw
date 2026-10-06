@@ -56,26 +56,37 @@ Z and A at a time.
   (`seekPositive: true`), so its park position is the top of its soft range:
   the safe height.
 * **Uncertain** (mute, excluded, or failed its leg) in an earlier cycle fails
-  the session before any later leg runs, naming the axis.
+  the session before any later leg runs, naming the node.
 * The rule lives in the controller recipe (only the config knows the cycles);
   the leg primitive stays unguarded, the raw path for the bench.
 
 ### `home`
 
-* A controller command: `home [unhomed] [only] [<axis> …]`. Lowercase only
-  (the control/data plane mux relies on it).
-* **Axes:** `x`, `y`, `z<n>`, `a<n>` with `n` the index into the config's
-  `heads[]` (the number `select` takes); `z` and `a` alone mean every head's.
-  No axes means all. An unknown name, a head index out of range, or an axis
-  the head lacks is `err usage` before anything moves.
-* **Named axes** are re-homed (the default); with `unhomed`, only the unhomed
-  ones are.
-* **`only`** homes the named axes without clearing any earlier cycle: the
-  operator asserts the way is clear (as grbl's `$HX`). The recovery for an
+* A controller command: `home [only] [<node> …]`, addressed by bus id like
+  `leg` and `setorigin`. Lowercase only (the control/data plane mux relies on
+  it). No nodes means every homeable node in the config.
+* A node not in the config is `err node N not_in_config`, one with no homing
+  block `err node N not_homeable`, a repeat or bad token `err usage`; all
+  before anything moves.
+* **Named nodes are re-homed.** Without `only`, earlier cycles are cleared
+  first (Cycles above).
+* **`only`** homes the named nodes in cycle order without clearing anything:
+  the operator asserts the way is clear (as grbl's `$HX`). The recovery for an
   uncertain Z.
-* Each cycle runs its legs in parallel; seeks, then retracts; then the next
-  cycle; `setorigin` names every node that was homed.
-* Replies name axes, not bus ids (e.g. `z1`).
+* **Selectors**, separate commands that resolve a node list and run the same
+  recipe:
+  * `home_unhomed`: `home <every unhomed homeable node>`; nothing unhomed is
+    `ok` with no motion.
+  * `home_cycle <k>`: `home <cycle k's nodes>`, earlier cycles cleared; an
+    empty cycle is `err usage`.
+  * `home_head <n>`: `home only <Zn> <An>`, `n` the index into `heads[]`.
+* Each cycle runs its legs in parallel, in lockstep phases (seek, back-off,
+  slow re-approach, pull-off; a rotary axis sweeps forward then back in the
+  first two); then one datum commit for every node of the cycle; then the
+  next cycle.
+* `home` energises the nodes it moves. It answers `ok` once started; progress
+  and failure are in `getstate` (`homing=`, `homecycle=`, `homefail=`,
+  `homenode=`).
 * After a tool swap only Z is probed again; no axis is homed.
 * Prior art: grbl/FluidNC `$H`, `$HX`; Marlin `G28 X Y`, `G28 O` (skip
   trusted axes); Klipper `G28 X Y`.
@@ -160,10 +171,16 @@ Per linear axis (frames and directions: docs/plans/coordinate-system.md):
 * `hardTravel`: the range comes from `maxTravel` and `parkPos`, the seek
   budget from `seekScaler`.
 * Positive-down Z: with signed ranges, ISO Z costs nothing.
+* Axis letters in `home` (`x`, `z1`, `unhomed`, …): node ids like the other
+  homing commands; selection by state, cycle or head is a separate selector
+  command.
+* Clearing only before a cycle that moves the gantry: the selectors (and
+  `only`) already avoid needless clearing.
 
 ## Wire changes
 
-* Commands: `home`; `setorigin` node-addressed syntax; `leg <node>
+* Commands: `home`, `home_unhomed`, `home_cycle`, `home_head`; `getstate`
+  `homecycle=`, `nodehomed=`; `setorigin` node-addressed syntax; `leg <node>
   seek|retract|sweep|park …` and `leg_abort` (raw, bench) replace `lin_leg`
   and `rot_leg`.
 * Node: `CMD_PARK_LEG`, `CMD_LEG_ABORT`.
@@ -183,7 +200,8 @@ Proposed order. Each gets a full Plan section when its turn comes.
    replacing `lin_leg`/`rot_leg`. Depends on 1a.
 2. `feature/homing-legs`: parallel legs with per-cycle failure, the park leg,
    node-addressed `setorigin`. Depends on state-handling branch 3 and 1b.
-3. `feature/home-command`: the `home` controller command. Depends on 1 and 2.
+3. `feature/home-command`: the `home` controller command and its selectors.
+   Depends on 1 and 2.
 
 ## Branch 1: `feature/homing-config`
 
@@ -476,6 +494,62 @@ Done, merged (f8c79ea..427cf35). Unblocks branch 3 (`feature/home-command`).
 * Not run on the machine: two legs at once, a failure with a running sibling
   (park keeping `homed`), `leg_abort` on one of two legs, `setorigin` with a
   dead node.
+
+## Branch 3: `feature/home-command`
+
+### Plan
+
+Type: feature. Depends on 1 and 2.
+
+Purpose: `home [only] [<node> …]` and the selectors `home_unhomed`,
+`home_cycle <k>`, `home_head <n>` (Decisions above), run on the Pico from
+the homing config.
+
+* First, its own `refactor(pico)` commit with no behaviour change (folded in
+  by agreement; too small for a branch): `cmdSetOrigin`'s `CMD_DATUM_SET` →
+  `originRecord` loop and first-failure capture (`cmd/axis.cpp:320-338`) move
+  to `ops/position.{h,cpp}` as `originDatum(nodes, steps, n, *badNode) →
+  why|nullptr`; the parse, estop snapshot and reply stay in the handler. The
+  enables need no move (`enable <id>` is one `rpcNodeCmd`, `axis.cpp:123`).
+
+* `controller/cmd/home.cpp`, `controller/cmd/table.h`, `control_plane.cpp`:
+  the four commands. They parse and resolve a node list (config lookups,
+  `originValid` for `home_unhomed`), check it before anything moves, and
+  hand it to the recipe. Admitted from IDLE or `ALARM_LIMIT_LATCHED`.
+* `controller/seq/home.{h,cpp}` (new): the recipe, a non-blocking state
+  machine ticked from the Core 0 loop beside `homingTick`
+  (`core0/core0.cpp:176`).
+  * The run set: the named nodes; without `only`, every homeable node of
+    every earlier cycle is added, homed ones as a park leg to `parkPos`,
+    unhomed ones homed. An earlier-cycle node that is mute, excluded, or not
+    homeable and unhomed fails before anything moves.
+  * Energise the run set (`CMD_ENABLE`), then per cycle, in lockstep phases
+    through `homingBegin`/`homingParkBegin`: seek (with forward sweeps and
+    parks), back-off (with reverse sweeps), slow re-approach, pull-off. A
+    phase starts when every leg of the last has ended; any failure is
+    branch 2's cycle failure.
+  * Leg numbers from the config: interval = 1e6 / (feed × stepsPerUnit);
+    seek budget (`maxTravel` + `pullOffDist`) × `seekScaler`; back-off
+    `backoffDist`; re-approach budget `backoffDist` × 2.5; pull-off
+    `pullOffDist`; direction bit = `seekPositive` XOR `invertDir`.
+  * Datum per cycle through `originDatum`: a linear node at `parkPos`, or
+    the default (`pullOffDist` homing −, `maxTravel` homing +); a rotary node
+    from the two sweeps (`web/src/homing/derive.ts` `resolveRotaryIndex`,
+    ported) with `toleranceDeg` checked. Steps carry the `invertDir` sign as
+    `frames.ts` does until `pico-frames` owns the frame.
+  * The session is held for the whole run; raw `leg`, `setorigin` and
+    `home_end` answer `err busy` meanwhile; `stop` aborts. The last commit
+    exits through `resumeOrHold()`.
+* `cmd/query.cpp`: `getstate` appends `homecycle=<k>` while a run is in
+  progress and `nodehomed=<hex>` (bit n: node n has an origin).
+* Web: `home()`, `homeUnhomed()`, `homeCycle()`, `homeHead()` in
+  `commands.ts`; `status.ts` parses `homecycle`, `nodehomed`. The sim is not
+  changed.
+* Docs: `docs/homing.md`, `docs/wire_protocol.md`.
+
+### Status
+
+Planned.
 
 ## Open questions
 
