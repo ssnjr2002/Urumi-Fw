@@ -23,7 +23,6 @@ import {
 import { KNIFE, PEN } from "../../src/machine/tools.js";
 import { resolvedAxesDefault } from "../../src/machine/resolve.js";
 import { MachineState } from "../../src/wire/format/status.js";
-import { setOrigin } from "../../src/wire/link/commands.js";
 
 /** Head 0: knife, Z at 1200 steps/mm on node 3. Head 1: pen, Z at 600 on node 5. */
 function dualHead(defaultHead = 0) {
@@ -150,7 +149,7 @@ describe("setup reconciliation", () => {
         // and a slot-framed mask would have reported it as homed.
         const { controller, link, sim } = bench();
         await controller.commit(0);              // slots = 1 2 3 4
-        await setOrigin(link, "z");
+        await link.command("setorigin z");   // the sim keeps the slot form
         await controller.refresh();
         expect(controller.status!.homed("z")).toBe(true);
 

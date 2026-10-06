@@ -227,22 +227,25 @@ export function axesEnable(link: Link, on: boolean): Promise<boolean> {
 
 // ── motion control ────────────────────────────────────────────────────────────
 
+/** One `setorigin` pair: bus node `node` is standing at machine position `steps`. */
+export interface OriginPair {
+    readonly node: number;
+    readonly steps: number;
+}
+
 /**
- * Record a datum: the named axes' current physical position IS `posSteps`.
+ * Record a datum per bus node: each node's current physical position IS its
+ * `steps` (`setorigin <node>:<steps> …`).
  *
- * `posSteps` defaults to 0 — "here is the origin" — which is the bare-jog case.
- * A home needs the other form: after leg 4 the axis is parked a known distance
- * clear of a switch whose own machine coordinate is known, so the datum is that
- * arithmetic, not zero. Omitting it there would put the origin at the park
- * point and silently shift the whole coordinate system by parkMm.
+ * A home's datum is arithmetic, not zero: after leg 4 the axis is parked a
+ * known distance clear of a switch whose own machine coordinate is known.
  *
- * Answers `err unbound` if NO named axis resolved to a node — a mask where
- * nothing resolved recorded nothing, and `ok` there would report a datum that
- * does not exist.
+ * Node-addressed, like the legs. False if any node failed (`err node <id> …`);
+ * the others still recorded their datum.
  */
-export function setOrigin(link: Link, axes: string = "", posSteps?: number): Promise<boolean> {
-    const args = posSteps !== undefined ? `${axes} ${posSteps}` : axes;
-    return _ok(link, `setorigin ${args}`.trim());
+export function setOrigin(link: Link, pairs: readonly OriginPair[]): Promise<boolean> {
+    const args = pairs.map((p) => `${p.node}:${Math.round(p.steps)}`).join(" ");
+    return _ok(link, `setorigin ${args}`);
 }
 
 // ── homing ────────────────────────────────────────────────────────────────────

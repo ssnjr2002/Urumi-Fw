@@ -100,7 +100,7 @@ describe("wire/link/commands: enable / disable / setorigin / unalarm", () => {
         await withLink(async (link) => {
             expect(await enable(link)).toBe(true);
             expect(await disable(link)).toBe(true);
-            expect(await setOrigin(link)).toBe(true);
+            expect(await setOrigin(link, [{ node: 1, steps: 0 }])).toBe(true);
         });
     });
 

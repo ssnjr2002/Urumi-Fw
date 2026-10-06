@@ -237,7 +237,7 @@ export async function runHoming(
         opts.onLeg?.(leg, i, plan.legs.length);
         await runLeg(link, node, leg, opts);
     }
-    if (!(await setOrigin(link, plan.axis, plan.datumSteps))) {
+    if (!(await setOrigin(link, [{ node, steps: plan.datumSteps }]))) {
         throw new HomingError(null, null,
             `${plan.axis}: legs completed but setorigin ${plan.datumSteps} was refused ` +
             `— the axis is parked correctly but has no datum`);
@@ -386,7 +386,7 @@ export async function runRotaryHoming(
     // is not on — it records "the node counter right now corresponds to this"
     // — which is exactly why the arithmetic is here and not on the wire.
     const originSteps = Math.round(plan.datumSteps + (reverse.pos - indexSteps));
-    if (!(await setOrigin(link, plan.axis, originSteps))) {
+    if (!(await setOrigin(link, [{ node, steps: originSteps }]))) {
         throw new HomingError(null, null,
             `${plan.axis}: both sweeps completed but setorigin ${originSteps} was `
             + `refused — the index is measured but the axis has no datum`);

@@ -262,6 +262,8 @@ export class MachineStatus {
          * undefined = the reply did not say (binary plane or older firmware).
          */
         readonly probeZ: number | null | undefined = undefined,
+        /** Bus node whose leg failed, alongside `homeFail` (0 for a dummy leg). */
+        readonly homeNode: number | undefined = undefined,
     ) {}
 
     homed(axis: AxisLetter): boolean {
@@ -342,6 +344,7 @@ export function parseGetstate(line: string): MachineStatus {
             : fields.probed === "1" && fields.pz !== undefined
                 ? parseInt(fields.pz, 10)
                 : null,
+        fields.homenode !== undefined ? parseInt(fields.homenode, 10) : undefined,
     );
 }
 
