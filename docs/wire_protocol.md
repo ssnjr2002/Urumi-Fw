@@ -327,6 +327,10 @@ prefixed `0x`.
 | `setorigin` | `<node>:<steps> [<node>:<steps> …]` | `ok` / `err usage` / `err node <id> not_in_config\|not_stepper\|no_datum\|<rpc>` / `err estop` / `err busy` | Set each node's datum: it stands at machine position `<steps>` (wire frame). Every pair is tried; `err node` names the first that failed, the others keep their datum. Clears no alarm. Between homing legs an `ok` also ends the session → IDLE, or `ALARM_LIMIT_LATCHED` if a switch is held; `err busy` while any leg runs |
 | `dummy_leg` | `<0\|1> [ms]` | `ok` / `err busy` / `err bad_state` / `err usage` / `err range` | Testing primitive: a homing leg with no node or motion, admitted where a leg is. After `ms` (default 1000, max 600000) `1` ends as a successful leg (`homing=1`), `0` as `ALARM_HOMING_FAIL` with `homefail=7`. Touches no latch and no origin |
 | `home_end` | — | `ok` / `err busy` / `err bad_state` | End a homing session between legs without a datum (each leg already dropped its node's origin) → IDLE, or `ALARM_LIMIT_LATCHED` if a switch is held. `err busy` while a leg runs (`stop` aborts one); `err bad_state` outside a session |
+| `home` | `[only] [<node> …]` | `ok` / `err usage` / `err busy` / `err bad_state` / `err node <id> not_in_config\|not_homeable\|mute\|excluded\|<rpc>` / `err <leg refusal>` | Controller: home the nodes from the homing config (homing.md §2.8); none = every homeable node. Without `only`, earlier cycles are cleared first. `ok` = started; progress in `homing=`/`homecycle=`, failure as `ALARM_HOMING_FAIL`. Raw `leg`, `dummy_leg`, `setorigin` and `home_end` answer `err busy` until it ends |
+| `home_unhomed` | — | as `home` | `home` of every homeable node with no origin; `ok` with no motion if none |
+| `home_cycle` | `<k>` | as `home` | `home` of cycle k's nodes; an empty cycle is `err usage` |
+| `home_head` | `<n>` | as `home` | `home only` of `heads[n]`'s Z and A |
 | `axes_map` | `[<x> <y> <z> <a>]` | `ok` / `err degraded` / `err unconfigured` / `err node <id> not_in_config\|not_stepper\|timeout\|<rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | The axis request: `-`/`0` = no axis. Each id must be a stepper axis node the config marks present; applied as a `slot_map` of the same ids once all are confirmed. A silent node stays pending, its slot parked, and the machine goes `ALARM_NODE_FAULT`. No-arg: `axes_map <t> <t> <t> <t>`, `t` = `-`, `n` or `?n` (pending). See engage_and_axis_map.md §5.4 |
 | `slot_map` | `[<n0> <n1> <n2> <n3>]` | `ok` / `err degraded` / `err node <id> <rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | Console primitive: bind any node to stream slots 0..3, no config. A node that does not engage leaves the request unmet (`ALARM_NODE_FAULT`). `err fenced` names the node of each requested fenced slot whose make-safe went unconfirmed, `-` elsewhere. No-arg: `slot_map <t> <t> <t> <t>`, `t` = `-`, `n` or `!n` (fenced). See engage_and_axis_map.md §5.5 |
 | `pause` | — | `ok` / `err <reason>` | Request pause of the running job (Core 0 sets flag, Core 1 drains). Planner motion brakes to a hold and keeps its queue |
@@ -353,6 +357,8 @@ running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaning
 homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; LEG = any leg runs, WAIT = none)
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with alarm=HOMING_FAIL)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
+homecycle=<k> homingHeld      the cycle a `home` run is in  (only while one runs)
+nodehomed=<hex> originMask    bitmask, bit n = bus node n holds an origin, mapped or not
 cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with alarm=CONFIG)
 ```
 Pre-flight checks every required axis is **present** (pingnode), **enabled**
@@ -407,6 +413,7 @@ Phase 2.
 | `leg` / `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✓ (one per node) |
 | `leg_abort` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `home_end` | ✗ | ✗ | ✗ | ✗ | between legs |
+| `home` / `home_unhomed` / `home_cycle` / `home_head` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✗ |
 | `axes_map` / `slot_map` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `pause` | ✗ | ✓ | ✗ | ✗ | ✗ |
 | `resume` / `cancel` | ✗ | ✗ | ✓ | ✗ | ✗ |

@@ -431,16 +431,12 @@ taken — but it is the one long ISR on the node.
 
 ## 2. Pico
 
-### 2.1 What the Pico does not do
+### 2.1 Primitives and the recipe
 
-- **Generates no homing motion.** It relays `CMD_HOME_LEG`, polls, and reports.
-- **Parses no config.** `config_store` owns *"one opaque msgpack blob"* and reads
-  no fields; every parameter arrives from the host as a plain number.
-
-Note that finishing the deferred Phase 2 MCFG work would not change this. Its
-mechanism is a CRC32 equality check — an *agreement* mechanism, not an *access*
-one. It proves both sides hold the same bytes; it never lets the Pico read a
-field. Homing is not blocked behind it.
+The primitives (`leg`, `leg_abort`, `setorigin`, `home_end`) take plain numbers
+and read no config: the Pico relays `CMD_HOME_LEG`, polls, and reports. The
+`home` controller command (§2.8) is the one place the Pico plans a home, from
+its decoded homing config; it drives the same primitives' ops.
 
 ### 2.2 The `leg` and `leg_abort` commands
 
@@ -511,8 +507,10 @@ unbuilt. The node still picks the mode from one read of its own limit pin at arm
 time (§1.2), which reproduces §3.4's sequence on its own: after a seek the switch
 is asserted, so the next leg retracts; after the back-off it is clear, so the
 next one seeks. What the master needs — WHICH mode ran, since the terminal flags
-read oppositely for the two (§1.5) — comes back in the arm ack, whose LIMIT bit
-*is* that pin read.
+read oppositely for the two (§1.5) — is the intent it sent: the node NAKs an
+intent that disagrees with its pin, so an accepted arm ran exactly that mode.
+Not the ack's LIMIT bit, which is the pin OR the node's latch: a latch outliving
+its switch would have a seek supervised as a retract.
 
 **`<intent>` is not that dropped token come back.** It carries no authority over
 the mode. What it does is give the node something to check the pin read AGAINST:
@@ -818,6 +816,44 @@ That is the general shape of the bottleneck: any feature wanting the Pico to do
 more than relay and count hits the same wall, because config reaches it only as
 an opaque blob. Worth solving once, generally, if that class of feature is ever
 actually wanted — not worth solving here for one subtraction.
+
+### 2.8 `home`: the controller recipe
+
+`home [only] [<node> …]`, `home_unhomed`, `home_cycle <k>` and `home_head <n>`
+(controller/cmd/home.cpp, controller/seq/home.cpp) home nodes from the homing
+config. Admitted from IDLE or `ALARM_LIMIT_LATCHED`; every check (config, mute,
+excluded, the enables) happens before anything moves. `ok` means started.
+
+- **The run set.** The named nodes; no nodes means every homeable node.
+  Without `only`, every homeable node of an earlier cycle than the highest named
+  joins: a homed linear node parks (a park leg to its park position, at
+  `startFeed` → `seekFeed`), an unhomed one homes, a homed rotary one stays.
+  `home_unhomed` names the unhomed nodes, `home_cycle k` cycle k's,
+  `home_head n` is `home only` of head n's Z and A.
+- **Cycles,** lowest first. A cycle runs its legs in parallel, in lockstep
+  phases: seek, back-off, slow re-approach, pull-off (§3.4); a rotary node
+  sweeps forward then back in the first two; a park runs in the first. A phase
+  starts when every leg of the last has ended. Every linear node tries its seek
+  first; one the node refuses as an intent mismatch stands on its switch, so its
+  back-off runs in that phase instead and each later leg one phase early.
+- **Leg numbers,** as `web/src/homing/derive.ts`: interval = 1e6 / (feed ×
+  stepsPerUnit); the seek ramps `startFeed` → `seekFeed` over `rampSteps` with
+  a budget of (`maxTravel` + `pullOffDist`) × `seekScaler`; the retracts and
+  re-approach run at `latchFeed`, unramped; the re-approach budget is 2.5 ×
+  `backoffDist`. The approach direction bit is `seekPositive` XOR `invertDir`.
+- **The datum,** once per cycle, for every node it homed (`originDatum`, as
+  `setorigin`): a linear node stands at `parkPos`, or by default at
+  `pullOffDist` (homing −) or `maxTravel` (homing +); a rotary node from its
+  two sweeps (`resolveRotaryIndex`), refused past `toleranceDeg` or a 2%
+  revolution spread. Coordinates carry the `invertDir` sign.
+- **The session** is held for the whole run (`homecycle=` in `getstate`): raw
+  `leg`, `dummy_leg`, `setorigin` and `home_end` answer `err busy`; `stop`
+  ends it. A failure fails the session as a failed leg does (§2.2), with
+  `homefail=` 10 (a leg refused mid-run), 11 (the datum commit failed) or 12
+  (the sweeps disagree), beside the leg causes. A refusal is not kept: it came
+  at the start of a phase, on the leg `homenode` was due next, so re-run that
+  leg by hand, or read `nodestat <homenode>`. The last datum exits through
+  IDLE, or `ALARM_LIMIT_LATCHED` if a switch is held.
 
 ---
 
