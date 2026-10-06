@@ -324,7 +324,7 @@ prefixed `0x`.
 | `getpos` | — | `pos <x> <y> <z> <a>` | Absolute machinePos in steps (signed) |
 | `enable` | `[all\|<id>]` | `ok` / `err <reason>` | Energise motors (per allowed-state matrix). Bare / `all` energises every present node; `enable <id>` relays CMD_ENABLE to that node only (mirrors `pingnode <id>`) |
 | `disable` | `[all\|<id>]` | `ok` / `err <reason>` | De-energise. Bare / `all` de-energises every node and clears `axes_homed`/`axisBounds` for all axes; `disable <id>` relays CMD_DISABLE to that node only and clears homing/bounds for that axis alone |
-| `setorigin` | `[axes]` | `ok` / `err <reason>` | Set datum for given axes (default all): home bits + zero pos + real bounds. Clears no alarm. Between homing legs it also ends the session → IDLE, or `ALARM_LIMIT_LATCHED` if a switch is held; `err busy` while a leg runs |
+| `setorigin` | `<node>:<steps> [<node>:<steps> …]` | `ok` / `err usage` / `err node <id> not_in_config\|not_stepper\|no_datum\|<rpc>` / `err estop` / `err busy` | Set each node's datum: it stands at machine position `<steps>` (wire frame). Every pair is tried; `err node` names the first that failed, the others keep their datum. Clears no alarm. Between homing legs an `ok` also ends the session → IDLE, or `ALARM_LIMIT_LATCHED` if a switch is held; `err busy` while any leg runs |
 | `dummy_leg` | `<0\|1> [ms]` | `ok` / `err busy` / `err bad_state` / `err usage` / `err range` | Testing primitive: a homing leg with no node or motion, admitted where a leg is. After `ms` (default 1000, max 600000) `1` ends as a successful leg (`homing=1`), `0` as `ALARM_HOMING_FAIL` with `homefail=7`. Touches no latch and no origin |
 | `home_end` | — | `ok` / `err busy` / `err bad_state` | End a homing session between legs without a datum (each leg already dropped its node's origin) → IDLE, or `ALARM_LIMIT_LATCHED` if a switch is held. `err busy` while a leg runs (`stop` aborts one); `err bad_state` outside a session |
 | `axes_map` | `[<x> <y> <z> <a>]` | `ok` / `err degraded` / `err unconfigured` / `err node <id> not_in_config\|not_stepper\|timeout\|<rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | The axis request: `-`/`0` = no axis. Each id must be a stepper axis node the config marks present; applied as a `slot_map` of the same ids once all are confirmed. A silent node stays pending, its slot parked, and the machine goes `ALARM_NODE_FAULT`. No-arg: `axes_map <t> <t> <t> <t>`, `t` = `-`, `n` or `?n` (pending). See engage_and_axis_map.md §5.4 |
@@ -350,7 +350,9 @@ enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
 running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaningful while state=RUNNING)
-homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; WAIT = between legs)
+homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; LEG = any leg runs, WAIT = none)
+homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with alarm=HOMING_FAIL)
+homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
 cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with alarm=CONFIG)
 ```
 Pre-flight checks every required axis is **present** (pingnode), **enabled**
@@ -402,7 +404,7 @@ Phase 2.
 | `pingnode` / `busstat` / `nodestat` | ✓ | ✗ | ✓ | ✓ | between legs |
 | `enable` / `disable` / `makesafe` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `setorigin` | ✓ | ✗ | ✓ | ✓ | between legs |
-| `leg` / `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | between legs |
+| `leg` / `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✓ (one per node) |
 | `leg_abort` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `home_end` | ✗ | ✗ | ✗ | ✗ | between legs |
 | `axes_map` / `slot_map` | ✓ | ✗ | ✓ | ✓ | ✗ |

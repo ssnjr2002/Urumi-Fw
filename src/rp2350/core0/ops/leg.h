@@ -1,7 +1,8 @@
 #pragma once
 #include <stdint.h>
 
-// leg.h — Core 0's supervisor for one node-run leg (docs/homing.md §2.3).
+// leg.h — Core 0's supervisor for node-run legs (docs/homing.md §2.3), at
+// most one per node, run in parallel.
 //
 // The node owns the stop and the motion; this owns only the WAITING. A leg
 // takes seconds and the control plane answers one line per command, so the
@@ -55,6 +56,9 @@ struct LegEnd {
     uint8_t failWhy;   // LEGFAIL_*; LEGFAIL_NONE on success
 };
 
+// Legs supervised at once: one per stepper node (six on a dual-head machine).
+#define LEG_MAX 8
+
 enum LegPoll : uint8_t {
     LEG_RUNNING,
     LEG_DONE,
@@ -63,7 +67,8 @@ enum LegPoll : uint8_t {
 
 // Arm ONE seek, retract or sweep on `node` with CMD_HOME_LEG. Returns true once the node is
 // pulsing; on any refusal prints the one `err` line and returns false, with
-// nothing moved.
+// nothing moved. A node already running a leg is `err node <id> busy`; a full
+// table is `err busy`.
 //
 // NODE-ADDRESSED: every output of a leg is node-framed -- the span, the index
 // in the node's own counter, the limit latch (a switch is wired to a NODE,
@@ -93,21 +98,32 @@ bool legArmPark(uint8_t node, int32_t target, uint16_t startUs,
                 uint16_t floorUs, uint16_t rampSteps);
 
 // Send CMD_LEG_ABORT to `node`. False, with the `err` line printed, if the node
-// did not ack; the leg (if any) then runs on, still supervised. On an ack to the
-// supervised node, the leg is released as LEGFAIL_ABORTED into `*end` and
+// did not ack; the leg (if any) then runs on, still supervised. On an ack to a
+// node running a leg, that leg is released as LEGFAIL_ABORTED into `*end` and
 // `*released` is set.
 bool legAbort(uint8_t node, LegEnd* end, bool* released);
 
-// A bench leg with no node and no motion: after `ms` it ends as a success, or
-// as a failure with LEGFAIL_DUMMY.
-void legArmDummy(bool succeed, uint32_t ms);
+// Abort every running leg (CMD_LEG_ABORT to each node) and release it into
+// `ends` (LEG_MAX entries); returns how many. An acked park ends with
+// LEGFAIL_NONE and the ack's counter in `pos`: the node stays energised, so
+// its datum stands. Every other end is LEGFAIL_ABORTED.
+uint8_t legAbortAll(LegEnd* ends);
 
-// Poll the running leg. LEG_DONE and LEG_FAILED release it and fill `*end`.
-// Call from the Core 0 loop, only while legActive().
+// A bench leg with no node and no motion: after `ms` it ends as a success, or
+// as a failure with LEGFAIL_DUMMY. False, with `err busy` printed, on a full
+// table.
+bool legArmDummy(bool succeed, uint32_t ms);
+
+// Poll the next due leg, in turn. LEG_DONE and LEG_FAILED release it and fill
+// `*end`; LEG_RUNNING means no leg ended this call. Call from the Core 0 loop.
 LegPoll legPoll(LegEnd* end);
 
-// Release the running leg without a verdict (something else took the machine).
-void legDrop(LegEnd* end);
+// Release every leg without a verdict into `ends` (LEG_MAX entries); returns
+// how many (something else took the machine).
+uint8_t legDropAll(LegEnd* ends);
 
-// True while a leg is armed and not yet released.
-bool legActive(void);
+// True while `node` runs a leg.
+bool legActive(uint8_t node);
+
+// True while any leg runs.
+bool legAny(void);

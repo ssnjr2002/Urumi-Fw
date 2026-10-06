@@ -523,10 +523,9 @@ Agree and the leg arms as before. Disagree and the node NAKs
 plan and physical reality having quietly diverged, which used to run silently
 under whichever leg's semantics the pin happened to pick.
 
-One leg at a time, machine-wide: the supervisor holds a single claim, so a
-second leg while one is in flight gets `err busy` (§3.5). Node addressing makes
-concurrent per-node legs *expressible* and they are deliberately not built —
-that is a separate decision about whether two axes may home at once.
+**Legs run in parallel, one per node.** A leg may arm while legs on other nodes
+run; a second leg on a busy node gets `err node N busy`, and a full supervisor
+table (8 legs) `err busy`. The supervisor polls the running legs in turn.
 
 Replies `ok`, or `err busy` / `err bad_state` / `err not_enabled` /
 `err kind_mismatch ...` / `err usage` / `err range` / `err bad_reply` /
@@ -542,12 +541,18 @@ axis at a hard stop. So it returns immediately and the machine enters
 **The session.** The first leg, from IDLE or `ALARM_LIMIT_LATCHED`, opens a
 homing session; the machine stays in `STATE_HOMING` across legs. Any other
 ALARM, and PAUSED, refuse a leg (`err bad_state`). `getstate` reports the phase
-as `homing=`: `0` (LEG) while a leg runs, `1` (WAIT) between legs.
+as `homing=`: `0` (LEG) while any leg runs, `1` (WAIT) when none does.
 
-- leg success: stays in `STATE_HOMING`, `homing=1`; a seek's latch is
-  recorded in the mask (§2.6) but not published as an alarm
-- leg fault: `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOMING_FAIL`;
-  the session is over, and `unalarm` must clear it before the next leg
+- leg success: stays in `STATE_HOMING`, `homing=1` once no other leg runs; a
+  seek's latch is recorded in the mask (§2.6) but not published as an alarm
+- leg fault: fails its cycle. Every other running leg is stopped with
+  `CMD_LEG_ABORT`, node by node (never a broadcast), and released without a
+  verdict; an aborted park keeps its origin, any other aborted leg drops it.
+  Then `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOMING_FAIL`, and
+  `getstate` names the cause and node (`homefail=`, `homenode=`). The session
+  is over, and `unalarm` must clear it before the next leg
+- `leg_abort N` on a node running a leg fails that leg (`homefail=9`), and so
+  its cycle
 - `setorigin` between legs: records the datum and ends the session
 - `home_end` between legs: ends the session without a datum
 - abort: the existing `stop` works unchanged
@@ -590,25 +595,22 @@ So no continuation words, no `FIFO_HOME` tag, and no per-command packing: the
 
 The payload is **11 bytes**, not the 12 this section assumed.
 
-### 2.5 `setorigin` needs one new argument
+### 2.5 `setorigin`
 
-**Implemented.** `setorigin [axes] [pos_steps]`, with `pos_steps` defaulting to 0
-and a mask that names only unbound axes answering `err unbound` rather than a
-misleading `ok`.
-
-Today `setorigin [axes]` hardcodes the datum to zero:
-
-```c
-nodeOrigin[n] = nsPos(st);  machinePos[i] = 0;
-```
-
-That is exactly the switch-at-origin case, and it already works. A far-end switch
-needs `machinePos[i] = hardTravel × stepsPerUnit`, which cannot be expressed.
-Extend it:
+**Implemented.** Node-addressed:
 
 ```
-setorigin [axes] [pos_steps]        # pos_steps defaults to 0
+setorigin <node>:<steps> [<node>:<steps> …]
 ```
+
+Each `<steps>` is the machine position that node stands at now. Nodes, not
+slots: the unselected head's nodes hold no slot while they home, and the datum
+is node-framed anyway. No pair, a repeated node, or a token without `:` is
+`err usage`; a node the config does not list is `err node N not_in_config`,
+both before any bus I/O. Every pair is then tried with `CMD_DATUM_SET`; the
+reply is one line, `ok`, or `err node N <why>` (`not_stepper`, `no_datum`, a
+bus error) for the first node that failed, the others keeping their datum. An
+`err` leaves a homing session open for a retry.
 
 `machinePos` is in the **wire** frame (steps), so the host converts. Keeping the
 datum here rather than folding it into `home` has two benefits: `home` stays

@@ -250,83 +250,92 @@ bool cmdAxesMap(const char* args) {
     return true;
 }
 
-// ── setorigin [axes] [pos_steps] (IDLE/PAUSED/ALARM, HOMING between legs) ────
+// ── setorigin <node>:<steps> [<node>:<steps> …] (IDLE/PAUSED/ALARM, HOMING
+//    between legs) ─────────────────────────────────────────────────────────────
 //
-// `pos_steps` is the machine position the axes are AT right now, defaulting to
-// 0. Zero is the switch-at-origin case; a far-end switch needs
-// hardTravel × stepsPerUnit, which the old zero-only form could not express
-// (docs/homing.md §2.5). It is the WIRE frame — steps, signed — because
-// machinePos is; the host owns the mm conversion.
+// `<steps>` is the machine position node `<node>` is AT right now, in the WIRE
+// frame — steps, signed — because machinePos is; the host owns the mm
+// conversion (docs/homing.md §2.5).
+//
+// NODE-ADDRESSED: the unselected head's nodes hold no slot while they home, and
+// the datum is node-framed anyway (position.h).
 //
 // The datum stays here rather than folding into `home` so that `home` remains
 // purely about motion: the retract and slow re-approach passes carry no datum
 // baggage, and this inherits the estop-window handling below, which is subtle
 // enough that it should not exist twice.
 //
-// In a homing session it commits and closes the session. It clears no alarm.
+// Every pair is tried. One reply line: `ok`, or `err node <id> <why>` for the
+// first node that failed, the others keeping their datum. In a homing session
+// an `ok` commits and closes the session; an `err` leaves it open for a retry.
+// It clears no alarm.
+static bool parseNode(const char** p, uint8_t* node);
+
 bool cmdSetOrigin(const char* args) {
     if (homingActive()) { Serial.println("err busy"); return true; }
     if (!homingWaiting() && busGateDenies()) return true;
 
-    // Split at the first space: axisMask() scans every character it is given,
-    // so handing it the whole line would let a stray letter in a later argument
-    // select an axis nobody named.
+    // Parse and check every pair before any bus I/O. No pair, a repeated
+    // node, or a token without `:` is a usage error, so the old slot form is
+    // refused outright.
+    uint8_t nodes[LEG_MAX];
+    int32_t steps[LEG_MAX];
+    uint8_t count = 0;
     const char* p = args;
-    while (*p && *p != ' ') p++;
-    char axesTok[8];
-    size_t n = (size_t)(p - args);
-    if (n >= sizeof(axesTok)) { Serial.println("err usage"); return true; }
-    memcpy(axesTok, args, n);
-    axesTok[n] = '\0';
-
-    int32_t posSteps = 0;
-    while (*p == ' ') p++;
-    if (*p) {
+    for (;;) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        uint8_t node;
+        if (count == LEG_MAX || !parseNode(&p, &node) || *p != ':') {
+            Serial.println("err usage"); return true;
+        }
+        p++;
         char* end;
-        long v = strtol(p, &end, 10);
-        if (end == p) { Serial.println("err usage"); return true; }
-        posSteps = (int32_t)v;
+        const long v = strtol(p, &end, 10);
+        if (end == p || (*end && *end != ' ')) { Serial.println("err usage"); return true; }
+        p = end;
+        for (uint8_t i = 0; i < count; i++)
+            if (nodes[i] == node) { Serial.println("err usage"); return true; }
+        nodes[count] = node;
+        steps[count] = (int32_t)v;
+        count++;
     }
+    if (count == 0) { Serial.println("err usage"); return true; }
+    for (uint8_t i = 0; i < count; i++)
+        if (!axisNodeInConfig(nodes[i])) {
+            Serial.printf("err node %d not_in_config\n", nodes[i]); return true;
+        }
 
-    uint8_t m = axisMask(axesTok);
-    // setorigin does bus I/O below — up to four round trips, so it can be in
+    // setorigin does bus I/O below — one round trip per node, so it can be in
     // flight for tens of milliseconds. An estop landing inside that window
     // would otherwise be ERASED by the alarm-clearing block at the end, which
     // cannot tell "the fault I was invoked to recover from" apart from "a
     // fault that arrived while I was working". Snapshot the reason on entry
     // and only clear what we came in with.
     uint8_t alarmAtEntry = alarmReason;
-    // The datum is recorded in the NODE's frame: originRecord captures that
-    // node's own counter here, so machinePos is a derived offset from now on
-    // and survives any later rebinding. A masked slot with no node bound
-    // cannot be datumed — there is nothing to record against — so it is
-    // skipped and left un-homed rather than silently claiming an origin.
-    // Named axes that resolved to a node. A mask where NOTHING resolved did no
-    // work at all, and answering `ok` to that reports a datum that was never
-    // recorded -- the operator reads back the old position and has to guess why.
-    // Counted rather than pre-checked so the per-slot skip above stays intact
-    // for a partly-bound `setorigin` with no axis token, which is the common
-    // case and is not an error.
-    uint8_t bound = 0;
-    for (int i = 0; i < 4; i++) {
-        if (!(m & (1 << i))) continue;
-        uint8_t n = axisNode(i);
-        if (n == SLOT_NONE) { axes_homed &= ~(1 << i); continue; }
-        bound++;
-
+    uint8_t     badNode = 0;
+    const char* badWhy  = nullptr;
+    for (uint8_t i = 0; i < count; i++) {
+        const uint8_t n = nodes[i];
         // CMD_DATUM_SET arms the node's continuity witness AND returns the
         // counter it refers to. One transaction, so the origin recorded here
         // and the witness armed there describe the same instant — a separate
         // read could straddle a reset and pair a witness with a stale count.
+        // The datum is recorded in the NODE's frame, so machinePos is a derived
+        // offset from now on and survives any later rebinding.
         NodeStatus st;
-        if (rpcNodeStatus(CMD_DATUM_SET, n, 0, &st) != RPC_OK ||
-            !st.hasStepperTail || !(st.flags & NODE_FLAG_DATUM)) {
-            originInvalidate(n);           // no answer, or witness not armed
+        const RpcResult r = rpcNodeStatus(CMD_DATUM_SET, n, 0, &st);
+        const char* why = r != RPC_OK              ? rpcResultText(r)
+                        : !st.hasStepperTail       ? "not_stepper"
+                        : !(st.flags & NODE_FLAG_DATUM) ? "no_datum"
+                        : nullptr;
+        if (why) {
+            originInvalidate(n);
+            if (!badWhy) { badNode = n; badWhy = why; }
             continue;
         }
-        originRecord(n, st.pos, posSteps);
+        originRecord(n, st.pos, steps[i]);
     }
-    if (bound == 0) { Serial.println("err unbound"); return true; }
     // A fault that arrived while we were on the bus outranks this command. The
     // datum we just recorded describes a machine that has since stopped hard,
     // so refuse rather than clear it — reconcileValidity() drops the masks on
@@ -334,6 +343,7 @@ bool cmdSetOrigin(const char* args) {
     if (alarmReason != alarmAtEntry || machineState == STATE_ESTOP) {
         Serial.println("err estop"); return true;
     }
+    if (badWhy) { Serial.printf("err node %d %s\n", badNode, badWhy); return true; }
     // Closing a session publishes what its legs left: IDLE, or LIMIT_LATCHED.
     if (machineState == STATE_HOMING) resumeOrHold();
     Serial.println("ok");
@@ -396,11 +406,11 @@ bool cmdHomeEnd(const char*) {
 
 // Which states may start a leg. Prints its own error; callers return on true.
 static bool legGateDenies() {
-    // A second leg while one is in flight: names what to wait for.
-    if (homingActive()) { Serial.println("err busy"); return true; }
-    // IDLE opens a session, HOMING_WAIT continues one. LIMIT_LATCHED is the
-    // one alarm a leg leaves (by retracting); every other alarm has its own exit.
-    const bool admitted = machineState == STATE_IDLE || homingWaiting() ||
+    // IDLE opens a session; HOMING continues one, beside any legs on other
+    // nodes (a busy node is leg.h's refusal). LIMIT_LATCHED is the one alarm a
+    // leg leaves (by retracting); every other alarm has its own exit.
+    const bool admitted = machineState == STATE_IDLE ||
+        machineState == STATE_HOMING ||
         (machineState == STATE_ALARM && alarmReason == ALARM_LIMIT_LATCHED);
     if (!admitted) { Serial.println("err bad_state"); return true; }
     return false;
@@ -514,7 +524,6 @@ bool cmdDummyLeg(const char* args) {
         if (ms > 600000UL) { Serial.println("err range"); return true; }
     }
     homingDummyBegin(ok == 1, (uint32_t)ms);
-    Serial.println("ok");
     return true;
 }
 

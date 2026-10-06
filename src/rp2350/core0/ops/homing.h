@@ -5,8 +5,10 @@
 // homing.h — the homing session around node-run legs (docs/homing.md §2.3).
 //
 // The machine stays in STATE_HOMING across legs (a session); homingReason says
-// whether a leg runs. `setorigin` and `home_end` close it, as do estop and
-// ALARM_HOMING_FAIL. Running and judging one leg is leg.h's.
+// whether any leg runs. Legs on different nodes run in parallel; a failure
+// aborts every other running leg (the cycle) and alarms. `setorigin` and
+// `home_end` close it, as do estop and ALARM_HOMING_FAIL. Running and judging
+// a leg is leg.h's.
 
 // Arm ONE LEG on `node` (legArm); the first opens the session. Prints exactly
 // one reply line in every path, per the control-plane contract. Returns true if
@@ -22,26 +24,29 @@ bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
 bool homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                      uint16_t floorUs, uint16_t rampSteps);
 
-// leg_abort: stop `node`'s pulser. If it ran the supervised leg, that leg fails
-// as LEGFAIL_ABORTED (ALARM_HOMING_FAIL); any other node just acks. Prints the
+// leg_abort: stop `node`'s pulser. If it ran a leg, that leg fails as
+// LEGFAIL_ABORTED, failing its cycle; any other node just acks. Prints the
 // reply line.
 bool homingAbort(uint8_t node);
 
-// Poll a leg in progress and turn its end into the session's state. No-op
+// Poll the legs in progress and turn each end into the session's state. No-op
 // unless a leg is armed. Call from the Core 0 loop.
 void homingTick(void);
 
 // A dummy leg (legArmDummy) in the session. Touches no latch and no origin.
-// The caller gates it as a leg.
+// The caller gates it as a leg. Prints the reply line.
 void homingDummyBegin(bool succeed, uint32_t ms);
 
-// True while a leg runs. Lets the gates refuse a second leg without reading
-// machineState, which anything may write.
+// True while any leg runs. Lets the gates refuse `setorigin` and `home_end`
+// without reading machineState, which anything may write.
 bool homingActive(void);
 
 // The session is open and no leg runs (HOMING_WAIT): the next leg, `setorigin`
 // or `home_end` may follow, and the bus is free.
 bool homingWaiting(void);
+
+// The node whose leg failed (0 for a dummy). Meaningful as homingFailWhy.
+uint8_t homingFailNode(void);
 
 // Why the last leg failed, LEGFAIL_*. ALARM_HOMING_FAIL says THAT one did;
 // this says which fault, because they are diagnosed in completely different

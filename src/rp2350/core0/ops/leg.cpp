@@ -48,11 +48,31 @@ struct Leg {
     uint32_t deadlineMs;
 };
 
-static Leg leg = {};
+static Leg legs[LEG_MAX] = {};
+static uint8_t pollNext;   // round-robin start for legPoll
 
-bool legActive(void) { return leg.claimed; }
+static Leg* legFind(uint8_t node) {
+    for (Leg& g : legs)
+        if (g.claimed && !g.dummy && g.node == node) return &g;
+    return nullptr;
+}
 
-static void legRelease(LegEnd* end, uint8_t why) {
+bool legActive(uint8_t node) { return legFind(node) != nullptr; }
+
+bool legAny(void) {
+    for (const Leg& g : legs) if (g.claimed) return true;
+    return false;
+}
+
+// A free entry for `node`, or nullptr with the `err` line printed.
+static Leg* legClaim(uint8_t node) {
+    if (legFind(node)) { Serial.printf("err node %d busy\n", node); return nullptr; }
+    for (Leg& g : legs) if (!g.claimed) return &g;
+    Serial.println("err busy");
+    return nullptr;
+}
+
+static void legRelease(Leg& leg, LegEnd* end, uint8_t why) {
     leg.claimed  = false;
     end->node    = leg.node;
     end->dummy   = leg.dummy;
@@ -102,6 +122,10 @@ static uint8_t rotaryIdxFail(uint8_t cause, uint8_t crossings) {
 
 bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
             uint16_t startUs, uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps) {
+    Leg* lp = legClaim(node);
+    if (!lp) return false;
+    Leg& leg = *lp;
+
     // ASK WHAT THE NODE IS BEFORE ARMING IT. The kind also arrives in the arm
     // ack below, but that ack is sampled AFTER the pulser has started: a
     // `leg <n> seek` aimed at a rotary node would run a full sweep before anyone
@@ -173,6 +197,10 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
 
 bool legArmPark(uint8_t node, int32_t target, uint16_t startUs,
                 uint16_t floorUs, uint16_t rampSteps) {
+    Leg* lp = legClaim(node);
+    if (!lp) return false;
+    Leg& leg = *lp;
+
     // The kind probe, as legArm: a node with no terminator has no datum to
     // park by, and the error names what it is.
     NodeStatus probe;
@@ -227,31 +255,73 @@ bool legAbort(uint8_t node, LegEnd* end, bool* released) {
         Serial.printf("err node %d %s\n", node, rpcResultText(r));
         return false;
     }
-    if (leg.claimed && !leg.dummy && leg.node == node) {
-        legRelease(end, LEGFAIL_ABORTED);
+    if (Leg* g = legFind(node)) {
+        legRelease(*g, end, LEGFAIL_ABORTED);
         *released = true;
     }
     return true;
 }
 
-void legArmDummy(bool succeed, uint32_t ms) {
+uint8_t legAbortAll(LegEnd* ends) {
+    uint8_t n = 0;
+    for (Leg& g : legs) {
+        if (!g.claimed) continue;
+        if (g.dummy) { legRelease(g, &ends[n++], LEGFAIL_ABORTED); continue; }
+        NodeStatus st;
+        const bool acked = rpcLegAbort(g.node, &st) == RPC_OK && st.hasStepperTail;
+        const bool kept  = acked && g.park && (st.flags & NODE_FLAG_DATUM);
+        legRelease(g, &ends[n], kept ? LEGFAIL_NONE : LEGFAIL_ABORTED);
+        if (kept) ends[n].pos = st.pos;
+        n++;
+    }
+    return n;
+}
+
+bool legArmDummy(bool succeed, uint32_t ms) {
+    Leg* lp = nullptr;
+    for (Leg& g : legs) if (!g.claimed) { lp = &g; break; }
+    if (!lp) { Serial.println("err busy"); return false; }
+    Leg& leg = *lp;
     leg.claimed    = true;
     leg.rotary     = false;
     leg.retract    = false;
     leg.park       = false;
     leg.dummy      = true;
     leg.dummyOk    = succeed;
+    leg.node       = 0;
     leg.deadlineMs = millis() + ms;
+    return true;
 }
 
-void legDrop(LegEnd* end) { legRelease(end, LEGFAIL_NONE); }
+uint8_t legDropAll(LegEnd* ends) {
+    uint8_t n = 0;
+    for (Leg& g : legs)
+        if (g.claimed) legRelease(g, &ends[n++], LEGFAIL_NONE);
+    return n;
+}
+
+static LegPoll legPollOne(Leg& leg, LegEnd* end, uint32_t now);
 
 LegPoll legPoll(LegEnd* end) {
     const uint32_t now = millis();
+    for (uint8_t i = 0; i < LEG_MAX; i++) {
+        Leg& g = legs[(pollNext + i) % LEG_MAX];
+        if (!g.claimed) continue;
+        // A dummy is due at its deadline, a node leg at its next poll.
+        const uint32_t due = g.dummy ? g.deadlineMs : g.nextPollMs;
+        if ((int32_t)(now - due) < 0) continue;
+        // One bus poll per call, so the next call starts after this leg.
+        pollNext = (uint8_t)((pollNext + i + 1) % LEG_MAX);
+        return legPollOne(g, end, now);
+    }
+    return LEG_RUNNING;
+}
+
+static LegPoll legPollOne(Leg& leg, LegEnd* end, uint32_t now) {
     if (leg.dummy) {
         if ((int32_t)(now - leg.deadlineMs) < 0) return LEG_RUNNING;
-        if (!leg.dummyOk) { legRelease(end, LEGFAIL_DUMMY); return LEG_FAILED; }
-        legRelease(end, LEGFAIL_NONE);
+        if (!leg.dummyOk) { legRelease(leg, end, LEGFAIL_DUMMY); return LEG_FAILED; }
+        legRelease(leg, end, LEGFAIL_NONE);
         return LEG_DONE;
     }
     if ((int32_t)(now - leg.nextPollMs) < 0) return LEG_RUNNING;
@@ -261,7 +331,7 @@ LegPoll legPoll(LegEnd* end) {
     if (rpcNodeStatus(CMD_NODE_STATUS, leg.node, 0, &st) != RPC_OK ||
         !st.hasStepperTail) {
         if (++leg.misses >= LEG_POLL_MISSES) {
-            legRelease(end, LEGFAIL_POLL);
+            legRelease(leg, end, LEGFAIL_POLL);
             return LEG_FAILED;
         }
         return LEG_RUNNING;
@@ -273,7 +343,7 @@ LegPoll legPoll(LegEnd* end) {
         // own deadline anyway: the budget cannot catch a pulser that hangs with
         // the flag set, and the node would go on answering polls forever.
         if ((int32_t)(now - leg.deadlineMs) >= 0) {
-            legRelease(end, LEGFAIL_DEADLINE);
+            legRelease(leg, end, LEGFAIL_DEADLINE);
             return LEG_FAILED;
         }
         return LEG_RUNNING;
@@ -288,13 +358,13 @@ LegPoll legPoll(LegEnd* end) {
         const bool ok = st.pos == leg.target &&
                         (st.flags & NODE_FLAG_DATUM) &&
                         (leg.rotary || !(st.flags & NODE_FLAG_LIMIT));
-        if (!ok) { legRelease(end, LEGFAIL_PARK); return LEG_FAILED; }
+        if (!ok) { legRelease(leg, end, LEGFAIL_PARK); return LEG_FAILED; }
     } else if (leg.rotary) {
         // No settle window: the node resolves the index BEFORE it publishes
         // NODE_FLAG_LEG clear (stepper.cpp node_loop), so the cause is final by
         // the time this poll can see the leg stopped.
         if (st.indexCause != ROTARY_IDX_OK) {
-            legRelease(end, rotaryIdxFail(st.indexCause, st.crossings));
+            legRelease(leg, end, rotaryIdxFail(st.indexCause, st.crossings));
             return LEG_FAILED;
         }
     } else {
@@ -305,11 +375,11 @@ LegPoll legPoll(LegEnd* end) {
                                     :  (st.flags & NODE_FLAG_LIMIT);
         if (!ok) {
             if (leg.settleLeft) { leg.settleLeft--; return LEG_RUNNING; }  // legFinish() may not have run
-            legRelease(end, LEGFAIL_BUDGET);
+            legRelease(leg, end, LEGFAIL_BUDGET);
             return LEG_FAILED;
         }
     }
 
-    legRelease(end, LEGFAIL_NONE);
+    legRelease(leg, end, LEGFAIL_NONE);
     return LEG_DONE;
 }

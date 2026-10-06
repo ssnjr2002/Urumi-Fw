@@ -31,8 +31,9 @@ bool cmdGetState(const char*) {
 
     // Only meaningful alongside ALARM_HOMING_FAIL, and omitted otherwise so it
     // cannot be read as a live fault. See homing.h for what the codes point at.
+    // `homenode` names the node whose leg failed (0 for a dummy leg).
     if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != LEGFAIL_NONE) {
-        Serial.printf(" homefail=%d", homingFailWhy());
+        Serial.printf(" homefail=%d homenode=%d", homingFailWhy(), homingFailNode());
     }
     if (alarmReason == ALARM_CONFIG) Serial.printf(" cfgerr=%s", machineCfgBlockName());
 

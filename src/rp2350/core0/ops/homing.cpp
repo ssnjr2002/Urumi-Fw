@@ -4,10 +4,13 @@
 #include "../../ipc/shared_state.h"
 
 static uint8_t failWhy = LEGFAIL_NONE;
+static uint8_t failNode;
 
-bool homingActive(void) { return legActive(); }
+bool homingActive(void) { return legAny(); }
 
 uint8_t homingFailWhy(void) { return failWhy; }
+
+uint8_t homingFailNode(void) { return failNode; }
 
 // The leg is over, one way or the other. Both exits invalidate the origin, and
 // that is not conservatism -- it is required. A leg moves the axis with the
@@ -36,9 +39,16 @@ static void homingRelease(const LegEnd& e) {
 // stopped is the whole diagnostic, and `nodestat` still reports it alongside
 // homefail= to tell a budget that genuinely ran out from one that stopped
 // nowhere near its limit.
+//
+// A failure fails its cycle: every other running leg is aborted, node by node,
+// and released without a verdict. legAbortAll keeps an aborted park's origin.
 static void homingFail(const LegEnd& e) {
-    failWhy = e.failWhy;
+    failWhy  = e.failWhy;
+    failNode = e.dummy ? 0 : e.node;
     homingRelease(e);
+    LegEnd ends[LEG_MAX];
+    const uint8_t n = legAbortAll(ends);
+    for (uint8_t i = 0; i < n; i++) homingRelease(ends[i]);
     alarmReason  = ALARM_HOMING_FAIL;
     machineState = STATE_ALARM;
 }
@@ -88,18 +98,24 @@ bool homingAbort(uint8_t node) {
 }
 
 void homingDummyBegin(bool succeed, uint32_t ms) {
-    legArmDummy(succeed, ms);
+    if (!legArmDummy(succeed, ms)) return;
     homingOpen();
+    Serial.println("ok");
 }
 
 void homingTick(void) {
-    if (!legActive()) return;
+    if (!legAny()) return;
 
     LegEnd e;
     // Something else has taken the machine -- `stop` sets ESTOP, Core 1 folds it
-    // to ALARM. Drop the leg rather than fight for it: leaving it armed would
-    // fire a timeout later, at a moment with nothing to do with homing.
-    if (machineState != STATE_HOMING) { legDrop(&e); homingRelease(e); return; }
+    // to ALARM. Drop the legs rather than fight for them: leaving them armed
+    // would fire timeouts later, at a moment with nothing to do with homing.
+    if (machineState != STATE_HOMING) {
+        LegEnd ends[LEG_MAX];
+        const uint8_t n = legDropAll(ends);
+        for (uint8_t i = 0; i < n; i++) homingRelease(ends[i]);
+        return;
+    }
 
     switch (legPoll(&e)) {
         case LEG_RUNNING: return;
@@ -123,10 +139,10 @@ void homingTick(void) {
     // The session stays open for the next leg, `setorigin` or `home_end`; the
     // latch is published at that exit, not here. If `stop` landed during the
     // poll above, the fault owns the machine and the phase is not ours to set.
-    if (machineState != STATE_HOMING) return;
+    if (machineState != STATE_HOMING || legAny()) return;
     homingReason = HOMING_WAIT;
 }
 
 bool homingWaiting(void) {
-    return machineState == STATE_HOMING && !legActive();
+    return machineState == STATE_HOMING && !legAny();
 }
