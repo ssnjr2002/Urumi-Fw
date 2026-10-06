@@ -409,6 +409,54 @@ with state-handling branch 3).
   mid-seek gave `homefail=9` with `en 1 datum 1`. Not run: a park on A, a
   park into the switch.
 
+## Branch 2: `feature/homing-legs`
+
+### Plan
+
+Type: feature. Depends on 1b and state-handling branch 3 (both done).
+
+Purpose: legs run in parallel, one per node, and a failure fails its cycle;
+`setorigin` becomes node-addressed.
+
+Today: one static `Leg` (`core0/ops/leg.cpp:337-356`); `legActive()` is the
+busy check for every leg, `setorigin` and `home_end` (`cmd/axis.cpp:268,346,
+400`); `setorigin` is slot-framed via `axisMask` (`axis.cpp:267-341`).
+
+* `ops/leg.{h,cpp}`: a table of `LEG_MAX` 8 legs keyed by node. A busy node
+  is refused (`err node <id> busy`). `legPoll` advances one due leg per call,
+  round-robin, and returns its `LegEnd`. `legActive(node)` and `legAny()`;
+  `legDrop` releases all. A dummy leg takes a slot with no node.
+* `ops/homing.{h,cpp}`: `HOMING_LEG` while any leg runs, `HOMING_WAIT` when
+  none. A failure aborts every other running leg (`rpcLegAbort` per node,
+  never a broadcast), releases them without a verdict, records the failing
+  node and cause, and goes to `ALARM_HOMING_FAIL`. An operator `leg_abort` on
+  a running node takes the same path. `homingFailNode()` beside
+  `homingFailWhy()`.
+* Until `home` (branch 3) the cycle is the set of legs running when one
+  fails.
+* An aborted sibling park keeps its origin (`originAdopt` with the abort
+  ack's `pos`; the node stays energised, witness intact). Other aborted
+  siblings drop theirs, as any leg end does.
+* `cmd/axis.cpp`: `legGateDenies` admits a leg on another node during
+  `HOMING_LEG`; `setorigin` and `home_end` stay `err busy` while any leg runs.
+  `setorigin <node>:<steps> …` replaces the slot form, per node through the
+  existing `DATUM_SET` → `originRecord` loop. Every pair is tried; one reply
+  line: `ok`, or `err node <id> <why>` for the first failure, the others
+  keeping their datum. A node not in the config (`axisNodeInConfig`) or not a
+  stepper is an error before any bus I/O.
+* `cmd/query.cpp`: `getstate` appends `homenode=<id>` beside `homefail=`.
+* Web: `commands.ts` `setOrigin(link, pairs)`; `homing/sequence.ts:240,389`
+  resolve the node from the axis map they already read; `sim.ts` models
+  parallel legs, the cycle abort, node `setorigin` and `homenode=`;
+  `status.ts` parses `homenode`; tests `sim.test.ts`, `probe.test.ts:156`,
+  `commands.test.ts`. Web homing stays serial.
+* Docs: `docs/homing.md` (session, parallel legs), `docs/wire_protocol.md`
+  (`setorigin` syntax, `homenode=`, busy rules).
+
+### Status
+
+Planned.
+
 ## Open questions
 
 * Guarding earlier-cycle axes while later legs run (still enabled and unmoved
