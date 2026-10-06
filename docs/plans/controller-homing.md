@@ -390,6 +390,24 @@ Done, merged (d73fe25..0c1981a). Unblocks 1b.
 
 Planned.
 
+### Outcome
+
+* Soft-range check on the park target deferred to coordinate-system.md
+  `feature/pico-frames` (it needs the machine frame); noted there in fba7967.
+* Decided in Write: a park armed on the switch is refused with the existing
+  `NAK_INTENT_MISMATCH` (no new code); `leg_abort` is refused only while
+  RUNNING; the web keeps `linLeg`/`rotLeg` as names, sending the new verbs.
+* `LEGFAIL_PARK` 8, `LEGFAIL_ABORTED` 9; `originAdopt(node, pos)` in
+  `position.h` for branch 2. A park's deadline counts the ramp at both ends.
+* Out of scope: `CMD_DISABLE` calls `legHalt()` with no leg running, which
+  re-runs the previous leg's finish (span rewritten; after a retract, the
+  latch clear re-applied against the current pin). `leg_abort` guards this;
+  `CMD_DISABLE` does not.
+* Bench (X): seek/retract under the new verbs; park −5000 and back to 0 kept
+  `homed` and `datum`, `getpos` −20098 / −15098 against origin 15098; abort
+  mid-seek gave `homefail=9` with `en 1 datum 1`. Not run: a park on A, a
+  park into the switch.
+
 ## Open questions
 
 * Guarding earlier-cycle axes while later legs run (still enabled and unmoved
