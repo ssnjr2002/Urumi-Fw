@@ -325,7 +325,7 @@ bool hallIndexSample(int32_t posNow) {
 // queue -- so a resolve that ran to completion in one pass answered NOTHING for
 // those 170 ms. The supervisor polls every 25 ms and fails a home after 4
 // unanswered polls, so every successful rotary home was reported as
-// HOMEFAIL_POLL: the sweep worked, the arithmetic worked, and the node went
+// LEGFAIL_POLL: the sweep worked, the arithmetic worked, and the node went
 // silent while doing it.
 //
 // Slicing fixes the cause rather than the symptom. Raising the miss count would

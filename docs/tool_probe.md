@@ -280,7 +280,7 @@ the vacuum, which also avoids the stale-latch failure mode that would make the
 next leg trigger on step one.
 
 **This is a deliberate divergence from homing, not an oversight.** The homing
-pulser debounces — `HOMING_LIMIT_SAMPLES` consecutive asserted reads before it
+pulser debounces — `LEG_LIMIT_SAMPLES` consecutive asserted reads before it
 believes the switch ([stepper.cpp](../src/node/types/stepper/stepper.cpp)) — and
 that debounce arrived as a fix, not as a design. Homing can afford it because a
 home is not a measurement: the datum *is* whatever the seek returns, so a few
@@ -681,7 +681,7 @@ quite fails is otherwise invisible from the bus.
 
 ### 5.10 Failure taxonomy
 
-Split by *where to look*, following `HOMEFAIL_*`. The codes below are
+Split by *where to look*, following `LEGFAIL_*`. The codes below are
 `PROBE_BUDGET` … `PROBE_ESTOP` = 1…8 in
 [core1_rpc.h](../src/rp2350/ipc/core1_rpc.h), with `PROBE_OK` = 0; `getstate`
 reports the raw number as `probe=` (§5.12):
@@ -709,7 +709,7 @@ draws that line correctly: [position.cpp](../src/rp2350/core0/position.cpp) keys
 origin invalidation on `STATE_ESTOP || ALARM_ESTOP || ALARM_SOFT_LIMIT`, not on
 `ALARM` generally. A probe-fail alarm must not use either of those reasons.
 
-`POLL` is homing's own reasoning transplanted — `HOMEFAIL_POLL` says "the bus is
+`POLL` is homing's own reasoning transplanted — `LEGFAIL_POLL` says "the bus is
 the suspect. The motion may well have been fine." Lockstep makes it stronger
 here: the Pico physically cannot have emitted a step it did not get a reply for,
 so a poll failure stops at a count it knows exactly.

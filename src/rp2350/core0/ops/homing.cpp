@@ -2,299 +2,95 @@
 #include "homing.h"
 #include "position.h"
 #include "../../ipc/shared_state.h"
-#include "../../ipc/core1_rpc.h"
 
-// Poll cadence. This does NOT set accuracy: the node's gate stops the axis at
-// the trip point whatever Core 0 is doing, so the counter is exact whenever it
-// is read. The cadence decides only when the Pico notices (docs/homing.md §2.3).
-#define HOMING_POLL_MS      25
+static uint8_t failWhy = LEGFAIL_NONE;
 
-// Consecutive unanswered polls before the home is declared failed. One dropped
-// reply on a shared 9-bit bus is not a fault; four in a row is. Kept small
-// enough that a dead node is caught in ~100 ms rather than at the timeout.
-#define HOMING_POLL_MISSES  4
-
-// Ceiling on the derived timeout. A malformed budget (max_steps at its uint32
-// limit with a slow floor) would otherwise compute an hours-long deadline and
-// the supervisor would wait it out.
-#define HOMING_TIMEOUT_CAP_MS 600000UL
-
-// Polls a FAILING terminal reading is allowed to be re-taken before it is
-// believed. There is a real window on the node between the two halves of
-// stopping: the pulser ISR clears NODE_FLAG_HOMING, but homingFinish() -- which
-// clears the limit latch after a successful retract -- runs in loop context on
-// the next pass, because it writes flags through node_set_flag() and an ISR may
-// not. A poll landing between the two reads "stopped, still asserted", which is
-// exactly the signature of a retract that failed to escape.
-//
-// Only the failing verdict waits. Success is unambiguous and taken immediately.
-#define HOMING_SETTLE_POLLS 2
-
-static bool     claimed    = false;
-static bool     wasRetract = false;
-// Which VERDICT applies at the end of this leg, latched at the arm from the
-// node's declared HOMING_KIND_*. Latched rather than re-read each poll for the
-// same reason wasRetract is: a leg is judged by the rules it was started
-// under, and a node that answered a poll with a different kind byte is a fault
-// to notice, not a rule change to adopt mid-flight.
-static bool     isRotary   = false;
-// A dummy leg (homingDummyBegin): no node, resolves to `dummyOk` at deadlineMs.
-static bool     isDummy    = false;
-static bool     dummyOk    = false;
-static uint8_t  hNode      = 0;
-static uint8_t  misses     = 0;
-static uint8_t  settleLeft = 0;
-static uint32_t nextPollMs = 0;
-static uint32_t deadlineMs = 0;
-
-// Why the last home failed. ALARM_HOMING_FAIL alone conflates three different
-// faults with three different fixes, and the host cannot tell them apart from
-// the reason byte -- so it guessed, and printed "switch never reached within
-// <max_steps>" for a leg that had died 190k steps short of that budget.
-//
-// Each of these is a distinct thing to go and look at: a switch or a travel
-// figure, a bus, or a pulser. Naming them is the difference between a
-// diagnostic and a shrug.
-static uint8_t  failWhy = HOMEFAIL_NONE;
-
-bool homingActive(void) { return claimed; }
+bool homingActive(void) { return legActive(); }
 
 uint8_t homingFailWhy(void) { return failWhy; }
 
-// The home is over, one way or the other. Both exits invalidate the origin, and
-// that is not conservatism -- it is required. A home moves the axis with the
+// The leg is over, one way or the other. Both exits invalidate the origin, and
+// that is not conservatism -- it is required. A leg moves the axis with the
 // NODE's own pulser, so the node counts those steps and Core 1 does not; the
 // machinePos it maintains is stale the moment the pulser runs. (`step` differs:
 // it goes through the stream, so Core 1 adds the same steps and both frames stay
 // consistent -- see cmdStep.) Dropping the datum makes that staleness visible as
 // an un-homed axis instead of a plausible wrong number, and §3.4's closing
 // `setorigin` is what re-derives it from the node's counter.
-static void homingRelease(uint8_t node) {
-    claimed = false;
-    if (!isDummy) originInvalidate(node);
+static void homingRelease(const LegEnd& e) {
+    if (!e.dummy) originInvalidate(e.node);
 }
 
 // homingLatched is deliberately untouched here, and it is already right in both
 // failure modes: a seek that failed never reached the switch, so its bit should
 // stay clear, and a retract that failed never escaped one, so its bit should
 // stay set. Both are what the last successful leg left behind.
-static void homingFail(uint8_t why) {
-    // The node's own span survives this untouched, which is the point of it
-    // living there: how far the leg got before it stopped is the whole
-    // diagnostic, and `nodestat` still reports it alongside homefail= to tell a
-    // budget that genuinely ran out from one that stopped nowhere near its limit.
-    failWhy = why;
-    homingRelease(hNode);
+//
+// The node's own span survives this untouched: how far the leg got before it
+// stopped is the whole diagnostic, and `nodestat` still reports it alongside
+// homefail= to tell a budget that genuinely ran out from one that stopped
+// nowhere near its limit.
+static void homingFail(const LegEnd& e) {
+    failWhy = e.failWhy;
+    homingRelease(e);
     alarmReason  = ALARM_HOMING_FAIL;
     machineState = STATE_ALARM;
 }
 
-// docs/homing.md §2.3. Bounding by `max_steps × start_interval` instead would
-// give a useless 88 s on X, because every step after the ramp runs at the floor.
-static uint32_t homingTimeoutMs(uint16_t startUs, uint16_t floorUs,
-                                uint16_t rampSteps, uint32_t maxSteps) {
-    uint32_t ramp = rampSteps;
-    if (ramp > maxSteps) ramp = maxSteps;
-    // 64-bit throughout: 88000 steps × 65535 µs already overflows uint32.
-    const uint64_t avgUs = ((uint64_t)startUs + (uint64_t)floorUs) / 2;
-    uint64_t us = (uint64_t)ramp * avgUs
-                + (uint64_t)(maxSteps - ramp) * (uint64_t)floorUs;
-    us = us * 12 / 10;                         // §2.3's 1.2 margin
-    uint64_t ms = (us / 1000) + HOMING_POLL_MS;   // never shorter than one poll
-    if (ms > HOMING_TIMEOUT_CAP_MS) ms = HOMING_TIMEOUT_CAP_MS;
-    return (uint32_t)ms;
-}
-
-// ROTARY_IDX_* -> HOMEFAIL_*. Only ROTARY_IDX_OK is a pass, so everything that
-// arrives here is a failure and the only question is what to go and look at.
-//
-// NOTFOUND splits on the crossing count, and that split is the whole value of
-// this function: "the budget was too small" and "there is no sensor" produce the
-// identical cause byte, and telling them apart by hand cost three bench
-// sessions. Zero crossings means the magnet was never seen at all.
-static uint8_t rotaryIdxFail(uint8_t cause, uint8_t crossings) {
-    switch (cause) {
-        case ROTARY_IDX_NOTFOUND:
-            return crossings ? HOMEFAIL_BUDGET : HOMEFAIL_INDEX_ABSENT;
-        case ROTARY_IDX_DEGENERATE: return HOMEFAIL_INDEX_ABSENT;
-        case ROTARY_IDX_OVERFLOW:   return HOMEFAIL_INDEX_SHAPE;
-        case ROTARY_IDX_SLIP:       return HOMEFAIL_INDEX_SLIP;
-        // ROTARY_IDX_NONE after a completed leg means resolve never ran at all.
-        // That is the node failing to answer, not the mechanism failing to move,
-        // which is exactly what POLL already names.
-        case ROTARY_IDX_NONE:       return HOMEFAIL_POLL;
-        default:                    return HOMEFAIL_POLL;   // cause we do not know
-    }
+// The first leg opens the session. The only alarm a leg is admitted from is
+// ALARM_LIMIT_LATCHED (cmdLinLeg), and the latch mask keeps that fact, so the
+// reason is cleared here: anything found in it later is new. The exit
+// re-derives it.
+static void homingOpen(void) {
+    failWhy      = LEGFAIL_NONE;   // this leg has not failed yet
+    homingReason = HOMING_LEG;
+    alarmReason  = ALARM_NONE;
+    __dmb();
+    machineState = STATE_HOMING;
 }
 
 bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                  bool intendedRetract,
                  uint16_t startUs, uint16_t floorUs,
                  uint16_t rampSteps, uint32_t maxSteps) {
-    // ASK WHAT THE NODE IS BEFORE ARMING IT. The kind also arrives in the arm
-    // ack below, which is where the seek/retract classification reads it -- but
-    // that ack is sampled AFTER the pulser has started. Checking there would
-    // mean a `lin_leg` aimed at a rotary node runs a full sweep before anyone
-    // notices, and a `rot_leg` aimed at a linear one drives into a hard stop
-    // hunting a dip that does not exist. One extra transaction, ~1 ms, buys a
-    // refusal that costs no motion.
-    //
-    // A node with no terminator at all (HOMING_KIND_NONE) fails this too, and
-    // more usefully than the NAK it would otherwise get: the error names what
-    // the node IS rather than only that it said no.
-    NodeStatus probe;
-    RpcResult pr = rpcNodeStatus(CMD_NODE_STATUS, node, 0, &probe);
-    if (pr != RPC_OK) {
-        Serial.printf("err node %d %s\n", node, rpcResultText(pr));
-        return true;
-    }
-    if (!probe.hasStepperTail) { Serial.println("err bad_reply"); return true; }
-    if (probe.homingKind != expectKind) {
-        Serial.printf("err kind_mismatch node %d is %d want %d\n",
-                      node, probe.homingKind, expectKind);
-        return true;
-    }
-
-    NodeStatus st;
-    RpcResult r = rpcHome(node, dir, intendedRetract, startUs, floorUs,
-                          rampSteps, maxSteps, &st);
-    if (r != RPC_OK) {
-        // A node with no switch wired NAKs CMD_HOME_LEG, and that refusal is on the
-        // wire rather than being a silent drop the master reads as absence.
-        // Same path now covers NAK_INTENT_MISMATCH: the host's plan disagreed
-        // with the node's own switch read (docs/homing.md §1.4/§2.6).
-        Serial.printf("err node %d %s\n", node, rpcResultText(r));
-        return true;
-    }
-    if (!st.hasStepperTail) { Serial.println("err bad_reply"); return true; }
-
-    // WHICH MOVE THIS IS, decided here and nowhere else. The node picks seek or
-    // retract from one read of its own pin at arm time and does not report the
-    // choice (docs/homing.md §1.2) -- but the ack is sampled AFTER the arm, so
-    // its LIMIT bit is that very pin read, handed back in the same transaction.
-    // The supervisor needs it because the terminal flags read OPPOSITELY for the
-    // two modes (§1.5), and this is the only way to learn it without a second
-    // poll that could straddle the switch.
-    //
-    // It is also why `home` carries no <seek|retract> argument: the host cannot
-    // know the pin state, and the node has already answered the question.
-    //
-    // A rotary node has no pin, so its LIMIT bit is permanently 0 and this read
-    // would silently classify every sweep as a seek. Kind is declared in the
-    // same tail (include/common.h, HOMING_KIND_*), so the answer rides along in
-    // this same transaction -- read it from the ACK rather than trusting the
-    // probe above, which is a whole round trip older.
-    isRotary   = (st.homingKind == HOMING_KIND_INDEX);
-    wasRetract = !isRotary && (st.flags & NODE_FLAG_LIMIT) != 0;
-
-    // The node accepted the command but is not pulsing. This should not happen:
-    // homingLegArm() starts TCA0 before the reply is built, the first overflow is a
-    // whole start_interval away, and `home` rejects the zero budget that is the
-    // only way to finish inside that window. It cannot be INTERPRETED either --
-    // "stopped" and "never started" produce identical flags, so the §1.5 table
-    // does not apply -- and guessing would report a home that never ran as one
-    // that succeeded. Refuse, and leave the machine where it was: nothing moved,
-    // so there is nothing to alarm about and no datum to drop.
-    if (!(st.flags & NODE_FLAG_HOMING)) {
-        Serial.printf("err node %d no_start limit %d\n", node,
-                      (st.flags & NODE_FLAG_LIMIT) ? 1 : 0);
-        return true;
-    }
-
-    failWhy      = HOMEFAIL_NONE;   // this leg has not failed yet
-
-    const uint32_t now = millis();
-    claimed      = true;
-    isDummy      = false;
-    hNode        = node;
-    misses       = 0;
-    settleLeft   = HOMING_SETTLE_POLLS;
-    nextPollMs   = now + HOMING_POLL_MS;
-    deadlineMs   = now + homingTimeoutMs(startUs, floorUs, rampSteps, maxSteps);
-    // The first leg opens the session. The only alarm a leg is admitted from is
-    // ALARM_LIMIT_LATCHED (cmdLinLeg), and the latch mask keeps that fact, so the
-    // reason is cleared here: anything found in it later is new. The exit
-    // re-derives it.
-    homingReason = HOMING_LEG;
-    alarmReason  = ALARM_NONE;
-    __dmb();
-    machineState = STATE_HOMING;
+    if (!legArm(node, expectKind, dir, intendedRetract,
+                startUs, floorUs, rampSteps, maxSteps)) return true;
+    homingOpen();
     Serial.println("ok");
     return true;
 }
 
+void homingDummyBegin(bool succeed, uint32_t ms) {
+    legArmDummy(succeed, ms);
+    homingOpen();
+}
+
 void homingTick(void) {
-    if (!claimed) return;
+    if (!legActive()) return;
 
+    LegEnd e;
     // Something else has taken the machine -- `stop` sets ESTOP, Core 1 folds it
-    // to ALARM. Drop the claim rather than fight for it: leaving it set would
+    // to ALARM. Drop the leg rather than fight for it: leaving it armed would
     // fire a timeout later, at a moment with nothing to do with homing.
-    if (machineState != STATE_HOMING) { homingRelease(hNode); return; }
+    if (machineState != STATE_HOMING) { legDrop(&e); homingRelease(e); return; }
 
-    const uint32_t now = millis();
-    if (isDummy) {
-        if ((int32_t)(now - deadlineMs) < 0) return;
-        if (!dummyOk) { homingFail(HOMEFAIL_DUMMY); return; }
-        homingRelease(hNode);
-        homingReason = HOMING_WAIT;
-        return;
-    }
-    if ((int32_t)(now - nextPollMs) < 0) return;
-    nextPollMs = now + HOMING_POLL_MS;
-
-    NodeStatus st;
-    if (rpcNodeStatus(CMD_NODE_STATUS, hNode, 0, &st) != RPC_OK ||
-        !st.hasStepperTail) {
-        if (++misses >= HOMING_POLL_MISSES) homingFail(HOMEFAIL_POLL);
-        return;
-    }
-    misses = 0;
-
-    if (st.flags & NODE_FLAG_HOMING) {
-        // Still pulsing. The runaway budget is the node's, but Core 0 keeps its
-        // own deadline anyway: the budget cannot catch a pulser that hangs with
-        // the flag set, and the node would go on answering polls forever.
-        if ((int32_t)(now - deadlineMs) >= 0) homingFail(HOMEFAIL_DEADLINE);
-        return;
+    switch (legPoll(&e)) {
+        case LEG_RUNNING: return;
+        case LEG_FAILED:  homingFail(e); return;
+        case LEG_DONE:    break;
     }
 
-    // Stopped. Two different questions, because the two kinds of leg are ended
-    // by different things and there is no flag they share.
-    if (isRotary) {
-        // No settle window here, and none is needed: the node runs
-        // hallIndexResolve() BEFORE it publishes NODE_FLAG_HOMING clear
-        // (stepper.cpp node_loop), so a cause is already final by the time this
-        // poll can see the leg stopped. That ordering is what makes the cause
-        // safe to read on the very first stopped poll.
-        if (st.indexCause != ROTARY_IDX_OK) {
-            homingFail(rotaryIdxFail(st.indexCause, st.crossings));
-            return;
-        }
-        // Deliberately no nodeLatchSet(): the latch means "this axis is standing
-        // on its limit switch", and a rotary axis has no switch to stand on.
-        // Setting it would put the machine in ALARM/LIMIT_LATCHED after a home
-        // that succeeded, with nothing an operator could do to clear it.
-    } else {
-        // §1.5: after a seek, LIMIT set means found and clear means the budget
-        // ran out without ever reaching the switch; after a retract it is the
-        // other way round.
-        const bool ok = wasRetract ? !(st.flags & NODE_FLAG_LIMIT)
-                                   :  (st.flags & NODE_FLAG_LIMIT);
-        if (!ok) {
-            if (settleLeft) { settleLeft--; return; }  // homingFinish() may not have run
-            homingFail(HOMEFAIL_BUDGET);
-            return;
-        }
+    // The leg succeeded, so its outcome is known without re-reading the pin: a
+    // seek ended ON the switch and a retract ended OFF it. Recorded against the
+    // NODE, which is what the switch is wired to; position.cpp keeps the
+    // slot-framed homingLatched in step and re-derives it across a rebind.
+    //
+    // Never for a sweep: the latch means "this axis is standing on its limit
+    // switch", and a rotary axis has no switch to stand on. Setting it would put
+    // the machine in ALARM/LIMIT_LATCHED after a home that succeeded.
+    if (!e.dummy && !e.rotary) nodeLatchSet(e.node, !e.retract);
 
-        // The leg succeeded, so its outcome is known without re-reading the pin:
-        // a seek ended ON the switch and a retract ended OFF it. Recorded against
-        // the NODE, which is what the switch is wired to; position.cpp keeps the
-        // slot-framed homingLatched in step and re-derives it across a rebind,
-        // the same way it does for the datum.
-        nodeLatchSet(hNode, !wasRetract);
-    }
-
-    homingRelease(hNode);
+    homingRelease(e);
 
     // The session stays open for the next leg, `setorigin` or `home_end`; the
     // latch is published at that exit, not here. If `stop` landed during the
@@ -303,18 +99,6 @@ void homingTick(void) {
     homingReason = HOMING_WAIT;
 }
 
-void homingDummyBegin(bool succeed, uint32_t ms) {
-    failWhy      = HOMEFAIL_NONE;
-    claimed      = true;
-    isDummy      = true;
-    dummyOk      = succeed;
-    deadlineMs   = millis() + ms;
-    homingReason = HOMING_LEG;
-    alarmReason  = ALARM_NONE;
-    __dmb();
-    machineState = STATE_HOMING;
-}
-
 bool homingWaiting(void) {
-    return machineState == STATE_HOMING && !claimed;
+    return machineState == STATE_HOMING && !legActive();
 }

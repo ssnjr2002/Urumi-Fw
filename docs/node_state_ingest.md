@@ -36,7 +36,7 @@ transaction**:
 | writes | `nodeEnabled` only | the rest of the node frame |
 
 `rpcCall` is the single choke point for the solicited half — every wrapper
-(`rpcNodeCmd`, `rpcNodeStatus`, `rpcSwitchGet`, `rpcHome`, …) goes through it,
+(`rpcNodeCmd`, `rpcNodeStatus`, `rpcSwitchGet`, `rpcHomeLeg`, …) goes through it,
 and it holds both the request and the reply, which is what a funnel needs: the
 payload cannot be interpreted without the `cmd` that produced it.
 

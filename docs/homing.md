@@ -239,7 +239,7 @@ that is exactly what alternates through the four legs in §3.4. `BACKOFF` and
 clear. `homing/sequence.ts` derives `intendedRetract` from `leg.kind` and passes
 it to `home()`, which packs it into bit 1 alongside `dir`. The Pico is a pure
 relay for it end to end — `cmdHome()` parses a sixth text argument and hands it
-straight to `homingBegin()` → `rpcHome()`, none of which inspect it.
+straight to `homingBegin()` → `legArm()` → `rpcHomeLeg()`, none of which inspect it.
 
 ### 1.3 The pulser
 
@@ -263,8 +263,8 @@ takes one more step past the thing that ended it. On a seek that is physical: th
 switch is the target and overshoot is travel into the hard stop.
 
 **Stopping is split across contexts.** The ISR halts the timer and sets a
-`homingFinished` flag; `node_loop()` does the rest. It has to be this way —
-clearing the latch and publishing `NODE_FLAG_HOMING` both go through
+`legFinished` flag; `legLoop()` does the rest. It has to be this way —
+clearing the latch and publishing `NODE_FLAG_LEG` both go through
 `node_set_flag()`, which read-modify-writes a byte the core's ENABLE/DISABLE/DATUM
 handlers also own, so it is loop-context only.
 
@@ -342,7 +342,7 @@ it once is only safe if nothing else writes it afterwards, and something did:
 `busQuiesce()` prefaces EVERY command frame with a NOP stream byte, a zero byte
 has the slot's dir bit clear, and the stream handler reads that as "direction 0"
 and drives DIR low. Since the supervisor (§2.3) polls the homing node every
-`HOMING_POLL_MS`, the first poll after the arm yanked DIR out from under the
+`LEG_POLL_MS`, the first poll after the arm yanked DIR out from under the
 pulser and every step after it ran the wrong way. `absolutePosition` did not
 notice — the pulser derives it from `homing.dir`, so the counter kept reporting
 the direction that was *asked for* while the shaft went the other way, and only
@@ -351,11 +351,11 @@ the counter is visible over the bus. Both directions therefore looked identical.
 The RX stream path now returns immediately while `homingActive`. It returns
 before the limit accumulator too: during a home the pulser's own pin read is the
 authority on the switch, and letting NOP bytes advance `limitBytesAsserted` would
-move the baseline `homingFinish()` judges a retract against.
+move the baseline `legFinish()` judges a retract against.
 
 ### 1.5 Terminal states
 
-Reported through the flags byte. `NODE_FLAG_HOMING` (0x08) is set while the pulser
+Reported through the flags byte. `NODE_FLAG_LEG` (0x08) is set while the pulser
 runs. The master polls; the node never announces (§1.6).
 
 | flags | after a seek | after a retract |
@@ -552,7 +552,7 @@ words, which the IPC refactor removed: `RpcRequest` now carries a generic
 `args[]` buffer sized by `RPC_ARG_MAX`, which is *defined as*
 `CMD_HOME_LEG_PAYLOAD_LEN` (11) precisely because `CMD_HOME_LEG` is the largest payload.
 So no continuation words, no `FIFO_HOME` tag, and no per-command packing: the
-11 bytes are laid out once in `rpcHome()` and copied verbatim by `buildPayload()`
+11 bytes are laid out once in `rpcHomeLeg()` and copied verbatim by `buildPayload()`
 (`core1/rpc_server.cpp`).
 
 The payload is **11 bytes**, not the 12 this section assumed.
@@ -722,7 +722,7 @@ silent and points the wrong way.
 ### 2.7 `span`: the node measures its own leg
 
 **Implemented**, and it lives on the **node**, not the Pico. `homingArm()`
-snapshots `absolutePosition`; `homingFinish()` stores `end - start`;
+snapshots `absolutePosition`; `legFinish()` stores `end - start`;
 `node_status()` appends it to the stepper tail, and `nodestat <id>` prints it
 as `span <steps>`.
 

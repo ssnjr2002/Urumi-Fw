@@ -106,16 +106,16 @@
 // simply never sets it — same contract as NODE_FLAG_DATUM on a vacuum node.
 #define NODE_FLAG_LIMIT   0x04
 
-// NODE_FLAG_HOMING — the local step pulser is running (CMD_HOME_LEG). Set when the
+// NODE_FLAG_LEG — the local step pulser is running (CMD_HOME_LEG). Set when the
 // command is accepted, cleared when the pulser stops for any reason. The master
-// learns a home finished by polling this off; a node never announces it.
+// learns a leg finished by polling this off; a node never announces it.
 //
-// LIMIT and HOMING together are the whole terminal-state report, and they read
+// LIMIT and LEG together are the whole terminal-state report, and they read
 // OPPOSITELY for the two kinds of move — after a seek, LIMIT set means found and
 // clear means the budget ran out; after a retract it is the other way round. The
 // node does not know which kind it ran (see docs/homing.md 1.2) and does not need
 // to: the master sent the move, so the master does the interpreting.
-#define NODE_FLAG_HOMING  0x08
+#define NODE_FLAG_LEG     0x08
 
 // Status payload — ONE shape, from one serializer on the node (buildNodeStatus):
 //     [node_type][flags][type-specific tail…]        flags: NODE_FLAG_*
@@ -192,8 +192,8 @@
 // ─── ROTARY_IDX_* — how a rotary index sweep ended ──────────────────────────
 // Named for the operation, not for homing in general: these describe one
 // technique (run through the magnet, buffer it, reduce it) and say nothing about
-// a limit-switch leg. The supervisor's own verdict on any home, by whatever
-// technique, is HOMEFAIL_* in rp2350/core0/homing.h — do not confuse the two.
+// a limit-switch leg. The supervisor's own verdict on any leg, by whatever
+// technique, is LEGFAIL_* in rp2350/core0/ops/leg.h — do not confuse the two.
 //
 // Reported in the stepper status tail on HAS_HALL_INDEX builds. `index` is
 // meaningful ONLY for ROTARY_IDX_OK; every other value says why there is no

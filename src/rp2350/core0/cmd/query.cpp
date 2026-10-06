@@ -31,7 +31,7 @@ bool cmdGetState(const char*) {
 
     // Only meaningful alongside ALARM_HOMING_FAIL, and omitted otherwise so it
     // cannot be read as a live fault. See homing.h for what the codes point at.
-    if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != HOMEFAIL_NONE) {
+    if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != LEGFAIL_NONE) {
         Serial.printf(" homefail=%d", homingFailWhy());
     }
     if (alarmReason == ALARM_CONFIG) Serial.printf(" cfgerr=%s", machineCfgBlockName());
@@ -229,7 +229,7 @@ bool cmdNodeStat(const char* args) {
     // switch that is fine rather than a switch that is absent.
     if (st.homingKind == HOMING_KIND_LIMIT)
         Serial.printf(" limit %d", (st.flags & NODE_FLAG_LIMIT) ? 1 : 0);
-    Serial.printf(" homing %d", (st.flags & NODE_FLAG_HOMING) ? 1 : 0);
+    Serial.printf(" homing %d", (st.flags & NODE_FLAG_LEG) ? 1 : 0);
     switch (type) {
         case NODE_TYPE_STEPPER: {
             if (st.slot == 0xFF) Serial.printf(" pos %ld slot none", (long)st.pos);

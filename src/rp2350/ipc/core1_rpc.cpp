@@ -327,9 +327,9 @@ RpcResult rpcBusStats(uint8_t node, BusStats* out) {
     return RPC_OK;
 }
 
-RpcResult rpcHome(uint8_t node, uint8_t dir, bool intendedRetract,
-                  uint16_t startIntervalUs, uint16_t floorIntervalUs,
-                  uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out) {
+RpcResult rpcHomeLeg(uint8_t node, uint8_t dir, bool intendedRetract,
+                     uint16_t startIntervalUs, uint16_t floorIntervalUs,
+                     uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out) {
     // The node's CMD_HOME_LEG payload, big-endian, laid out once here instead of
     // being smeared across four FIFO words and unpacked on the far side.
     RpcRequest req = {};
@@ -378,7 +378,7 @@ RpcResult rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps) {
 // ─── Probe leg (docs/tool_probe.md §5.6) ─────────────────────────────────────
 // Marshalling only. Nothing here interprets a leg: which leg of four this is,
 // what the switch means, and what a failure costs are all Core 0's, exactly as
-// rpcHome does not know seek from retract.
+// rpcHomeLeg does not know seek from retract.
 
 const char* probeCauseText(uint8_t c) {
     switch (c) {

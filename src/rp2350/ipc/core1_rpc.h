@@ -62,7 +62,7 @@ typedef enum {
 } RpcOp;
 
 // ─── Probe leg outcome (docs/tool_probe.md §5.10) ──────────────────────────────
-// Split by WHERE TO LOOK, following HOMEFAIL_*. The Z-datum column is the part
+// Split by WHERE TO LOOK, following LEGFAIL_*. The Z-datum column is the part
 // that matters most: MOST probe failures do not destroy it, and only the two
 // marked below do -- for the same reason in both cases, an unknown number of
 // steps went unaccounted for.
@@ -72,7 +72,7 @@ typedef enum {
 #define PROBE_POLL          2   // the vacuum stopped answering     datum intact
                                 // the bus is the suspect; the motion may have
                                 // been fine. Lockstep makes that stronger than
-                                // HOMEFAIL_POLL: the Pico physically cannot have
+                                // LEGFAIL_POLL: the Pico physically cannot have
                                 // emitted a step it did not get a reply for, so
                                 // it stops at a count it knows exactly.
 #define PROBE_CHATTER       3   // retry limit exhausted            datum intact
@@ -319,9 +319,9 @@ RpcResult rpcBusStats(uint8_t node, BusStats* out);
 // its own limit pin; Core 0 polls for the outcome. `intendedRetract` rides
 // along unexamined -- it is Core 0's prediction for the node to check itself
 // against, not a Core 1 concern.
-RpcResult rpcHome(uint8_t node, uint8_t dir, bool intendedRetract,
-                  uint16_t startIntervalUs, uint16_t floorIntervalUs,
-                  uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out);
+RpcResult rpcHomeLeg(uint8_t node, uint8_t dir, bool intendedRetract,
+                     uint16_t startIntervalUs, uint16_t floorIntervalUs,
+                     uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out);
 
 // ─── Server side (Core 1) ─────────────────────────────────────────────────────
 // core1/rpc_server.cpp implements these; nothing on Core 0 calls them.
