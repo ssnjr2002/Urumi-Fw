@@ -45,12 +45,14 @@ struct LegState {
     uint16_t interval;    // current step interval, TCA0 ticks
     uint16_t floorTicks;  // fastest interval this move is allowed to reach
     uint16_t rampStep;    // ticks shaved per step until floorTicks; 0 = no ramp
-    uint32_t remaining;   // runaway budget, in steps
+    uint16_t startTicks;  // the interval a park ramps back down to
+    uint16_t upSteps;     // steps a park spent ramping up, so it ramps down as many
+    uint32_t remaining;   // runaway budget, in steps; a park's distance
     bool     dir;         // wire dir bit for the whole move
     LegMode  mode;
     uint8_t  limitRun;    // consecutive asserted samples, for the seek's debounce
 };
-static volatile LegState leg = {0, 0, 0, 0, false, LEG_SEEK, 0};
+static volatile LegState leg = {0, 0, 0, 0, 0, 0, false, LEG_SEEK, 0};
 volatile bool legActive = false;
 
 // Set by the pulser ISR when a SEEK stopped because its switch genuinely
@@ -121,6 +123,8 @@ uint8_t legArm(LegMode mode, bool dir, uint16_t startUs, uint16_t floorUs,
     h.dir        = dir;
     h.mode       = mode;
     h.floorTicks = (uint16_t)floorTicks;
+    h.startTicks = (uint16_t)startTicks;
+    h.upSteps    = 0;
     h.remaining  = maxSteps;
     h.limitRun   = 0;
     // ramp_steps == 0 means no ramp: start at the cruise rate rather than
@@ -225,7 +229,9 @@ static void legFinish(void) {
     // A seek that stopped ON its switch latches, so the fact survives the pin
     // bouncing before the supervisor's next poll. §1.5's "after a seek, LIMIT
     // set means found" rests on this.
-    if (leg.mode == LEG_SEEK && legHitLimit) limitLatched = true;
+    // A park stopped by its switch latches the same way.
+    if ((leg.mode == LEG_SEEK || leg.mode == LEG_PARK) && legHitLimit)
+        limitLatched = true;
 #endif
 }
 
@@ -268,7 +274,9 @@ ISR(TCA0_OVF_vect) {
     // testing the level would stop it before it ever moved. Its only terminator
     // is the budget, which is therefore a distance, not a guard.
 #ifdef HAS_LIMIT_SWITCH
-    if (leg.mode == LEG_SEEK) {
+    // A park starts clear of the switch (the arm refuses otherwise), so meeting
+    // it on the way is a fault to stop at, exactly as a seek's target.
+    if (leg.mode == LEG_SEEK || leg.mode == LEG_PARK) {
         // Debounced. A run that breaks before LEG_LIMIT_SAMPLES was a glitch
         // and the seek carries on; one that reaches it is the switch, and is
         // RECORDED as such rather than left for the supervisor to re-read off a
@@ -306,11 +314,23 @@ ISR(TCA0_OVF_vect) {
     // Linear decay of the interval toward the floor. Not constant acceleration
     // (that falls as ~1/sqrt(n)), but gentler early, which is the direction that
     // matters for not stalling on pull-in.
-    if (leg.rampStep && leg.interval > leg.floorTicks) {
+    //
+    // A park mirrors it at the end: once the steps left are no more than the
+    // steps it climbed, it ramps back up to the start interval. A move too short
+    // to reach the floor stops climbing halfway, so the profile is a triangle.
+    if (leg.mode == LEG_PARK && leg.remaining <= leg.upSteps) {
+        if (leg.rampStep) {
+            uint16_t next = leg.interval + leg.rampStep;
+            if (next > leg.startTicks) next = leg.startTicks;
+            leg.interval = next;
+            TCA0.SINGLE.PER = next - 1;
+        }
+    } else if (leg.rampStep && leg.interval > leg.floorTicks) {
         uint16_t next = leg.interval - leg.rampStep;
         if (next < leg.floorTicks) next = leg.floorTicks;  // never overshoot
         leg.interval = next;
         TCA0.SINGLE.PER = next - 1;
+        if (leg.mode == LEG_PARK) leg.upSteps++;
     }
 }
 

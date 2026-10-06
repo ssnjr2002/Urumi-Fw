@@ -379,6 +379,68 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             *replyLen = 3 + n + 1;
             return true;
         }
+        case CMD_PARK_LEG: {
+            // [id][cmd][len][10 payload][crc].
+            if (len < 3 + CMD_PARK_LEG_PAYLOAD_LEN + 1) {
+                node_reply_nak(CMD_PARK_LEG, NAK_BAD_ARG, reply, replyLen);
+                return true;
+            }
+            const uint8_t* p = &pkt[3];
+            const int32_t  target    = (int32_t)(((uint32_t)p[0] << 24) |
+                                                 ((uint32_t)p[1] << 16) |
+                                                 ((uint32_t)p[2] <<  8) |
+                                                  (uint32_t)p[3]);
+            const uint16_t startUs   = ((uint16_t)p[4] << 8) | p[5];
+            const uint16_t floorUs   = ((uint16_t)p[6] << 8) | p[7];
+            const uint16_t rampSteps = ((uint16_t)p[8] << 8) | p[9];
+
+            // A counter with a broken witness is not a position.
+            if (!node_flag(NODE_FLAG_DATUM)) {
+                node_reply_nak(CMD_PARK_LEG, NAK_NO_DATUM, reply, replyLen);
+                return true;
+            }
+#ifdef HAS_LIMIT_SWITCH
+            // A park starts clear of the switch; on it, the switch would stop
+            // the leg before its first step whichever way it went.
+            if (HAL_LIMIT_ASSERTED() || limitLatched) {
+                node_reply_nak(CMD_PARK_LEG, NAK_INTENT_MISMATCH, reply, replyLen);
+                return true;
+            }
+#endif
+            const int32_t pos = readPositionAtomic();
+            if (target != pos) {
+                const bool     dir   = target > pos;
+                const uint32_t steps = dir ? (uint32_t)(target - pos)
+                                           : (uint32_t)(pos - target);
+                const uint8_t why = legArm(LEG_PARK, dir, startUs, floorUs,
+                                           rampSteps, steps);
+                if (why) {
+                    node_reply_nak(CMD_PARK_LEG, why, reply, replyLen);
+                    return true;
+                }
+            }
+            // Already there: nothing armed, and the ack's NODE_FLAG_LEG is clear.
+            reply[0] = NODE_ID;
+            reply[1] = CMD_PARK_LEG;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;
+            *replyLen = 3 + n + 1;
+            return true;
+        }
+        case CMD_LEG_ABORT: {
+            // Stops the pulser and nothing else: the motor stays energised, so
+            // the counter and the datum witness stay good. legLoop() closes the
+            // span and publishes NODE_FLAG_LEG clear on its next pass. Guarded:
+            // halting an idle pulser would re-run the LAST leg's finish (its
+            // span, and a retract's latch clear) against today's state.
+            if (legActive) legHalt();
+            reply[0] = NODE_ID;
+            reply[1] = CMD_LEG_ABORT;
+            uint8_t n = buildNodeStatus(&reply[3]);
+            reply[2] = n;
+            *replyLen = 3 + n + 1;
+            return true;
+        }
 #endif
         case CMD_GET_POS: {
             // Same payload as CMD_NODE_STATUS / the ENGAGE ack — position never

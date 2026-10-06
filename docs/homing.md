@@ -353,6 +353,33 @@ before the limit accumulator too: during a home the pulser's own pin read is the
 authority on the switch, and letting NOP bytes advance `limitBytesAsserted` would
 move the baseline `legFinish()` judges a retract against.
 
+### 1.4a `CMD_PARK_LEG` (0x25) and `CMD_LEG_ABORT` (0x26)
+
+**Park** runs the same pulser to an absolute counter value: a homed node's way
+to its park position. Payload (10 bytes, big-endian): `target` (int32),
+`start_us`, `floor_us`, `ramp_steps`. Direction and length come from
+`target − counter`; the distance is the budget. The ramp is mirrored at the end:
+once the steps left are no more than the steps spent climbing, the interval
+climbs back to `start_us`, so a move too short to reach the floor is a triangle.
+
+- Refused with `NAK_NO_DATUM` unless `NODE_FLAG_DATUM` is set: a counter with a
+  broken witness is not a position.
+- Refused with `NAK_INTENT_MISMATCH` if the switch is asserted or latched at the
+  arm: a park starts clear of it.
+- A switch asserting on the way stops it (debounced, as a seek) and latches.
+- `target == counter` arms nothing; the ack has `NODE_FLAG_LEG` clear.
+
+The Pico judges a park by where it stopped: the counter equals the target,
+`NODE_FLAG_DATUM` is still set, and (linear) `NODE_FLAG_LIMIT` is clear.
+Anything else is `LEGFAIL_PARK`. A finished park keeps the node's origin and
+re-derives `machinePos` from the counter (`originAdopt`); a failed one drops it.
+
+**Abort** stops the pulser and nothing else: the motor stays energised, so the
+counter and `NODE_FLAG_DATUM` stay good (`CMD_DISABLE` and `CMD_MAKE_SAFE`
+de-energise and drop the witness). It acks with the status payload whether or
+not a leg ran. On the Pico, `leg_abort` on the supervised node fails that leg
+as `LEGFAIL_ABORTED`; any other node just acks.
+
 ### 1.5 Terminal states
 
 Reported through the flags byte. `NODE_FLAG_LEG` (0x08) is set while the pulser

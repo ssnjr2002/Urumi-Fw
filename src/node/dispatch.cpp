@@ -54,6 +54,8 @@ void node_set_flag(uint8_t bit, bool on) {
     else    g_nodeFlags &= ~bit;
 }
 
+bool node_flag(uint8_t bit) { return (g_nodeFlags & bit) != 0; }
+
 uint8_t buildNodeStatus(uint8_t* buf) {
     buf[0] = node_type();
     buf[1] = g_nodeFlags;

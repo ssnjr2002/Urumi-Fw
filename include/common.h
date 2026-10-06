@@ -79,6 +79,8 @@
                               // it. Distinct from BAD_ARG because retrying the
                               // IDENTICAL frame later is the correct response;
                               // a BAD_ARG frame is wrong however long you wait.
+#define NAK_NO_DATUM    0x06  // CMD_PARK_LEG only: NODE_FLAG_DATUM is clear, so
+                              // the counter is not a position to park by.
 // Type-specific (0x20+): only one type is compiled per node, so values may
 // overlap between types. Stepper:
 // Node status flags (the [flags] byte of the status payload below).
@@ -188,6 +190,29 @@
 // the axis stopped. See the status tail below.
 #define CMD_HOME_LEG 0x24
 #define CMD_HOME_LEG_PAYLOAD_LEN 11
+
+// CMD_PARK_LEG — run the pulser to an absolute counter value, ramping up and
+// down. A homed node's way to its park position (docs/homing.md 1.4).
+//
+//   payload (10 bytes, big-endian):
+//     [0..3] target         signed node counter to stop at
+//     [4..5] start_interval microseconds, at both ends of the move
+//     [6..7] floor_interval microseconds, cruise rate
+//     [8..9] ramp_steps     steps from start to floor, and back; 0 = no ramp
+//   ack: the status payload, sampled after arming.
+//
+// Direction and length come from target − counter; the distance is the budget.
+// Refused with NAK_NO_DATUM unless NODE_FLAG_DATUM is set, and with
+// NAK_INTENT_MISMATCH if the limit switch is asserted at the arm (a park starts
+// clear of it). A switch asserting on the way stops the leg and latches, as a
+// seek. Target == counter arms nothing: the ack has NODE_FLAG_LEG clear.
+#define CMD_PARK_LEG 0x25
+#define CMD_PARK_LEG_PAYLOAD_LEN 10
+
+// CMD_LEG_ABORT — stop the pulser. No payload. The motor stays energised, so
+// the counter and NODE_FLAG_DATUM stay good (unlike CMD_DISABLE / MAKE_SAFE).
+// Acks with the status payload whether or not a leg was running.
+#define CMD_LEG_ABORT 0x26
 
 // ─── ROTARY_IDX_* — how a rotary index sweep ended ──────────────────────────
 // Named for the operation, not for homing in general: these describe one

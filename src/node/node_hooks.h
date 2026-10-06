@@ -66,6 +66,9 @@ void    node_make_safe(void);
 // node_loop(); the stepper does that with NODE_FLAG_LIMIT.
 void    node_set_flag(uint8_t bit, bool on);
 
+// True if that bit of the generic flags byte is set.
+bool    node_flag(uint8_t bit);
+
 // Stage a reasoned refusal instead of a bare ACK/data reply: [ID][CMD_NAK]
 // [len=2][cmd][reason][crc-slot]. For a type that wants the master to see WHY a
 // command was rejected rather than the generic NAK_UNSUPPORTED every plain
