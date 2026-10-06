@@ -289,7 +289,7 @@ branch 2) and coordinate-system.md branch 1 (`feature/pico-frames`).
 
 ### Status
 
-Done, ready to merge (d73fe25). Unblocks 1b.
+Done, merged (d73fe25..0c1981a). Unblocks 1b.
 
 ### Outcome
 
