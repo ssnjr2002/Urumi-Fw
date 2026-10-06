@@ -549,7 +549,45 @@ the homing config.
 
 ### Status
 
-Planned.
+In progress.
+
+### Outcome
+
+* Agreed in Read: leg arming (`legArm`, `legArmPark`, `homingBegin`,
+  `homingParkBegin`) returns a reason instead of printing, and its handlers
+  reply; an ops-level flag holds the session for a run; `originTarget` reads a
+  node's park target. A park leg uses the block's `startFeed`, `seekFeed` and
+  `rampSteps`. A homed rotary node in an earlier cycle is left as is.
+* Settled in Write: `homefail=` gains 10 (a leg refused mid-run), 11 (the
+  cycle's datum commit failed) and 12 (the sweeps disagree past
+  `toleranceDeg`, or revolutions over 2% apart). A refusal before any leg ran
+  is the command's `err`; after, it fails the session. Every linear node tries
+  its seek first; a seek refused as an intent mismatch (`legArm`'s new flag,
+  from `rpcLastNakReason`) means it stands on its switch, so it backs off in
+  that phase and runs each later leg a phase early. The hold carries the cycle
+  (`homingHold(k)`), so `getstate` reads `homecycle=` from ops; `nodehomed=` is
+  `originMask()`. `legAbort`/`homingAbort` went quiet with the arming. A
+  mute or excluded run node is `err node N mute|excluded`.
+* Bench (2026-10-06, head 0 only via `config/controller-1head.jsonc`, picked
+  in `platformio.ini`): `home only` of Y, and of X and Y in parallel; a dead X
+  switch failing with `homefail=1` and the failed cycle committing nothing;
+  `home_head 0` (Z, then A's sweeps within tolerance); `home 4` parking a
+  jogged Z before A; plain `home` landing X at `maxTravel`, Y at `maxTravel`,
+  Z at `parkPos`; `home_unhomed` with X invalidated parking Z and homing X
+  while Y and A stayed put.
+* Found on the bench: a node's `limit` status bit is pin OR latch, but the
+  node picks seek or retract from the pin alone. A latched node with an open
+  pin (X with a loose wire) was read as on its switch, so its seek was skipped
+  and the back-off refused (`intent_mismatch`). Fixed by seek-first (above).
+  `legArm` had the same flaw, supervising a leg by the ack bit; it now uses
+  the intent the node accepted (its own `fix(pico)` commit). No `homewhy=`:
+  `getstate` stays lean; re-run the leg by hand.
+* Out of scope: the Pico's latch mask starts at 0 at boot and learns a node's
+  latch only at that node's next successful leg, so `latched=` can read 0
+  while a node holds one (the node's own gate still refuses stream steps).
+* Out of scope: the other ops that still print their own replies
+  (`ops/axes_map.cpp`, `ops/slot_map.cpp`, `ops/probe.cpp`) should get the same
+  treatment: ops return, handlers reply.
 
 ## Open questions
 
