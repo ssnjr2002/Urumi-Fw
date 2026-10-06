@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include "leg.h"
 #include "../../ipc/core1_rpc.h"
 
@@ -64,11 +66,22 @@ bool legAny(void) {
     return false;
 }
 
-// A free entry for `node`, or nullptr with the `err` line printed.
-static Leg* legClaim(uint8_t node) {
-    if (legFind(node)) { Serial.printf("err node %d busy\n", node); return nullptr; }
+// A refusal's text, after `err `. One buffer: valid until the next refusal.
+static char refusal[48];
+
+static const char* refuse(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(refusal, sizeof refusal, fmt, ap);
+    va_end(ap);
+    return refusal;
+}
+
+// A free entry for `node`, or nullptr with the refusal in `*why`.
+static Leg* legClaim(uint8_t node, const char** why) {
+    if (legFind(node)) { *why = refuse("node %d busy", node); return nullptr; }
     for (Leg& g : legs) if (!g.claimed) return &g;
-    Serial.println("err busy");
+    *why = "busy";
     return nullptr;
 }
 
@@ -120,10 +133,12 @@ static uint8_t rotaryIdxFail(uint8_t cause, uint8_t crossings) {
     }
 }
 
-bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
-            uint16_t startUs, uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps) {
-    Leg* lp = legClaim(node);
-    if (!lp) return false;
+const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
+                   uint16_t startUs, uint16_t floorUs, uint16_t rampSteps,
+                   uint32_t maxSteps) {
+    const char* why;
+    Leg* lp = legClaim(node, &why);
+    if (!lp) return why;
     Leg& leg = *lp;
 
     // ASK WHAT THE NODE IS BEFORE ARMING IT. The kind also arrives in the arm
@@ -134,16 +149,11 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
     // the error names what the node IS.
     NodeStatus probe;
     RpcResult pr = rpcNodeStatus(CMD_NODE_STATUS, node, 0, &probe);
-    if (pr != RPC_OK) {
-        Serial.printf("err node %d %s\n", node, rpcResultText(pr));
-        return false;
-    }
-    if (!probe.hasStepperTail) { Serial.println("err bad_reply"); return false; }
-    if (probe.homingKind != expectKind) {
-        Serial.printf("err kind_mismatch node %d is %d want %d\n",
+    if (pr != RPC_OK) return refuse("node %d %s", node, rpcResultText(pr));
+    if (!probe.hasStepperTail) return "bad_reply";
+    if (probe.homingKind != expectKind)
+        return refuse("kind_mismatch node %d is %d want %d",
                       node, probe.homingKind, expectKind);
-        return false;
-    }
 
     NodeStatus st;
     RpcResult r = rpcHomeLeg(node, dir, intendedRetract, startUs, floorUs,
@@ -153,10 +163,9 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
         // the wire rather than being a silent drop the master reads as absence.
         // Same path covers NAK_INTENT_MISMATCH: the host's plan disagreed with
         // the node's own switch read (docs/homing.md §1.4/§2.6).
-        Serial.printf("err node %d %s\n", node, rpcResultText(r));
-        return false;
+        return refuse("node %d %s", node, rpcResultText(r));
     }
-    if (!st.hasStepperTail) { Serial.println("err bad_reply"); return false; }
+    if (!st.hasStepperTail) return "bad_reply";
 
     // WHICH MOVE THIS IS, decided here and nowhere else. The node picks seek or
     // retract from one read of its own pin at arm time and does not report the
@@ -175,11 +184,9 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
     // start_interval away, so this should not happen. It cannot be INTERPRETED
     // either -- "stopped" and "never started" produce identical flags -- so
     // refuse: nothing moved, so there is nothing to alarm about.
-    if (!(st.flags & NODE_FLAG_LEG)) {
-        Serial.printf("err node %d no_start limit %d\n", node,
+    if (!(st.flags & NODE_FLAG_LEG))
+        return refuse("node %d no_start limit %d", node,
                       (st.flags & NODE_FLAG_LIMIT) ? 1 : 0);
-        return false;
-    }
 
     const uint32_t now = millis();
     leg.claimed    = true;
@@ -192,38 +199,33 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
     leg.settleLeft = LEG_SETTLE_POLLS;
     leg.nextPollMs = now + LEG_POLL_MS;
     leg.deadlineMs = now + legTimeoutMs(startUs, floorUs, rampSteps, maxSteps);
-    return true;
+    return nullptr;
 }
 
-bool legArmPark(uint8_t node, int32_t target, uint16_t startUs,
-                uint16_t floorUs, uint16_t rampSteps) {
-    Leg* lp = legClaim(node);
-    if (!lp) return false;
+const char* legArmPark(uint8_t node, int32_t target, uint16_t startUs,
+                       uint16_t floorUs, uint16_t rampSteps) {
+    const char* why;
+    Leg* lp = legClaim(node, &why);
+    if (!lp) return why;
     Leg& leg = *lp;
 
     // The kind probe, as legArm: a node with no terminator has no datum to
     // park by, and the error names what it is.
     NodeStatus probe;
     RpcResult pr = rpcNodeStatus(CMD_NODE_STATUS, node, 0, &probe);
-    if (pr != RPC_OK) {
-        Serial.printf("err node %d %s\n", node, rpcResultText(pr));
-        return false;
-    }
-    if (!probe.hasStepperTail) { Serial.println("err bad_reply"); return false; }
-    if (probe.homingKind == HOMING_KIND_NONE) {
-        Serial.printf("err kind_mismatch node %d is %d\n", node, probe.homingKind);
-        return false;
-    }
+    if (pr != RPC_OK) return refuse("node %d %s", node, rpcResultText(pr));
+    if (!probe.hasStepperTail) return "bad_reply";
+    if (probe.homingKind == HOMING_KIND_NONE)
+        return refuse("kind_mismatch node %d is %d", node, probe.homingKind);
 
     NodeStatus st;
     RpcResult r = rpcParkLeg(node, target, startUs, floorUs, rampSteps, &st);
     if (r != RPC_OK) {
         // NAK_NO_DATUM, NAK_INTENT_MISMATCH (on the switch), NAK_BUSY: nothing
         // moved.
-        Serial.printf("err node %d %s\n", node, rpcResultText(r));
-        return false;
+        return refuse("node %d %s", node, rpcResultText(r));
     }
-    if (!st.hasStepperTail) { Serial.println("err bad_reply"); return false; }
+    if (!st.hasStepperTail) return "bad_reply";
 
     // Distance from the ack, which is sampled after the arm: the counter may
     // have moved a step or two, which only lengthens the deadline.
@@ -244,22 +246,19 @@ bool legArmPark(uint8_t node, int32_t target, uint16_t startUs,
     leg.settleLeft = 0;
     leg.nextPollMs = now + LEG_POLL_MS;
     leg.deadlineMs = now + legTimeoutMs(startUs, floorUs, ramp, steps);
-    return true;
+    return nullptr;
 }
 
-bool legAbort(uint8_t node, LegEnd* end, bool* released) {
+const char* legAbort(uint8_t node, LegEnd* end, bool* released) {
     *released = false;
     NodeStatus st;
     RpcResult r = rpcLegAbort(node, &st);
-    if (r != RPC_OK) {
-        Serial.printf("err node %d %s\n", node, rpcResultText(r));
-        return false;
-    }
+    if (r != RPC_OK) return refuse("node %d %s", node, rpcResultText(r));
     if (Leg* g = legFind(node)) {
         legRelease(*g, end, LEGFAIL_ABORTED);
         *released = true;
     }
-    return true;
+    return nullptr;
 }
 
 uint8_t legAbortAll(LegEnd* ends) {
@@ -277,10 +276,10 @@ uint8_t legAbortAll(LegEnd* ends) {
     return n;
 }
 
-bool legArmDummy(bool succeed, uint32_t ms) {
+const char* legArmDummy(bool succeed, uint32_t ms) {
     Leg* lp = nullptr;
     for (Leg& g : legs) if (!g.claimed) { lp = &g; break; }
-    if (!lp) { Serial.println("err busy"); return false; }
+    if (!lp) return "busy";
     Leg& leg = *lp;
     leg.claimed    = true;
     leg.rotary     = false;
@@ -290,7 +289,7 @@ bool legArmDummy(bool succeed, uint32_t ms) {
     leg.dummyOk    = succeed;
     leg.node       = 0;
     leg.deadlineMs = millis() + ms;
-    return true;
+    return nullptr;
 }
 
 uint8_t legDropAll(LegEnd* ends) {

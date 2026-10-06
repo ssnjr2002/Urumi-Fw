@@ -10,32 +10,31 @@
 // `home_end` close it, as do estop and ALARM_HOMING_FAIL. Running and judging
 // a leg is leg.h's.
 
-// Arm ONE LEG on `node` (legArm); the first opens the session. Prints exactly
-// one reply line in every path, per the control-plane contract. Returns true if
-// the command was answered at all -- which is what the handler propagates --
-// not whether the leg found anything.
-bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
-                 bool intendedRetract,
-                 uint16_t startUs, uint16_t floorUs,
-                 uint16_t rampSteps, uint32_t maxSteps);
+// Arm ONE LEG on `node` (legArm); the first opens the session. Returns nullptr,
+// or legArm's refusal text with nothing moved. Prints nothing: the caller
+// replies.
+const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
+                        bool intendedRetract,
+                        uint16_t startUs, uint16_t floorUs,
+                        uint16_t rampSteps, uint32_t maxSteps);
 
 // Arm a park leg (legArmPark) in the session, as homingBegin. A finished park
 // keeps the node's origin; the caller checks it is homed.
-bool homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
-                     uint16_t floorUs, uint16_t rampSteps);
+const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
+                            uint16_t floorUs, uint16_t rampSteps);
 
 // leg_abort: stop `node`'s pulser. If it ran a leg, that leg fails as
-// LEGFAIL_ABORTED, failing its cycle; any other node just acks. Prints the
-// reply line.
-bool homingAbort(uint8_t node);
+// LEGFAIL_ABORTED, failing its cycle; any other node just acks. Returns as
+// homingBegin.
+const char* homingAbort(uint8_t node);
 
 // Poll the legs in progress and turn each end into the session's state. No-op
 // unless a leg is armed. Call from the Core 0 loop.
 void homingTick(void);
 
 // A dummy leg (legArmDummy) in the session. Touches no latch and no origin.
-// The caller gates it as a leg. Prints the reply line.
-void homingDummyBegin(bool succeed, uint32_t ms);
+// The caller gates it as a leg. Returns as homingBegin.
+const char* homingDummyBegin(bool succeed, uint32_t ms);
 
 // True while any leg runs. Lets the gates refuse `setorigin` and `home_end`
 // without reading machineState, which anything may write.

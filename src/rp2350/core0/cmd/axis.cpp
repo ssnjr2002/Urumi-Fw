@@ -395,6 +395,12 @@ static bool legGateDenies() {
     return false;
 }
 
+// `ok` for nullptr, else `err <why>`.
+static void replyWhy(const char* why) {
+    if (why) Serial.printf("err %s\n", why);
+    else     Serial.println("ok");
+}
+
 // Parse a node id; advances *p past it. False on a bad token.
 static bool parseNode(const char** p, uint8_t* node) {
     char* end;
@@ -468,12 +474,14 @@ bool cmdLeg(const char* args) {
         Serial.println("err range"); return true;
     }
 
-    if (park)
-        return homingParkBegin(node, (int32_t)first, (uint16_t)v[0],
-                               (uint16_t)v[1], (uint16_t)v[2]);
-    return homingBegin(node, expectKind, (uint8_t)first, intent,
-                       (uint16_t)v[0], (uint16_t)v[1],
-                       (uint16_t)v[2], (uint32_t)v[3]);
+    const char* why = park
+        ? homingParkBegin(node, (int32_t)first, (uint16_t)v[0],
+                          (uint16_t)v[1], (uint16_t)v[2])
+        : homingBegin(node, expectKind, (uint8_t)first, intent,
+                      (uint16_t)v[0], (uint16_t)v[1],
+                      (uint16_t)v[2], (uint32_t)v[3]);
+    replyWhy(why);
+    return true;
 }
 
 // Allowed in every state but RUNNING, where no leg can run and the bus belongs
@@ -483,7 +491,9 @@ bool cmdLegAbort(const char* args) {
     const char* p = args;
     uint8_t node;
     if (!parseNode(&p, &node)) { Serial.println("err usage"); return true; }
-    return homingAbort(node);
+    // The reply is the command's; a leg it failed alarms on its own.
+    replyWhy(homingAbort(node));
+    return true;
 }
 
 // ── dummy_leg <0|1> [ms] — a leg with no node, for testing the session ───────
@@ -502,7 +512,7 @@ bool cmdDummyLeg(const char* args) {
         if (end == p) { Serial.println("err usage"); return true; }
         if (ms > 600000UL) { Serial.println("err range"); return true; }
     }
-    homingDummyBegin(ok == 1, (uint32_t)ms);
+    replyWhy(homingDummyBegin(ok == 1, (uint32_t)ms));
     return true;
 }
 

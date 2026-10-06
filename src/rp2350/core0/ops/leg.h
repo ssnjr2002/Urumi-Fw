@@ -65,10 +65,10 @@ enum LegPoll : uint8_t {
     LEG_FAILED,
 };
 
-// Arm ONE seek, retract or sweep on `node` with CMD_HOME_LEG. Returns true once the node is
-// pulsing; on any refusal prints the one `err` line and returns false, with
-// nothing moved. A node already running a leg is `err node <id> busy`; a full
-// table is `err busy`.
+// Arm ONE seek, retract or sweep on `node` with CMD_HOME_LEG. Returns nullptr
+// once the node is pulsing; on a refusal, with nothing moved, the reply text
+// after `err ` (valid until the next refusal). A node already running a leg is
+// `node <id> busy`; a full table is `busy`. Prints nothing.
 //
 // NODE-ADDRESSED: every output of a leg is node-framed -- the span, the index
 // in the node's own counter, the limit latch (a switch is wired to a NODE,
@@ -87,21 +87,22 @@ enum LegPoll : uint8_t {
 // wrong leg's semantics under the right leg's budget. Meaningless for
 // HOMING_KIND_INDEX -- there is no pin to agree with -- and `leg <n> sweep`
 // passes false.
-bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
-            uint16_t startUs, uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps);
+const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
+                   uint16_t startUs, uint16_t floorUs, uint16_t rampSteps,
+                   uint32_t maxSteps);
 
 // Arm a park leg on `node` with CMD_PARK_LEG: run to the absolute node counter
 // `target`. Any node with a terminator; the caller checks the origin. Returns
-// and prints as legArm. A node already at `target` arms nothing and the first
-// poll finishes the leg.
-bool legArmPark(uint8_t node, int32_t target, uint16_t startUs,
-                uint16_t floorUs, uint16_t rampSteps);
+// as legArm. A node already at `target` arms nothing and the first poll
+// finishes the leg.
+const char* legArmPark(uint8_t node, int32_t target, uint16_t startUs,
+                       uint16_t floorUs, uint16_t rampSteps);
 
-// Send CMD_LEG_ABORT to `node`. False, with the `err` line printed, if the node
-// did not ack; the leg (if any) then runs on, still supervised. On an ack to a
-// node running a leg, that leg is released as LEGFAIL_ABORTED into `*end` and
+// Send CMD_LEG_ABORT to `node`. The refusal text, as legArm, if the node did
+// not ack; the leg (if any) then runs on, still supervised. On an ack to a node
+// running a leg, that leg is released as LEGFAIL_ABORTED into `*end` and
 // `*released` is set.
-bool legAbort(uint8_t node, LegEnd* end, bool* released);
+const char* legAbort(uint8_t node, LegEnd* end, bool* released);
 
 // Abort every running leg (CMD_LEG_ABORT to each node) and release it into
 // `ends` (LEG_MAX entries); returns how many. An acked park ends with
@@ -110,9 +111,8 @@ bool legAbort(uint8_t node, LegEnd* end, bool* released);
 uint8_t legAbortAll(LegEnd* ends);
 
 // A bench leg with no node and no motion: after `ms` it ends as a success, or
-// as a failure with LEGFAIL_DUMMY. False, with `err busy` printed, on a full
-// table.
-bool legArmDummy(bool succeed, uint32_t ms);
+// as a failure with LEGFAIL_DUMMY. `busy` on a full table.
+const char* legArmDummy(bool succeed, uint32_t ms);
 
 // Poll the next due leg, in turn. LEG_DONE and LEG_FAILED release it and fill
 // `*end`; LEG_RUNNING means no leg ended this call. Call from the Core 0 loop.

@@ -65,42 +65,38 @@ static void homingOpen(void) {
     machineState = STATE_HOMING;
 }
 
-bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
-                 bool intendedRetract,
-                 uint16_t startUs, uint16_t floorUs,
-                 uint16_t rampSteps, uint32_t maxSteps) {
-    if (!legArm(node, expectKind, dir, intendedRetract,
-                startUs, floorUs, rampSteps, maxSteps)) return true;
-    homingOpen();
-    Serial.println("ok");
-    return true;
+const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
+                        bool intendedRetract,
+                        uint16_t startUs, uint16_t floorUs,
+                        uint16_t rampSteps, uint32_t maxSteps) {
+    const char* why = legArm(node, expectKind, dir, intendedRetract,
+                             startUs, floorUs, rampSteps, maxSteps);
+    if (!why) homingOpen();
+    return why;
 }
 
-bool homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
-                     uint16_t floorUs, uint16_t rampSteps) {
-    if (!legArmPark(node, target, startUs, floorUs, rampSteps)) return true;
-    homingOpen();
-    Serial.println("ok");
-    return true;
+const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
+                            uint16_t floorUs, uint16_t rampSteps) {
+    const char* why = legArmPark(node, target, startUs, floorUs, rampSteps);
+    if (!why) homingOpen();
+    return why;
 }
 
-bool homingAbort(uint8_t node) {
+const char* homingAbort(uint8_t node) {
     LegEnd e;
     bool released;
-    if (!legAbort(node, &e, &released)) return true;
-    // Answer first: the alarm is the leg's outcome, not the command's.
-    Serial.println("ok");
-    if (!released) return true;
+    if (const char* why = legAbort(node, &e, &released)) return why;
+    if (!released) return nullptr;
     // As homingTick: if something else already owns the machine, drop quietly.
     if (machineState != STATE_HOMING) homingRelease(e);
     else                              homingFail(e);
-    return true;
+    return nullptr;
 }
 
-void homingDummyBegin(bool succeed, uint32_t ms) {
-    if (!legArmDummy(succeed, ms)) return;
-    homingOpen();
-    Serial.println("ok");
+const char* homingDummyBegin(bool succeed, uint32_t ms) {
+    const char* why = legArmDummy(succeed, ms);
+    if (!why) homingOpen();
+    return why;
 }
 
 void homingTick(void) {
