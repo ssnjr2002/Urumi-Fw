@@ -5,7 +5,7 @@
  * that needs a machine: send a leg, wait for the Pico to leave HOMING, and
  * check the verdict against what the leg said it expected.
  *
- * The waiting exists because `lin_leg` returns as soon as the leg is ARMED, not
+ * The waiting exists because `leg` returns as soon as the leg is ARMED, not
  * when it finishes — deliberately, since a leg takes seconds and a handler that
  * blocked would freeze `getstate` and every abort for the whole seek
  * (docs/homing.md §2.3). The host therefore owns the polling, and the sequence
@@ -214,7 +214,7 @@ export async function runHoming(
     opts: RunHomingOptions = {},
 ): Promise<void> {
     // Resolve the axis to a bus id ONCE, here. The legs are node-addressed
-    // (commands.ts linLeg) because everything they produce is node-framed, but
+    // (commands.ts `leg`) because everything they produce is node-framed, but
     // a PLAN is written against an axis — datumSteps is a machine coordinate,
     // and only the map says which motor that axis is. Reading the committed map
     // rather than trusting a cached one matters because the map is host-authored

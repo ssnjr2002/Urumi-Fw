@@ -14,7 +14,7 @@
  *                in.
  *   sequence.ts  The part that needs a machine: arm, poll, judge the verdict.
  *
- * The wire verbs it drives (`lin_leg`, `rot_leg`, `setorigin`) stay in wire/link/
+ * The wire verbs it drives (`leg`, `setorigin`) stay in wire/link/
  * commands.ts, and the schema stays in machine/schema.ts — this module owns the
  * arithmetic and the sequencing, not the transport or the config shape.
  */

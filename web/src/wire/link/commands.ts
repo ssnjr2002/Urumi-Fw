@@ -315,9 +315,9 @@ export async function linLeg(
     rampSteps: number,
     maxSteps: number,
 ): Promise<HomeResult> {
-    const intent = retract ? 1 : 0;
+    const verb = retract ? "retract" : "seek";
     const r = await link.command(
-        `lin_leg ${node} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps} ${intent}`,
+        `leg ${node} ${verb} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps}`,
     );
     if (r === "ok") return { armed: true };
     return { armed: false, reason: r };
@@ -346,10 +346,39 @@ export async function rotLeg(
     maxSteps: number,
 ): Promise<HomeResult> {
     const r = await link.command(
-        `rot_leg ${node} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps}`,
+        `leg ${node} sweep ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps}`,
     );
     if (r === "ok") return { armed: true };
     return { armed: false, reason: r };
+}
+
+/**
+ * A park leg: the node runs to the absolute counter `target` in its own frame,
+ * ramping up and down. Refused with `err not_homed` unless the Pico holds the
+ * node's origin. A finished park keeps the origin; a failed one drops it
+ * (HomeFail.PARK).
+ */
+export async function parkLeg(
+    link: Link,
+    node: number,
+    target: number,
+    startUs: number,
+    floorUs: number,
+    rampSteps: number,
+): Promise<HomeResult> {
+    const r = await link.command(
+        `leg ${node} park ${target} ${startUs} ${floorUs} ${rampSteps}`,
+    );
+    if (r === "ok") return { armed: true };
+    return { armed: false, reason: r };
+}
+
+/**
+ * Stop `node`'s pulser, motor left energised. If it ran the supervised leg,
+ * that leg fails as HomeFail.ABORTED. Resolves to `ok` or the raw `err` line.
+ */
+export async function legAbort(link: Link, node: number): Promise<string> {
+    return link.command(`leg_abort ${node}`);
 }
 
 // ── tool probe (docs/tool_probe.md §5) ───────────────────────────────────────

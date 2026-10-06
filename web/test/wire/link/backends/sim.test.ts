@@ -126,15 +126,15 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("lin_leg arms and returns; the leg finishes asynchronously", async () => {
+    it("a leg arms and returns; the leg finishes asynchronously", async () => {
         // `ok` means ARMED, not finished — the whole reason the supervisor
         // exists (docs/homing.md §2.3). A handler that blocked until the pulser
         // stopped would freeze getstate and every abort for the whole seek.
         await withLink(async (link, sim) => {
             sim.homingLegMs = 30;
-            expect(await link.command("lin_leg 1 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
             expect((await link.getStatus()).state).toBe(MachineState.HOMING);
-            expect(await link.command("lin_leg 2 1 2500 500 400 88000")).toBe("err busy");
+            expect(await link.command("leg 2 seek 1 2500 500 400 88000")).toBe("err busy");
 
             await tick(80);
             // A seek ends ON the switch, which is an alarm and not a failure.
@@ -149,7 +149,7 @@ describe("wire/link/backends/sim: control plane", () => {
             expect((await link.getStatus()).alarm).toBe(AlarmReason.LIMIT_LATCHED);
 
             // Armed while latched, so the node reads its pin and runs a RETRACT.
-            expect(await link.command("lin_leg 1 0 8013 8013 0 320")).toBe("ok");
+            expect(await link.command("leg 1 retract 0 8013 8013 0 320")).toBe("ok");
             await tick(80);
             const done = await link.getStatus();
             expect(done.state).toBe(MachineState.IDLE);
@@ -168,7 +168,7 @@ describe("wire/link/backends/sim: control plane", () => {
             expect(await link.command("axis_map - - - -")).toBe("ok");
             expect((await link.getStatus()).alarm).toBe(AlarmReason.NONE);
 
-            expect(await link.command("lin_leg 3 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.command("leg 3 seek 1 2500 500 400 88000")).toBe("ok");
             await tick(60);
 
             // Node 3 is standing on its switch, and no slot claims it, so the
@@ -179,18 +179,43 @@ describe("wire/link/backends/sim: control plane", () => {
         }, { busNodes: [1, 2, 3, 4] });
     });
 
-    it("rot_leg on a limit-switch node is refused before anything moves", async () => {
+    it("a sweep on a limit-switch node is refused before anything moves", async () => {
         await withLink(async (link) => {
-            expect(await link.command("rot_leg 1 1 2500 500 400 88000"))
+            expect(await link.command("leg 1 sweep 1 2500 500 400 88000"))
                 .toContain("kind_mismatch");
             expect((await link.getStatus()).state).not.toBe(MachineState.HOMING);
+        });
+    });
+
+    it("a park needs the node homed and keeps its datum", async () => {
+        await withLink(async (link, sim) => {
+            sim.homingLegMs = 20;
+            expect(await link.command("leg 1 park 100 2500 500 400")).toBe("err not_homed");
+            expect(await link.command("setorigin")).toBe("ok");
+            expect(await link.command("leg 1 park 100 2500 500 400")).toBe("ok");
+            expect((await link.getStatus()).state).toBe(MachineState.HOMING);
+            await tick(60);
+            expect(await link.command("getstate")).toContain("homed=0x0f");
+        });
+    });
+
+    it("leg_abort fails the supervised leg; another node just acks", async () => {
+        await withLink(async (link, sim) => {
+            sim.homingLegMs = 1000;
+            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.command("leg_abort 2")).toBe("ok");
+            expect((await link.getStatus()).state).toBe(MachineState.HOMING);
+            expect(await link.command("leg_abort 1")).toBe("ok");
+            const st = await link.getStatus();
+            expect(st.state).toBe(MachineState.ALARM);
+            expect(st.alarm).toBe(AlarmReason.HOMING_FAIL);
         });
     });
 
     it("a latched limit follows the NODE across a rebind, not the slot", async () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 20;
-            await link.command("lin_leg 3 1 2500 500 400 88000"); // node 3 = slot 2
+            await link.command("leg 3 seek 1 2500 500 400 88000"); // node 3 = slot 2
             await tick(60);
             expect(await link.command("getstate")).toContain("latched=0x04");
 

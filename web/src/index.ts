@@ -415,6 +415,8 @@ export {
     setOrigin,
     linLeg,
     rotLeg,
+    parkLeg,
+    legAbort,
     probeMap,
     probeLeg,
     probeEnd,

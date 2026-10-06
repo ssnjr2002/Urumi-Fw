@@ -143,6 +143,11 @@ export const HomeFail = {
      *  other. The measurement is sound and the MECHANISM is not: slipped belt,
      *  stalled driver, or a feature that is not once-per-revolution. */
     INDEX_SLIP: 6,
+    /** A park leg stopped off its target: on a switch, short of it, or with the
+     *  node's datum witness gone. */
+    PARK: 8,
+    /** The leg was stopped by `leg_abort`. */
+    ABORTED: 9,
 } as const;
 export type HomeFail = (typeof HomeFail)[keyof typeof HomeFail];
 const HOME_FAIL_VALUES = Object.values(HomeFail) as readonly number[];

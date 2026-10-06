@@ -132,7 +132,7 @@ export class SimTransport implements Transport {
      * states, and this reproduces those exactly; how long the axis takes to
      * arrive is not something the host reasons about.
      */
-    homing: { node: number; retract: boolean; until: number } | null = null;
+    homing: { node: number; retract: boolean; park: boolean; until: number } | null = null;
 
     /** Wall-clock ms a modelled home leg takes. Short — it is not the point. */
     homingLegMs = 60;
@@ -557,13 +557,14 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 S._rederiveLatched();
                 return "ok";
             }
-            // `lin_leg <node> <dir> <startUs> <floorUs> <rampSteps> <maxSteps> <intent>`
+            // `leg <node> seek|retract <dir> <startUs> <floorUs> <rampSteps> <maxSteps>`
+            // `leg <node> park <target> <startUs> <floorUs> <rampSteps>`
+            // `leg <node> sweep …`
             // — arms ONE leg and returns; the machine sits in HOMING until
-            // _tickHoming() finishes it. `dir`/`startUs`/`floorUs`/`rampSteps`/
-            // `maxSteps` are accepted and ignored: this models the protocol, not
-            // the motion. `intent` is not ignored — it is the one field the real
-            // node actually checks before arming (include/common.h,
-            // CMD_HOME_LEG).
+            // _tickHoming() finishes it. The numbers are accepted and ignored:
+            // this models the protocol, not the motion. seek/retract is not
+            // ignored — it is the intent the real node checks before arming
+            // (include/common.h, CMD_HOME_LEG).
             //
             // Addresses a BUS ID, like the firmware. No `err unconfigured` and no
             // map lookup: a leg needs no committed axis_map, which is the point
@@ -571,35 +572,49 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             // _tickHoming() writes the node-framed masks and re-derives the
             // per-slot views, so an unbound node models correctly with no
             // special case.
-            case "lin_leg": {
+            case "leg": {
                 if (S.homing !== null) return "err busy";
                 if (!isIdlePausedAlarm(S.state)) return "err bad_state";
                 const node = parseInt(args[0] ?? "", 10);
                 if (!Number.isInteger(node)) return "err usage";
-                // The node reads its own switch ONCE, here, and that read alone
-                // decides seek vs retract.
-                const retract = S.nodeLatched.has(node);
-                // The intent bit does not feed the decision above -- it is
-                // checked AGAINST it, mirroring the real node's CMD_HOME_LEG
-                // handler. A missing arg (an older caller) is treated as "no
-                // opinion" and never mismatches.
-                const intentArg = args[6];
-                if (intentArg !== undefined) {
-                    const intendedRetract = intentArg === "1";
-                    if (intendedRetract !== retract) return "err node intent_mismatch";
+                const verb = args[1];
+                // This sim models no index node: no Hall capture, no `index`,
+                // no `steprev`. Answering the way a real Pico answers a
+                // wrong-kind verb is honest; pretending to sweep would let a
+                // test pass against a rotary path that was never exercised.
+                if (verb === "sweep") return `err kind_mismatch node ${node} is 1 want 2`;
+                if (verb === "park") {
+                    if (!S.nodeHomed.has(node)) return "err not_homed";
+                    // A park starts clear of its switch.
+                    if (S.nodeLatched.has(node)) return `err node ${node} nak intent_mismatch`;
+                    S.homing = { node, retract: false, park: true, until: Date.now() + S.homingLegMs };
+                    S.state = MachineState.HOMING;
+                    return "ok";
                 }
-                S.homing = { node, retract, until: Date.now() + S.homingLegMs };
+                if (verb !== "seek" && verb !== "retract") return "err usage";
+                // The node reads its own switch ONCE, here, and that read alone
+                // decides seek vs retract. The verb is checked AGAINST it,
+                // mirroring the real node's CMD_HOME_LEG handler.
+                const retract = S.nodeLatched.has(node);
+                if ((verb === "retract") !== retract) return `err node ${node} nak intent_mismatch`;
+                S.homing = { node, retract, park: false, until: Date.now() + S.homingLegMs };
                 S.state = MachineState.HOMING;
                 return "ok";
             }
-            // `rot_leg <node> <dir> <startUs> <floorUs> <rampSteps> <maxSteps>`
-            // — accepted by the protocol, but this sim models no index node:
-            // there is no Hall capture, no `index`, no `steprev`, and nothing to
-            // report in nodeStat. Answering the way a real Pico answers a
-            // wrong-kind verb is honest; pretending to sweep would let a test
-            // pass against a rotary path that was never exercised.
-            case "rot_leg":
-                return "err kind_mismatch node " + (args[0] ?? "?") + " is 1 want 2";
+            // `leg_abort <node>`: stops the supervised leg as a failure; any
+            // other node just acks.
+            case "leg_abort": {
+                const node = parseInt(args[0] ?? "", 10);
+                if (!Number.isInteger(node)) return "err usage";
+                if (S.homing !== null && S.homing.node === node) {
+                    S.homing = null;
+                    S.nodeHomed.delete(node);
+                    S._rederiveHomed();
+                    S.state = MachineState.ALARM;
+                    S.alarm = AlarmReason.HOMING_FAIL;
+                }
+                return "ok";
+            }
             case "getstate":
                 return (
                     `state=${S.state} enabled=0x${S.axesEnabled.toString(16).padStart(2, "0")} ` +
@@ -830,15 +845,18 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
         if (h === null || Date.now() < h.until) return;
         this.homing = null;
 
-        if (h.retract) this.nodeLatched.delete(h.node);
-        else this.nodeLatched.add(h.node);
-        this._rederiveLatched();
+        // A park ends off its switch with the datum kept: it moved within it.
+        if (!h.park) {
+            if (h.retract) this.nodeLatched.delete(h.node);
+            else this.nodeLatched.add(h.node);
+            this._rederiveLatched();
 
-        // A home moves the axis with the NODE's own pulser, which the master
-        // does not count, so the datum is dropped either way — §3.4's closing
-        // `setorigin` is what re-derives it.
-        this.nodeHomed.delete(h.node);
-        this._rederiveHomed();
+            // A home moves the axis with the NODE's own pulser, which the
+            // master does not count, so the datum is dropped either way —
+            // §3.4's closing `setorigin` is what re-derives it.
+            this.nodeHomed.delete(h.node);
+            this._rederiveHomed();
+        }
 
         if (this.axesLatched !== 0) {
             this.state = MachineState.ALARM;
