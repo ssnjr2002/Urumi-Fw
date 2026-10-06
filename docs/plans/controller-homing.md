@@ -582,6 +582,13 @@ In progress.
   `legArm` had the same flaw, supervising a leg by the ack bit; it now uses
   the intent the node accepted (its own `fix(pico)` commit). No `homewhy=`:
   `getstate` stays lean; re-run the leg by hand.
+* Re-checked on the bench after both fixes: plain `home` landed on the same
+  positions; Y started on its switch, its seek was refused, and it backed off,
+  re-approached and pulled off with no alarm, landing within 2 steps of the
+  plain home.
+* Not run: `pio test -e native` skips on this Windows machine (no host
+  compiler), so the Pico decoder has not seen the regenerated
+  `controller.msgpack`. Follow-up: run it where `native` builds.
 * Out of scope: the Pico's latch mask starts at 0 at boot and learns a node's
   latch only at that node's next successful leg, so `latched=` can read 0
   while a node holds one (the node's own gate still refuses stream steps).
