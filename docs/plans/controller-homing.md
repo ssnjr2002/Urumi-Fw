@@ -456,7 +456,7 @@ busy check for every leg, `setorigin` and `home_end` (`cmd/axis.cpp:268,346,
 
 ### Status
 
-Ready to merge.
+Done, merged (f8c79ea..427cf35). Unblocks branch 3 (`feature/home-command`).
 
 ### Outcome
 
