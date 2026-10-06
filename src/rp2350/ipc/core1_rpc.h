@@ -197,6 +197,10 @@ typedef struct {
 // you just received, before issuing another.
 const char* rpcResultText(RpcResult r);
 
+// The NAK_* reason of the last completed call, 0 unless it was RPC_NAK. Same
+// rule as rpcResultText: read it before issuing another call.
+uint8_t rpcLastNakReason(void);
+
 // ─── Decoded node status ──────────────────────────────────────────────────────
 // Every command that reports node state answers with the same bytes, from one
 // serializer on the node (buildNodeStatus): [type][flags][type tail…], stepper

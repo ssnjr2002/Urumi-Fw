@@ -6,7 +6,13 @@
 static uint8_t failWhy = LEGFAIL_NONE;
 static uint8_t failNode;
 
+static uint8_t heldCycle;
+
 bool homingActive(void) { return legAny(); }
+
+void homingHold(uint8_t cycle) { heldCycle = cycle; }
+
+uint8_t homingHeld(void) { return heldCycle; }
 
 uint8_t homingFailWhy(void) { return failWhy; }
 
@@ -53,6 +59,13 @@ static void homingFail(const LegEnd& e) {
     machineState = STATE_ALARM;
 }
 
+void homingAbandon(uint8_t node, uint8_t why) {
+    LegEnd e = {};
+    e.node    = node;
+    e.failWhy = why;
+    homingFail(e);
+}
+
 // The first leg opens the session. The only alarm a leg is admitted from is
 // ALARM_LIMIT_LATCHED (cmdLeg), and the latch mask keeps that fact, so the
 // reason is cleared here: anything found in it later is new. The exit
@@ -68,9 +81,10 @@ static void homingOpen(void) {
 const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                         bool intendedRetract,
                         uint16_t startUs, uint16_t floorUs,
-                        uint16_t rampSteps, uint32_t maxSteps) {
+                        uint16_t rampSteps, uint32_t maxSteps,
+                        bool* intentMismatch) {
     const char* why = legArm(node, expectKind, dir, intendedRetract,
-                             startUs, floorUs, rampSteps, maxSteps);
+                             startUs, floorUs, rampSteps, maxSteps, intentMismatch);
     if (!why) homingOpen();
     return why;
 }

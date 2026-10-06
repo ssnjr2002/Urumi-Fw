@@ -272,7 +272,7 @@ bool cmdAxesMap(const char* args) {
 static bool parseNode(const char** p, uint8_t* node);
 
 bool cmdSetOrigin(const char* args) {
-    if (homingActive()) { Serial.println("err busy"); return true; }
+    if (homingActive() || homingHeld()) { Serial.println("err busy"); return true; }
     if (!homingWaiting() && busGateDenies()) return true;
 
     // Parse and check every pair before any bus I/O. No pair, a repeated
@@ -332,7 +332,7 @@ bool cmdSetOrigin(const char* args) {
 // ── home_end — close a homing session without a datum ───────────────────────
 // Every leg already dropped its node's origin, so nothing is recorded.
 bool cmdHomeEnd(const char*) {
-    if (homingActive()) { Serial.println("err busy"); return true; }
+    if (homingActive() || homingHeld()) { Serial.println("err busy"); return true; }
     if (!homingWaiting()) { Serial.println("err bad_state"); return true; }
     resumeOrHold();
     Serial.println("ok");
@@ -385,6 +385,8 @@ bool cmdHomeEnd(const char*) {
 
 // Which states may start a leg. Prints its own error; callers return on true.
 static bool legGateDenies() {
+    // A `home` run owns its session's legs.
+    if (homingHeld()) { Serial.println("err busy"); return true; }
     // IDLE opens a session; HOMING continues one, beside any legs on other
     // nodes (a busy node is leg.h's refusal). LIMIT_LATCHED is the one alarm a
     // leg leaves (by retracting); every other alarm has its own exit.

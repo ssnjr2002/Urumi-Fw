@@ -204,6 +204,12 @@ void originAdopt(uint8_t n, int32_t nodePos) {
     if (s != SLOT_NONE) machinePos[s] = nodePos - nodeOrigin[n];
 }
 
+int32_t originTarget(uint8_t n, int32_t machineSteps) {
+    return n <= BUS_ADDR_MAX ? nodeOrigin[n] + machineSteps : 0;
+}
+
+uint16_t originMask(void) { return nodeHomed; }
+
 bool originValid(uint8_t n) {
     return n <= BUS_ADDR_MAX && (nodeHomed & (1u << n)) != 0;
 }

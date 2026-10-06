@@ -135,7 +135,8 @@ static uint8_t rotaryIdxFail(uint8_t cause, uint8_t crossings) {
 
 const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
                    uint16_t startUs, uint16_t floorUs, uint16_t rampSteps,
-                   uint32_t maxSteps) {
+                   uint32_t maxSteps, bool* intentMismatch) {
+    if (intentMismatch) *intentMismatch = false;
     const char* why;
     Leg* lp = legClaim(node, &why);
     if (!lp) return why;
@@ -163,6 +164,8 @@ const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedR
         // the wire rather than being a silent drop the master reads as absence.
         // Same path covers NAK_INTENT_MISMATCH: the host's plan disagreed with
         // the node's own switch read (docs/homing.md §1.4/§2.6).
+        if (intentMismatch)
+            *intentMismatch = r == RPC_NAK && rpcLastNakReason() == NAK_INTENT_MISMATCH;
         return refuse("node %d %s", node, rpcResultText(r));
     }
     if (!st.hasStepperTail) return "bad_reply";

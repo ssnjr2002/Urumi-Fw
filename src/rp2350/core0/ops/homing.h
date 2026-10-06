@@ -16,7 +16,8 @@
 const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                         bool intendedRetract,
                         uint16_t startUs, uint16_t floorUs,
-                        uint16_t rampSteps, uint32_t maxSteps);
+                        uint16_t rampSteps, uint32_t maxSteps,
+                        bool* intentMismatch = nullptr);
 
 // Arm a park leg (legArmPark) in the session, as homingBegin. A finished park
 // keeps the node's origin; the caller checks it is homed.
@@ -35,6 +36,17 @@ void homingTick(void);
 // A dummy leg (legArmDummy) in the session. Touches no latch and no origin.
 // The caller gates it as a leg. Returns as homingBegin.
 const char* homingDummyBegin(bool succeed, uint32_t ms);
+
+// A controller run holds the session between its legs: raw legs, `setorigin`
+// and `home_end` answer `err busy` while it is held. The run holds it with the
+// cycle in progress and releases it with 0; homingHeld returns that cycle.
+void homingHold(uint8_t cycle);
+uint8_t homingHeld(void);
+
+// Fail the cycle on `node` for a cause found outside a leg (LEGFAIL_*): as a
+// failed leg, the other legs are aborted, `node`'s origin is dropped and the
+// machine alarms.
+void homingAbandon(uint8_t node, uint8_t why);
 
 // True while any leg runs. Lets the gates refuse `setorigin` and `home_end`
 // without reading machineState, which anything may write.

@@ -53,6 +53,11 @@ bool cmdGetState(const char*) {
     int32_t pz;
     if (probeValid(axisNode(SLOT_Z), &pz)) Serial.printf(" probed=1 pz=%ld", (long)pz);
     else                                     Serial.print(" probed=0");
+
+    // The cycle a `home` run is in, while one is; and which NODES hold an
+    // origin, mapped or not (`homed=` covers the bound axes only).
+    if (homingHeld()) Serial.printf(" homecycle=%d", homingHeld());
+    Serial.printf(" nodehomed=0x%03x", originMask());
 #ifdef DEBUG_TIMING
     // texp/tmeas = expected vs measured duration (us) of the last completed
     // burst, from the intervals actually commanded vs wall-clock execution

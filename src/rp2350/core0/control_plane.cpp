@@ -74,6 +74,10 @@ static const Cmd kCommands[] = {
 
 static const Cmd kControllerCommands[] = {
     { "unalarm",      cmdUnalarm     },
+    { "home",         cmdHome        },
+    { "home_unhomed", cmdHomeUnhomed },
+    { "home_cycle",   cmdHomeCycle   },
+    { "home_head",    cmdHomeHead    },
 };
 
 template <size_t N>

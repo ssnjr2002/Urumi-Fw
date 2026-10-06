@@ -23,6 +23,7 @@
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "controller/seq/controller.h"
+#include "controller/seq/home.h"
 
 // ─── Text line assembly ───────────────────────────────────────────────────────
 
@@ -174,6 +175,8 @@ void loop() {
         // command: blocking there would hold `getstate` and `stop` shut for the
         // whole seek, on the one command that is driving an axis at a hard stop.
         homingTick();
+        // A `home` run, after the legs it sequences have been polled.
+        homeTick();
         // And a probe leg, for the same reason and on the same terms: a leg runs
         // for seconds with a tool descending onto a bed, and holding `getstate`
         // and `stop` shut for the whole of it is exactly what a supervisor out

@@ -126,6 +126,8 @@ RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs) {
     }
 }
 
+uint8_t rpcLastNakReason(void) { return s_lastNakReason; }
+
 const char* rpcResultText(RpcResult r) {
     switch (r) {
         case RPC_OK:        return "ok";

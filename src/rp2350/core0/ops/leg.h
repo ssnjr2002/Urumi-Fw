@@ -45,6 +45,13 @@
                                 // short of it, or with the node's datum gone
 #define LEGFAIL_ABORTED      9  // the operator aborted the leg (leg_abort)
 
+// ── a `home` run only (controller/seq/home) ─────────────────────────────────
+#define LEGFAIL_REFUSED     10  // the node refused a leg mid-run (`leg` would
+                                // have answered err)
+#define LEGFAIL_DATUM       11  // the cycle's datum commit failed on this node
+#define LEGFAIL_INDEX_TOL   12  // the two sweeps disagree past toleranceDeg, or
+                                // measured revolutions over 2% apart
+
 // How a leg ended, filled by legPoll and legDrop.
 struct LegEnd {
     uint8_t node;
@@ -87,9 +94,12 @@ enum LegPoll : uint8_t {
 // wrong leg's semantics under the right leg's budget. Meaningless for
 // HOMING_KIND_INDEX -- there is no pin to agree with -- and `leg <n> sweep`
 // passes false.
+//
+// `*intentMismatch`, when given, is set on a NAK_INTENT_MISMATCH refusal: the
+// node's pin disagreed with `intendedRetract`.
 const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
                    uint16_t startUs, uint16_t floorUs, uint16_t rampSteps,
-                   uint32_t maxSteps);
+                   uint32_t maxSteps, bool* intentMismatch = nullptr);
 
 // Arm a park leg on `node` with CMD_PARK_LEG: run to the absolute node counter
 // `target`. Any node with a terminator; the caller checks the origin. Returns

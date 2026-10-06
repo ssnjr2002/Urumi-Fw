@@ -159,12 +159,19 @@ void originInvalidate(uint8_t node);
 // machinePos for its slot, as a bind does. No-op unless `n` is homed.
 void originAdopt(uint8_t n, int32_t nodePos);
 
+// The node counter at which homed node `n` stands at machine position
+// `machineSteps`: the target of a park leg. Meaningful only if originValid(n).
+int32_t originTarget(uint8_t n, int32_t machineSteps);
+
 // Whole-machine version -- estop, soft limit, disable-all.
 void originInvalidateAll(void);
 
 // True once an origin has been recorded for node `n` and nothing since has
 // invalidated it. Core 0's half of the validity conjunction.
 bool originValid(uint8_t n);
+
+// The nodes holding an origin, bit n = node n (getstate nodehomed=).
+uint16_t originMask(void);
 
 // ─── Tool probe, in the NODE frame ────────────────────────────────────────────
 // The machine-frame Z at which node n's tool opened the bed switch. Keyed by bus
