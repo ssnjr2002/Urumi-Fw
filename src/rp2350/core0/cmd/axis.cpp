@@ -313,29 +313,8 @@ bool cmdSetOrigin(const char* args) {
     // fault that arrived while I was working". Snapshot the reason on entry
     // and only clear what we came in with.
     uint8_t alarmAtEntry = alarmReason;
-    uint8_t     badNode = 0;
-    const char* badWhy  = nullptr;
-    for (uint8_t i = 0; i < count; i++) {
-        const uint8_t n = nodes[i];
-        // CMD_DATUM_SET arms the node's continuity witness AND returns the
-        // counter it refers to. One transaction, so the origin recorded here
-        // and the witness armed there describe the same instant — a separate
-        // read could straddle a reset and pair a witness with a stale count.
-        // The datum is recorded in the NODE's frame, so machinePos is a derived
-        // offset from now on and survives any later rebinding.
-        NodeStatus st;
-        const RpcResult r = rpcNodeStatus(CMD_DATUM_SET, n, 0, &st);
-        const char* why = r != RPC_OK              ? rpcResultText(r)
-                        : !st.hasStepperTail       ? "not_stepper"
-                        : !(st.flags & NODE_FLAG_DATUM) ? "no_datum"
-                        : nullptr;
-        if (why) {
-            originInvalidate(n);
-            if (!badWhy) { badNode = n; badWhy = why; }
-            continue;
-        }
-        originRecord(n, st.pos, steps[i]);
-    }
+    uint8_t badNode;
+    const char* badWhy = originDatum(nodes, steps, count, &badNode);
     // A fault that arrived while we were on the bus outranks this command. The
     // datum we just recorded describes a machine that has since stopped hard,
     // so refuse rather than clear it — reconcileValidity() drops the masks on

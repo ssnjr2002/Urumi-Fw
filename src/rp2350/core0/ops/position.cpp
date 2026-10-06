@@ -172,6 +172,30 @@ void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps) {
     if (s != SLOT_NONE) { machinePos[s] = machineSteps; axes_homed |= (1 << s); }
 }
 
+const char* originDatum(const uint8_t* nodes, const int32_t* steps, uint8_t n,
+                        uint8_t* badNode) {
+    const char* badWhy = nullptr;
+    for (uint8_t i = 0; i < n; i++) {
+        // CMD_DATUM_SET arms the node's continuity witness AND returns the
+        // counter it refers to. One transaction, so the origin recorded here
+        // and the witness armed there describe the same instant — a separate
+        // read could straddle a reset and pair a witness with a stale count.
+        NodeStatus st;
+        const RpcResult r = rpcNodeStatus(CMD_DATUM_SET, nodes[i], 0, &st);
+        const char* why = r != RPC_OK                   ? rpcResultText(r)
+                        : !st.hasStepperTail            ? "not_stepper"
+                        : !(st.flags & NODE_FLAG_DATUM) ? "no_datum"
+                        : nullptr;
+        if (why) {
+            originInvalidate(nodes[i]);
+            if (!badWhy) { *badNode = nodes[i]; badWhy = why; }
+            continue;
+        }
+        originRecord(nodes[i], st.pos, steps[i]);
+    }
+    return badWhy;
+}
+
 // Written from Core 0 as originRecord is: inside a homing session no stream
 // runs, so Core 1 is not advancing machinePos underneath.
 void originAdopt(uint8_t n, int32_t nodePos) {

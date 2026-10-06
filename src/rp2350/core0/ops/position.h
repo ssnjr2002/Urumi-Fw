@@ -138,6 +138,13 @@ extern uint8_t homingLatched;
 // nodeOrigin and machinePos are both the WIRE frame, which is steps.
 void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps);
 
+// Datum each of `nodes[0..n)` at `steps[i]`: CMD_DATUM_SET, then originRecord
+// from its ack. Every node is tried; one that fails has its origin
+// invalidated. Returns nullptr, or the first failure's reason ("not_stepper",
+// "no_datum" or an RPC result) with its node in `*badNode`. Does bus I/O.
+const char* originDatum(const uint8_t* nodes, const int32_t* steps, uint8_t n,
+                        uint8_t* badNode);
+
 // Destroy every position reference for node `n`: its origin, its parked-counter
 // entry, and the homed bit of whatever slot it occupies. Both frames die
 // together, here, or the two disagree.
