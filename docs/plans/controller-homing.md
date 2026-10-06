@@ -442,20 +442,40 @@ busy check for every leg, `setorigin` and `home_end` (`cmd/axis.cpp:268,346,
   `setorigin <node>:<steps> …` replaces the slot form, per node through the
   existing `DATUM_SET` → `originRecord` loop. Every pair is tried; one reply
   line: `ok`, or `err node <id> <why>` for the first failure, the others
-  keeping their datum. A node not in the config (`axisNodeInConfig`) or not a
-  stepper is an error before any bus I/O.
+  keeping their datum. A node not in the config (`axisNodeInConfig`) is an
+  error before any bus I/O; a non-stepper is known only from the `DATUM_SET`
+  reply (`err node <id> not_stepper`).
 * `cmd/query.cpp`: `getstate` appends `homenode=<id>` beside `homefail=`.
 * Web: `commands.ts` `setOrigin(link, pairs)`; `homing/sequence.ts:240,389`
-  resolve the node from the axis map they already read; `sim.ts` models
-  parallel legs, the cycle abort, node `setorigin` and `homenode=`;
-  `status.ts` parses `homenode`; tests `sim.test.ts`, `probe.test.ts:156`,
-  `commands.test.ts`. Web homing stays serial.
+  resolve the node from the axis map they already read; `status.ts` parses
+  `homenode`; tests `commands.test.ts`, `controller.test.ts`. Web homing stays
+  serial. The sim is not changed (agreed in Read): it still models one-leg
+  sessions and slot-form `setorigin`.
 * Docs: `docs/homing.md` (session, parallel legs), `docs/wire_protocol.md`
   (`setorigin` syntax, `homenode=`, busy rules).
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces for branch 3: `legActive(node)`, `legAny()`, `legAbortAll`,
+  `legDropAll` (`ops/leg.h`); `homingFailNode()`; `setOrigin(link, pairs)` on
+  the web.
+* Decided in Write: a failed `setorigin` leaves the homing session open for a
+  retry (only `ok` closes it); `dummy_leg`'s `ok` is now printed by
+  `homingDummyBegin` (it can be `err busy` on a full table).
+* The sim is unchanged: `controller.test.ts` sends slot-form `setorigin z`
+  raw, and the homing tests pass because the sim answers `ok` to any
+  `setorigin` arguments, so they no longer check the datum.
+* Out of scope: a sibling whose abort is not acked drops its origin but may
+  still be moving under `ALARM_HOMING_FAIL`; nothing stops it.
+  `docs/homing.md`'s worked example (~line 1030) still uses the old `home x`
+  and slot `setorigin` forms.
+* Not run on the machine: two legs at once, a failure with a running sibling
+  (park keeping `homed`), `leg_abort` on one of two legs, `setorigin` with a
+  dead node.
 
 ## Open questions
 
