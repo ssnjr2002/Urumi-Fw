@@ -549,7 +549,8 @@ the homing config.
 
 ### Status
 
-In progress.
+Done: merged into `main` (25ece01). The last branch of this plan; it
+unblocks nothing.
 
 ### Outcome
 
