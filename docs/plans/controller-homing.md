@@ -354,23 +354,25 @@ Done, merged (d73fe25..0c1981a). Unblocks 1b.
     so no before-count is needed; a reset clears the datum flag. Otherwise
     `LEGFAIL_PARK` (or `DEADLINE`/`POLL`). A refused arm (`NAK_NO_DATUM`,
     `NAK_BUSY`) moved nothing and fails nothing.
+  * `legArmPark(node, target, …)` beside `legArm`, sharing the kind probe
+    and the claim. A park opens the homing session like any leg.
   * **Origin:** a finished park keeps the origin and re-derives `machinePos`
-    from the node's counter (as `slotAdoptStatus`, `position.h:27`); every
-    other leg end, a failed park included, still calls `originInvalidate`.
-  * **Abort:** `leg_abort <node>` aborts that node only. Inside a homing
-    session it fails the leg with a new `LEGFAIL_ABORTED` (`ALARM_HOMING_FAIL`);
-    outside one (bench) the leg is released with no verdict, origin dropped.
-    Aborts the Pico itself sends while failing a cycle (branch 2) add no
-    verdict.
+    from the node's counter through a new `originAdopt(node, status)` in
+    `core0/ops/position.{h,cpp}` (as `slotAdoptStatus`); every other leg end,
+    a failed park included, still calls `originInvalidate`.
+  * **Abort:** `leg_abort <node>` aborts that node only. On the supervised
+    node it fails the leg with a new `LEGFAIL_ABORTED` (`ALARM_HOMING_FAIL`);
+    every Pico-supervised leg runs inside a session. Any other node just
+    acks. Aborts the Pico itself sends while failing a cycle (branch 2) add
+    no verdict.
   * `core0/cmd/axis.cpp`: `leg <node> seek|retract|sweep|park …` and
     `leg_abort <node>` replace `cmdLinLeg`/`cmdRotLeg`; `control_plane.cpp:60`
     table. Seek and retract set the intent bit, so a mismatch NAKs as today.
     `park` takes a target in node counts (the wire payload as typed). It
     needs the node homed on the Pico (`originValid`), else `err not_homed`
     with no bus I/O; the target is in the node's frame as `setorigin` left
-    it. On a linear axis with `softLimits`, the target is converted to mm
-    through the origin and checked against the soft range, else
-    `err soft_limit`; a rotary axis or one without soft limits is unchecked.
+    it. No soft-range check: deferred to coordinate-system.md's
+    `feature/pico-frames`, which defines the machine frame it needs.
 * **Web:** `web/src/wire/link/commands.ts` (`:320-349`): `linLeg`/`rotLeg`
   move to the `leg` verbs; `parkLeg` and `legAbort` added;
   `web/src/homing/sequence.ts` and `web/src/wire/link/backends/sim.ts`
