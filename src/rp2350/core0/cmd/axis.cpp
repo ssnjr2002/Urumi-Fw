@@ -350,15 +350,15 @@ bool cmdHomeEnd(const char*) {
     return true;
 }
 
-// ── lin_leg / rot_leg <node> <dir> <start_us> <floor_us> <ramp> <max> [intent]
+// ── leg <node> seek|retract|sweep <dir> <start_us> <floor_us> <ramp> <max>
+//    leg <node> park <target> <start_us> <floor_us> <ramp>
+//    leg_abort <node>
 //
 // docs/homing.md §2.2. ONE LEG, NOT A HOME. The firmware runs a leg and reports
 // what it measured; sequencing legs into a home, deciding when a pair is done,
-// and turning the result into a datum all belong to the host (§3). The verb says
-// so, which the old `home` did not: for a linear axis `home` was one leg of
-// four, and for a rotary one it looked like the whole job. Two verbs also mean
-// no argument means two things -- `rot_leg` has no `intent` because there is no
-// pin to predict.
+// and turning the result into a datum all belong to the host (§3). `sweep` is
+// the rotary leg and has no seek/retract intent: there is no pin to predict.
+// `park` runs to an absolute node counter and needs the node homed.
 //
 // ADDRESSES A BUS ID, not an axis. Every output of a leg is node-framed: the
 // span, the index in the node's own counter, the limit latch (a switch is wired
@@ -388,14 +388,12 @@ bool cmdHomeEnd(const char*) {
 // so the next one seeks. WHICH mode ran -- needed to interpret the terminal
 // flags -- comes back in the arm ack; see homingBegin().
 //
-// `intent` is the host's prediction of that same thing, checked rather than
-// obeyed: the host's own plan (§3.4) knows whether this leg is SUPPOSED to start
-// on the switch, so it says so, and the node NAKs (NAK_INTENT_MISMATCH) rather
-// than silently running under the wrong leg's budget semantics. The Pico is a
-// pure relay for it.
+// `seek` / `retract` is the host's prediction of that same thing, checked
+// rather than obeyed: the host's own plan (§3.4) knows whether this leg is
+// SUPPOSED to start on the switch, so it says so, and the node NAKs
+// (NAK_INTENT_MISMATCH) rather than silently running under the wrong leg's
+// budget semantics. The Pico is a pure relay for it.
 
-// Everything both verbs share: gates, the node token, and the six numbers.
-// `intent` is parsed by the caller because only one verb has it.
 // Which states may start a leg. Prints its own error; callers return on true.
 static bool legGateDenies() {
     // A second leg while one is in flight: names what to wait for.
@@ -408,14 +406,35 @@ static bool legGateDenies() {
     return false;
 }
 
-static bool legCommon(const char* args, uint8_t expectKind, bool wantIntent) {
+// Parse a node id; advances *p past it. False on a bad token.
+static bool parseNode(const char** p, uint8_t* node) {
+    char* end;
+    const unsigned long v = strtoul(*p, &end, 10);
+    if (end == *p || v > BUS_ADDR_MAX) return false;
+    *node = (uint8_t)v;
+    *p = end;
+    return true;
+}
+
+bool cmdLeg(const char* args) {
     if (legGateDenies()) return true;
 
-    char* end;
-    const unsigned long nodeV = strtoul(args, &end, 10);
-    if (end == args || nodeV > BUS_ADDR_MAX) { Serial.println("err usage"); return true; }
-    const uint8_t node = (uint8_t)nodeV;
-    const char* p = end;
+    const char* p = args;
+    uint8_t node;
+    if (!parseNode(&p, &node)) { Serial.println("err usage"); return true; }
+    while (*p == ' ') p++;
+    const char* verb = p;
+    while (*p && *p != ' ') p++;
+    const size_t vlen = (size_t)(p - verb);
+    auto is = [&](const char* w) { return strlen(w) == vlen && strncmp(verb, w, vlen) == 0; };
+    const bool park = is("park");
+    uint8_t expectKind;
+    bool intent = false;
+    if      (is("seek"))    expectKind = HOMING_KIND_LIMIT;
+    else if (is("retract")) { expectKind = HOMING_KIND_LIMIT; intent = true; }
+    else if (is("sweep"))   expectKind = HOMING_KIND_INDEX;
+    else if (park)          expectKind = HOMING_KIND_NONE;   // any terminator
+    else { Serial.println("err usage"); return true; }
 
     // A de-energised node accepts CMD_HOME_LEG and pulses into a motor that
     // cannot turn: the terminator is never reached, so the leg burns its entire
@@ -433,34 +452,49 @@ static bool legCommon(const char* args, uint8_t expectKind, bool wantIntent) {
         Serial.println("err not_enabled"); return true;
     }
 
-    const int want = wantIntent ? 6 : 5;
-    unsigned long v[6] = {0};
+    // The target is in the node's own frame, so it means something only while
+    // the Pico holds that node's origin. Checked before any bus I/O.
+    if (park && !originValid(node)) { Serial.println("err not_homed"); return true; }
+
+    // Five numbers: the first is <dir> (0/1) or a park's signed <target>; the
+    // rest are start, floor, ramp, and for a non-park leg the budget.
+    char* end;
+    const long first = strtol(p, &end, 10);
+    if (end == p) { Serial.println("err usage"); return true; }
+    p = end;
+    const int want = park ? 3 : 4;
+    unsigned long v[4] = {0};
     for (int i = 0; i < want; i++) {
         v[i] = strtoul(p, &end, 10);
         if (end == p) { Serial.println("err usage"); return true; }
         p = end;
     }
-    if (v[0] > 1 || v[1] > 0xFFFF || v[2] > 0xFFFF || v[3] > 0xFFFF || v[5] > 1) {
+    if ((!park && (first < 0 || first > 1)) ||
+        v[0] > 0xFFFF || v[1] > 0xFFFF || v[2] > 0xFFFF) {
         Serial.println("err range"); return true;
     }
     // A zero interval would divide the pulser's ramp by nothing and free-run the
     // step pin; a zero budget is a command that cannot move and cannot fail.
-    if (v[1] == 0 || v[2] == 0 || v[4] == 0) { Serial.println("err range"); return true; }
+    if (v[0] == 0 || v[1] == 0 || (!park && v[3] == 0)) {
+        Serial.println("err range"); return true;
+    }
 
-    return homingBegin(node, expectKind, (uint8_t)(v[0] & 1), v[5] != 0,
-                       (uint16_t)v[1], (uint16_t)v[2],
-                       (uint16_t)v[3], (uint32_t)v[4]);
+    if (park)
+        return homingParkBegin(node, (int32_t)first, (uint16_t)v[0],
+                               (uint16_t)v[1], (uint16_t)v[2]);
+    return homingBegin(node, expectKind, (uint8_t)first, intent,
+                       (uint16_t)v[0], (uint16_t)v[1],
+                       (uint16_t)v[2], (uint32_t)v[3]);
 }
 
-bool cmdLinLeg(const char* args) {
-    return legCommon(args, HOMING_KIND_LIMIT, true);
-}
-
-// No `intent`: a rotary node has no limit pin, so there is nothing for the host
-// to predict and nothing for the node to disagree with. It passes false, and
-// the node's intent check is dead code on an index build.
-bool cmdRotLeg(const char* args) {
-    return legCommon(args, HOMING_KIND_INDEX, false);
+// Allowed in every state but RUNNING, where no leg can run and the bus belongs
+// to the stream. An idle node just acks.
+bool cmdLegAbort(const char* args) {
+    if (machineState == STATE_RUNNING) { Serial.println("err bad_state"); return true; }
+    const char* p = args;
+    uint8_t node;
+    if (!parseNode(&p, &node)) { Serial.println("err usage"); return true; }
+    return homingAbort(node);
 }
 
 // ── dummy_leg <0|1> [ms] — a leg with no node, for testing the session ───────
@@ -664,17 +698,17 @@ bool cmdProbeMap(const char* args) {
 
 // ── probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps>
 //             <deadline_us> <intent> ─────────────────────────────────────────
-// Positional, following lin_leg's idiom. The host owns the sequence and the Pico
+// Positional, following the leg verb's idiom. The host owns the sequence and the Pico
 // runs ONE leg: there is no leg index, and the Pico never learns which leg of
 // four this is.
 //
-// No node argument, and that is the difference from lin_leg rather than an
+// No node argument, and that is the difference from `leg` rather than an
 // oversight. A home is node-framed and runs before any map is committed; a probe
 // is the opposite — the session already bound both nodes, so naming them again
 // would be a second source of truth that could disagree with the binding.
 //
 // `start_us` is not in the design document's argument table. It is here for the
-// reason lin_leg carries both a start and a floor: a ramp needs somewhere to
+// reason `leg` carries both a start and a floor: a ramp needs somewhere to
 // ramp FROM, and the alternative was a hidden multiplier of ceil_us buried in
 // the emitter, which is a worse place for a number that decides whether Z loses
 // steps.

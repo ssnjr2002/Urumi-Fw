@@ -402,7 +402,8 @@ Phase 2.
 | `pingnode` / `busstat` / `nodestat` | ✓ | ✗ | ✓ | ✓ | between legs |
 | `enable` / `disable` / `makesafe` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `setorigin` | ✓ | ✗ | ✓ | ✓ | between legs |
-| `lin_leg` / `rot_leg` / `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | between legs |
+| `leg` / `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | between legs |
+| `leg_abort` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `home_end` | ✗ | ✗ | ✗ | ✗ | between legs |
 | `axes_map` / `slot_map` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `pause` | ✗ | ✓ | ✗ | ✗ | ✗ |

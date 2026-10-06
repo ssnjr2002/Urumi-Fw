@@ -172,6 +172,14 @@ void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps) {
     if (s != SLOT_NONE) { machinePos[s] = machineSteps; axes_homed |= (1 << s); }
 }
 
+// Written from Core 0 as originRecord is: inside a homing session no stream
+// runs, so Core 1 is not advancing machinePos underneath.
+void originAdopt(uint8_t n, int32_t nodePos) {
+    if (!originValid(n)) return;
+    uint8_t s = nodeAxis(n);
+    if (s != SLOT_NONE) machinePos[s] = nodePos - nodeOrigin[n];
+}
+
 bool originValid(uint8_t n) {
     return n <= BUS_ADDR_MAX && (nodeHomed & (1u << n)) != 0;
 }

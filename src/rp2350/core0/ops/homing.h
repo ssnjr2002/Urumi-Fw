@@ -17,6 +17,16 @@ bool homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                  uint16_t startUs, uint16_t floorUs,
                  uint16_t rampSteps, uint32_t maxSteps);
 
+// Arm a park leg (legArmPark) in the session, as homingBegin. A finished park
+// keeps the node's origin; the caller checks it is homed.
+bool homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
+                     uint16_t floorUs, uint16_t rampSteps);
+
+// leg_abort: stop `node`'s pulser. If it ran the supervised leg, that leg fails
+// as LEGFAIL_ABORTED (ALARM_HOMING_FAIL); any other node just acks. Prints the
+// reply line.
+bool homingAbort(uint8_t node);
+
 // Poll a leg in progress and turn its end into the session's state. No-op
 // unless a leg is armed. Call from the Core 0 loop.
 void homingTick(void);

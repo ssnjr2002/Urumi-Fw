@@ -100,7 +100,7 @@ const char* probeCauseText(uint8_t c);
 
 struct ProbeLegReq {
     uint8_t  zSlot, vacSlot, vacNode;
-    uint8_t  dir;             // 0/1, as lin_leg
+    uint8_t  dir;             // 0/1, as `leg`
     // true = IGNORE the switch and run the budget out; false = stop when it
     // opens. Exactly stepper.cpp's homing split, and the budget means opposite
     // things in the two modes: a seek's is a runaway cap for a move the switch
@@ -322,6 +322,13 @@ RpcResult rpcBusStats(uint8_t node, BusStats* out);
 RpcResult rpcHomeLeg(uint8_t node, uint8_t dir, bool intendedRetract,
                      uint16_t startIntervalUs, uint16_t floorIntervalUs,
                      uint16_t rampSteps, uint32_t maxSteps, NodeStatus* out);
+
+// CMD_PARK_LEG: run to the absolute node counter `target`. Marshalling only.
+RpcResult rpcParkLeg(uint8_t node, int32_t target, uint16_t startIntervalUs,
+                     uint16_t floorIntervalUs, uint16_t rampSteps, NodeStatus* out);
+
+// CMD_LEG_ABORT: stop the node's pulser, motor left energised.
+RpcResult rpcLegAbort(uint8_t node, NodeStatus* out);
 
 // ─── Server side (Core 1) ─────────────────────────────────────────────────────
 // core1/rpc_server.cpp implements these; nothing on Core 0 calls them.

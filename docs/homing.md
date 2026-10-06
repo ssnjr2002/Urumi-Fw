@@ -1,6 +1,6 @@
 # Homing
 
-**Status:** §1 (the node) and §2 (the Pico: `lin_leg`/`rot_leg`, `setorigin <pos_steps>`, the
+**Status:** §1 (the node) and §2 (the Pico: `leg`, `setorigin <pos_steps>`, the
 supervisor in `src/rp2350/core0/homing.cpp`) implemented and confirmed on
 hardware — **except** the `<intent>` argument and `NAK_INTENT_MISMATCH` (§1.2,
 §1.4, §2.2), which build clean on both `db_node1` and `pico` but have not yet
@@ -442,7 +442,7 @@ mechanism is a CRC32 equality check — an *agreement* mechanism, not an *access
 one. It proves both sides hold the same bytes; it never lets the Pico read a
 field. Homing is not blocked behind it.
 
-### 2.2 The `lin_leg` and `rot_leg` commands
+### 2.2 The `leg` and `leg_abort` commands
 
 Control plane (text, one line in, one line out) — homing is infrequent,
 parameterised, and wants a reply, which is that plane's exact profile. The data
@@ -450,8 +450,10 @@ plane is for high-rate windowed streams and would need new binary framing for no
 gain.
 
 ```
-lin_leg <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps> <intent>
-rot_leg <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+leg <node> seek|retract <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+leg <node> sweep <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+leg <node> park <target> <start_us> <floor_us> <ramp_steps>
+leg_abort <node>
 ```
 
 **ONE LEG, NOT A HOME**, and the verbs say so. These replace the single `home`
@@ -483,10 +485,14 @@ slot's homed bit only if some slot happens to point at that node;
 `slotAdoptStatus()` recomputes `machinePos` from `nodeOrigin` on every later
 bind. A leg run before the map and a map committed after it land correctly.
 
-**Two verbs, so no argument means two things.** `rot_leg` has no `<intent>`,
-because a rotary node has no limit pin: there is nothing for the host to predict
-and nothing for the node to disagree with. Under the single overloaded verb that
-argument was inert on half the nodes it could be sent to.
+**The mode word is the intent.** `seek` and `retract` are the host's prediction
+of the node's pin read (§1.2), checked rather than obeyed. `sweep` is the rotary
+leg and carries no intent: a rotary node has no limit pin, so there is nothing
+to predict and nothing to disagree with. `park` (§1.4a) takes a signed target in
+the node's own counts and needs the Pico to hold the node's origin, else
+`err not_homed` before any bus I/O. It is not checked against the soft range:
+that needs the machine frame (docs/plans/coordinate-system.md, `pico-frames`).
+`leg_abort` is allowed in every state but RUNNING.
 
 **The Pico probes the node's kind before arming.** `HOMING_KIND_*` is declared in
 every stepper's status tail, so `homingBegin()` spends one extra transaction
@@ -494,8 +500,8 @@ every stepper's status tail, so `homingBegin()` spends one extra transaction
 `err kind_mismatch node <n> is <k> want <k>` on a mismatch. The kind also arrives
 in the arm ack — which is where the seek/retract classification reads it — but
 that ack is sampled *after* the pulser has started, so checking only there would
-let a `lin_leg` aimed at a rotary node run a full sweep before anyone noticed,
-and a `rot_leg` aimed at a linear one drive into a hard stop hunting a dip that
+let a `leg <n> seek` aimed at a rotary node run a full sweep before anyone noticed,
+and a `leg <n> sweep` aimed at a linear one drive into a hard stop hunting a dip that
 does not exist. A node with no terminator at all (`HOMING_KIND_NONE`) fails the
 same check, and more usefully than the bare NAK it would otherwise get: the error
 names what the node *is*, not merely that it said no.

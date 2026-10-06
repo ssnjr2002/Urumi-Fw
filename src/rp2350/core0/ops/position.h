@@ -147,6 +147,11 @@ void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps);
 // continuity witness; Core 0 never writes that. Two different facts.
 void originInvalidate(uint8_t node);
 
+// Node `n` moved under its own pulser, with its witness intact (a finished park
+// leg), and its counter now reads `nodePos`. Keep the origin and re-derive
+// machinePos for its slot, as a bind does. No-op unless `n` is homed.
+void originAdopt(uint8_t n, int32_t nodePos);
+
 // Whole-machine version -- estop, soft limit, disable-all.
 void originInvalidateAll(void);
 

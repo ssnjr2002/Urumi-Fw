@@ -513,19 +513,19 @@ wrong one.
 probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps> <deadline_us> <intent>
 ```
 
-Positional, `err usage` / `err range`, following `lin_leg`'s idiom in
+Positional, `err usage` / `err range`, following `leg`'s idiom in
 [axis.cpp](../src/rp2350/core0/cmd/axis.cpp). The host owns the sequence and the
 Pico runs one leg — there is no leg index, and the Pico does not know which leg
 of four this is.
 
-**No node argument.** `lin_leg` is node-addressed because a home is node-framed
+**No node argument.** `leg` is node-addressed because a home is node-framed
 and runs before any map is committed. A probe is the opposite: the session
 already bound both nodes (§5.3), so naming them again would be a second source of
 truth that could disagree with the binding.
 
 | arg | meaning |
 |---|---|
-| `dir` | 0/1, as `lin_leg` |
+| `dir` | 0/1, as `leg` |
 | `start_us` | first step interval — where the ramp starts |
 | `ceil_us` | step interval floor — the feed **ceiling** (§2.3) |
 | `ramp_steps` | 0 = no ramp; required on fast legs (§2.4) |
@@ -535,7 +535,7 @@ truth that could disagree with the binding.
 | `intent` | 0 = expect switch closed at start, 1 = expect open |
 
 `start_us` was not in this table when it was first written. It is here for the
-reason `lin_leg` carries both a start and a floor: a ramp needs somewhere to ramp
+reason `leg` carries both a start and a floor: a ramp needs somewhere to ramp
 *from*, and the alternative was a hidden multiplier of `ceil_us` buried in the
 emitter — a poor home for a number that decides whether Z loses steps (§2.4).
 

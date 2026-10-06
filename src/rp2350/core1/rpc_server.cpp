@@ -45,6 +45,7 @@ static void replyWith(const RpcRequest* req, RpcResult result,
 static bool answersWithStatus(uint8_t cmd) {
     return cmd == CMD_NODE_STATUS || cmd == CMD_DATUM_SET ||
            cmd == CMD_ENGAGE      || cmd == CMD_HOME_LEG ||
+           cmd == CMD_PARK_LEG    || cmd == CMD_LEG_ABORT ||
            cmd == CMD_MAKE_SAFE;
 }
 

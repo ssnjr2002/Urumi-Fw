@@ -140,6 +140,8 @@ const char* rpcResultText(RpcResult r) {
         case NAK_BAD_TOKEN:        return "nak bad_token";
         case NAK_BAD_ARG:          return "nak bad_arg";
         case NAK_INTENT_MISMATCH:  return "nak intent_mismatch";
+        case NAK_BUSY:             return "nak busy";
+        case NAK_NO_DATUM:         return "nak no_datum";
         default: break;
     }
     // An unknown reason still reports as a nak. Degrading it to "timeout" would
@@ -355,6 +357,35 @@ RpcResult rpcHomeLeg(uint8_t node, uint8_t dir, bool intendedRetract,
     if (r != RPC_OK) return r;
     if (!nodeStatusDecode(rep.payload, rep.len, out)) return RPC_BAD_REPLY;
     return RPC_OK;
+}
+
+RpcResult rpcParkLeg(uint8_t node, int32_t target, uint16_t startIntervalUs,
+                     uint16_t floorIntervalUs, uint16_t rampSteps, NodeStatus* out) {
+    RpcRequest req = {};
+    req.op   = RPC_OP_NODE;
+    req.cmd  = CMD_PARK_LEG;
+    req.node = node;
+    req.argLen = CMD_PARK_LEG_PAYLOAD_LEN;
+    req.args[0] = (uint8_t)((uint32_t)target >> 24);
+    req.args[1] = (uint8_t)((uint32_t)target >> 16);
+    req.args[2] = (uint8_t)((uint32_t)target >>  8);
+    req.args[3] = (uint8_t)((uint32_t)target);
+    req.args[4] = (uint8_t)(startIntervalUs >> 8);
+    req.args[5] = (uint8_t)(startIntervalUs);
+    req.args[6] = (uint8_t)(floorIntervalUs >> 8);
+    req.args[7] = (uint8_t)(floorIntervalUs);
+    req.args[8] = (uint8_t)(rampSteps >> 8);
+    req.args[9] = (uint8_t)(rampSteps);
+
+    RpcReply rep;
+    RpcResult r = rpcCall(&req, &rep, RPC_CALL_TIMEOUT_MS);
+    if (r != RPC_OK) return r;
+    if (!nodeStatusDecode(rep.payload, rep.len, out)) return RPC_BAD_REPLY;
+    return RPC_OK;
+}
+
+RpcResult rpcLegAbort(uint8_t node, NodeStatus* out) {
+    return rpcNodeStatus(CMD_LEG_ABORT, node, 0, out);
 }
 
 RpcResult rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps) {

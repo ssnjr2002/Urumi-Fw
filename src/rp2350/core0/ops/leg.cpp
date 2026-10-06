@@ -37,6 +37,8 @@ struct Leg {
     // to adopt mid-flight.
     bool     rotary;
     bool     retract;
+    bool     park;
+    int32_t  target;    // a park's node counter
     bool     dummy;     // resolves to dummyOk at deadlineMs
     bool     dummyOk;
     uint8_t  node;
@@ -56,13 +58,15 @@ static void legRelease(LegEnd* end, uint8_t why) {
     end->dummy   = leg.dummy;
     end->rotary  = leg.rotary;
     end->retract = leg.retract;
+    end->park    = leg.park;
+    end->pos     = leg.target;
     end->failWhy = why;
 }
 
 // docs/homing.md §2.3. Bounding by `max_steps × start_interval` instead would
 // give a useless 88 s on X, because every step after the ramp runs at the floor.
 static uint32_t legTimeoutMs(uint16_t startUs, uint16_t floorUs,
-                             uint16_t rampSteps, uint32_t maxSteps) {
+                             uint32_t rampSteps, uint32_t maxSteps) {
     uint32_t ramp = rampSteps;
     if (ramp > maxSteps) ramp = maxSteps;
     // 64-bit throughout: 88000 steps × 65535 µs already overflows uint32.
@@ -100,7 +104,7 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
             uint16_t startUs, uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps) {
     // ASK WHAT THE NODE IS BEFORE ARMING IT. The kind also arrives in the arm
     // ack below, but that ack is sampled AFTER the pulser has started: a
-    // `lin_leg` aimed at a rotary node would run a full sweep before anyone
+    // `leg <n> seek` aimed at a rotary node would run a full sweep before anyone
     // noticed. One extra transaction, ~1 ms, buys a refusal that costs no
     // motion. A node with no terminator (HOMING_KIND_NONE) fails here too, and
     // the error names what the node IS.
@@ -157,6 +161,7 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
     leg.claimed    = true;
     leg.rotary     = rotary;
     leg.retract    = !rotary && (st.flags & NODE_FLAG_LIMIT) != 0;
+    leg.park       = false;
     leg.dummy      = false;
     leg.node       = node;
     leg.misses     = 0;
@@ -166,10 +171,74 @@ bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
     return true;
 }
 
+bool legArmPark(uint8_t node, int32_t target, uint16_t startUs,
+                uint16_t floorUs, uint16_t rampSteps) {
+    // The kind probe, as legArm: a node with no terminator has no datum to
+    // park by, and the error names what it is.
+    NodeStatus probe;
+    RpcResult pr = rpcNodeStatus(CMD_NODE_STATUS, node, 0, &probe);
+    if (pr != RPC_OK) {
+        Serial.printf("err node %d %s\n", node, rpcResultText(pr));
+        return false;
+    }
+    if (!probe.hasStepperTail) { Serial.println("err bad_reply"); return false; }
+    if (probe.homingKind == HOMING_KIND_NONE) {
+        Serial.printf("err kind_mismatch node %d is %d\n", node, probe.homingKind);
+        return false;
+    }
+
+    NodeStatus st;
+    RpcResult r = rpcParkLeg(node, target, startUs, floorUs, rampSteps, &st);
+    if (r != RPC_OK) {
+        // NAK_NO_DATUM, NAK_INTENT_MISMATCH (on the switch), NAK_BUSY: nothing
+        // moved.
+        Serial.printf("err node %d %s\n", node, rpcResultText(r));
+        return false;
+    }
+    if (!st.hasStepperTail) { Serial.println("err bad_reply"); return false; }
+
+    // Distance from the ack, which is sampled after the arm: the counter may
+    // have moved a step or two, which only lengthens the deadline.
+    const int64_t  d     = (int64_t)target - (int64_t)st.pos;
+    const uint32_t steps = (uint32_t)(d < 0 ? -d : d) + 1;
+    // Ramped at both ends.
+    const uint32_t ramp  = 2u * rampSteps;
+
+    const uint32_t now = millis();
+    leg.claimed    = true;
+    leg.rotary     = (st.homingKind == HOMING_KIND_INDEX);
+    leg.retract    = false;
+    leg.park       = true;
+    leg.target     = target;
+    leg.dummy      = false;
+    leg.node       = node;
+    leg.misses     = 0;
+    leg.settleLeft = 0;
+    leg.nextPollMs = now + LEG_POLL_MS;
+    leg.deadlineMs = now + legTimeoutMs(startUs, floorUs, ramp, steps);
+    return true;
+}
+
+bool legAbort(uint8_t node, LegEnd* end, bool* released) {
+    *released = false;
+    NodeStatus st;
+    RpcResult r = rpcLegAbort(node, &st);
+    if (r != RPC_OK) {
+        Serial.printf("err node %d %s\n", node, rpcResultText(r));
+        return false;
+    }
+    if (leg.claimed && !leg.dummy && leg.node == node) {
+        legRelease(end, LEGFAIL_ABORTED);
+        *released = true;
+    }
+    return true;
+}
+
 void legArmDummy(bool succeed, uint32_t ms) {
     leg.claimed    = true;
     leg.rotary     = false;
     leg.retract    = false;
+    leg.park       = false;
     leg.dummy      = true;
     leg.dummyOk    = succeed;
     leg.deadlineMs = millis() + ms;
@@ -210,9 +279,17 @@ LegPoll legPoll(LegEnd* end) {
         return LEG_RUNNING;
     }
 
-    // Stopped. The two kinds of leg are ended by different things and there is
+    // Stopped. The kinds of leg are ended by different things and there is
     // no flag they share.
-    if (leg.rotary) {
+    if (leg.park) {
+        // The target is absolute, so where it stopped is the whole verdict. A
+        // switch on the way, or a reset (which clears the datum and the
+        // counter), both land elsewhere or drop the witness.
+        const bool ok = st.pos == leg.target &&
+                        (st.flags & NODE_FLAG_DATUM) &&
+                        (leg.rotary || !(st.flags & NODE_FLAG_LIMIT));
+        if (!ok) { legRelease(end, LEGFAIL_PARK); return LEG_FAILED; }
+    } else if (leg.rotary) {
         // No settle window: the node resolves the index BEFORE it publishes
         // NODE_FLAG_LEG clear (stepper.cpp node_loop), so the cause is final by
         // the time this poll can see the leg stopped.

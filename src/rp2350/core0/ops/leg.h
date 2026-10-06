@@ -40,12 +40,18 @@
 
 #define LEGFAIL_DUMMY        7  // a dummy leg told to fail
 
+#define LEGFAIL_PARK         8  // a park stopped off its target: on a switch,
+                                // short of it, or with the node's datum gone
+#define LEGFAIL_ABORTED      9  // the operator aborted the leg (leg_abort)
+
 // How a leg ended, filled by legPoll and legDrop.
 struct LegEnd {
     uint8_t node;
     bool    dummy;     // no node, no motion
     bool    rotary;    // a sweep: no switch, so no latch to record
     bool    retract;   // the node armed a retract (its pin was asserted)
+    bool    park;      // a park leg
+    int32_t pos;       // a finished park: the node's counter at the final poll
     uint8_t failWhy;   // LEGFAIL_*; LEGFAIL_NONE on success
 };
 
@@ -55,7 +61,7 @@ enum LegPoll : uint8_t {
     LEG_FAILED,
 };
 
-// Arm ONE leg on `node` with CMD_HOME_LEG. Returns true once the node is
+// Arm ONE seek, retract or sweep on `node` with CMD_HOME_LEG. Returns true once the node is
 // pulsing; on any refusal prints the one `err` line and returns false, with
 // nothing moved.
 //
@@ -74,10 +80,23 @@ enum LegPoll : uint8_t {
 // checks it against its own pin read and NAKs on disagreement
 // (NAK_INTENT_MISMATCH, include/common.h) rather than silently running the
 // wrong leg's semantics under the right leg's budget. Meaningless for
-// HOMING_KIND_INDEX -- there is no pin to agree with -- and `rot_leg` passes
-// false.
+// HOMING_KIND_INDEX -- there is no pin to agree with -- and `leg <n> sweep`
+// passes false.
 bool legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedRetract,
             uint16_t startUs, uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps);
+
+// Arm a park leg on `node` with CMD_PARK_LEG: run to the absolute node counter
+// `target`. Any node with a terminator; the caller checks the origin. Returns
+// and prints as legArm. A node already at `target` arms nothing and the first
+// poll finishes the leg.
+bool legArmPark(uint8_t node, int32_t target, uint16_t startUs,
+                uint16_t floorUs, uint16_t rampSteps);
+
+// Send CMD_LEG_ABORT to `node`. False, with the `err` line printed, if the node
+// did not ack; the leg (if any) then runs on, still supervised. On an ack to the
+// supervised node, the leg is released as LEGFAIL_ABORTED into `*end` and
+// `*released` is set.
+bool legAbort(uint8_t node, LegEnd* end, bool* released);
 
 // A bench leg with no node and no motion: after `ms` it ends as a success, or
 // as a failure with LEGFAIL_DUMMY.
