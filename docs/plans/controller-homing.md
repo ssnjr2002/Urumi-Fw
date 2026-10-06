@@ -39,7 +39,10 @@ Z and A at a time.
   its datum. It is a leg, not a plain move, so the session still allows no
   motion outside legs. The node drives it: it runs to an absolute counter
   value, ramping up and down. A switch asserting on the way stops it, and
-  ending anywhere but the target is a failure.
+  ending anywhere but the target is a failure. A finished park keeps the
+  datum; a failed one drops it.
+* **An operator `leg_abort`** inside a session fails its leg, so its cycle
+  fails as above.
 
 ### Cycles
 
@@ -327,7 +330,7 @@ Done, merged (d73fe25..0c1981a). Unblocks 1b.
   * `CMD_LEG_ABORT` 0x26, no payload. Ack: the status payload. Aborting with
     no leg running is an ack, not a NAK (idempotent, so fail-all needs no
     state check).
-  * NAKs: `NAK_BUSY` (a leg runs), `NAK_BAD_ARG` (as `homingLegArm`), and a
+  * NAKs: `NAK_BUSY` (a leg runs), `NAK_BAD_ARG` (as `legArm`), and a
     park leg without `NODE_FLAG_DATUM` is refused (new `NAK_NO_DATUM`): a
     counter with a broken witness is not a position.
 * **Node** (`src/node/types/stepper/`, on 1a's `leg.{h,cpp}`):
@@ -344,14 +347,30 @@ Done, merged (d73fe25..0c1981a). Unblocks 1b.
   * `ipc/core1_rpc.{h,cpp}`: `rpcParkLeg`, `rpcLegAbort`;
     `core1/rpc_server.cpp:47` answers both with status.
   * `core0/ops/leg.{h,cpp}`: a park leg uses the same claim, poll and
-    deadline; it succeeds when the node stops at the target, and fails with a
-    new `LEGFAIL_PARK` otherwise. One node at a time, as today; branch 2 makes
-    it per node.
+    deadline (the deadline from distance and ramp, not a budget). One node at
+    a time, as today; branch 2 makes it per node.
+  * **Park verdict:** done when the node's counter equals the target, not
+    latched (linear) and `NODE_FLAG_DATUM` still set. The target is absolute,
+    so no before-count is needed; a reset clears the datum flag. Otherwise
+    `LEGFAIL_PARK` (or `DEADLINE`/`POLL`). A refused arm (`NAK_NO_DATUM`,
+    `NAK_BUSY`) moved nothing and fails nothing.
+  * **Origin:** a finished park keeps the origin and re-derives `machinePos`
+    from the node's counter (as `slotAdoptStatus`, `position.h:27`); every
+    other leg end, a failed park included, still calls `originInvalidate`.
+  * **Abort:** `leg_abort <node>` aborts that node only. Inside a homing
+    session it fails the leg with a new `LEGFAIL_ABORTED` (`ALARM_HOMING_FAIL`);
+    outside one (bench) the leg is released with no verdict, origin dropped.
+    Aborts the Pico itself sends while failing a cycle (branch 2) add no
+    verdict.
   * `core0/cmd/axis.cpp`: `leg <node> seek|retract|sweep|park …` and
     `leg_abort <node>` replace `cmdLinLeg`/`cmdRotLeg`; `control_plane.cpp:60`
     table. Seek and retract set the intent bit, so a mismatch NAKs as today.
-    `park` needs the node homed on the Pico (`originValid`), so the target is
-    in the node's frame as `setorigin` left it.
+    `park` takes a target in node counts (the wire payload as typed). It
+    needs the node homed on the Pico (`originValid`), else `err not_homed`
+    with no bus I/O; the target is in the node's frame as `setorigin` left
+    it. On a linear axis with `softLimits`, the target is converted to mm
+    through the origin and checked against the soft range, else
+    `err soft_limit`; a rotary axis or one without soft limits is unchecked.
 * **Web:** `web/src/wire/link/commands.ts` (`:320-349`): `linLeg`/`rotLeg`
   move to the `leg` verbs; `parkLeg` and `legAbort` added;
   `web/src/homing/sequence.ts` and `web/src/wire/link/backends/sim.ts`
@@ -362,7 +381,8 @@ Done, merged (d73fe25..0c1981a). Unblocks 1b.
   `pio run -e pico`, `pnpm typecheck` and `pnpm test` in `web/`.
 * **Human scope:** park to a target and back on X and A, a park run into the
   switch, abort mid-seek (motor stays energised, `datum` flag kept, counter
-  matches a `getpos`).
+  matches a `getpos`), position still valid after a park and dropped after a
+  failed one.
 
 ### Status
 
