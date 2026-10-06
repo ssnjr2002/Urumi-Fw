@@ -109,7 +109,10 @@ Proposed; each gets a full Plan section when its turn comes.
 
 1. `feature/pico-frames`: the controlled point, the work offset in flash,
    `MPos`/`WPos` in `status`, stored positions. Depends on
-   controller-homing branch 1 (`parkPos`).
+   controller-homing branch 1 (`parkPos`). Also the soft-range check
+   (`softLimits`, `[park, park ± maxTravel]`) deferred from
+   controller-homing 1b: the bench `leg <node> park <count>` target is
+   converted through the origin and refused outside it.
 
 ## Open questions
 
