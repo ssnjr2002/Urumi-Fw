@@ -289,7 +289,26 @@ branch 2) and coordinate-system.md branch 1 (`feature/pico-frames`).
 
 ### Status
 
-Planned.
+Done, ready to merge (d73fe25). Unblocks 1b.
+
+### Outcome
+
+* Modes are a `LegMode` enum switched on inside the one TCA0 ISR, not
+  per-mode hooks: a call the compiler cannot see would make the ISR save
+  every call-clobbered register. ISR prologues are unchanged (18 pushes
+  linear, 28 rotary; RX ISR 16); `db_node1` flash is byte-identical.
+* `stepper_state.h` (new) shares the counter, DIR and limit gate between
+  `stepper.cpp` and `leg.cpp`. `HAS_HOMING` keeps its name: park and abort
+  stay under it in 1b (a node without a terminator never has a datum).
+* Pico: `legArm` / `legPoll` / `legDrop` return a `LegEnd` (node, dummy,
+  rotary, retract, `LEGFAIL_*`); `homing.cpp` turns it into the session,
+  the latch and the origin drop. The leg's state is one `Leg` struct, for
+  branch 2 to make per node. The dummy leg is a leg (`legArmDummy`).
+* `rpcHome` → `rpcHomeLeg`. `probe.cpp` was not a caller: probe legs are
+  stream-driven.
+* Bench: X seek (span 25241, latched) and retract (span −320, clear), A
+  sweep (`idxcause ok`, cross 3, steprev 16605), `kind_mismatch` and the
+  dummy failure, all as before.
 
 ## Branch 1b: `feature/node-park-leg`
 
