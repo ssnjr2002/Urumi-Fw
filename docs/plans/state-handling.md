@@ -1253,6 +1253,20 @@ without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
   names it (`ok unconfirmed <ids>`). Either way the node is excluded.
   Exclusion blocks RPCs only, so an excluded node gets no slot again until
   the next sweep. Its own small branch.
+* One query, `get <key> …`, in place of `getstate`, `getpos` and `status`:
+  the reply is `key=value` for each key, in the order requested, all read in
+  one snapshot. Markers: `?` the value is unknown (a read failed, as
+  `switch=?` today), `-` the key does not apply now (`homefail` outside a
+  homing alarm), `!` the key is not recognised, so a newer host still reads
+  the other fields from older firmware. One key is one field, no groups at
+  first. Bare `get` lists the keys this firmware knows (`keys state mpos …`,
+  one line), so a host can check support once instead of probing for `!`;
+  `status` stays the human readout. The old commands
+  become fixed key lists, then go. Memory reads only: `nodepos`, `busstat`
+  and other bus transactions stay their own commands. `STATUS_RSP` stays the
+  live binary poll. Prior art: Klipper `objects/query`, grbl's `$10` mask.
+  Its own `refactor/` branch; new fields (coordinate-system.md's `mpos`,
+  `wpos`, `head`) take names that work as keys.
 * Flashed config image: a pre-upload pio script turns a `config.json` into
   `data/config.bin` (16-byte header: `CFG_VERSION`, seq, length, CRC32) for
   `uploadfs`. Encode through the web's encoder (a node/pnpm command), not a
