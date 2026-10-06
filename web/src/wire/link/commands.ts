@@ -384,6 +384,37 @@ export async function legAbort(link: Link, node: number): Promise<string> {
     return link.command(`leg_abort ${node}`);
 }
 
+// ── home (docs/homing.md) ────────────────────────────────────────────────────
+
+/**
+ * The Pico's `home` and its selectors, run from its homing config. `ok` means
+ * STARTED: poll `getstate` (`homing=`, `homecycle=`) until the machine leaves
+ * HOMING; a failure is ALARM_HOMING_FAIL with `homefail=` and `homenode=`.
+ * Resolves to `ok` or the raw `err` line.
+ *
+ * @param nodes bus ids; none homes every homeable node.
+ * @param only  home just these, in cycle order, without clearing earlier cycles.
+ */
+export async function home(link: Link, nodes: readonly number[] = [], only = false): Promise<string> {
+    const words = [...(only ? ["only"] : []), ...nodes.map(String)];
+    return link.command(words.length ? `home ${words.join(" ")}` : "home");
+}
+
+/** `home` of every homeable node with no origin; `ok` with no motion if none. */
+export async function homeUnhomed(link: Link): Promise<string> {
+    return link.command("home_unhomed");
+}
+
+/** `home` of cycle `cycle`'s nodes, earlier cycles cleared first. */
+export async function homeCycle(link: Link, cycle: number): Promise<string> {
+    return link.command(`home_cycle ${cycle}`);
+}
+
+/** `home only` of head `head`'s Z and A (`head` indexes the config's heads). */
+export async function homeHead(link: Link, head: number): Promise<string> {
+    return link.command(`home_head ${head}`);
+}
+
 // ── tool probe (docs/tool_probe.md §5) ───────────────────────────────────────
 
 /** A probe verb's outcome: `ok`, or the raw `err <reason>` line. */

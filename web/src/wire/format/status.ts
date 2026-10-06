@@ -148,6 +148,13 @@ export const HomeFail = {
     PARK: 8,
     /** The leg was stopped by `leg_abort`. */
     ABORTED: 9,
+    /** A `home` run: the node refused a leg mid-run. */
+    REFUSED: 10,
+    /** A `home` run: the cycle's datum commit failed on this node. */
+    DATUM: 11,
+    /** A `home` run, rotary: the two sweeps disagree past toleranceDeg, or
+     *  measured revolutions more than 2% apart. */
+    INDEX_TOL: 12,
 } as const;
 export type HomeFail = (typeof HomeFail)[keyof typeof HomeFail];
 const HOME_FAIL_VALUES = Object.values(HomeFail) as readonly number[];
@@ -264,6 +271,13 @@ export class MachineStatus {
         readonly probeZ: number | null | undefined = undefined,
         /** Bus node whose leg failed, alongside `homeFail` (0 for a dummy leg). */
         readonly homeNode: number | undefined = undefined,
+        /** The cycle a `home` run is in; undefined when no run is. */
+        readonly homeCycle: number | undefined = undefined,
+        /**
+         * Bus nodes holding an origin, bit n = node n, mapped or not. undefined
+         * on the binary plane or older firmware.
+         */
+        readonly nodeHomed: number | undefined = undefined,
     ) {}
 
     homed(axis: AxisLetter): boolean {
@@ -345,6 +359,8 @@ export function parseGetstate(line: string): MachineStatus {
                 ? parseInt(fields.pz, 10)
                 : null,
         fields.homenode !== undefined ? parseInt(fields.homenode, 10) : undefined,
+        fields.homecycle !== undefined ? parseInt(fields.homecycle, 10) : undefined,
+        fields.nodehomed !== undefined ? toInt(fields.nodehomed) : undefined,
     );
 }
 

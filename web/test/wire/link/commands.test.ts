@@ -32,6 +32,10 @@ import {
     unalarm,
     axisMap,
     readAxisMap,
+    home,
+    homeUnhomed,
+    homeCycle,
+    homeHead,
 } from "../../../src/wire/link/commands.js";
 import { MachineState, AlarmReason } from "../../../src/wire/format/status.js";
 
@@ -325,5 +329,23 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
             expect(await enable(link, 6)).toBe(true); // e.g. a vacuum node
             expect((await getStatus(link)).axesEnabled).toBe(0);
         });
+    });
+});
+// The sim has no `home`; these only check the command lines sent.
+describe("wire/link/commands: home and its selectors", () => {
+    it("sends each command line", async () => {
+        const sent: string[] = [];
+        const link = { command: async (s: string) => { sent.push(s); return "ok"; } } as unknown as Link;
+        expect(await home(link)).toBe("ok");
+        await home(link, [3, 4]);
+        await home(link, [3], true);
+        await home(link, [], true);
+        await homeUnhomed(link);
+        await homeCycle(link, 2);
+        await homeHead(link, 1);
+        expect(sent).toEqual([
+            "home", "home 3 4", "home only 3", "home only",
+            "home_unhomed", "home_cycle 2", "home_head 1",
+        ]);
     });
 });

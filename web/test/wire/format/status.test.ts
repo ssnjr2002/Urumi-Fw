@@ -241,6 +241,18 @@ describe("wire/format/status: parseGetstate (text plane)", () => {
     it("throws on a line missing homed", () => {
         expect(() => parseGetstate("state=0 enabled=0x0f")).toThrow(/not a getstate reply/);
     });
+
+    it("parses homecycle and nodehomed", () => {
+        const st = parseGetstate("state=5 homed=0x00 homing=0 probed=0 homecycle=2 nodehomed=0x018");
+        expect(st.homeCycle).toBe(2);
+        expect(st.nodeHomed).toBe(0x18);
+    });
+
+    it("leaves homecycle and nodehomed undefined when absent", () => {
+        const st = parseGetstate("state=0 homed=0x0f");
+        expect(st.homeCycle).toBeUndefined();
+        expect(st.nodeHomed).toBeUndefined();
+    });
 });
 
 describe("wire/format/status: MachineStatus helpers", () => {
