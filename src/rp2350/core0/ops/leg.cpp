@@ -167,16 +167,15 @@ const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedR
     }
     if (!st.hasStepperTail) return "bad_reply";
 
-    // WHICH MOVE THIS IS, decided here and nowhere else. The node picks seek or
-    // retract from one read of its own pin at arm time and does not report the
-    // choice (docs/homing.md §1.2) -- but the ack is sampled AFTER the arm, so
-    // its LIMIT bit is that very pin read. The terminal flags read OPPOSITELY
-    // for the two modes (§1.5), and this is the only way to learn it without a
-    // second poll that could straddle the switch.
+    // WHICH MOVE THIS IS. The node picks seek or retract from one read of its
+    // own pin at arm time (docs/homing.md §1.2) and NAKs an intent that
+    // disagrees, so an accepted linear arm ran exactly `intendedRetract`. The
+    // terminal flags read OPPOSITELY for the two modes (§1.5). Not the ack's
+    // LIMIT bit: that is the pin OR the node's latch, and a latch outliving its
+    // switch would supervise a seek as a retract.
     //
-    // A rotary node has no pin, so its LIMIT bit is permanently 0 and would
-    // classify every sweep as a seek. Kind rides in this same ack, so read it
-    // here rather than trusting the probe above, a whole round trip older.
+    // Kind rides in this same ack, so read it here rather than trusting the
+    // probe above, a whole round trip older.
     const bool rotary = (st.homingKind == HOMING_KIND_INDEX);
 
     // The node accepted the command but is not pulsing. legArm() on the node
@@ -191,7 +190,7 @@ const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedR
     const uint32_t now = millis();
     leg.claimed    = true;
     leg.rotary     = rotary;
-    leg.retract    = !rotary && (st.flags & NODE_FLAG_LIMIT) != 0;
+    leg.retract    = !rotary && intendedRetract;
     leg.park       = false;
     leg.dummy      = false;
     leg.node       = node;
