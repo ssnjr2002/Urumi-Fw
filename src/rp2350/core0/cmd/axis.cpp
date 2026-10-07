@@ -25,6 +25,23 @@
 #include "../../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
 
+// `ok` for nullptr, else `err <why>`.
+static void replyWhy(const char* why) {
+    if (why) Serial.printf("err %s\n", why);
+    else     Serial.println("ok");
+}
+
+// Close the probe session (probe_end, or axes_map while probing). `switch=1`
+// on the way out is worth an operator's attention -- the tool may be resting
+// on the bed, or the far switch may be stuck -- but it is information, not a
+// refusal. `switch=?` means the read itself failed.
+static void replyProbeExit(const uint8_t* newMap) {
+    int8_t sw;
+    if (const char* why = probeExit(newMap, &sw)) Serial.printf("err %s\n", why);
+    else if (sw < 0) Serial.println("ok switch=?");
+    else             Serial.printf("ok switch=%d\n", sw);
+}
+
 // The gate shared by every command here that goes to the bus: Core 1 services
 // channel 1 only after draining the ring, so a request issued mid-stream waits
 // out the whole queue while Core 0 blocks and stops reading serial.
@@ -186,7 +203,7 @@ bool cmdSlotMap(const char* args) {
     if (busGateDenies() || degradedDenies()) return true;
     uint8_t desired[4];
     if (!parseFourNodes(args, desired)) return true;
-    slotMapApply(desired, /*quiet=*/false);
+    replyWhy(slotMapApply(desired));
     return true;
 }
 
@@ -244,9 +261,11 @@ bool cmdAxesMap(const char* args) {
     // Committing a map is also the OTHER way out of a probe session (§5.5):
     // any committed map ends the session, and `probe_end` is sugar for
     // committing the one that was already there.
-    if (machineState == STATE_PROBING) return probeExit(desired);
+    if (machineState == STATE_PROBING) { replyProbeExit(desired); return true; }
 
-    axesMapApply(desired, /*quiet=*/false, /*keepWrongType=*/false);
+    const char* why;
+    axesMapApply(desired, /*keepWrongType=*/false, &why);
+    replyWhy(why);
     return true;
 }
 
@@ -397,11 +416,6 @@ static bool legGateDenies() {
     return false;
 }
 
-// `ok` for nullptr, else `err <why>`.
-static void replyWhy(const char* why) {
-    if (why) Serial.printf("err %s\n", why);
-    else     Serial.println("ok");
-}
 
 // Parse a node id; advances *p past it. False on a bad token.
 static bool parseNode(const char** p, uint8_t* node) {
@@ -693,7 +707,11 @@ bool cmdProbeMap(const char* args) {
     char* end;
     const uint8_t vac = parseNode(args, &end);
     if (!vac) { Serial.println("err bad_node"); return true; }
-    return probeBegin(vac);
+    uint8_t z;
+    bool open;
+    if (const char* why = probeBegin(vac, &z, &open)) Serial.printf("err %s\n", why);
+    else Serial.printf("ok probing z=%d vac=%d switch=%d\n", z, vac, open ? 1 : 0);
+    return true;
 }
 
 // ── probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps>
@@ -739,9 +757,10 @@ bool cmdProbeLeg(const char* args) {
     if (v[1] == 0 || v[2] == 0 || v[4] == 0 || v[5] == 0 || v[6] == 0) {
         Serial.println("err range"); return true;
     }
-    return probeArmLeg((uint8_t)v[0], (uint16_t)v[1], (uint16_t)v[2],
-                       (uint16_t)v[3], (uint8_t)v[4], (uint32_t)v[5],
-                       (uint16_t)v[6], (uint8_t)v[7]);
+    replyWhy(probeArmLeg((uint8_t)v[0], (uint16_t)v[1], (uint16_t)v[2],
+                         (uint16_t)v[3], (uint8_t)v[4], (uint32_t)v[5],
+                         (uint16_t)v[6], (uint8_t)v[7]));
+    return true;
 }
 
 // ── probe_end ────────────────────────────────────────────────────────────────
@@ -749,7 +768,8 @@ bool cmdProbeLeg(const char* args) {
 // and in the bail-out case, where the operator is already unsure what state
 // things are in.
 bool cmdProbeEnd(const char*) {
-    return probeExit(nullptr);
+    replyProbeExit(nullptr);
+    return true;
 }
 
 // ── setprobe <z_steps> ───────────────────────────────────────────────────────

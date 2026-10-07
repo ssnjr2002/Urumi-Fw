@@ -2,8 +2,10 @@
 // slot_map.h.
 
 #include <Arduino.h>
+#include <stdio.h>             // snprintf
 #include <string.h>            // memcpy
 #include "slot_map.h"
+#include "refusal.h"
 #include "position.h"
 #include "state.h"
 #include "../../ipc/shared_state.h"
@@ -106,13 +108,14 @@ uint8_t slotMapCommit(const uint8_t* req, bool axes, uint8_t skip, RpcResult* re
     return bad;
 }
 
-void slotMapPrintFenced(uint8_t fenced) {
-    Serial.print("err fenced");
+const char* slotMapFencedText(uint8_t fenced) {
+    char slots[MOTION_SLOTS * 4 + 1];
+    size_t at = 0;
     for (uint8_t i = 0; i < MOTION_SLOTS; i++) {
-        if (fenced & (1 << i)) Serial.printf(" %d", slotNodeAt(i));
-        else                   Serial.print(" -");
+        if (fenced & (1 << i)) at += snprintf(slots + at, sizeof slots - at, " %d", slotNodeAt(i));
+        else                   at += snprintf(slots + at, sizeof slots - at, " -");
     }
-    Serial.println();
+    return refuse("fenced%s", slots);
 }
 
 void slotMapDrop(uint8_t n) {
@@ -120,7 +123,7 @@ void slotMapDrop(uint8_t n) {
         if (slotReq[i] == n) slotReq[i] = SLOT_NONE;
 }
 
-bool slotMapApply(const uint8_t* desired, bool quiet, uint8_t* failed) {
+const char* slotMapApply(const uint8_t* desired, uint8_t* failed) {
     RpcResult r = RPC_OK;
     uint8_t fenced;
     uint8_t bad = slotMapCommit(desired, /*fromAxes=*/false, /*skip=*/0, &r, &fenced);
@@ -128,18 +131,13 @@ bool slotMapApply(const uint8_t* desired, bool quiet, uint8_t* failed) {
         for (uint8_t i = 0; i < MOTION_SLOTS && bad == SLOT_NONE; i++)
             if (fenced & (1 << i)) bad = slotNodeAt(i);
         if (failed) *failed = bad;
-        if (!quiet) slotMapPrintFenced(fenced);
-        return false;
+        return slotMapFencedText(fenced);
     }
     if (failed) *failed = bad;
-    if (bad != SLOT_NONE) {
-        // `nak unsupported` here means a node type that takes no slot.
-        if (!quiet) Serial.printf("err node %d %s\n", bad, rpcResultText(r));
-        return false;
-    }
-    // `ok` even for a partial map: committing it is what was asked for.
-    if (!quiet) Serial.println("ok");
-    return true;
+    // `nak unsupported` here means a node type that takes no slot.
+    if (bad != SLOT_NONE) return refuse("node %d %s", bad, rpcResultText(r));
+    // nullptr even for a partial map: committing it is what was asked for.
+    return nullptr;
 }
 
 bool slotMapComplete(void) {

@@ -5,6 +5,7 @@
 #include <string.h>            // memcpy
 #include "axes_map.h"
 #include "slot_map.h"
+#include "refusal.h"
 #include "position.h"
 #include "../config/machine_cfg.h"
 #include "../../ipc/core1_rpc.h"
@@ -48,9 +49,9 @@ static uint8_t checkPending(PendingFault* fault, uint8_t* fenced) {
 
 // Commit the axes request as the slot request and apply it. A pending axis's
 // slot is parked, not engaged. `bad`, `fault` and `fenced` are checkPending's
-// report.
-static AxesMapResult axesCommit(bool quiet, uint8_t bad, PendingFault fault,
-                                uint8_t fenced) {
+// report. `*why` gets nullptr or the refusal.
+static AxesMapResult axesCommit(uint8_t bad, PendingFault fault, uint8_t fenced,
+                                const char** why) {
     uint8_t req[MOTION_SLOTS];
     for (uint8_t k = 0; k < MOTION_SLOTS; k++) req[k] = axesReqAt(k);
 
@@ -60,23 +61,25 @@ static AxesMapResult axesCommit(bool quiet, uint8_t bad, PendingFault fault,
     const uint8_t failed = slotMapCommit(req, /*fromAxes=*/true, pending, &r, &mapFenced);
     fenced |= mapFenced;
     if (fenced) {
-        if (!quiet) slotMapPrintFenced(fenced);
+        *why = slotMapFencedText(fenced);
         return pending ? AXES_PENDING : AXES_ENGAGE;
     }
     if (pending) {
-        if (!quiet) Serial.printf("err node %d %s\n", bad,
-                                  fault == PF_WRONG_TYPE ? "not_stepper" : "timeout");
+        *why = refuse("node %d %s", bad,
+                      fault == PF_WRONG_TYPE ? "not_stepper" : "timeout");
         return AXES_PENDING;
     }
     if (failed != SLOT_NONE) {
-        if (!quiet) Serial.printf("err node %d %s\n", failed, rpcResultText(r));
+        *why = refuse("node %d %s", failed, rpcResultText(r));
         return AXES_ENGAGE;
     }
-    if (!quiet) Serial.println("ok");
+    *why = nullptr;
     return AXES_OK;
 }
 
-AxesMapResult axesMapApply(const uint8_t* in, bool quiet, bool keepWrongType) {
+AxesMapResult axesMapApply(const uint8_t* in, bool keepWrongType, const char** why) {
+    const char* unused;
+    if (!why) why = &unused;
     uint8_t ids[MOTION_SLOTS];
     memcpy(ids, in, sizeof ids);
 
@@ -96,17 +99,19 @@ AxesMapResult axesMapApply(const uint8_t* in, bool quiet, bool keepWrongType) {
     const uint8_t bad = checkPending(&fault, &fenced);
     if (fault == PF_WRONG_TYPE && !keepWrongType) {
         axesReqSet(oldIds, oldPending);
-        if (!quiet) Serial.printf("err node %d not_stepper\n", bad);
+        *why = refuse("node %d not_stepper", bad);
         return AXES_NOT_STEPPER;
     }
-    return axesCommit(quiet, bad, fault, fenced);
+    return axesCommit(bad, fault, fenced, why);
 }
 
-AxesMapResult axesMapRetry(bool quiet) {
+AxesMapResult axesMapRetry(const char** why) {
+    const char* unused;
+    if (!why) why = &unused;
     PendingFault fault;
     uint8_t fenced;
     const uint8_t bad = checkPending(&fault, &fenced);
-    return axesCommit(quiet, bad, fault, fenced);
+    return axesCommit(bad, fault, fenced, why);
 }
 
 bool axisNodeInConfig(uint8_t node) {

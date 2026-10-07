@@ -16,7 +16,7 @@ bool cmdUnalarm(const char*) {
     // one from axes_map re-checks its pending axes first.
     bool met = slotMapComplete();
     if (!met) {
-        if (slotMapFromAxes()) { axesMapRetry(/*quiet=*/true); met = slotMapComplete(); }
+        if (slotMapFromAxes()) { axesMapRetry(); met = slotMapComplete(); }
         else                   met = slotMapRetry();
     }
     if (!met) {

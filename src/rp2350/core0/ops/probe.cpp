@@ -5,6 +5,7 @@
 #include "position.h"
 #include "slot_map.h"
 #include "axes_map.h"
+#include "refusal.h"
 #include "state.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -77,8 +78,8 @@ static bool readSwitch(bool* openOut) {
 // ── Binding ──────────────────────────────────────────────────────────────────
 // Verify both types by status, then apply the slot map `- - <z> <vac>`. Types
 // first, while nothing has been rebound, so a refusal leaves the binding
-// untouched. `*zst` gets Z's status, for the leg cross-check. Prints the error
-// and returns false on refusal; a failed engage has already been restored.
+// untouched. `*zst` gets Z's status, for the leg cross-check. Returns nullptr
+// or the refusal; a failed engage has already been restored.
 //
 // The probe binding is an ordinary slot map: every slot holder is parked, then
 // Z and the vacuum are engaged. A poll is requested by setting the vacuum
@@ -89,32 +90,27 @@ static bool readSwitch(bool* openOut) {
 static void probeRestore(const uint8_t* map);
 static void probeSettle(void);
 
-static bool probeBind(uint8_t zNode, uint8_t vacNode, NodeStatus* zst) {
+static const char* probeBind(uint8_t zNode, uint8_t vacNode, NodeStatus* zst) {
     NodeStatus vst;
-    if (rpcNodeStatus(CMD_NODE_STATUS, zNode, 0, zst) != RPC_OK) {
-        Serial.printf("err node %d no_ack\n", zNode); return false;
-    }
-    if (zst->type != NODE_TYPE_STEPPER) {
-        Serial.printf("err node %d not_stepper\n", zNode); return false;
-    }
-    if (rpcNodeStatus(CMD_NODE_STATUS, vacNode, 0, &vst) != RPC_OK) {
-        Serial.printf("err node %d no_ack\n", vacNode); return false;
-    }
-    if (vst.type != NODE_TYPE_VACUUM) {
-        Serial.printf("err node %d not_vacuum\n", vacNode); return false;
-    }
+    if (rpcNodeStatus(CMD_NODE_STATUS, zNode, 0, zst) != RPC_OK)
+        return refuse("node %d no_ack", zNode);
+    if (zst->type != NODE_TYPE_STEPPER)
+        return refuse("node %d not_stepper", zNode);
+    if (rpcNodeStatus(CMD_NODE_STATUS, vacNode, 0, &vst) != RPC_OK)
+        return refuse("node %d no_ack", vacNode);
+    if (vst.type != NODE_TYPE_VACUUM)
+        return refuse("node %d not_vacuum", vacNode);
 
     uint8_t map[MOTION_SLOTS] = { SLOT_NONE, SLOT_NONE, SLOT_NONE, SLOT_NONE };
     map[PROBE_Z_SLOT]   = zNode;
     map[PROBE_VAC_SLOT] = vacNode;
     uint8_t failed;
-    if (!slotMapApply(map, /*quiet=*/true, &failed)) {
-        Serial.printf("err node %d engage\n", failed);
+    if (slotMapApply(map, &failed)) {
         probeRestore(nullptr);
         probeSettle();
-        return false;
+        return refuse("node %d engage", failed);   // after the restore's refusals
     }
-    return true;
+    return nullptr;
 }
 
 // ── Teardown ─────────────────────────────────────────────────────────────────
@@ -132,8 +128,8 @@ static bool probeBind(uint8_t zNode, uint8_t vacNode, NodeStatus* zst) {
 // flaky bus, not garbage. A `map` refused for a wrong type falls back to the
 // stored request, so the session never ends with the vacuum still bound.
 static void probeRestore(const uint8_t* map) {
-    if (!map || axesMapApply(map, /*quiet=*/true, /*keepWrongType=*/false) == AXES_NOT_STEPPER)
-        axesMapRetry(/*quiet=*/true);
+    if (!map || axesMapApply(map, /*keepWrongType=*/false) == AXES_NOT_STEPPER)
+        axesMapRetry();
     claimed     = false;
     legInFlight = false;
     haveNodePos = false;
@@ -198,30 +194,30 @@ static void probeFail(uint8_t cause) {
 }
 
 // ── probe_map ────────────────────────────────────────────────────────────────
-bool probeBegin(uint8_t vacNode) {
-    if (claimed) { Serial.println("err busy"); return true; }
+const char* probeBegin(uint8_t vacNode, uint8_t* zOut, bool* openOut) {
+    if (claimed) return "busy";
 
     // Z is the node bound as axis Z. One source of truth for "which node is Z",
     // and the axes request is already that source everywhere else.
     const uint8_t zNode = axisNode(PROBE_Z_SLOT);
-    if (zNode == SLOT_NONE) { Serial.println("err no_z"); return true; }
+    if (zNode == SLOT_NONE) return "no_z";
 
     // The vacuum must not be an axis. A map that names a vacuum as an axis is a
     // problem to fix in the map rather than to work around here.
     for (uint8_t k = 0; k < MOTION_SLOTS; k++)
-        if (axesReqAt(k) == vacNode) { Serial.println("err vac_mapped"); return true; }
+        if (axesReqAt(k) == vacNode) return "vac_mapped";
 
     // A de-energised Z accepts every leg and cannot turn, so the terminator is
     // never reached, the budget burns out, and the result reads as a broken
     // switch rather than a motor nobody turned on. legCommon refuses a home for
     // this reason; the same reason applies here and the same mask answers it.
-    if (!(nodeEnabled & (1u << zNode))) { Serial.println("err not_enabled"); return true; }
+    if (!(nodeEnabled & (1u << zNode))) return "not_enabled";
     returnState = machineState;        // IDLE or PAUSED — a mid-job tool swap
                                        // must land back in PAUSED, and neither
                                        // exit route can infer where it started
 
     NodeStatus zst;
-    if (!probeBind(zNode, vacNode, &zst)) return true;
+    if (const char* why = probeBind(zNode, vacNode, &zst)) return why;
 
     probeForget(zNode);                  // a new measurement replaces the old
     zNodeId     = zNode;
@@ -237,25 +233,25 @@ bool probeBegin(uint8_t vacNode) {
 
     bool open = false;
     if (!readSwitch(&open)) {
-        Serial.printf("err node %d no_switch\n", vacNode);
         probeRestore(nullptr);
         probeSettle();
-        return true;
+        return refuse("node %d no_switch", vacNode);   // after the restore's refusals
     }
 
     __dmb();
     machineState = STATE_PROBING;
-    Serial.printf("ok probing z=%d vac=%d switch=%d\n", zNode, vacNode, open ? 1 : 0);
-    return true;
+    *zOut    = zNode;
+    *openOut = open;
+    return nullptr;
 }
 
 // ── probe_leg ────────────────────────────────────────────────────────────────
-bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
-                 uint16_t rampSteps, uint8_t pollDiv, uint32_t maxSteps,
-                 uint16_t deadlineUs, uint8_t intent) {
-    if (!claimed)     { Serial.println("err not_probing"); return true; }
-    if (legInFlight)  { Serial.println("err busy");        return true; }
-    if (!(nodeEnabled & (1u << zNodeId))) { Serial.println("err not_enabled"); return true; }
+const char* probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
+                        uint16_t rampSteps, uint8_t pollDiv, uint32_t maxSteps,
+                        uint16_t deadlineUs, uint8_t intent) {
+    if (!claimed)     return "not_probing";
+    if (legInFlight)  return "busy";
+    if (!(nodeEnabled & (1u << zNodeId))) return "not_enabled";
 
     // §5.8's cross-check, at the leg boundary — one of the only two windows
     // where the bus is free. A mismatch means steps were refused, and the limit
@@ -263,13 +259,10 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
     // fiction. It is checked here rather than after the fact because the cheapest
     // moment to stop is before the next leg drives the axis.
     NodeStatus st;
-    if (rpcNodeStatus(CMD_NODE_STATUS, zNodeId, 0, &st) != RPC_OK) {
-        Serial.println("err node no_ack"); return true;
-    }
+    if (rpcNodeStatus(CMD_NODE_STATUS, zNodeId, 0, &st) != RPC_OK) return "node no_ack";
     if (haveNodePos && st.hasStepperTail && st.pos != lastNodePos) {
-        Serial.println("err pos_mismatch");
         probeFail(PROBE_POS_MISMATCH);
-        return true;
+        return "pos_mismatch";
     }
 
     // The intent check runs HERE, not on the node. CMD_HOME_LEG pushes it to the
@@ -284,7 +277,7 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
     // value of the check. A check derived from the machine's own reading could
     // never disagree with it.
     bool open = false;
-    if (!readSwitch(&open)) { Serial.println("err node no_switch"); return true; }
+    if (!readSwitch(&open)) return "node no_switch";
     if (open != (intent != 0)) {
         // Which way is DOWN is not knowable here -- `dir` is a wire bit and the
         // host owns the geometry -- so ALREADY_OPEN is derived from the intent
@@ -298,11 +291,9 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
         // so it is refused without tearing the session down.
         if (intent == 0) {
             probeFail(PROBE_ALREADY_OPEN);
-            Serial.println("err already_open");
-        } else {
-            Serial.printf("err intent switch=%d\n", open ? 1 : 0);
+            return "already_open";
         }
-        return true;
+        return refuse("intent switch=%d", open ? 1 : 0);
     }
 
     // THE mode decision, and the only place it is made: the read above, which
@@ -326,7 +317,7 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
     rq.confirmPolls = PROBE_CONFIRM_POLLS;
     rq.retryLimit   = PROBE_RETRY_LIMIT;
 
-    if (rpcProbeLegStart(&rq, &legId) != RPC_OK) { Serial.println("err busy"); return true; }
+    if (rpcProbeLegStart(&rq, &legId) != RPC_OK) return "busy";
 
     // Worst case: every step at its slowest interval, plus a full poll deadline
     // for each poll, plus a margin. Generous on purpose — this bound exists to
@@ -340,14 +331,13 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
 
     legInFlight   = true;
     probingReason = PROBING_LEG;
-    Serial.println("ok");
-    return true;
+    return nullptr;
 }
 
 // ── probe_end / axes_map-as-exit ─────────────────────────────────────────────
-bool probeExit(const uint8_t* newMap) {
-    if (!claimed)    { Serial.println("err not_probing"); return true; }
-    if (legInFlight) { Serial.println("err busy");        return true; }
+const char* probeExit(const uint8_t* newMap, int8_t* switchOut) {
+    if (!claimed)    return "not_probing";
+    if (legInFlight) return "busy";
 
     // The switch is REPORTED, not gated on.
     //
@@ -377,12 +367,8 @@ bool probeExit(const uint8_t* newMap) {
     probeRestore(newMap);
     probeSettle();
 
-    // `switch=1` on the way out is worth an operator's attention -- the tool may
-    // be resting on the bed, or the far switch may be stuck -- but it is
-    // information, not a refusal. `switch=?` means the read itself failed.
-    if (known) Serial.printf("ok switch=%d\n", open ? 1 : 0);
-    else       Serial.println("ok switch=?");
-    return true;
+    *switchOut = known ? (open ? 1 : 0) : -1;
+    return nullptr;
 }
 
 // ── supervisor ───────────────────────────────────────────────────────────────

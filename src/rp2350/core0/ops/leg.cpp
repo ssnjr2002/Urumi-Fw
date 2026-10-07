@@ -1,7 +1,6 @@
 #include <Arduino.h>
-#include <stdarg.h>
-#include <stdio.h>
 #include "leg.h"
+#include "refusal.h"
 #include "../../ipc/core1_rpc.h"
 
 // Poll cadence. This does NOT set accuracy: the node's gate stops the axis at
@@ -64,17 +63,6 @@ bool legActive(uint8_t node) { return legFind(node) != nullptr; }
 bool legAny(void) {
     for (const Leg& g : legs) if (g.claimed) return true;
     return false;
-}
-
-// A refusal's text, after `err `. One buffer: valid until the next refusal.
-static char refusal[48];
-
-static const char* refuse(const char* fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(refusal, sizeof refusal, fmt, ap);
-    va_end(ap);
-    return refusal;
 }
 
 // A free entry for `node`, or nullptr with the refusal in `*why`.

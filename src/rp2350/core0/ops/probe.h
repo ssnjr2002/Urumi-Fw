@@ -34,15 +34,16 @@
 // place that says which node is Z. It also means a probe requires an axes
 // request, which the exit restores.
 //
-// Prints exactly one reply line on every path.
-bool probeBegin(uint8_t vacNode);
+// Every entry point here returns nullptr or the refusal (refusal.h); nothing
+// here prints. On success `*zNode` gets Z and `*open` the switch.
+const char* probeBegin(uint8_t vacNode, uint8_t* zNode, bool* open);
 
 // Arm one leg. Returns once the leg is POSTED, not once it has run; the result
 // arrives through probeTick(). `intent` is the host's prediction of the switch
 // state at the start of this leg — checked against a real read, not obeyed.
-bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
-                 uint16_t rampSteps, uint8_t pollDiv, uint32_t maxSteps,
-                 uint16_t deadlineUs, uint8_t intent);
+const char* probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
+                        uint16_t rampSteps, uint8_t pollDiv, uint32_t maxSteps,
+                        uint16_t deadlineUs, uint8_t intent);
 
 // Close the session, re-applying the axes request. `newMap` is four bus ids to
 // commit as the axes request instead (the `axes_map`-as-exit route), or nullptr
@@ -50,9 +51,10 @@ bool probeArmLeg(uint8_t dir, uint16_t startUs, uint16_t ceilUs,
 //
 // Refuses ONLY while a leg is in flight, which is a real conflict: Core 1 is
 // emitting into the slot table this is about to rewrite. The switch state is
-// reported on the way out (`ok switch=N`) and never gated on -- see the note in
-// probeExit for why a teardown must not be refusable.
-bool probeExit(const uint8_t* newMap);
+// reported on the way out and never gated on -- see the note in probeExit for
+// why a teardown must not be refusable. `*switchOut` gets 1 open, 0 closed, or
+// -1 when the read failed.
+const char* probeExit(const uint8_t* newMap, int8_t* switchOut);
 
 // Poll a leg in flight. No-op unless one is. Call from the Core 0 loop.
 void probeTick(void);
