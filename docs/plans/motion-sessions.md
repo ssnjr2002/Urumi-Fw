@@ -359,7 +359,40 @@ Not started.
 
 ### Status
 
-Not started.
+Done, ready to merge.
+
+### Outcome
+
+* Interfaces: `joggingReason` (NONE, STEP, CONT) replaced J1's `plannerJog`;
+  `plannerQueueLine` and `plannerJogFrom` take the reason. New
+  `plannerStopJog()` brakes the jogs Core 1 runs, or empties a ring it has
+  not taken yet (an abort raised then could be consumed as nothing to stop
+  and leave the line to run). Web: `packCjog`, `Link.cjog`, `Link.cjogStop`.
+* Settled while writing: a speed change while holding does not restart the
+  jog; repeats stay silent at the end of travel until released; the sim
+  models no braking and takes `cjogStepsPerS`, `cjogTravel` and `jogUnhomed`
+  in place of a config.
+* Added at the user's request: WASD jog in `web/demo/barebones.html`, gated
+  by a checkbox.
+* Config: Y was mirrored. `controller-1head.jsonc` now has `invertDir: true`
+  and `seekPositive: false` on Y, confirmed by jogging Y+; this answers the
+  Y question in coordinate-system.md.
+* Bench (human scope): hold and release on X, Y and a diagonal; a direction
+  change (ACK about 215 ms later, once at rest); a stop at the soft limit,
+  silent while held; the stop byte; packets 200 ms apart trip the deadman
+  each time; a step jog during a continuous one refused; a continuous packet
+  stopping step jogs. `nodestat` deltas matched the Pico throughout. Not
+  tested: pulling the cable mid-jog; the demo on the machine was tried by the
+  user.
+* Checks: `pio run -e pico` clean; `pnpm typecheck` and `pnpm test` pass.
+  `pio test -e native` skips `test_config` and `test_planner` on this
+  Windows machine.
+* Out of scope:
+  * A direction change brakes to rest before the new line; blending would
+    need the executor to cut a block short mid-flight.
+  * The preview server starts in the main folder (`${workspaceFolder}`), so
+    a worktree's demo can't be previewed; the demo also imports `dist/`,
+    which a worktree has to build first.
 
 ## Open
 
