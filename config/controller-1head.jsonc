@@ -8,10 +8,11 @@
 // homing path is removed; the Pico reads the ones beside them
 // (docs/homing.md §3.2a, docs/plans/controller-homing.md).
 //
+// maxTravel on x and y: measured as (seek span steps / stepsPerUnit) -
+// pullOffDist, seeking from the end opposite the switch, rounded down.
+//
 // Unmeasured, check when homing works:
-//   maxTravel: estimates (old hardTravel − pullOffDist). Measure by pushing the
-//     gantry to the end opposite the switch, then homing and reading the steps
-//     to the trip.
+//   maxTravel on z: estimate (old hardTravel − pullOffDist).
 //   invertDir on y and z: derived from the old frames; jog + to confirm
 //     (X right, Y away, Z up).
 //   invertDir on a: unchecked; jog A+, expect counter-clockwise from above.
@@ -27,7 +28,7 @@
       "stepsPerUnit": 160,
       "maxFeed": 80,
       "maxAccel": 100,
-      "maxTravel": 1195,         // estimate
+      "maxTravel": 1175,         // (189000 / 160) - 5 = 1176.25, rounded down
       "softLimits": true,
       "invert": false,           // web only
       "invertDir": false,
@@ -54,7 +55,7 @@
       "stepsPerUnit": 160,
       "maxFeed": 80,
       "maxAccel": 100,
-      "maxTravel": 495,          // estimate
+      "maxTravel": 735,          // (118929 / 160) - 5 = 738.31, rounded down
       "softLimits": true,
       "invert": true,            // web only
       "invertDir": true,         // confirmed by jogging Y+
@@ -81,8 +82,8 @@
   "heads": [
     {
       "accepts": ["knife", "crease"],
-      "xOffset": 0,              // unmeasured: tip − laser dot
-      "yOffset": 0,
+      "xOffset": -70,              // rough eyeball: tip − laser dot
+      "yOffset": -40,
       "z": {
         "node": { "id": 3, "present": true },
         "stepsPerUnit": 1200,
