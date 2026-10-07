@@ -256,7 +256,7 @@ and get their own sections.
 
 ### Status
 
-Done, ready to merge.
+Done (merged). Unblocks J1b and J2.
 
 ### Outcome
 
