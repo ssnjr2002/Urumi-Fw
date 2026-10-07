@@ -256,7 +256,34 @@ and get their own sections.
 
 ### Status
 
-Not started.
+Done, ready to merge.
+
+### Outcome
+
+* Interfaces later branches use: `plannerJog` (ring owner, set in
+  `resetIfIdle`), `plannerJogFrom()` (where the next jog starts),
+  `framesCheckMove()` (soft range with mm left), and `queueJog()` in
+  `cmd/axis.cpp` (cap, start point, soft-limit check, queueing).
+* `jog`'s `[scale]` multiplies `jogFeed`; it is not a feed in mm/s.
+* Added: an unhomed click (with `jogUnhomed`) longer than `maxTravel` is
+  refused with `err too_far`.
+* `jogto` runs at the slower of X's and Y's `jogFeed`.
+* The jog's soft-range check follows `softLimits`, as jobs do. The pico build
+  encodes `config/controller-1head.jsonc`; this branch turned `softLimits` on
+  for X and Y there.
+* Bench (human scope): every J1 human check passed with `nodestat` deltas
+  matching the Pico, except: `jogto` with another head (one-head config) and
+  the `JOG_MAGIC` refusal (left untested at the user's call).
+* Untestable on the bench: the race on an idle ring between a jog and a
+  record, and the hold-and-resume after a late adoption (`late=0` throughout).
+* Checks: `pio run -e pico` clean; `pnpm typecheck` and `pnpm test` pass.
+  `pio test -e native` skips `test_config` and `test_planner` on this Windows
+  machine, so the new decoder test cases have not run.
+* Out of scope:
+  * `stateName` in `cmd/gate.h` has no PROBING.
+  * The web host doesn't refuse `maxTravel` 0; only the Pico does.
+  * `nodestat` answers `err bad_state` while JOGGING.
+  * The web host's XY jog gets NACKs until J2.
 
 ## Branch J1b: `feature/jogto-named`
 
