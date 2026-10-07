@@ -1267,6 +1267,14 @@ without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
   live binary poll. Prior art: Klipper `objects/query`, grbl's `$10` mask.
   Its own `refactor/` branch; new fields (coordinate-system.md's `mpos`,
   `wpos`, `head`) take names that work as keys.
+  **Done** in `refactor/get-query`: `cmd/get.cpp`, `getstate` and `getpos`
+  removed, the web host on `get` (`getState`/`getPos` keep their
+  signatures). Position is `pos=x,y,z,a` in steps, slot order. At most 32
+  keys (`err too_many_keys`); the text-line buffer is 256 bytes. Outcome: no
+  host fallback to the old commands (firmware and host ship together); the
+  `web/demo/comms` page moved to `get` too; a line over 255 characters is
+  still cut silently, for every command (not addressed); `mpos`, `wpos`,
+  `head` are now rows in the key table. Bench: not yet run.
 * Flashed config image: a pre-upload pio script turns a `config.json` into
   `data/config.bin` (16-byte header: `CFG_VERSION`, seq, length, CRC32) for
   `uploadfs`. Encode through the web's encoder (a node/pnpm command), not a
