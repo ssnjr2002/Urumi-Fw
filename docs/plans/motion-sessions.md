@@ -324,20 +324,34 @@ Not started.
   one-byte stop.
 * Depends on: J1.
 * Scope:
-  1. Packet: magic, direction per axis (X, Y: −1/0/+1), speed fraction (u8,
-     of `jogFeed`), CRC; and a one-byte stop. Both are received beside the
-     existing magics (`core0/data_plane.cpp:326`).
+  1. Packet (7 bytes): `0xAF`, direction per axis X, Y, Z, A (i8: −1/0/+1;
+     Z and A reserved and refused unless 0), speed (u8, multiplier of
+     `jogFeed` in 1/64 steps, capped at `maxFeed`), CRC8. Stop byte `0xB3`,
+     acting only on a continuous jog. Both are received beside the existing
+     magics (`core0/data_plane.cpp:326`). Replies use the existing frames:
+     ACK when a jog starts, NACK `bb <code> 00` when refused, nothing for
+     repeats.
   2. The first packet queues a line to the soft-range end in that direction,
      or `maxTravel` from the start when unhomed or with `softLimits` off.
-     Diagonals are allowed. Repeats renew a timer; 150 ms without one holds
-     and discards (`abortRequested`), checked in `dataPlaneTick`. All-zero
-     directions or the stop byte stop at once. A direction change stops,
-     then queues a new line once at rest.
-  3. A step jog during a continuous jog is refused. A continuous packet
+     Diagonals are allowed, at the slower axis's `jogFeed`, cut short where
+     the first axis reaches its end. Repeats renew a timer; 150 ms without
+     one holds and discards (`abortRequested`), checked in `dataPlaneTick`.
+     All-zero directions or the stop byte stop at once. A direction change
+     stops, then queues a new line once at rest.
+  3. Jogging reasons: `JoggingReason` {NONE, STEP, CONT} and
+     `joggingReason` (`ipc/shared_state.h`), replacing J1's `plannerJog`.
+     Core 0 writes it when it restarts an empty, idle ring (`resetIfIdle`,
+     under `plannerLock`); NONE means a job owns the ring. It decides ring
+     ownership, Core 1's `enter()` picks JOGGING or RUNNING from it, and the
+     deadman runs only on CONT. It changes only while the ring is empty and
+     idle, so it is settled before Core 1 publishes JOGGING. Meaningful while
+     JOGGING; `get` reports it as `jogging=`. Apart from `runningReason`,
+     which the job branches rework; STATUS_RSP is unchanged.
+  4. A step jog during a continuous jog is refused. A continuous packet
      while step jogs run stops them first, the same as a direction change.
-  4. Web: a `wire/` encoder for the packet, and a sim that answers it.
+  5. Web: a `wire/` encoder for the packet, and a sim that answers it.
      The operator UI port stays deferred.
-  5. Docs: `docs/wire_protocol.md`.
+  6. Docs: `docs/wire_protocol.md`.
 * Overlap: `web/src/wire/`.
 * Checks: as J1. Human checks: hold and release on X, Y and a diagonal;
   pulling the cable mid-jog stops within about 150 ms plus braking; running
