@@ -1290,3 +1290,19 @@ without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
   homing runs (noted in the file); `web/demo/comms.json` is unchanged and still
   rejected by the Pico; `controller.msgpack` makes the native test decode the
   real config.
+* The control plane prints every reply line. `refactor/ops-silent` made the
+  ops return refusals (`ops/refusal.h`); the handlers still print their own
+  `ok`/`err`, and the gates (`busGateDenies`, `degradedDenies`,
+  `legGateDenies`, `periphGateDenies`, `busQueryDenies`, `alarmDeniesOn`,
+  `homeGate`) and `parseFourNodes` print too. The handler type becomes
+  `const char* (*)(const char* args)`: nullptr is `ok`, a refusal is
+  `err <text>`, and a `REPLIED` sentinel means the handler printed its one
+  data line (`get`, `status`, read-backs, `ok probing …`). Gates return their
+  refusal; `handleCommand` owns `err unknown` and `err unconfigured`. Wire
+  output unchanged. About 50 handlers in one commit, since the table type
+  changes them all at once. Its own `refactor/cmd-reply` branch; worth doing
+  before a plan that adds many commands.
+* Can a host that stops reading block Core 0? A write waits once the USB CDC
+  TX FIFO is full, and `stop` and the leg and probe supervisors wait with it.
+  Replies are short and the host reads continuously, so not seen; a bench
+  check before anything is built.
