@@ -30,6 +30,9 @@ import { MAGIC_MICROSEG } from "../../../../src/wire/format/constants.js";
 import { packBezier } from "../../../../src/wire/format/bezier.js";
 import { BezierFlag } from "../../../../src/toolpath/annotate.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
+import { packCjog, type JogDir } from "../../../../src/wire/format/cjog.js";
+import { CJOG_DEADMAN_MS, MAGIC_CJOG_STOP } from "../../../../src/wire/format/constants.js";
+import { crc8 } from "../../../../src/wire/format/crc.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -39,14 +42,7 @@ function mseg(dx = 1, interval = 1000): Uint8Array {
 
 async function withLink<T>(
     fn: (link: Link, sim: SimTransport) => Promise<T>,
-    simOpts?: {
-        ackCoalesceMax?: number;
-        ringSize?: number;
-        frameMs?: number;
-        fCpu?: number;
-        busNodes?: readonly number[];
-        axisMap?: readonly (number | null)[];
-    },
+    simOpts?: ConstructorParameters<typeof SimTransport>[0],
 ): Promise<T> {
     // Boot into a COMMITTED map by default, as the firmware's controller does
     // with a config. A test passes `{ axisMap: undefined }` to get the
@@ -460,5 +456,86 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
             expect(r.ok).toBe(false);
             expect(r.nacks).toBeGreaterThan(0);
         });
+    });
+});
+
+describe("wire/link/backends/sim: continuous jog", () => {
+    /** Frames the sim replied with, as hex, captured from here on. */
+    function replies(sim: SimTransport): string[] {
+        const out: string[] = [];
+        const s = sim as unknown as { reply: (d: Uint8Array) => void };
+        const orig = s.reply.bind(sim);
+        s.reply = (d) => {
+            if (d[0] === 0xaa || d[0] === 0xbb) out.push(Buffer.from(d).toString("hex"));
+            orig(d);
+        };
+        return out;
+    }
+
+    /** Repeat a packet every 30 ms for `ms`. */
+    async function hold(sim: SimTransport, x: JogDir, y: JogDir, ms: number, speed = 1) {
+        const end = Date.now() + ms;
+        while (Date.now() < end) {
+            await sim.write(packCjog(x, y, speed));
+            await tick(30);
+        }
+    }
+
+    const opts = { frameMs: 5, cjogStepsPerS: 1000, cjogTravel: [[0, 400], [0, 400]] as const };
+
+    it("runs while held, ACKs once, and stops on the deadman", async () => {
+        await withLink(async (link, sim) => {
+            await link.command("setorigin");
+            sim.pos = [100, 100, 0, 0];
+            const r = replies(sim);
+            await hold(sim, 1, 0, 120);
+            expect(await link.command("get state jogging")).toBe("state=7 jogging=2");
+            await tick(CJOG_DEADMAN_MS + 60);
+            expect(sim.state).toBe(MachineState.IDLE);
+            expect(r).toEqual(["aa0000"]);
+            expect(sim.pos[0]).toBeGreaterThan(150);
+            expect(sim.pos[1]).toBe(100);
+        }, opts);
+    });
+
+    it("stops at the end of travel and stays silent while held", async () => {
+        await withLink(async (link, sim) => {
+            await link.command("setorigin");
+            sim.pos = [390, 100, 0, 0];
+            const r = replies(sim);
+            await hold(sim, 1, 0, 150);
+            expect(sim.pos[0]).toBe(400);
+            expect(sim.state).toBe(MachineState.IDLE);
+            expect(r).toEqual(["aa0000"]);
+            await tick(CJOG_DEADMAN_MS + 30);
+            await sim.write(packCjog(1, 0));          // a fresh press at the end
+            expect(r).toEqual(["aa0000", "bb0900"]);
+        }, opts);
+    });
+
+    it("the stop byte stops at once; a bad packet is NACKed", async () => {
+        await withLink(async (link, sim) => {
+            await link.command("setorigin");
+            sim.pos = [100, 100, 0, 0];
+            const r = replies(sim);
+            await sim.write(packCjog(0, -1));
+            expect(sim.state).toBe(MachineState.JOGGING);
+            await sim.write(new Uint8Array([MAGIC_CJOG_STOP]));
+            expect(sim.state).toBe(MachineState.IDLE);
+            const bad = packCjog(1, 0);
+            bad[3] = 1;                                 // Z is reserved
+            bad[6] = crc8(bad, 0, 6);
+            await sim.write(bad);
+            expect(r).toEqual(["aa0000", "bb0600"]);
+        }, opts);
+    });
+
+    it("refuses an unhomed axis without jogUnhomed", async () => {
+        await withLink(async (_link, sim) => {
+            const r = replies(sim);
+            await sim.write(packCjog(1, 0));
+            expect(r).toEqual(["bb0600"]);
+            expect(sim.state).toBe(MachineState.IDLE);
+        }, opts);
     });
 });

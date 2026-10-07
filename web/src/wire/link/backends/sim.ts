@@ -38,6 +38,12 @@ import {
     NACK_FULL,
     NACK_BAD_STATE,
     NACK_PAUSED,
+    NACK_SOFT_LIMIT,
+    MAGIC_CJOG,
+    MAGIC_CJOG_STOP,
+    CJOG_SIZE,
+    CJOG_SPEED_ONE,
+    CJOG_DEADMAN_MS,
 } from "../../format/constants.js";
 import {
     MachineState,
@@ -69,7 +75,19 @@ interface SimOptions {
      * the firmware does with no config (core0.cpp).
      */
     axisMap?: readonly (number | null)[];
+    /** Continuous-jog rate at 1× speed, steps/s on each moving axis. */
+    cjogStepsPerS?: number;
+    /**
+     * X and Y travel, [lo, hi] steps, for a continuous jog to stop at. Without
+     * it a jog runs until released.
+     */
+    cjogTravel?: readonly [readonly [number, number], readonly [number, number]];
+    /** Allow a continuous jog on an unhomed axis (the config's jogUnhomed). */
+    jogUnhomed?: boolean;
 }
+
+/** `get jogging=` values (shared_state.h JoggingReason). */
+const JOGGING_CONT = 2;
 
 /** Provisional bus-address ceiling — control_plane.cpp BUS_ADDR_MAX. */
 const BUS_ADDR_MAX = 8;
@@ -78,7 +96,7 @@ const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
     "state", "enabled", "homed", "alarm", "running", "latched",
-    "probed", "pz", "nodehomed", "pos",
+    "probed", "pz", "nodehomed", "pos", "jogging",
 ] as const;
 
 export class SimTransport implements Transport {
@@ -176,12 +194,27 @@ export class SimTransport implements Transport {
 
     private timer: ReturnType<typeof setInterval> | null = null;
 
+    // Continuous jog (data_plane.cpp acceptCjog). The sim models no braking:
+    // a stop or a new direction takes effect at once.
+    readonly cjogStepsPerS: number;
+    readonly cjogTravel: SimOptions["cjogTravel"];
+    readonly jogUnhomed: boolean;
+    private cjogDir: [number, number] = [0, 0];
+    private cjogSpeed = CJOG_SPEED_ONE;
+    private cjogHeld = false; // packets keep arriving for cjogDir
+    private cjogMoving = false; // not yet at the end of travel
+    private cjogLastMs = 0;
+    private cjogFrac: [number, number] = [0, 0]; // sub-step progress
+
     constructor(opts: SimOptions = {}) {
         this.ringSize = opts.ringSize ?? 64;
         this.ackCoalesceMax = opts.ackCoalesceMax ?? 8;
         this.frameMs = opts.frameMs ?? 40;
         this.fCpu = opts.fCpu ?? 150_000_000;
         this.busNodes = new Set(opts.busNodes ?? [1, 2, 3, 4]);
+        this.cjogStepsPerS = opts.cjogStepsPerS ?? 2000;
+        this.cjogTravel = opts.cjogTravel;
+        this.jogUnhomed = opts.jogUnhomed ?? false;
         if (opts.axisMap) {
             for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axisMap[i] ?? null;
             this.state = MachineState.IDLE;
@@ -235,6 +268,11 @@ export class SimTransport implements Transport {
             return Promise.resolve();
         }
 
+        if (data.length === 1 && first === MAGIC_CJOG_STOP) {
+            this._cjogStop();
+            return Promise.resolve();
+        }
+
         if (data.length === 1 && first === MAGIC_SEQRESET) {
             this.expectedSeq = 0;
             this.pendingAcks = 0;
@@ -264,10 +302,12 @@ export class SimTransport implements Transport {
             const m = data[off];
             const size = m === MAGIC_BEZIER ? BEZIER_SIZE
                 : m === MAGIC_MICROSEG || m === MAGIC_JOG ? PACKET_SIZE
+                : m === MAGIC_CJOG ? CJOG_SIZE
                 : 0;
             if (size === 0 || off + size > data.length) break; // unframeable — drop the rest
             const pkt = data.subarray(off, off + size);
             if (m === MAGIC_BEZIER) this._writeBezier(pkt);
+            else if (m === MAGIC_CJOG) this._writeCjog(pkt);
             else this._writePacket(pkt);
             off += size;
         }
@@ -322,6 +362,86 @@ export class SimTransport implements Transport {
         if (this.pendingAcks >= this.ackCoalesceMax) {
             this.pendingAcks = 0;
             this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
+        }
+    }
+
+    // ── continuous jog (mirrors data_plane.cpp acceptCjog / cjogTick) ──────────
+
+    private _writeCjog(data: Uint8Array): void {
+        if (crc8(data, 0, CJOG_SIZE - 1) !== data[CJOG_SIZE - 1]) return; // corrupt — drop
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const d = [dv.getInt8(1), dv.getInt8(2), dv.getInt8(3), dv.getInt8(4)];
+        const speed = data[5]!;
+        const bad = d.some((v, k) => v < -1 || v > 1 || (k >= 2 && v !== 0));
+        if (bad || speed === 0) return this._nack(NACK_BAD_STATE);
+
+        this.cjogLastMs = Date.now();
+        if (d[0] === 0 && d[1] === 0) return this._cjogStop();
+        if (this.cjogHeld && d[0] === this.cjogDir[0] && d[1] === this.cjogDir[1]) return; // a repeat
+
+        const jogging = this.state === MachineState.JOGGING;
+        if (this.state !== MachineState.IDLE && !jogging) return this._nack(NACK_BAD_STATE);
+        for (let k = 0; k < 2; k++) {
+            if (d[k] !== 0 && !(this.axesHomed & (1 << k)) && !this.jogUnhomed) {
+                return this._nack(NACK_BAD_STATE);
+            }
+        }
+        const dir: [number, number] = [d[0]!, d[1]!];
+        if (!this._cjogRoom(dir)) {
+            this._cjogStop();
+            return this._nack(NACK_SOFT_LIMIT);
+        }
+        this.cjogDir = dir;
+        this.cjogSpeed = speed;
+        this.cjogHeld = this.cjogMoving = true;
+        this.cjogFrac = [0, 0];
+        this.state = MachineState.JOGGING;
+        this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
+    }
+
+    private _nack(reason: number): void {
+        this.reply(new Uint8Array([MAGIC_NACK, reason, 0]));
+    }
+
+    /** Some travel left on every moving axis. */
+    private _cjogRoom(dir: readonly [number, number]): boolean {
+        if (!this.cjogTravel) return true;
+        return dir.every((v, k) => {
+            const [lo, hi] = this.cjogTravel![k]!;
+            return v === 0 || (v > 0 ? this.pos[k]! < hi : this.pos[k]! > lo);
+        });
+    }
+
+    private _cjogStop(): void {
+        this.cjogHeld = this.cjogMoving = false;
+        if (this.state === MachineState.JOGGING) this.state = MachineState.IDLE;
+    }
+
+    private _tickCjog(frameS: number): void {
+        if (this.cjogHeld && Date.now() - this.cjogLastMs > CJOG_DEADMAN_MS) {
+            this._cjogStop();
+            return;
+        }
+        if (!this.cjogMoving) return;
+        const run = (this.cjogStepsPerS * this.cjogSpeed) / CJOG_SPEED_ONE * frameS;
+        let ended = false;
+        for (let k = 0; k < 2; k++) {
+            const v = this.cjogDir[k]!;
+            if (v === 0) continue;
+            this.cjogFrac[k]! += run;
+            const n = Math.floor(this.cjogFrac[k]!);
+            this.cjogFrac[k]! -= n;
+            let p = this.pos[k]! + v * n;
+            if (this.cjogTravel) {
+                const [lo, hi] = this.cjogTravel[k]!;
+                if (p <= lo || p >= hi) { p = Math.min(hi, Math.max(lo, p)); ended = true; }
+            }
+            this.pos[k] = p;
+        }
+        // At the end of travel the jog stops but stays held: repeats stay silent.
+        if (ended) {
+            this.cjogMoving = false;
+            this.state = MachineState.IDLE;
         }
     }
 
@@ -430,6 +550,7 @@ export class SimTransport implements Transport {
     private _tick(): void {
         this._tickHoming();
         const frameS = this.frameMs / 1000;
+        this._tickCjog(frameS);
         if (!this.executing || this.state !== MachineState.RUNNING) {
             this.timeCredit = 0;
             return; // idle, or paused/alarmed — hold
@@ -904,6 +1025,7 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 return hex(m, 3);
             }
             case "pos":       return this.pos.join(",");
+            case "jogging":   return this.state === MachineState.JOGGING ? String(JOGGING_CONT) : "-";
             default:          return undefined;
         }
     }

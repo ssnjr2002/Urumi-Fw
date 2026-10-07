@@ -31,7 +31,7 @@ export interface Attachable {
     attach(demux: Demux): void;
 }
 import {
-    MAGIC_ABORT,
+    MAGIC_ABORT, MAGIC_CJOG_STOP,
     MAGIC_CFG_ACK,
     MAGIC_CFG_DATA,
     MAGIC_CFG_GET,
@@ -40,6 +40,7 @@ import {
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
 } from "../format/constants.js";
+import { packCjog, type JogDir } from "../format/cjog.js";
 import { CFG_MAX_BYTES, packCfgSetHeader } from "../format/cfg.js";
 import { crc32 } from "../format/crc.js";
 import { parseStatusRsp, type MachineStatus } from "../format/status.js";
@@ -196,6 +197,21 @@ export class Link {
      */
     abort(): void {
         void this.writer.writeFrame(new Uint8Array([MAGIC_ABORT]));
+    }
+
+    /**
+     * One continuous-jog packet (format/cjog.ts). Repeat it faster than
+     * CJOG_DEADMAN_MS while the direction is held; all-zero directions stop.
+     * Fire-and-forget like `abort`: the Pico ACKs a start and NACKs a refusal,
+     * which arrive on the stream sinks.
+     */
+    cjog(x: JogDir, y: JogDir, speed = 1): void {
+        void this.writer.writeFrame(packCjog(x, y, speed));
+    }
+
+    /** Stop a continuous jog at once (no reply). */
+    cjogStop(): void {
+        void this.writer.writeFrame(new Uint8Array([MAGIC_CJOG_STOP]));
     }
 
     // -- config blob (docs/config_storage.md §5) -------------------------------

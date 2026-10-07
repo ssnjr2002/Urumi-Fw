@@ -270,6 +270,7 @@ export {
 } from "./wire/format/packet.js";
 
 export { packJog, stampSeq, unpackMicrosegment } from "./wire/format/packet.js";
+export { packCjog, CJOG_SPEED_MAX, type JogDir } from "./wire/format/cjog.js";
 
 // ── wire format: STATUS_RSP + machine enums ──────────────────────────────────
 export {
@@ -324,6 +325,12 @@ export {
     NACK_PAUSED,
     NACK_BAD_STATE,
     NACK_ABORTING,
+    NACK_SOFT_LIMIT,
+    MAGIC_CJOG,
+    MAGIC_CJOG_STOP,
+    CJOG_SIZE,
+    CJOG_SPEED_ONE,
+    CJOG_DEADMAN_MS,
 } from "./wire/format/constants.js";
 
 export {

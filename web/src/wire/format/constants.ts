@@ -21,6 +21,13 @@ export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planne
 export const BEZIER_SIZE = 56;
 export const BEZIER_SEQ_OFFSET = 2;
 
+// ── Continuous jog — 7-byte deadman packet and its stop byte (format/cjog.ts) ──
+export const MAGIC_CJOG = 0xaf; // host → Pico: held XY jog, repeated while held
+export const CJOG_SIZE = 7;
+export const CJOG_SPEED_ONE = 64; // speed byte for 1× jogFeed
+export const CJOG_DEADMAN_MS = 150; // silence after which the Pico stops the jog
+export const MAGIC_CJOG_STOP = 0xb3; // host → Pico: one byte, no reply
+
 // ── Status plane — binary mirror of `get` (state, pos, queued time) ───────────
 // docs/wire_protocol.md "STATUS_RSP". The magic bumped from 0xA6 to 0xA7 when
 // the frame grew 9 → 30 bytes (pos[4], expectedSeq, queuedUs). The retired
