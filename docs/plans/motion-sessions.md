@@ -58,8 +58,10 @@ preflight and the record layouts are open (below), and they have no branches yet
 ### Buffering (jobs only)
 
 * `BUFFERING` is entered at job start, at resume, and when the ring runs dry
-  mid-job (the planner has already braked to rest at the last block). Jogs
-  have no buffering.
+  mid-job (the planner has already braked to rest at the last block). A late
+  block adoption (Core 1 needed a block before Core 0 committed it) is a dry
+  ring too: hold to rest, `BUFFERING`, then on automatically. `PAUSED` is
+  only ever the operator's pause. Jogs have no buffering.
 * Leaves for `RUNNING` on the first of:
   * the ring holds enough path to reach full feed (queued distance ≥ braking
     distance at the job feed; a block count as a simpler stand-in);
@@ -182,7 +184,7 @@ what is sent continuously.
 
 ## Branches
 
-A dependent chain, one session: J1, then J2. The job branches come later
+A dependent chain, one session: J1, then J1b and J2 in either order. The job branches come later
 and get their own sections.
 
 ## Branch J1: `feature/pico-jog`
@@ -191,10 +193,10 @@ and get their own sections.
 
 * Type: feature.
 * Purpose: XY jogs on the planner. Adds `STATE_JOGGING`, step `jog`,
-  numeric and named `jogto`, the homing gate, refusal at the soft limit, and
+  numeric `jogto`, the homing gate, refusal at the soft limit, and
   appending clicks. The jog config fields come in the same branch.
 * Depends on: coordinate-system `feature/pico-frames` (done): `framesToMachine`,
-  `framesCheckXY`, stored positions, `framesTipOffset`
+  `framesCheckXY`, `framesTipOffset`
   (`core0/ops/frames.h`).
 * What the code has today:
   * `admit()` (`core0/planner/queue.cpp:26`) accepts IDLE or
@@ -207,6 +209,10 @@ and get their own sections.
     (`config_decode.cpp:133`). `CFG_SCHEMA_VERSION` and
     `CONFIG_BLOB_VERSION` (`web/src/machine/json/blob.ts:15`) are 3.
   * `framesCheckXY` returns `soft_limit x|y` without the distance left.
+  * Jogs and records share the ring and `admit()`, so a `line` could join a
+    streamed job's ring.
+  * A late block adoption sets `pauseRequested` (`follower.cpp:156`) and
+    lands PAUSED with the ring kept.
 * Scope:
   1. Config, Pico and web schema/loader: per-axis `jogFeed` and
      `jogFeedUnhomed`, machine `jogUnhomed`, and a positive `maxTravel`
@@ -216,22 +222,27 @@ and get their own sections.
      from a jog flag Core 0 sets when it queues the jog. A jog returns to
      IDLE. Refused while PAUSED until the job branches add the return to
      `JOB.PAUSED`. `admit()` accepts JOGGING in place of `RUNNING_PLANNER`;
-     `status`, `get` and the web state names know it.
+     `status`, `get` and the web state names know it. The ring's owner (jog
+     or job) is set when `resetIfIdle` restarts it; a push of the other kind
+     is refused, and `enter()` picks JOGGING or RUNNING from it. Core 1's
+     abort (`core1/core1.cpp:113`) returns JOGGING to IDLE too.
+     A late adoption during a jog holds to rest and resumes the rest of the
+     ring within JOGGING (no clicks lost); `get` reports the late-adoption
+     count.
   3. Step `jog <axis> <dist> [feed]` (X or Y): homing gate (`jogUnhomed`),
      feed from `jogFeed`/`jogFeedUnhomed`, scaled by `[feed]`, clamped to
      `maxFeed`. Refused at the soft limit with `err soft_limit <axis> <mm
      left>` (a `framesCheckXY` variant that also returns the distance).
      Clicks append, up to 4 queued, else `err busy`.
   4. `jogto <x> <y>` in work coordinates, homed only, through
-     `framesToMachine` and the soft-limit refusal. `jogto park|load|probe`:
-     every head's Z goes to its park first (a park leg), then the XY line.
+     `framesToMachine` and the soft-limit refusal.
   5. `line` and `bez` (`core0/cmd/axis.cpp:613`, `:625`) run as JOGGING.
   6. `JOG_MAGIC` narrowed to Z and A: a packet with nonzero X or Y is
      refused. The web host's XY jog stops working, as allowed by the web
      deferral in state-handling 1d.
   7. Docs: `docs/wire_protocol.md` (`jog`, `jogto`, `err soft_limit`, the
      JOGGING state, `JOG_MAGIC`'s narrowing), and the config doc.
-* Out of scope: the continuous jog (J2), jogging while paused (job
+* Out of scope: named `jogto` (J1b), the continuous jog (J2), jogging while paused (job
   branches), Z/A on the planner, tool offsets.
 * Overlap: `src/rp2350/core0/cmd/table.h` (or `control_plane.cpp`),
   `web/src/machine/schema.ts`, `web/src/wire/`.
@@ -240,8 +251,38 @@ and get their own sections.
   Human checks: a step jog on X and Y, homed and unhomed (with `jogUnhomed`);
   clicks join without stopping; a fifth click answers `err busy`; a jog past
   the soft range refused with mm left; `jogto` numeric with each head
-  selected; `jogto park|load|probe` with the Z park first; `stop` mid-jog;
+  selected; `stop` mid-jog;
   `status` shows JOGGING, then IDLE.
+
+### Status
+
+Not started.
+
+## Branch J1b: `feature/jogto-named`
+
+### Plan
+
+* Type: feature.
+* Purpose: `jogto park|load|probe`.
+* Depends on: J1.
+* What the code has today: stored positions are decoded
+  (`core0/config/config_decode.h:78`, `:95`) but nothing resolves them.
+  `homingParkBegin` (`core0/ops/homing.h:24`) arms a park leg in the homing
+  session; `controller/seq/home.cpp` parks homed nodes that way (`JOB_PARK`).
+* Scope:
+  1. A resolver in `core0/ops/frames`: a name to the anchor's machine XY
+     (`park` defaulting to where homing parks, `load`, `probe` as the
+     selected head's `probeSwitch` minus its offset). Missing: `err
+     no_position`.
+  2. `controller/seq/jogto.cpp`: a homing session with one park leg per
+     head's Z node (in parallel, `homingHold` keeping raw legs out), then the
+     session closed and the XY line queued as a J1 jog. HOMING → IDLE →
+     JOGGING → IDLE; the gap is the sequencer's (`err busy`). A failed park
+     alarms as `ALARM_HOMING_FAIL` (`LEGFAIL_PARK`). `stop` mid-sequence
+     aborts the legs.
+  3. Docs: `docs/wire_protocol.md`.
+* Checks: as J1. Human checks: each name with each head selected, Z parked
+  first; a missing position refused; `stop` during the park.
 
 ### Status
 
