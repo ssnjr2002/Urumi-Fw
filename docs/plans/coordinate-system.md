@@ -39,6 +39,13 @@ frame is in docs/plans/controller-homing.md.
 
   Rule: `parkPos` is 0 when the switch is at the origin end, +max when the
   switch is at the + end and the origin at the − end, −max the other way.
+* The current configs set `parkPos` on Z only (0 at the top). X and Y take
+  the default (`home.cpp` `parkSteps`): seeking +, park is `maxTravel`, so X0
+  is the left end, `maxTravel` from the right switch, not at it. `parkPos: 0`
+  on X and Y would put the origin at the switches instead.
+* Y in the configs seeks + toward a switch commented "at the front", which
+  contradicts Y+ away from the operator: either the switch is at the back or
+  Y is mirrored. Check by jogging Y+ (`invertDir` on Y is unconfirmed too).
 * Coordinates are tip positions, measured by the machine: the unmeasured
   distance from the switch striker to the anchor cancels, because every bed
   point (work origin, probe station, offsets) is taught by jogging a tip to it.
@@ -107,13 +114,26 @@ frame is in docs/plans/controller-homing.md.
   the controlled point. It never moves.
 * `select anchor`: offset (0, 0). With a laser, the laser tip; Z and A stay
   bound as they were. Without one, the head at (0, 0), same as selecting it.
+  A defined laser is (0, 0) by definition: its config is `laser: {node}`, the
+  bus id of the node it is wired to, with no offsets. `select anchor` turns
+  it on (when the anchor is the laser); a head switch, by `select` or by a
+  raw `axes_map`, turns it off.
   The decoder refuses a config with no laser and no head at (0, 0).
   `get head` reports `anchor`.
+* `select` drives `axes_map`, but a raw `axes_map` can bind another head's
+  nodes, and the laser has no slot. On every committed map the selection is
+  re-derived: kept if it still matches (a laser anchor always does); else
+  the head whose Z and A the map binds; else the laser anchor if there is
+  one; else none. With none, `get head` is `-` and XY moves in work
+  coordinates are refused (`err no_head`): the XY offset is unknown.
 
 ### Limits and reach
 
 * Soft limits per axis: the range from homing (`[park, park ± maxTravel]`).
   The strip between the switch and the park position is outside it.
+* Checked on homed axes only. Absolute moves need homing (motion-sessions'
+  motion gating); relative jogs may run unhomed, without limits, only with
+  `jogUnhomed` (testing). As Klipper, LinuxCNC and grbl's homing lock.
 * Each tip reaches the anchor's range shifted by its offsets. Checked at job
   preflight (each tool's bbox, shifted by the work offset) and on every jog.
   `select` never moves, so it cannot fail on reach.
@@ -220,25 +240,64 @@ Proposed; each gets a full Plan section when its turn comes.
   by probing, anything A beyond `MPos`, the Core 1 ramp check, merging the
   status replies.
 * Overlap: `src/rp2350/core0/cmd/table.h`, `web/src/machine/schema.ts`,
-  `web/src/wire/`, `lib/planner/` if the record path needs the transform
-  there.
+  `web/src/wire/`.
 * Checks: `pio run -e pico`; `pio test -e native` where it builds (not on
   this Windows machine); `pnpm typecheck` and `pnpm test` in `web/`.
   Human: `get mpos wpos head` after `home`; `select 0|1` binding the head's Z and A;
   zero here with each head selected, `WPos` jumping by the head offset on a
   head change; a `line` in work coordinates landing at offset + target; a
   `line` past the soft range refused.
-* Decisions for Read:
-  * `select` while a slot is fenced or a node is mute: refuse, or bind what
-    answers.
-  * Where records get the transform: at ingest in `plannerQueueRecord`, or
-    in `lib/planner`.
+* Agreed in Read:
+  * Signed `plannerSpm` (−spm on an `invertDir` axis), so planner mm are
+    machine mm: the planner (`planner/queue.cpp:50`) and Core 1
+    (`emit/follower.cpp:186`) apply no `invertDir` today, only homing does
+    (`seq/home.cpp:80`). No change on the current machine (X and Y false).
+  * Records translate at ingest in `plannerQueueRecord`: offsets added to
+    `p[0..3]` before `checkBezier`; the analysed fields do not change under
+    translation. `lib/planner` untouched.
+  * The new config fields are required in the blob (the host's loader fills
+    defaults), except `positions.park`, which only the Pico can default.
+    `CFG_SCHEMA_VERSION` and `CONFIG_BLOB_VERSION` 2 → 3.
+  * The laser is the anchor when defined; the selection re-derived on every
+    committed map (Commands and frames, above).
+  * Agreed in Write: `laser` becomes `{node}` (offsets dropped); `select
+    anchor` switches it on, a head switch off (`CMD_LASER` to that node).
+  * Soft range on homed axes only.
+* Decision for Write: `select` while a slot is fenced or a node is mute:
+  refuse, or bind what answers.
 
 ### Status
 
 Planned.
 
 ### Outcome
+
+* A head's `probeSwitch` is optional in the blob (a head may have none, and
+  the host has no default for it), beside `positions.park` and `.load`.
+* Reach, the anchor and `work.z` per head are the decoder's `frames`
+  rejection; a laser node outside the bus is `node_id`. The host checks the
+  anchor and that the laser's node is configured.
+* Selection on a map commit: a map that binds a different head than the last
+  one is a head switch (that head, laser off); one that leaves the head as
+  it was keeps a laser selection. `select <head>` selects the head even when
+  its map was already bound.
+* The reported selection is derived from the axes request, so a path that
+  unmaps (`unstop`, `bus_exclude`) can't leave a stale head: a head needs X,
+  Y and its Z/A mapped, else the anchor (laser, X and Y mapped), else none.
+  `select n` writes `x y zn an`; `select anchor` maps X and Y if missing and
+  leaves Z and A.
+* Out of scope: the laser's on/off state can't be read on the wire
+  (`nodestat` doesn't report it); a `laser` get key would.
+  `bus_exclude` settling `ALARM_BUS_DEGRADED` stays unmapped (decided).
+* `select` with a fenced slot or a mute node does what `axes_map` does (the
+  map commits, a pending axis holds `ALARM_NODE_FAULT`) and replies with
+  its refusal.
+* New: `ops/frames.{h,cpp}`, `controller/cmd/frames.cpp`
+  (`select`, `wzero`, `wset`, `wclear`), `MSEG_NACK_SOFT_LIMIT` 0x09 for
+  records. `wzero` needs the axes homed. Homing's park position comes from
+  `configParkPos`. The web host has `getFrames`, `select`, `wzero`, `wset`,
+  `wclear` in `wire/link/commands.ts`; the Sim does not model frames (it
+  answers `!` for the new keys).
 
 ## Open questions
 
