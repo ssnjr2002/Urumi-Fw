@@ -115,6 +115,17 @@
 // as the state settles — like `stop`, it correlates nothing, so it needs no ACK.
 #define ABORT_MAGIC      0xA9
 
+// Continuous jog (7 bytes): magic, direction per axis X, Y, Z, A (int8 −1/0/+1;
+// Z and A must be 0), speed (uint8, jogFeed × speed/64, capped at maxFeed),
+// CRC8 over [0..5]. Repeat it to keep the jog going: CJOG_DEADMAN_MS without one
+// stops it. All-zero directions stop it. ACK when a jog starts, NACK when
+// refused, nothing for a repeat.
+#define CJOG_MAGIC        0xAF
+#define CJOG_PACKET_SIZE  7
+#define CJOG_DEADMAN_MS   150u
+// Stop a continuous jog: one byte, no reply. Ignored without one.
+#define CJOG_STOP_MAGIC   0xB3
+
 // ─── Config Blob Store (docs/config_storage.md) ───────────────────────────────
 // USB opcodes for the opaque msgpack config blob. Host→Pico magics have bit 7
 // set, disjoint from lowercase-ASCII control-plane text. CFG_SET is a two-phase

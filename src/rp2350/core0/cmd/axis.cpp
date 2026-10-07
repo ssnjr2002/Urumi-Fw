@@ -614,7 +614,7 @@ bool cmdLine(const char* args) {
     float v[3];
     if (!parseFloats(args, v, 3)) { Serial.println("err usage"); return true; }
     if (const char* why = toMachine(v, 1)) { Serial.printf("err %s\n", why); return true; }
-    replyQueued(plannerQueueLine(v[0], v[1], v[2]));
+    replyQueued(plannerQueueLine(v[0], v[1], v[2], JOGGING_STEP));
     return true;
 }
 
@@ -642,7 +642,7 @@ bool cmdBez(const char* args) {
 static void queueJog(const float to[2], bool rel, float feed) {
     if (plannerQueueDepth() >= JOG_MAX_QUEUED) { Serial.println("err busy"); return; }
     float at[2];
-    if (!plannerJogFrom(&at[0], &at[1])) { Serial.println("err bad_state"); return; }
+    if (!plannerJogFrom(&at[0], &at[1], JOGGING_STEP)) { Serial.println("err bad_state"); return; }
     float target[2];
     for (uint8_t k = 0; k < 2; k++) {
         target[k] = isnan(to[k]) ? at[k] : rel ? at[k] + to[k] : to[k];
@@ -651,7 +651,7 @@ static void queueJog(const float to[2], bool rel, float feed) {
             Serial.printf("err %s %.2f\n", why, left); return;
         }
     }
-    replyQueued(plannerQueueLine(target[0], target[1], feed));
+    replyQueued(plannerQueueLine(target[0], target[1], feed, JOGGING_STEP));
 }
 
 bool cmdJog(const char* args) {

@@ -42,6 +42,8 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 |---|---|---|---|
 | `MSEG_MAGIC` | `0xAB` | Host → Pico | MicroSegment — pre-computed step event |
 | `JOG_MAGIC`  | `0xAE` | Host → Pico | Jog packet (separate from MSEG) |
+| `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY jog (7 B) |
+| `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
@@ -120,6 +122,32 @@ the return to `pausePos`) is one or more jog packets; the Pico runs
 PAUSED when `PausedJobContext.active`) when the burst drains. The burst ends
 when the ring drains, **not** on a flag — a sender may mark its last packet
 `MSEG_FLAG_PATH_END`, but the firmware does not read it (see the flags table).
+
+### Continuous Jog — `CJOG_MAGIC` (0xAF, 7 bytes)
+```
+[0]  magic = 0xAF
+[1]  dirX   int8   — −1, 0 or +1
+[2]  dirY   int8   — −1, 0 or +1
+[3]  dirZ   int8   — reserved, must be 0
+[4]  dirA   int8   — reserved, must be 0
+[5]  speed  uint8  — jogFeed × speed/64 (64 = 1×), capped at maxFeed; 0 is refused
+[6]  CRC8 over bytes [0..5]
+```
+A held jog: the host repeats the packet while the operator holds the
+direction, faster than every 150 ms. The first one queues a line to the end of
+travel (the soft-range end when homed with `softLimits`, else `maxTravel`; a
+diagonal stops at the nearer end) at the slower moving axis's feed, and runs as
+JOGGING with `jogging=2`. Replies: `ACK` when a jog starts, `NACK` when refused,
+nothing for a repeat. 150 ms without a packet, all-zero directions, or
+`CJOG_STOP_MAGIC` (0xB3) brake and stop. A new direction stops the jog and
+starts the new one once at rest (its ACK comes then). A packet while step jogs
+run stops them first, the same way; a step jog during a continuous jog is
+refused. Speed changes while holding are ignored. No seq; the abort barrier
+does not apply.
+
+NACKs: `NACK_SOFT_LIMIT` (0x09) = no room left in that direction;
+`NACK_BAD_STATE` (0x06) = a bad direction or speed, not IDLE or jogging,
+unhomed without `jogUnhomed`, or no config.
 
 ### BEZIER Record — `BEZIER_MAGIC` (0xAD, 56 bytes)
 ```
@@ -302,7 +330,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_CONFIG_MISMATCH` | `0x05` | MCFG header CRC32 disagrees with Pico flash |
 | `MSEG_NACK_BAD_STATE` | `0x06` | Command rejected — wrong machine state |
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
-| `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset |
+| `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset; a continuous jog with no room left in its direction |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 
@@ -375,6 +403,7 @@ latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with alarm=HOMING_FAIL)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
 cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with alarm=CONFIG)
+jogging=<j>   joggingReason   1=STEP 2=CONT  (only while state=JOGGING; STEP = jog/jogto/line/bez, CONT = a continuous jog)
 homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; LEG = any leg runs, WAIT = none)
 probing=<p>   probingReason   probe session phase  (only while PROBING or with alarm=PROBE_FAIL)
 probe=<c>     last leg cause  PROBE_*  (with probing)

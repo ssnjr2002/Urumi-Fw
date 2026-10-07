@@ -43,10 +43,10 @@ static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
 }
 
 // Under plannerLock: an empty, idle ring starts again from machinePos, owned by
-// `jog`'s kind. True if it did.
-static bool resetIfIdle(bool jog) {
+// `reason`'s kind. True if it did.
+static bool resetIfIdle(uint8_t reason) {
     if (plannerActive || plannerRing.count() != 0) return false;
-    plannerJog = jog;
+    joggingReason = reason;
     // Signed, so planner mm are machine mm on an invertDir axis too.
     const MachineCfg& cfg = machineCfg();
     plannerSpm[0] = cfg.x.invertDir ? -cfg.x.stepsPerUnit : cfg.x.stepsPerUnit;
@@ -57,14 +57,14 @@ static bool resetIfIdle(bool jog) {
     return true;
 }
 
-PlannerQueueResult plannerQueueLine(float x, float y, float feed) {
+PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason) {
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, true);
     if (r != PQ_OK) return r;
 
     const uint32_t s = spin_lock_blocking(plannerLock);
-    resetIfIdle(true);
-    const bool mine = plannerJog;
+    resetIfIdle(reason);
+    const bool mine = joggingReason == reason;
     const bool pushed = mine && plannerRing.pushLine({x, y}, feed, limits, kDeviation);
     spin_unlock(plannerLock, s);
     if (!mine) return PQ_BAD_STATE;
@@ -81,8 +81,8 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
     if (r != PQ_OK) return r;
 
     uint32_t s = spin_lock_blocking(plannerLock);
-    resetIfIdle(true);
-    const bool mine = plannerJog;
+    resetIfIdle(JOGGING_STEP);
+    const bool mine = joggingReason == JOGGING_STEP;
     const planner::Vec2 p0 = plannerRing.end();
     spin_unlock(plannerLock, s);
     if (!mine) return PQ_BAD_STATE;
@@ -126,11 +126,11 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     if (planner::checkBezier(b) != planner::BezierError::None) return PQ_BAD_CURVE;
 
     const uint32_t s = spin_lock_blocking(plannerLock);
-    const bool reset = resetIfIdle(false);
+    const bool reset = resetIfIdle(JOGGING_NONE);
     const planner::Vec2 e = plannerRing.end();
     const float dx = b.p[0].x - e.x, dy = b.p[0].y - e.y;
     PlannerQueueResult out = PQ_OK;
-    if (plannerJog) {
+    if (joggingReason != JOGGING_NONE) {
         out = PQ_BAD_STATE;                         // a jog owns the ring
     } else if (dx == 0 && dy == 0) {
         if (plannerRing.full()) out = PQ_FULL;
@@ -155,11 +155,11 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     return PQ_OK;
 }
 
-bool plannerJogFrom(float* x, float* y) {
+bool plannerJogFrom(float* x, float* y, uint8_t reason) {
     const MachineCfg& cfg = machineCfg();
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool idle = !plannerActive && plannerRing.count() == 0;
-    const bool ok = idle || plannerJog;
+    const bool ok = idle || joggingReason == reason;
     if (idle) {
         *x = machinePos[0] / (cfg.x.invertDir ? -cfg.x.stepsPerUnit : cfg.x.stepsPerUnit);
         *y = machinePos[1] / (cfg.y.invertDir ? -cfg.y.stepsPerUnit : cfg.y.stepsPerUnit);
@@ -170,6 +170,20 @@ bool plannerJogFrom(float* x, float* y) {
     }
     spin_unlock(plannerLock, s);
     return ok;
+}
+
+void plannerStopJog() {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    if (plannerActive) {
+        abortRequested = true;     // Core 1 brakes, discards the ring, lands IDLE
+    } else if (plannerRing.count() != 0) {
+        // Core 1 has not taken the ring yet: drop it here, where an abort could
+        // be consumed as "nothing to stop" and leave the ring to run.
+        const planner::Vec2 at{machinePos[0] / plannerSpm[0], machinePos[1] / plannerSpm[1]};
+        plannerRing.reset(at);
+        plannerExec.reset(at);
+    }
+    spin_unlock(plannerLock, s);
 }
 
 int plannerQueueDepth() { return plannerRing.count(); }

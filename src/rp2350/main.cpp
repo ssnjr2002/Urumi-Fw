@@ -43,6 +43,7 @@ volatile int32_t resumePos[4]   = {0, 0, 0, 0};
 // Inter-core request flags
 volatile bool    pauseRequested = false;
 volatile bool    abortRequested = false;
+volatile uint8_t joggingReason  = JOGGING_NONE;
 volatile bool    streamIsJog    = false;
 
 // Planner motion (see shared.h) — plannerLock is claimed in setup()
@@ -50,7 +51,6 @@ planner::Planner  plannerRing;
 planner::Executor plannerExec;
 spin_lock_t*      plannerLock     = nullptr;
 volatile bool     plannerActive   = false;
-volatile bool     plannerJog      = false;
 float             plannerSpm[2]   = {0, 0};
 volatile bool     resumeRequested = false;
 

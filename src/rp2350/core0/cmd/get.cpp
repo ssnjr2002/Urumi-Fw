@@ -22,7 +22,7 @@ namespace {
 struct Snap {
     uint8_t  state, enabled, homed, alarm, running, latched;
     uint8_t  homingReason, homeFailWhy, homeFailNode, homeCycle;
-    uint8_t  probingReason, probeCause, probeRetries;
+    uint8_t  probingReason, probeCause, probeRetries, joggingReason;
     int32_t  probeSteps;
     bool     probed;
     int32_t  pz;
@@ -49,6 +49,7 @@ void takeSnap(Snap& s) {
     s.homeFailNode  = homingFailNode();
     s.homeCycle     = homingHeld();
     s.probingReason = probingReason;
+    s.joggingReason = joggingReason;
     s.probeCause    = probeLastCause();
     s.probeRetries  = probeLastRetries();
     s.probeSteps    = probeLastSteps();
@@ -115,6 +116,8 @@ const Key kKeys[] = {
         snprintf(o, n, "%s", machineCfgBlockName()); return KEY_OK; } },
     { "homing",    [](const Snap& s, char* o, size_t n) {
         return s.state == STATE_HOMING ? fmtU(o, n, s.homingReason) : KEY_NA; } },
+    { "jogging",   [](const Snap& s, char* o, size_t n) {
+        return s.state == STATE_JOGGING ? fmtU(o, n, s.joggingReason) : KEY_NA; } },
     // `probing` is the session phase; `probe`, `retries` and `psteps` are the
     // last leg's outcome, the only report of a leg boundary.
     { "probing",   [](const Snap& s, char* o, size_t n) {

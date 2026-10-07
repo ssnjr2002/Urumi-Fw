@@ -2,7 +2,8 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — MSEG (0xAB) / jog (0xAE), 26 bytes; BEZIER (0xAD), 56 bytes
+//   RX_PACKET  — MSEG (0xAB) / jog (0xAE), 26 bytes; BEZIER (0xAD), 56 bytes;
+//                continuous jog (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
 //
@@ -98,6 +99,7 @@ static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
 static void acceptMseg();
 static void acceptBezier();
+static void acceptCjog();
 
 // ─── Packet state machine ─────────────────────────────────────────────────────
 // Receives bytes [1..pktSize-1]; byte [0] (magic) was stored by the dispatcher.
@@ -116,6 +118,9 @@ static void feedPacket(uint8_t b) {
         sendNack(MSEG_NACK_CRC);
         return;
     }
+
+    // Before the abort barrier: a direction change brakes with it raised.
+    if (pktBuf[0] == CJOG_MAGIC) { acceptCjog(); return; }
 
     // State gate (wire_protocol.md allowed-state matrix). The magic byte selects
     // the stream type; we record it as the streamIsJog intent so Core 1 sets
@@ -318,6 +323,109 @@ static void handleCfgGet() {
     }
 }
 
+// ─── Continuous jog ───────────────────────────────────────────────────────────
+// A held jog is one line to the end of travel, stopped when the packets stop.
+// cjogHeld: packets for cjogDir keep arriving (until the stop byte, the deadman
+// or another direction). cjogOn: its line may still run. cjogWant: a direction
+// to start once the machine is at rest, after a change stopped the last jog.
+
+static int8_t   cjogDir[2]  = {0, 0};
+static int8_t   cjogWant[2] = {0, 0};
+static uint8_t  cjogSpeed   = 0;
+static bool     cjogHeld    = false;
+static bool     cjogOn      = false;
+static uint32_t cjogLastMs  = 0;
+
+static void sendAck() {
+    const uint8_t f[3] = { MSEG_ACK, expectedSeq, 0 };
+    Serial.write(f, 3);
+}
+
+static bool cjogWanted() { return cjogWant[0] != 0 || cjogWant[1] != 0; }
+
+static void cjogStop() {
+    if (cjogOn) plannerStopJog();
+    cjogOn = cjogHeld = false;
+    cjogWant[0] = cjogWant[1] = 0;
+}
+
+// Queue the line for direction `d`. Returns a NACK reason, or 0 once queued.
+static uint8_t cjogStart(const int8_t d[2], uint8_t speed) {
+    if (!machineCfgValid()) return MSEG_NACK_BAD_STATE;
+    const MachineCfg& cfg = machineCfg();
+    const CfgAxis* axes[2] = { &cfg.x, &cfg.y };
+    float at[2];
+    if (!plannerJogFrom(&at[0], &at[1], JOGGING_CONT)) return MSEG_NACK_BAD_STATE;
+
+    // How far each moving axis may go: to its soft end when homed with
+    // softLimits, else maxTravel. A diagonal stops at the nearer end.
+    float run = INFINITY, feed = INFINITY;
+    for (uint8_t k = 0; k < 2; k++) {
+        if (d[k] == 0) continue;
+        const CfgAxis& a = *axes[k];
+        const bool homed = axes_homed & (1u << k);
+        if (!homed && !cfg.jogUnhomed) return MSEG_NACK_BAD_STATE;
+        float lo, hi, room = a.maxTravel;
+        if (homed && a.softLimits && configAxisRange(a, &lo, &hi))
+            room = d[k] > 0 ? hi - at[k] : at[k] - lo;
+        run = fminf(run, room);
+        float f = (homed ? a.jogFeed : a.jogFeedUnhomed) * speed / 64.0f;
+        if (a.maxFeed > 0) f = fminf(f, a.maxFeed);
+        feed = fminf(feed, f);
+    }
+    const float step = 1 / fminf(cfg.x.stepsPerUnit, cfg.y.stepsPerUnit);
+    if (!(run > step)) return MSEG_NACK_SOFT_LIMIT;
+    if (!(feed > 0)) return MSEG_NACK_BAD_STATE;
+
+    if (plannerQueueLine(at[0] + d[0] * run, at[1] + d[1] * run, feed, JOGGING_CONT) != PQ_OK)
+        return MSEG_NACK_BAD_STATE;
+    cjogDir[0] = d[0];
+    cjogDir[1] = d[1];
+    cjogSpeed = speed;
+    cjogOn = cjogHeld = true;
+    return 0;
+}
+
+static void acceptCjog() {
+    const int8_t d[4] = { (int8_t)pktBuf[1], (int8_t)pktBuf[2], (int8_t)pktBuf[3], (int8_t)pktBuf[4] };
+    const uint8_t speed = pktBuf[5];
+    for (uint8_t k = 0; k < 4; k++)
+        if (d[k] < -1 || d[k] > 1 || (k >= 2 && d[k] != 0)) { sendNack(MSEG_NACK_BAD_STATE); return; }
+    if (speed == 0) { sendNack(MSEG_NACK_BAD_STATE); return; }
+
+    cjogLastMs = millis();
+    if (d[0] == 0 && d[1] == 0) { cjogStop(); return; }
+    if (cjogHeld && d[0] == cjogDir[0] && d[1] == cjogDir[1]) return;   // a repeat
+
+    // Another direction, or step jogs running: stop them, start once at rest.
+    const bool busy = cjogOn || plannerQueueDepth() != 0 || plannerActive || abortRequested;
+    if (busy) {
+        if (cjogOn || joggingReason == JOGGING_STEP) plannerStopJog();
+        cjogOn = cjogHeld = false;
+        cjogWant[0] = d[0];
+        cjogWant[1] = d[1];
+        cjogSpeed = speed;
+        return;
+    }
+    if (const uint8_t why = cjogStart(d, speed)) { sendNack(why); return; }
+    sendAck();
+}
+
+// The deadman, the end of a jog, and a start held for rest.
+static void cjogTick() {
+    const bool silent = (millis() - cjogLastMs) > CJOG_DEADMAN_MS;
+    const bool empty = !plannerActive && plannerQueueDepth() == 0;
+    if (cjogOn && empty) cjogOn = false;              // ran to the end of travel
+    if (cjogHeld && silent) cjogStop();
+    if (!cjogWanted()) return;
+    if (silent) { cjogWant[0] = cjogWant[1] = 0; return; }
+    if (!empty || abortRequested || machineState != STATE_IDLE) return;
+    const int8_t d[2] = { cjogWant[0], cjogWant[1] };
+    cjogWant[0] = cjogWant[1] = 0;
+    if (const uint8_t why = cjogStart(d, cjogSpeed)) sendNack(why);
+    else sendAck();
+}
+
 // ─── Public Interface ─────────────────────────────────────────────────────────
 
 bool dataPlaneConsume(uint8_t b) {
@@ -328,10 +436,11 @@ bool dataPlaneConsume(uint8_t b) {
     }
 
     // Idle — dispatch on the leading magic byte.
-    if (b == MSEG_MAGIC || b == JOG_MAGIC || b == BEZIER_MAGIC) {
+    if (b == MSEG_MAGIC || b == JOG_MAGIC || b == BEZIER_MAGIC || b == CJOG_MAGIC) {
         pktBuf[0] = b;                          // remember stream type for the state gate
         pktIdx    = 1;
-        pktSize   = b == BEZIER_MAGIC ? BEZIER_PACKET_SIZE : MSEG_PACKET_SIZE;
+        pktSize   = b == BEZIER_MAGIC ? BEZIER_PACKET_SIZE
+                  : b == CJOG_MAGIC   ? CJOG_PACKET_SIZE : MSEG_PACKET_SIZE;
         pktLastMs = millis();
         rxKind    = RX_PACKET;
         return true;
@@ -355,6 +464,10 @@ bool dataPlaneConsume(uint8_t b) {
         plannerEndContour();
         return true;
     }
+    if (b == CJOG_STOP_MAGIC) {                  // synchronous — no reply
+        cjogStop();
+        return true;
+    }
     if (b == SEQRESET_MAGIC) {                   // synchronous — no receive state
         dataPlaneResetSeq();                     // also drops any deferred ACK
         flushAck();                              // ACK(0) — immediate: it is the
@@ -371,6 +484,8 @@ void dataPlaneTick() {
     // its window, so holding them while there is nothing left to read deadlocks
     // the stream. Deferral is only ever an optimisation over a busy wire.
     if (pendingAcks) flushAck();
+
+    cjogTick();
 
     if (rxKind == RX_CFG && (millis() - cfgLastMs) > CFG_RX_TIMEOUT_MS) {
         rxKind = RX_NONE;

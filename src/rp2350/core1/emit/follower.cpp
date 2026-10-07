@@ -74,7 +74,7 @@ static bool __time_critical_func(enter)() {
         }
     } else if (machineState == STATE_IDLE && plannerRing.count() > 0) {
         plannerActive = true;
-        jog = plannerJog;
+        jog = joggingReason != JOGGING_NONE;
         ok = true;
     }
     // Leaving PAUSED under the lock: `cancel` checks for PAUSED under it.

@@ -23,7 +23,8 @@ namespace planner { struct Bezier; }
 
 // Queue a straight move to (x, y) in machine mm at `feed` mm/s. On an empty,
 // idle ring the move starts from machinePos.
-PlannerQueueResult plannerQueueLine(float x, float y, float feed);
+// `reason` is the JoggingReason it runs as; it joins only a ring of that kind.
+PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason);
 
 // Queue a cubic Bézier from the end of the last move (machinePos on an empty,
 // idle ring) through handles p1, p2 to p3, machine mm, at `feed` mm/s.
@@ -43,8 +44,12 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end);
 void plannerEndContour();
 
 // Where the next jog starts, machine mm: the ring's end, or machinePos on an
-// empty, idle ring. False while a job owns the ring.
-bool plannerJogFrom(float* x, float* y);
+// empty, idle ring. False while another kind (JoggingReason) owns the ring.
+bool plannerJogFrom(float* x, float* y, uint8_t reason);
+
+// Stop the jogs in the ring: brake and discard if Core 1 runs them, else empty
+// the ring.
+void plannerStopJog();
 
 // Blocks queued, the running one included.
 int plannerQueueDepth();

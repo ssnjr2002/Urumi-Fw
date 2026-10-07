@@ -226,6 +226,15 @@ enum HomingReason : uint8_t {
     HOMING_WAIT = 1,   // between legs: next leg, setorigin or home_end
 };
 
+// The kind of planner motion in the ring (meaningful while STATE_JOGGING).
+// Core 0 writes it when it restarts an empty, idle ring, so it is settled
+// before Core 1 publishes JOGGING; NONE means a job owns the ring.
+enum JoggingReason : uint8_t {
+    JOGGING_NONE = 0,   // a job (RUNNING)
+    JOGGING_STEP = 1,   // `jog`, `jogto`, `line`, `bez`
+    JOGGING_CONT = 2,   // a continuous jog, held by deadman packets
+};
+
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
 extern MicroSegment masterBuf[MASTER_BUF_SIZE];
@@ -255,6 +264,7 @@ extern volatile uint8_t runningReason;    // one of RunningReason (meaningful wh
 // decoding a probe phase as a jog.
 extern volatile uint8_t probingReason;
 extern volatile uint8_t homingReason;     // one of HomingReason (meaningful while HOMING)
+extern volatile uint8_t joggingReason;    // one of JoggingReason; see its comment
 
 // Machine position in steps (X,Y,Z,A), owned and accumulated by Core 1 per
 // completed segment. The consumer (Core 1) is the single source of truth so it
@@ -344,15 +354,14 @@ extern volatile bool    streamIsJog;
 //   resets the ring and executor only while it is false. Written under the lock.
 // plannerSpm — X and Y steps/mm, set by Core 0 with that reset; negative on an
 //   invertDir axis, so the planner works in machine mm.
-// plannerJog — the ring holds jogs (JOGGING), not a job (RUNNING). Set by Core
-//   0 with that reset, under the lock.
+// joggingReason — which kind owns the ring; set by Core 0 with that reset,
+//   under the lock.
 // resumeRequested — `resume` of a held planner job; Core 1 replans from where
 //   it stopped and returns to RUNNING. Set and cleared under the lock.
 extern planner::Planner  plannerRing;
 extern planner::Executor plannerExec;
 extern spin_lock_t*      plannerLock;
 extern volatile bool     plannerActive;
-extern volatile bool     plannerJog;
 extern float             plannerSpm[2];
 extern volatile bool     resumeRequested;
 
