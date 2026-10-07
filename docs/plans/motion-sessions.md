@@ -359,7 +359,7 @@ Not started.
 
 ### Status
 
-Done, ready to merge.
+Done (merged).
 
 ### Outcome
 
