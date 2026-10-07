@@ -43,6 +43,11 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(c.x.invertDir);
     CHECK(c.x.softLimits);
     CHECK(c.x.maxTravel == doctest::Approx(480));
+    CHECK(c.x.jogFeed == doctest::Approx(40));
+    CHECK(c.x.jogFeedUnhomed == doctest::Approx(10));
+    CHECK(c.y.jogFeed == doctest::Approx(80));          // defaults to maxFeed
+    CHECK(c.y.jogFeedUnhomed == doctest::Approx(80));
+    CHECK_FALSE(c.jogUnhomed);
     CHECK(c.y.node.id == 2);
     CHECK_FALSE(c.y.invertDir);
     CHECK(c.heads[0].z.node.id == 3);
@@ -144,6 +149,8 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"dup_node", "dup_node"}, {"heads", "heads"}, {"homing", "homing"},
         {"homing_kind", "homing"}, {"no_invert_dir", "missing"},
         {"frames", "frames"}, {"probe_reach", "frames"}, {"laser_node", "node_id"},
+        {"travel", "ceiling"}, {"no_jog_feed", "missing"},
+        {"no_jog_unhomed", "missing"},
     };
     for (auto& t : cases) {
         CAPTURE(t[0]);

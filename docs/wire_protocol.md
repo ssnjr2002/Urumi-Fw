@@ -62,8 +62,8 @@ ASCII that begins every control-plane line.
 ### MicroSegment — `0xAB` (26 bytes)
 ```
 [0]      magic = 0xAB
-[1..4]   dx        int32 LE   — X axis steps
-[5..8]   dy        int32 LE   — Y axis steps
+[1..4]   dx        int32 LE   — X axis steps, must be 0
+[5..8]   dy        int32 LE   — Y axis steps, must be 0
 [9..12]  dz        int32 LE   — Z axis steps
 [13..16] da        int32 LE   — A axis steps
 [17..20] interval  uint32 LE  — step interval in CPU cycles
@@ -113,7 +113,8 @@ NACK `NACK_STREAM_CONFIG_MISMATCH`.
 Same 26-byte layout as MSEG (so one parser serves both), differing only in the
 magic and in byte [22] carrying `jogSeq` instead of the stream `seq`. Accepted
 in `STATE_IDLE` and `STATE_PAUSED`. No seqnum window — window-1 fire-and-wait;
-jogSeq provides duplicate rejection only. A jog burst (host-computed move, e.g.
+jogSeq provides duplicate rejection only. A jog burst moves Z and A only:
+nonzero `dx` or `dy` is NACKed `NACK_BAD_STATE` (XY jogs are `jog`/`jogto`). A jog burst (host-computed move, e.g.
 the return to `pausePos`) is one or more jog packets; the Pico runs
 `runningReason = JOG` while emitting and returns to its prior state (IDLE, or
 PAUSED when `PausedJobContext.active`) when the burst drains. The burst ends
@@ -155,7 +156,7 @@ record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
 with `softLimits` is `NACK_SOFT_LIMIT`.
 
 Records are refused (`NACK_BAD_STATE`) until `feed` has set the cut and travel
-feeds.
+feeds, and while the planner ring holds jogs (JOGGING, or jogs queued in IDLE).
 
 ### ACK — `0xAA` (3 bytes)
 ```
@@ -206,11 +207,11 @@ packets by inserting the byte at a packet boundary.
 ### STATUS_RSP — `0xA7` (30 bytes)
 ```
 [0]      magic         = 0xA7
-[1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
+[1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING
 [2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
-[5]      runningReason uint8   — 0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER (only meaningful while state=RUNNING)
+[5]      runningReason uint8   — 0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER (only meaningful while state=RUNNING or JOGGING)
 [6..7]   bufCount      uint16 LE — MicroSegments queued in masterBuf; planner blocks while a planner job runs or is paused
 [8..23]  pos[4]        int32 LE  — machinePos: x, y, z, a (steps)
 [24]     expectedSeq   uint8   — next wire seq the data plane will execute
@@ -346,8 +347,10 @@ prefixed `0x`.
 | `bus_exclude` | `<id> …` | `ok` / `err not_mute` / `err bad_node` / `err usage` | Run without mute nodes (those the boot sweep could not make safe). Commands to an excluded node then answer `excluded` (make-safe exempt) until the next `reset`. With no unexcluded mute node left, `ALARM_BUS_DEGRADED` → IDLE, unmapped. Any state |
 | `uncfg` | — | `ok` / `err bad_state` | Builds with `PICO_ALLOW_UNCONFIGURED` only. Leave `ALARM_CONFIG` → IDLE (or the next alarm), unconfigured; the stored file is kept and ignored until power-off. The other way out is a `CFG_SET` commit |
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved). `err estop` in `ALARM_ESTOP`: use `unstop` |
-| `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico (runningReason 3). `<depth>` = blocks queued. IDLE, or while planner motion runs. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`. No homing check |
+| `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico as a jog (state JOGGING). `<depth>` = blocks queued. IDLE, or JOGGING; `bad_state` while the ring holds a streamed job. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`. No homing check |
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, work mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line`, on every handle |
+| `jog` | `<x\|y> <dist> [scale]` | `ok <depth>` / `err usage\|unconfigured\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>` (and `line`'s queue errors) | Step jog: move X or Y by `dist` machine mm from where the queued jogs end, as a jog (state JOGGING). Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel`. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction |
+| `jogto` | `<x> <y>` | `ok <depth>` / `err usage\|unconfigured\|not_homed\|no_head\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>` (and `line`'s queue errors) | Jog to work mm (x, y) as a jog (state JOGGING), at the slower of X's and Y's `jogFeed`. X and Y must be homed. Joins, caps and refuses at the soft range as `jog` |
 | `select` | `<head>\|anchor` | `ok` / `err usage\|bad_state\|degraded\|no_head` / as `axes_map` | Controller command: the controlled point. A head commits its Z and A as the axes map (`axes_map`'s replies) and turns the laser off; `anchor` is the laser tip (laser on; maps X and Y if either is unmapped, Z and A unchanged) or, without a laser, the head at (0, 0). Never moves. IDLE/PAUSED/ALARM, not while probing. The selection is derived from the axes map: a head needs X, Y and its Z and A mapped, the laser X and Y, else none. A raw `axes_map` that binds a different head selects it (laser off) |
 | `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM |
 | `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
@@ -363,11 +366,11 @@ the key does not apply now, `!` the key is not recognised (older firmware). A
 request line is at most 255 characters.
 
 ```
-state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
+state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
-running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaningful while state=RUNNING)
+running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaningful while state=RUNNING or JOGGING)
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with alarm=HOMING_FAIL)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
@@ -385,6 +388,7 @@ pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on ho
 mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
 wpos=<x>,<y>,<z>,<a> work position: selected tip − work offset; A folded to (−180, 180]; X/Y `-` with no head
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
+late=<n>             planner blocks Core 1 found late, since boot; a job lands PAUSED, a jog holds and runs on
 texp= tmeas= twall=           DEBUG_TIMING builds only: last burst's expected, measured and wall time (us)
 ```
 Pre-flight checks every required axis is **present** (pingnode), **enabled**

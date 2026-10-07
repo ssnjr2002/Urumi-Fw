@@ -60,11 +60,12 @@ FOLLOWER_INLINE int64_t incrementFor(int64_t err) {
 
 FOLLOWER_INLINE int32_t stepOf(int64_t q) { return (int32_t)(q >> 32); }
 
-// Enter planner motion, from IDLE with lines queued or from PAUSED on a resume.
-// False if there is nothing to run.
+// Enter planner motion, from IDLE with lines queued (JOGGING for a jog, else
+// RUNNING) or from PAUSED on a resume. False if there is nothing to run.
 static bool __time_critical_func(enter)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     bool ok = false;
+    bool jog = false;
     if (machineState == STATE_PAUSED) {
         if (resumeRequested && plannerActive) {
             resumeRequested = false;
@@ -73,14 +74,15 @@ static bool __time_critical_func(enter)() {
         }
     } else if (machineState == STATE_IDLE && plannerRing.count() > 0) {
         plannerActive = true;
+        jog = plannerJog;
         ok = true;
     }
-    // RUNNING under the lock: `cancel` checks for PAUSED under it.
+    // Leaving PAUSED under the lock: `cancel` checks for PAUSED under it.
     if (ok) {
         jobActive = false;
         runningReason = RUNNING_PLANNER;
         __dmb();
-        machineState = STATE_RUNNING;
+        machineState = jog ? STATE_JOGGING : STATE_RUNNING;
     }
     spin_unlock(plannerLock, s);
     return ok;
@@ -120,7 +122,9 @@ void __time_critical_func(processPlanner)() {
     int64_t accum[2], inc[2] = {0, 0};
     for (int i = 0; i < 2; i++) accum[i] = (int64_t)machinePos[i] * kOne + kHalf;
 
-    bool holding = false, aborting = false;
+    // A jog never pauses: a late adoption holds it, then it runs on.
+    const bool jog = machineState == STATE_JOGGING;
+    bool holding = false, aborting = false, lateHold = false;
     uint32_t late = plannerExec.lateAdoptions();
     int slot = 0;
     float pending = 0;
@@ -154,11 +158,16 @@ void __time_critical_func(processPlanner)() {
         if (++slot < kSlotsPerTick) continue;
 
         // One found after its switch time is refused and the executor holds:
-        // land PAUSED as for `pause`, resumable from rest.
+        // a job lands PAUSED as for `pause`, resumable from rest; a jog resumes
+        // itself once at rest.
         plannerExec.adopt(plannerRing);
         if (plannerExec.lateAdoptions() != late) {
             late = plannerExec.lateAdoptions();
-            pauseRequested = true;
+            if (jog) {
+                if (!holding) { plannerExec.hold(); holding = lateHold = true; }
+            } else {
+                pauseRequested = true;
+            }
         }
 
         if (abortRequested && !aborting) {
@@ -193,6 +202,13 @@ void __time_critical_func(processPlanner)() {
         if (aborting) {
             // A finished abort has emptied the ring and reset the executor.
             if (st == Executor::State::Running && leaveIdle()) return;
+        } else if (lateHold) {
+            if (st == Executor::State::Held) {
+                const uint32_t s = spin_lock_blocking(plannerLock);
+                plannerExec.resume(plannerRing);
+                spin_unlock(plannerLock, s);
+                holding = lateHold = false;
+            }
         } else if (holding) {
             if (st == Executor::State::Held) { leavePaused(); return; }
         } else if (plannerRing.count() == 0 && leaveIdle()) {

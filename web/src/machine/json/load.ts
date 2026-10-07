@@ -17,11 +17,12 @@
  *   calibration — constant at 150 MHz across RP2350 boards, so defaulting it
  *   beats making every config.json restate it), machine targets
  *   (path/rapid/z/slew), axis ceilings
- *   (maxFeed/maxAccel), invert, maxTravel, laser, peripherals (the ARRAY is
+ *   (maxFeed/maxAccel), invert, maxTravel, jogFeed/jogFeedUnhomed (default
+ *   maxFeed), jogUnhomed (false), laser, peripherals (the ARRAY is
  *   optional, but each entry needs id + type), tools.*,
  *   quality. Absent → documented code default. See feed_accel_value_model.md.
  *
- * Lenient migration: unknown keys (old maxRate/accel/feedMax/jogFeed/zFeed/
+ * Lenient migration: unknown keys (old maxRate/accel/feedMax/zFeed/
  * nodeId names) are silently ignored, not rejected.
  *
  * No silent fallback to hardcoded machine calibration (the old
@@ -90,6 +91,8 @@ interface JsonAxis {
     readonly invert?: boolean;
     readonly invertDir?: boolean;
     readonly softLimits?: boolean;
+    readonly jogFeed?: number;
+    readonly jogFeedUnhomed?: number;
     readonly rotary?: boolean;
     readonly homing?: JsonHoming;
     readonly probe?: JsonProbe;
@@ -173,6 +176,7 @@ interface JsonMachine {
     /** Work offset default; `z` per head. Absent fields: 0. */
     readonly work?: { readonly x?: number; readonly y?: number; readonly z?: readonly number[] };
     readonly positions?: { readonly park?: JsonPoint; readonly load?: JsonPoint };
+    readonly jogUnhomed?: boolean;
 }
 
 interface JsonPeripheral {
@@ -384,6 +388,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         laser: buildLaser(machine.laser, errors),
         work: buildWork(machine.work, heads.length, errors),
         positions: buildPositions(machine.positions, errors),
+        jogUnhomed: machine.jogUnhomed ?? false,
     });
 
     if (errors.length > 0) {
@@ -507,6 +512,8 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         maxTravel: ja.maxTravel ?? 0,
         invert: ja.invert ?? false,
         ...present(ja, ["invertDir", "softLimits"]),
+        jogFeed: ja.jogFeed ?? ja.maxFeed ?? 0,
+        jogFeedUnhomed: ja.jogFeedUnhomed ?? ja.jogFeed ?? ja.maxFeed ?? 0,
         rotary: ja.rotary ?? false,
         // Spread, not `homing`, so an axis without a switch has no key at all
         // rather than an explicit `undefined`. `"homing" in axis` then means

@@ -74,6 +74,9 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "no_invert_dir", host: false, mutate: (c) => delete c.machine.y.invertDir },
     { name: "frames", host: true, mutate: (c) => (c.machine.heads[0].xOffset = 5) },
     { name: "laser_node", host: true, mutate: (c) => (c.machine.laser = { node: 9 }) },
+    { name: "travel", host: false, mutate: (c) => (c.machine.heads[0].z.maxTravel = 0) },
+    { name: "no_jog_feed", host: false, mutate: (c) => delete c.machine.x.jogFeed },
+    { name: "no_jog_unhomed", host: false, mutate: (c) => delete c.machine.jogUnhomed },
     { name: "probe_reach", host: false, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 1e4, y: 0 }) },
 ];
 

@@ -50,6 +50,7 @@ planner::Planner  plannerRing;
 planner::Executor plannerExec;
 spin_lock_t*      plannerLock     = nullptr;
 volatile bool     plannerActive   = false;
+volatile bool     plannerJog      = false;
 float             plannerSpm[2]   = {0, 0};
 volatile bool     resumeRequested = false;
 

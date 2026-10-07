@@ -107,7 +107,9 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 //   PAUSED suspends a job mid-stream; only resume / cancel / stop exit it.
 //
 // Transition map:
-//   IDLE    → RUNNING   Core 1, queue or planner ring non-empty
+//   IDLE    → RUNNING   Core 1, queue or planner ring (a job) non-empty
+//   IDLE    → JOGGING   Core 1, planner ring (a jog) non-empty
+//   JOGGING → IDLE      Core 1, ring drained or the jog aborted
 //   RUNNING → IDLE      Core 1, queue drained
 //   RUNNING → PAUSED    Core 1, on MSEG_FLAG_PAUSE or pauseRequested (drain first)
 //   PAUSED  → RUNNING   Core 1, jog burst arrives (runningReason = JOG)
@@ -136,6 +138,9 @@ enum MachineState : uint8_t {
     // explicit exit. Like HOMING it is neither IDLE nor RUNNING, so the data
     // plane refuses MSEG and JOG in it for free.
     STATE_PROBING = 6,
+    // Planner jog motion (`line`, `bez`, `jog`, `jogto`; docs/plans/
+    // motion-sessions.md). Never pauses: it runs, or is aborted to IDLE.
+    STATE_JOGGING = 7,
 };
 
 // Reason codes (state_redesign Layer 2): metadata on WHY we are in a state, so
@@ -339,12 +344,15 @@ extern volatile bool    streamIsJog;
 //   resets the ring and executor only while it is false. Written under the lock.
 // plannerSpm — X and Y steps/mm, set by Core 0 with that reset; negative on an
 //   invertDir axis, so the planner works in machine mm.
+// plannerJog — the ring holds jogs (JOGGING), not a job (RUNNING). Set by Core
+//   0 with that reset, under the lock.
 // resumeRequested — `resume` of a held planner job; Core 1 replans from where
 //   it stopped and returns to RUNNING. Set and cleared under the lock.
 extern planner::Planner  plannerRing;
 extern planner::Executor plannerExec;
 extern spin_lock_t*      plannerLock;
 extern volatile bool     plannerActive;
+extern volatile bool     plannerJog;
 extern float             plannerSpm[2];
 extern volatile bool     resumeRequested;
 

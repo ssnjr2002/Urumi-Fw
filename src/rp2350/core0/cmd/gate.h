@@ -43,6 +43,7 @@ static inline const char* stateName(uint8_t s) {
         case STATE_ALARM:   return "ALARM";
         case STATE_PAUSED:  return "PAUSED";
         case STATE_HOMING:  return "HOMING";
+        case STATE_JOGGING: return "JOGGING";
         default:            return "?";
     }
 }

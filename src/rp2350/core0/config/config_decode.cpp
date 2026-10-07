@@ -20,6 +20,8 @@ static void filterAxis(JsonObject f) {
     f["maxAccel"]     = true;
     f["maxTravel"]    = true;
     f["softLimits"]   = true;
+    f["jogFeed"]      = true;
+    f["jogFeedUnhomed"] = true;
     f["invertDir"]    = true;
     f["rotary"]       = true;
     JsonObject h = f["homing"].to<JsonObject>();
@@ -105,6 +107,8 @@ static CfgDecodeError readAxis(JsonObjectConst j, uint8_t defaultCycle, CfgAxis*
         !readFloat(j["maxFeed"],      &out->maxFeed) ||
         !readFloat(j["maxAccel"],     &out->maxAccel) ||
         !readFloat(j["maxTravel"],    &out->maxTravel) ||
+        !readFloat(j["jogFeed"],      &out->jogFeed) ||
+        !readFloat(j["jogFeedUnhomed"], &out->jogFeedUnhomed) ||
         !readBool(j["softLimits"],    &out->softLimits) ||
         !readBool(j["invertDir"],     &out->invertDir) ||
         !readBool(j["rotary"],        &out->rotary)) return CFG_DEC_MISSING;
@@ -143,7 +147,10 @@ static CfgDecodeError checkAxis(const CfgAxis& a) {
     if (!isfinite(a.stepsPerUnit) || a.stepsPerUnit <= 0.0f) return CFG_DEC_STEPS;
     if (!isfinite(a.maxFeed)   || a.maxFeed   < 0.0f ||
         !isfinite(a.maxAccel)  || a.maxAccel  < 0.0f ||
-        !isfinite(a.maxTravel) || a.maxTravel < 0.0f) return CFG_DEC_CEILING;
+        !isfinite(a.maxTravel) || a.maxTravel < 0.0f ||
+        !isfinite(a.jogFeed)   || a.jogFeed   < 0.0f ||
+        !isfinite(a.jogFeedUnhomed) || a.jogFeedUnhomed < 0.0f ||
+        (!a.rotary && a.maxTravel == 0.0f)) return CFG_DEC_CEILING;
     return checkHoming(a);
 }
 
@@ -224,6 +231,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["laser"]       = true;
     fm["work"]        = true;
     fm["positions"]   = true;
+    fm["jogUnhomed"]  = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
 
     JsonDocument doc;
@@ -275,6 +283,8 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     JsonObjectConst pos = m["positions"];
     if (pos.isNull() || !readOptPoint(pos["park"], &out->hasPark, &out->park) ||
         !readOptPoint(pos["load"], &out->hasLoad, &out->load)) return CFG_DEC_MISSING;
+
+    if (!readBool(m["jogUnhomed"], &out->jogUnhomed)) return CFG_DEC_MISSING;
 
     JsonVariantConst dh = m["defaultHead"];
     if (!dh.is<unsigned>()) return CFG_DEC_MISSING;

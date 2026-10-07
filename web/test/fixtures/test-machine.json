@@ -13,6 +13,8 @@
       "invert": true,
       "invertDir": true,
       "softLimits": true,
+      "jogFeed": 40,
+      "jogFeedUnhomed": 10,
       "homing": {
         "hardTravel": 500, "atOrigin": false,
         "pullInFeed": 2.5, "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,

@@ -110,7 +110,8 @@ void processBus() {
         runningReason  = RUNNING_JOB;
         if (plannerActive) dropPlanner();   // a held planner job
         __dmb();
-        if (machineState == STATE_RUNNING || machineState == STATE_PAUSED)
+        if (machineState == STATE_RUNNING || machineState == STATE_PAUSED ||
+            machineState == STATE_JOGGING)
             machineState = STATE_IDLE;
     }
 

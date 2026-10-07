@@ -31,6 +31,7 @@ struct Snap {
     float    mpos[4], wpos[4];
     bool     mposOk[4], wposOk[4];
     uint8_t  head;
+    uint32_t late;
 #ifdef DEBUG_TIMING
     uint32_t texp, tmeas, twall;
 #endif
@@ -59,6 +60,7 @@ void takeSnap(Snap& s) {
         s.wposOk[i] = framesWPos(i, &s.wpos[i]);
     }
     s.head = framesSelected();
+    s.late = plannerExec.lateAdoptions();
 #ifdef DEBUG_TIMING
     s.texp  = jobExpectedUs;
     s.tmeas = jobMeasuredUs;
@@ -144,6 +146,8 @@ const Key kKeys[] = {
         if (s.head == FRAMES_NONE) return KEY_NA;
         if (s.head == FRAMES_ANCHOR) { snprintf(o, n, "anchor"); return KEY_OK; }
         return fmtU(o, n, s.head); } },
+    // Planner blocks Core 1 found late, since boot; each held the motion briefly.
+    { "late",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.late); } },
 #ifdef DEBUG_TIMING
     // Expected vs measured duration (us) of the last completed burst, and its
     // wall time including any pause inside it. tmeas > texp: Core 1 fell behind.

@@ -507,10 +507,10 @@ bool cmdLeg(const char* args) {
     return true;
 }
 
-// Allowed in every state but RUNNING, where no leg can run and the bus belongs
-// to the stream. An idle node just acks.
+// Allowed in every state but RUNNING and JOGGING, where no leg can run and the
+// bus belongs to the stream. An idle node just acks.
 bool cmdLegAbort(const char* args) {
-    if (machineState == STATE_RUNNING) { Serial.println("err bad_state"); return true; }
+    if (machineState == STATE_RUNNING || machineState == STATE_JOGGING) { Serial.println("err bad_state"); return true; }
     const char* p = args;
     uint8_t node;
     if (!parseNode(&p, &node)) { Serial.println("err usage"); return true; }
@@ -627,6 +627,84 @@ bool cmdBez(const char* args) {
     if (!parseFloats(args, v, 7)) { Serial.println("err usage"); return true; }
     if (const char* why = toMachine(v, 3)) { Serial.printf("err %s\n", why); return true; }
     replyQueued(plannerQueueBezier(v[0], v[1], v[2], v[3], v[4], v[5], v[6]));
+    return true;
+}
+
+// ── jog <x|y> <dist> [scale] — step jog ──────────────────────────────────────
+// Moves X or Y by `dist` machine mm from where the queued jogs end, at the
+// axis's jogFeed (jogFeedUnhomed before homing, with jogUnhomed) times
+// `scale`, capped at maxFeed. Clicks join the running jog, up to
+// JOG_MAX_QUEUED blocks. An unhomed jog moves at most maxTravel.
+#define JOG_MAX_QUEUED 4
+
+// Queue a jog to machine mm `to`; a NAN coordinate stays where the queued jogs
+// end. `rel` adds `to` to that end instead. Replies.
+static void queueJog(const float to[2], bool rel, float feed) {
+    if (plannerQueueDepth() >= JOG_MAX_QUEUED) { Serial.println("err busy"); return; }
+    float at[2];
+    if (!plannerJogFrom(&at[0], &at[1])) { Serial.println("err bad_state"); return; }
+    float target[2];
+    for (uint8_t k = 0; k < 2; k++) {
+        target[k] = isnan(to[k]) ? at[k] : rel ? at[k] + to[k] : to[k];
+        float left;
+        if (const char* why = framesCheckMove(k, at[k], target[k], &left)) {
+            Serial.printf("err %s %.2f\n", why, left); return;
+        }
+    }
+    replyQueued(plannerQueueLine(target[0], target[1], feed));
+}
+
+bool cmdJog(const char* args) {
+    const char* p = args;
+    while (*p == ' ') p++;
+    const uint8_t k = (*p == 'x' || *p == 'X') ? SLOT_X : (*p == 'y' || *p == 'Y') ? SLOT_Y : 0xFF;
+    char* end;
+    const float dist = k == 0xFF ? 0 : strtof(p + 1, &end);
+    if (k == 0xFF || end == p + 1 || dist == 0 || !isfinite(dist)) {
+        Serial.println("err usage"); return true;
+    }
+    const char* q = end;
+    float scale = strtof(q, &end);
+    if (end == q) scale = 1;
+    if (!(scale > 0) || !isfinite(scale)) { Serial.println("err usage"); return true; }
+    if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
+
+    const MachineCfg& cfg = machineCfg();
+    const CfgAxis& a = k == SLOT_X ? cfg.x : cfg.y;
+    const bool homed = axes_homed & (1u << k);
+    if (!homed && !cfg.jogUnhomed) { Serial.println("err not_homed"); return true; }
+    if (!homed && fabsf(dist) > a.maxTravel) { Serial.println("err too_far"); return true; }
+    float feed = (homed ? a.jogFeed : a.jogFeedUnhomed) * scale;
+    if (a.maxFeed > 0 && feed > a.maxFeed) feed = a.maxFeed;
+    if (!(feed > 0)) { Serial.println("err no_feed"); return true; }
+
+    float to[2] = {NAN, NAN};
+    to[k] = dist;
+    queueJog(to, true, feed);
+    return true;
+}
+
+// ── jogto <x> <y> — jog to a work position ───────────────────────────────────
+// Moves to work mm (x, y) through framesToMachine, homed X and Y only, at the
+// slower of the two axes' jogFeed. Joins and caps as `jog`.
+bool cmdJogTo(const char* args) {
+    float v[2];
+    char* end;
+    const char* p = args;
+    for (int i = 0; i < 2; i++) {
+        v[i] = strtof(p, &end);
+        if (end == p || !isfinite(v[i])) { Serial.println("err usage"); return true; }
+        p = end;
+    }
+    if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
+    if ((axes_homed & 0x3) != 0x3) { Serial.println("err not_homed"); return true; }
+    if (const char* why = framesToMachine(v[0], v[1], &v[0], &v[1])) {
+        Serial.printf("err %s\n", why); return true;
+    }
+    const MachineCfg& cfg = machineCfg();
+    float feed = fminf(cfg.x.jogFeed, cfg.y.jogFeed);
+    if (!(feed > 0)) { Serial.println("err no_feed"); return true; }
+    queueJog(v, false, feed);
     return true;
 }
 

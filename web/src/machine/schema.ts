@@ -401,6 +401,9 @@ export interface AxisConfig {
     /** The Pico's direction and soft-limit fields, carried through to the blob. */
     readonly invertDir?: boolean;
     readonly softLimits?: boolean;
+    /** The Pico's jog speeds (units/s), homed and unhomed. The loader fills both. */
+    readonly jogFeed?: number;
+    readonly jogFeedUnhomed?: number;
     readonly rotary: boolean;
     /**
      * Absent = this axis has no terminator (no limit switch, no index) and
@@ -663,6 +666,8 @@ export interface MachineConfig {
     readonly laser?: LaserPointer;
     readonly work: WorkOffset;
     readonly positions: StoredPositions;
+    /** Relative jogs allowed before homing, without soft limits (testing). */
+    readonly jogUnhomed: boolean;
 }
 
 export function machineConfig(
@@ -675,6 +680,7 @@ export function machineConfig(
         x, y, heads, ...DEFAULTS.machine,
         work: { x: 0, y: 0, z: heads.map(() => 0) },
         positions: {},
+        jogUnhomed: false,
         ...overrides,
     };
 }

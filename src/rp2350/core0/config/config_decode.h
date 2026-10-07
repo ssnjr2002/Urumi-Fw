@@ -17,7 +17,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 3u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 4u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
 #define CFG_BUS_ADDR_MAX   8u   // must equal BUS_ADDR_MAX (shared_state.h)
@@ -56,7 +56,9 @@ struct CfgAxis {
     float     stepsPerUnit;
     float     maxFeed;    // 0 = uncapped
     float     maxAccel;   // 0 = uncapped
-    float     maxTravel;  // usable length from the park position
+    float     maxTravel;  // usable length from the park position; > 0 on a linear axis
+    float     jogFeed;        // jog speed, units/s, homed
+    float     jogFeedUnhomed; // jog speed before homing (with jogUnhomed)
     bool      softLimits; // enforce [park, park ± maxTravel]
     bool      invertDir;  // wiring fix so + is physical
     bool      rotary;
@@ -97,6 +99,7 @@ struct MachineCfg {
     CfgPoint park;
     bool     hasLoad;
     CfgPoint load;
+    bool     jogUnhomed;     // relative jogs before homing, no soft limits (testing)
 };
 
 enum CfgDecodeError : uint8_t {
@@ -110,7 +113,7 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_NODE_TYPE,      // an axis node that is not a stepper
     CFG_DEC_DUP_NODE,       // one node id claimed twice
     CFG_DEC_STEPS,          // stepsPerUnit not a positive finite number
-    CFG_DEC_CEILING,        // maxFeed / maxAccel / maxTravel negative or not finite
+    CFG_DEC_CEILING,        // a ceiling or jog feed negative or not finite; maxTravel 0 on a linear axis
     CFG_DEC_HOMING,         // a homing field out of range, or the wrong kind for the axis
     CFG_DEC_FRAMES,         // no anchor, a work Z per head missing, or a point out of reach
 };

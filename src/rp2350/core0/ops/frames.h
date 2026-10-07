@@ -69,6 +69,11 @@ const char* framesToMachine(float wx, float wy, float* mx, float* my);
 // axis's soft range, when that axis has softLimits. nullptr, or "soft_limit".
 const char* framesCheckNode(uint8_t node, int32_t machineSteps);
 
+// A move of slot k (X or Y) from `from` to `to`, machine mm, inside the soft
+// range when that axis is homed with softLimits. nullptr, or "soft_limit x|y"
+// with `*left` the mm still free in the move's direction (never negative).
+const char* framesCheckMove(uint8_t k, float from, float to, float* left);
+
 // Machine XY inside the soft range on every homed X/Y axis with softLimits.
 // Returns nullptr, or "soft_limit x|y".
 const char* framesCheckXY(float mx, float my);

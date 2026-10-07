@@ -184,6 +184,11 @@ static void acceptMseg() {
     ms.flags  = *p++;
     ms.pad[0] = ms.pad[1] = ms.pad[2] = 0;
 
+    // XY jogs run on the planner (`jog`, `jogto`); a jog burst moves Z and A.
+    if (pktBuf[0] == JOG_MAGIC && (ms.dx != 0 || ms.dy != 0)) {
+        sendNack(MSEG_NACK_BAD_STATE); return;
+    }
+
     // Steps for an unbound axis would reach whatever holds its slot (a probe's
     // vacuum reads them as poll requests), or no one.
     const int32_t d[MOTION_SLOTS] = { ms.dx, ms.dy, ms.dz, ms.da };

@@ -186,6 +186,17 @@ const char* framesCheckNode(uint8_t node, int32_t machineSteps) {
     return (m < lo || m > hi) ? "soft_limit" : nullptr;
 }
 
+const char* framesCheckMove(uint8_t k, float from, float to, float* left) {
+    if (!machineCfgValid() || k > SLOT_Y) return nullptr;
+    const CfgAxis& a = k == SLOT_X ? machineCfg().x : machineCfg().y;
+    float lo, hi;
+    if (!a.softLimits || !(axes_homed & (1u << k)) || !configAxisRange(a, &lo, &hi))
+        return nullptr;
+    if (to >= lo && to <= hi) return nullptr;
+    *left = fmaxf(0.0f, to > from ? hi - from : from - lo);
+    return k == SLOT_X ? "soft_limit x" : "soft_limit y";
+}
+
 const char* framesCheckXY(float mx, float my) {
     if (!machineCfgValid()) return nullptr;
     const MachineCfg& c = machineCfg();
