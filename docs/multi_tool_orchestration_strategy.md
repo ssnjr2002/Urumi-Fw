@@ -49,7 +49,7 @@ Integer steps (not mm) keep the Orchestrator in exact agreement with the pipelin
 
 **In host-bake mode:** `global_pos_x/y` are updated from the **integer step position returned by the pipeline** after each block. This is the only correct source — the pipeline's own float accumulator rounding determines the true final position.
 
-**In Pico-local mode:** The Pico never sends step data back to the host. The Orchestrator **dead-reckons** position from the Bézier geometry it sent — computing the expected endpoint of the last curve in integer steps. The `getpos` control-plane command (`link.command("getpos")`) is available to confirm position after each block completes if needed.
+**In Pico-local mode:** The Pico never sends step data back to the host. The Orchestrator **dead-reckons** position from the Bézier geometry it sent — computing the expected endpoint of the last curve in integer steps. The `get pos` control-plane query (`getPos(link)`) is available to confirm position after each block completes if needed.
 
 ### Step C: The Travel Injection
 Before executing the next Block, the Orchestrator knows the starting coordinate of that block's first path and the current `global_pos_x/y`.

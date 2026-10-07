@@ -16,7 +16,7 @@
 // This file owns the WAITING and the JUDGING; the stepping is Core 1's
 // (core1/emit/probe_leg.cpp), and the same argument homing.h makes applies
 // verbatim — a handler that blocked until the leg finished would hold
-// `getstate` and `stop` shut for the whole descent, on the one command that is
+// `get` and `stop` shut for the whole descent, on the one command that is
 // driving a tool into a bed.
 
 // Open a session: verify both nodes' types by status, then apply the slot map
@@ -65,7 +65,7 @@ bool probeActive(void);
 // starved and no supervision can run.
 bool probeLegInFlight(void);
 
-// The last leg's outcome, for `getstate`. PROBE_* from ipc/core1_rpc.h.
+// The last leg's outcome, for `get`. PROBE_* from ipc/core1_rpc.h.
 uint8_t probeLastCause(void);
 uint8_t probeLastRetries(void);
 int32_t probeLastSteps(void);

@@ -378,10 +378,10 @@ state re-derived from an actual `CMD_SWITCH_GET` at each leg boundary, at
 performs (§5.7), not a copy kept alongside it — which is what stops the third
 reason from being a second source of truth.
 
-It is deliberately **not** re-read on each `getstate`. The switch is on the far
+It is deliberately **not** re-read on each `get`. The switch is on the far
 side of the bus, so a fresh read per query would put a bus transaction inside a
 read-only command, which `query.cpp` refuses to do everywhere else and which would
-make `getstate` cost up to `RESPONSE_TIMEOUT_MS`. The boundary refresh is
+make `get` cost up to `RESPONSE_TIMEOUT_MS`. The boundary refresh is
 sufficient because between legs **nothing moves**: the only things that can change
 the switch are a fault or a hand, and neither is what the reason is for. The one
 place that must not trust a cached answer is the exit, and §5.5's gate re-reads.
@@ -683,7 +683,7 @@ quite fails is otherwise invisible from the bus.
 
 Split by *where to look*, following `LEGFAIL_*`. The codes below are
 `PROBE_BUDGET` … `PROBE_ESTOP` = 1…8 in
-[core1_rpc.h](../src/rp2350/ipc/core1_rpc.h), with `PROBE_OK` = 0; `getstate`
+[core1_rpc.h](../src/rp2350/ipc/core1_rpc.h), with `PROBE_OK` = 0; `get`
 reports the raw number as `probe=` (§5.12):
 
 | code | meaning | suspect | Z datum |
@@ -811,10 +811,9 @@ already a stop-everything event with nothing streaming, so an unresponsive
 control plane during a fault is tolerable in a way it would not be on the happy
 path — which is exactly why the happy-path exit is a command (§5.5).
 
-### 5.12 What `getstate` reports
+### 5.12 What `get` reports
 
-Four fields, appended **after** every field an existing host already parses, for
-the reason `latched` was:
+Four keys:
 
 ```
 probing=<ProbingReason> probe=<cause> retries=<n> psteps=<int32>
@@ -953,7 +952,7 @@ finding again, not because anything is open):
 - `PROBE_ESTOP` exists as a ninth cause and publishes no verdict — §5.10.
 - `start_us` joined `probe_leg`'s arguments — §5.7.
 - `ALREADY_OPEN` is keyed off `intent`, not `dir` — §5.7.
-- `PROBING_CLEAR` / `PROBING_CONTACT` refresh at boundaries, not per `getstate`
+- `PROBING_CLEAR` / `PROBING_CONTACT` refresh at boundaries, not per `get`
   — §5.2.
 - The node's drop rule is an `RXCIF` check, not an elapsed-time one — §4.2.
 

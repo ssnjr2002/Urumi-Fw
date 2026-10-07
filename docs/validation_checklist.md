@@ -90,14 +90,14 @@ host cannot reach past, so proving it standalone is what makes A✓B✓C✗ mean
       **Failure:** EN wiring or the node's pin config, not the bus (B2 passed).
 
 - [ ] **B5 — one node steps.** `step 1 200`
-      **Expect:** shaft moves; `getpos` advances by exactly 200.
+      **Expect:** shaft moves; `get pos` advances by exactly 200.
       **Failure with B4 ✓:** node step/dir output or the driver, not addressing.
 
 - [ ] **B6 — direction is symmetric.** `step 1 200` then `step 1 -200`
-      **Expect:** returns to the same physical spot; `getpos` back to start.
+      **Expect:** returns to the same physical spot; `get pos` back to start.
       **Failure:** DIR setup-time violation or a driver latching direction late.
 
-- [ ] **B7 — position survives.** `setorigin`, `step 1 1000`, `getpos`
+- [ ] **B7 — position survives.** `setorigin`, `step 1 1000`, `get pos`
       **Expect:** exactly 1000. Repeat ×5 — the counter must not drift.
       **Failure:** the node's ISR is losing or double-counting step events.
 
@@ -125,7 +125,7 @@ Everything here is bus-independent. This is what all runs to date have exercised
       **Expect:** connects; `text_desyncs == 0` (the startup banner is drained at open).
       **Failure:** a stale reader still holding the port, or a banner change.
 
-- [ ] **A2 — control plane round-trips.** `getstate`, `getpos`, `status cfg`.
+- [ ] **A2 — control plane round-trips.** `get state homed`, `get pos`, `status cfg`.
       **Expect:** one line per command, no orphans.
       **Failure:** a multi-line reply is desyncing the text sink — the bug class
       `pingnode all` had.
@@ -172,7 +172,7 @@ Everything here is bus-independent. This is what all runs to date have exercised
 
 Only once **S, A and B are each green**.
 
-- [ ] **C1 — jog direction matches `step`.** Enable X. Note `getpos`. Jog X+ 10 mm
+- [ ] **C1 — jog direction matches `step`.** Enable X. Note `get pos`. Jog X+ 10 mm
       from the UI. Compare the physical direction against **B9**.
       **Expect:** the axis moves the direction your machine calls +X.
       **This is the open question in the tree.** `axis.invert` was only just
@@ -183,7 +183,7 @@ Only once **S, A and B are each green**.
       **If jog and job disagree → the code regressed; that is exactly what `d8bd12a` fixed.**
 
 - [ ] **C2 — jog distance is exact.** Jog 10 mm; measure physically.
-      **Expect:** 10 mm, and `getpos` delta = `10 × steps_per_unit` (negated on
+      **Expect:** 10 mm, and `get pos` delta = `10 × steps_per_unit` (negated on
       an inverted axis — the Pico counts motor steps, not machine direction).
       **Failure with B8 ✓:** host-side units, not the machine.
 
@@ -198,7 +198,7 @@ Only once **S, A and B are each green**.
       **Failure:** the soft-abort path (§4.5).
 
 - [ ] **C5 — no lost steps at speed.** Jog at max rate, cancel mid-move. `setorigin`
-      first, and compare `getpos` against a physical mark.
+      first, and compare `get pos` against a physical mark.
       **Expect:** commanded and physical position still agree.
       **Failure:** the decel ramp is too aggressive for the pull-in rate —
       `DECEL_SPS2_*` (Z's value is an unverified placeholder).

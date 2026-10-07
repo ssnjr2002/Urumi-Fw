@@ -63,7 +63,7 @@ Two properties worth naming:
 
 | | |
 |---|---|
-| **Silent mid-job step loss** | A brownout reboots a node into `SLOT_NONE` + `streamEnabled=false`; it ignores the rest of the job while the Pico dead-reckons and `getpos` reads perfectly. Today nothing detects this. |
+| **Silent mid-job step loss** | A brownout reboots a node into `SLOT_NONE` + `streamEnabled=false`; it ignores the rest of the job while the Pico dead-reckons and `get pos` reads perfectly. Today nothing detects this. |
 | **Why it reset** | `RSTCTRL.RSTFR` is one free byte: BOD → power/motor transient, WDT → firmware hang, UPDI → someone reflashed it. |
 | **Firmware identity** | A build id would have made `err node 1 timeout` (node running pre-ENGAGE firmware) a one-line read. |
 | **Hot-swapped heads** | Distinguishes "node 4 parked, datum intact" from "different physical head at that address" — opposite situations, otherwise identical on the wire. |

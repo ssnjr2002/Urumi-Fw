@@ -10,7 +10,6 @@
 #include "gate.h"
 #include "../ops/position.h"
 #include "../ops/homing.h"
-#include "../ops/probe.h"
 #include "../ops/bus.h"
 #include "../status.h"                  // getBufCount (status alias)
 #include "../../ipc/shared_state.h"
@@ -19,76 +18,6 @@
 #include "../config/machine_cfg.h"
 
 bool cmdPing(const char*) { Serial.println("pong"); return true; }
-
-bool cmdGetState(const char*) {
-    // `latched` is appended LAST, after every field an existing host parses.
-    // The reply is whitespace-delimited key=value and the host tolerates
-    // trailing tokens it does not know, so an un-updated host keeps working and
-    // simply cannot see the mask -- it still sees the ALARM the mask caused.
-    Serial.printf("state=%d enabled=0x%02x homed=0x%02x alarm=%d running=%d latched=0x%02x",
-                  machineState, axes_enabled, axes_homed, alarmReason, runningReason,
-                  homingLatched);
-
-    // Only meaningful alongside ALARM_HOMING_FAIL, and omitted otherwise so it
-    // cannot be read as a live fault. See homing.h for what the codes point at.
-    // `homenode` names the node whose leg failed (0 for a dummy leg).
-    if (alarmReason == ALARM_HOMING_FAIL && homingFailWhy() != LEGFAIL_NONE) {
-        Serial.printf(" homefail=%d homenode=%d", homingFailWhy(), homingFailNode());
-    }
-    if (alarmReason == ALARM_CONFIG) Serial.printf(" cfgerr=%s", machineCfgBlockName());
-
-    // Appended last, after every field an existing host parses, for the same
-    // reason `latched` was. `probing=` is the session phase (ProbingReason);
-    // `probe=` is the LAST LEG's outcome and is emitted alongside it, because a
-    // leg boundary is not a terminal state -- the machine stays PROBING and the
-    // only report of what just happened is this pair.
-    if (machineState == STATE_HOMING) Serial.printf(" homing=%d", homingReason);
-    if (machineState == STATE_PROBING || alarmReason == ALARM_PROBE_FAIL) {
-        Serial.printf(" probing=%d probe=%d retries=%d psteps=%ld",
-                      probingReason, probeLastCause(), probeLastRetries(),
-                      (long)probeLastSteps());
-    }
-
-    // The contact height of the Z in slot 2, when it holds one.
-    int32_t pz;
-    if (probeValid(axisNode(SLOT_Z), &pz)) Serial.printf(" probed=1 pz=%ld", (long)pz);
-    else                                     Serial.print(" probed=0");
-
-    // The cycle a `home` run is in, while one is; and which NODES hold an
-    // origin, mapped or not (`homed=` covers the bound axes only).
-    if (homingHeld()) Serial.printf(" homecycle=%d", homingHeld());
-    Serial.printf(" nodehomed=0x%03x", originMask());
-#ifdef DEBUG_TIMING
-    // texp/tmeas = expected vs measured duration (us) of the last completed
-    // burst, from the intervals actually commanded vs wall-clock execution
-    // on Core 1; twall = end-to-end wall time including any pause/wait
-    // inside the burst. tmeas > texp means Core 1 fell behind schedule.
-    Serial.printf(" texp=%lu tmeas=%lu twall=%lu",
-                  (unsigned long)jobExpectedUs, (unsigned long)jobMeasuredUs,
-                  (unsigned long)jobWallUs);
-#endif
-    Serial.println();
-    return true;
-}
-
-// Position AND its validity, in one reply. The four counts are always plain
-// numbers — never a sentinel. An in-band "invalid" value cannot survive this
-// system: Core 1 dead-reckons with `machinePos[slot] += steps`, so a magic
-// number would be silently incremented into an ordinary-looking coordinate.
-// Validity has to travel out of band, hence the trailing mask.
-//
-// A cleared bit means the count is untrustworthy, NOT that it is zero — most
-// invalidation paths (estop, soft limit, disable, debug step) deliberately
-// retain the last known value because it is approximately right for that same
-// axis. Only a rebind to an un-datumed node zeroes, because there the leftover
-// number describes the slot's PREVIOUS occupant — a different physical motor.
-// Callers must gate on the mask; the number alone never says it is stale.
-bool cmdGetPos(const char*) {
-    Serial.printf("pos %ld %ld %ld %ld homed=0x%02x\n",
-                  (long)machinePos[0], (long)machinePos[1],
-                  (long)machinePos[2], (long)machinePos[3], axes_homed);
-    return true;
-}
 
 // `cfg` — the committed config blob, whether it decoded, and the most recent
 // rejection. Answers with or without a config, so it is a primitive.
@@ -162,10 +91,10 @@ bool cmdPingNode(const char* args) {
 }
 
 // A node's OWN step counter, read over RS485 — the independent check on
-// `getpos`, which reports machinePos: what Core 1 believes it EMITTED. Only
+// `get pos`, which reports machinePos: what Core 1 believes it EMITTED. Only
 // this can tell those apart. If the node never received the stream bytes
 // (wrong baud, DE timing, streamEnabled unset) machinePos still advances by
-// the full amount and reads perfectly correct, so `getpos` alone cannot
+// the full amount and reads perfectly correct, so `get pos` alone cannot
 // detect lost steps. A divergence localises the loss to the bus or the node.
 bool cmdNodePos(const char* args) {
     // Same gate as pingnode/enable/disable and the peripherals, for the reason

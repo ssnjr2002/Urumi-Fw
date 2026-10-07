@@ -532,13 +532,13 @@ the pre-existing `nak unsupported` / `nak bad_token` / `nak bad_arg`.
 
 **It must not block.** A home takes ~13 s, and the control-plane contract is one
 reply line per command. A blocking leg would freeze the plane for the whole
-seek — no `getstate`, no `stop`, **no abort** — on a command that is driving an
+seek — no `get`, no `stop`, **no abort** — on a command that is driving an
 axis at a hard stop. So it returns immediately and the machine enters
 `STATE_HOMING` (already reserved in `shared.h`), exactly as a job does.
 
 **The session.** The first leg, from IDLE or `ALARM_LIMIT_LATCHED`, opens a
 homing session; the machine stays in `STATE_HOMING` across legs. Any other
-ALARM, and PAUSED, refuse a leg (`err bad_state`). `getstate` reports the phase
+ALARM, and PAUSED, refuse a leg (`err bad_state`). `get` reports the phase
 as `homing=`: `0` (LEG) while any leg runs, `1` (WAIT) when none does.
 
 - leg success: stays in `STATE_HOMING`, `homing=1` once no other leg runs; a
@@ -547,7 +547,7 @@ as `homing=`: `0` (LEG) while any leg runs, `1` (WAIT) when none does.
   `CMD_LEG_ABORT`, node by node (never a broadcast), and released without a
   verdict; an aborted park keeps its origin, any other aborted leg drops it.
   Then `STATE_HOMING` → `STATE_ALARM`, `alarmReason = ALARM_HOMING_FAIL`, and
-  `getstate` names the cause and node (`homefail=`, `homenode=`). The session
+  `get` names the cause and node (`homefail=`, `homenode=`). The session
   is over, and `unalarm` must clear it before the next leg
 - `leg_abort N` on a node running a leg fails that leg (`homefail=9`), and so
   its cycle
@@ -715,7 +715,7 @@ The old reasoning for `homing.h` over `shared_state.h` — that sitting beside
 `axes_homed` would overstate its authority, since a crash-latch during a job
 never reaches this code (§6.6) — was sound but argued the wrong axis. `position.h`
 answers it better anyway: the mask now sits beside the datum, the other
-node-framed fact with the same caveat and the same rebind behaviour. `getstate`
+node-framed fact with the same caveat and the same rebind behaviour. `get`
 includes `position.h` to report it.
 
 **The generalisation, since this is the second time the same bug has been
@@ -726,15 +726,14 @@ state to change — nothing moved.
 
 #### Reporting it: `latched=` on the text plane only
 
-`getstate` gains one field, appended **last** so every existing parse position is
-undisturbed:
+`get` reports it as the `latched` key:
 
 ```
-state=0 enabled=0x00 homed=0x03 alarm=0 running=0 latched=0x00
+latched=0x00
 ```
 
-`parseGetstate` ignores trailing tokens it does not know, so a new host reading
-old firmware is a missing key rather than a parse failure.
+Firmware that predates it answers `latched=!`, so a new host reading old
+firmware gets a missing key rather than a parse failure.
 
 **It is deliberately NOT in `STATUS_RSP`.** That frame is a fixed 30 bytes whose
 length the demux checks, so adding a byte is a version-skew problem across two
@@ -742,7 +741,7 @@ binaries, not a field addition. The consequence is that `axesLatched` is
 `undefined` on a binary poll — **not `0`**. Zero would be a claim ("every switch
 clear") made on the strength of a frame that never asked, which is precisely the
 class of silent-wrong this section exists to remove. The demo panel renders that
-`undefined` as `— (binary poll — run getstate)`.
+`undefined` as `— (binary poll — run get latched)`.
 
 **Deploy the firmware and the host together.** `enumFromInt` coerces an unknown
 `AlarmReason` to the fallback, so a host without `LIMIT_LATCHED: 6` renders an
@@ -846,7 +845,7 @@ excluded, the enables) happens before anything moves. `ok` means started.
   `pullOffDist` (homing −) or `maxTravel` (homing +); a rotary node from its
   two sweeps (`resolveRotaryIndex`), refused past `toleranceDeg` or a 2%
   revolution spread. Coordinates carry the `invertDir` sign.
-- **The session** is held for the whole run (`homecycle=` in `getstate`): raw
+- **The session** is held for the whole run (`homecycle=` in `get`): raw
   `leg`, `dummy_leg`, `setorigin` and `home_end` answer `err busy`; `stop`
   ends it. A failure fails the session as a failed leg does (§2.2), with
   `homefail=` 10 (a leg refused mid-run), 11 (the datum commit failed) or 12

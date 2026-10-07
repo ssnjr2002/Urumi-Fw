@@ -69,7 +69,7 @@ move the other way either.
 
 ## When to revisit
 
-If a bench report ever shows `nodeHomed`/`getpos` disagreeing with what a node
+If a bench report ever shows `nodeHomed`/`get pos` disagreeing with what a node
 actually holds (the `nodeEnabled` bug's shape, but for the datum instead of
 enable state), this doc has the sketch already done — start from the table
 above rather than re-deriving it.

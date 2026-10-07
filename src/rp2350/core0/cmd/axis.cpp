@@ -754,7 +754,7 @@ bool cmdProbeEnd(const char*) {
 
 // ── setprobe <z_steps> ───────────────────────────────────────────────────────
 // Record the contact height, machine-frame steps, for the Z node in slot 2. The
-// host issues it after a clean probe with the latch leg's getpos Z.
+// host issues it after a clean probe with the latch leg's `get pos` Z.
 bool cmdSetProbe(const char* args) {
     if (machineState != STATE_IDLE && machineState != STATE_PAUSED) {
         Serial.println("err bad_state"); return true;

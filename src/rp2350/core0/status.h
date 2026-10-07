@@ -7,7 +7,7 @@
 // shared by the binary STATUS_RSP and the human-readable text `status` alias.
 uint16_t getBufCount();
 
-// Binary mirror of `getstate` (docs/wire_protocol.md STATUS_REQ/STATUS_RSP).
+// Binary mirror of the `get` state keys (docs/wire_protocol.md STATUS_REQ/STATUS_RSP).
 // Accepted in every machine state; handled inline (no ring-buffer / Core 1
 // interaction) so it never delays step timing.
 void sendStatusRsp();

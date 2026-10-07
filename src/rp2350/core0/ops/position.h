@@ -170,7 +170,7 @@ void originInvalidateAll(void);
 // invalidated it. Core 0's half of the validity conjunction.
 bool originValid(uint8_t n);
 
-// The nodes holding an origin, bit n = node n (getstate nodehomed=).
+// The nodes holding an origin, bit n = node n (get nodehomed=).
 uint16_t originMask(void);
 
 // ─── Tool probe, in the NODE frame ────────────────────────────────────────────

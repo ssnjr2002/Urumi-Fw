@@ -2,7 +2,7 @@
 //
 // Each resolves a node list, checks it before anything moves, and hands it to
 // the recipe (controller/seq/home). `ok` once the run starts; its progress and
-// failure are in getstate (homing=, homecycle=, homefail=, homenode=).
+// failure are in get (homing=, homecycle=, homefail=, homenode=).
 
 #include <Arduino.h>
 #include <stdlib.h>

@@ -62,7 +62,7 @@
 // and always before a NACK or a duplicate ACK. See docs/comms_architecture.md §4.1.
 #define ACK_COALESCE_MAX 8      // ≈ half a typical host window
 
-// Binary status request/response (mirrors the text `getstate` command).
+// Binary status request/response (mirrors the text `get` state keys).
 // docs/comms_architecture.md §4.2 + §4.6.
 //
 //   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
@@ -81,7 +81,7 @@
 //     [25..28] queuedUs   u32 LE   — motion time queued, microseconds
 //     [29]     CRC8 over [0..28]
 //
-// One frame, one coherent sample. Position used to need a separate `getpos` on
+// One frame, one coherent sample. Position used to need a separate text query on
 // the text plane, so state and position could disagree by tens of ms; per §1
 // the extra bytes are free because cost is per-transaction, not per-byte.
 //

@@ -120,7 +120,7 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 //   HOMING  → IDLE      Core 0 supervisor, node's pulser stopped as expected
 //   HOMING  → ALARM     Core 0 supervisor, ALARM_HOMING_FAIL (see homing.cpp)
 //
-// Enum values are the wire contract (getstate state=<n>). HOMING is entered only
+// Enum values are the wire contract (get state=<n>). HOMING is entered only
 // by `home` and is a MOTION state: the data plane refuses MSEG and JOG in it for
 // free, since both admit only IDLE/RUNNING and IDLE/PAUSED respectively.
 enum MachineState : uint8_t {
@@ -139,12 +139,12 @@ enum MachineState : uint8_t {
 };
 
 // Reason codes (state_redesign Layer 2): metadata on WHY we are in a state, so
-// no sub-states are needed. Values are the wire contract (getstate alarm=/running=).
+// no sub-states are needed. Values are the wire contract (get alarm=/running=).
 enum AlarmReason : uint8_t {
     ALARM_NONE       = 0,
     ALARM_ESTOP      = 1,   // stop command or poison pill
     // Boot found no usable config: none, an unmountable filesystem, a bad file,
-    // or one that does not decode (getstate cfgerr=). Held until a CFG_SET
+    // or one that does not decode (get cfgerr=). Held until a CFG_SET
     // commit, or `uncfg` with PICO_ALLOW_UNCONFIGURED.
     ALARM_CONFIG     = 2,
     ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
@@ -206,7 +206,7 @@ enum RunningReason : uint8_t {
 // DERIVED, not latched as a phase flag: it is refreshed from an actual switch
 // read at every leg boundary and at the exit gate. Between legs nothing moves,
 // so nothing else can change it. It is deliberately NOT re-read on each
-// `getstate` -- that would put a bus transaction inside a read-only query, which
+// `get` -- that would put a bus transaction inside a read-only query, which
 // query.cpp refuses to do for the same reason everywhere else.
 enum ProbingReason : uint8_t {
     PROBING_LEG     = 0,   // a leg is executing; the bus is starved
@@ -245,7 +245,7 @@ extern volatile uint8_t machineState;     // one of MachineState
 extern volatile uint8_t alarmReason;      // one of AlarmReason   (set before STATE_ALARM)
 extern volatile uint8_t runningReason;    // one of RunningReason (meaningful while RUNNING)
 // One of ProbingReason (meaningful while STATE_PROBING). A separate byte rather
-// than a second meaning for runningReason: getstate publishes that one as
+// than a second meaning for runningReason: get publishes that one as
 // `running=`, and two unrelated facts in one wire field is how a host ends up
 // decoding a probe phase as a jog.
 extern volatile uint8_t probingReason;
@@ -306,7 +306,7 @@ extern volatile uint16_t nodeEnabled;
 // Paused-job context (state_redesign: PausedJobContext, slimmed for Phase 1).
 // Captured when a job enters PAUSED. `resumePos` is the machinePos snapshot at
 // the pause boundary — Phase 2's onboard auto-return target; in Phase 1 the host
-// reads it via getpos and pre-positions before `resume`. `requiredAxes` is
+// reads it via `get pos` and pre-positions before `resume`. `requiredAxes` is
 // omitted: the Phase 1 resume gate is host-driven (PLAN_phase1_host_impl §11).
 // jobActive stays true through a jog-during-pause so the burst returns to PAUSED.
 extern volatile bool    jobActive;

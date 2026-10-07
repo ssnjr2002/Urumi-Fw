@@ -18,8 +18,6 @@
 static const Cmd kCommands[] = {
     // query.cpp
     { "ping",         cmdPing        },
-    { "getstate",     cmdGetState    },
-    { "getpos",       cmdGetPos      },
     { "status",       cmdStatus      },
     { "cfg",          cmdCfg         },
     { "?",            cmdStatus      },   // human alias, not host-facing
@@ -28,6 +26,8 @@ static const Cmd kCommands[] = {
     { "nodestat",     cmdNodeStat    },
     { "busstat",      cmdBusStat     },
     { "vac_switch",   cmdVacSwitch   },
+    // get.cpp
+    { "get",          cmdGet         },
     // lifecycle.cpp
     { "stop",         cmdStop        },
     { "unstop",       cmdUnstop      },

@@ -33,6 +33,6 @@ CfgDecodeError    machineCfgError();
 bool machineCfgBlocking();
 void machineCfgIgnore();
 bool machineCfgIgnored();
-// Why boot found no usable config, for getstate cfgerr=: "absent", "fs",
+// Why boot found no usable config, for get cfgerr=: "absent", "fs",
 // "file", or the stored blob's decode error name.
 const char* machineCfgBlockName();

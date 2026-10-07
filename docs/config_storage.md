@@ -92,7 +92,7 @@ not decode leaves the active config invalid.
 
 **No-config policy: `ALARM_CONFIG`.** Without a usable config (none, an
 unmounted filesystem, a bad file, or one that does not decode) the machine
-boots into `ALARM_CONFIG`, nothing mapped; `getstate cfgerr=` says why.
+boots into `ALARM_CONFIG`, nothing mapped; `get cfgerr` says why.
 `resumeOrHold()` holds it, so no other exit leaves it. Controller commands
 answer `err unconfigured` and `axes_map` refuses. An accepted `CFG_SET` is the
 way out. A build with `PICO_ALLOW_UNCONFIGURED` adds `uncfg`, which ignores the

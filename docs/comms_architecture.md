@@ -301,8 +301,8 @@ behind a pending text command.
 Text stays untagged and human-readable — it is low-rate, and `status` / `?` /
 the bring-up CLI are meant to be typed at a terminal. Text commands needing
 concurrency get *ported to binary* instead: `STATUS_REQ` is already the binary
-mirror of `getstate`, and folding position into the status frame (§4.2) is the
-same move applied to `getpos`.
+mirror of the `get` state keys, and folding position into the status frame
+(§4.2) is the same move applied to `get pos`.
 
 ### 2.5 Decisions
 
@@ -376,7 +376,7 @@ impossible under seizure.
 **Estop.** Abort the batch at the next frame boundary rather than queueing
 behind the rest of it (D13), then write `"stop\n"` and **do not await a reply**.
 The one-outstanding text limit exists for reply correlation, and estop
-correlates nothing — so it can never queue behind a pending `getstate`.
+correlates nothing — so it can never queue behind a pending `get`.
 Confirmation arrives on the status sink as the state goes ESTOP→ALARM. Total
 wait: one frame.
 
@@ -613,7 +613,7 @@ Abort adds no special requirement here.
 `state_redesign.md` describes resume as continuing from the last ACKed seqnum + 1.
 Per §4.1 that contract cannot hold — an ACK means accepted, not executed — so it
 was already unsound before ramping entered the picture. Phase 1 resume is
-host-driven and position-based (`resumePos` + `getpos`) precisely because of
+host-driven and position-based (`resumePos` + `get pos`) precisely because of
 this. So: **pause ramps, flushes, and resume re-plans from position.** That
 supersedes the seqnum wording in `state_redesign.md` §PAUSE and matches what the
 host already does.

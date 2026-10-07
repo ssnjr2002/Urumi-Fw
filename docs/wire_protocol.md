@@ -15,10 +15,10 @@ Phase 1 splits the host↔Pico link into two planes that share the USB CDC pipe:
   the MCFG preamble. Pico replies ACK/NACK. Each binary packet is a fixed
   length keyed by its magic byte.
 - **Control plane — text lines.** Low-rate commands the operator/host issues:
-  `getstate`, `getpos`, `enable`, `disable`, `pause`, `resume`, `cancel`,
+  `get`, `enable`, `disable`, `pause`, `resume`, `cancel`,
   `setorigin`, `stop`, `unalarm`, `ping`, `pingnode`. One command per line,
   `\n`-terminated; the Pico replies with a text line. This matches the existing
-  Core 0 text CLI (`move`/`stop`/`ping`/`enable`/`disable`/`getpos`).
+  Core 0 text CLI (`move`/`stop`/`ping`/`enable`/`disable`/`get`).
 
 **Dispatch rule (Core 0 ingest):** at a packet boundary, peek the first byte. If
 it is a known data-plane magic, read the whole fixed-length binary packet. Any
@@ -47,7 +47,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
 | `MSEG_NACK`  | `0xBB` | Pico → Host | NACK response |
-| `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request (mirrors `getstate`) |
+| `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request (mirrors the `get` state keys) |
 | `SEQRESET`   | `0xA8` | Host → Pico | Zero `expectedSeq`; replies `ACK(0)` |
 | `STATUS_RSP` | `0xA7` | Pico → Host | Binary status response (30 B) |
 | ~~`STATUS_RSP_V1`~~ | `0xA6` | — | Retired 9-byte frame; reserved, never emitted |
@@ -211,9 +211,8 @@ packets by inserting the byte at a packet boundary.
 [25..28] queuedUs      uint32 LE — queued motion time, microseconds
 [29]     CRC8 over bytes [0..28]
 ```
-Supersedes `getstate` **and** `getpos` in one coherent sample — previously the
-two were separate round trips on the text plane and could disagree by tens of
-ms. Per the transport's per-transaction cost model the extra bytes are free: one
+Carries `get`'s state keys **and** `pos` in one coherent sample; two text
+round trips could disagree by tens of ms. Per the transport's per-transaction cost model the extra bytes are free: one
 30-byte frame fits a single 64-byte USB packet.
 
 `bufCount` counts segments, including the one Core 1 is mid-executing.
@@ -233,7 +232,7 @@ than mis-parse 30 bytes as 9 and desync the stream. `0xA6` is retired and
 reserved; it is never emitted. Host and firmware for this frame must be flashed
 together.
 
-ASCII `getstate` and `getpos` remain available for human/debug use.
+The text `get` remains for the keys this frame has no room for, and for human/debug use.
 
 ### CMD_GET_CONFIG response (Pico → Host) *(Phase 2)*
 ```
@@ -320,8 +319,7 @@ prefixed `0x`.
 | `pingnode` | `[all\|<id>]` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
 | `busstat` | `<id>` | `node <id> ferr <n> ovf <n> crc <n>` / `node <id> timeout` | A node's receive-error counters (CMD_BUS_STATS): framing errors, buffer overflows, CRC failures. Wrapping 16-bit counts since the node powered on; diff successive reads |
 | `makesafe` | `<id>` | `node <id> en <0\|1> datum <0\|1> slot <n\|->` / `node <id> timeout` | Relay CMD_MAKE_SAFE: the node de-energises, clears its datum, drops its stream slot (stepper, probe vacuum) and closes its servos (vacuum). The line is the node's own report after the release; `slot -` = the node has none. The Pico's slot binding is not changed |
-| `getstate` | — | `state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r>` | Operational status snapshot (see below) |
-| `getpos` | — | `pos <x> <y> <z> <a>` | Absolute machinePos in steps (signed) |
+| `get` | `[<key> …]` | `<key>=<value> …` / `keys <key> …` / `err too_many_keys` | Read keys from one snapshot, in the order asked (see below). Bare: the keys this build knows. At most 32 keys |
 | `enable` | `[all\|<id>]` | `ok` / `err <reason>` | Energise motors (per allowed-state matrix). Bare / `all` energises every present node; `enable <id>` relays CMD_ENABLE to that node only (mirrors `pingnode <id>`) |
 | `disable` | `[all\|<id>]` | `ok` / `err <reason>` | De-energise. Bare / `all` de-energises every node and clears `axes_homed`/`axisBounds` for all axes; `disable <id>` relays CMD_DISABLE to that node only and clears homing/bounds for that axis alone |
 | `setorigin` | `<node>:<steps> [<node>:<steps> …]` | `ok` / `err usage` / `err node <id> not_in_config\|not_stepper\|no_datum\|<rpc>` / `err estop` / `err busy` | Set each node's datum: it stands at machine position `<steps>` (wire frame). Every pair is tried; `err node` names the first that failed, the others keep their datum. Clears no alarm. Between homing legs an `ok` also ends the session → IDLE, or `ALARM_LIMIT_LATCHED` if a switch is held; `err busy` while any leg runs |
@@ -346,7 +344,12 @@ prefixed `0x`.
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot; records are refused until it is sent. The `TOOL` record replaces it |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
-### `getstate` reply fields
+### `get` keys
+
+`get` answers `key=value` for each key asked, space-separated, in the order
+asked, all read in one snapshot. In place of a value: `?` the read failed, `-`
+the key does not apply now, `!` the key is not recognised (older firmware). A
+request line is at most 255 characters.
 
 ```
 state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING
@@ -354,12 +357,21 @@ enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
 running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaningful while state=RUNNING)
-homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; LEG = any leg runs, WAIT = none)
+latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with alarm=HOMING_FAIL)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
+cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with alarm=CONFIG)
+homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; LEG = any leg runs, WAIT = none)
+probing=<p>   probingReason   probe session phase  (only while PROBING or with alarm=PROBE_FAIL)
+probe=<c>     last leg cause  PROBE_*  (with probing)
+retries=<n>   last leg retries  (with probing)
+psteps=<n>    last leg steps  (with probing)
+probed=<0|1>  a probe height is held for the Z in slot 2
+pz=<z>        that height in steps  (only with probed=1)
 homecycle=<k> homingHeld      the cycle a `home` run is in  (only while one runs)
 nodehomed=<hex> originMask    bitmask, bit n = bus node n holds an origin, mapped or not
-cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with alarm=CONFIG)
+pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on homed
+texp= tmeas= twall=           DEBUG_TIMING builds only: last burst's expected, measured and wall time (us)
 ```
 Pre-flight checks every required axis is **present** (pingnode), **enabled**
 (this mask), and **homed** — a present-but-disabled axis would drop steps.
@@ -406,7 +418,7 @@ Phase 2.
 | | IDLE | RUNNING | PAUSED | ALARM | HOMING |
 |---|---|---|---|---|---|
 | `STATUS_REQ` (binary) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `ping` / `getstate` / `getpos` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ping` / `get` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `pingnode` / `busstat` / `nodestat` | ✓ | ✗ | ✓ | ✓ | between legs |
 | `enable` / `disable` / `makesafe` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `setorigin` | ✓ | ✗ | ✓ | ✓ | between legs |

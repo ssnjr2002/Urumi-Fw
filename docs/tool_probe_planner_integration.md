@@ -33,8 +33,8 @@ So a knife lifts `materialMm + clearanceMm` and a pen lifts `clearanceMm`.
 
 ### What the probe value is — and is not
 
-The value is the machine Z read by `getpos` after the **latch** leg ends on
-contact. It is **not** `getstate`'s `psteps=`: that is the last leg's emitted
+The value is the machine Z read by `get pos` after the **latch** leg ends on
+contact. It is **not** `get`'s `psteps=`: that is the last leg's emitted
 step count, a relative number, and it is gone once `probe_end` closes the
 session.
 
@@ -111,13 +111,13 @@ no slot. Idempotent.
 
 ### Reporting
 
-`getstate` appends, last, after every field an existing host parses:
+`get probed pz` reports:
 
 ```
-probed=<0|1>[ pz=<z_steps>]
+probed=<0|1> pz=<z_steps>
 ```
 
-`probed` is `probeValidZ()`. `pz` is present only when `probed=1`. The host
+`probed` is `probeValidZ()`. `pz` is `-` unless `probed=1`. The host
 reads the cut height from here, not from a cache of its own.
 
 ---
@@ -160,10 +160,10 @@ recompiling. The probe value never reaches the planner; only the runner uses
 A block assumes it starts at clear height. Nothing establishes that today; Z is
 wherever it was left. So before a phase's first block, the runner:
 
-1. Reads `getstate`. If `probed=0`, measures the tool first: the probe (§4.4)
+1. Reads `get probed pz`. If `probed=0`, measures the tool first: the probe (§4.4)
    for a Z with a `ProbeConfig`, a manual touch-off (§4.6) for one without.
 2. Computes clear Z from `pz`, `tripMm`, `materialMm` and `clearanceMm`.
-3. Moves Z there (absolute: target minus `getpos` Z).
+3. Moves Z there (absolute: target minus `get pos` Z).
 
 A block ends where it started, so Z is back at clear after every block and no
 further moves are needed within the phase.
@@ -176,7 +176,7 @@ further moves are needed within the phase.
    repeatability on the bench, and a fast ramped approach scattered by 200–900
    steps.
 2. After the latch leg: wait for `probing=` to leave 0. `probe_leg` answers `ok`
-   when the leg starts, not when it finishes. Then read `getpos` Z.
+   when the leg starts, not when it finishes. Then read `get pos` Z.
 3. `probe_end`, then `setprobe <z>`.
 
 ### 4.5 When the host invalidates
@@ -193,7 +193,7 @@ A Z with no `ProbeConfig` has no bed switch. Whenever that head is about to cut
 unprobed (the first phase, after a swap, after a mid-phase head switch), the
 runner records XY and calls its `touchOff` hook. The operator jogs the tip onto
 bare mat and stores that Z (`touchOffHere`, i.e. `setprobe` at the current
-`getpos` Z). The hook resolves only once `getstate` shows `probed=1`. The
+`get pos` Z). The hook resolves only once `get` shows `probed=1`. The
 runner then moves Z to clear and returns XY to where it was recorded.
 
 The mat is the reference, as with the switch, so no material thickness is

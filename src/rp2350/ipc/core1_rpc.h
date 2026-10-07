@@ -356,7 +356,7 @@ RpcResult rpcStepDebug(uint8_t slot, uint16_t sps, int32_t steps);
 
 // ─── Probe leg — started, then finished by the Core 0 supervisor ─────────────
 // Start/finish rather than rpcCall, and for the reason rpcCall's own comment
-// gives: a leg runs for seconds and Core 0 must keep serving `getstate` and
+// gives: a leg runs for seconds and Core 0 must keep serving `get` and
 // `stop` throughout. *idOut receives the id to pass to rpcFinish.
 RpcResult rpcProbeLegStart(const ProbeLegReq* rq, uint16_t* idOut);
 
