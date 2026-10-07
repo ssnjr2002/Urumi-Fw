@@ -7,8 +7,8 @@ docs/plans/pico-planner.md (the ring, `BEZIER` records). Replaces
 state-handling branch 5 ("motion gating, no jobs without homing") and planner
 branch 3 (`feature/pico-jog`).
 
-Draft: decisions settled so far. Preflight and the record layouts are still
-open (below); no branches yet.
+Jogging is settled and has branches (J1, J2). Jobs are still a draft:
+preflight and the record layouts are open (below), and they have no branches yet.
 
 ## Decisions
 
@@ -159,15 +159,18 @@ what is sent continuously.
 * **Homing gate:** `jogto` needs the axis homed. Relative jogs (step and
   continuous) need it unless the config field `jogUnhomed` is set (testing;
   off in production). Un-homed, soft limits are not enforced, the speed is
-  `jogFeedUnhomed`, and a continuous jog runs at most `maxTravel`.
+  `jogFeedUnhomed`, and a continuous jog runs at most `maxTravel` from where
+  it started (also on a homed axis with `softLimits` off).
+* **`maxTravel` is required on every linear axis** (positive, homing or not);
+  rotary A keeps 0 until the A range pass.
 * Every jog needs its axes bound and enabled; none run in ALARM (leaving
   `LIMIT_LATCHED` is the homing session's reverse leg).
 * **Soft limit:** a step jog or `jogto` that would cross it is refused,
   `err soft_limit <axis> <mm left>`, never clamped. A continuous jog runs to
   the limit and stops there.
 * **Clicks append:** a step jog while one runs is queued behind it and the
-  planner joins them, up to a small cap. A step jog during a continuous jog
-  is refused.
+  planner joins them, up to 4 queued; past that `err busy`. A step jog during
+  a continuous jog is refused.
 * **Speed:** per-axis `jogFeed` and `jogFeedUnhomed` in the config; the step
   jog's `[feed]` and the continuous packet's speed fraction (u8, of
   `jogFeed`) scale it, clamped to `maxFeed`. Acceleration is the axis
@@ -176,6 +179,105 @@ what is sent continuously.
   without a packet (the ordinary hold, then discard).
 * **Diagonal** continuous jogs (X and Y together) are allowed; speed is along
   the path.
+
+## Branches
+
+A dependent chain, one session: J1, then J2. The job branches come later
+and get their own sections.
+
+## Branch J1: `feature/pico-jog`
+
+### Plan
+
+* Type: feature.
+* Purpose: XY jogs on the planner. Adds `STATE_JOGGING`, step `jog`,
+  numeric and named `jogto`, the homing gate, refusal at the soft limit, and
+  appending clicks. The jog config fields come in the same branch.
+* Depends on: coordinate-system `feature/pico-frames` (done): `framesToMachine`,
+  `framesCheckXY`, stored positions, `framesTipOffset`
+  (`core0/ops/frames.h`).
+* What the code has today:
+  * `admit()` (`core0/planner/queue.cpp:26`) accepts IDLE or
+    `STATE_RUNNING`/`RUNNING_PLANNER`. The follower's `enter()`
+    (`core1/emit/follower.cpp:83`) sets `RUNNING_PLANNER` for every ring.
+  * `JOG_MAGIC` (`core0/data_plane.cpp:144`) is accepted in IDLE, PAUSED or
+    a continuing jog, and moves any axis.
+  * `CfgAxis` (`core0/config/config_decode.h:54`) has no jog fields. The
+    decoder requires `maxTravel` only on a homeable linear axis
+    (`config_decode.cpp:133`). `CFG_SCHEMA_VERSION` and
+    `CONFIG_BLOB_VERSION` (`web/src/machine/json/blob.ts:15`) are 3.
+  * `framesCheckXY` returns `soft_limit x|y` without the distance left.
+* Scope:
+  1. Config, Pico and web schema/loader: per-axis `jogFeed` and
+     `jogFeedUnhomed`, machine `jogUnhomed`, and a positive `maxTravel`
+     required on every linear axis. Schema and blob versions 3 → 4, fixtures
+     and `controller.msgpack` regenerated.
+  2. `STATE_JOGGING` (`ipc/shared_state.h`), set by the follower's `enter()`
+     from a jog flag Core 0 sets when it queues the jog. A jog returns to
+     IDLE. Refused while PAUSED until the job branches add the return to
+     `JOB.PAUSED`. `admit()` accepts JOGGING in place of `RUNNING_PLANNER`;
+     `status`, `get` and the web state names know it.
+  3. Step `jog <axis> <dist> [feed]` (X or Y): homing gate (`jogUnhomed`),
+     feed from `jogFeed`/`jogFeedUnhomed`, scaled by `[feed]`, clamped to
+     `maxFeed`. Refused at the soft limit with `err soft_limit <axis> <mm
+     left>` (a `framesCheckXY` variant that also returns the distance).
+     Clicks append, up to 4 queued, else `err busy`.
+  4. `jogto <x> <y>` in work coordinates, homed only, through
+     `framesToMachine` and the soft-limit refusal. `jogto park|load|probe`:
+     every head's Z goes to its park first (a park leg), then the XY line.
+  5. `line` and `bez` (`core0/cmd/axis.cpp:613`, `:625`) run as JOGGING.
+  6. `JOG_MAGIC` narrowed to Z and A: a packet with nonzero X or Y is
+     refused. The web host's XY jog stops working, as allowed by the web
+     deferral in state-handling 1d.
+  7. Docs: `docs/wire_protocol.md` (`jog`, `jogto`, `err soft_limit`, the
+     JOGGING state, `JOG_MAGIC`'s narrowing), and the config doc.
+* Out of scope: the continuous jog (J2), jogging while paused (job
+  branches), Z/A on the planner, tool offsets.
+* Overlap: `src/rp2350/core0/cmd/table.h` (or `control_plane.cpp`),
+  `web/src/machine/schema.ts`, `web/src/wire/`.
+* Checks: `pio run -e pico`; `pio test -e native` where it builds;
+  `pnpm typecheck` and `pnpm test` in `web/`.
+  Human checks: a step jog on X and Y, homed and unhomed (with `jogUnhomed`);
+  clicks join without stopping; a fifth click answers `err busy`; a jog past
+  the soft range refused with mm left; `jogto` numeric with each head
+  selected; `jogto park|load|probe` with the Z park first; `stop` mid-jog;
+  `status` shows JOGGING, then IDLE.
+
+### Status
+
+Not started.
+
+## Branch J2: `feature/jog-continuous`
+
+### Plan
+
+* Type: feature.
+* Purpose: continuous XY jogs from a data-plane deadman packet, with a
+  one-byte stop.
+* Depends on: J1.
+* Scope:
+  1. Packet: magic, direction per axis (X, Y: −1/0/+1), speed fraction (u8,
+     of `jogFeed`), CRC; and a one-byte stop. Both are received beside the
+     existing magics (`core0/data_plane.cpp:326`).
+  2. The first packet queues a line to the soft-range end in that direction,
+     or `maxTravel` from the start when unhomed or with `softLimits` off.
+     Diagonals are allowed. Repeats renew a timer; 150 ms without one holds
+     and discards (`abortRequested`), checked in `dataPlaneTick`. All-zero
+     directions or the stop byte stop at once. A direction change stops,
+     then queues a new line once at rest.
+  3. A step jog during a continuous jog is refused. A continuous packet
+     while step jogs run stops them first, the same as a direction change.
+  4. Web: a `wire/` encoder for the packet, and a sim that answers it.
+     The operator UI port stays deferred.
+  5. Docs: `docs/wire_protocol.md`.
+* Overlap: `web/src/wire/`.
+* Checks: as J1. Human checks: hold and release on X, Y and a diagonal;
+  pulling the cable mid-jog stops within about 150 ms plus braking; running
+  into the soft limit stops there.
+
+### Status
+
+Not started.
 
 ## Open
 
