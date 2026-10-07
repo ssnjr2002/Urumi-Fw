@@ -254,3 +254,59 @@ disconnectBtn.addEventListener('click', async () => {
     connectBtn.disabled = false;
     syncButtons();
 });
+
+// ── WASD jog ──────────────────────────────────────────────────────────────────
+// While the checkbox is ticked, held keys send a continuous-jog packet every
+// JOG_PERIOD_MS (inside the Pico's 150 ms deadman). Releasing every key, or
+// unticking, losing focus or disconnecting, sends the stop byte.
+
+const jogKeysBox = document.getElementById('jog-keys');
+const jogSpeedIn = document.getElementById('jog-speed');
+const jogDirOut  = document.getElementById('jog-dir');
+
+const JOG_PERIOD_MS = 50;
+const JOG_KEYS = { w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0] };
+const held = new Set();
+let jogTimer = null;
+
+function jogDir() {
+    let x = 0, y = 0;
+    for (const k of held) { x += JOG_KEYS[k][0]; y += JOG_KEYS[k][1]; }
+    return [Math.sign(x), Math.sign(y)];
+}
+
+function jogSend() {
+    const [x, y] = jogDir();
+    const speed = Number(jogSpeedIn.value) || 1;
+    jogDirOut.textContent = x || y ? `jogging x ${x} y ${y}` : '';
+    if (!link || (!x && !y)) return;
+    try { link.cjog(x, y, speed); } catch (e) { console.error(TAG, 'jog', e); }
+}
+
+function jogStop() {
+    held.clear();
+    if (jogTimer) { clearInterval(jogTimer); jogTimer = null; }
+    jogDirOut.textContent = '';
+    link?.cjogStop();
+}
+
+document.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (!jogKeysBox.checked || !(k in JOG_KEYS) || e.target instanceof HTMLInputElement && e.target.type !== 'checkbox') return;
+    e.preventDefault();
+    if (e.repeat || held.has(k)) return;
+    held.add(k);
+    jogSend();                                   // a new direction goes out at once
+    jogTimer ??= setInterval(jogSend, JOG_PERIOD_MS);
+});
+
+document.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (!held.delete(k)) return;
+    if (held.size === 0) jogStop();
+    else jogSend();
+});
+
+jogKeysBox.addEventListener('change', () => { if (!jogKeysBox.checked) jogStop(); });
+window.addEventListener('blur', jogStop);
+disconnectBtn.addEventListener('click', jogStop);

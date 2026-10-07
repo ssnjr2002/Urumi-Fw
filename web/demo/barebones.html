@@ -15,6 +15,10 @@
   <button id="push-config" disabled>Push config</button>
   <button id="pull-config" disabled>Pull config</button>
   <button id="status-cfg" disabled>cfg</button>
+  <h2>Jog</h2>
+  <label><input type="checkbox" id="jog-keys"> WASD jog (hold: W/S = +Y/−Y, A/D = −X/+X)</label>
+  <label>Speed (× jogFeed): <input type="number" id="jog-speed" min="0.02" max="3.98" step="0.25" value="1"></label>
+  <span id="jog-dir"></span>
   <h2>Job</h2>
   <label for="svg-file">SVG: </label>
   <input type="file" id="svg-file" accept="image/svg+xml,.svg">
