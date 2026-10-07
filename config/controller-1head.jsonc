@@ -76,12 +76,12 @@
         "pullOffDist": 5
       }
     },
-    "laser": null
+    "laser": { "node": 3 }       // the anchor, (0, 0); wired to node 3 (-DNODE_HAS_LASER)
   },
   "heads": [
     {
       "accepts": ["knife", "crease"],
-      "xOffset": 0,
+      "xOffset": 0,              // unmeasured: tip − laser dot
       "yOffset": 0,
       "z": {
         "node": { "id": 3, "present": true },
