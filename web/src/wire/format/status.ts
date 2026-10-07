@@ -42,6 +42,8 @@ export const MachineState = {
      * against a machine whose axis map is currently a probe binding.
      */
     PROBING: 6,
+    /** Planner jog motion (`line`, `bez`, `jog`, `jogto`). Never pauses. */
+    JOGGING: 7,
 } as const;
 export type MachineState = (typeof MachineState)[keyof typeof MachineState];
 const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];

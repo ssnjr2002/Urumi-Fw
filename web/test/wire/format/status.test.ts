@@ -183,9 +183,9 @@ describe("wire/format/status: parseStatusRsp", () => {
 
     it("falls back to IDLE on an out-of-range state byte (forward-compat)", () => {
         const pkt = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, alarm: 0, running: 0 });
-        // 7 is not a known MachineState — keep CRC valid by recomputing via pack
+        // 8 is not a known MachineState — keep CRC valid by recomputing via pack
         const forged = packStatusRsp({
-            state: 7,
+            state: 8,
             axesEnabled: 0,
             axesHomed: 0,
             alarm: 9, // also out of range
