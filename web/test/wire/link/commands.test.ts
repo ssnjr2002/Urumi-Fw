@@ -38,6 +38,11 @@ import {
     homeUnhomed,
     homeCycle,
     homeHead,
+    getFrames,
+    select,
+    wzero,
+    wset,
+    wclear,
 } from "../../../src/wire/link/commands.js";
 import { MachineState, AlarmReason } from "../../../src/wire/format/status.js";
 
@@ -368,6 +373,37 @@ describe("wire/link/commands: home and its selectors", () => {
         expect(sent).toEqual([
             "home", "home 3 4", "home only 3", "home only",
             "home_unhomed", "home_cycle 2", "home_head 1",
+        ]);
+    });
+});
+
+// The sim has no frames; these check the lines sent and the replies parsed.
+describe("wire/link/commands: frames", () => {
+    it("parses mpos, wpos and head, with - as null", async () => {
+        const link = {
+            command: async () => "mpos=1195.000,0.000,-,- wpos=-,-,-,- head=anchor",
+        } as unknown as Link;
+        expect(await getFrames(link)).toEqual({
+            mpos: [1195, 0, null, null],
+            wpos: [null, null, null, null],
+            head: "anchor",
+        });
+    });
+
+    it("sends select and the work offset commands, throwing on err", async () => {
+        const sent: string[] = [];
+        const link = {
+            command: async (s: string) => { sent.push(s); return s === "select 3" ? "err usage" : "ok"; },
+        } as unknown as Link;
+        await select(link, 1);
+        await select(link, "anchor");
+        await wzero(link);
+        await wzero(link, ["x", "y"]);
+        await wset(link, { x: 10, z: -2 });
+        await wclear(link);
+        await expect(select(link, 3)).rejects.toThrow(/err usage/);
+        expect(sent).toEqual([
+            "select 1", "select anchor", "wzero", "wzero x y", "wset x 10 z -2", "wclear", "select 3",
         ]);
     });
 });

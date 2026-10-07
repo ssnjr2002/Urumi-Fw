@@ -61,6 +61,8 @@ export const NACK_BAD_STATE = 0x06; // command rejected — wrong machine state
 export const NACK_ABORTING = 0x07;
 // A BEZIER record failed the Pico's checks, or broke contour framing or the chain.
 export const NACK_BAD_CURVE = 0x08;
+// A BEZIER record lies outside the soft range on a homed axis, after the work offset.
+export const NACK_SOFT_LIMIT = 0x09;
 
 // ── Config plane magics (Phase-2) — CFG blob push/pull over the data plane ──────
 // docs/wire_protocol.md "CRC Algorithms" + packets.py. CFG_SET/GET are host→Pico

@@ -37,6 +37,7 @@ import {
     NACK_FULL,
     NACK_ABORTING,
     NACK_BAD_CURVE,
+    NACK_SOFT_LIMIT,
 } from "../format/constants.js";
 import { stampSeq } from "../format/packet.js";
 import { Ack, Nack } from "./demux.js";
@@ -332,6 +333,11 @@ export class Session {
                 v?.(`FATAL: the Pico refused a curve`);
                 return false; // fatal — the record or its framing is wrong
             }
+            if (r === NACK_SOFT_LIMIT) {
+                this.fatalReason = r;
+                v?.(`FATAL: a record lies outside the soft range`);
+                return false; // fatal — the job does not fit where it is placed
+            }
             if (r === NACK_PAUSED || r === NACK_BAD_STATE) {
                 this.fatalReason = r;
                 v?.(`FATAL: wrong machine state (${fatalReasonName(r)})`);
@@ -459,6 +465,7 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [NACK_BAD_STATE]: "NACK_BAD_STATE",
     [NACK_ABORTING]: "NACK_ABORTING",
     [NACK_BAD_CURVE]: "NACK_BAD_CURVE",
+    [NACK_SOFT_LIMIT]: "NACK_SOFT_LIMIT",
     [FATAL_STALL]: "FATAL_STALL",
     [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",
 };

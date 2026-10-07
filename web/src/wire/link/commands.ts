@@ -102,6 +102,60 @@ export async function getPos(link: Link): Promise<readonly [number, number, numb
     return [p[0]!, p[1]!, p[2]!, p[3]!];
 }
 
+// ── frames (docs/plans/coordinate-system.md) ──────────────────────────────────
+
+/** x,y,z,a in units; null for a slot the firmware reports as `-`. */
+export type Units4 = readonly [number | null, number | null, number | null, number | null];
+
+/** The controlled point: a head index, the laser anchor, or none. */
+export type Selected = number | "anchor" | null;
+
+function parseUnits4(v: string | undefined, key: string): Units4 {
+    const p = (v ?? "").split(",").map((s) => (s === "-" ? null : Number(s)));
+    if (p.length !== 4 || p.some((n) => n !== null && !Number.isFinite(n))) {
+        throw new Error(`bad get ${key} value: ${JSON.stringify(v)}`);
+    }
+    return [p[0]!, p[1]!, p[2]!, p[3]!];
+}
+
+/** Machine and work position and the selected head, from one snapshot. */
+export async function getFrames(link: Link): Promise<{ mpos: Units4; wpos: Units4; head: Selected }> {
+    const r = await get(link, ["mpos", "wpos", "head"]);
+    const head = getValue(r, "head");
+    return {
+        mpos: parseUnits4(getValue(r, "mpos"), "mpos"),
+        wpos: parseUnits4(getValue(r, "wpos"), "wpos"),
+        head: head === undefined || head === "-" ? null : head === "anchor" ? "anchor" : Number(head),
+    };
+}
+
+/** `select <head>|anchor`: the controlled point; a head binds its Z and A. */
+export async function select(link: Link, target: number | "anchor"): Promise<void> {
+    await okOrThrow(link, `select ${target}`);
+}
+
+/** `wzero [axes]`: the work offset becomes the selected tip here (no axes: all). */
+export async function wzero(link: Link, axes: readonly ("x" | "y" | "z")[] = []): Promise<void> {
+    await okOrThrow(link, ["wzero", ...axes].join(" "));
+}
+
+/** `wset`: the work offset in machine units, per axis. */
+export async function wset(link: Link, offset: Partial<Record<"x" | "y" | "z", number>>): Promise<void> {
+    const parts = Object.entries(offset).map(([k, v]) => `${k} ${v}`);
+    if (parts.length === 0) throw new Error("wset needs at least one axis");
+    await okOrThrow(link, `wset ${parts.join(" ")}`);
+}
+
+/** `wclear`: the work offset back to the config's `work` block. */
+export async function wclear(link: Link): Promise<void> {
+    await okOrThrow(link, "wclear");
+}
+
+async function okOrThrow(link: Link, cmd: string): Promise<void> {
+    const r = (await link.command(cmd)).trim();
+    if (r !== "ok") throw new Error(`${cmd}: ${r}`);
+}
+
 // ── node verbs (proactive — firmware additions since the Python snapshot) ────
 
 /**
