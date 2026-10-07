@@ -134,6 +134,25 @@ Per linear axis (frames and directions: docs/plans/coordinate-system.md):
 * **Commissioning order:** jog + and fix `invertDir` first; then home and fix
   `seekPositive`. Fixing a wrong + with `seekPositive` homes correctly and
   mirrors every job.
+* **Measuring `maxTravel`** (linear): push the axis to the end opposite its
+  switch, then run one raw seek with a generous budget and read the node's
+  span:
+
+  ```
+  enable <node>
+  leg <node> seek <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+  nodestat <node>                      # span <steps>
+  ```
+
+  `dir` is `seekPositive != invertDir`; the intervals are
+  `1e6 / (feed × stepsPerUnit)`. Try a short seek first (a few mm of
+  `max_steps`) to confirm the direction: from the far stop, a wrong `dir`
+  drives into it. Then `maxTravel = (|span| / stepsPerUnit) − pullOffDist`,
+  rounded down so the soft limit stays short of the far stop. Retract off the
+  switch and `home_end` after. Measured on the bench (2026-10-07): X 189000
+  steps → 1175, Y 118929 → 735 at 160 steps/mm. The seek budget `home` uses
+  comes from `maxTravel`, so an underestimate fails a home started from the
+  far end.
 * Replaces `hardTravel`, `atOrigin` and `invert`; renames `backoffMm`,
   `parkMm`, `pullInFeed` and `datumDeg`. The web keeps the old fields until its homing
   path is removed; the Pico reads only the new ones.
