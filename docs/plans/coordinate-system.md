@@ -268,7 +268,8 @@ Proposed; each gets a full Plan section when its turn comes.
 
 ### Status
 
-Planned.
+Done, merged 2026-10-07 (`3ce091f`..`ce63276`). Unblocks the
+motion-sessions jog branches (`jogto` calls into `frames`).
 
 ### Outcome
 
