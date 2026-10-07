@@ -12,7 +12,7 @@ import { decode, encode } from "@msgpack/msgpack";
 import type { PipelineConfig } from "../schema.js";
 
 /** Payload schema version. Bump when a field the Pico decodes changes shape. */
-export const CONFIG_BLOB_VERSION = 2;
+export const CONFIG_BLOB_VERSION = 3;
 
 export function encodeConfigBlob(config: PipelineConfig): Uint8Array {
     return encode({ v: CONFIG_BLOB_VERSION, ...config }, { ignoreUndefined: true });

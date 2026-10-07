@@ -72,6 +72,9 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "homing", host: false, mutate: (c) => (c.machine.x.homing.seekScaler = 0.5) },
     { name: "homing_kind", host: false, mutate: (c) => (c.machine.heads[0].z.homing = c.machine.heads[0].a.homing) },
     { name: "no_invert_dir", host: false, mutate: (c) => delete c.machine.y.invertDir },
+    { name: "frames", host: true, mutate: (c) => (c.machine.heads[0].xOffset = 5) },
+    { name: "laser_node", host: true, mutate: (c) => (c.machine.laser = { node: 9 }) },
+    { name: "probe_reach", host: false, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 1e4, y: 0 }) },
 ];
 
 const DIR = join(FIXTURES, "config");

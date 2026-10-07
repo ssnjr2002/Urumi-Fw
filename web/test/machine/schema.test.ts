@@ -207,9 +207,9 @@ describe("config: MachineConfig laser", () => {
                     { xOffset: -50 },
                 ),
             ],
-            { laser: { xOffset: 0, yOffset: 0 } },
+            { laser: { node: 1 } },
         );
-        expect(m.laser).toEqual({ xOffset: 0, yOffset: 0 });
+        expect(m.laser).toEqual({ node: 1 });
         expect(m.heads[0]!.xOffset).toBe(-50);
     });
 });

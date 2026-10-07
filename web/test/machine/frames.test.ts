@@ -29,7 +29,7 @@ import {
 /** Dual-head machine: head 0 at the origin, head 1 offset by (dx, dy). */
 function machine(opts?: {
     offsets?: readonly XY[];
-    laser?: { xOffset: number; yOffset: number } | undefined;
+    laser?: { node: number } | undefined;
 }): MachineConfig {
     const offsets = opts?.offsets ?? [{ x: 0, y: 0 }, { x: 60, y: 0 }];
     const heads = offsets.map((o, i) =>
@@ -58,7 +58,7 @@ describe("config/frames: the anchor", () => {
     });
 
     it("is the laser whenever one is fitted, even if a head is also at (0,0)", () => {
-        const m = machine({ laser: { xOffset: 0, yOffset: 0 } });
+        const m = machine({ laser: { node: 1 } });
         expect(machineAnchor(m)).toEqual({ kind: "laser" });
     });
 

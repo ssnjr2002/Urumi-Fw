@@ -260,7 +260,7 @@ describe("load: dual-head + laser", () => {
             "fCpu": 150000000,
             "x": { "node": { "id": 1 }, "stepsPerUnit": 160 },
             "y": { "node": { "id": 2 }, "stepsPerUnit": 160 },
-            "laser": { "xOffset": 0, "yOffset": 0 }
+            "laser": { "node": 1 }
         },
         "heads": [
             {
@@ -295,7 +295,7 @@ describe("load: dual-head + laser", () => {
     it("parses laser pointer", () => {
         const r = parseConfig(dualHeadJson);
         if (!r.ok) throw new Error("expected ok");
-        expect(r.config.machine.laser).toEqual({ xOffset: 0, yOffset: 0 });
+        expect(r.config.machine.laser).toEqual({ node: 1 });
     });
 });
 

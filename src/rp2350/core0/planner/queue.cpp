@@ -44,9 +44,10 @@ static PlannerQueueResult admit(planner::AxisLimits& limits) {
 // it did.
 static bool resetIfIdle() {
     if (plannerActive || plannerRing.count() != 0) return false;
+    // Signed, so planner mm are machine mm on an invertDir axis too.
     const MachineCfg& cfg = machineCfg();
-    plannerSpm[0] = cfg.x.stepsPerUnit;
-    plannerSpm[1] = cfg.y.stepsPerUnit;
+    plannerSpm[0] = cfg.x.invertDir ? -cfg.x.stepsPerUnit : cfg.x.stepsPerUnit;
+    plannerSpm[1] = cfg.y.invertDir ? -cfg.y.stepsPerUnit : cfg.y.stepsPerUnit;
     const planner::Vec2 at{machinePos[0] / plannerSpm[0], machinePos[1] / plannerSpm[1]};
     plannerRing.reset(at);
     plannerExec.reset(at);
@@ -127,7 +128,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     } else if (!start) {
         // An idle reset restarts the ring at machinePos, which rounds p3 to a
         // step; a contour continuing after a drain is within one step of it.
-        const float step = 1 / fminf(plannerSpm[0], plannerSpm[1]);
+        const float step = 1 / fminf(fabsf(plannerSpm[0]), fabsf(plannerSpm[1]));
         if (reset && fabsf(dx) <= step && fabsf(dy) <= step) b.p[0] = e;
         else out = PQ_BAD_CURVE;
         if (out == PQ_OK && plannerRing.full()) out = PQ_FULL;

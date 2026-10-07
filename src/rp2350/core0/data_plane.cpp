@@ -23,6 +23,7 @@
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "ops/position.h"          // axisNode
+#include "ops/frames.h"
 #include "planner/queue.h"
 #include <planner/bezier.h>
 
@@ -215,6 +216,13 @@ static void acceptBezier() {
     memcpy(&bz.dkappa_max, p, 4); p += 4;
     memcpy(&bz.ts[1],      p, 4); p += 4;
     memcpy(&bz.ts[2],      p, 4);
+
+    // Work → machine: a translation, so the analysed fields stand as sent.
+    for (int i = 0; i < 4; i++) {
+        planner::Vec2& q = bz.p[i];
+        if (framesToMachine(q.x, q.y, &q.x, &q.y)) { sendNack(MSEG_NACK_BAD_STATE); return; }
+        if (framesCheckXY(q.x, q.y)) { sendNack(MSEG_NACK_SOFT_LIMIT); return; }
+    }
 
     const uint8_t flags = pktBuf[1];
     switch (plannerQueueRecord(bz, flags & BEZIER_FLAG_START, flags & BEZIER_FLAG_END)) {

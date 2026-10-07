@@ -5,9 +5,11 @@
 #include "../../config/machine_cfg.h"
 #include "../../ops/position.h"      // SLOT_NONE
 #include "../../ops/axes_map.h"
+#include "../../ops/frames.h"
 #include "../../ops/state.h"
 
 void controllerApplyDefaultMap() {
+    framesReset();
     if (!machineCfgValid()) {
         resumeOrHold();                    // ALARM_CONFIG, or IDLE after uncfg
         return;

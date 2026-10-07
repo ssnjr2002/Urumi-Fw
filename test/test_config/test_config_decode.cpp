@@ -106,6 +106,26 @@ TEST_CASE("config/controller.jsonc decodes") {
     CHECK(c.heads[1].a.homing.present);
 }
 
+TEST_CASE("frame fields decode with their defaults") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    CHECK(c.heads[0].xOffset == doctest::Approx(0));
+    CHECK(c.heads[0].yOffset == doctest::Approx(0));
+    CHECK_FALSE(c.heads[0].hasProbeSwitch);
+    CHECK(c.laserNode == 0);
+    CHECK(c.workX == doctest::Approx(0));
+    CHECK(c.workZ[0] == doctest::Approx(0));
+    CHECK_FALSE(c.hasPark);
+    CHECK_FALSE(c.hasLoad);
+
+    float lo, hi;
+    REQUIRE(configAxisRange(c.x, &lo, &hi));     // seeks +, no parkPos: [0, max]
+    CHECK(lo == doctest::Approx(0));
+    CHECK(hi == doctest::Approx(480));
+    CHECK_FALSE(configAxisRange(c.heads[0].a, &lo, &hi));
+}
+
 TEST_CASE("an absent node maps to none") {
     std::vector<uint8_t> b = readBlob("good.msgpack");
     MachineCfg c;
@@ -123,6 +143,7 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"node_id", "node_id"}, {"node_type", "node_type"},
         {"dup_node", "dup_node"}, {"heads", "heads"}, {"homing", "homing"},
         {"homing_kind", "homing"}, {"no_invert_dir", "missing"},
+        {"frames", "frames"}, {"probe_reach", "frames"}, {"laser_node", "node_id"},
     };
     for (auto& t : cases) {
         CAPTURE(t[0]);

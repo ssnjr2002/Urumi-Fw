@@ -13,6 +13,7 @@
 #include "parse.h"
 #include "gate.h"
 #include "../ops/position.h"
+#include "../ops/frames.h"
 #include "../ops/homing.h"
 #include "../ops/state.h"
 #include "../ops/probe.h"
@@ -490,6 +491,12 @@ bool cmdLeg(const char* args) {
         Serial.println("err range"); return true;
     }
 
+    if (park) {
+        if (const char* why = framesCheckNode(node, (int32_t)first - originTarget(node, 0))) {
+            replyWhy(why); return true;
+        }
+    }
+
     const char* why = park
         ? homingParkBegin(node, (int32_t)first, (uint16_t)v[0],
                           (uint16_t)v[1], (uint16_t)v[2])
@@ -571,9 +578,9 @@ bool cmdStep(const char* args) {
 }
 
 // ── line <x> <y> <feed> — debug planner move (bring-up only) ─────────────────
-// Queues one line through plannerQueueLine: machine mm, feed in mm/s. Lines sent
-// back to back join at their junction speed. No homing, soft-limit or
-// enabled-axis check.
+// Queues one line through plannerQueueLine: work mm (ops/frames.h), feed in
+// mm/s. Lines sent back to back join at their junction speed. Refused outside
+// the soft range on homed axes; no homing or enabled-axis check.
 // Parse `n` floats; the last is a feed and must be positive.
 static bool parseFloats(const char* args, float* out, int n) {
     const char* p = args;
@@ -592,19 +599,33 @@ static void replyQueued(PlannerQueueResult r) {
     else Serial.printf("err %s\n", kErr[r]);
 }
 
+// Work-coordinate points `v[0..2n)` to machine mm in place, each inside the
+// soft range. nullptr, or why not.
+static const char* toMachine(float* v, int n) {
+    for (int i = 0; i < n; i++) {
+        float* p = &v[2 * i];
+        if (const char* why = framesToMachine(p[0], p[1], &p[0], &p[1])) return why;
+        if (const char* why = framesCheckXY(p[0], p[1])) return why;
+    }
+    return nullptr;
+}
+
 bool cmdLine(const char* args) {
     float v[3];
     if (!parseFloats(args, v, 3)) { Serial.println("err usage"); return true; }
+    if (const char* why = toMachine(v, 1)) { Serial.printf("err %s\n", why); return true; }
     replyQueued(plannerQueueLine(v[0], v[1], v[2]));
     return true;
 }
 
 // ── bez <p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed> — debug Bézier (bring-up) ──
 // Queues one cubic through plannerQueueBezier: p0 is where the last move ends,
-// machine mm, feed in mm/s. The Pico analyses the curve itself (~0.6 ms).
+// work mm, feed in mm/s. The Pico analyses the curve itself (~0.6 ms). The
+// curve lies inside its control points' hull, so checking them bounds it.
 bool cmdBez(const char* args) {
     float v[7];
     if (!parseFloats(args, v, 7)) { Serial.println("err usage"); return true; }
+    if (const char* why = toMachine(v, 3)) { Serial.printf("err %s\n", why); return true; }
     replyQueued(plannerQueueBezier(v[0], v[1], v[2], v[3], v[4], v[5], v[6]));
     return true;
 }

@@ -579,6 +579,11 @@ export interface ToolHead extends ReferencePoint {
     readonly a: AxisConfig;
     /** Tools whose fixture this socket takes, preference-ordered. See interface doc. */
     readonly accepts: readonly ToolType[];
+    /**
+     * This head's tool-probe switch, as a tip position in machine coordinates.
+     * Each head reaches only its own (docs/plans/coordinate-system.md).
+     */
+    readonly probeSwitch?: BedPoint;
 }
 
 /**
@@ -597,16 +602,40 @@ export function toolHead(
 // ── machine tier (config) ────────────────────────────────────────────────────
 
 /**
- * Optional laser pointer module. When present, defines the machine
- * reference point (the laser is at (0, 0) by convention). Heads are
- * positioned relative to the laser. When absent, the head at (0, 0) is
- * the reference.
+ * Optional laser pointer. When present it is the anchor, (0, 0) by definition:
+ * heads are offset from it. When absent, the head at (0, 0) is the anchor.
  *
- * The laser is a passive alignment aid — it doesn't move, doesn't have
- * axes, and isn't on the bus. It's purely a geometric reference for
- * head offset calculations.
+ * It has no axes; it is switched through the node that carries it
+ * (`-DNODE_HAS_LASER`). `select anchor` turns it on; selecting a head turns
+ * it off.
  */
-export type LaserPointer = ReferencePoint;
+export interface LaserPointer {
+    /** Bus id of the node the laser is wired to. */
+    readonly node: number;
+}
+
+/** A point on the bed in machine coordinates, mm. */
+export interface BedPoint {
+    readonly x: number;
+    readonly y: number;
+}
+
+/**
+ * The work offset's default, in machine coordinates: XY a point on the
+ * material shared by every head, Z one entry per head (that head's tip on the
+ * material). The Pico holds a runtime offset over it.
+ */
+export interface WorkOffset {
+    readonly x: number;
+    readonly y: number;
+    readonly z: readonly number[];
+}
+
+/** Anchor positions in machine coordinates. Absent `park`: where homing parks. */
+export interface StoredPositions {
+    readonly park?: BedPoint;
+    readonly load?: BedPoint;
+}
 
 export interface MachineConfig {
     readonly x: AxisConfig;
@@ -632,6 +661,8 @@ export interface MachineConfig {
     readonly peripherals: readonly BusNode[];
     /** Optional laser pointer module (alignment reference). */
     readonly laser?: LaserPointer;
+    readonly work: WorkOffset;
+    readonly positions: StoredPositions;
 }
 
 export function machineConfig(
@@ -640,7 +671,12 @@ export function machineConfig(
     heads: readonly ToolHead[],
     overrides?: Partial<Omit<MachineConfig, "x" | "y" | "heads">>,
 ): MachineConfig {
-    return { x, y, heads, ...DEFAULTS.machine, ...overrides };
+    return {
+        x, y, heads, ...DEFAULTS.machine,
+        work: { x: 0, y: 0, z: heads.map(() => 0) },
+        positions: {},
+        ...overrides,
+    };
 }
 
 // ── quality tier ─────────────────────────────────────────────────────────────

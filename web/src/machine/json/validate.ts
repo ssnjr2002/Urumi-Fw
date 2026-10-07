@@ -401,7 +401,29 @@ const probeCoherent: Rule = ({ machine }) =>
         return issues;
     });
 
+/**
+ * Something must sit at (0, 0): the laser when defined, else a head. The laser
+ * is switched through its node, so that must be a configured node. Reach of
+ * the probe switches and stored positions is the Pico's check.
+ */
+const hasAnchor: Rule = ({ machine }) => {
+    const issues: Issue[] = [];
+    if (machine.laser) {
+        const ids = [machine.x, machine.y, ...machine.heads.flatMap((h) => [h.z, h.a])]
+            .map((a) => a.node.id)
+            .concat(machine.peripherals.map((p) => p.id));
+        if (!ids.includes(machine.laser.node)) {
+            issues.push(error(`machine.laser.node ${machine.laser.node}: not a configured node`));
+        }
+    }
+    if (!machine.laser && !machine.heads.some((h) => h.xOffset === 0 && h.yOffset === 0)) {
+        issues.push(error("no anchor: define a laser or place a head at (0, 0)"));
+    }
+    return issues;
+};
+
 const RULES: readonly Rule[] = [
+    hasAnchor,
     homingCoherent,
     probeCoherent,
     nonNegativeCeilings,

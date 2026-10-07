@@ -12,3 +12,9 @@ bool cmdHome(const char*);
 bool cmdHomeUnhomed(const char*);
 bool cmdHomeCycle(const char*);
 bool cmdHomeHead(const char*);
+
+// ─── frames.cpp ───────────────────────────────────────────────────────────────
+bool cmdSelect(const char*);
+bool cmdWzero(const char*);
+bool cmdWset(const char*);
+bool cmdWclear(const char*);

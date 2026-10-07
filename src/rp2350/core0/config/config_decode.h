@@ -9,14 +9,15 @@
 // config is skipped by an ArduinoJson filter. The blob is the host's RESOLVED
 // config, so every field decoded here must be present: there is no defaults
 // table on this side. Exceptions: the homing block (absent: not homeable),
-// and inside it `cycle` and `parkPos`.
+// and inside it `cycle` and `parkPos`; `laser`, a head's `probeSwitch`, and
+// `positions.park` / `positions.load`.
 //
 // Validation is consumer-scoped: it checks what would make the Pico's own use
 // of a field wrong, and leaves every other judgement to the host's
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 2u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 3u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
 #define CFG_BUS_ADDR_MAX   8u   // must equal BUS_ADDR_MAX (shared_state.h)
@@ -62,9 +63,19 @@ struct CfgAxis {
     CfgHoming homing;
 };
 
+// A bed point, machine coordinates (docs/plans/coordinate-system.md).
+struct CfgPoint {
+    float x;
+    float y;
+};
+
 struct CfgHead {
-    CfgAxis z;
-    CfgAxis a;
+    CfgAxis  z;
+    CfgAxis  a;
+    float    xOffset;        // tip − anchor, signed
+    float    yOffset;
+    bool     hasProbeSwitch;
+    CfgPoint probeSwitch;    // a tip position; valid if hasProbeSwitch
 };
 
 struct MachineCfg {
@@ -76,6 +87,16 @@ struct MachineCfg {
     uint8_t  defaultHead;
     CfgNode  peripherals[CFG_MAX_PERIPH];
     uint8_t  periphCount;
+    uint8_t  laserNode;      // bus id the laser is wired to, 0 = none; the anchor, (0, 0)
+    // The work offset's config default: XY shared, Z per head.
+    float    workX;
+    float    workY;
+    float    workZ[CFG_MAX_HEADS];
+    // Anchor positions. Absent park: where homing parks.
+    bool     hasPark;
+    CfgPoint park;
+    bool     hasLoad;
+    CfgPoint load;
 };
 
 enum CfgDecodeError : uint8_t {
@@ -91,6 +112,7 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_STEPS,          // stepsPerUnit not a positive finite number
     CFG_DEC_CEILING,        // maxFeed / maxAccel / maxTravel negative or not finite
     CFG_DEC_HOMING,         // a homing field out of range, or the wrong kind for the axis
+    CFG_DEC_FRAMES,         // no anchor, a work Z per head missing, or a point out of reach
 };
 
 // Decode and validate `len` bytes at `blob` into *out. On failure *out is left
@@ -103,3 +125,11 @@ const char* configDecodeErrorName(CfgDecodeError e);
 // The slot map for `head`: [x, y, head.z, head.a] bus ids, with `none` for an
 // absent node. Mirrors slotMapFor() in web/src/machine/slots.ts.
 void configSlotMap(const MachineCfg& cfg, uint8_t head, uint8_t none, uint8_t out[4]);
+
+// Where a linear home leaves the axis, in units: parkPos, or the default
+// frame (the trip at 0 homing −, at maxTravel + pullOffDist homing +).
+float configParkPos(const CfgAxis& a);
+
+// The anchor's soft range on a homeable linear axis: [park, park ± maxTravel],
+// away from the switch. False for an axis with no linear home.
+bool configAxisRange(const CfgAxis& a, float* lo, float* hi);

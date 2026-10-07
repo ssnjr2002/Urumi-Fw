@@ -59,6 +59,10 @@ import {
     type ToolType,
     type QualityConfig,
     type PipelineConfig,
+    type BedPoint,
+    type LaserPointer,
+    type WorkOffset,
+    type StoredPositions,
 } from "../schema.js";
 import { TOOL_PROFILES } from "../tools.js";
 import { validateConfig } from "./validate.js";
@@ -142,13 +146,18 @@ interface JsonHead {
     readonly tool?: string;
     readonly xOffset?: number;
     readonly yOffset?: number;
+    readonly probeSwitch?: JsonPoint;
     readonly z: JsonAxis;
     readonly a: JsonAxis;
 }
 
+interface JsonPoint {
+    readonly x: number;
+    readonly y: number;
+}
+
 interface JsonLaser {
-    readonly xOffset: number;
-    readonly yOffset: number;
+    readonly node: number;
 }
 
 interface JsonMachine {
@@ -161,6 +170,9 @@ interface JsonMachine {
     readonly x: JsonAxis;
     readonly y: JsonAxis;
     readonly laser?: JsonLaser;
+    /** Work offset default; `z` per head. Absent fields: 0. */
+    readonly work?: { readonly x?: number; readonly y?: number; readonly z?: readonly number[] };
+    readonly positions?: { readonly park?: JsonPoint; readonly load?: JsonPoint };
 }
 
 interface JsonPeripheral {
@@ -316,10 +328,12 @@ export function parseConfig(jsonText: string): ConfigResult {
         const jh = json.heads[i]!;
         const z = buildAxis(jh.z, errors, `heads[${i}].z`);
         const a = buildAxis(jh.a, errors, `heads[${i}].a`);
+        const probeSwitch = buildPoint(jh.probeSwitch, errors, `heads[${i}].probeSwitch`);
         heads.push(toolHead(z, a, {
             accepts: resolveAccepts(jh.accepts, errors, `heads[${i}].accepts`),
             xOffset: jh.xOffset ?? 0,
             yOffset: jh.yOffset ?? 0,
+            ...(probeSwitch ? { probeSwitch } : {}),
         }));
     }
 
@@ -367,8 +381,14 @@ export function parseConfig(jsonText: string): ConfigResult {
         clearanceMm: machine.clearanceMm ?? DEFAULTS.machine.clearanceMm,
         peripherals,
         defaultHead: json.defaultHead ?? 0,
-        laser: machine.laser ?? undefined,
+        laser: buildLaser(machine.laser, errors),
+        work: buildWork(machine.work, heads.length, errors),
+        positions: buildPositions(machine.positions, errors),
     });
+
+    if (errors.length > 0) {
+        return { ok: false, errors };
+    }
 
     // ── build tool profiles registry ──────────────────────────────────────
     const toolProfiles: Record<string, ToolProfile> = { ...TOOL_PROFILES };
@@ -403,6 +423,40 @@ export function parseConfig(jsonText: string): ConfigResult {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+/** An optional {x, y}: undefined when absent, an error when malformed. */
+function buildPoint(j: JsonPoint | undefined, errors: string[], at: string): BedPoint | undefined {
+    if (j === undefined) return undefined;
+    if (typeof j !== "object" || j === null || typeof j.x !== "number" || typeof j.y !== "number") {
+        errors.push(`${at}: must be {x, y} in mm`);
+        return undefined;
+    }
+    return { x: j.x, y: j.y };
+}
+
+/** The work offset default, filled to 0; `z` must have one entry per head. */
+function buildWork(j: JsonMachine["work"], headCount: number, errors: string[]): WorkOffset {
+    const z = j?.z ?? new Array<number>(headCount).fill(0);
+    if (z.length !== headCount || z.some((v) => typeof v !== "number")) {
+        errors.push(`machine.work.z: one number per head (${headCount})`);
+    }
+    return { x: j?.x ?? 0, y: j?.y ?? 0, z: [...z] };
+}
+
+function buildLaser(j: JsonLaser | null | undefined, errors: string[]): LaserPointer | undefined {
+    if (j === null || j === undefined) return undefined;
+    if (typeof j !== "object" || typeof j.node !== "number") {
+        errors.push("machine.laser: must be {node} (bus id of the node it is wired to)");
+        return undefined;
+    }
+    return { node: j.node };
+}
+
+function buildPositions(j: JsonMachine["positions"], errors: string[]): StoredPositions {
+    const park = buildPoint(j?.park, errors, "machine.positions.park");
+    const load = buildPoint(j?.load, errors, "machine.positions.load");
+    return { ...(park ? { park } : {}), ...(load ? { load } : {}) };
+}
 
 /**
  * Build an OpTarget from JSON, keeping only numeric feed/accel and applying a

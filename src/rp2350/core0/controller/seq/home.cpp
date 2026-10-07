@@ -82,13 +82,9 @@ static int32_t coordSteps(const CfgAxis& a, double units) {
     return a.invertDir ? -s : s;
 }
 
-// Where a linear home leaves the axis: parkPos, or the default frame (the trip
-// at 0 homing −, at maxTravel + pullOffDist homing +).
+// Where a linear home leaves the axis (configParkPos), in steps.
 static int32_t parkSteps(const CfgAxis& a) {
-    const CfgHoming& h = a.homing;
-    const double u = h.hasParkPos ? h.parkPos
-                   : h.seekPositive ? a.maxTravel : h.pullOffDist;
-    return coordSteps(a, u);
+    return coordSteps(a, configParkPos(a));
 }
 
 // Fold into (-period/2, +period/2] (derive.ts foldSigned).

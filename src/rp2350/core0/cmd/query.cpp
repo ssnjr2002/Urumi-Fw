@@ -9,6 +9,7 @@
 #include "parse.h"
 #include "gate.h"
 #include "../ops/position.h"
+#include "../ops/frames.h"
 #include "../ops/homing.h"
 #include "../ops/bus.h"
 #include "../status.h"                  // getBufCount (status alias)
@@ -46,13 +47,29 @@ bool cmdStatus(const char*) {
     // mute / excluded / touched: bit n = bus id n (ops/bus.h).
     // buf= counts planner blocks, of planner::Planner::kSize, while planner motion runs or is held.
     Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u"
-                  " mute=0x%03x excluded=0x%03x touched=0x%03x\n",
+                  " mute=0x%03x excluded=0x%03x touched=0x%03x",
                   stateName(machineState),
                   (long)machinePos[0], (long)machinePos[1],
                   (long)machinePos[2], (long)machinePos[3],
                   axes_homed, axes_enabled, getBufCount(),
                   plannerActive ? planner::Planner::kSize : MASTER_BUF_SIZE,
                   busMute(), busExcluded(), busTouched());
+    // Frames, units; `-` where a slot has no value.
+    const uint8_t sel = framesSelected();
+    if (sel == FRAMES_NONE)        Serial.print(" head=-");
+    else if (sel == FRAMES_ANCHOR) Serial.print(" head=anchor");
+    else                           Serial.printf(" head=%u", sel);
+    for (int w = 0; w < 2; w++) {
+        Serial.print(w ? " wpos=" : " mpos=");
+        for (uint8_t k = 0; k < 4; k++) {
+            float v;
+            const bool ok = w ? framesWPos(k, &v) : framesMPos(k, &v);
+            if (k) Serial.print(',');
+            if (ok) Serial.printf("%.3f", v);
+            else    Serial.print('-');
+        }
+    }
+    Serial.println();
     return true;
 }
 

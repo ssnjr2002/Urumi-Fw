@@ -150,3 +150,6 @@
 #define MSEG_NACK_ABORTING  0x07
 // A BEZIER record failed checkBezier, or broke contour framing or the chain.
 #define MSEG_NACK_BAD_CURVE 0x08
+// A BEZIER record's control point lies outside the soft range on a homed axis
+// (ops/frames.h), after the work offset is applied.
+#define MSEG_NACK_SOFT_LIMIT 0x09

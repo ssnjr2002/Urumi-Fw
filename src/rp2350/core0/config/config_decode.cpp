@@ -55,6 +55,16 @@ static bool readBool(JsonVariantConst v, bool* out) {
     return true;
 }
 
+static bool readPoint(JsonVariantConst v, CfgPoint* out) {
+    return v.is<JsonObjectConst>() && readFloat(v["x"], &out->x) && readFloat(v["y"], &out->y);
+}
+
+// An optional point: absent is fine, present must be a point.
+static bool readOptPoint(JsonVariantConst v, bool* has, CfgPoint* out) {
+    *has = !v.isNull();
+    return !*has || readPoint(v, out);
+}
+
 static bool readHoming(JsonObjectConst j, uint8_t defaultCycle, bool* rotaryKind,
                        CfgHoming* out) {
     *out = CfgHoming{};
@@ -137,6 +147,33 @@ static CfgDecodeError checkAxis(const CfgAxis& a) {
     return checkHoming(a);
 }
 
+// A point inside [lo, hi] on an axis with a range; an axis without one
+// (no linear home) cannot judge it.
+static bool inRange(const CfgAxis& a, float v) {
+    float lo, hi;
+    return !configAxisRange(a, &lo, &hi) || (v >= lo && v <= hi);
+}
+
+// An anchor at (0, 0); every head's probe switch within its tip's reach (the
+// anchor's range shifted by the head offset); park and load within the
+// anchor's range.
+static CfgDecodeError checkFrames(const MachineCfg& c) {
+    bool anchor = c.laserNode != 0;
+    for (uint8_t h = 0; h < c.headCount; h++) {
+        const CfgHead& hd = c.heads[h];
+        if (!isfinite(hd.xOffset) || !isfinite(hd.yOffset) || !isfinite(c.workZ[h]))
+            return CFG_DEC_FRAMES;
+        if (hd.xOffset == 0.0f && hd.yOffset == 0.0f) anchor = true;
+        if (hd.hasProbeSwitch &&
+            (!inRange(c.x, hd.probeSwitch.x - hd.xOffset) ||
+             !inRange(c.y, hd.probeSwitch.y - hd.yOffset))) return CFG_DEC_FRAMES;
+    }
+    if (!anchor || !isfinite(c.workX) || !isfinite(c.workY)) return CFG_DEC_FRAMES;
+    if (c.hasPark && (!inRange(c.x, c.park.x) || !inRange(c.y, c.park.y))) return CFG_DEC_FRAMES;
+    if (c.hasLoad && (!inRange(c.x, c.load.x) || !inRange(c.y, c.load.y))) return CFG_DEC_FRAMES;
+    return CFG_DEC_OK;
+}
+
 static CfgDecodeError validate(const MachineCfg& c) {
     const CfgAxis* axes[2 + 2 * CFG_MAX_HEADS];
     uint8_t n = 0;
@@ -166,7 +203,7 @@ static CfgDecodeError validate(const MachineCfg& c) {
         if (seen & bit) return CFG_DEC_DUP_NODE;
         seen |= bit;
     }
-    return CFG_DEC_OK;
+    return checkFrames(c);
 }
 
 // ─── Entry ────────────────────────────────────────────────────────────────────
@@ -180,7 +217,13 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     JsonObject fh = fm["heads"].to<JsonArray>().add<JsonObject>();
     filterAxis(fh["z"].to<JsonObject>());
     filterAxis(fh["a"].to<JsonObject>());
+    fh["xOffset"]     = true;
+    fh["yOffset"]     = true;
+    fh["probeSwitch"] = true;
     fm["defaultHead"] = true;
+    fm["laser"]       = true;
+    fm["work"]        = true;
+    fm["positions"]   = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
 
     JsonDocument doc;
@@ -202,9 +245,36 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     if (heads.size() == 0 || heads.size() > CFG_MAX_HEADS) return CFG_DEC_HEADS;
     out->headCount = (uint8_t)heads.size();
     for (uint8_t h = 0; h < out->headCount; h++) {
-        if ((e = readAxis(heads[h]["z"], 1, &out->heads[h].z)) != CFG_DEC_OK) return e;
-        if ((e = readAxis(heads[h]["a"], 2, &out->heads[h].a)) != CFG_DEC_OK) return e;
+        CfgHead& hd = out->heads[h];
+        if ((e = readAxis(heads[h]["z"], 1, &hd.z)) != CFG_DEC_OK) return e;
+        if ((e = readAxis(heads[h]["a"], 2, &hd.a)) != CFG_DEC_OK) return e;
+        if (!readFloat(heads[h]["xOffset"], &hd.xOffset) ||
+            !readFloat(heads[h]["yOffset"], &hd.yOffset) ||
+            !readOptPoint(heads[h]["probeSwitch"], &hd.hasProbeSwitch, &hd.probeSwitch))
+            return CFG_DEC_MISSING;
     }
+
+    // A laser is (0, 0) by definition; it carries only the node that switches it.
+    JsonVariantConst laser = m["laser"];
+    out->laserNode = 0;
+    if (!laser.isNull()) {
+        JsonVariantConst ln = laser["node"];
+        if (!ln.is<unsigned>()) return CFG_DEC_MISSING;
+        if (ln.as<unsigned>() < 1 || ln.as<unsigned>() > CFG_BUS_ADDR_MAX) return CFG_DEC_NODE_ID;
+        out->laserNode = (uint8_t)ln.as<unsigned>();
+    }
+
+    JsonObjectConst work = m["work"];
+    JsonArrayConst workZ = work["z"];
+    if (work.isNull() || !readFloat(work["x"], &out->workX) ||
+        !readFloat(work["y"], &out->workY) || workZ.isNull()) return CFG_DEC_MISSING;
+    if (workZ.size() != out->headCount) return CFG_DEC_FRAMES;
+    for (uint8_t h = 0; h < out->headCount; h++)
+        if (!readFloat(workZ[h], &out->workZ[h])) return CFG_DEC_MISSING;
+
+    JsonObjectConst pos = m["positions"];
+    if (pos.isNull() || !readOptPoint(pos["park"], &out->hasPark, &out->park) ||
+        !readOptPoint(pos["load"], &out->hasLoad, &out->load)) return CFG_DEC_MISSING;
 
     JsonVariantConst dh = m["defaultHead"];
     if (!dh.is<unsigned>()) return CFG_DEC_MISSING;
@@ -236,8 +306,22 @@ const char* configDecodeErrorName(CfgDecodeError e) {
         case CFG_DEC_STEPS:     return "steps";
         case CFG_DEC_CEILING:   return "ceiling";
         case CFG_DEC_HOMING:    return "homing";
+        case CFG_DEC_FRAMES:    return "frames";
     }
     return "?";
+}
+
+float configParkPos(const CfgAxis& a) {
+    const CfgHoming& h = a.homing;
+    return h.hasParkPos ? h.parkPos : h.seekPositive ? a.maxTravel : h.pullOffDist;
+}
+
+bool configAxisRange(const CfgAxis& a, float* lo, float* hi) {
+    if (!a.homing.present || a.rotary) return false;
+    const float park = configParkPos(a);
+    *lo = a.homing.seekPositive ? park - a.maxTravel : park;
+    *hi = a.homing.seekPositive ? park : park + a.maxTravel;
+    return true;
 }
 
 void configSlotMap(const MachineCfg& cfg, uint8_t head, uint8_t none, uint8_t out[4]) {

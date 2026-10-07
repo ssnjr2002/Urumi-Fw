@@ -7,6 +7,7 @@
 #include "slot_map.h"
 #include "refusal.h"
 #include "position.h"
+#include "frames.h"
 #include "../config/machine_cfg.h"
 #include "../../ipc/core1_rpc.h"
 
@@ -59,6 +60,7 @@ static AxesMapResult axesCommit(uint8_t bad, PendingFault fault, uint8_t fenced,
     uint8_t mapFenced;
     const uint8_t pending = axesReqPending();
     const uint8_t failed = slotMapCommit(req, /*fromAxes=*/true, pending, &r, &mapFenced);
+    framesOnMap();
     fenced |= mapFenced;
     if (fenced) {
         *why = slotMapFencedText(fenced);

@@ -125,7 +125,7 @@ when the ring drains, **not** on a flag — a sender may mark its last packet
 [0]      magic = 0xAD
 [1]      flags      uint8      — BEZIER_FLAG_*: START 0x01, BREAK 0x02, END 0x04
 [2]      seq        uint8      — rolling stream seq (the MSEG duplicate guard)
-[3..34]  p0..p3     float32 LE — x, y each, machine mm
+[3..34]  p0..p3     float32 LE — x, y each, work mm (the Pico adds the offsets)
 [35..38] length     float32 LE — arc length, mm
 [39..42] kappa_max  float32 LE — max |κ|, 1/mm
 [43..46] dkappa_max float32 LE — max |dκ/ds|, 1/mm² (for A's acceleration limit; unread yet)
@@ -147,6 +147,12 @@ drained to idle, within one step, snapped). `END` closes the contour. A
 `NACK_BAD_CURVE`. `seqreset` and abort forget an open contour. `BREAK` marks a
 corner or cusp; joins run on the planner's junction limit whatever the flags
 say — what a tool does at a flag is tool-profile scope.
+
+**Frames.** Points are work coordinates: the Pico adds the work offset and
+subtracts the selected head's offset (docs/plans/coordinate-system.md), a
+translation that leaves the analysed fields as sent. With no head selected the
+record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
+with `softLimits` is `NACK_SOFT_LIMIT`.
 
 Records are refused (`NACK_BAD_STATE`) until `feed` has set the cut and travel
 feeds.
@@ -295,6 +301,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_CONFIG_MISMATCH` | `0x05` | MCFG header CRC32 disagrees with Pico flash |
 | `MSEG_NACK_BAD_STATE` | `0x06` | Command rejected — wrong machine state |
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
+| `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 
@@ -339,8 +346,12 @@ prefixed `0x`.
 | `bus_exclude` | `<id> …` | `ok` / `err not_mute` / `err bad_node` / `err usage` | Run without mute nodes (those the boot sweep could not make safe). Commands to an excluded node then answer `excluded` (make-safe exempt) until the next `reset`. With no unexcluded mute node left, `ALARM_BUS_DEGRADED` → IDLE, unmapped. Any state |
 | `uncfg` | — | `ok` / `err bad_state` | Builds with `PICO_ALLOW_UNCONFIGURED` only. Leave `ALARM_CONFIG` → IDLE (or the next alarm), unconfigured; the stored file is kept and ignored until power-off. The other way out is a `CFG_SET` commit |
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved). `err estop` in `ALARM_ESTOP`: use `unstop` |
-| `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full` | Bring-up only: queue a planner line to machine mm (x, y) at `feed` mm/s, planned and run on the Pico (runningReason 3). `<depth>` = blocks queued. IDLE, or while planner motion runs. Refused if X or Y has `maxFeed` or `maxAccel` 0. No homing or soft-limit check |
-| `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, machine mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line` |
+| `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico (runningReason 3). `<depth>` = blocks queued. IDLE, or while planner motion runs. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`. No homing check |
+| `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, work mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line`, on every handle |
+| `select` | `<head>\|anchor` | `ok` / `err usage\|bad_state\|degraded\|no_head` / as `axes_map` | Controller command: the controlled point. A head commits its Z and A as the axes map (`axes_map`'s replies) and turns the laser off; `anchor` is the laser tip (laser on; maps X and Y if either is unmapped, Z and A unchanged) or, without a laser, the head at (0, 0). Never moves. IDLE/PAUSED/ALARM, not while probing. The selection is derived from the axes map: a head needs X, Y and its Z and A mapped, the laser X and Y, else none. A raw `axes_map` that binds a different head selects it (laser off) |
+| `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM |
+| `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
+| `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset back to the config's `work` block |
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot; records are refused until it is sent. The `TOOL` record replaces it |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
@@ -371,6 +382,9 @@ pz=<z>        that height in steps  (only with probed=1)
 homecycle=<k> homingHeld      the cycle a `home` run is in  (only while one runs)
 nodehomed=<hex> originMask    bitmask, bit n = bus node n holds an origin, mapped or not
 pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on homed
+mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
+wpos=<x>,<y>,<z>,<a> work position: selected tip − work offset; A folded to (−180, 180]; X/Y `-` with no head
+head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
 texp= tmeas= twall=           DEBUG_TIMING builds only: last burst's expected, measured and wall time (us)
 ```
 Pre-flight checks every required axis is **present** (pingnode), **enabled**

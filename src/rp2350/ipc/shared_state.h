@@ -337,7 +337,8 @@ extern volatile bool    streamIsJog;
 //
 // plannerActive — Core 1 owns planner motion, running or held in PAUSED. Core 0
 //   resets the ring and executor only while it is false. Written under the lock.
-// plannerSpm — X and Y steps/mm, set by Core 0 with that reset.
+// plannerSpm — X and Y steps/mm, set by Core 0 with that reset; negative on an
+//   invertDir axis, so the planner works in machine mm.
 // resumeRequested — `resume` of a held planner job; Core 1 replans from where
 //   it stopped and returns to RUNNING. Set and cleared under the lock.
 extern planner::Planner  plannerRing;
