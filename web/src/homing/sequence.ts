@@ -7,7 +7,7 @@
  *
  * The waiting exists because `leg` returns as soon as the leg is ARMED, not
  * when it finishes — deliberately, since a leg takes seconds and a handler that
- * blocked would freeze `getstate` and every abort for the whole seek
+ * blocked would freeze `get` and every abort for the whole seek
  * (docs/homing.md §2.3). The host therefore owns the polling, and the sequence
  * is four arm-and-wait rounds followed by one `setorigin`.
  */
@@ -134,7 +134,7 @@ async function awaitLeg(
     }
 
     // The verdict comes from the TEXT plane, not the binary poll settle() used.
-    // Only `getstate` carries the per-axis `latched` mask — STATUS_RSP has no
+    // Only `get` carries the per-axis `latched` mask — STATUS_RSP has no
     // room for it — and the mask is what distinguishes "this axis is on its
     // switch" from "some axis is". One extra round trip per leg, four per home.
     const st = await getState(link);

@@ -1,18 +1,18 @@
 /**
  * format/status.ts — binary STATUS_RSP (0xA7, 30B) + the operational enums.
  * Ported from host/protocol/{state,packets}.py: MachineState / AlarmReason /
- * RunningReason, MachineStatus, parse_getstate, parse_status_rsp,
+ * RunningReason, MachineStatus, parse_status_rsp,
  * pack_status_rsp, axis_mask.
  *
  * STATUS_RSP folds state + position + expectedSeq + queued motion time into
  * one coherent sample (docs/comms_architecture.md §4.2/§4.6). It supersedes
- * the text `getstate` + `getpos` pair for any caller that can do a binary
+ * the text `get` query for any caller that can do a binary
  * poll — including mid-stream, where the ASCII line would be a heavier
- * insertion between MSEG packets. ASCII `getstate` remains for bring-up and
- * human use; parseGetstate keeps parity with it.
+ * insertion between MSEG packets. The text `get` query carries the fields
+ * STATUS_RSP has no room for; statusFromGet builds the same MachineStatus.
  *
  * The fields text cannot carry (`pos`, `expectedSeq`, `queuedUs`, `bufCount`)
- * stay `undefined` on a getstate-parsed MachineStatus, distinguishing "this
+ * stay `undefined` on a text-parsed MachineStatus, distinguishing "this
  * came from the text plane" from a real zero.
  */
 
@@ -50,7 +50,7 @@ export const AlarmReason = {
     NONE: 0,
     ESTOP: 1,
     /**
-     * Boot found no usable config (getstate `cfgerr=` says why). Left by a
+     * Boot found no usable config (get `cfgerr=` says why). Left by a
      * CFG_SET commit, or `uncfg` on a PICO_ALLOW_UNCONFIGURED build.
      * Load-bearing, as LIMIT_LATCHED below.
      */
@@ -78,7 +78,7 @@ export const AlarmReason = {
     /**
      * A probe leg ended wrong (docs/tool_probe.md §5.11.1). Mirrors HOMING_FAIL,
      * and like it says only THAT one failed — which of the seven causes it was
-     * travels separately, in the `probe=` field of `getstate`.
+     * travels separately, in the `probe=` key of `get`.
      *
      * Most probe failures leave the Z datum intact; the firmware voids it per
      * cause rather than by reason, so this value must NOT be treated as
@@ -224,10 +224,10 @@ function enumFromStr<E extends number>(values: readonly number[], raw: string | 
 // ── parsed snapshot ────────────────────────────────────────────────────────────
 
 /**
- * Parsed snapshot from a `getstate` reply or a binary STATUS_RSP. The binary
+ * Parsed snapshot from a `get` reply or a binary STATUS_RSP. The binary
  * form is a strict superset: it also carries `bufCount`, `pos`, `expectedSeq`
  * and `queuedUs`, which text cannot express. Those stay `undefined` on a
- * getstate-parsed status so a caller can tell "no information" apart from a
+ * get-parsed status so a caller can tell "no information" apart from a
  * genuine zero.
  */
 export class MachineStatus {
@@ -308,31 +308,62 @@ export class MachineStatus {
     }
 }
 
-// ── text-plane parser — `getstate` reply ───────────────────────────────────────
+// ── text-plane parser — `get <key> …` reply ───────────────────────────────────
+
+/** `get` markers in place of a value (docs/wire_protocol.md "`get` keys"). */
+export const GetMarker = {
+    /** The read failed. */
+    FAILED: "?",
+    /** The key does not apply now. */
+    NA: "-",
+    /** The firmware does not know the key. */
+    UNKNOWN: "!",
+} as const;
 
 /**
- * Parse a `getstate` reply line:
- *     state=<s> enabled=<hex> homed=<hex> alarm=<a> running=<r> latched=<hex>
- *
- * Key=value tokens, space-separated. Tolerant of unknown trailing tokens
- * (forward-compatible) and of out-of-range enum values. Requires at least
- * `state` and `homed`; `enabled` defaults to 0 if absent. Throws if the line
- * is not a status reply.
+ * Parse a `get` reply into key → raw value, in reply order. Markers are kept
+ * as they are; {@link getValue} reads a key with them folded away. Throws on
+ * an `err` reply or a line with no `key=value` token.
  */
-export function parseGetstate(line: string): MachineStatus {
-    const fields: Record<string, string> = {};
-    for (const tok of line.trim().split(/\s+/)) {
-        const eq = tok.indexOf("=");
-        if (eq > 0) {
-            fields[tok.slice(0, eq)] = tok.slice(eq + 1);
+export function parseGetReply(line: string): Map<string, string> {
+    const out = new Map<string, string>();
+    const t = line.trim();
+    if (!t.startsWith("err")) {
+        for (const tok of t.split(/\s+/)) {
+            const eq = tok.indexOf("=");
+            if (eq > 0) out.set(tok.slice(0, eq), tok.slice(eq + 1));
         }
     }
-    if (fields.state === undefined || fields.homed === undefined) {
-        throw new Error(`not a getstate reply: ${JSON.stringify(line)}`);
+    if (out.size === 0) throw new Error(`not a get reply: ${JSON.stringify(line)}`);
+    return out;
+}
+
+/** A key's value, or `undefined` when absent or a marker. */
+export function getValue(reply: ReadonlyMap<string, string>, key: string): string | undefined {
+    const v = reply.get(key);
+    return v === undefined || v === GetMarker.FAILED || v === GetMarker.NA || v === GetMarker.UNKNOWN
+        ? undefined
+        : v;
+}
+
+/**
+ * Build a MachineStatus from a `get` reply over at least `state` and `homed`.
+ * Absent keys and markers read as absent fields; `enabled` defaults to 0, and
+ * out-of-range enum values fall back to their defaults.
+ */
+export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus {
+    const fields: Record<string, string> = {};
+    for (const k of reply.keys()) {
+        const v = getValue(reply, k);
+        if (v !== undefined) fields[k] = v;
+    }
+    const { state, homed } = fields;
+    if (state === undefined || homed === undefined) {
+        throw new Error(`get reply lacks state or homed: ${JSON.stringify([...reply])}`);
     }
     return new MachineStatus(
-        enumFromStr(MACHINE_STATE_VALUES, fields.state, MachineState.IDLE),
-        toInt(fields.homed),
+        enumFromStr(MACHINE_STATE_VALUES, state, MachineState.IDLE),
+        toInt(homed),
         toInt(fields.enabled ?? "0"),
         enumFromStr(ALARM_REASON_VALUES, fields.alarm, AlarmReason.NONE),
         enumFromStr(RUNNING_REASON_VALUES, fields.running, RunningReason.JOB),

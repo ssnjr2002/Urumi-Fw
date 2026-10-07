@@ -75,6 +75,11 @@ interface SimOptions {
 const BUS_ADDR_MAX = 8;
 /** Stream-byte motion slots (X/Y/Z/A) — control_plane.cpp MOTION_SLOTS. */
 const MOTION_SLOTS = 4;
+/** The `get` keys the Sim models (Sim._getKey). */
+const SIM_GET_KEYS = [
+    "state", "enabled", "homed", "alarm", "running", "latched",
+    "probed", "pz", "nodehomed", "pos",
+] as const;
 
 export class SimTransport implements Transport {
     readonly ringSize: number;
@@ -615,16 +620,13 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 }
                 return "ok";
             }
-            case "getstate":
-                return (
-                    `state=${S.state} enabled=0x${S.axesEnabled.toString(16).padStart(2, "0")} ` +
-                    `homed=0x${S.axesHomed.toString(16).padStart(2, "0")} ` +
-                    `alarm=${S.alarm} running=${S.running} ` +
-                    // Last, after every field an older host parses. Only the
-                    // text plane carries it — STATUS_RSP has no room.
-                    `latched=0x${S.axesLatched.toString(16).padStart(2, "0")}` +
-                    S._probedField()
-                );
+            // Keys the Sim does not model answer `!`, as older firmware would.
+            case "get": {
+                const keys = args.filter((k) => k !== "");
+                if (keys.length === 0) return "keys " + SIM_GET_KEYS.join(" ");
+                if (keys.length > 32) return "err too_many_keys";
+                return keys.map((k) => `${k}=${S._getKey(k) ?? "!"}`).join(" ");
+            }
             case "setprobe": {
                 if (S.state !== MachineState.IDLE && S.state !== MachineState.PAUSED) {
                     return "err bad_state";
@@ -648,13 +650,6 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 S.nodeProbe.delete(n);
                 return `ok unprobe node=${n}`;
             }
-            case "getpos":
-                // Trailing validity mask, as the firmware does — the counts are
-                // always plain numbers, never a sentinel.
-                return (
-                    "pos " + S.pos.join(" ") +
-                    ` homed=0x${S.axesHomed.toString(16).padStart(2, "0")}`
-                );
             case "stop": // always available; de-energises
                 S.state = MachineState.ALARM;
                 S.alarm = AlarmReason.ESTOP;
@@ -891,13 +886,34 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
         this.axesHomed = m;
     }
 
-    /** getstate's ` probed=<0|1>[ pz=<z>]` for the Z in slot 2. */
-    _probedField(): string {
+    /** One `get` key's value, `-` when it does not apply, undefined if unmodelled. */
+    _getKey(key: string): string | undefined {
+        const hex = (v: number, w: number) => `0x${v.toString(16).padStart(w, "0")}`;
+        switch (key) {
+            case "state":     return String(this.state);
+            case "enabled":   return hex(this.axesEnabled, 2);
+            case "homed":     return hex(this.axesHomed, 2);
+            case "alarm":     return String(this.alarm);
+            case "running":   return String(this.running);
+            case "latched":   return hex(this.axesLatched, 2);
+            case "probed":    return this._probeZ() === undefined ? "0" : "1";
+            case "pz":        return String(this._probeZ() ?? "-");
+            case "nodehomed": {
+                let m = 0;
+                for (const n of this.nodeHomed) m |= 1 << n;
+                return hex(m, 3);
+            }
+            case "pos":       return this.pos.join(",");
+            default:          return undefined;
+        }
+    }
+
+    /** The probe height held for the Z in slot 2, if any. */
+    private _probeZ(): number | undefined {
         const n = this.slotNode[2];
-        const z = n !== null && n !== undefined && this.nodeHomed.has(n)
+        return n !== null && n !== undefined && this.nodeHomed.has(n)
             ? this.nodeProbe.get(n)
             : undefined;
-        return z === undefined ? " probed=0" : ` probed=1 pz=${z}`;
     }
 
     /** Which stream slot a bus id is ENGAGE-bound to, or null (nodeSlot()). */

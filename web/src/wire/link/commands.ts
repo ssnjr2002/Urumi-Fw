@@ -15,7 +15,12 @@
  */
 
 import { Link } from "./link.js";
-import { parseGetstate, type MachineStatus } from "../format/status.js";
+import {
+    getValue,
+    parseGetReply,
+    statusFromGet,
+    type MachineStatus,
+} from "../format/status.js";
 
 // ── query / liveness ─────────────────────────────────────────────────────────
 
@@ -48,9 +53,38 @@ export async function pingAll(link: Link): Promise<Map<number, boolean>> {
 
 // ── state / position ─────────────────────────────────────────────────────────
 
-/** Operational status snapshot via the text `getstate` command. */
+/** Most keys one `get` takes (firmware GET_MAX_KEYS). */
+export const GET_MAX_KEYS = 32;
+
+/** The keys {@link getState} reads: everything MachineStatus carries. */
+export const STATE_KEYS = [
+    "state", "enabled", "homed", "alarm", "running", "latched",
+    "homefail", "homenode", "cfgerr", "homing",
+    "probing", "probe", "retries", "psteps", "probed", "pz",
+    "homecycle", "nodehomed",
+] as const;
+
+/**
+ * Read keys from one firmware snapshot via `get <key> …`. The reply maps each
+ * key to its raw value or marker (`?`, `-`, `!`); see format/status.ts.
+ */
+export async function get(link: Link, keys: readonly string[]): Promise<Map<string, string>> {
+    if (keys.length === 0) throw new Error("get needs at least one key");
+    if (keys.length > GET_MAX_KEYS) throw new Error(`get takes at most ${GET_MAX_KEYS} keys`);
+    return parseGetReply(await link.command(`get ${keys.join(" ")}`));
+}
+
+/** The keys this firmware knows, via bare `get` (`keys <key> …`). */
+export async function getKeys(link: Link): Promise<string[]> {
+    const r = await link.command("get");
+    const parts = r.trim().split(/\s+/);
+    if (parts[0] !== "keys") throw new Error(`bad get reply: ${JSON.stringify(r)}`);
+    return parts.slice(1);
+}
+
+/** Operational status snapshot via `get` over {@link STATE_KEYS}. */
 export async function getState(link: Link): Promise<MachineStatus> {
-    return parseGetstate(await link.command("getstate"));
+    return statusFromGet(await get(link, STATE_KEYS));
 }
 
 /** Binary status snapshot (STATUS_REQ / STATUS_RSP v2) — the cheaper poll. */
@@ -58,12 +92,14 @@ export function getStatus(link: Link): Promise<MachineStatus> {
     return link.getStatus();
 }
 
-/** Absolute machinePos in steps via the text `getpos` command: [x, y, z, a]. */
+/** Absolute machinePos in steps via `get pos`: [x, y, z, a], slot order. */
 export async function getPos(link: Link): Promise<readonly [number, number, number, number]> {
-    const r = await link.command("getpos");
-    const parts = r.split(/\s+/);
-    if (parts[0] !== "pos" || parts.length < 5) throw new Error(`bad getpos reply: ${JSON.stringify(r)}`);
-    return [parseInt(parts[1]!), parseInt(parts[2]!), parseInt(parts[3]!), parseInt(parts[4]!)];
+    const v = getValue(await get(link, ["pos"]), "pos");
+    const p = (v ?? "").split(",").map((s) => parseInt(s, 10));
+    if (p.length !== 4 || p.some((n) => !Number.isInteger(n))) {
+        throw new Error(`bad get pos value: ${JSON.stringify(v)}`);
+    }
+    return [p[0]!, p[1]!, p[2]!, p[3]!];
 }
 
 // ── node verbs (proactive — firmware additions since the Python snapshot) ────
@@ -71,7 +107,7 @@ export async function getPos(link: Link): Promise<readonly [number, number, numb
 /**
  * Query a single node's own step counter via `nodepos <id>`. The Pico relays
  * CMD_GET_POS over RS485 and replies with the node's int32 position — the
- * measurement CAN detect lost steps (unlike `getpos`, which reads what the
+ * measurement CAN detect lost steps (unlike `get pos`, which reads what the
  * Pico THINKS it emitted). Reply format: `node <id> pos <steps>`.
  */
 export async function nodePos(link: Link, nodeId: number): Promise<{ nodeId: number; pos: number }> {
@@ -267,7 +303,7 @@ export function setOrigin(link: Link, pairs: readonly OriginPair[]): Promise<boo
  * a new head is being commissioned.
  *
  * `ok` means ARMED, not finished. The machine is now in HOMING and the caller
- * must poll `getstate` until it leaves — see homing/sequence.ts.
+ * must poll `get` until it leaves — see homing/sequence.ts.
  *
  * The Pico probes the node kind before arming and answers `err kind_mismatch`
  * if the verb does not match what the node declares, so a `linLeg` aimed at a
@@ -388,7 +424,7 @@ export async function legAbort(link: Link, node: number): Promise<string> {
 
 /**
  * The Pico's `home` and its selectors, run from its homing config. `ok` means
- * STARTED: poll `getstate` (`homing=`, `homecycle=`) until the machine leaves
+ * STARTED: poll `get` (`homing=`, `homecycle=`) until the machine leaves
  * HOMING; a failure is ALARM_HOMING_FAIL with `homefail=` and `homenode=`.
  * Resolves to `ok` or the raw `err` line.
  *
@@ -447,7 +483,7 @@ export interface ProbeLegArgs {
     readonly retract: boolean;
 }
 
-/** Arm one probe leg. `ok` means ARMED; poll `getstate` until `probing=` leaves 0. */
+/** Arm one probe leg. `ok` means ARMED; poll `get` until `probing=` leaves 0. */
 export function probeLeg(link: Link, leg: ProbeLegArgs): Promise<ProbeReply> {
     return _probeReply(
         link,

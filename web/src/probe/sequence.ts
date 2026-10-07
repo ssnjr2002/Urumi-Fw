@@ -2,7 +2,7 @@
  * probe/sequence.ts — run a probe plan against a Link and store the result.
  *
  * `probe_map`, four arm-and-wait legs, `probe_end`, `setprobe`. The contact
- * height is `getpos` Z read after the latch leg. A failed leg tears the session
+ * height is `get pos` Z read after the latch leg. A failed leg tears the session
  * down on the Pico (docs/tool_probe.md §5.11.2); any other failure here closes
  * it with `probe_end` before rethrowing.
  */

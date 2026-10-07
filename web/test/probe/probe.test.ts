@@ -1,5 +1,5 @@
 /**
- * probe.test.ts — heights, the probe leg plan, the getstate probe fields, and
+ * probe.test.ts — heights, the probe leg plan, the get probe keys, and
  * prepareZ / runWalk against the sim's setprobe/unprobe model.
  */
 
@@ -18,7 +18,7 @@ import {
 } from "../../src/machine/index.js";
 import { toolHeights, zAtHeightSteps } from "../../src/machine/heights.js";
 import { deriveProbePlan } from "../../src/probe/derive.js";
-import { parseGetstate } from "../../src/wire/format/status.js";
+import { parseGetReply, statusFromGet } from "../../src/wire/format/status.js";
 import { Controller } from "../../src/controller/controller.js";
 import { prepareZ, touchOffHere } from "../../src/controller/prepareZ.js";
 import { jogToPoint } from "../../src/operatorJog/jogTo.js";
@@ -129,20 +129,21 @@ describe("deriveProbePlan", () => {
     });
 });
 
-describe("getstate probe fields", () => {
+describe("get probe keys", () => {
+    const parse = (line: string) => statusFromGet(parseGetReply(line));
     const base = "state=6 enabled=0x0f homed=0x0f alarm=0 running=0 latched=0x00";
 
     it("reads the stored contact height", () => {
-        expect(parseGetstate(`${base} probed=1 pz=47150`).probeZ).toBe(47150);
+        expect(parse(`${base} probed=1 pz=47150`).probeZ).toBe(47150);
     });
 
     it("probed=0 is null, an absent field is undefined", () => {
-        expect(parseGetstate(`${base} probed=0`).probeZ).toBeNull();
-        expect(parseGetstate(base).probeZ).toBeUndefined();
+        expect(parse(`${base} probed=0`).probeZ).toBeNull();
+        expect(parse(base).probeZ).toBeUndefined();
     });
 
     it("reads the session phase and last cause", () => {
-        const st = parseGetstate(`${base} probing=2 probe=0 retries=0 psteps=12 probed=0`);
+        const st = parse(`${base} probing=2 probe=0 retries=0 psteps=12 probed=0`);
         expect(st.probing).toBe(2);
         expect(st.probeCause).toBe(0);
     });
@@ -183,7 +184,7 @@ describe("prepareZ", () => {
             },
         });
         expect(asked).toBe(1);
-        expect(await link.command("getstate")).toMatch(/probed=1 pz=0$/);
+        expect(await link.command("get probed pz")).toMatch(/probed=1 pz=0$/);
         // clear = 1 mm material + 2 mm clearance above the mat.
         expect(clear).toBe(-3 * 1200);
         expect(sim.pos[2]).toBe(clear);
@@ -217,7 +218,7 @@ describe("runWalk invalidates the probe on a swap", () => {
             confirmSwap: () => (controller.mount(0, { ...KNIFE }), true),
         });
 
-        expect(await link.command("getstate")).toMatch(/probed=0/);
+        expect(await link.command("get probed pz")).toMatch(/probed=0/);
         await link.close();
     });
 
@@ -231,7 +232,7 @@ describe("runWalk invalidates the probe on a swap", () => {
             confirmSwap: () => true,
         });
 
-        expect(await link.command("getstate")).toMatch(/probed=1 pz=30000/);
+        expect(await link.command("get probed pz")).toMatch(/probed=1 pz=30000/);
         await link.close();
     });
 });

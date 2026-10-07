@@ -122,7 +122,7 @@ export async function prepareZ(
 
     let stored = (await getState(link)).probeZ;
     if (stored === undefined) {
-        throw new Error("getstate carries no probed= field — the Pico firmware predates setprobe");
+        throw new Error("get probed is missing — the Pico firmware predates setprobe");
     }
 
     let touchedAt: readonly [number, number] | null = null;

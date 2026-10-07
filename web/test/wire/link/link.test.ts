@@ -120,20 +120,20 @@ describe("wire/link/link: command (one-outstanding text plane)", () => {
         const t = new FakeTransport();
         const link = new Link(t);
         const p1 = link.command("ping");
-        const p2 = link.command("getpos");
+        const p2 = link.command("get pos");
         await tick();
         // p1 holds the text lock awaiting "pong"; p2 has NOT written yet.
         expect(writtenStrings(t).filter((s) => s === "ping\n").length).toBe(1);
-        expect(writtenStrings(t).some((s) => s.startsWith("getpos"))).toBe(false);
+        expect(writtenStrings(t).some((s) => s.startsWith("get"))).toBe(false);
 
         t.feedReply(enc.encode("pong\n"));
         expect(await p1).toBe("pong");
 
         // now p2 acquires the lock and writes
         await tick();
-        expect(writtenStrings(t).filter((s) => s === "getpos\n").length).toBe(1);
-        t.feedReply(enc.encode("pos 0 0 0 0\n"));
-        expect(await p2).toBe("pos 0 0 0 0");
+        expect(writtenStrings(t).filter((s) => s === "get pos\n").length).toBe(1);
+        t.feedReply(enc.encode("pos=0,0,0,0\n"));
+        expect(await p2).toBe("pos=0,0,0,0");
     });
 
     it("textDesyncs counts orphan lines drained before a command", async () => {

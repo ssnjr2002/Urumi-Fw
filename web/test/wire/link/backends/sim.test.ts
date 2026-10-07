@@ -4,7 +4,7 @@
  * Link → Writer → SimTransport.write → SimTransport.reply → Demux → sink.
  *
  * Pins the behaviours the Sim exists to make testable without hardware:
- *   - control plane: ping/getstate/getpos/enable/disable/setorigin/pause/resume/
+ *   - control plane: ping/get/enable/disable/setorigin/pause/resume/
  *     cancel/stop/unalarm per the allowed-state matrix
  *   - binary status poll (STATUS_RSP v2 fields incl pos + queuedUs)
  *   - coalesced ACKs (K=8: one ACK frame per 8 accepted packets, not 1:1)
@@ -60,6 +60,9 @@ async function withLink<T>(
     }
 }
 
+/** The state and mask keys the Sim models. */
+const STATE = "get state enabled homed alarm running latched probed";
+
 describe("wire/link/backends/sim: control plane", () => {
     it("ping → pong", async () => {
         await withLink(async (link) => {
@@ -67,9 +70,9 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("getstate reports the state + masks", async () => {
+    it("get reports the state + masks", async () => {
         await withLink(async (link) => {
-            expect(await link.command("getstate")).toBe(
+            expect(await link.command(STATE)).toBe(
                 "state=0 enabled=0x00 homed=0x00 alarm=0 running=0 latched=0x00 probed=0",
             );
         });
@@ -78,11 +81,11 @@ describe("wire/link/backends/sim: control plane", () => {
     it("axes_enable energises all axes; setorigin homes + zeros pos + recovers from ALARM", async () => {
         await withLink(async (link) => {
             expect(await link.command("axes_enable on")).toBe("ok");
-            expect(await link.command("getstate")).toBe(
+            expect(await link.command(STATE)).toBe(
                 "state=0 enabled=0x0f homed=0x00 alarm=0 running=0 latched=0x00 probed=0",
             );
             expect(await link.command("setorigin")).toBe("ok");
-            expect(await link.command("getstate")).toBe(
+            expect(await link.command(STATE)).toBe(
                 "state=0 enabled=0x0f homed=0x0f alarm=0 running=0 latched=0x00 probed=0",
             );
 
@@ -129,7 +132,7 @@ describe("wire/link/backends/sim: control plane", () => {
     it("a leg arms and returns; the leg finishes asynchronously", async () => {
         // `ok` means ARMED, not finished — the whole reason the supervisor
         // exists (docs/homing.md §2.3). A handler that blocked until the pulser
-        // stopped would freeze getstate and every abort for the whole seek.
+        // stopped would freeze get and every abort for the whole seek.
         await withLink(async (link, sim) => {
             sim.homingLegMs = 30;
             expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
@@ -141,7 +144,7 @@ describe("wire/link/backends/sim: control plane", () => {
             const st = await link.getStatus();
             expect(st.state).toBe(MachineState.ALARM);
             expect(st.alarm).toBe(AlarmReason.LIMIT_LATCHED);
-            expect(await link.command("getstate")).toContain("latched=0x01");
+            expect(await link.command(STATE)).toContain("latched=0x01");
 
             // `unalarm` cannot clear it: nothing moved, so the switch is still
             // held. Only a retract gets out.
@@ -153,7 +156,7 @@ describe("wire/link/backends/sim: control plane", () => {
             await tick(80);
             const done = await link.getStatus();
             expect(done.state).toBe(MachineState.IDLE);
-            expect(await link.command("getstate")).toContain("latched=0x00");
+            expect(await link.command(STATE)).toContain("latched=0x00");
         });
     });
 
@@ -173,9 +176,9 @@ describe("wire/link/backends/sim: control plane", () => {
 
             // Node 3 is standing on its switch, and no slot claims it, so the
             // per-slot view is empty while the node-framed truth is not.
-            expect(await link.command("getstate")).toContain("latched=0x00");
+            expect(await link.command(STATE)).toContain("latched=0x00");
             expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
-            expect(await link.command("getstate")).toContain("latched=0x04");
+            expect(await link.command(STATE)).toContain("latched=0x04");
         }, { busNodes: [1, 2, 3, 4] });
     });
 
@@ -195,7 +198,7 @@ describe("wire/link/backends/sim: control plane", () => {
             expect(await link.command("leg 1 park 100 2500 500 400")).toBe("ok");
             expect((await link.getStatus()).state).toBe(MachineState.HOMING);
             await tick(60);
-            expect(await link.command("getstate")).toContain("homed=0x0f");
+            expect(await link.command(STATE)).toContain("homed=0x0f");
         });
     });
 
@@ -217,16 +220,16 @@ describe("wire/link/backends/sim: control plane", () => {
             sim.homingLegMs = 20;
             await link.command("leg 3 seek 1 2500 500 400 88000"); // node 3 = slot 2
             await tick(60);
-            expect(await link.command("getstate")).toContain("latched=0x04");
+            expect(await link.command(STATE)).toContain("latched=0x04");
 
             // Slot 2 now holds node 5, which is not on a switch. The gate lifts.
             expect(await link.command("axis_map 1 2 5 6")).toBe("ok");
-            expect(await link.command("getstate")).toContain("latched=0x00");
+            expect(await link.command(STATE)).toContain("latched=0x00");
 
             // ...and comes back with node 3, because node 3 really is still
             // standing on its switch and really will still refuse stream steps.
             expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
-            expect(await link.command("getstate")).toContain("latched=0x04");
+            expect(await link.command(STATE)).toContain("latched=0x04");
         }, { busNodes: [1, 2, 3, 4, 5, 6] });
     });
 

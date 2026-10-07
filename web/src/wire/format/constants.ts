@@ -21,7 +21,7 @@ export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planne
 export const BEZIER_SIZE = 56;
 export const BEZIER_SEQ_OFFSET = 2;
 
-// ── Status plane — binary mirror of `getstate` (+ getpos, queued time) ─────────
+// ── Status plane — binary mirror of `get` (state, pos, queued time) ───────────
 // docs/wire_protocol.md "STATUS_RSP". The magic bumped from 0xA6 to 0xA7 when
 // the frame grew 9 → 30 bytes (pos[4], expectedSeq, queuedUs). The retired
 // magic is reserved, never emitted, and parsed as unknown rather than

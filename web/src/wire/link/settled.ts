@@ -135,7 +135,7 @@ export async function settle(
  * the firmware leaves RUNNING when it stops consuming, which is not the same
  * instant the buffer drains, and a command issued in that gap is rejected.
  *
- * Note `bufCount` is `undefined` on a getstate-parsed status (the text plane
+ * Note `bufCount` is `undefined` on a get-parsed status (the text plane
  * cannot carry it), and undefined reads as empty here. That is correct for
  * settle(), which polls the binary STATUS_REQ, but means this condition is not
  * meaningful against a text-derived sample.

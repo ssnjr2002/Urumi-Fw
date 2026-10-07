@@ -1,7 +1,7 @@
 /**
  * Tests for wire/link/commands — the control-plane command helpers over a Link
- * backed by the in-process Sim. Exercises the live verbs (ping / getstate /
- * getpos / enable / disable / setorigin / pause / resume / cancel / stop /
+ * backed by the in-process Sim. Exercises the live verbs (ping / get /
+ * enable / disable / setorigin / pause / resume / cancel / stop /
  * unalarm / pingnode all / the proactive nodepos / vac_servo / vac_pump) and
  * axis_map on an unmapped boot.
  */
@@ -13,6 +13,8 @@ import {
     ping,
     pingNode,
     pingAll,
+    get,
+    getKeys,
     getState,
     getStatus,
     getPos,
@@ -95,6 +97,26 @@ describe("wire/link/commands: liveness + state", () => {
     it("getPos returns [x, y, z, a]", async () => {
         await withLink(async (link) => {
             expect(await getPos(link)).toEqual([0, 0, 0, 0]);
+        });
+    });
+
+    it("get answers each key in the order asked, unknown keys as !", async () => {
+        await withLink(async (link) => {
+            const r = await get(link, ["pos", "state", "nosuchkey", "pz"]);
+            expect([...r]).toEqual([["pos", "0,0,0,0"], ["state", "0"], ["nosuchkey", "!"], ["pz", "-"]]);
+        });
+    });
+
+    it("get refuses an empty or oversized key list before sending", async () => {
+        await withLink(async (link) => {
+            await expect(get(link, [])).rejects.toThrow(/at least one key/);
+            await expect(get(link, Array(33).fill("state"))).rejects.toThrow(/at most 32/);
+        });
+    });
+
+    it("getKeys lists the keys the firmware knows", async () => {
+        await withLink(async (link) => {
+            expect(await getKeys(link)).toContain("pos");
         });
     });
 });

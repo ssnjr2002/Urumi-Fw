@@ -693,7 +693,7 @@ verboseChk.addEventListener('change', () => { if (link) link.verbose = verboseCh
 // ── text plane ──────────────────────────────────────────────────────────────
 
 const QUICK = [
-    'ping', 'getstate', 'getpos', 'pingnode all', 'axis_map',
+    'ping', 'get', 'get state homed latched pos', 'pingnode all', 'axis_map',
     'enable', 'disable', 'setorigin', 'unalarm',
     'pause', 'resume', 'cancel', '!stop', '!abort',
 ];
@@ -893,10 +893,10 @@ function renderStatus(st) {
         ['axesEnabled', `0x${st.axesEnabled.toString(16)} ${maskStr(st.axesEnabled)}`],
         // '—' here is "the poll cannot see it", not "nothing is latched". The
         // panel is fed by the binary STATUS_RSP, which has no field for the
-        // mask; only a text `getstate` carries it. Rendering 0x0 would claim
+        // mask; only a text `get latched` carries it. Rendering 0x0 would claim
         // every switch is clear on the strength of a frame that never asked.
         ['axesLatched', st.axesLatched === undefined
-            ? '—  (binary poll — run getstate)'
+            ? '—  (binary poll — run get latched)'
             : `0x${st.axesLatched.toString(16)} ${maskStr(st.axesLatched)}`],
         ['bufCount',    fmt(st.bufCount)],
         ['expectedSeq', fmt(st.expectedSeq)],

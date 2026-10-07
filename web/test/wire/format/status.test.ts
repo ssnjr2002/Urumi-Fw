@@ -1,6 +1,6 @@
 /**
  * Tests for wire/format/status — STATUS_RSP (0xA7, 30B), the operational
- * enums, MachineStatus, parseGetstate / parseStatusRsp / packStatusRsp.
+ * enums, MachineStatus, the get reply / parseStatusRsp / packStatusRsp.
  *
  * The reference byte sequences below are the actual output of
  * host.protocol.packets.pack_status_rsp — captured from the Python, so a
@@ -16,7 +16,9 @@ import {
     AXIS_BITS,
     axisMask,
     MachineStatus,
-    parseGetstate,
+    parseGetReply,
+    getValue,
+    statusFromGet,
     parseStatusRsp,
     packStatusRsp,
 } from "../../../src/wire/format/status.js";
@@ -197,9 +199,11 @@ describe("wire/format/status: parseStatusRsp", () => {
     });
 });
 
-describe("wire/format/status: parseGetstate (text plane)", () => {
+describe("wire/format/status: statusFromGet (text plane)", () => {
+    const parse = (line: string) => statusFromGet(parseGetReply(line));
+
     it("parses a standard reply", () => {
-        const st = parseGetstate("state=0 enabled=0x0f homed=0x0f alarm=0 running=0");
+        const st = parse("state=0 enabled=0x0f homed=0x0f alarm=0 running=0");
         expect(st.state).toBe(MachineState.IDLE);
         expect(st.axesEnabled).toBe(0x0f);
         expect(st.axesHomed).toBe(0x0f);
@@ -208,7 +212,7 @@ describe("wire/format/status: parseGetstate (text plane)", () => {
     });
 
     it("leaves binary-only fields undefined (distinguishing text from real zero)", () => {
-        const st = parseGetstate("state=0 enabled=0x0f homed=0x0f alarm=0 running=0");
+        const st = parse("state=0 enabled=0x0f homed=0x0f alarm=0 running=0");
         expect(st.bufCount).toBeUndefined();
         expect(st.pos).toBeUndefined();
         expect(st.expectedSeq).toBeUndefined();
@@ -216,42 +220,80 @@ describe("wire/format/status: parseGetstate (text plane)", () => {
     });
 
     it("defaults enabled to 0 when absent", () => {
-        const st = parseGetstate("state=1 homed=0x03");
+        const st = parse("state=1 homed=0x03");
         expect(st.state).toBe(MachineState.RUNNING);
         expect(st.axesEnabled).toBe(0);
         expect(st.axesHomed).toBe(0x03);
     });
 
     it("tolerates unknown trailing tokens (forward-compat)", () => {
-        const st = parseGetstate("state=4 homed=0x0f future=7");
+        const st = parse("state=4 homed=0x0f future=7");
         expect(st.state).toBe(MachineState.PAUSED);
     });
 
     it("falls back to NONE/JOB on unknown enum values", () => {
-        const st = parseGetstate("state=42 homed=0x0f alarm=99 running=99");
+        const st = parse("state=42 homed=0x0f alarm=99 running=99");
         expect(st.state).toBe(MachineState.IDLE);
         expect(st.alarm).toBe(AlarmReason.NONE);
         expect(st.running).toBe(RunningReason.JOB);
     });
 
     it("throws on a non-status line", () => {
-        expect(() => parseGetstate("pong")).toThrow(/not a getstate reply/);
+        expect(() => parse("pong")).toThrow(/not a get reply/);
     });
 
     it("throws on a line missing homed", () => {
-        expect(() => parseGetstate("state=0 enabled=0x0f")).toThrow(/not a getstate reply/);
+        expect(() => parse("state=0 enabled=0x0f")).toThrow(/lacks state or homed/);
     });
 
     it("parses homecycle and nodehomed", () => {
-        const st = parseGetstate("state=5 homed=0x00 homing=0 probed=0 homecycle=2 nodehomed=0x018");
+        const st = parse("state=5 homed=0x00 homing=0 probed=0 homecycle=2 nodehomed=0x018");
         expect(st.homeCycle).toBe(2);
         expect(st.nodeHomed).toBe(0x18);
     });
 
     it("leaves homecycle and nodehomed undefined when absent", () => {
-        const st = parseGetstate("state=0 homed=0x0f");
+        const st = parse("state=0 homed=0x0f");
         expect(st.homeCycle).toBeUndefined();
         expect(st.nodeHomed).toBeUndefined();
+    });
+});
+
+describe("wire/format/status: get reply", () => {
+    it("keeps keys in reply order with their raw values", () => {
+        const r = parseGetReply("pos=1,-2,3,4 homed=0x0f homefail=- bogus=!");
+        expect([...r.keys()]).toEqual(["pos", "homed", "homefail", "bogus"]);
+        expect(r.get("homefail")).toBe("-");
+    });
+
+    it("folds markers to undefined in getValue", () => {
+        const r = parseGetReply("a=- b=? c=! d=7");
+        expect(getValue(r, "a")).toBeUndefined();
+        expect(getValue(r, "b")).toBeUndefined();
+        expect(getValue(r, "c")).toBeUndefined();
+        expect(getValue(r, "d")).toBe("7");
+        expect(getValue(r, "e")).toBeUndefined();
+    });
+
+    it("throws on an err reply or a line with no key=value", () => {
+        expect(() => parseGetReply("err too_many_keys")).toThrow(/not a get reply/);
+        expect(() => parseGetReply("err unknown")).toThrow(/not a get reply/);
+        expect(() => parseGetReply("pong")).toThrow(/not a get reply/);
+    });
+
+    it("reads markers as absent fields", () => {
+        const withMarkers = statusFromGet(parseGetReply(
+            "state=3 enabled=0x00 homed=0x01 alarm=4 running=0 latched=0x00 homefail=2 " +
+            "homenode=3 cfgerr=- homing=- probing=- probe=- retries=- psteps=- probed=0 " +
+            "pz=- homecycle=? nodehomed=0x008 future=!"));
+        const without = statusFromGet(parseGetReply(
+            "state=3 enabled=0x00 homed=0x01 alarm=4 running=0 latched=0x00 homefail=2 " +
+            "homenode=3 probed=0 nodehomed=0x008"));
+        expect(withMarkers).toEqual(without);
+    });
+
+    it("requires state and homed", () => {
+        expect(() => statusFromGet(parseGetReply("state=0 homed=!"))).toThrow(/lacks state or homed/);
     });
 });
 

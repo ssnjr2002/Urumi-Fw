@@ -166,7 +166,7 @@ export class Link {
     }
 
     /**
-     * Binary mirror of command("getstate") AND command("getpos") — one byte
+     * Binary mirror of the `get` state keys AND `get pos` — one byte
      * out, one frame back. Cheap enough to poll during a stream, since it
      * slots into a boundary between MSEG packets instead of needing a whole
      * ASCII line. Coherent: state, position, expectedSeq and queuedUs describe
