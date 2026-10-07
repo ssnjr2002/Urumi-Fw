@@ -57,7 +57,7 @@
       "maxTravel": 495,          // estimate
       "softLimits": true,
       "invert": true,            // web only
-      "invertDir": false,        // derived, unconfirmed
+      "invertDir": true,         // confirmed by jogging Y+
       "rotary": false,
       "homing": {
         "kind": "linear",
@@ -66,7 +66,7 @@
         "pullInFeed": 2.5,       // web only
         "backoffMm": 2,          // web only
         "parkMm": 5,             // web only
-        "seekPositive": true,   // switch at the front
+        "seekPositive": false,   // switch at the front (- end)
         "seekScaler": 1.2,
         "startFeed": 2.5,
         "seekFeed": 12.5,
