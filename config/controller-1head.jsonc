@@ -28,7 +28,7 @@
       "maxFeed": 80,
       "maxAccel": 100,
       "maxTravel": 1195,         // estimate
-      "softLimits": false,
+      "softLimits": true,
       "invert": false,           // web only
       "invertDir": false,
       "rotary": false,
@@ -55,7 +55,7 @@
       "maxFeed": 80,
       "maxAccel": 100,
       "maxTravel": 495,          // estimate
-      "softLimits": false,
+      "softLimits": true,
       "invert": true,            // web only
       "invertDir": false,        // derived, unconfirmed
       "rotary": false,
