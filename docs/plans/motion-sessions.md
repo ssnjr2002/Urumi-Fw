@@ -117,23 +117,15 @@ open (below); no branches yet.
 
 ### Offsets and frames
 
-* **Soft limits live in the home frame** (docs/coordinate_frames_and_limits.md
-  §1, §4-5), fixed by the switches. An offset never moves them; it only
-  translates command coordinates: `target_home = target − offset`, checked
-  against `[0, maxTravel]`. Each head's reach ("same size, shifted", §5.1)
-  falls out of the translation.
-* **`apply_offset <x> <y>`**, a config-free primitive: sets the global XY
-  offset that X/Y targets are read through, kept like the axes request. No
-  argument reads it back.
-* **`select <head> [tool]`**, a controller command: `axes_map` binds the
-  head's Z and A, and `apply_offset` gets head offset + tool offset from the
-  config (head only without a tool; nothing selected is the anchor).
-* **Z and A have no offsets.** Their jogs move whatever node is bound to the
-  slot; `select` decides that through `axes_map`.
-* Relative motion is frame-free; the offset matters for absolute targets, the
+* **The frames, `select`, the work offset, stored positions and the soft
+  range are in docs/plans/coordinate-system.md** (branch `feature/pico-frames`,
+  which lands before the jog branches). In short: move targets are work
+  coordinates; the Pico adds the work offset and the selected head's offset,
+  and checks the result against the signed soft range `[park, park ±
+  maxTravel]`.
+* Relative motion is frame-free; the frames matter for absolute targets, the
   position readout and preflight.
-* Job coordinates are tool-tip coordinates; the `TOOL` record's selection
-  applies the offsets on the Pico.
+* The `TOOL` record's selection goes through `select`.
 * **A job leaves its last selection in place** when it ends.
 
 ### Jog command shape
@@ -144,7 +136,8 @@ what is sent continuously.
 | | plane |
 |---|---|
 | step jog `jog <axis> <dist> [feed]` | text |
-| absolute `jogto <x> <y>`, through the offset | text |
+| absolute `jogto <x> <y>`, work coordinates | text |
+| stored position `jogto park\|load\|probe` | text |
 | continuous jog | data plane, deadman packet |
 | jog stop | data plane, one byte |
 
@@ -159,6 +152,10 @@ what is sent continuously.
 
 * **Z and A stay on `JOG_MAGIC`** until the planner gains them; only XY jogs
   move to the planner. An XY jog mixed with Z or A is refused.
+* **Named `jogto`** (`park`, `load`, `probe`): the position comes from
+  coordinate-system.md's stored positions; `probe` is the selected head's
+  switch. Every head's Z goes to its park position first (a park leg until
+  the planner moves Z), then the XY line. A numeric `jogto` moves XY only.
 * **Homing gate:** `jogto` needs the axis homed. Relative jogs (step and
   continuous) need it unless the config field `jogUnhomed` is set (testing;
   off in production). Un-homed, soft limits are not enforced, the speed is
@@ -186,7 +183,8 @@ what is sent continuously.
   (config indices or names); per-tool bbox vs relying on the per-record
   soft-limit check alone.
 * **Soft limits per record:** each `BEZIER`'s control points checked at
-  ingest (a Bézier lies inside their hull), plus the Pico's own travels.
+  ingest (a Bézier lies inside their hull), plus the Pico's own travels. The
+  range and its check come from `feature/pico-frames`.
 * **Preflight:** refuses and never prepares (proposed, not confirmed); its
   check list; `NACK_PREFLIGHT` plus a text `preflight` listing failures.
 * `cancel` from `PAUSED`: ends the session to IDLE at once (proposed).
