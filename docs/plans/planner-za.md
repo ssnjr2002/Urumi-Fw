@@ -353,7 +353,8 @@ Not started.
      soft-range check (a held XY jog ends where Z would leave it); the
      load-time worst-case report.
   3. `/mesh.bin` decode into RAM, flat when missing or bad; `mesh on|off`
-     (volatile, on at boot with a valid file, latched at the next restart);
+     (volatile, on at boot per the config's required `machine.meshOn`,
+     latched at the next restart);
      `get` key `mesh=<nx>x<ny>|off|flat|bad`; `WPos` Z without the mesh.
   4. A bench mesh flashed by `uploadfs` (`data/mesh.bin`), encoded by
      `web/scripts/mesh-image.ts` from `custom_mesh_json`
@@ -367,7 +368,30 @@ Not started.
 
 ### Status
 
-Not started.
+Ready to merge.
+
+### Outcome
+
+* Added in Work: `machine.meshOn`, required by the web loader and the Pico
+  decoder (an older `config.bin` is `missing` until `uploadfs`); the mesh
+  starts off without a config. `config/mesh-jagged.jsonc`, a 10 mm
+  checkerboard on a 100 mm grid, for seeing Z follow.
+* For branch 3 and motion-sessions: `Planner::pushMove`/`pushLine`/
+  `pushBezier` take an optional `PathCap` (v² and accel ceilings); the
+  queue's walk runs under `plannerLock`. A move refused for Z under the mesh
+  is `PQ_SOFT_LIMIT` (`err soft_limit z`, `NACK_SOFT_LIMIT`).
+* The load-time worst-case report is `get meshslope` (steepest neighbour
+  slope); the per-block caps do the rest.
+* The offset is relative to the work origin, so with Z at park any bed
+  higher than the origin is out of range: XY jogs from park stop there.
+  Lower Z first. A clearer reply or a park rule is open.
+* Bench (head 0, node 8 excluded, `select 0` needed after `bus_exclude`):
+  tilted and jagged meshes followed on step and held jogs, `mesh on|off`
+  without a jump, `wzero z` off the origin, soft-range refusal and the held
+  jog's clip. Not bench-tested: records and `bez` under the mesh, the speed
+  caps binding, head 1, the tick's cycles with the mesh on.
+* Found: `pio test -e native` runs on Windows now; the `memset` veneer
+  warning predates this branch.
 
 ## Open
 
