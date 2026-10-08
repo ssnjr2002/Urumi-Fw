@@ -23,7 +23,15 @@ PLANNER_RAM void Planner::clearOffer() {
     staged_flag_ = false;
 }
 
-bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, float deviation) {
+// The path with a caller's caps on top of its own.
+static Path capped(Path p, const PathCap& cap) {
+    p.v_max_sqr = fminf(p.v_max_sqr, cap.v_max_sqr);
+    p.accel = fminf(p.accel, cap.accel);
+    return p;
+}
+
+bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, float deviation,
+                       const PathCap& cap) {
     const Axes axes = axesOf(end_, target);
     if (axes == AXES_NONE) return true;
     if (axes == AXES_MIXED || full()) return false;
@@ -35,15 +43,16 @@ bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, 
     } else {
         path = axisPath(axes, axes == AXES_Z ? target.z - end_.z : target.aSince(end_), feed, limits);
     }
-    return pushBlock(Block::LINE, path, target, deviation);
+    return pushBlock(Block::LINE, capped(path, cap), target, deviation);
 }
 
-bool Planner::pushBezier(const Bezier& bz, float feed, const AxisLimits& limits, float deviation) {
+bool Planner::pushBezier(const Bezier& bz, float feed, const AxisLimits& limits, float deviation,
+                         const PathCap& cap) {
     if (full()) return false;
     ring_[index(count_)].bez = bz;
     Pos to = end_;
     to.setXy(bz.p[3]);
-    return pushBlock(Block::BEZIER, pathOf(bz, feed, limits), to, deviation);
+    return pushBlock(Block::BEZIER, capped(pathOf(bz, feed, limits), cap), to, deviation);
 }
 
 bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, float deviation) {

@@ -69,6 +69,12 @@ struct Path {
     Vec2 end;             // XY: mm, machine frame
 };
 
+/** Caps a caller adds to a path beyond its axes: another axis riding along. */
+struct PathCap {
+    float v_max_sqr = INFINITY;
+    float accel = INFINITY;
+};
+
 /** Highest squared speed through the corner from `prev` into `next`. */
 float junctionMaxSqr(const Path& prev, const Path& next, float deviation);
 

@@ -78,15 +78,18 @@ public:
      * set (axesOf). Returns false if the ring is full or the line mixes sets.
      * A zero-length move queues nothing and returns true.
      */
-    bool pushMove(const Pos& target, float feed, const AxisLimits& limits, float deviation);
+    bool pushMove(const Pos& target, float feed, const AxisLimits& limits, float deviation,
+                  const PathCap& cap = PathCap());
     /** An XY line; Z and A stay where the last block ends. */
-    bool pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
+    bool pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation,
+                  const PathCap& cap = PathCap()) {
         Pos to = end_;
         to.setXy(target);
-        return pushMove(to, feed, limits, deviation);
+        return pushMove(to, feed, limits, deviation, cap);
     }
     /** Queue an analysed Bézier; `b.p[0]` must be end(). False if full. */
-    bool pushBezier(const Bezier& b, float feed, const AxisLimits& limits, float deviation);
+    bool pushBezier(const Bezier& b, float feed, const AxisLimits& limits, float deviation,
+                    const PathCap& cap = PathCap());
 
     /** Horizon `ahead` of the consumer's clock, and the commit guard, in s. */
     void setTiming(float ahead, float guard) { ahead_ = ahead; guard_ = guard; }
