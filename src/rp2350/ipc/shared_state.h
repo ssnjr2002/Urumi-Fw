@@ -352,8 +352,11 @@ extern volatile bool    streamIsJog;
 //
 // plannerActive — Core 1 owns planner motion, running or held in PAUSED. Core 0
 //   resets the ring and executor only while it is false. Written under the lock.
-// plannerSpm — X and Y steps/mm, set by Core 0 with that reset; negative on an
-//   invertDir axis, so the planner works in machine mm.
+// plannerSpm — steps per mm (A: per degree) for slots X, Y, Z, A, set by Core 0
+//   with that reset; negative on an invertDir axis, so the planner works in
+//   machine units; 0 on a slot no head binds. plannerTurnQ32 — one turn of A in
+//   steps, Q32.32, signed as plannerSpm[3]: A's step target is exact however
+//   many turns it has made.
 // joggingReason — which kind owns the ring; set by Core 0 with that reset,
 //   under the lock.
 // resumeRequested — `resume` of a held planner job; Core 1 replans from where
@@ -362,7 +365,8 @@ extern planner::Planner  plannerRing;
 extern planner::Executor plannerExec;
 extern spin_lock_t*      plannerLock;
 extern volatile bool     plannerActive;
-extern float             plannerSpm[2];
+extern float             plannerSpm[4];
+extern int64_t           plannerTurnQ32;
 extern volatile bool     resumeRequested;
 
 // Soft-Reset Handshake Flags

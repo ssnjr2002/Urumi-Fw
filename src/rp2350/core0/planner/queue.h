@@ -13,7 +13,7 @@ enum PlannerQueueResult : uint8_t {
     PQ_OK = 0,
     PQ_BAD_STATE,   // not IDLE or running motion of this kind, or stopping
     PQ_NO_CONFIG,   // no valid machine config
-    PQ_NO_LIMITS,   // maxFeed or maxAccel is 0 on X or Y
+    PQ_NO_LIMITS,   // maxFeed or maxAccel is 0 on an axis the move needs
     PQ_FULL,        // the ring is full; try again as it drains
     PQ_BAD_CURVE,   // a degenerate handle, a cusp, or an unfittable curve
     PQ_NO_FEED,     // a record before any `feed`
@@ -25,6 +25,10 @@ namespace planner { struct Bezier; }
 // idle ring the move starts from machinePos.
 // `reason` is the JoggingReason it runs as; it joins only a ring of that kind.
 PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason);
+
+// Queue a move of slot k (SLOT_Z or SLOT_A) by `d` mm or degrees from where the
+// queued moves end, at `feed` units/s. PQ_NO_LIMITS when no head binds the slot.
+PlannerQueueResult plannerQueueAxis(uint8_t k, float d, float feed, uint8_t reason);
 
 // Queue a cubic Bézier from the end of the last move (machinePos on an empty,
 // idle ring) through handles p1, p2 to p3, machine mm, at `feed` mm/s.
@@ -43,9 +47,10 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end);
 // Forget an open contour: seqreset, abort, soft reset.
 void plannerEndContour();
 
-// Where the next jog starts, machine mm: the ring's end, or machinePos on an
-// empty, idle ring. False while another kind (JoggingReason) owns the ring.
-bool plannerJogFrom(float* x, float* y, uint8_t reason);
+// Where the next jog starts on slots X, Y, Z, A, machine units (A in degrees,
+// turns included): the ring's end, or machinePos on an empty, idle ring. False
+// while another kind (JoggingReason) owns the ring.
+bool plannerJogFrom(float at[4], uint8_t reason);
 
 // Stop the jogs in the ring: brake and discard if Core 1 runs them, else empty
 // the ring.

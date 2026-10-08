@@ -630,19 +630,20 @@ bool cmdBez(const char* args) {
     return true;
 }
 
-// ── jog <x|y> <dist> [scale] — step jog ──────────────────────────────────────
-// Moves X or Y by `dist` machine mm from where the queued jogs end, at the
-// axis's jogFeed (jogFeedUnhomed before homing, with jogUnhomed) times
-// `scale`, capped at maxFeed. Clicks join the running jog, up to
-// JOG_MAX_QUEUED blocks. An unhomed jog moves at most maxTravel.
+// ── jog <x|y|z|a> <dist> [scale] — step jog ──────────────────────────────────
+// Moves one axis by `dist` machine mm (A: degrees) from where the queued jogs
+// end, at the axis's jogFeed (jogFeedUnhomed before homing, with jogUnhomed)
+// times `scale`, capped at maxFeed. Z and A are the selected head's. Clicks
+// join the running jog, up to JOG_MAX_QUEUED blocks. An unhomed jog moves at
+// most maxTravel, or one turn on a rotary axis.
 #define JOG_MAX_QUEUED 4
 
 // Queue a jog to machine mm `to`; a NAN coordinate stays where the queued jogs
 // end. `rel` adds `to` to that end instead. Replies.
 static void queueJog(const float to[2], bool rel, float feed) {
     if (plannerQueueDepth() >= JOG_MAX_QUEUED) { Serial.println("err busy"); return; }
-    float at[2];
-    if (!plannerJogFrom(&at[0], &at[1], JOGGING_STEP)) { Serial.println("err bad_state"); return; }
+    float at[4];
+    if (!plannerJogFrom(at, JOGGING_STEP)) { Serial.println("err bad_state"); return; }
     float target[2];
     for (uint8_t k = 0; k < 2; k++) {
         target[k] = isnan(to[k]) ? at[k] : rel ? at[k] + to[k] : to[k];
@@ -654,10 +655,24 @@ static void queueJog(const float to[2], bool rel, float feed) {
     replyQueued(plannerQueueLine(target[0], target[1], feed, JOGGING_STEP));
 }
 
+// Queue a jog of slot k (Z or A) by `d`. Replies.
+static void queueAxisJog(uint8_t k, float d, float feed) {
+    if (plannerQueueDepth() >= JOG_MAX_QUEUED) { Serial.println("err busy"); return; }
+    float at[4];
+    if (!plannerJogFrom(at, JOGGING_STEP)) { Serial.println("err bad_state"); return; }
+    float left;
+    if (const char* why = framesCheckMove(k, at[k], at[k] + d, &left)) {
+        Serial.printf("err %s %.2f\n", why, left); return;
+    }
+    replyQueued(plannerQueueAxis(k, d, feed, JOGGING_STEP));
+}
+
 bool cmdJog(const char* args) {
     const char* p = args;
     while (*p == ' ') p++;
-    const uint8_t k = (*p == 'x' || *p == 'X') ? SLOT_X : (*p == 'y' || *p == 'Y') ? SLOT_Y : 0xFF;
+    static const char kNames[] = "xyza";
+    const char* at = strchr(kNames, *p | 0x20);
+    const uint8_t k = *p && at ? (uint8_t)(at - kNames) : 0xFF;
     char* end;
     const float dist = k == 0xFF ? 0 : strtof(p + 1, &end);
     if (k == 0xFF || end == p + 1 || dist == 0 || !isfinite(dist)) {
@@ -670,14 +685,19 @@ bool cmdJog(const char* args) {
     if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
 
     const MachineCfg& cfg = machineCfg();
-    const CfgAxis& a = k == SLOT_X ? cfg.x : cfg.y;
+    const CfgAxis* ax = framesAxis(k);
+    if (!ax) { Serial.println("err no_head"); return true; }
+    const CfgAxis& a = *ax;
     const bool homed = axes_homed & (1u << k);
     if (!homed && !cfg.jogUnhomed) { Serial.println("err not_homed"); return true; }
-    if (!homed && fabsf(dist) > a.maxTravel) { Serial.println("err too_far"); return true; }
+    if (!homed && fabsf(dist) > (a.rotary ? 360.0f : a.maxTravel)) {
+        Serial.println("err too_far"); return true;
+    }
     float feed = (homed ? a.jogFeed : a.jogFeedUnhomed) * scale;
     if (a.maxFeed > 0 && feed > a.maxFeed) feed = a.maxFeed;
     if (!(feed > 0)) { Serial.println("err no_feed"); return true; }
 
+    if (k >= SLOT_Z) { queueAxisJog(k, dist, feed); return true; }
     float to[2] = {NAN, NAN};
     to[k] = dist;
     queueJog(to, true, feed);

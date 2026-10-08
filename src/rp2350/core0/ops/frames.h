@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
 
+struct CfgAxis;
+
 // frames.h — the controlled point, the work offset, MPos/WPos and the soft
 // range (docs/plans/coordinate-system.md).
 //
@@ -54,6 +56,10 @@ bool framesMPos(uint8_t k, float* out);
 // folded to (−180, 180]. False as framesMPos, or X/Y with no selection.
 bool framesWPos(uint8_t k, float* out);
 
+// The config of the axis on slot k: X, Y, or the head bound to Z or A. Null
+// without a config or a head on that slot.
+const CfgAxis* framesAxis(uint8_t k);
+
 // Work offset, machine units. Z is the Z head's.
 float framesWork(uint8_t k);
 // Set the work offset of slot k (0..2) in machine units. Z needs a Z head.
@@ -69,9 +75,10 @@ const char* framesToMachine(float wx, float wy, float* mx, float* my);
 // axis's soft range, when that axis has softLimits. nullptr, or "soft_limit".
 const char* framesCheckNode(uint8_t node, int32_t machineSteps);
 
-// A move of slot k (X or Y) from `from` to `to`, machine mm, inside the soft
-// range when that axis is homed with softLimits. nullptr, or "soft_limit x|y"
+// A move of slot k (X, Y or Z) from `from` to `to`, machine mm, inside the soft
+// range when that axis is homed with softLimits. nullptr, or "soft_limit x|y|z"
 // with `*left` the mm still free in the move's direction (never negative).
+// A has no soft range.
 const char* framesCheckMove(uint8_t k, float from, float to, float* left);
 
 // Machine XY inside the soft range on every homed X/Y axis with softLimits.

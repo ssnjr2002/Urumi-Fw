@@ -20,7 +20,7 @@
 //   [25]     CRC8 over bytes [0..24]
 
 #define MSEG_MAGIC       0xAB   // host production  — pre-computed step events
-#define JOG_MAGIC        0xAE   // host-driven jog burst (same 26-byte layout as MSEG)
+#define JOG_MAGIC        0xAE   // retired jog burst (MSEG layout); always NACKed
 #define TOOL_MAGIC       0xAC   // local production — ToolConfig packets
 #define MSEG_PACKET_SIZE 26     // magic(1) + MicroSegment(24) + CRC8(1)
 #define MSEG_SEQ_OFFSET  22
@@ -116,8 +116,8 @@
 #define ABORT_MAGIC      0xA9
 
 // Continuous jog (7 bytes): magic, direction per axis X, Y, Z, A (int8 −1/0/+1;
-// Z and A must be 0), speed (uint8, jogFeed × speed/64, capped at maxFeed),
-// CRC8 over [0..5]. Repeat it to keep the jog going: CJOG_DEADMAN_MS without one
+// one axis set: XY, Z or A, else NACK MIXED_AXES), speed (uint8, jogFeed ×
+// speed/64, capped at maxFeed), CRC8 over [0..5]. Repeat it to keep the jog going: CJOG_DEADMAN_MS without one
 // stops it. All-zero directions stop it. ACK when a jog starts, NACK when
 // refused, nothing for a repeat.
 #define CJOG_MAGIC        0xAF
@@ -164,3 +164,5 @@
 // A BEZIER record's control point lies outside the soft range on a homed axis
 // (ops/frames.h), after the work offset is applied.
 #define MSEG_NACK_SOFT_LIMIT 0x09
+// A CJOG packet moving more than one axis set: XY, Z, A.
+#define MSEG_NACK_MIXED_AXES 0x0A

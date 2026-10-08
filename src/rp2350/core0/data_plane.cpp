@@ -127,11 +127,7 @@ static void feedPacket(uint8_t b) {
     // runningReason together with the RUNNING transition it owns.
     //   MSEG job stream — IDLE/RUNNING; NACK_PAUSED while paused, else bad_state.
     //   BEZIER records  — the same; the planner's admit narrows RUNNING to its own.
-    //   JOG burst       — IDLE/PAUSED, or RUNNING if the in-progress burst is
-    //                     itself a jog (packet 2+ of the same multi-packet burst
-    //                     arrives after Core 1 has already flipped the state to
-    //                     RUNNING to execute packet 1 — rejecting those left every
-    //                     jog after the first NACK_BAD_STATE'd forever).
+    //   JOG burst       — retired: jogs run on the planner (`jog`, CJOG).
     // Abort is a barrier — reject everything until the machine reaches IDLE,
     // with a reason distinct from BAD_STATE so the host waits and reopens rather
     // than surfacing an error. Checked before the per-magic gates because it
@@ -147,11 +143,7 @@ static void feedPacket(uint8_t b) {
         if (st != STATE_IDLE && st != STATE_RUNNING) { sendNack(MSEG_NACK_BAD_STATE); return; }
         if (pktBuf[0] == MSEG_MAGIC) streamIsJog = false;
     } else { // JOG_MAGIC
-        bool continuingJog = (st == STATE_RUNNING && runningReason == RUNNING_JOG);
-        if (st != STATE_IDLE && st != STATE_PAUSED && !continuingJog) {
-            sendNack(MSEG_NACK_BAD_STATE); return;
-        }
-        streamIsJog = true;
+        sendNack(MSEG_NACK_BAD_STATE); return;
     }
 
     // Duplicate guard: the seq byte carries the host's rolling 8-bit seq. After a
@@ -188,11 +180,6 @@ static void acceptMseg() {
     memcpy(&ms.interval, p,      4); p += 4;
     ms.flags  = *p++;
     ms.pad[0] = ms.pad[1] = ms.pad[2] = 0;
-
-    // XY jogs run on the planner (`jog`, `jogto`); a jog burst moves Z and A.
-    if (pktBuf[0] == JOG_MAGIC && (ms.dx != 0 || ms.dy != 0)) {
-        sendNack(MSEG_NACK_BAD_STATE); return;
-    }
 
     // Steps for an unbound axis would reach whatever holds its slot (a probe's
     // vacuum reads them as poll requests), or no one.
@@ -325,12 +312,16 @@ static void handleCfgGet() {
 
 // ─── Continuous jog ───────────────────────────────────────────────────────────
 // A held jog is one line to the end of travel, stopped when the packets stop.
-// cjogHeld: packets for cjogDir keep arriving (until the stop byte, the deadman
-// or another direction). cjogOn: its line may still run. cjogWant: a direction
-// to start once the machine is at rest, after a change stopped the last jog.
+// It moves one axis set: XY, Z or A. cjogHeld: packets for cjogDir keep
+// arriving (until the stop byte, the deadman or another direction). cjogOn:
+// its line may still run. cjogWant: a direction to start once the machine is
+// at rest, after a change stopped the last jog.
 
-static int8_t   cjogDir[2]  = {0, 0};
-static int8_t   cjogWant[2] = {0, 0};
+// How far a held A jog runs: A has no soft range, and a cabled head winds.
+#define CJOG_A_RUN 360.0f
+
+static int8_t   cjogDir[4]  = {0, 0, 0, 0};
+static int8_t   cjogWant[4] = {0, 0, 0, 0};
 static uint8_t  cjogSpeed   = 0;
 static bool     cjogHeld    = false;
 static bool     cjogOn      = false;
@@ -341,46 +332,52 @@ static void sendAck() {
     Serial.write(f, 3);
 }
 
-static bool cjogWanted() { return cjogWant[0] != 0 || cjogWant[1] != 0; }
+static bool cjogWanted() {
+    return cjogWant[0] != 0 || cjogWant[1] != 0 || cjogWant[2] != 0 || cjogWant[3] != 0;
+}
 
 static void cjogStop() {
     if (cjogOn) plannerStopJog();
     cjogOn = cjogHeld = false;
-    cjogWant[0] = cjogWant[1] = 0;
+    for (uint8_t k = 0; k < 4; k++) cjogWant[k] = 0;
 }
 
-// Queue the line for direction `d`. Returns a NACK reason, or 0 once queued.
-static uint8_t cjogStart(const int8_t d[2], uint8_t speed) {
+// Queue the line for direction `d` (one axis set). Returns a NACK reason, or 0
+// once queued.
+static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
     if (!machineCfgValid()) return MSEG_NACK_BAD_STATE;
     const MachineCfg& cfg = machineCfg();
-    const CfgAxis* axes[2] = { &cfg.x, &cfg.y };
-    float at[2];
-    if (!plannerJogFrom(&at[0], &at[1], JOGGING_CONT)) return MSEG_NACK_BAD_STATE;
+    float at[4];
+    if (!plannerJogFrom(at, JOGGING_CONT)) return MSEG_NACK_BAD_STATE;
 
     // How far each moving axis may go: to its soft end when homed with
-    // softLimits, else maxTravel. A diagonal stops at the nearer end.
-    float run = INFINITY, feed = INFINITY;
-    for (uint8_t k = 0; k < 2; k++) {
+    // softLimits, else maxTravel; A one CJOG_A_RUN. A diagonal stops at the
+    // nearer end.
+    float run = INFINITY, feed = INFINITY, step = 0;
+    for (uint8_t k = 0; k < 4; k++) {
         if (d[k] == 0) continue;
-        const CfgAxis& a = *axes[k];
+        const CfgAxis* a = framesAxis(k);
+        if (!a) return MSEG_NACK_BAD_STATE;
         const bool homed = axes_homed & (1u << k);
         if (!homed && !cfg.jogUnhomed) return MSEG_NACK_BAD_STATE;
-        float lo, hi, room = a.maxTravel;
-        if (homed && a.softLimits && configAxisRange(a, &lo, &hi))
+        float lo, hi, room = k == SLOT_A ? CJOG_A_RUN : a->maxTravel;
+        if (k != SLOT_A && homed && a->softLimits && configAxisRange(*a, &lo, &hi))
             room = d[k] > 0 ? hi - at[k] : at[k] - lo;
         run = fminf(run, room);
-        float f = (homed ? a.jogFeed : a.jogFeedUnhomed) * speed / 64.0f;
-        if (a.maxFeed > 0) f = fminf(f, a.maxFeed);
+        float f = (homed ? a->jogFeed : a->jogFeedUnhomed) * speed / 64.0f;
+        if (a->maxFeed > 0) f = fminf(f, a->maxFeed);
         feed = fminf(feed, f);
+        step = fmaxf(step, 1 / a->stepsPerUnit);
     }
-    const float step = 1 / fminf(cfg.x.stepsPerUnit, cfg.y.stepsPerUnit);
     if (!(run > step)) return MSEG_NACK_SOFT_LIMIT;
     if (!(feed > 0)) return MSEG_NACK_BAD_STATE;
 
-    if (plannerQueueLine(at[0] + d[0] * run, at[1] + d[1] * run, feed, JOGGING_CONT) != PQ_OK)
-        return MSEG_NACK_BAD_STATE;
-    cjogDir[0] = d[0];
-    cjogDir[1] = d[1];
+    const PlannerQueueResult r =
+        d[2] != 0 ? plannerQueueAxis(SLOT_Z, d[2] * run, feed, JOGGING_CONT)
+      : d[3] != 0 ? plannerQueueAxis(SLOT_A, d[3] * run, feed, JOGGING_CONT)
+      : plannerQueueLine(at[0] + d[0] * run, at[1] + d[1] * run, feed, JOGGING_CONT);
+    if (r != PQ_OK) return MSEG_NACK_BAD_STATE;
+    for (uint8_t k = 0; k < 4; k++) cjogDir[k] = d[k];
     cjogSpeed = speed;
     cjogOn = cjogHeld = true;
     return 0;
@@ -390,20 +387,21 @@ static void acceptCjog() {
     const int8_t d[4] = { (int8_t)pktBuf[1], (int8_t)pktBuf[2], (int8_t)pktBuf[3], (int8_t)pktBuf[4] };
     const uint8_t speed = pktBuf[5];
     for (uint8_t k = 0; k < 4; k++)
-        if (d[k] < -1 || d[k] > 1 || (k >= 2 && d[k] != 0)) { sendNack(MSEG_NACK_BAD_STATE); return; }
+        if (d[k] < -1 || d[k] > 1) { sendNack(MSEG_NACK_BAD_STATE); return; }
     if (speed == 0) { sendNack(MSEG_NACK_BAD_STATE); return; }
+    const uint8_t sets = (d[0] != 0 || d[1] != 0) + (d[2] != 0) + (d[3] != 0);
+    if (sets > 1) { sendNack(MSEG_NACK_MIXED_AXES); return; }
 
     cjogLastMs = millis();
-    if (d[0] == 0 && d[1] == 0) { cjogStop(); return; }
-    if (cjogHeld && d[0] == cjogDir[0] && d[1] == cjogDir[1]) return;   // a repeat
+    if (sets == 0) { cjogStop(); return; }
+    if (cjogHeld && memcmp(d, cjogDir, 4) == 0) return;   // a repeat
 
     // Another direction, or step jogs running: stop them, start once at rest.
     const bool busy = cjogOn || plannerQueueDepth() != 0 || plannerActive || abortRequested;
     if (busy) {
         if (cjogOn || joggingReason == JOGGING_STEP) plannerStopJog();
         cjogOn = cjogHeld = false;
-        cjogWant[0] = d[0];
-        cjogWant[1] = d[1];
+        for (uint8_t k = 0; k < 4; k++) cjogWant[k] = d[k];
         cjogSpeed = speed;
         return;
     }
@@ -418,10 +416,10 @@ static void cjogTick() {
     if (cjogOn && empty) cjogOn = false;              // ran to the end of travel
     if (cjogHeld && silent) cjogStop();
     if (!cjogWanted()) return;
-    if (silent) { cjogWant[0] = cjogWant[1] = 0; return; }
+    if (silent) { for (uint8_t k = 0; k < 4; k++) cjogWant[k] = 0; return; }
     if (!empty || abortRequested || machineState != STATE_IDLE) return;
-    const int8_t d[2] = { cjogWant[0], cjogWant[1] };
-    cjogWant[0] = cjogWant[1] = 0;
+    int8_t d[4];
+    for (uint8_t k = 0; k < 4; k++) { d[k] = cjogWant[k]; cjogWant[k] = 0; }
     if (const uint8_t why = cjogStart(d, cjogSpeed)) sendNack(why);
     else sendAck();
 }

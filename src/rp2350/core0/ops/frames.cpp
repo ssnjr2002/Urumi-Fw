@@ -112,7 +112,7 @@ bool framesTipOffset(float* dx, float* dy) {
 
 uint8_t framesZHead(void) { return headOwning(SLOT_Z, axisNode(SLOT_Z)); }
 
-static const CfgAxis* axisFor(uint8_t k) {
+const CfgAxis* framesAxis(uint8_t k) {
     if (!machineCfgValid()) return nullptr;
     const MachineCfg& c = machineCfg();
     if (k == SLOT_X) return &c.x;
@@ -123,7 +123,7 @@ static const CfgAxis* axisFor(uint8_t k) {
 }
 
 bool framesMPos(uint8_t k, float* out) {
-    const CfgAxis* a = axisFor(k);
+    const CfgAxis* a = framesAxis(k);
     if (!a) return false;
     const float u = (float)machinePos[k] / a->stepsPerUnit;
     *out = (a->invertDir ? -u : u) + 0.0f;   // no -0
@@ -187,14 +187,15 @@ const char* framesCheckNode(uint8_t node, int32_t machineSteps) {
 }
 
 const char* framesCheckMove(uint8_t k, float from, float to, float* left) {
-    if (!machineCfgValid() || k > SLOT_Y) return nullptr;
-    const CfgAxis& a = k == SLOT_X ? machineCfg().x : machineCfg().y;
+    static const char* const kWhy[3] = { "soft_limit x", "soft_limit y", "soft_limit z" };
+    if (k > SLOT_Z) return nullptr;
+    const CfgAxis* a = framesAxis(k);
     float lo, hi;
-    if (!a.softLimits || !(axes_homed & (1u << k)) || !configAxisRange(a, &lo, &hi))
+    if (!a || !a->softLimits || !(axes_homed & (1u << k)) || !configAxisRange(*a, &lo, &hi))
         return nullptr;
     if (to >= lo && to <= hi) return nullptr;
     *left = fmaxf(0.0f, to > from ? hi - from : from - lo);
-    return k == SLOT_X ? "soft_limit x" : "soft_limit y";
+    return kWhy[k];
 }
 
 const char* framesCheckXY(float mx, float my) {

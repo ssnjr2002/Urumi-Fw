@@ -51,7 +51,8 @@ planner::Planner  plannerRing;
 planner::Executor plannerExec;
 spin_lock_t*      plannerLock     = nullptr;
 volatile bool     plannerActive   = false;
-float             plannerSpm[2]   = {0, 0};
+float             plannerSpm[4]   = {0, 0, 0, 0};
+int64_t           plannerTurnQ32  = 0;
 volatile bool     resumeRequested = false;
 
 // Soft-Reset Handshake Flags

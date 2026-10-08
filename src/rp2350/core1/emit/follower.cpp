@@ -1,6 +1,6 @@
 // follower.cpp — planner motion on Core 1.
 //
-// A 20 µs slot loop. Every slot, the X and Y position followers (Q32.32 step
+// A 20 µs slot loop. Every slot, the X, Y, Z and A position followers (Q32.32 step
 // accumulators, seed §13) advance by their increment and one stream byte goes
 // out, steps or not. Every 50 slots the executor ticks 1 ms ahead, and each
 // follower's increment is set to reach that position by the next tick; what a
@@ -16,7 +16,7 @@
 // inlined, and lib/planner's tick path is placed by PLANNER_RAM (platformio.ini).
 //
 // Stream byte: bit 2n = step, bit 2n+1 = dir (1 = positive), for slot n.
-// X is slot 0 and Y slot 1, as machinePos.
+// X, Y, Z, A are slots 0 to 3, as machinePos; Z and A are the selected head's.
 
 #include <Arduino.h>
 #include "../../ipc/shared_state.h"
@@ -119,8 +119,8 @@ void __time_critical_func(processPlanner)() {
 
     // Followers start where Core 1 last emitted. The half step makes a step fall
     // where the target crosses a half, so position rounds to the nearest step.
-    int64_t accum[2], inc[2] = {0, 0};
-    for (int i = 0; i < 2; i++) accum[i] = (int64_t)machinePos[i] * kOne + kHalf;
+    int64_t accum[4], inc[4] = {0, 0, 0, 0};
+    for (int i = 0; i < 4; i++) accum[i] = (int64_t)machinePos[i] * kOne + kHalf;
 
     // A jog never pauses: a late adoption holds it, then it runs on.
     const bool jog = machineState == STATE_JOGGING;
@@ -132,15 +132,15 @@ void __time_critical_func(processPlanner)() {
 
     for (;;) {
         uint8_t streamByte = 0;
-        bool stepped[2] = {false, false};
-        for (int i = 0; i < 2; i++) {
+        uint8_t stepped = 0;   // bit i: slot i stepped
+        for (int i = 0; i < 4; i++) {
             if (inc[i] == 0) continue;
             const int32_t before = stepOf(accum[i]);
             accum[i] += inc[i];
             if (inc[i] > 0) streamByte |= 1u << (2 * i + 1);
             if (stepOf(accum[i]) != before) {
                 streamByte |= 1u << (2 * i);
-                stepped[i] = true;
+                stepped |= 1u << i;
             }
         }
 
@@ -149,8 +149,8 @@ void __time_critical_func(processPlanner)() {
         }
         t0 += kSlotCycles;
         rs485.writeStream(streamByte);
-        for (int i = 0; i < 2; i++)
-            if (stepped[i]) machinePos[i] = stepOf(accum[i]);
+        for (int i = 0; i < 4; i++)
+            if (stepped & (1u << i)) machinePos[i] = stepOf(accum[i]);
 
         if (machineState == STATE_ESTOP) return;
 
@@ -194,9 +194,13 @@ void __time_critical_func(processPlanner)() {
 
         inc[0] = incrementFor(toQ32(pos.x * plannerSpm[0]) + kHalf - accum[0]);
         inc[1] = incrementFor(toQ32(pos.y * plannerSpm[1]) + kHalf - accum[1]);
+        inc[2] = incrementFor(toQ32(pos.z * plannerSpm[2]) + kHalf - accum[2]);
+        inc[3] = incrementFor(toQ32(pos.a * plannerSpm[3]) + (int64_t)pos.turns * plannerTurnQ32
+                              + kHalf - accum[3]);
 
         // At rest only once the followers have caught up with the executor.
-        const bool settled = inc[0] == 0 && inc[1] == 0 && plannerExec.speed() == 0;
+        const bool settled = inc[0] == 0 && inc[1] == 0 && inc[2] == 0 && inc[3] == 0 &&
+                             plannerExec.speed() == 0;
         if (!settled) continue;
         const Executor::State st = plannerExec.state();
         if (aborting) {
