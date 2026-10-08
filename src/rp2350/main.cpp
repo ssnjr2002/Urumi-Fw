@@ -53,6 +53,7 @@ spin_lock_t*      plannerLock     = nullptr;
 volatile bool     plannerActive   = false;
 float             plannerSpm[4]   = {0, 0, 0, 0};
 int64_t           plannerTurnQ32  = 0;
+PlannerMesh       plannerMesh     = {nullptr, 0, 0, 0};
 volatile bool     resumeRequested = false;
 
 // Soft-Reset Handshake Flags

@@ -17,6 +17,7 @@ enum PlannerQueueResult : uint8_t {
     PQ_FULL,        // the ring is full; try again as it drains
     PQ_BAD_CURVE,   // a degenerate handle, a cusp, or an unfittable curve
     PQ_NO_FEED,     // a record before any `feed`
+    PQ_SOFT_LIMIT,  // the bed mesh would take Z outside its soft range
 };
 
 namespace planner { struct Bezier; }
@@ -24,6 +25,9 @@ namespace planner { struct Bezier; }
 // Queue a straight move to (x, y) in machine mm at `feed` mm/s. On an empty,
 // idle ring the move starts from machinePos.
 // `reason` is the JoggingReason it runs as; it joins only a ring of that kind.
+// A continuous jog ends where the bed mesh would take Z outside its soft range;
+// any other XY move is refused there (PQ_SOFT_LIMIT), as are Béziers and
+// records.
 PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason);
 
 // Queue a move of slot k (SLOT_Z or SLOT_A) by `d` mm or degrees from where the

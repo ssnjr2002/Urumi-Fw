@@ -226,6 +226,7 @@ static void acceptBezier() {
         case PQ_OK:        break;
         case PQ_FULL:      sendNack(MSEG_NACK_FULL);      return;
         case PQ_BAD_CURVE: sendNack(MSEG_NACK_BAD_CURVE); return;
+        case PQ_SOFT_LIMIT: sendNack(MSEG_NACK_SOFT_LIMIT); return;
         default:           sendNack(MSEG_NACK_BAD_STATE); return;   // state, config, limits, feed
     }
     expectedSeq++;
@@ -376,6 +377,7 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
         d[2] != 0 ? plannerQueueAxis(SLOT_Z, d[2] * run, feed, JOGGING_CONT)
       : d[3] != 0 ? plannerQueueAxis(SLOT_A, d[3] * run, feed, JOGGING_CONT)
       : plannerQueueLine(at[0] + d[0] * run, at[1] + d[1] * run, feed, JOGGING_CONT);
+    if (r == PQ_SOFT_LIMIT) return MSEG_NACK_SOFT_LIMIT;   // the mesh leaves Z no room
     if (r != PQ_OK) return MSEG_NACK_BAD_STATE;
     for (uint8_t k = 0; k < 4; k++) cjogDir[k] = d[k];
     cjogSpeed = speed;

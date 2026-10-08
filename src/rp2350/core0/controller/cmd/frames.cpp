@@ -5,6 +5,7 @@
 //   wzero [x] [y] [z]        work offset = the selected tip here (bare: all)
 //   wset <axis> <v> …        work offset in machine units
 //   wclear                   work offset back to the config's `work` block
+//   mesh on|off              the bed mesh, from the next ring start
 
 #include <Arduino.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #include "../../config/machine_cfg.h"
 #include "../../ops/axes_map.h"
 #include "../../ops/frames.h"
+#include "../../ops/mesh.h"
 #include "../../ops/position.h"
 #include "../../../ipc/shared_state.h"
 
@@ -126,8 +128,11 @@ bool cmdWzero(const char* args) {
         if (!framesMPos(k, &tip[k])) { Serial.println("err no_head"); return true; }
         tip[k] += k == SLOT_X ? dx : k == SLOT_Y ? dy : 0;
     }
-    for (uint8_t k = 0; k < 3; k++)
+    // XY first: the mesh's offset is relative to the new work origin. Z is
+    // stored flat, so a Z zeroed away from the origin is not corrected twice.
+    for (uint8_t k = 0; k < 2; k++)
         if (want[k]) framesSetWork(k, tip[k]);
+    if (want[SLOT_Z]) framesSetWork(SLOT_Z, tip[SLOT_Z] - framesMeshOffset());
     Serial.println("ok");
     return true;
 }
@@ -162,6 +167,15 @@ bool cmdWclear(const char* args) {
     if (framesGateDenies()) return true;
     if (*args != '\0') { Serial.println("err usage"); return true; }
     framesClearWork();
+    Serial.println("ok");
+    return true;
+}
+
+bool cmdMesh(const char* args) {
+    if (framesGateDenies()) return true;
+    const bool on = strcmp(args, "on") == 0;
+    if (!on && strcmp(args, "off") != 0) { Serial.println("err usage"); return true; }
+    meshEnable(on);
     Serial.println("ok");
     return true;
 }

@@ -12,6 +12,7 @@
 #include "../ops/homing.h"
 #include "../ops/probe.h"
 #include "../ops/frames.h"
+#include "../ops/mesh.h"
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
 
@@ -32,6 +33,10 @@ struct Snap {
     bool     mposOk[4], wposOk[4];
     uint8_t  head;
     uint32_t late;
+    uint8_t  meshFile;
+    bool     meshOn;
+    uint16_t meshNx, meshNy;
+    float    meshSlope;
 #ifdef DEBUG_TIMING
     uint32_t texp, tmeas, twall;
 #endif
@@ -62,6 +67,11 @@ void takeSnap(Snap& s) {
     }
     s.head = framesSelected();
     s.late = plannerExec.lateAdoptions();
+    s.meshFile = meshFile();
+    s.meshOn   = meshEnabled();
+    s.meshNx   = meshNx();
+    s.meshNy   = meshNy();
+    s.meshSlope = meshSlope();
 #ifdef DEBUG_TIMING
     s.texp  = jobExpectedUs;
     s.tmeas = jobMeasuredUs;
@@ -94,6 +104,14 @@ KeyResult fmtUnits(char* out, size_t n, const float* v, const bool* ok) {
         at += ok[i] ? snprintf(out + at, n - at, "%s%.3f", sep, v[i])
                     : snprintf(out + at, n - at, "%s-", sep);
     }
+    return KEY_OK;
+}
+
+KeyResult fmtMesh(char* out, size_t n, const Snap& s) {
+    if (s.meshFile == MESH_FILE_ABSENT) snprintf(out, n, "flat");
+    else if (s.meshFile == MESH_FILE_BAD) snprintf(out, n, "bad");
+    else if (!s.meshOn) snprintf(out, n, "off");
+    else snprintf(out, n, "%ux%u", s.meshNx, s.meshNy);
     return KEY_OK;
 }
 
@@ -151,6 +169,12 @@ const Key kKeys[] = {
         return fmtU(o, n, s.head); } },
     // Planner blocks Core 1 found late, since boot; each held the motion briefly.
     { "late",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.late); } },
+    // The bed mesh: <nx>x<ny> loaded and on, off, flat (no file) or bad.
+    { "mesh",      [](const Snap& s, char* o, size_t n) { return fmtMesh(o, n, s); } },
+    // Its steepest slope between neighbouring points, mm/mm.
+    { "meshslope", [](const Snap& s, char* o, size_t n) {
+        if (s.meshFile != MESH_FILE_OK) return KEY_NA;
+        snprintf(o, n, "%.5f", s.meshSlope); return KEY_OK; } },
 #ifdef DEBUG_TIMING
     // Expected vs measured duration (us) of the last completed burst, and its
     // wall time including any pause inside it. tmeas > texp: Core 1 fell behind.

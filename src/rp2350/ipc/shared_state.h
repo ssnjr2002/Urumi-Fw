@@ -5,6 +5,7 @@
 #include "hardware/sync.h"
 #include <planner/executor.h>
 #include <planner/planner.h>
+#include <planner/mesh.h>
 
 // shared_state.h — channels 2 and 3 of the core boundary.
 //
@@ -359,6 +360,9 @@ extern volatile bool    streamIsJog;
 //   many turns it has made.
 // joggingReason — which kind owns the ring; set by Core 0 with that reset,
 //   under the lock.
+// plannerMesh — the bed mesh for this ring (core0/ops/mesh.h), latched by
+//   Core 0 with that reset: Core 1 adds meshAt(*mesh, pos + tip) − ref to Z.
+//   `mesh` is null while the mesh is inactive.
 // resumeRequested — `resume` of a held planner job; Core 1 replans from where
 //   it stopped and returns to RUNNING. Set and cleared under the lock.
 extern planner::Planner  plannerRing;
@@ -367,6 +371,12 @@ extern spin_lock_t*      plannerLock;
 extern volatile bool     plannerActive;
 extern float             plannerSpm[4];
 extern int64_t           plannerTurnQ32;
+struct PlannerMesh {
+    const planner::Mesh* mesh;
+    float tipX, tipY;   // mm, anchor to tip
+    float ref;          // mm, the height at the work origin
+};
+extern PlannerMesh       plannerMesh;
 extern volatile bool     resumeRequested;
 
 // Soft-Reset Handshake Flags

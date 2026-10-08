@@ -17,6 +17,9 @@
 //
 // Stream byte: bit 2n = step, bit 2n+1 = dir (1 = positive), for slot n.
 // X, Y, Z, A are slots 0 to 3, as machinePos; Z and A are the selected head's.
+//
+// The planner's Z is flat: the bed mesh latched for this ring (plannerMesh) is
+// added to Z's target at the tip, each tick.
 
 #include <Arduino.h>
 #include "../../ipc/shared_state.h"
@@ -124,6 +127,7 @@ void __time_critical_func(processPlanner)() {
 
     // A jog never pauses: a late adoption holds it, then it runs on.
     const bool jog = machineState == STATE_JOGGING;
+    const PlannerMesh mesh = plannerMesh;
     bool holding = false, aborting = false, lateHold = false;
     uint32_t late = plannerExec.lateAdoptions();
     int slot = 0;
@@ -194,7 +198,9 @@ void __time_critical_func(processPlanner)() {
 
         inc[0] = incrementFor(toQ32(pos.x * plannerSpm[0]) + kHalf - accum[0]);
         inc[1] = incrementFor(toQ32(pos.y * plannerSpm[1]) + kHalf - accum[1]);
-        inc[2] = incrementFor(toQ32(pos.z * plannerSpm[2]) + kHalf - accum[2]);
+        float z = pos.z;
+        if (mesh.mesh) z += planner::meshAt(*mesh.mesh, pos.x + mesh.tipX, pos.y + mesh.tipY) - mesh.ref;
+        inc[2] = incrementFor(toQ32(z * plannerSpm[2]) + kHalf - accum[2]);
         inc[3] = incrementFor(toQ32(pos.a * plannerSpm[3]) + (int64_t)pos.turns * plannerTurnQ32
                               + kHalf - accum[3]);
 

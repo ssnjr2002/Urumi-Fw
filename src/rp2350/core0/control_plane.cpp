@@ -84,6 +84,7 @@ static const Cmd kControllerCommands[] = {
     { "wzero",        cmdWzero       },
     { "wset",         cmdWset        },
     { "wclear",       cmdWclear      },
+    { "mesh",         cmdMesh        },
 };
 
 template <size_t N>

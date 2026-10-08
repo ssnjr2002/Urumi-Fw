@@ -18,3 +18,4 @@ bool cmdSelect(const char*);
 bool cmdWzero(const char*);
 bool cmdWset(const char*);
 bool cmdWclear(const char*);
+bool cmdMesh(const char*);

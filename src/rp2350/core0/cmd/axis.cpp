@@ -594,7 +594,8 @@ static bool parseFloats(const char* args, float* out, int n) {
 }
 
 static void replyQueued(PlannerQueueResult r) {
-    static const char* const kErr[] = {"", "bad_state", "unconfigured", "no_limits", "full", "bad_curve", "no_feed"};
+    static const char* const kErr[] = {"", "bad_state", "unconfigured", "no_limits", "full", "bad_curve",
+                                       "no_feed", "soft_limit z"};
     if (r == PQ_OK) Serial.printf("ok %d\n", plannerQueueDepth());
     else Serial.printf("err %s\n", kErr[r]);
 }

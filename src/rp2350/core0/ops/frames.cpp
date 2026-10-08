@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <math.h>
 #include "frames.h"
+#include "mesh.h"
 #include "position.h"
 #include "../config/machine_cfg.h"
 #include "../../ipc/shared_state.h"
@@ -157,8 +158,15 @@ bool framesWPos(uint8_t k, float* out) {
     }
     float dx = 0, dy = 0;
     if (k != SLOT_Z && !framesTipOffset(&dx, &dy)) return false;
+    if (k == SLOT_Z) m -= framesMeshOffset();
     *out = m + (k == SLOT_X ? dx : k == SLOT_Y ? dy : 0) - framesWork(k);
     return true;
+}
+
+float framesMeshOffset(void) {
+    float x, y, dx, dy;
+    if (!framesTipOffset(&dx, &dy) || !framesMPos(SLOT_X, &x) || !framesMPos(SLOT_Y, &y)) return 0;
+    return meshOffsetAt(x + dx, y + dy);
 }
 
 const char* framesToMachine(float wx, float wy, float* mx, float* my) {

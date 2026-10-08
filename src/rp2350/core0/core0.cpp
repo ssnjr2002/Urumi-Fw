@@ -13,6 +13,7 @@
 #include "hardware/sync.h"
 #include "control_plane.h"
 #include "ops/position.h"
+#include "ops/mesh.h"
 #include "ops/slot_map.h"
 #include "ops/bus.h"
 #include "ops/state.h"
@@ -73,6 +74,7 @@ void setup() {
     plannerLock = spin_lock_instance(spin_lock_claim_unused(true));
     while (!Serial && millis() < 10000) {}
     configStoreInit();   // mount LittleFS, verify /config.bin into g_cfg
+    meshInit();          // /mesh.bin into RAM
     machineCfgLoad();    // decode it; the axis map follows once Core 1 runs
 }
 

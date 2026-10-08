@@ -52,9 +52,13 @@ uint8_t framesZHead(void);
 // (an unbound Z/A).
 bool framesMPos(uint8_t k, float* out);
 
-// Work position of slot k, units: tip − work offset on X/Y/Z; on A, MPos
-// folded to (−180, 180]. False as framesMPos, or X/Y with no selection.
+// Work position of slot k, units: tip − work offset on X/Y/Z, Z less the bed
+// mesh; on A, MPos folded to (−180, 180]. False as framesMPos, or X/Y with no
+// selection.
 bool framesWPos(uint8_t k, float* out);
+
+// The bed mesh's offset at the selected tip now, mm (0 while inactive).
+float framesMeshOffset(void);
 
 // The config of the axis on slot k: X, Y, or the head bound to Z or A. Null
 // without a config or a head on that slot.

@@ -10,6 +10,7 @@
 #include "gate.h"
 #include "../ops/position.h"
 #include "../ops/frames.h"
+#include "../ops/mesh.h"
 #include "../ops/homing.h"
 #include "../ops/bus.h"
 #include "../status.h"                  // getBufCount (status alias)
@@ -69,6 +70,10 @@ bool cmdStatus(const char*) {
             else    Serial.print('-');
         }
     }
+    if (meshFile() == MESH_FILE_ABSENT)   Serial.print(" mesh=flat");
+    else if (meshFile() == MESH_FILE_BAD) Serial.print(" mesh=bad");
+    else if (!meshEnabled())              Serial.print(" mesh=off");
+    else                                  Serial.printf(" mesh=%ux%u", meshNx(), meshNy());
     Serial.println();
     return true;
 }
