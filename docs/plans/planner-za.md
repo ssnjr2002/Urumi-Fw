@@ -368,7 +368,8 @@ Not started.
 
 ### Status
 
-Ready to merge.
+Done: merged to `main`. Unblocks the motion-sessions job branch (lift
+insertions), then branch 3.
 
 ### Outcome
 
