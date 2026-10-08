@@ -22,13 +22,14 @@ PLANNER_RAM static Pos pointAt(const Block& b, float s) {
     const float g = b.s0 + s;
     Pos p = b.origin;
     if (b.kind == Block::BEZIER) p.setXy(bezierPoint(b.bez, bezierT(b.bez, g)));
+    else if (b.path.axes == AXES_Z) p.z += b.path.dir_start.x * g;
+    else if (b.path.axes == AXES_A) p.addA(b.path.dir_start.x * g);
     else p.setXy({b.origin.x + b.path.dir_start.x * g, b.origin.y + b.path.dir_start.y * g});
     return p;
 }
 
 PLANNER_RAM void Executor::finishBlock(Planner& p) {
-    pos_ = cur_->origin;
-    pos_.setXy(cur_->path.end);
+    pos_ = cur_->target;
     p.release();
     cur_ = nullptr;
     has_next_ = false;

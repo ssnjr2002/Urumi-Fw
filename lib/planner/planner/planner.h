@@ -50,6 +50,7 @@ struct Block {
     Path path;                 // length is what remains after s0
     float s0 = 0;              // mm of the geometry already run (a resume trim)
     Pos origin;                // start point
+    Pos target;                // end point
     Bezier bez;                // BEZIER: the curve
     float max_entry_sqr = 0;   // junction limit with the previous block
     float entry_sqr = 0;       // committed plan
@@ -73,10 +74,17 @@ public:
     void reset(Pos pos);
 
     /**
-     * Queue a line from the end of the last one to `target`. Returns false if
-     * the ring is full. A zero-length move queues nothing and returns true.
+     * Queue a line from the end of the last one to `target`, moving one axis
+     * set (axesOf). Returns false if the ring is full or the line mixes sets.
+     * A zero-length move queues nothing and returns true.
      */
-    bool pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation);
+    bool pushMove(const Pos& target, float feed, const AxisLimits& limits, float deviation);
+    /** An XY line; Z and A stay where the last block ends. */
+    bool pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
+        Pos to = end_;
+        to.setXy(target);
+        return pushMove(to, feed, limits, deviation);
+    }
     /** Queue an analysed Bézier; `b.p[0]` must be end(). False if full. */
     bool pushBezier(const Bezier& b, float feed, const AxisLimits& limits, float deviation);
 
@@ -121,7 +129,7 @@ public:
 private:
     int index(int i) const { return (tail_ + i) % kSize; }
     int firstUnclaimed() const { return claimed_ ? 1 : 0; }
-    bool pushBlock(Block::Kind kind, const Path& path, float deviation);
+    bool pushBlock(Block::Kind kind, const Path& path, const Pos& target, float deviation);
     void clearOffer();
 
     Block ring_[kSize];

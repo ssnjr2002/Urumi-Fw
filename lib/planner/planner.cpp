@@ -23,23 +23,34 @@ PLANNER_RAM void Planner::clearOffer() {
     staged_flag_ = false;
 }
 
-bool Planner::pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
-    const Line ln = makeLine(end_.xy(), target, feed, limits);
-    if (ln.length <= 0) return true;
-    if (full()) return false;
-    return pushBlock(Block::LINE, pathOf(ln), deviation);
+bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, float deviation) {
+    const Axes axes = axesOf(end_, target);
+    if (axes == AXES_NONE) return true;
+    if (axes == AXES_MIXED || full()) return false;
+    Path path;
+    if (axes == AXES_XY) {
+        const Line ln = makeLine(end_.xy(), target.xy(), feed, limits);
+        if (ln.length <= 0) return true;
+        path = pathOf(ln);
+    } else {
+        path = axisPath(axes, axes == AXES_Z ? target.z - end_.z : target.aSince(end_), feed, limits);
+    }
+    return pushBlock(Block::LINE, path, target, deviation);
 }
 
 bool Planner::pushBezier(const Bezier& bz, float feed, const AxisLimits& limits, float deviation) {
     if (full()) return false;
     ring_[index(count_)].bez = bz;
-    return pushBlock(Block::BEZIER, pathOf(bz, feed, limits), deviation);
+    Pos to = end_;
+    to.setXy(bz.p[3]);
+    return pushBlock(Block::BEZIER, pathOf(bz, feed, limits), to, deviation);
 }
 
-bool Planner::pushBlock(Block::Kind kind, const Path& path, float deviation) {
+bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, float deviation) {
     Block& b = ring_[index(count_)];
     b.kind = kind;
     b.origin = end_;
+    b.target = target;
     b.path = path;
     b.s0 = 0;
     b.max_entry_sqr = count_ > 0
@@ -53,7 +64,7 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, float deviation) {
 
     count_++;
     epoch_++;
-    end_.setXy(path.end);
+    end_ = target;
     return true;
 }
 

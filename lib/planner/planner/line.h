@@ -25,6 +25,9 @@ Line makeLine(Vec2 p0, Vec2 p1, float feed, const AxisLimits& limits);
 
 Path pathOf(const Line& ln);
 
+/** A Z or A move of `d` (mm or deg, signed), capped by that axis. */
+Path axisPath(Axes axes, float d, float feed, const AxisLimits& limits);
+
 /** Highest squared speed through the corner from `prev` into `next`. */
 float junctionMaxSqr(const Line& prev, const Line& next, float deviation);
 
