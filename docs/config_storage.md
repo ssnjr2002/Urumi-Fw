@@ -27,6 +27,7 @@ flash top ┌──────────────────────�
           ├────────────────────────┤ _FS_end   0x103FF000
           │ LittleFS (128 KB)      │
           │   /config.bin          │
+          │   /mesh.bin (optional) │
           │   /config.tmp (during  │
           │    a write only)       │
           ├────────────────────────┤ _FS_start 0x103DF000
@@ -72,6 +73,32 @@ generated and gitignored; keep nothing else in `data/`, since all of it is
 packed. `uploadfs` replaces the filesystem, so it overwrites a config pushed
 since; a plain `upload` leaves the filesystem alone. Needs pnpm on PATH and
 `pnpm install` run in `web/`.
+
+### /mesh.bin
+
+The bed mesh (wire_protocol.md, "Bed mesh"), read once at boot. Absent: no
+mesh; unreadable: none either, and `get mesh` says `bad`.
+
+```
+[0..27]   header   (28 bytes)
+[28..]    z        nx × ny int16, µm, + up; rows by y, each a column per x
+[end-4..] crc32    u32 over everything before it
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `magic` | u32 | `0x4853454D` ("MESH") |
+| `version` | u16 | =1 |
+| `nx`, `ny` | u16 | Columns and rows, each ≥ 2, nx × ny ≤ 16384 |
+| `_pad` | u16 | 0 |
+| `x0`, `y0` | f32 | First point, tip machine coordinates, mm |
+| `dx`, `dy` | f32 | Spacing, mm, > 0 |
+
+`uploadfs` writes it from `custom_mesh_json` in `env:pico` (a JSONC file in
+`config/`, e.g. `config/mesh-bench.jsonc`), through `web/scripts/mesh-image.ts`
+into the generated, gitignored `data/mesh.bin`. Without `custom_mesh_json`
+a stale `data/mesh.bin` is removed, so the image carries no mesh. Whether the
+Pico follows it at boot is the config's `machine.meshOn`.
 
 ---
 

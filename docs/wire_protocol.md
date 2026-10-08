@@ -128,7 +128,9 @@ run stops them first, the same way; a step jog during a continuous jog is
 refused. Speed changes while holding are ignored. No seq; the abort barrier
 does not apply.
 
-NACKs: `NACK_SOFT_LIMIT` (0x09) = no room left in that direction;
+NACKs: `NACK_SOFT_LIMIT` (0x09) = no room left in that direction, or the bed
+mesh would take Z out of its soft range at once (an X/Y jog otherwise ends
+where Z would leave it, see "Bed mesh");
 `NACK_MIXED_AXES` (0x0A) = directions in more than one axis set;
 `NACK_BAD_STATE` (0x06) = a bad direction or speed, not IDLE or jogging,
 unhomed without `jogUnhomed`, or no config.
@@ -165,7 +167,8 @@ say — what a tool does at a flag is tool-profile scope.
 subtracts the selected head's offset (docs/plans/coordinate-system.md), a
 translation that leaves the analysed fields as sent. With no head selected the
 record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
-with `softLimits` is `NACK_SOFT_LIMIT`.
+with `softLimits` is `NACK_SOFT_LIMIT`, as is a record (or its travel line)
+along which the bed mesh would take Z out of its soft range.
 
 Records are refused (`NACK_BAD_STATE`) until `feed` has set the cut and travel
 feeds, and while the planner ring holds jogs (JOGGING, or jogs queued in IDLE).
@@ -314,7 +317,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_CONFIG_MISMATCH` | `0x05` | MCFG header CRC32 disagrees with Pico flash |
 | `MSEG_NACK_BAD_STATE` | `0x06` | Command rejected — wrong machine state |
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
-| `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset; a continuous jog with no room left in its direction |
+| `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset, or a record the bed mesh would take Z out of range on; a continuous jog with no room left in its direction |
 | `MSEG_NACK_MIXED_AXES` | `0x0A` | Continuous jog with directions in more than one axis set (XY, Z, A) |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
@@ -360,7 +363,7 @@ prefixed `0x`.
 | `bus_exclude` | `<id> …` | `ok` / `err not_mute` / `err bad_node` / `err usage` | Run without mute nodes (those the boot sweep could not make safe). Commands to an excluded node then answer `excluded` (make-safe exempt) until the next `reset`. With no unexcluded mute node left, `ALARM_BUS_DEGRADED` → IDLE, unmapped. Any state |
 | `uncfg` | — | `ok` / `err bad_state` | Builds with `PICO_ALLOW_UNCONFIGURED` only. Leave `ALARM_CONFIG` → IDLE (or the next alarm), unconfigured; the stored file is kept and ignored until power-off. The other way out is a `CFG_SET` commit |
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved). `err estop` in `ALARM_ESTOP`: use `unstop` |
-| `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico as a jog (state JOGGING). `<depth>` = blocks queued. IDLE, or JOGGING; `bad_state` while the ring holds a streamed job. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`. No homing check |
+| `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico as a jog (state JOGGING). `<depth>` = blocks queued. IDLE, or JOGGING; `bad_state` while the ring holds a streamed job. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`; `soft_limit z` = the bed mesh would take Z out of its soft range along the move. No homing check |
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, work mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line`, on every handle |
 | `jog` | `<x\|y\|z\|a> <dist> [scale]` | `ok <depth>` / `err usage\|unconfigured\|no_head\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit <axis> <mm>` (and `line`'s queue errors) | Step jog: move one axis by `dist` machine mm (A: degrees) from where the queued jogs end; Z and A are the selected head's (`no_head` with none bound), as a jog (state JOGGING). Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel` (one turn on A). A has no soft range. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction |
 | `jogto` | `<x> <y>` | `ok <depth>` / `err usage\|unconfigured\|not_homed\|no_head\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>` (and `line`'s queue errors) | Jog to work mm (x, y) as a jog (state JOGGING), at the slower of X's and Y's `jogFeed`. X and Y must be homed. Joins, caps and refuses at the soft range as `jog` |
@@ -368,6 +371,7 @@ prefixed `0x`.
 | `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM |
 | `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
 | `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset back to the config's `work` block |
+| `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again. IDLE/PAUSED/ALARM. See "Bed mesh" |
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot; records are refused until it is sent. The `TOOL` record replaces it |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
@@ -402,6 +406,8 @@ pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on ho
 mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
 wpos=<x>,<y>,<z>,<a> work position: selected tip − work offset; A folded to (−180, 180]; X/Y `-` with no head
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
+mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)
+meshslope=<s>        its steepest slope between neighbouring points, mm/mm  (`-` without a loaded mesh)
 late=<n>             planner blocks Core 1 found late, since boot; a job lands PAUSED, a jog holds and runs on
 texp= tmeas= twall=           DEBUG_TIMING builds only: last burst's expected, measured and wall time (us)
 ```
@@ -412,6 +418,25 @@ This is the read the host polls during pre-flight and the PAUSE choreography to
 know what is blocking a resume. (It is the Phase 1 subset of what the Phase 2
 `CMD_HANDSHAKE` also reports — minus `config_crc32`.) Fields are key=value so
 the host parser tolerates later additions.
+
+---
+
+### Bed mesh
+
+`/mesh.bin` (docs/config_storage.md) is a grid of bed heights the selected
+tip's Z follows, once X, Y and Z are homed and `mesh on` (boot: the config's
+`meshOn`). Every move follows it, jogs included.
+
+* The offset is mesh(tip) − mesh(work origin XY), added to Z by Core 1 as X
+  and Y move. Outside the grid the edge value carries on.
+* `mpos` Z is the actual Z; `wpos` Z leaves the offset out, so it stays put
+  over a flat-cut job. `wzero z` stores the flat Z.
+* The tip, work origin and on/off are latched when a move starts from rest;
+  `mesh`, `select` and `wzero` take effect from the next one.
+* Each X/Y block is checked before it is queued: one along which Z would
+  leave its soft range is refused (`err soft_limit z`, `NACK_SOFT_LIMIT`); a
+  held jog instead ends there. The rest are slowed so Z keeps up with its
+  `maxFeed` and `maxAccel`.
 
 ---
 
