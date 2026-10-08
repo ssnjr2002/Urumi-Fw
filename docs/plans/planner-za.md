@@ -115,12 +115,19 @@ A dependent chain, one session: 1, 2, then 3 → 3b, and 4 after 2 (beside 3).
   * `makeLine` caps per axis over 2 (`line.cpp:23`); `pathOf` takes
     `min(max_feed[0], max_feed[1])` (`bezier.cpp:194`).
 * Scope:
-  1. A 4-axis position (X, Y, Z, A) for block ends, the executor's output and
-     `reset`; `AxisLimits` over 4. XY geometry (Bézier control points,
-     tangents, curvature) stays `Vec2`.
-  2. Callers in `core0/planner/queue.cpp` (`:27` `admit`, `:54`, `:182`) and
-     `core1/emit/follower.cpp:195` pass and take the wider types, using X and
-     Y only.
+  1. A position type for block ends (`Block::origin`, `Path::end`), the
+     executor's output and `reset`/`end`:
+     `struct Pos { float x, y, z; float a; Vec2 xy() const; void setXy(Vec2); }`
+     (mm; A in deg). Not a vector: its units are mixed and no maths runs
+     across all four. `AxisLimits` over 4. XY geometry (Bézier control
+     points, tangents, curvature) stays `Vec2`; Z and A pass through
+     unchanged.
+  2. Callers pass and take the wider types, using X and Y only:
+     `core0/planner/queue.cpp` (`:27` `admit`, `:54`, `:182`),
+     `core1/emit/follower.cpp:183`, `core0/cmd/lifecycle.cpp:116`,
+     `core1/core1.cpp:49`, `core0/core0.cpp:140`.
+  3. Tests reach XY through `.xy()` (`test_executor.cpp`, `test_bezier.cpp`);
+     what they check is unchanged.
 * Out of scope: any Z or A motion.
 * Overlap: `lib/planner/`.
 * Checks: `pio run -e pico`, `pio test -e native`.
