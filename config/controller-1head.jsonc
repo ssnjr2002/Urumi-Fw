@@ -89,7 +89,7 @@
         "stepsPerUnit": 1200,
         "maxFeed": 20,
         "maxAccel": 500,
-        "maxTravel": 36,         // estimate
+        "maxTravel": 50,         // abs(-66530 / 1200) - 4 = 51.44, rounded to 50
         "softLimits": true,
         "invert": false,         // web only
         "invertDir": true,       // derived, unconfirmed
@@ -109,7 +109,7 @@
           "rampSteps": 400,
           "backoffDist": 4,
           "pullOffDist": 4,
-          "parkPos": 0           // ISO: 0 at the top, range [-36, 0]
+          "parkPos": 0           // ISO: 0 at the top, range [-50, 0]
         }
       },
       "a": {
