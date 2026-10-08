@@ -134,7 +134,18 @@ A dependent chain, one session: 1, 2, then 3 → 3b, and 4 after 2 (beside 3).
 
 ### Status
 
-Not started.
+Done.
+
+### Outcome
+
+* `Path::end` stays `Vec2`: `Path` is geometry (junctions read it). A
+  block's Z and A live in `Block::origin`, now set for Béziers too; block
+  ends take XY from `Path::end` and Z, A from `origin`.
+* `admit` fills limits for X and Y only; Z and A stay 0 until branch 2.
+* Found, out of scope: PlatformIO reports doctest suites that pass as
+  SKIPPED, because it parses only the per-case blocks doctest prints for
+  failures; a case-per-block doctest reporter in `test/main.cpp` would fix
+  it. `test/main.cpp:2` still says "motion suite".
 
 ## Branch 2: `feature/planner-za`
 
