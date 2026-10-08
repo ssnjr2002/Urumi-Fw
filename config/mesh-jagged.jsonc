@@ -1,0 +1,29 @@
+// A bench bed mesh you can see: a 10 mm checkerboard of peaks and pits on a
+// 100 mm grid, so a straight XY move along a grid line rides a sawtooth.
+// Flash it by pointing `custom_mesh_json` at this file. Not a measured bed.
+//
+// Tip machine coordinates, mm. z holds rows by y (y0, y0 + dy, …), each a
+// column per x (x0, x0 + dx, …); heights + up. Outside the grid the edge
+// value carries on.
+//
+// Peaks (0) where the column + row index is even, pits (-10) where it is
+// odd. The offset is measured from the work origin's height, so with the
+// origin off a peak Z rises over the peaks: lower Z 10 mm before jogging
+// from park, or the soft range stops the jog.
+{
+  "x0": 0,
+  "y0": 0,
+  "dx": 100,
+  "dy": 100,
+  "z": [
+    [  0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0],  // y 0
+    [-10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10],  // y 100
+    [  0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0],  // y 200
+    [-10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10],  // y 300
+    [  0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0],  // y 400
+    [-10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10],  // y 500
+    [  0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0],  // y 600
+    [-10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10],  // y 700
+    [  0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0, -10,   0]   // y 800
+  ]
+}
