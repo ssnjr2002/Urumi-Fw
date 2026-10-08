@@ -167,17 +167,27 @@ Done.
   * A's `stepsPerUnit` is steps per degree (45.98 in
     `config/controller-1head.jsonc:117`).
 * Scope:
-  1. Line blocks in any subset of axes; junctions as in Decisions, Axes.
+  1. Line blocks moving one axis set: XY (either or both), Z alone or A
+     alone; a line mixing sets is refused (mm and degrees share no length).
+     Junctions as in Decisions, Axes: each `Path` carries its axis set, and
+     a Z or A line's direction is `{±1, 0}`, so the junction formula gives
+     full speed straight on and a stop on a reversal; different sets stop.
   2. Follower: slots 2 and 3 (the selected head's Z and A), `plannerSpm[4]`,
-     seeded from `machinePos`.
-  3. A held as heading plus integer wrap count, step targets absolute
-     (Decisions, A). The wrap interface (re-pick by a whole number of
-     periods) is used by branch 3.
-  4. Step `jog` and `jogto`/continuous jogs accept Z and A (soft range on Z;
-     none on A); `JOG_MAGIC` refused, then removed with its web packer.
-  5. J1b's park of the selected head's Z can become a Z line (the other head
-     keeps its node park).
-  6. Docs: `docs/wire_protocol.md`.
+     seeded from `machinePos`. Z and A limits and steps/unit from the head
+     bound to each slot: `frames.cpp:115` `axisFor` exported.
+  3. `Pos::a` becomes a heading in [0, 360) plus an integer `turns`; the step
+     target is `turns · (360 · spm) + heading · spm` in Q32.32, so A's
+     resolution does not fall with turns (a plain float is past a step after
+     ~1000 turns). Branch 3 re-picks by whole periods within this form.
+  4. Step `jog` and continuous jogs accept Z and A; `jogto` stays XY (J1b
+     decides absolute Z and A). Soft range on Z through `framesCheckMove`,
+     which covers slot 2; none on A. A CJOG
+     packet holding more than one axis set is NACKed `MIXED_AXES` (0x0A);
+     moving from one held set to another still brakes and starts anew.
+     `JOG_MAGIC` refused, then removed with every web use of it
+     (`web/src/operatorJog/`: `makeJog`, `clickJogSource`, `jogClick`,
+     `jogTo`, and their tests); Z and A clicks become `jog z|a`.
+  5. Docs: `docs/wire_protocol.md`.
 * Out of scope: derived Z and A, tools.
 * Overlap: `lib/planner/`, `web/src/wire/`, `src/rp2350/core0/cmd/table.h`.
 * Checks: `pio run -e pico`, `pio test -e native`, `pnpm typecheck`,
