@@ -75,22 +75,67 @@ uses what this plan builds.
 
 ### Mesh
 
-* **Applied to every XY move,** cut and travel, after the executor and before
-  the followers (Marlin and Klipper `bed_mesh` likewise; no fade). Lift and
-  plunge are pure Z lines to (lift height or work Z) + mesh at that point.
+* **Applied to every move, jogs included,** after the executor and before
+  the followers (Marlin and Klipper `bed_mesh` likewise; no fade), once X, Y
+  and Z are homed. Lift and plunge are pure Z lines to (lift height or work
+  Z) + mesh at that point.
+* **One mesh of the bed, looked up at the selected tip** (anchor + head
+  offset), so both heads see the same surface. Probing fills it head by
+  head where each reaches; a constant difference between heads is their
+  work Z.
+* **Relative to the work origin:** the offset is mesh(tip XY) − mesh(work
+  origin XY), a height difference (+ up, as Z). A head's work Z is taught by
+  a touch that already includes the bed there.
+* **The planner's Z is flat; the mesh is a rule, not a state.** Whenever the
+  mesh is active (loaded; X, Y, Z homed): actual Z = flat Z + offset(tip).
+  * Core 1, every tick: Z target = the executor's flat Z + offset(tip now).
+  * Core 0, whenever the ring starts from the motors (`posFromSteps`: the
+    first push after a drain or idle, homing included, and a jog start):
+    flat Z = actual Z − offset(tip now). The first tick then targets where
+    Z already is, so Z never jumps; it follows the change in offset from
+    there.
+  * A hold, resume or abort keeps the executor's flat position; nothing is
+    recomputed.
+  * The offset changing at rest (mesh loaded, homing done, `select`, the
+    work origin moved) moves nothing: the next restart absorbs it.
+* **Work Z is stored flat:** `wzero`/`wset` Z store actual − offset(tip), so
+  a Z zeroed away from the work origin is not corrected twice.
+* **Positions:** `MPos` Z is actual (the motors). `WPos` Z = actual −
+  offset(tip) − work Z, computed on Core 0 from `machinePos` (`frames`);
+  0 is on the material everywhere. `STATUS_RSP` stays steps.
+* **Grid in RAM, read by Core 1 every tick:** a bilinear lookup in RAM-only
+  code (no libm or library calls; casts instead of `floorf`), about 100
+  cycles of the tick's 3000-cycle slot. Core 0 walks each block at push, at
+  about half the grid spacing, for its slope and its Z range.
+* **Upgrade if grids outgrow RAM: a point ring.** Core 0 keeps the grid in
+  flash and, at push, samples each block's offset every Δs (half the grid
+  spacing) into a ring of int16 values beside the block ring; Core 1 reads
+  point s/Δs and its neighbour, and never sees the grid.
+  * Blocks are pushed and released in order, so the points are a FIFO:
+    appended at push, freed at release, cleared with the block ring on an
+    abort or idle reset. No allocator.
+  * A full point ring is a full ring (`PQ_FULL`). 4096 points (8 KB) hold
+    about 20 m of path at Δs 5 mm; look-ahead needs a stopping distance.
+  * Points are keyed by distance along the block's whole geometry, so a
+    block trimmed on resume (`s0`) needs nothing.
+  * RAM stays flat however fine the grid. Only Core 1's source of the
+    offset changes; the push-time walk is the same.
 * **Z limits XY speed** too: v ≤ Z `maxFeed` / |slope| along the block, and
   Z's acceleration from the change of slope (block boundaries included).
   A load-time check reports the worst case; on this bed it should never bind.
+* **Soft range per block:** flat Z plus the mesh's range along the block
+  must stay inside Z's soft range; refused as other soft-limit moves.
 * **Storage: `/mesh.bin` on LittleFS, apart from the config.** Fixed layout,
   so a probe can rewrite one point in place:
 
   ```
   magic, version, nx, ny, x0, y0, dx, dy   (machine frame, mm)
-  float32 z[nx*ny]                          (mm, row-major)
+  int16 z[nx*ny]                            (µm, row-major)
   crc32
   ```
 
-  Bilinear between points. Missing or a bad CRC means flat, reported by `get`.
+  Any nx × ny up to 16384 points (32 KB). Bilinear between points, the edge
+  value outside the grid. Missing or a bad CRC means flat, reported by `get`.
   Written only at rest (no flash writes during motion). Filling it by probing
   (the BLTouch head) is a later plan.
 
@@ -299,16 +344,21 @@ Not started.
   acceleration limits; `/mesh.bin` read at boot.
 * Depends on: branch 2. Runs before branch 3.
 * Scope:
-  1. Mesh added between executor and followers, under XY moves; a lookup
-     of the mesh Z at a point, for the job's lifts and plunges (none exist
-     yet). Jogs stay in machine coordinates, without it.
-  2. Z limits along XY blocks; the load-time worst-case report.
-  3. `/mesh.bin` decode, flat when missing or bad; `get` reports it.
-  4. Web: a `mesh.bin` encoder (for bench meshes until probing exists).
+  1. Mesh added between executor and followers at the selected tip, on
+     every move once X, Y and Z are homed; flat planner Z (restart
+     subtracts it); a lookup of the mesh Z at a point, for the job's lifts
+     and plunges (none exist yet).
+  2. The push-time walk: Z limits along XY blocks, the per-block soft-range
+     check; the load-time worst-case report.
+  3. `/mesh.bin` decode into RAM, flat when missing or bad; `get` reports
+     it; `WPos` Z without the mesh.
+  4. A bench mesh flashed by `uploadfs` (`data/mesh.bin`); its encoder, in
+     the image script or the web, settled in Read.
+  5. Docs: `docs/wire_protocol.md` (`get` keys), the mesh file.
 * Out of scope: probing the mesh.
 * Overlap: `web/src/wire/`.
-* Checks: as branch 2. Human: a tilted test mesh followed on a line and a
-  curve.
+* Checks: as branch 2. Human: a tilted test mesh followed on a line, a
+  curve and a jog; the tick's worst-case cycles with the mesh on and off.
 
 ### Status
 
