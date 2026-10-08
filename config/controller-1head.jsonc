@@ -103,8 +103,8 @@
           "parkMm": 4,           // web only
           "seekPositive": true,  // switch at the top
           "seekScaler": 1.2,
-          "startFeed": 2.5,
-          "seekFeed": 6,
+          "startFeed": 0.3333,   // 2500 us/step at 1200 steps/mm
+          "seekFeed": 1.6667,    // 500 us/step
           "latchFeed": 0.78,
           "rampSteps": 400,
           "backoffDist": 4,
