@@ -196,7 +196,39 @@ Done.
 
 ### Status
 
-Not started.
+Ready to merge.
+
+### Outcome
+
+* An unhomed step jog on A is capped at one turn, and a held A jog at one
+  turn per hold (`CJOG_A_RUN`), for the cabled knife; homed A step jogs are
+  uncapped.
+* `JOG_MAGIC` is NACKed `BAD_STATE`; its 26 bytes are still read so the
+  stream stays in sync.
+* Web, deviating from Scope 4: `jogTo`/`jogToPoint` were ported to `jog`
+  rather than removed (one `jog` per moving axis, then a wait for IDLE), so
+  `jogToPoint` now runs its axes one after another, not as one coordinated
+  move. Later removals delete replaced web code and leave callers broken.
+  `AxisCalibration` gained `invertDir` and `jogFeed`; the host's `invert`
+  and the Pico's `invertDir` disagree on Z.
+* Demo: barebones jogs Z (R/F) and A (Q/E) and selects head 0, 1 or the
+  anchor.
+* Found, out of scope:
+  * `memset` runs from flash: arduino-pico's `memmap_default.ld` keeps
+    `*libc.a:*lib_a-mem*.o` in RAM, but GCC 14.3 names it
+    `libc_a-memset.o`, so the pattern misses. RAM code calling it stalls on
+    XIP.
+  * Dead now that no jog bursts arrive: `streamIsJog`, `RUNNING_JOG` and
+    the paused-jog path (`core1/emit/microsegment.cpp:159-167`, `sim.ts`).
+  * Docs still describing jog bursts: `comms_architecture`,
+    `coordinate_frames_and_limits`, `feed_override`, `PLAN_phase1_host_impl`.
+  * `pnpm lint` fails on `main` too (`axisChars` in `sim.ts` among others).
+  * Bench: with Z `softLimits` false, a held Z jog ran past the top switch;
+    node 3 then reported `limit 1`. Z soft limits are now on, and Z
+    `maxTravel` measured (50) on `main`.
+* Checks: `pio run -e pico`, `pio test -e native` (65 cases), `pnpm
+  typecheck`, `pnpm test` (1072) pass. Human: Z and A jogs on head 1; Z
+  re-checked and re-homed after the overrun.
 
 ## Branch 3: `feature/planner-tangential`
 
