@@ -255,32 +255,43 @@ disconnectBtn.addEventListener('click', async () => {
     syncButtons();
 });
 
-// ── WASD jog ──────────────────────────────────────────────────────────────────
+// ── key jog ───────────────────────────────────────────────────────────────────
 // While the checkbox is ticked, held keys send a continuous-jog packet every
 // JOG_PERIOD_MS (inside the Pico's 150 ms deadman). Releasing every key, or
-// unticking, losing focus or disconnecting, sends the stop byte.
+// unticking, losing focus or disconnecting, sends the stop byte. A packet moves
+// one axis set (XY, Z or A), so the set of the last key pressed wins.
 
 const jogKeysBox = document.getElementById('jog-keys');
 const jogSpeedIn = document.getElementById('jog-speed');
 const jogDirOut  = document.getElementById('jog-dir');
 
 const JOG_PERIOD_MS = 50;
-const JOG_KEYS = { w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0] };
+// [x, y, z, a] direction per key.
+const JOG_KEYS = {
+    w: [0, 1, 0, 0], s: [0, -1, 0, 0], a: [-1, 0, 0, 0], d: [1, 0, 0, 0],
+    r: [0, 0, 1, 0], f: [0, 0, -1, 0], q: [0, 0, 0, -1], e: [0, 0, 0, 1],
+};
+const setOf = (k) => JOG_KEYS[k][2] ? 'z' : JOG_KEYS[k][3] ? 'a' : 'xy';
 const held = new Set();
+let jogSet = 'xy';
 let jogTimer = null;
 
 function jogDir() {
-    let x = 0, y = 0;
-    for (const k of held) { x += JOG_KEYS[k][0]; y += JOG_KEYS[k][1]; }
-    return [Math.sign(x), Math.sign(y)];
+    const d = [0, 0, 0, 0];
+    for (const k of held) {
+        if (setOf(k) !== jogSet) continue;
+        for (let i = 0; i < 4; i++) d[i] += JOG_KEYS[k][i];
+    }
+    return d.map(Math.sign);
 }
 
 function jogSend() {
-    const [x, y] = jogDir();
+    const [x, y, z, a] = jogDir();
     const speed = Number(jogSpeedIn.value) || 1;
-    jogDirOut.textContent = x || y ? `jogging x ${x} y ${y}` : '';
-    if (!link || (!x && !y)) return;
-    try { link.cjog(x, y, speed); } catch (e) { console.error(TAG, 'jog', e); }
+    const moving = x || y || z || a;
+    jogDirOut.textContent = moving ? `jogging x ${x} y ${y} z ${z} a ${a}` : '';
+    if (!link || !moving) return;
+    try { link.cjog(x, y, speed, z, a); } catch (e) { console.error(TAG, 'jog', e); }
 }
 
 function jogStop() {
@@ -296,6 +307,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (e.repeat || held.has(k)) return;
     held.add(k);
+    jogSet = setOf(k);
     jogSend();                                   // a new direction goes out at once
     jogTimer ??= setInterval(jogSend, JOG_PERIOD_MS);
 });
@@ -303,10 +315,23 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
     if (!held.delete(k)) return;
-    if (held.size === 0) jogStop();
-    else jogSend();
+    if (held.size === 0) return jogStop();
+    // Releasing the last key of the set falls back to a set still held.
+    if (![...held].some((h) => setOf(h) === jogSet)) jogSet = setOf([...held].at(-1));
+    jogSend();
 });
 
 jogKeysBox.addEventListener('change', () => { if (!jogKeysBox.checked) jogStop(); });
 window.addEventListener('blur', jogStop);
 disconnectBtn.addEventListener('click', jogStop);
+
+// ── offset ────────────────────────────────────────────────────────────────────
+// `select` sets the controlled point; a head also binds its Z and A, the anchor
+// leaves them bound. A refusal is only logged.
+for (const r of document.querySelectorAll('input[name="head"]')) {
+    r.addEventListener('change', async () => {
+        if (!link) return;
+        const reply = await link.command(`select ${r.value}`);
+        if (reply !== 'ok') console.error(TAG, `select ${r.value}:`, reply);
+    });
+}

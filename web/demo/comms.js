@@ -4,21 +4,18 @@
  * The other demos (main.js, bench.js, orchestrate.js) all start from an SVG and
  * exercise src/plan + src/production. This one starts from a Link and exercises
  * src/wire/link and src/operatorJog: the text plane, the binary STATUS_RSP
- * poll, and the two jog shapes.
+ * poll, and jogging.
  *
  *   text console  — link.command() one line out, one line back (D11: strictly
  *                   one outstanding). `!line` uses link.send(), the
  *                   fire-and-forget path estop needs.
  *   status panel  — link.getStatus() every N ms. It keeps polling DURING a jog
- *                   because the demux routes by magic (D1/D10), which is also
- *                   what makes the open jog session pace itself.
- *   click jog     — ClickJogSource held directly (not jogClick) so a second
- *                   click on the same axis+sign can call src.add() and BLEND
- *                   into the live move. jogClick would open a second session.
- *   go-to queue   — jogToPoint per entry: closed session, read live pos, one
- *                   coordinated trapezoid across every axis the entry names
- *                   to the target. Stacked line by line and fired one at a
- *                   time, since only one session may own the ack sink.
+ *                   because the demux routes by magic (D1/D10).
+ *   click jog     — one `jog <axis> <dist>` per click; the Pico joins clicks
+ *                   into the running jog.
+ *   go-to queue   — jogToPoint per entry: read live pos, one `jog` per axis
+ *                   the entry names. Stacked line by line and fired one at a
+ *                   time.
  *   job runner    — the bench.js path (SVG → bakePlan → schedule/walk →
  *                   link.stream) on THIS page's config, so a job and the jog
  *                   panel cannot disagree about the machine. A tool swap also
@@ -28,8 +25,6 @@
  * `node.present` is true, and each head gets its own Z/A group. A config that
  * fails loadConfig() leaves everything disabled.
  *
- * Sessions stamp seq from 0, so every jog here is preceded by link.resetSeq()
- * — jogClick/jogToPoint do not do it for you (link.stream() does).
  */
 
 import {
@@ -38,10 +33,9 @@ import {
     Controller,
     runWalk,
     SimTransport,
-    ClickJogSource,
     jogToPoint,
+    jog as jogCmd,
     MachineState,
-    fatalReasonName,
     bakePlan,
     walkSchedule,
     getPos,
@@ -252,7 +246,8 @@ function buildAxes(cfg) {
     return axisSlots(cfg.machine).map(r => ({
         key: r.key, letter: r.letter, slot: r.slot, label: r.label, head: r.head,
         ax: r.axis, present: r.present, unit: r.unit, group: groupOf(r),
-        cal: { stepsPerUnit: r.stepsPerUnit, invert: r.invert },
+        cal: { stepsPerUnit: r.stepsPerUnit, invert: r.invert,
+               invertDir: r.axis.invertDir, jogFeed: r.axis.jogFeed },
     }));
 }
 
@@ -945,95 +940,54 @@ function renderLinkStats() {
     for (const [k, v] of rows) linkBody.appendChild(tr(k, String(v)));
 }
 
-// ── click jog (open session, blending) ──────────────────────────────────────
+// ── click jog (`jog`) ───────────────────────────────────────────────────────
 
 /**
- * Clicks are serialised through one chain. Starting a jog is async (it awaits
- * the previous session and resetSeq), and `jog` is only assigned at the end of
- * that — so two fast clicks racing through would both find `jog === null` and
- * open two sessions on the same ack sink. Chained, the second click runs after
- * the first has published its source and blends into it instead.
+ * Each click is one `jog <axis> <dist> [scale]`: the Pico joins it onto the
+ * running jog (up to four queued blocks, then `err busy`), stopping between
+ * blocks only where the direction changes. Esc / Cancel is a soft abort.
+ * `jog` is { label, clicks } while the machine runs step jogs.
  */
-let jogChain = Promise.resolve();
-
 function onJogClick(axis, sign) {
-    jogChain = jogChain
-        .then(() => startOrBlend(axis, sign))
-        .catch(e => log(`jog error: ${e.message}`, 'err'));
+    void clickJog(axis, sign).catch(e => log(`jog error: ${e.message}`, 'err'));
 }
 
-/**
- * If the live source is the SAME axis+sign and has not finished, add() extends
- * the move in place — the blend. Anything else (other axis, reversal) cancels
- * the live source, which hands deceleration to the Pico via link.abort(), and
- * starts fresh once the old session settles.
- */
-async function startOrBlend(axis, sign) {
+async function clickJog(axis, sign) {
     if (!isConnected() || !axis.present) return;
     const distMm = Math.abs(parseFloat(jogStep.value)) || 1;
     const feed   = Math.abs(parseFloat(jogFeed.value)) || 1;
-    const steps  = Math.max(1, Math.round(distMm * axis.cal.stepsPerUnit));
-    const key    = `${axis.key}${sign > 0 ? '+' : '-'}`;
     const label  = `${axis.label}${sign > 0 ? '+' : '-'}`;
-
-    // `jog.cancelled` is tracked here, not read off the source: ClickJogSource
-    // only sets its own `_finished` inside pull(), so add() still returns true
-    // on a cancelled source that has not been polled yet. Blending into one
-    // silently discards the distance — the next pull returns null — and leaves
-    // the UI showing a live jog whose session already ended.
-    if (jog && !jog.cancelled && jog.key === key && jog.src.add(steps)) {
-        jog.clicks++;
-        log(`jog ${jog.label}: blended (+${distMm} ${axis.unit}, click ${jog.clicks})`, 'note');
-        jogStateEl.textContent = `${jog.label} blended ×${jog.clicks}`;
-        return;
-    }
-    // A click that is NOT a blend spends itself entirely on stopping. It does
-    // not also start the new move: the operator has to click again, on a
-    // machine they can now see is stationary, to commit to the new direction.
-    // Reversing under one click would mean the axis never stops between two
-    // opposite moves, and the second one begins while the operator is still
-    // reacting to the first. Cancel-then-go also cannot be made clean from
-    // here — the soft abort (§4.5) ramps the Pico down asynchronously, so a
-    // new session opened on its heels contends with a decelerating machine and
-    // the motion comes out as a stutter rather than a stop.
+    // The Pico's frame: + is the physical + of its invertDir.
+    const scale  = axis.ax.jogFeed ? feed / axis.ax.jogFeed : 1;
+    const depth  = await jogCmd(link, axis.letter, sign * distMm, scale);
+    log(`jog ${label}: ${distMm} ${axis.unit} @ ${feed} ${axis.unit}/s (queued ${depth})`, 'tx');
     if (jog) {
-        const prev = jog;
-        prev.cancelled = true;
-        prev.src.cancel();            // §4.5 soft abort — the Pico ramps down
-        log(`jog ${prev.label}: cancelled by ${label} — click again to jog ${label}`, 'note');
-        jogStateEl.textContent = `${prev.label} cancelling`;
-        await prev.done;              // let the session settle; frees the ack sink
+        jog.clicks++;
+        jog.label = label;
+        jogStateEl.textContent = `${label} ×${jog.clicks}`;
         return;
     }
-
-    const src = new ClickJogSource(axis.cal, axis.letter, sign, feed, link);
-    src.add(steps);
-    // The demo counts operator clicks itself: ClickJogSource.clicks starts at 1
-    // and the constructing add() above already bumps it, so it is not the
-    // number of buttons pressed.
-    const record = { src, key, label, clicks: 1, cancelled: false, done: null };
-
-    await link.resetSeq();            // sessions stamp from 0; align the Pico
-    const session = link.session(src);
-    // Publish BEFORE run(): the .finally below can fire synchronously-ish on a
-    // short move, and it clears `jog` — assigning afterwards would resurrect a
-    // finished session as the live one.
-    jog = record;
+    jog = { label, clicks: 1 };
     jogStateEl.textContent = `${label} running`;
-    log(`jog ${label}: ${distMm} ${axis.unit} @ ${feed} ${axis.unit}/s`, 'tx');
     renderAll();
+    const ok = await jogAtRest();
+    log(`jog: ${ok ? 'done' : 'stopped'} — ${jog.clicks} click(s)`, ok ? 'ok' : 'note');
+    jog = null;
+    jogStateEl.textContent = 'idle';
+    renderAll();
+}
 
-    record.done = session.run().then(ok => {
-        const r = session.result();
-        const why = r.fatalReason !== undefined ? ` (${fatalReasonName(r.fatalReason)})` : '';
-        log(`jog ${label}: ${ok ? 'done' : 'FAILED'}${why} — ` +
-            `${record.clicks} click(s), ${src.stepsTotal} steps, ` +
-            `emitted=${r.emitted} acked=${r.acked} nacks=${r.nacks} retries=${r.retries}`,
-            ok ? 'ok' : 'err');
-        return ok;
-    }).finally(() => {
-        if (jog && jog.src === src) { jog = null; jogStateEl.textContent = 'idle'; renderAll(); }
-    });
+/** True once the step jogs run out; false if the machine left JOGGING otherwise. */
+async function jogAtRest() {
+    const t0 = Date.now();
+    let seen = false;
+    for (;;) {
+        const s = (await link.getStatus()).state;
+        if (s === MachineState.JOGGING) seen = true;
+        else if (s === MachineState.IDLE) { if (seen || Date.now() - t0 > 500) return true; }
+        else return false;
+        await new Promise(r => setTimeout(r, 50));
+    }
 }
 
 // ── keyboard jogging ────────────────────────────────────────────────────────
@@ -1043,9 +997,8 @@ async function startOrBlend(axis, sign) {
 // increment.
 //
 // HOLDING A KEY DOES NOT REPEAT. The OS auto-repeat is discarded, so a leaned-on
-// or stuck key commands one increment and no more. This mirrors the click-jog
-// contract the library is built around (`clickJogSource.ts`: one click = one
-// fixed distance) and keeps the operator's intent countable: every increment of
+// or stuck key commands one increment and no more. One click is one fixed
+// distance, which keeps the operator's intent countable: every increment of
 // travel corresponds to a deliberate press. Continuous motion is what the
 // go-to-coordinate path is for, where the total distance is stated up front
 // rather than accumulated by however long a key was down.
@@ -1089,8 +1042,7 @@ function renderKeyHint() {
 
 function cancelJog() {
     if (!jog) return;
-    jog.cancelled = true;
-    jog.src.cancel();
+    link.abort();                 // §4.5 soft abort — the Pico ramps down
     jogStateEl.textContent = `${jog.label} cancelling`;
 }
 
@@ -1309,8 +1261,7 @@ gotoNext.addEventListener('click', () => void sendNext());
 gotoAll.addEventListener('click', () => void sendAll());
 gotoAbort.addEventListener('click', () => { goTo?.handle.abort(); });
 
-/** Stream the first pending entry. One at a time — a second session would
- *  correlate its ACKs against the first one's window. */
+/** Send the first pending entry. One at a time. */
 async function sendNext() {
     if (!isConnected() || goTo || jog) return false;
     const entry = queue.find(e => e.state === 'pending');
@@ -1350,9 +1301,6 @@ async function sendNext() {
 
     let ok = false;
     try {
-        await link.resetSeq();
-        // One coordinated move: every named axis starts and stops together,
-        // rather than a per-axis walk that would trace the move's bounding box.
         const handle = jogToPoint(
             link,
             parts.map(p => ({ axisIndex: p.axis.slot, axis: p.axis.cal, targetPos: p.target })),
