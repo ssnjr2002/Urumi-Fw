@@ -11,7 +11,7 @@ All other docs cross-reference here rather than defining constants.
 
 Phase 1 splits the host↔Pico link into two planes that share the USB CDC pipe:
 
-- **Data plane — binary, magic-dispatched.** High-rate streaming: MSEG, JOG,
+- **Data plane — binary, magic-dispatched.** High-rate streaming: MSEG, BEZIER, CJOG,
   the MCFG preamble. Pico replies ACK/NACK. Each binary packet is a fixed
   length keyed by its magic byte.
 - **Control plane — text lines.** Low-rate commands the operator/host issues:
@@ -41,8 +41,8 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | Constant | Value | Direction | Description |
 |---|---|---|---|
 | `MSEG_MAGIC` | `0xAB` | Host → Pico | MicroSegment — pre-computed step event |
-| `JOG_MAGIC`  | `0xAE` | Host → Pico | Jog packet (separate from MSEG) |
-| `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY jog (7 B) |
+| `JOG_MAGIC`  | `0xAE` | Host → Pico | Retired jog burst: always NACKed |
+| `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
@@ -99,45 +99,28 @@ Must precede any MSEG packets in a job stream.
 Phase 2: Pico compares `config_crc32` against stored flash CRC32; mismatch →
 NACK `NACK_STREAM_CONFIG_MISMATCH`.
 
-### Jog Packet — `JOG_MAGIC` (0xAE, 26 bytes)
-```
-[0]      magic = 0xAE
-[1..4]   dx        int32 LE   — X axis steps
-[5..8]   dy        int32 LE   — Y axis steps
-[9..12]  dz        int32 LE   — Z axis steps
-[13..16] da        int32 LE   — A axis steps
-[17..20] interval  uint32 LE  — step interval in CPU cycles
-[21]     flags     uint8      — MSEG_FLAG_* bitmask
-[22]     jogSeq    uint8      — 1-byte rolling duplicate guard (independent of MSEG seq)
-[23..24] pad       uint8[2]
-[25]     CRC8 over bytes [0..24]
-```
-Same 26-byte layout as MSEG (so one parser serves both), differing only in the
-magic and in byte [22] carrying `jogSeq` instead of the stream `seq`. Accepted
-in `STATE_IDLE` and `STATE_PAUSED`. No seqnum window — window-1 fire-and-wait;
-jogSeq provides duplicate rejection only. A jog burst moves Z and A only:
-nonzero `dx` or `dy` is NACKed `NACK_BAD_STATE` (XY jogs are `jog`/`jogto`). A jog burst (host-computed move, e.g.
-the return to `pausePos`) is one or more jog packets; the Pico runs
-`runningReason = JOG` while emitting and returns to its prior state (IDLE, or
-PAUSED when `PausedJobContext.active`) when the burst drains. The burst ends
-when the ring drains, **not** on a flag — a sender may mark its last packet
-`MSEG_FLAG_PATH_END`, but the firmware does not read it (see the flags table).
+### Jog Packet — `JOG_MAGIC` (0xAE, 26 bytes, retired)
+Retired: jogs are `jog`, `jogto` and continuous jog. The Pico still reads the
+26 bytes (MSEG layout) so the stream stays in sync, and NACKs every one
+`NACK_BAD_STATE`.
 
 ### Continuous Jog — `CJOG_MAGIC` (0xAF, 7 bytes)
 ```
 [0]  magic = 0xAF
 [1]  dirX   int8   — −1, 0 or +1
 [2]  dirY   int8   — −1, 0 or +1
-[3]  dirZ   int8   — reserved, must be 0
-[4]  dirA   int8   — reserved, must be 0
+[3]  dirZ   int8   — −1, 0 or +1
+[4]  dirA   int8   — −1, 0 or +1
 [5]  speed  uint8  — jogFeed × speed/64 (64 = 1×), capped at maxFeed; 0 is refused
 [6]  CRC8 over bytes [0..5]
 ```
 A held jog: the host repeats the packet while the operator holds the
-direction, faster than every 150 ms. The first one queues a line to the end of
-travel (the soft-range end when homed with `softLimits`, else `maxTravel`; a
-diagonal stops at the nearer end) at the slower moving axis's feed, and runs as
-JOGGING with `jogging=2`. Replies: `ACK` when a jog starts, `NACK` when refused,
+direction, faster than every 150 ms. One axis set moves per packet: X and Y,
+Z alone or A alone (Z and A are the selected head's); directions in more than
+one set are NACKed `NACK_MIXED_AXES`. The first one queues a line to the end
+of travel (the soft-range end when homed with `softLimits`, else `maxTravel`;
+a diagonal stops at the nearer end, at the slower moving axis's feed; A runs
+at most one turn per hold) and runs as JOGGING with `jogging=2`. Replies: `ACK` when a jog starts, `NACK` when refused,
 nothing for a repeat. 150 ms without a packet, all-zero directions, or
 `CJOG_STOP_MAGIC` (0xB3) brake and stop. A new direction stops the jog and
 starts the new one once at rest (its ACK comes then). A packet while step jogs
@@ -146,6 +129,7 @@ refused. Speed changes while holding are ignored. No seq; the abort barrier
 does not apply.
 
 NACKs: `NACK_SOFT_LIMIT` (0x09) = no room left in that direction;
+`NACK_MIXED_AXES` (0x0A) = directions in more than one axis set;
 `NACK_BAD_STATE` (0x06) = a bad direction or speed, not IDLE or jogging,
 unhomed without `jogUnhomed`, or no config.
 
@@ -331,6 +315,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_BAD_STATE` | `0x06` | Command rejected — wrong machine state |
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
 | `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset; a continuous jog with no room left in its direction |
+| `MSEG_NACK_MIXED_AXES` | `0x0A` | Continuous jog with directions in more than one axis set (XY, Z, A) |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 
@@ -377,7 +362,7 @@ prefixed `0x`.
 | `unalarm` | — | `ok` / `err <reason>` | Clear ALARM → IDLE (when the cause is resolved). `err estop` in `ALARM_ESTOP`: use `unstop` |
 | `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico as a jog (state JOGGING). `<depth>` = blocks queued. IDLE, or JOGGING; `bad_state` while the ring holds a streamed job. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`. No homing check |
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, work mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line`, on every handle |
-| `jog` | `<x\|y> <dist> [scale]` | `ok <depth>` / `err usage\|unconfigured\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>` (and `line`'s queue errors) | Step jog: move X or Y by `dist` machine mm from where the queued jogs end, as a jog (state JOGGING). Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel`. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction |
+| `jog` | `<x\|y\|z\|a> <dist> [scale]` | `ok <depth>` / `err usage\|unconfigured\|no_head\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit <axis> <mm>` (and `line`'s queue errors) | Step jog: move one axis by `dist` machine mm (A: degrees) from where the queued jogs end; Z and A are the selected head's (`no_head` with none bound), as a jog (state JOGGING). Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel` (one turn on A). A has no soft range. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction |
 | `jogto` | `<x> <y>` | `ok <depth>` / `err usage\|unconfigured\|not_homed\|no_head\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>` (and `line`'s queue errors) | Jog to work mm (x, y) as a jog (state JOGGING), at the slower of X's and Y's `jogFeed`. X and Y must be homed. Joins, caps and refuses at the soft range as `jog` |
 | `select` | `<head>\|anchor` | `ok` / `err usage\|bad_state\|degraded\|no_head` / as `axes_map` | Controller command: the controlled point. A head commits its Z and A as the axes map (`axes_map`'s replies) and turns the laser off; `anchor` is the laser tip (laser on; maps X and Y if either is unmapped, Z and A unchanged) or, without a laser, the head at (0, 0). Never moves. IDLE/PAUSED/ALARM, not while probing. The selection is derived from the axes map: a head needs X, Y and its Z and A mapped, the laser X and Y, else none. A raw `axes_map` that binds a different head selects it (laser off) |
 | `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM |
@@ -430,9 +415,9 @@ the host parser tolerates later additions.
 
 ---
 
-### Duplicate guard (MSEG / jog / BEZIER seq)
+### Duplicate guard (MSEG / BEZIER seq)
 
-Each MSEG/jog packet carries a rolling 8-bit seq in byte [22], a BEZIER record
+Each MSEG packet carries a rolling 8-bit seq in byte [22], a BEZIER record
 in byte [2]. The Go-Back-N
 sender, on a NACK, rewinds to `base` and resends packets that were in flight
 behind the rejected one — packets the Pico may have already accepted. The Pico
@@ -504,7 +489,7 @@ XIP for both cores; disrupts step timing on Core 1.
 
 | Use | Algorithm | Notes |
 |---|---|---|
-| MSEG packets, jog packets | CRC8 polynomial `0x8C` | Existing implementation in `common.h` |
+| MSEG packets, CJOG packets | CRC8 polynomial `0x8C` | Existing implementation in `common.h` |
 | CMD_SET_CONFIG, CMD_GET_CONFIG, stored flash checksum *(Phase 2)* | CRC32 | Stronger collision resistance for config correctness gate; same value used for flash storage, GET response, and MCFG header |
 
 *(Phase 2)* Both the connect-time handshake and the job stream MCFG header compare against
