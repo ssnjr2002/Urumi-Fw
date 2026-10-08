@@ -196,7 +196,7 @@ Done.
 
 ### Status
 
-Ready to merge.
+Done, merged 2026-10-08 (`e89ca85`..`f245f09`). Unblocks branch 3.
 
 ### Outcome
 
