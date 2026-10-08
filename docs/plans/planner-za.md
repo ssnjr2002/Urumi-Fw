@@ -348,12 +348,17 @@ Not started.
      every move once X, Y and Z are homed; flat planner Z (restart
      subtracts it); a lookup of the mesh Z at a point, for the job's lifts
      and plunges (none exist yet).
-  2. The push-time walk: Z limits along XY blocks, the per-block soft-range
-     check; the load-time worst-case report.
-  3. `/mesh.bin` decode into RAM, flat when missing or bad; `get` reports
-     it; `WPos` Z without the mesh.
-  4. A bench mesh flashed by `uploadfs` (`data/mesh.bin`); its encoder, in
-     the image script or the web, settled in Read.
+  2. The push-time walk: Z limits along XY blocks (a grid-line crossing is
+     a junction: v² ≤ Z `maxAccel` · spacing / Δslope), the per-block
+     soft-range check (a held XY jog ends where Z would leave it); the
+     load-time worst-case report.
+  3. `/mesh.bin` decode into RAM, flat when missing or bad; `mesh on|off`
+     (volatile, on at boot with a valid file, latched at the next restart);
+     `get` key `mesh=<nx>x<ny>|off|flat|bad`; `WPos` Z without the mesh.
+  4. A bench mesh flashed by `uploadfs` (`data/mesh.bin`), encoded by
+     `web/scripts/mesh-image.ts` from `custom_mesh_json`
+     (`config/mesh-bench.jsonc`). Maths in `lib/planner/planner/mesh.h`,
+     load and latch in `core0/ops/mesh.{h,cpp}`.
   5. Docs: `docs/wire_protocol.md` (`get` keys), the mesh file.
 * Out of scope: probing the mesh.
 * Overlap: `web/src/wire/`.
