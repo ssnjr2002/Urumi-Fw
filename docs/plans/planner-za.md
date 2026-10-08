@@ -96,7 +96,10 @@ uses what this plan builds.
 
 ## Branches
 
-A dependent chain, one session: 1, 2, then 3 → 3b, and 4 after 2 (beside 3).
+A dependent chain, one session: 1, 2, 4, then 3 → 3b. Between 4 and 3,
+motion-sessions' job branch inserts lifts and plunges (contour start, travel,
+corners past `cornerAngleDeg`, duty breaks), so a tangential cut can be
+tested.
 
 ## Branch 1: `refactor/planner-axes`
 
@@ -251,6 +254,17 @@ Done, merged 2026-10-08 (`e89ca85`..`f245f09`). Unblocks branch 3.
 * Overlap: `lib/planner/`.
 * Checks: as branch 2. Human: a test cut with offset 0 tracking curves and
   corners; a cabled range never exceeded.
+* Found while planning (after branch 2), to settle in its Planning:
+  * Corners: at a `BREAK` the heading jumps, and XY rounds it by junction
+    deviation today. A needs an A-only swivel block between the XY blocks
+    (a change of axis set already stops). Lifting there is the job's.
+  * Travel: A rotates once at the lift to the next contour's start heading
+    (lines have κ = 0), rather than following travel.
+  * The executor's `pointAt` (`executor.cpp:19`) is stateless; a Bézier can
+    turn past 180°, so the heading is unwrapped tick to tick.
+  * The curvature-jump limit needs a bound on A's instant speed change.
+  * How tangential, period and range reach the Pico before the job decodes
+    `tools`: a bring-up command, or the job branch first.
 
 ### Status
 
@@ -283,10 +297,11 @@ Not started.
 * Type: feature.
 * Purpose: Z from the mesh under every XY move, with Z's speed and
   acceleration limits; `/mesh.bin` read at boot.
-* Depends on: branch 2.
+* Depends on: branch 2. Runs before branch 3.
 * Scope:
-  1. Mesh added between executor and followers; lift and plunge targets
-     include it.
+  1. Mesh added between executor and followers, under XY moves; a lookup
+     of the mesh Z at a point, for the job's lifts and plunges (none exist
+     yet). Jogs stay in machine coordinates, without it.
   2. Z limits along XY blocks; the load-time worst-case report.
   3. `/mesh.bin` decode, flat when missing or bad; `get` reports it.
   4. Web: a `mesh.bin` encoder (for bench meshes until probing exists).
