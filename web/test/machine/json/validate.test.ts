@@ -205,6 +205,7 @@ describe("rule: headsHaveAxesForAccepted", () => {
 describe("loadConfig (parse ⨟ validate)", () => {
     const base = {
         machine: {
+            meshOn: false,
             x: { node: { id: 1 }, stepsPerUnit: 160, maxFeed: 80, maxAccel: 1000 },
             y: { node: { id: 2 }, stepsPerUnit: 160, maxFeed: 80, maxAccel: 1000 },
         },

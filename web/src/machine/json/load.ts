@@ -8,7 +8,7 @@
  * tuning — which the JSON can override but does not redefine from scratch.
  *
  * Required vs optional:
- *   Required: machine.x, machine.y, heads[], each axis's node.id +
+ *   Required: machine.x, machine.y, machine.meshOn, heads[], each axis's node.id +
  *   stepsPerUnit, each head's accepts. Missing → error. Note the rule: a field is
  *   required IFF it has no entry in DEFAULTS. Requiring a field that also has a
  *   default is a contradiction — the default could never be reached.
@@ -177,6 +177,7 @@ interface JsonMachine {
     readonly work?: { readonly x?: number; readonly y?: number; readonly z?: readonly number[] };
     readonly positions?: { readonly park?: JsonPoint; readonly load?: JsonPoint };
     readonly jogUnhomed?: boolean;
+    readonly meshOn: boolean;
 }
 
 interface JsonPeripheral {
@@ -270,6 +271,9 @@ export function parseConfig(jsonText: string): ConfigResult {
         }
         if (typeof m.y !== "object" || m.y === null) {
             errors.push("machine.y: required (axis object)");
+        }
+        if (typeof m.meshOn !== "boolean") {
+            errors.push("machine.meshOn: required (boolean)");
         }
     }
 
@@ -389,6 +393,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         work: buildWork(machine.work, heads.length, errors),
         positions: buildPositions(machine.positions, errors),
         jogUnhomed: machine.jogUnhomed ?? false,
+        meshOn: machine.meshOn === true,
     });
 
     if (errors.length > 0) {

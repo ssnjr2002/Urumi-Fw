@@ -77,6 +77,7 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "travel", host: false, mutate: (c) => (c.machine.heads[0].z.maxTravel = 0) },
     { name: "no_jog_feed", host: false, mutate: (c) => delete c.machine.x.jogFeed },
     { name: "no_jog_unhomed", host: false, mutate: (c) => delete c.machine.jogUnhomed },
+    { name: "no_mesh_on", host: false, mutate: (c) => delete c.machine.meshOn },
     { name: "probe_reach", host: false, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 1e4, y: 0 }) },
 ];
 

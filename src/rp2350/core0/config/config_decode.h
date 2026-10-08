@@ -100,6 +100,7 @@ struct MachineCfg {
     bool     hasLoad;
     CfgPoint load;
     bool     jogUnhomed;     // relative jogs before homing, no soft limits (testing)
+    bool     meshOn;         // bed mesh on at boot (the `mesh` command changes it)
 };
 
 enum CfgDecodeError : uint8_t {

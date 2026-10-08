@@ -1,6 +1,7 @@
 {
   "machine": {
     "fCpu": 150000000,
+    "meshOn": false,
     "path": {
       "feed": 80
     },

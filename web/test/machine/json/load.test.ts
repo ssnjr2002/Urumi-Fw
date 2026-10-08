@@ -258,6 +258,7 @@ describe("load: dual-head + laser", () => {
     const dualHeadJson = `{
         "machine": {
             "fCpu": 150000000,
+            "meshOn": false,
             "x": { "node": { "id": 1 }, "stepsPerUnit": 160 },
             "y": { "node": { "id": 2 }, "stepsPerUnit": 160 },
             "laser": { "node": 1 }
@@ -353,6 +354,7 @@ describe("load: peripherals", () => {
 describe("load: heads[].accepts", () => {
     const head = (h: object) => JSON.stringify({
         machine: {
+            meshOn: false,
             x: { node: { id: 1 }, stepsPerUnit: 160 },
             y: { node: { id: 2 }, stepsPerUnit: 160 },
         },
@@ -467,6 +469,14 @@ describe("load: error cases", () => {
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.some((e) => e.includes("stepsPerUnit"))).toBe(true);
+    });
+
+    it("rejects missing meshOn", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        delete json.machine.meshOn;
+        const r = parseConfig(JSON.stringify(json));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors.some((e) => e.includes("machine.meshOn"))).toBe(true);
     });
 
     it("rejects zero stepsPerUnit", () => {

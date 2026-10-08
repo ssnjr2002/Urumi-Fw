@@ -74,8 +74,8 @@ void setup() {
     plannerLock = spin_lock_instance(spin_lock_claim_unused(true));
     while (!Serial && millis() < 10000) {}
     configStoreInit();   // mount LittleFS, verify /config.bin into g_cfg
-    meshInit();          // /mesh.bin into RAM
     machineCfgLoad();    // decode it; the axis map follows once Core 1 runs
+    meshInit();          // /mesh.bin into RAM, on per the config
 }
 
 void loop() {

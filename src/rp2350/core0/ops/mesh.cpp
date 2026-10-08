@@ -6,6 +6,7 @@
 #include "mesh.h"
 #include "frames.h"
 #include "position.h"
+#include "../config/machine_cfg.h"
 #include "../../ipc/shared_state.h"
 #include <planner/mesh.h>
 
@@ -22,7 +23,7 @@ struct __attribute__((packed)) MeshHeader {
 static int16_t        heights[MESH_MAX_POINTS];
 static planner::Mesh  grid;
 static MeshFile       file = MESH_FILE_ABSENT;
-static bool           enabled = true;
+static bool           enabled = false;
 static float          slopeMax = 0;
 
 static uint32_t crc32Fold(uint32_t crc, const uint8_t* p, uint32_t n) {
@@ -67,7 +68,7 @@ void meshInit(void) {
     grid = planner::Mesh();
     file = load();
     if (file != MESH_FILE_OK) grid = planner::Mesh();
-    enabled = true;
+    enabled = machineCfgValid() && machineCfg().meshOn;
 }
 
 MeshFile meshFile(void) { return file; }

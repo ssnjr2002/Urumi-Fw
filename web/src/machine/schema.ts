@@ -668,6 +668,8 @@ export interface MachineConfig {
     readonly positions: StoredPositions;
     /** Relative jogs allowed before homing, without soft limits (testing). */
     readonly jogUnhomed: boolean;
+    /** Bed mesh on at boot; the Pico's `mesh on|off` changes it until reboot. */
+    readonly meshOn: boolean;
 }
 
 export function machineConfig(
@@ -681,6 +683,7 @@ export function machineConfig(
         work: { x: 0, y: 0, z: heads.map(() => 0) },
         positions: {},
         jogUnhomed: false,
+        meshOn: false,
         ...overrides,
     };
 }

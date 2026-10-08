@@ -66,6 +66,7 @@ describe("factories derive from DEFAULTS", () => {
 const MINIMAL = JSON.stringify({
     machine: {
         fCpu: 150_000_000,
+        meshOn: false,
         x: { node: { id: 1 }, stepsPerUnit: 160 },
         y: { node: { id: 2 }, stepsPerUnit: 160 },
     },
@@ -93,6 +94,7 @@ describe("fill-at-load", () => {
         const explicit = JSON.stringify({
             machine: {
                 fCpu: 150_000_000,
+                meshOn: false,
                 path: DEFAULTS.machine.path,
                 rapid: DEFAULTS.machine.rapid,
                 z: DEFAULTS.machine.z,

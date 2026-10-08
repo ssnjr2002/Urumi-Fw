@@ -232,6 +232,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["work"]        = true;
     fm["positions"]   = true;
     fm["jogUnhomed"]  = true;
+    fm["meshOn"]      = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
 
     JsonDocument doc;
@@ -284,7 +285,8 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     if (pos.isNull() || !readOptPoint(pos["park"], &out->hasPark, &out->park) ||
         !readOptPoint(pos["load"], &out->hasLoad, &out->load)) return CFG_DEC_MISSING;
 
-    if (!readBool(m["jogUnhomed"], &out->jogUnhomed)) return CFG_DEC_MISSING;
+    if (!readBool(m["jogUnhomed"], &out->jogUnhomed) ||
+        !readBool(m["meshOn"], &out->meshOn)) return CFG_DEC_MISSING;
 
     JsonVariantConst dh = m["defaultHead"];
     if (!dh.is<unsigned>()) return CFG_DEC_MISSING;
