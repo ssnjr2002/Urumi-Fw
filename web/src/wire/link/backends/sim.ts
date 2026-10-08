@@ -4,13 +4,12 @@
  *
  * Answers text commands per the wire_protocol.md allowed-state matrix AND
  * "executes" streamed data-plane packets: their step deltas integrate into the
- * tracked position over time while state holds RUNNING, so a job/jog actually
- * moves and finishes (returning to IDLE, or to PAUSED for a jog issued during a
- * pause). pause holds the executor; resume continues it; stop/cancel flush the
+ * tracked position over time while state holds RUNNING, so a job actually
+ * moves and finishes; `jog` and held jogs move too, as JOGGING. pause holds the executor; resume continues it; stop/cancel flush the
  * remaining motion. A test double — not real-time accurate.
  *
  * This is the backend that lets vitest exercise backpressure, coalesced ACKs,
- * open sessions, jog blend/cancel, status-during-stream and abort — all
+ * open sessions, step and continuous jogs, status-during-stream and abort — all
  * without hardware. The SimTransport implements the Transport interface, so a
  * Link constructed over it works identically to one over a real port.
  *
@@ -29,7 +28,6 @@ import {
     MAGIC_ABORT,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
-    MAGIC_JOG,
     MAGIC_BEZIER,
     MAGIC_MICROSEG,
     BEZIER_SIZE,
@@ -39,6 +37,7 @@ import {
     NACK_BAD_STATE,
     NACK_PAUSED,
     NACK_SOFT_LIMIT,
+    NACK_MIXED_AXES,
     MAGIC_CJOG,
     MAGIC_CJOG_STOP,
     CJOG_SIZE,
@@ -75,8 +74,13 @@ interface SimOptions {
      * the firmware does with no config (core0.cpp).
      */
     axisMap?: readonly (number | null)[];
-    /** Continuous-jog rate at 1× speed, steps/s on each moving axis. */
+    /** Continuous- and step-jog rate at 1× speed, steps/s on each moving axis. */
     cjogStepsPerS?: number;
+    /**
+     * The Pico's signed steps per unit on X, Y, Z, A (negative on an invertDir
+     * axis), which turn a `jog` distance into steps. Default 1: units are steps.
+     */
+    jogSpm?: readonly number[];
     /**
      * X and Y travel, [lo, hi] steps, for a continuous jog to stop at. Without
      * it a jog runs until released.
@@ -87,7 +91,10 @@ interface SimOptions {
 }
 
 /** `get jogging=` values (shared_state.h JoggingReason). */
+const JOGGING_STEP = 1;
 const JOGGING_CONT = 2;
+/** cmd/axis.cpp JOG_MAX_QUEUED. */
+const JOG_MAX_QUEUED = 4;
 
 /** Provisional bus-address ceiling — control_plane.cpp BUS_ADDR_MAX. */
 const BUS_ADDR_MAX = 8;
@@ -199,12 +206,16 @@ export class SimTransport implements Transport {
     readonly cjogStepsPerS: number;
     readonly cjogTravel: SimOptions["cjogTravel"];
     readonly jogUnhomed: boolean;
-    private cjogDir: [number, number] = [0, 0];
+    readonly jogSpm: readonly number[];
+    private cjogDir = [0, 0, 0, 0];
     private cjogSpeed = CJOG_SPEED_ONE;
     private cjogHeld = false; // packets keep arriving for cjogDir
     private cjogMoving = false; // not yet at the end of travel
     private cjogLastMs = 0;
-    private cjogFrac: [number, number] = [0, 0]; // sub-step progress
+    private cjogFrac = [0, 0, 0, 0]; // sub-step progress
+    // Step jogs (`jog`): queued single-axis moves, run in order.
+    private jogQueue: Array<{ k: number; left: number; rate: number }> = [];
+    private jogFrac = 0;
 
     constructor(opts: SimOptions = {}) {
         this.ringSize = opts.ringSize ?? 64;
@@ -215,6 +226,7 @@ export class SimTransport implements Transport {
         this.cjogStepsPerS = opts.cjogStepsPerS ?? 2000;
         this.cjogTravel = opts.cjogTravel;
         this.jogUnhomed = opts.jogUnhomed ?? false;
+        this.jogSpm = opts.jogSpm ?? [1, 1, 1, 1];
         if (opts.axisMap) {
             for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axisMap[i] ?? null;
             this.state = MachineState.IDLE;
@@ -259,8 +271,10 @@ export class SimTransport implements Transport {
             this.motion = [];
             this.executing = false;
             this.timeCredit = 0;
+            this.jogQueue = [];
             this.aborting = true;
-            if (this.state === MachineState.RUNNING || this.state === MachineState.PAUSED) {
+            if (this.state === MachineState.RUNNING || this.state === MachineState.PAUSED ||
+                this.state === MachineState.JOGGING) {
                 this.state = MachineState.IDLE;
             }
             this.running = RunningReason.JOB;
@@ -301,7 +315,7 @@ export class SimTransport implements Transport {
         for (let off = 0; off < data.length; ) {
             const m = data[off];
             const size = m === MAGIC_BEZIER ? BEZIER_SIZE
-                : m === MAGIC_MICROSEG || m === MAGIC_JOG ? PACKET_SIZE
+                : m === MAGIC_MICROSEG ? PACKET_SIZE
                 : m === MAGIC_CJOG ? CJOG_SIZE
                 : 0;
             if (size === 0 || off + size > data.length) break; // unframeable — drop the rest
@@ -372,29 +386,31 @@ export class SimTransport implements Transport {
         const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
         const d = [dv.getInt8(1), dv.getInt8(2), dv.getInt8(3), dv.getInt8(4)];
         const speed = data[5]!;
-        const bad = d.some((v, k) => v < -1 || v > 1 || (k >= 2 && v !== 0));
+        const bad = d.some(v => v < -1 || v > 1);
         if (bad || speed === 0) return this._nack(NACK_BAD_STATE);
+        const sets = Number(d[0] !== 0 || d[1] !== 0) + Number(d[2] !== 0) + Number(d[3] !== 0);
+        if (sets > 1) return this._nack(NACK_MIXED_AXES);
 
         this.cjogLastMs = Date.now();
-        if (d[0] === 0 && d[1] === 0) return this._cjogStop();
-        if (this.cjogHeld && d[0] === this.cjogDir[0] && d[1] === this.cjogDir[1]) return; // a repeat
+        if (sets === 0) return this._cjogStop();
+        if (this.cjogHeld && d.every((v, k) => v === this.cjogDir[k])) return; // a repeat
 
         const jogging = this.state === MachineState.JOGGING;
         if (this.state !== MachineState.IDLE && !jogging) return this._nack(NACK_BAD_STATE);
-        for (let k = 0; k < 2; k++) {
+        for (let k = 0; k < MOTION_SLOTS; k++) {
             if (d[k] !== 0 && !(this.axesHomed & (1 << k)) && !this.jogUnhomed) {
                 return this._nack(NACK_BAD_STATE);
             }
         }
-        const dir: [number, number] = [d[0]!, d[1]!];
-        if (!this._cjogRoom(dir)) {
+        if (!this._cjogRoom(d)) {
             this._cjogStop();
             return this._nack(NACK_SOFT_LIMIT);
         }
-        this.cjogDir = dir;
+        this.jogQueue = [];
+        this.cjogDir = d;
         this.cjogSpeed = speed;
         this.cjogHeld = this.cjogMoving = true;
-        this.cjogFrac = [0, 0];
+        this.cjogFrac = [0, 0, 0, 0];
         this.state = MachineState.JOGGING;
         this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
     }
@@ -403,10 +419,11 @@ export class SimTransport implements Transport {
         this.reply(new Uint8Array([MAGIC_NACK, reason, 0]));
     }
 
-    /** Some travel left on every moving axis. */
-    private _cjogRoom(dir: readonly [number, number]): boolean {
+    /** Some travel left on every moving axis; Z and A have no travel model. */
+    private _cjogRoom(dir: readonly number[]): boolean {
         if (!this.cjogTravel) return true;
         return dir.every((v, k) => {
+            if (k >= 2) return true;
             const [lo, hi] = this.cjogTravel![k]!;
             return v === 0 || (v > 0 ? this.pos[k]! < hi : this.pos[k]! > lo);
         });
@@ -425,14 +442,14 @@ export class SimTransport implements Transport {
         if (!this.cjogMoving) return;
         const run = (this.cjogStepsPerS * this.cjogSpeed) / CJOG_SPEED_ONE * frameS;
         let ended = false;
-        for (let k = 0; k < 2; k++) {
+        for (let k = 0; k < MOTION_SLOTS; k++) {
             const v = this.cjogDir[k]!;
             if (v === 0) continue;
             this.cjogFrac[k]! += run;
             const n = Math.floor(this.cjogFrac[k]!);
             this.cjogFrac[k]! -= n;
             let p = this.pos[k]! + v * n;
-            if (this.cjogTravel) {
+            if (this.cjogTravel && k < 2) {
                 const [lo, hi] = this.cjogTravel[k]!;
                 if (p <= lo || p >= hi) { p = Math.min(hi, Math.max(lo, p)); ended = true; }
             }
@@ -442,6 +459,44 @@ export class SimTransport implements Transport {
         if (ended) {
             this.cjogMoving = false;
             this.state = MachineState.IDLE;
+        }
+    }
+
+    // ── step jog (mirrors cmd/axis.cpp cmdJog; the planner's ring) ────────────
+
+    /** `jog <axis> <dist> [scale]`. Joins a running step jog, up to JOG_MAX_QUEUED. */
+    private _jog(args: readonly string[]): string {
+        const name = (args[0] ?? "").toLowerCase();
+        const k = name.length === 1 ? "xyza".indexOf(name) : -1;
+        const dist = Number(args[1]);
+        const scale = args[2] === undefined ? 1 : Number(args[2]);
+        if (k < 0 || !Number.isFinite(dist) || dist === 0 ||
+            !(scale > 0) || !Number.isFinite(scale)) return "err usage";
+        const stepping = this.state === MachineState.JOGGING && this.jogQueue.length > 0;
+        if (this.state !== MachineState.IDLE && !stepping) return "err bad_state";
+        if (!(this.axesHomed & (1 << k)) && !this.jogUnhomed) return "err not_homed";
+        if (this.jogQueue.length >= JOG_MAX_QUEUED) return "err busy";
+        const steps = Math.round(dist * this.jogSpm[k]!);
+        if (steps === 0) return `ok ${this.jogQueue.length}`;
+        this.jogQueue.push({ k, left: steps, rate: this.cjogStepsPerS * scale });
+        this.state = MachineState.JOGGING;
+        return `ok ${this.jogQueue.length}`;
+    }
+
+    private _tickJog(frameS: number): void {
+        const j = this.jogQueue[0];
+        if (!j) return;
+        this.jogFrac += j.rate * frameS;
+        const n = Math.min(Math.floor(this.jogFrac), Math.abs(j.left));
+        this.jogFrac -= n;
+        const sign = Math.sign(j.left);
+        this.pos[j.k] = this.pos[j.k]! + sign * n;
+        j.left -= sign * n;
+        if (j.left !== 0) return;
+        this.jogQueue.shift();
+        if (this.jogQueue.length === 0) {
+            this.jogFrac = 0;
+            if (this.state === MachineState.JOGGING) this.state = MachineState.IDLE;
         }
     }
 
@@ -477,32 +532,18 @@ export class SimTransport implements Transport {
         // State gate, per magic (data_plane.cpp). The two stream types differ:
         //   MSEG (job) — IDLE/RUNNING only; PAUSED gets its own NACK_PAUSED so
         //     the host can hold rather than treat it as an error.
-        //   JOG        — IDLE/PAUSED, plus RUNNING when the burst in progress is
-        //     itself a jog. Packet 2+ of a multi-packet jog arrives after the
-        //     machine already flipped to RUNNING for packet 1; rejecting those
-        //     would NACK every jog after the first, forever.
         // ALARM lands here too, which is how every alarm refuses all motion
         // without a separate predicate.
-        const isJog = data[0] === MAGIC_JOG;
         const st = this.state;
-        if (!isJog) {
-            if (st === MachineState.PAUSED) {
-                this._flushAck();
-                this.reply(new Uint8Array([MAGIC_NACK, NACK_PAUSED, 0]));
-                return;
-            }
-            if (st !== MachineState.IDLE && st !== MachineState.RUNNING) {
-                this._flushAck(); // ACKs earned before a rewind land first
-                this.reply(new Uint8Array([MAGIC_NACK, NACK_BAD_STATE, 0]));
-                return;
-            }
-        } else {
-            const continuingJog = st === MachineState.RUNNING && this.running === RunningReason.JOG;
-            if (st !== MachineState.IDLE && st !== MachineState.PAUSED && !continuingJog) {
-                this._flushAck();
-                this.reply(new Uint8Array([MAGIC_NACK, NACK_BAD_STATE, 0]));
-                return;
-            }
+        if (st === MachineState.PAUSED) {
+            this._flushAck();
+            this.reply(new Uint8Array([MAGIC_NACK, NACK_PAUSED, 0]));
+            return;
+        }
+        if (st !== MachineState.IDLE && st !== MachineState.RUNNING) {
+            this._flushAck(); // ACKs earned before a rewind land first
+            this.reply(new Uint8Array([MAGIC_NACK, NACK_BAD_STATE, 0]));
+            return;
         }
         if (this.motion.length >= this.ringSize) {
             this._flushAck();
@@ -510,15 +551,10 @@ export class SimTransport implements Transport {
             return; // backpressure — sender retries
         }
         if (!this.executing) {
-            // Start a burst. From IDLE → returns to IDLE (a job). From PAUSED →
-            // a jog during pause, returns to PAUSED. From RUNNING → the resumed
-            // continuation after a tool-change PAUSE; returns to IDLE.
-            this.returnState =
-                this.state === MachineState.PAUSED ? MachineState.PAUSED : MachineState.IDLE;
-            // runningReason follows the STREAM TYPE, not the entry state: a jog
-            // from IDLE is RUNNING_JOG, and that is exactly what lets packet 2+
-            // of the burst past the gate above.
-            this.running = isJog ? RunningReason.JOG : RunningReason.JOB;
+            // Start a burst. From IDLE → returns to IDLE (a job). From RUNNING →
+            // the resumed continuation after a tool-change PAUSE; returns to IDLE.
+            this.returnState = MachineState.IDLE;
+            this.running = RunningReason.JOB;
             this.state = MachineState.RUNNING;
             this.executing = true;
         }
@@ -551,6 +587,7 @@ export class SimTransport implements Transport {
         this._tickHoming();
         const frameS = this.frameMs / 1000;
         this._tickCjog(frameS);
+        this._tickJog(frameS);
         if (!this.executing || this.state !== MachineState.RUNNING) {
             this.timeCredit = 0;
             return; // idle, or paused/alarmed — hold
@@ -771,6 +808,8 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 S.nodeProbe.delete(n);
                 return `ok unprobe node=${n}`;
             }
+            case "jog":
+                return S._jog(args);
             case "stop": // always available; de-energises
                 S.state = MachineState.ALARM;
                 S.alarm = AlarmReason.ESTOP;
@@ -782,6 +821,7 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 S.axesEnabled = 0;
                 S.motion = [];
                 S.executing = false;
+                S.jogQueue = [];
                 return "ok";
             // enable/disable are TYPE-BLIND relays (§9): they go to any bus id,
             // and the axis bookkeeping applies only when that id is in the axis
@@ -1025,7 +1065,9 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 return hex(m, 3);
             }
             case "pos":       return this.pos.join(",");
-            case "jogging":   return this.state === MachineState.JOGGING ? String(JOGGING_CONT) : "-";
+            case "jogging":
+                return this.state !== MachineState.JOGGING ? "-"
+                    : String(this.jogQueue.length > 0 ? JOGGING_STEP : JOGGING_CONT);
             default:          return undefined;
         }
     }

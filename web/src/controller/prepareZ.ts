@@ -44,8 +44,6 @@ async function moveTo(
     rate: number,
     what: string,
 ): Promise<void> {
-    // A jog session stamps seq from 0.
-    if (!(await controller.link.resetSeq())) throw new Error(`${what}: seq reset failed`);
     if (!(await jogToPoint(controller.link, targets, rate).done)) {
         throw new Error(`${what}: the move failed`);
     }

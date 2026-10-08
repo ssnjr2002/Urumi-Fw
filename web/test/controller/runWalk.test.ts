@@ -23,7 +23,6 @@ import { unpackMicrosegment } from "../../src/wire/format/packet.js";
 import {
     PACKET_SIZE,
     MAGIC_MICROSEG,
-    MAGIC_JOG,
 } from "../../src/wire/format/constants.js";
 import {
     axisConfig,
@@ -69,7 +68,7 @@ class RecordingSim extends SimTransport {
         // lines share the same channel, so gate on the magic.
         for (let off = 0; off + PACKET_SIZE <= bytes.length; off += PACKET_SIZE) {
             const magic = bytes[off];
-            if (magic !== MAGIC_MICROSEG && magic !== MAGIC_JOG) break;
+            if (magic !== MAGIC_MICROSEG) break;
             this.packets.push(bytes.slice(off, off + PACKET_SIZE));
         }
         return super.write(bytes);

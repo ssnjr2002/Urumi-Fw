@@ -10,9 +10,8 @@
  * add their packers; TOOL (0xAC) has none yet.
  */
 
-// ── MicroSegment / Jog — 26-byte packets, shared layout ───────────────────────
+// ── MicroSegment — 26-byte packet ─────────────────────────────────────────────
 export const MAGIC_MICROSEG = 0xab; // host → Pico: pre-computed step event
-export const MAGIC_JOG = 0xae; // host → Pico: operator jog packet (same 26B layout)
 export const PACKET_SIZE = 26;
 export const MSEG_SEQ_OFFSET = 22;
 
@@ -22,7 +21,7 @@ export const BEZIER_SIZE = 56;
 export const BEZIER_SEQ_OFFSET = 2;
 
 // ── Continuous jog — 7-byte deadman packet and its stop byte (format/cjog.ts) ──
-export const MAGIC_CJOG = 0xaf; // host → Pico: held XY jog, repeated while held
+export const MAGIC_CJOG = 0xaf; // host → Pico: held jog, repeated while held
 export const CJOG_SIZE = 7;
 export const CJOG_SPEED_ONE = 64; // speed byte for 1× jogFeed
 export const CJOG_DEADMAN_MS = 150; // silence after which the Pico stops the jog
@@ -70,6 +69,8 @@ export const NACK_ABORTING = 0x07;
 export const NACK_BAD_CURVE = 0x08;
 // A BEZIER record lies outside the soft range on a homed axis, after the work offset.
 export const NACK_SOFT_LIMIT = 0x09;
+// A continuous-jog packet moving more than one axis set (XY, Z, A).
+export const NACK_MIXED_AXES = 0x0a;
 
 // ── Config plane magics (Phase-2) — CFG blob push/pull over the data plane ──────
 // docs/wire_protocol.md "CRC Algorithms" + packets.py. CFG_SET/GET are host→Pico

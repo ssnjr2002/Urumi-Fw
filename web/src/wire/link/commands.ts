@@ -151,6 +151,21 @@ export async function wclear(link: Link): Promise<void> {
     await okOrThrow(link, "wclear");
 }
 
+export type JogAxis = "x" | "y" | "z" | "a";
+
+/**
+ * `jog <axis> <dist> [scale]`: move one axis by `dist` machine units (A:
+ * degrees) from where the queued jogs end, at its jogFeed × `scale`. Resolves
+ * with the queued block count; throws on `err <reason>`.
+ */
+export async function jog(link: Link, axis: JogAxis, dist: number, scale = 1): Promise<number> {
+    const cmd = scale === 1 ? `jog ${axis} ${dist}` : `jog ${axis} ${dist} ${scale}`;
+    const r = (await link.command(cmd)).trim();
+    const m = /^ok (\d+)$/.exec(r);
+    if (!m) throw new Error(`${cmd}: ${r}`);
+    return Number(m[1]);
+}
+
 async function okOrThrow(link: Link, cmd: string): Promise<void> {
     const r = (await link.command(cmd)).trim();
     if (r !== "ok") throw new Error(`${cmd}: ${r}`);

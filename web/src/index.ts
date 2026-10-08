@@ -269,7 +269,7 @@ export {
     FRAMED_PACKET_SIZE,
 } from "./wire/format/packet.js";
 
-export { packJog, stampSeq, unpackMicrosegment } from "./wire/format/packet.js";
+export { stampSeq, unpackMicrosegment } from "./wire/format/packet.js";
 export { packCjog, CJOG_SPEED_MAX, type JogDir } from "./wire/format/cjog.js";
 
 // ── wire format: STATUS_RSP + machine enums ──────────────────────────────────
@@ -304,7 +304,6 @@ export {
 
 // ── wire format: remaining framing constants ──────────────────────────────────
 export {
-    MAGIC_JOG,
     MAGIC_ACK,
     MAGIC_NACK,
     MAGIC_ABORT,
@@ -326,6 +325,7 @@ export {
     NACK_BAD_STATE,
     NACK_ABORTING,
     NACK_SOFT_LIMIT,
+    NACK_MIXED_AXES,
     MAGIC_CJOG,
     MAGIC_CJOG_STOP,
     CJOG_SIZE,
@@ -446,6 +446,8 @@ export {
     axisMap,
     readAxisMap,
     type SlotBinding,
+    jog,
+    type JogAxis,
 } from "./wire/link/commands.js";
 
 // ── wire/link backends: Sim (env-agnostic; real ports import from the subpath) ─
@@ -481,15 +483,10 @@ export {
 
 // ── operatorJog ──────────────────────────────────────────────────────────────
 export {
-    makeJog,
-    ClickJogSource,
-    jogClick,
     jogTo,
     jogToPoint,
     type JogTarget,
     type JogHandle,
-    type ClickJogSourceOptions,
-    type JogToOptions,
     type AxisCalibration,
 } from "./operatorJog/index.js";
 

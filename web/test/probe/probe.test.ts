@@ -15,6 +15,7 @@ import {
     PEN,
     type ProbeConfig,
     type MachineConfig,
+    type AxisConfig,
 } from "../../src/machine/index.js";
 import { toolHeights, zAtHeightSteps } from "../../src/machine/heights.js";
 import { deriveProbePlan } from "../../src/probe/derive.js";
@@ -150,7 +151,11 @@ describe("get probe keys", () => {
 });
 
 async function bench(m = machine()) {
-    const sim = new SimTransport({ busNodes: [1, 2, 3, 4, 5, 6, 7], frameMs: 2, ringSize: 256 });
+    const spm = (a: AxisConfig) => a.stepsPerUnit * (a.invertDir ? -1 : 1);
+    const sim = new SimTransport({
+        busNodes: [1, 2, 3, 4, 5, 6, 7], frameMs: 2, ringSize: 256, cjogStepsPerS: 100000,
+        jogSpm: [spm(m.x), spm(m.y), spm(m.heads[0]!.z), 1],
+    });
     const link = new Link(sim);
     const controller = new Controller(m, link, { pollMs: 2 });
     await controller.commit(0);

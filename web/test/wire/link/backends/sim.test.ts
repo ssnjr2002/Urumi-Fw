@@ -523,12 +523,32 @@ describe("wire/link/backends/sim: continuous jog", () => {
             await sim.write(new Uint8Array([MAGIC_CJOG_STOP]));
             expect(sim.state).toBe(MachineState.IDLE);
             const bad = packCjog(1, 0);
-            bad[3] = 1;                                 // Z is reserved
+            bad[1] = 2;                                 // not −1, 0 or +1
             bad[6] = crc8(bad, 0, 6);
             await sim.write(bad);
             expect(r).toEqual(["aa0000", "bb0600"]);
         }, opts);
     });
+
+    const sets: Array<{ name: string; dir: [JogDir, JogDir, JogDir, JogDir]; reply: string; moved: number }> = [
+        { name: "Z alone runs", dir: [0, 0, 1, 0], reply: "aa0000", moved: 2 },
+        { name: "A alone runs", dir: [0, 0, 0, -1], reply: "aa0000", moved: 3 },
+        { name: "XY with Z is NACKed MIXED_AXES", dir: [1, 0, 1, 0], reply: "bb0a00", moved: -1 },
+        { name: "Z with A is NACKed MIXED_AXES", dir: [0, 0, 1, 1], reply: "bb0a00", moved: -1 },
+    ];
+    for (const c of sets) {
+        it(c.name, async () => {
+            await withLink(async (link, sim) => {
+                await link.command("setorigin");
+                const r = replies(sim);
+                const [x, y, z, a] = c.dir;
+                await sim.write(packCjog(x, y, 1, z, a));
+                await new Promise(res => setTimeout(res, 50));
+                expect(r).toEqual([c.reply]);
+                sim.pos.forEach((p, k) => expect(p !== 0).toBe(k === c.moved));
+            }, opts);
+        });
+    }
 
     it("refuses an unhomed axis without jogUnhomed", async () => {
         await withLink(async (_link, sim) => {

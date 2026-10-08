@@ -27,7 +27,6 @@ import {
     BEZIER_SEQ_OFFSET,
     BEZIER_SIZE,
     MAGIC_BEZIER,
-    MAGIC_JOG,
     MAGIC_MICROSEG,
     MSEG_SEQ_OFFSET,
     PACKET_SIZE,
@@ -66,28 +65,9 @@ export function packMicrosegment(ms: MicroSegment, seq = 0): Uint8Array {
     return u8;
 }
 
-/** Pack a MicroSegment as a JOG packet (magic 0xAE, same 26-byte layout as MSEG). */
-export function packJog(ms: MicroSegment, seq = 0): Uint8Array {
-    const buf = new ArrayBuffer(PACKET_SIZE);
-    const dv = new DataView(buf);
-    const u8 = new Uint8Array(buf);
-
-    dv.setUint8(0, MAGIC_JOG);
-    dv.setInt32(1, ms.dx, true);
-    dv.setInt32(5, ms.dy, true);
-    dv.setInt32(9, ms.dz, true);
-    dv.setInt32(13, ms.da, true);
-    dv.setUint32(17, ms.interval, true);
-    dv.setUint8(21, ms.flags & 0xff);
-    dv.setUint8(22, seq & 0xff);
-    dv.setUint8(25, crc8(u8, 0, PACKET_SIZE - 1));
-
-    return u8;
-}
-
 /**
- * Stamp a rolling 8-bit sequence number into pad byte [22] of a MicroSegment /
- * Jog packet and recompute the CRC. The Pico only executes a packet whose seq
+ * Stamp a rolling 8-bit sequence number into pad byte [22] of a MicroSegment
+ * packet and recompute the CRC. The Pico only executes a packet whose seq
  * matches the one it expects next; a stale Go-Back-N retransmit (one it already
  * accepted) is ACKed but NOT executed. Without that, any go-back after the
  * Pico accepted in-flight packets would duplicate motion — a permanent position
@@ -97,10 +77,10 @@ export function stampSeq(packet: Uint8Array, seq: number): Uint8Array {
     const magic = packet[0];
     const [size, at] =
         magic === MAGIC_BEZIER ? [BEZIER_SIZE, BEZIER_SEQ_OFFSET]
-        : magic === MAGIC_MICROSEG || magic === MAGIC_JOG ? [PACKET_SIZE, MSEG_SEQ_OFFSET]
+        : magic === MAGIC_MICROSEG ? [PACKET_SIZE, MSEG_SEQ_OFFSET]
         : [0, 0];
     if (size === 0 || packet.length !== size) {
-        throw new Error("stampSeq: not a MicroSegment, Jog or BEZIER packet");
+        throw new Error("stampSeq: not a MicroSegment or BEZIER packet");
     }
     const out = new Uint8Array(size);
     out.set(packet.subarray(0, size - 1));
@@ -110,7 +90,7 @@ export function stampSeq(packet: Uint8Array, seq: number): Uint8Array {
 }
 
 /**
- * Unpack a 26-byte MSEG/JOG packet into a MicroSegment. Throws on bad magic or
+ * Unpack a 26-byte MSEG packet into a MicroSegment. Throws on bad magic or
  * CRC. The inverse of packMicrosegment; used by the in-process SimTransport to
  * extract the deltas it integrates into position. Ported from Python
  * unpack_microsegment.
@@ -120,8 +100,8 @@ export function unpackMicrosegment(data: Uint8Array): MicroSegment {
         throw new Error(`Expected ${PACKET_SIZE} bytes, got ${data.length}`);
     }
     const magic = data[0];
-    if (magic !== MAGIC_MICROSEG && magic !== MAGIC_JOG) {
-        throw new Error(`Bad magic: 0x${magic!.toString(16).padStart(2, "0")} (expected MSEG or JOG)`);
+    if (magic !== MAGIC_MICROSEG) {
+        throw new Error(`Bad magic: 0x${magic!.toString(16).padStart(2, "0")} (expected MSEG)`);
     }
     if (crc8(data, 0, PACKET_SIZE - 1) !== data[PACKET_SIZE - 1]) {
         throw new Error("CRC mismatch");

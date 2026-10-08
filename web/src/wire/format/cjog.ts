@@ -4,7 +4,8 @@
  *
  * The host repeats the packet faster than CJOG_DEADMAN_MS while the operator
  * holds a direction; the Pico stops the jog when the packets stop, on all-zero
- * directions, or on MAGIC_CJOG_STOP. Z and A are reserved and always 0.
+ * directions, or on MAGIC_CJOG_STOP. A packet moves one axis set — XY, Z or
+ * A — or is NACKed NACK_MIXED_AXES.
  */
 
 import { crc8 } from "./crc.js";
@@ -19,7 +20,7 @@ export const CJOG_SPEED_MAX = 255 / CJOG_SPEED_ONE;
  * Pack a continuous-jog packet. `speed` multiplies the axis's jogFeed, in
  * 1/64 steps; the Pico caps the result at maxFeed.
  */
-export function packCjog(x: JogDir, y: JogDir, speed = 1): Uint8Array {
+export function packCjog(x: JogDir, y: JogDir, speed = 1, z: JogDir = 0, a: JogDir = 0): Uint8Array {
     const byte = Math.round(speed * CJOG_SPEED_ONE);
     if (!(byte >= 1 && byte <= 255)) {
         throw new RangeError(`cjog speed ${speed} outside (0, ${CJOG_SPEED_MAX}]`);
@@ -29,7 +30,8 @@ export function packCjog(x: JogDir, y: JogDir, speed = 1): Uint8Array {
     dv.setUint8(0, MAGIC_CJOG);
     dv.setInt8(1, x);
     dv.setInt8(2, y);
-    // [3], [4] — Z and A, reserved
+    dv.setInt8(3, z);
+    dv.setInt8(4, a);
     dv.setUint8(5, byte);
     u8[CJOG_SIZE - 1] = crc8(u8, 0, CJOG_SIZE - 1);
     return u8;
