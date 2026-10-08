@@ -1,0 +1,22 @@
+// A bench bed mesh for the Pico, flashed by `pio run -e pico -t uploadfs`
+// when `custom_mesh_json` names it (scripts/pio/config_image.py writes
+// data/mesh.bin from it). Not a measured bed.
+//
+// Tip machine coordinates, mm. z holds rows by y (y0, y0 + dy, …), each a
+// column per x (x0, x0 + dx, …); heights + up. Outside the grid the edge
+// value carries on.
+//
+// Lowest away from (0, 0), the default work origin, so the offset is never
+// positive: Z only drops from where it starts, 1 mm per 600 mm in X and
+// 0.5 mm per 400 mm in Y.
+{
+  "x0": 0,
+  "y0": 0,
+  "dx": 600,
+  "dy": 400,
+  "z": [
+    [ 0.0, -1.0, -2.0],    // y 0
+    [-0.5, -1.5, -2.5],    // y 400
+    [-1.0, -2.0, -3.0]     // y 800
+  ]
+}
