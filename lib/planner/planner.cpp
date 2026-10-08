@@ -8,7 +8,7 @@ namespace planner {
 // Orders the staging slot against its flag between the two sides.
 PLANNER_RAM static inline void fence() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 
-void Planner::reset(Vec2 pos) {
+void Planner::reset(Pos pos) {
     tail_ = 0;
     count_ = 0;
     claimed_ = false;
@@ -24,10 +24,9 @@ PLANNER_RAM void Planner::clearOffer() {
 }
 
 bool Planner::pushLine(Vec2 target, float feed, const AxisLimits& limits, float deviation) {
-    const Line ln = makeLine(end_, target, feed, limits);
+    const Line ln = makeLine(end_.xy(), target, feed, limits);
     if (ln.length <= 0) return true;
     if (full()) return false;
-    ring_[index(count_)].origin = ln.p0;
     return pushBlock(Block::LINE, pathOf(ln), deviation);
 }
 
@@ -40,6 +39,7 @@ bool Planner::pushBezier(const Bezier& bz, float feed, const AxisLimits& limits,
 bool Planner::pushBlock(Block::Kind kind, const Path& path, float deviation) {
     Block& b = ring_[index(count_)];
     b.kind = kind;
+    b.origin = end_;
     b.path = path;
     b.s0 = 0;
     b.max_entry_sqr = count_ > 0
@@ -53,7 +53,7 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, float deviation) {
 
     count_++;
     epoch_++;
-    end_ = path.end;
+    end_.setXy(path.end);
     return true;
 }
 

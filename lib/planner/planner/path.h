@@ -17,9 +17,17 @@ struct Vec2 {
     float y = 0;
 };
 
+/** A machine position, one coordinate per axis. Not a vector: A is in degrees. */
+struct Pos {
+    float x = 0, y = 0, z = 0;   // mm
+    float a = 0;                 // deg
+    Vec2 xy() const { return {x, y}; }
+    void setXy(Vec2 q) { x = q.x; y = q.y; }
+};
+
 struct AxisLimits {
-    float max_feed[2] = {0, 0};    // mm/s, X and Y
-    float max_accel[2] = {0, 0};   // mm/s²
+    float max_feed[4] = {0, 0, 0, 0};    // mm/s (A: deg/s), X Y Z A
+    float max_accel[4] = {0, 0, 0, 0};   // mm/s² (A: deg/s²)
 };
 
 struct Path {

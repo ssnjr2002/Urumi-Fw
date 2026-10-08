@@ -49,7 +49,7 @@ struct Block {
     Kind kind = LINE;
     Path path;                 // length is what remains after s0
     float s0 = 0;              // mm of the geometry already run (a resume trim)
-    Vec2 origin;               // LINE: start point
+    Pos origin;                // start point
     Bezier bez;                // BEZIER: the curve
     float max_entry_sqr = 0;   // junction limit with the previous block
     float entry_sqr = 0;       // committed plan
@@ -70,7 +70,7 @@ public:
     static constexpr int kSize = PLANNER_RING_SIZE;
 
     /** Empty the ring; the machine is at rest at `pos`. */
-    void reset(Vec2 pos);
+    void reset(Pos pos);
 
     /**
      * Queue a line from the end of the last one to `target`. Returns false if
@@ -116,7 +116,7 @@ public:
     bool full() const { return count_ == kSize; }
     bool claimed() const { return claimed_; }
     /** Where the last queued block ends. */
-    Vec2 end() const { return end_; }
+    Pos end() const { return end_; }
 
 private:
     int index(int i) const { return (tail_ + i) % kSize; }
@@ -128,7 +128,7 @@ private:
     int tail_ = 0;
     int count_ = 0;
     bool claimed_ = false;
-    Vec2 end_;
+    Pos end_;
 
     // Exit speed of the most recently claimed block: the entry of the next.
     float pinned_entry_sqr_ = 0;

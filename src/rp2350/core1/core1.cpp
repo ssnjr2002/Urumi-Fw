@@ -46,7 +46,7 @@ static void __not_in_flash_func(core1FlashPark)() {
 // Discard planner motion that is not running: after estop, or a held job aborted.
 static void dropPlanner() {
     const uint32_t s = spin_lock_blocking(plannerLock);
-    const planner::Vec2 at = plannerExec.position();
+    const planner::Pos at = plannerExec.position();
     plannerRing.reset(at);
     plannerExec.reset(at);
     plannerActive   = false;

@@ -32,10 +32,10 @@ struct Rig {
     float max_dv = 0;           // largest speed change per tick
     float time = 0;
 
-    explicit Rig(Vec2 start = {0, 0}) { p.reset(start); e.reset(start); }
+    explicit Rig(Pos start = {0, 0}) { p.reset(start); e.reset(start); }
 
     void pushLine(Vec2 to, float feed) {
-        planned_length += dist(p.end(), to);
+        planned_length += dist(p.end().xy(), to);
         REQUIRE(p.pushLine(to, feed, lim(), kDev));
     }
     // Replan and commit as the producer does, retrying a refused commit.
@@ -49,11 +49,11 @@ struct Rig {
     }
 
     void tick(float dt = kDt) {
-        const Vec2 before = e.position();
+        const Vec2 before = e.position().xy();
         const float v0 = e.speed();
         e.adopt(p);
         e.tick(p, dt);
-        travelled += dist(before, e.position());
+        travelled += dist(before, e.position().xy());
         max_dv = fmaxf(max_dv, fabsf(e.speed() - v0));
         time += dt;
     }
@@ -69,7 +69,7 @@ struct Rig {
 
 static Vec2 randomPolyline(Rig& r, uint32_t& seed, int n) {
     auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return (seed >> 8) / 16777216.0f; };
-    Vec2 at = r.p.end();
+    Vec2 at = r.p.end().xy();
     for (int i = 0; i < n; i++) {
         at = {at.x + (rnd() - 0.5f) * 40 * rnd(), at.y + (rnd() - 0.5f) * 40 * rnd()};
         r.pushLine(at, 50 + rnd() * 450);
@@ -95,7 +95,7 @@ TEST_CASE("speed never jumps, including across block joins") {
     const Vec2 end = randomPolyline(r, seed, 60);
     r.plan();
     r.run();
-    CHECK(dist(r.e.position(), end) < 1e-3f);
+    CHECK(dist(r.e.position().xy(), end) < 1e-3f);
     CHECK(r.travelled == doctest::Approx(r.planned_length).epsilon(1e-3));
     // Axis accel is 2000; along a diagonal the path accel can reach 2000·√2.
     CHECK(r.max_dv <= 2000 * 1.4143f * kDt * 1.01f);
@@ -132,13 +132,13 @@ TEST_CASE("a hold stops no later than the plan, and resume finishes the path") {
         held_mid_path++;
 
         // Held means held.
-        const Vec2 held = r.e.position();
+        const Vec2 held = r.e.position().xy();
         for (int i = 0; i < 50; i++) r.tick();
-        CHECK(dist(held, r.e.position()) == 0);
+        CHECK(dist(held, r.e.position().xy()) == 0);
 
         r.e.resume(r.p);
         r.run();
-        CHECK(dist(r.e.position(), end) < 1e-3f);
+        CHECK(dist(r.e.position().xy(), end) < 1e-3f);
         CHECK(r.travelled == doctest::Approx(r.planned_length).epsilon(1e-3));
         CHECK(r.max_dv <= 2000 * 1.4143f * kDt * 1.01f);
     }
@@ -172,8 +172,8 @@ TEST_CASE("abort stops, empties the ring, and restarts from where it stopped") {
     CHECK(r.e.speed() == 0);
     CHECK(r.p.count() == 0);
     CHECK_FALSE(r.p.claimed());
-    const Vec2 stopped = r.e.position();
-    CHECK(dist(r.p.end(), stopped) == 0);
+    const Vec2 stopped = r.e.position().xy();
+    CHECK(dist(r.p.end().xy(), stopped) == 0);
 
     // A new move starts from there.
     REQUIRE(r.p.pushLine({stopped.x + 10, stopped.y}, 100, lim(), kDev));
@@ -337,7 +337,7 @@ TEST_CASE("random polylines typed while running keep speed continuous") {
             r.tick();
             REQUIRE(++i < 200000);
         }
-        CHECK(dist(r.e.position(), at) < 1e-3f);
+        CHECK(dist(r.e.position().xy(), at) < 1e-3f);
         CHECK(r.travelled == doctest::Approx(r.planned_length).epsilon(1e-3));
         CHECK(r.max_dv <= 2000 * 1.4143f * kDt * 1.01f);
         CHECK(r.e.lateAdoptions() == 0);

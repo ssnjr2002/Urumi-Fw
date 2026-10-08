@@ -5,7 +5,7 @@
 
 namespace planner {
 
-void Executor::reset(Vec2 pos) {
+void Executor::reset(Pos pos) {
     state_ = State::Running;
     aborting_ = false;
     cur_ = nullptr;
@@ -18,14 +18,17 @@ void Executor::reset(Vec2 pos) {
 }
 
 // `s` mm into what remains of the block.
-PLANNER_RAM static Vec2 pointAt(const Block& b, float s) {
+PLANNER_RAM static Pos pointAt(const Block& b, float s) {
     const float g = b.s0 + s;
-    if (b.kind == Block::BEZIER) return bezierPoint(b.bez, bezierT(b.bez, g));
-    return {b.origin.x + b.path.dir_start.x * g, b.origin.y + b.path.dir_start.y * g};
+    Pos p = b.origin;
+    if (b.kind == Block::BEZIER) p.setXy(bezierPoint(b.bez, bezierT(b.bez, g)));
+    else p.setXy({b.origin.x + b.path.dir_start.x * g, b.origin.y + b.path.dir_start.y * g});
+    return p;
 }
 
 PLANNER_RAM void Executor::finishBlock(Planner& p) {
-    pos_ = cur_->path.end;
+    pos_ = cur_->origin;
+    pos_.setXy(cur_->path.end);
     p.release();
     cur_ = nullptr;
     has_next_ = false;
@@ -49,7 +52,7 @@ PLANNER_RAM void Executor::adopt(Planner& p) {
 #endif
 }
 
-PLANNER_RAM Vec2 Executor::tick(Planner& p, float dt) {
+PLANNER_RAM Pos Executor::tick(Planner& p, float dt) {
     while (dt > 0 && state_ != State::Held) {
         if (!cur_) {
             // At rest between blocks, a hold is already complete.

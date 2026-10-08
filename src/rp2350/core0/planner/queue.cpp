@@ -51,7 +51,7 @@ static bool resetIfIdle(uint8_t reason) {
     const MachineCfg& cfg = machineCfg();
     plannerSpm[0] = cfg.x.invertDir ? -cfg.x.stepsPerUnit : cfg.x.stepsPerUnit;
     plannerSpm[1] = cfg.y.invertDir ? -cfg.y.stepsPerUnit : cfg.y.stepsPerUnit;
-    const planner::Vec2 at{machinePos[0] / plannerSpm[0], machinePos[1] / plannerSpm[1]};
+    const planner::Pos at{machinePos[0] / plannerSpm[0], machinePos[1] / plannerSpm[1]};
     plannerRing.reset(at);
     plannerExec.reset(at);
     return true;
@@ -83,7 +83,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
     uint32_t s = spin_lock_blocking(plannerLock);
     resetIfIdle(JOGGING_STEP);
     const bool mine = joggingReason == JOGGING_STEP;
-    const planner::Vec2 p0 = plannerRing.end();
+    const planner::Vec2 p0 = plannerRing.end().xy();
     spin_unlock(plannerLock, s);
     if (!mine) return PQ_BAD_STATE;
 
@@ -94,7 +94,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
         return PQ_BAD_CURVE;
 
     s = spin_lock_blocking(plannerLock);
-    const planner::Vec2 e = plannerRing.end();
+    const planner::Pos e = plannerRing.end();
     const bool moved = e.x != p0.x || e.y != p0.y;
     const bool pushed = !moved && plannerRing.pushBezier(b, feed, limits, kDeviation);
     spin_unlock(plannerLock, s);
@@ -127,7 +127,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool reset = resetIfIdle(JOGGING_NONE);
-    const planner::Vec2 e = plannerRing.end();
+    const planner::Pos e = plannerRing.end();
     const float dx = b.p[0].x - e.x, dy = b.p[0].y - e.y;
     PlannerQueueResult out = PQ_OK;
     if (joggingReason != JOGGING_NONE) {
@@ -138,7 +138,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
         // An idle reset restarts the ring at machinePos, which rounds p3 to a
         // step; a contour continuing after a drain is within one step of it.
         const float step = 1 / fminf(fabsf(plannerSpm[0]), fabsf(plannerSpm[1]));
-        if (reset && fabsf(dx) <= step && fabsf(dy) <= step) b.p[0] = e;
+        if (reset && fabsf(dx) <= step && fabsf(dy) <= step) b.p[0] = e.xy();
         else out = PQ_BAD_CURVE;
         if (out == PQ_OK && plannerRing.full()) out = PQ_FULL;
     } else if (plannerRing.count() > planner::Planner::kSize - 2) {
@@ -164,7 +164,7 @@ bool plannerJogFrom(float* x, float* y, uint8_t reason) {
         *x = machinePos[0] / (cfg.x.invertDir ? -cfg.x.stepsPerUnit : cfg.x.stepsPerUnit);
         *y = machinePos[1] / (cfg.y.invertDir ? -cfg.y.stepsPerUnit : cfg.y.stepsPerUnit);
     } else if (ok) {
-        const planner::Vec2 e = plannerRing.end();
+        const planner::Pos e = plannerRing.end();
         *x = e.x;
         *y = e.y;
     }
@@ -179,7 +179,7 @@ void plannerStopJog() {
     } else if (plannerRing.count() != 0) {
         // Core 1 has not taken the ring yet: drop it here, where an abort could
         // be consumed as "nothing to stop" and leave the ring to run.
-        const planner::Vec2 at{machinePos[0] / plannerSpm[0], machinePos[1] / plannerSpm[1]};
+        const planner::Pos at{machinePos[0] / plannerSpm[0], machinePos[1] / plannerSpm[1]};
         plannerRing.reset(at);
         plannerExec.reset(at);
     }

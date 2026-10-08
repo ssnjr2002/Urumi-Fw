@@ -3,7 +3,7 @@
  *
  * tick() advances by dt through the claimed block's profile, releasing and
  * claiming as blocks finish; leftover time carries into the next block. It
- * returns the XY position along the path.
+ * returns the position along the path; Z and A stay at the block's start.
  *
  * hold() brakes along the path at each block's own acceleration. Since the
  * committed plan is at or above that braking curve everywhere and ends at rest,
@@ -30,7 +30,7 @@ public:
     enum class State { Running, Holding, Held };
 
     /** At rest at `pos`; call alongside Planner::reset(). */
-    void reset(Vec2 pos);
+    void reset(Pos pos);
 
     /**
      * Take a staged Piece, without the lock. Call before needsRing(): the piece
@@ -38,7 +38,7 @@ public:
      */
     void adopt(Planner& p);
 
-    Vec2 tick(Planner& p, float dt);
+    Pos tick(Planner& p, float dt);
 
     /**
      * True if tick(dt) may claim, release or reset the ring, so the caller
@@ -55,7 +55,7 @@ public:
     void abort();
 
     State state() const { return state_; }
-    Vec2 position() const { return pos_; }
+    Pos position() const { return pos_; }
     float speed() const { return v_; }   // mm/s along the path
     /** Seconds into the claimed block, published after each tick. */
     float clock() const { return clock_; }
@@ -77,7 +77,7 @@ private:
     float t_ = 0;   // s since cur_ was claimed, while running
     float s_ = 0;   // mm into cur_
     float v_ = 0;
-    Vec2 pos_;
+    Pos pos_;
     volatile float clock_ = 0;
     uint32_t late_ = 0;
 };

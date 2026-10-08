@@ -154,12 +154,12 @@ struct Track {
 
 TEST_CASE("bezier: tangent joins run through without stopping, within the acceleration circle") {
     Track tr;
-    Vec2 q0 = tr.e.position(), q1 = q0;
+    Vec2 q0 = tr.e.position().xy(), q1 = q0;
     float min_speed = INFINITY;
     float max_acc = 0;
     int ticks = 0;
     while (tr.p.count() > 0 || tr.p.claimed()) {
-        const Vec2 q2 = tr.e.tick(tr.p, kDt);
+        const Vec2 q2 = tr.e.tick(tr.p, kDt).xy();
         CHECK(tr.onPath(q2));
         if (ticks >= 2) {
             // Second difference: the vector acceleration the motors see.
@@ -173,7 +173,7 @@ TEST_CASE("bezier: tangent joins run through without stopping, within the accele
         ticks++;
         REQUIRE(ticks < 100000);
     }
-    CHECK(dist(tr.e.position(), {70, 80}) < 1e-4f);
+    CHECK(dist(tr.e.position().xy(), {70, 80}) < 1e-4f);
     CHECK(min_speed > 50);
     // Lines may use the full 2000 along an axis; the arc stays inside it too.
     CHECK(max_acc <= 2000 * 1.05f);
@@ -182,37 +182,37 @@ TEST_CASE("bezier: tangent joins run through without stopping, within the accele
 TEST_CASE("bezier: a hold inside the arc stops on the curve within v²/2a, and resume finishes") {
     Track tr;
     int guard = 0;
-    while (!tr.onArc(tr.e.position()) || dist(tr.e.position(), {50, 0}) < 5) {
+    while (!tr.onArc(tr.e.position().xy()) || dist(tr.e.position().xy(), {50, 0}) < 5) {
         tr.e.tick(tr.p, kDt);
         REQUIRE(++guard < 100000);
     }
     const float v = tr.e.speed();
     REQUIRE(v > 0);
     const float a = 2000 / sqrtf(2.0f);
-    const Vec2 at = tr.e.position();
+    const Vec2 at = tr.e.position().xy();
     tr.e.hold();
 
     float travelled = 0;
     Vec2 prev = at;
     while (tr.e.state() != Executor::State::Held) {
-        const Vec2 q = tr.e.tick(tr.p, kDt);
+        const Vec2 q = tr.e.tick(tr.p, kDt).xy();
         CHECK(tr.onPath(q));
         travelled += dist(prev, q);
         prev = q;
         REQUIRE(++guard < 100000);
     }
     CHECK(travelled <= v * v / (2 * a) * 1.01f + 1e-3f);
-    CHECK(tr.onArc(tr.e.position()));
+    CHECK(tr.onArc(tr.e.position().xy()));
 
-    const Vec2 held = tr.e.position();
+    const Vec2 held = tr.e.position().xy();
     tr.e.resume(tr.p);
-    const Vec2 first = tr.e.tick(tr.p, kDt);
+    const Vec2 first = tr.e.tick(tr.p, kDt).xy();
     CHECK(dist(first, held) < 1e-2f);   // restarts from rest where it stopped
     while (tr.p.count() > 0 || tr.p.claimed()) {
-        CHECK(tr.onPath(tr.e.tick(tr.p, kDt)));
+        CHECK(tr.onPath(tr.e.tick(tr.p, kDt).xy()));
         REQUIRE(++guard < 200000);
     }
-    CHECK(dist(tr.e.position(), {70, 80}) < 1e-4f);
+    CHECK(dist(tr.e.position().xy(), {70, 80}) < 1e-4f);
 }
 
 // What the host sends: the analysis without c1 and the end curvatures.

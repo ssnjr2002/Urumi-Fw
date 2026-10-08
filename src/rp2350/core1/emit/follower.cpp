@@ -26,7 +26,7 @@
 #include "hardware/sync.h"
 
 using planner::Executor;
-using planner::Vec2;
+using planner::Pos;
 
 static constexpr uint32_t kSlotCycles   = F_CPU / 50000;   // 20 µs
 static constexpr int      kSlotsPerTick = 50;               // 1 ms
@@ -180,7 +180,7 @@ void __time_critical_func(processPlanner)() {
             runningReason = RUNNING_ABORT_DECEL;
         }
 
-        Vec2 pos;
+        Pos pos;
         if (!plannerExec.needsRing(pending)) {
             pos = plannerExec.tick(plannerRing, pending);
         } else if (spin_try_lock_unsafe(plannerLock)) {
