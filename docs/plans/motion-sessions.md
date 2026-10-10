@@ -10,6 +10,44 @@ branch 3 (`feature/pico-jog`).
 Jogging is settled and has branches (J1, J2). Jobs are still a draft:
 preflight and the record layouts are open (below), and they have no branches yet.
 
+## Glossary
+
+```
+job                      one file; header + records
+└─ layer                 one TOOL_REC and what follows (tool, plunge scale k)
+   └─ contour            the tool down: START … END; travel between contours
+      └─ stretch         tangent continuous: between BREAKs
+         └─ piece        one cubic the Pico queues without analysis
+
+            host            wire                   Pico ring
+            piece    ──►    record (BEZIER)  ──►   block
+                            seq, index             + inserted blocks: lift,
+                                                     travel, plunge, swivel
+                                                     (index of the record
+                                                     they lead into); jogs
+```
+
+* **Contour** is the host code's subpath. Touching subpaths that are one cut
+  are joined by the host into one contour; the Pico never skips a travel.
+* **Piece, record, block** are one unit of geometry where it is seen: a
+  piece on the host (`AnnotatedBezier`), a record on the wire (`BEZIER`,
+  with seq and index), a block in the Pico's ring. The ring also holds
+  blocks no record sent: inserted lifts, travels, plunges, swivels, and
+  jogs.
+* **Flags** (`BEZIER` byte 1; `web/src/toolpath/annotate.ts:277`): `START`
+  on a contour's first piece, `END` on its last, `BREAK` on the first piece
+  after a corner (a join over `angleTol`) or a cusp. Other splits
+  (inflection, curvature ratio, fit) are 0. A `BREAK` is inside a contour,
+  never between two; a closed contour's closing corner has none (`END`
+  lifts there).
+
+```
+layer (TOOL_REC)
+├─ circle      START ─────────────────────────── END   1 stretch
+├─ circle      START ─────────────────────────── END   1 stretch
+└─ rectangle   START ── BREAK ── BREAK ── BREAK ── END   4 stretches
+```
+
 ## Decisions
 
 ### States
@@ -17,7 +55,30 @@ preflight and the record layouts are open (below), and they have no branches yet
 * **`STATE_JOB` with a reason byte**, like `STATE_HOMING` and `STATE_PROBING`
   (`ProbingReason`). Every session has the same shape: IDLE between sessions,
   the session owns the machine, ALARM ends it.
-* **Job reasons:** `BUFFERING`, `RUNNING`, `HOLDING`, `PAUSED`, `ABORTING`.
+* **Job reasons:** `PREFLIGHT`, `TOOL_CHANGE`, `BUFFERING`, `RUNNING`,
+  `HOLDING`, `PAUSED`,
+  `DWELL`, `ABORTING`.
+* **Writers.** Core 0 writes the entries it is asked for; Core 1 writes every
+  change made at rest or decided from the ring:
+
+  | from | to | writer | trigger |
+  |---|---|---|---|
+  | IDLE | `PREFLIGHT` | Core 0 | `JOB_HDR` accepted |
+  | `PREFLIGHT` | `BUFFERING` | Core 0 | first `TOOL_REC`, all tool headers ACKed, tools mounted |
+  | `PREFLIGHT`, `RUNNING` | `TOOL_CHANGE` → `BUFFERING` | Core 0 / Core 1 | the next tools are not mounted; `loaded` |
+  | `PREFLIGHT` | IDLE | Core 0 | any preflight NACK |
+  | `BUFFERING` | `RUNNING` | Core 1 | buffered time, last record, or timeout |
+  | `RUNNING` | `BUFFERING` | Core 1 | dry ring or late adoption, at rest |
+  | `RUNNING` | `HOLDING` | Core 0 | `pause` |
+  | `HOLDING` | `PAUSED` | Core 1 | at rest, after the lift |
+  | `RUNNING` | `DWELL` → `RUNNING` | Core 1 | duty lift, then the delay |
+  | `PAUSED` | `BUFFERING` | Core 0 | `TOOL_REC(N)`, N the resume point |
+  | `PAUSED` | JOGGING → `PAUSED` | Core 0 / Core 1 | jog, with the return slot |
+  | any | `ABORTING` → IDLE | Core 0 / Core 1 | `cancel`/`stop`; IDLE at rest |
+  | `RUNNING` | IDLE | Core 1 | last record executed, after the end lift |
+
+* **Records are admitted only in `JOB.BUFFERING` and `JOB.RUNNING`,** never
+  from IDLE: a record needs a header first. `RUNNING_PLANNER` goes.
 * **IDLE stays a state.** The job ends to IDLE on its last record executed,
   on cancel, and on abort; to ALARM on estop, soft limit or node fault.
 * **`STATE_JOGGING`** is all jog motion (and the bench `line`/`bez`). Jogs are
@@ -31,29 +92,87 @@ preflight and the record layouts are open (below), and they have no branches yet
 * **`STATE_RUNNING` and `STATE_PAUSED` are retired** with MicroSegment jobs,
   which keep them until then and are not ported.
 
-### Job header and `TOOL` record
+### Job records
 
-* **The job header is for preflight only:** job id, record count, the tools
-  used, each with the bbox of its geometry. Sent at job start and at a
-  restart.
+* **Three records before the geometry:** a job header, one tool header per
+  tool, then tool records, each starting a run of `BEZIER`s:
+
+  ```
+  JOB_HDR                job id, record count, t, tool count n
+  n × TOOL_HDR           any order; one per tool that will run
+  TOOL_REC(N)            tool, index N, feed, k
+  BEZIER …               from N
+  TOOL_REC(M) …          the next layer, at any index
+  ```
+
+* **Every start sends the headers;** the host picks where to start. A job
+  start is `TOOL_REC(0)`; a restart after an alarm or power loss is a fresh
+  `JOB_HDR` with the same record count, tool headers for only the tools
+  still to run, and `TOOL_REC`s from where it left off. A resume from
+  `PAUSED` is `TOOL_REC(N)` alone, guarded by the resume point and job id.
 * **No `config_crc32` and no `required_axes`.** The host no longer models the
   machine; the Pico infers axes and peripherals from each tool's profile.
-* **The `TOOL` record starts every run of motion in a job:** tool id, the
-  record index it applies from, an optional feed override. It selects the
-  tool (as `select`, below), then records follow. Sent at each layer change
-  and at every resume or restart:
-
-  ```
-  job start          header + TOOL(0) + records 0…
-  resume (paused)             TOOL(N) + records N…
-  restart (alarm,    header + TOOL(N) + records N…
-   power loss)
-  ```
-
-* The first record after a `TOOL` is treated as `START`: the Pico travels to
-  it (in air; lift and plunge once tool profiles exist).
+* **Only `BEZIER` records are indexed,** and the index is not on the wire:
+  the seq window keeps order with no gaps, so a record's index is its
+  `TOOL_REC`'s index plus the count since. The job's last record is index =
+  record count − 1. A `TOOL_REC`'s index is that of the next `BEZIER`.
+* **Tools have an explicit `id`** (u8) in each config `tools` entry, unique,
+  checked at load; it survives reordering the config. The host looks a
+  layer's name up in the config it pulled and packs the `id`. `toolType`
+  stays a separate field.
+* **Chambers.** A revolver pen is one tool with chambers (the profile's
+  `slotOffsets`, to be renamed `chamberOffsets`; "slot" is the stream
+  slot). The host maps sub-layers to chamber numbers; `TOOL_REC` carries the
+  number, 0 for a tool without chambers. One tool header covers all
+  chambers.
+* The first record after a `TOOL_REC` is treated as `START`: the Pico lifts,
+  travels to it and plunges (Lifts, below). `TOOL_REC` selects the tool (as
+  `select`, below).
+* **Feed** in `TOOL_REC` is absolute (mm/s; 0 the profile's `path.feed`). A
+  live feed override (a scale, re-planning the ring) is a later branch,
+  replacing docs/feed_override.md.
 * The Pico keeps nothing about tools that must survive a power loss; the host
-  holds the job and can send the right `TOOL` for any index.
+  holds the job.
+
+### Record layouts
+
+Little-endian, seq at byte 2 in all three, CRC8 over the bytes before it.
+
+```
+JOB_HDR 0xA0, 17 B
+[0] magic  [1] version (1)  [2] seq
+[3..6] job id u32  [7..10] record count u32  [11..14] t f32 mm  [15] tool count 1..4
+[16] CRC8
+
+TOOL_HDR 0xA1, 20 B
+[0] magic  [1] tool id  [2] seq
+[3..18] xmin, xmax, ymin, ymax f32, work coordinates at the tip
+[19] CRC8
+
+TOOL_REC 0xA2, 17 B
+[0] magic  [1] chamber (0 = none)  [2] seq
+[3] tool id  [4..7] index u32  [8..11] feed f32  [12..15] k f32
+[16] CRC8
+```
+
+The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
+
+### Preflight
+
+* **Each frame gets its own verdict,** ACK or NACK; the NACK's third byte
+  (unused today) carries the detail.
+
+  | frame | checks | NACK |
+  |---|---|---|
+  | `JOB_HDR` | state, homed, version, tool count 1–4 | `BAD_STATE`, `NOT_HOMED` |
+  | `TOOL_HDR` | id in the config, no duplicate; head and peripheral present and bound; bbox with offsets, mesh and heights in range | `TOOL_UNKNOWN`, `TOOL_UNAVAILABLE`, `OUT_OF_RANGE` (detail: axis and side) |
+  | `TOOL_REC` | its tool has a header; index valid (the resume point in `PAUSED`); chamber valid | `JOB` |
+
+* **Any preflight NACK ends the session to IDLE;** the host fixes the job and
+  sends the header again.
+* **`JOB.PREFLIGHT`** lasts from `JOB_HDR` until the first `TOOL_REC` after all
+  n tool headers are ACKed; a `TOOL_REC` or `BEZIER` before then is `NACK_JOB`.
+* Codes for the new reasons are picked in the branch, after `0x0A`.
 
 ### Buffering (jobs only)
 
@@ -62,32 +181,93 @@ preflight and the record layouts are open (below), and they have no branches yet
   block adoption (Core 1 needed a block before Core 0 committed it) is a dry
   ring too: hold to rest, `BUFFERING`, then on automatically. `PAUSED` is
   only ever the operator's pause. Jogs have no buffering.
-* Leaves for `RUNNING` on the first of:
-  * the ring holds enough path to reach full feed (queued distance ≥ braking
-    distance at the job feed; a block count as a simpler stand-in);
-  * the job's last record has arrived (a short job never fills the ring);
-  * a timeout (Klipper: 250 ms), so a slow host still progresses.
-* Threshold and timeout are config fields.
+* Core 1 leaves for `RUNNING` on the first of:
+  * the ring holds `bufferTime` of motion (~1 s): Core 0 adds each block's
+    length/feed to a shared counter on push, Core 1 subtracts it on
+    release (a lower bound; accel ignored);
+  * the job's last record is in the ring (index = header count − 1);
+  * a timeout, counted in ticks since entering `BUFFERING`.
+* `bufferTime` and the timeout are config fields.
 
 ### Pause drains the ring
 
-* `pause`: `HOLDING` (brake along the path, existing hold), then at rest
-  `PAUSED`: the ring is dropped and the resume point `{index, s}` recorded
-  (the block that was running and how far into it).
+* `pause`: `HOLDING` (brake along the path, existing hold), then at rest a
+  lift, then `PAUSED`: the ring is dropped and the resume point `{index, s}`
+  recorded (the block that was running and how far into it).
 * With the ring empty, a jog can use it while paused. No second ring, no
   set-aside.
 * **Contour framing resets on pause**, as on abort.
-* **Resume is a `TOOL` record**, not a text command: in `PAUSED` only a
-  `TOOL` whose index matches the resume point is accepted, and every other
+* **Resume is a `TOOL_REC`**, not a text command: in `PAUSED` only a
+  `TOOL_REC` whose index matches the resume point is accepted, and every other
   record is NACKed, so a stray record cannot restart motion. Then
   `BUFFERING`.
 * The resumed block is re-cut from its start. Resuming at `s − margin` (trim
   by `s0`, plunge mid-block) comes with Z, A and tool profiles; the resume
   point already keeps `s`.
 * `select` and `apply_offset` are allowed while paused (e.g. to jog another
-  head); resume re-selects through its `TOOL`.
+  head); resume re-selects through its `TOOL_REC`.
 * Planner branch 2's in-place resume (`restartFrom`, `err moved`) is unused on
   this path; it stays in `lib/planner` for now.
+
+### Lifts and heights
+
+* **The Pico inserts every lift;** the wire stays 2D. Lifts and plunges are
+  Z-only lines (a change of axis set stops), tagged with the index of the
+  record they lead into, so `TOOL_REC(N)` replays its own travel.
+* **Heights,** with work Z the bed top (the mesh applies by its rule):
+
+  ```
+  lift / travel   workZ + t + c
+  plunge          workZ + t − k·t      k in [0, 2]; 1 a full cut, past 1 into the mat
+  ```
+
+  `t` from the header, `k` (plunge scale) from the `TOOL_REC`, `c` (clearance) from the
+  tool profile. Preflight checks both against Z's soft range over the bbox,
+  with the mesh.
+* **What lifts:**
+
+  | cause | stop | where |
+  |---|---|---|
+  | `START` | lift, travel, A to the start heading, plunge | every contour start |
+  | corner turn > `cornerAngleDeg` | lift, swivel, plunge | that `BREAK` |
+  | cable range | lift, unwind by whole periods, plunge | anywhere |
+  | duty, past `maxOnS` | lift, tool off, `DWELL` for `dwellS`, tool on, plunge | anywhere |
+  | hold or abort at rest | lift | where it stopped |
+  | job end | lift | after the last record |
+
+  Estop does not lift (Alarms in a job).
+* **A `BREAK` is the host's tangent discontinuity** (a join turning more than
+  `angleTol`, or a cusp; `web/src/toolpath/clean.ts:67`,
+  `annotate.ts:281`). The Pico computes the turn from the two records'
+  tangents; at or below `cornerAngleDeg` A swivels in the material.
+* **A lift can happen anywhere on the path:** hold to rest, lift, plunge back
+  at the same XY and the same physical heading (an unwind is whole periods),
+  and continue the rest of the block from `s`. Today a hold resumes in place
+  (branch 2's `restartFrom`); putting the lift and plunge between the held
+  point and the rest of the block is new planner work. A `BREAK` is only a cheaper
+  place: a cable or duty lift due shortly is moved to an earlier `BREAK`
+  that lifts anyway. No stretch is refused for length.
+* **Triggers are live counters on Core 1:** tool on-time, and A against the
+  cable range; each requests a hold early enough to stop in time.
+* **Tool on and off are event blocks** in the ring, executed by Core 1 at
+  rest (where it owns the bus): motion stops before the plunge (a change of
+  axis set), tool on, wait `settleS`, plunge; the lift runs with the tool on
+  so the blade does not stick, and the tool goes off at clearance.
+* **Duty** (the existing `dutyLimits`, docs/tool_duty_limits.md): the tool is
+  on only while cutting, from the plunge's event to the lift's. On-time adds up across contours until a
+  reset; an off of at least `dwellS` is a reset. At a contour's `START`:
+  * the off time since the last lift is already ≥ `dwellS`: reset;
+  * else, if on-time ≥ `minOnS`: wait until the off time reaches `dwellS`
+    (`DWELL`), reset;
+  * else: plunge without a reset.
+
+  Mid-contour, past `maxOnS`: the duty lift, `DWELL` for `dwellS`.
+* **Tool profiles are the existing `ToolProfile`** (`web/src/machine/schema.ts:508`,
+  `tools` in the config), decoded by the Pico for the first time:
+  `cornerAngleDeg`, `tangential`, `unwind`, `path.feed` (cut), `z.feed`
+  (plunge), `offsetMm` (blade trail), `toolOffset`, `plunge` (false for a pen:
+  `k` is 0), `dutyLimits`. New: `clearance`, the cable range, the node that
+  switches the tool.
 
 ### Record index and identity
 
@@ -99,11 +279,74 @@ preflight and the record layouts are open (below), and they have no branches yet
 * **A job id** identifies the job; a resume or restart must match it, so the
   wrong file cannot be resumed.
 
+### Vacuum
+
+* **On for the whole session:** buffering, hold, `PAUSED`, `DWELL`, a jog
+  while paused, and alarms other than estop; releasing it can shift the
+  material. Off at job end, on `cancel`, or by an explicit command.
+* **Zones** are the vacuum node's six valves. First iteration: the Pico
+  opens all six; nothing about zones is on the wire.
+
+### Out of range
+
+* **Preflight** checks the bbox against the soft range, with what the Pico
+  adds after the wire (offsets, mesh, lift heights, travels); a failure is
+  `NACK_PREFLIGHT`, since the host waits on the header's reply.
+* **In a job** the host is not waiting on a reply, so a record out of range
+  at ingest (control points, a Bézier lying in their hull), or a Pico travel
+  out of range, never enters the ring: the job holds before it, lifts, and
+  goes to `ALARM_SOFT_LIMIT` with that record's index as the resume point.
+
+### Alarms in a job
+
+* **Estop ends the job:** tool and vacuum off, no lift, no resume point. The
+  host's saved index lets the operator start a new run from there by hand.
+  `pause` is the stop that resumes.
+* **Every other alarm** lifts when Z can still move, turns the tool off and
+  keeps the vacuum on; the job restarts from its index.
+
+### Lost host
+
+* A dry ring with no last record (the host stopped sending): at rest, lift,
+  tool off, vacuum on, wait in `BUFFERING`. After `hostTimeoutMin` (config,
+  minutes; 0 waits indefinitely) the job ends as `cancel`.
+
+### Tool change
+
+* **Two tables.** The machine's mount state (which tool is on each head) is
+  kept by the Pico across jobs, in RAM, set by the operator's `loaded`
+  command. The job's plan comes from the `TOOL_HDR` order: header p goes on
+  head p mod `headCount`, so tools pair up (0, 1), (2, 3), ….
+* **Preflight** checks each tool's head accepts it, then compares the mount
+  state with the first pair; a mismatch goes to `TOOL_CHANGE` before
+  `BUFFERING`.
+* **Mid-job,** a `TOOL_REC` naming a tool not mounted means the next pair is
+  due: hold, lift the selected head on the planner, park both heads' Z by
+  node park legs (in parallel), then for each head of the pair: an XY line
+  to its probe switch, wait for `loaded`. Then `BUFFERING`.
+* **Park legs run outside homing:** the leg runner (`core0/ops/leg.cpp`,
+  ticked today only by `homingTick`, which drops legs outside HOMING,
+  `homing.cpp:123`) is ticked by whichever session armed the legs, and
+  dropped when that session loses the machine. Records are held off while a
+  leg is armed. A failed park leg alarms as `ALARM_HOMING_FAIL`
+  (`LEGFAIL_PARK`) with the job kept. `pause` is refused in `TOOL_CHANGE`.
+* The host orders layers by tool; returning to an earlier tool is another
+  change, allowed but slow.
+
+### Reporting
+
+* **`STATUS_RSP` grows** (new magic, as `0xA6` → `0xA7`): `bufCount` goes
+  with MicroSegment; job id (u32) and index (u32) are added; the reason byte
+  is the current state's reason (job, jogging, homing, probing), replacing
+  `runningReason`. Position is WPos (f32 mm; Core 0's `frames`); MPos stays
+  on `get`. Two bytes say what the WPos is of: the frame (head 0, 1, or
+  `0xFF` the anchor) and the tool mounted there (its `id`, `0xFF` none).
+
 ### Restart after an alarm
 
 * Once the alarm is cleared and the machine re-homed, the job can restart
-  from the recorded index: header with the same job id, `TOOL(N)`, records
-  from N.
+  from the recorded index: a fresh `JOB_HDR`, tool headers for the tools still
+  to run, `TOOL_REC(N)`, records from N (Job records).
 
 ### Power loss
 
@@ -127,7 +370,7 @@ preflight and the record layouts are open (below), and they have no branches yet
   maxTravel]`.
 * Relative motion is frame-free; the frames matter for absolute targets, the
   position readout and preflight.
-* The `TOOL` record's selection goes through `select`.
+* The `TOOL_REC`'s selection goes through `select`.
 * **A job leaves its last selection in place** when it ends.
 
 ### Jog command shape
@@ -396,19 +639,31 @@ Done (merged).
 
 ## Open
 
-* **Record layouts:** the header and `TOOL` byte layouts, magics; tool ids
-  (config indices or names); per-tool bbox vs relying on the per-record
-  soft-limit check alone.
-* **Soft limits per record:** each `BEZIER`'s control points checked at
-  ingest (a Bézier lies inside their hull), plus the Pico's own travels. The
-  range and its check come from `feature/pico-frames`.
-* **Preflight:** refuses and never prepares (proposed, not confirmed); its
-  check list; `NACK_PREFLIGHT` plus a text `preflight` listing failures.
-* `cancel` from `PAUSED`: ends the session to IDLE at once (proposed).
-* A dry ring with no last record: wait indefinitely in `BUFFERING`, the
-  operator cancels (proposed).
-* Core 1 becomes a writer of the job reason (hold → `PAUSED`, dry →
-  `BUFFERING`) and of the jog's return state, beside the `alarmReason`
-  two-writer note.
+* Preflight refuses and never prepares (proposed, not confirmed).
+* `cancel` from `PAUSED`: ends the session to IDLE at once, tool and vacuum
+  off (proposed).
+* **Vacuum zones from the bbox (later):** the servo ids drawn as seen from
+  the front (first row at the back, X left to right), the servo covering
+  machine (0, 0), and a cell size. The Pico finds the origin, which must be in
+  a corner, and takes away from it as +X and +Y; load checks the corner and
+  that every id appears once.
+
+  ```jsonc
+  "vacuum": {
+    "cell": [392, 368],      // mm, X then Y
+    "map": [[3, 4, 6],       // back row
+            [5, 1, 2]],      // front row
+    "origin": 5
+  }
+  ```
+
+  Considered: rows written from the origin (first row the origin's, starting
+  at the origin, columns +X, rows +Y), with no `origin` field and nothing to
+  infer, but the operator flips the grid by hand whenever the origin is not
+  top left of how they would draw it.
+
+* Bench: how clean a re-plunge into the slit is; A backlash after an unwind.
 * Order: state-handling branches 3 and 4 first; motion gating (planner pushes
-  refuse unbound, fenced or unhomed axes) before the job branches.
+  refuse unbound, fenced or unhomed axes) before the job branches; a minimal
+  tool-profile branch before the first job branch; a `refactor/` moving the
+  leg runner out of homing before J1b and the tool-change branch.

@@ -42,15 +42,11 @@ uses what this plan builds.
   accumulating, so no tool is refused for it. No float grows on a long spiral.
 * **Heading choice at lifts.** At a lift (contour start, a corner the tool
   lifts at) any equivalent mod P may be chosen. Mid-cut A follows the path.
-* **Cable range.** The planner picks the start equivalent that keeps a sweep
-  inside the range, and answers whether a stretch's sweep fits. The sweeps
-  come from the job: XY-only geometry the host computes from tangents and
-  corner turns, sent with every `START` and `BREAK` as two intervals relative
-  to the heading there: to the next `BREAK`/`END` (stretch) and to `END`
-  (rest of contour). The Pico lifts at a lift point when the rest fits,
-  otherwise checks each stretch before its `BREAK` and lifts there when the
-  next stretch would leave the range; a single stretch wider than the range
-  is refused at ingest. The wire change is the job's, not this plan's.
+* **Cable range.** No sweeps on the wire. At every lift A goes to the
+  equivalent nearest the middle of the range. While cutting, Core 1 watches A
+  against the range and requests a hold in time; the job lifts, unwinds by
+  whole periods and plunges back at the same heading, anywhere on the path
+  (motion-sessions, Lifts and heights).
 * **A limits XY speed** (from the seed session):
   * turn rate: v ≤ ω_max / κ_max;
   * turn acceleration: α = a_t·κ + v²·dκ/ds, so v ≤ √(α_frac·α_max / dκ_max)
