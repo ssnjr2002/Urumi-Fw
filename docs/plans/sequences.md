@@ -247,7 +247,7 @@ stomped.
 
 ### Status
 
-Ready to merge.
+Done (merged, d9591d4..54aa1dc). Unblocks R2a.
 
 ### Outcome
 
