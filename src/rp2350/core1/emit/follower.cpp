@@ -23,6 +23,7 @@
 
 #include <Arduino.h>
 #include "../../ipc/shared_state.h"
+#include "../../ipc/core1_facts.h"
 #include "../bus/packet.h"   // for the shared `rs485` instance
 #include "../cycles.h"
 #include "emit.h"
@@ -131,6 +132,7 @@ static bool __time_critical_func(leaveIdle)() {
     pauseRequested = abortRequested = false;
     __dmb();
     machineState = STATE_IDLE;
+    core1FactPush(FACT_RING_DRAINED);
     return true;
 }
 

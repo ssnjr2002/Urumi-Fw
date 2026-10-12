@@ -10,9 +10,11 @@
 #include <Arduino.h>
 #include "../ipc/shared_state.h"
 #include "../ipc/core1_rpc.h"
+#include "../ipc/core1_facts.h"
 #include "hardware/sync.h"
 #include "control_plane.h"
 #include "ops/position.h"
+#include "ops/observe.h"
 #include "ops/mesh.h"
 #include "ops/slot_map.h"
 #include "ops/bus.h"
@@ -109,6 +111,7 @@ void loop() {
     // the queues across a soft reset. Core 1 is parked here, so nothing can be
     // added while we drain.
     rpcReset();
+    core1FactsReset();
 
     // 5. WIPE ALL GLOBAL STATE (Clean Slate!)
     // Held in ALARM until section B settles it: with a valid config the
@@ -125,7 +128,7 @@ void loop() {
     homingReason = HOMING_WAIT;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
     axes_homed = 0;
-    // axes_enabled is DERIVED and deliberately not wiped here: reconcileValidity
+    // axes_enabled is DERIVED and deliberately not wiped here: projectEnabled
     // rebuilds it from nodeEnabled at the top of the loop below, before anything
     // host-observable runs. nodeEnabled itself is Core 1's — Core 0 must not
     // write it — and the boot sweep below clears it, per node, as each one
@@ -162,10 +165,8 @@ void loop() {
     Serial.println("ready");
 
     while (!soft_reset_requested) {
-        // Fold Core 1's ALARM signals into the validity masks BEFORE serving the
-        // host. Core 1 no longer writes axes_homed/axes_enabled itself (that
-        // raced Core 0's read-modify-writes); it signals, and Core 0 owns them.
-        reconcileValidity();
+        // Fold in what Core 1 reported BEFORE serving the host.
+        observeTick();
         processSerial();
         dataPlaneTick();   // abort a stalled CFG_SET transfer (inter-byte timeout)
         // Poll node-run legs to completion, then let the homing session judge

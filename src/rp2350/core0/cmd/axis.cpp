@@ -95,7 +95,7 @@ bool cmdAxesEnable(const char* args) {
         uint8_t n = axisNode(i);
         if (n == SLOT_NONE) continue;
         // No bookkeeping here: Core 1 folds each ack into nodeEnabled as it
-        // relays, and reconcileValidity projects that onto the slots before the
+        // relays, and projectEnabled projects that onto the slots before the
         // next command is served (ipc/shared_state.h).
         rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, n, 0);
     }
@@ -340,8 +340,8 @@ bool cmdSetOrigin(const char* args) {
     const char* badWhy = originDatum(nodes, steps, count, &badNode);
     // A fault that arrived while we were on the bus outranks this command. The
     // datum we just recorded describes a machine that has since stopped hard,
-    // so refuse rather than clear it — reconcileValidity() drops the masks on
-    // the next pass, and the operator retries after unalarm.
+    // so refuse rather than clear it; the estop has dropped the masks, and the
+    // operator retries after unalarm.
     if (alarmReason != alarmAtEntry || machineState == STATE_ESTOP) {
         Serial.println("err estop"); return true;
     }

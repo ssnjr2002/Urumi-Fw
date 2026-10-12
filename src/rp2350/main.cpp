@@ -24,7 +24,7 @@ volatile uint8_t homingReason   = HOMING_WAIT;
 // Position model (Layer 4) — counts always retained; bits say the datum is known
 volatile int32_t machinePos[4]  = {0, 0, 0, 0};   // X, Y, Z, A steps
 volatile uint8_t axes_homed     = 0;              // none homed until first setorigin
-volatile uint8_t axes_enabled   = 0;              // derived — reconcileValidity()
+volatile uint8_t axes_enabled   = 0;              // derived — projectEnabled()
 volatile uint16_t nodeEnabled   = 0;              // none energised until a node acks
 
 volatile int32_t resumePos[4]   = {0, 0, 0, 0};

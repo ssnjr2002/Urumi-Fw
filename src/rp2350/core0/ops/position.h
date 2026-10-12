@@ -19,7 +19,7 @@
 // nodeEnabled is the one node-frame mask that is NOT a Core-0 static, because it
 // is the one with an asynchronous writer -- Core 1 sweeps the bus safe on estop
 // and soft reset without being asked. It is declared in ipc/shared_state.h with
-// the reasoning; reconcileValidity() projects it onto axes_enabled here, the
+// the reasoning; projectEnabled() projects it onto axes_enabled here, the
 // same way axes_homed and homingLatched are projections of nodeHomed and
 // nodeLatched. The rule the three share: the NODE frame is the truth, the SLOT
 // frame is a view, and a view is never written directly by a command handler.
@@ -74,6 +74,12 @@ void slotUnbind(uint8_t s);
 // confirmed make-safe (or an engage elsewhere) from `n` frees it: slotUnbind.
 void slotFence(uint8_t s, uint8_t n);
 bool slotFencedAt(uint8_t s);
+
+// The estop's fence, on every bound slot, in two halves: the fence itself at
+// the stop, and the fenced slots' positions once Core 1 has stopped writing
+// machinePos (FACT_ESTOP_SWEPT).
+void slotFenceAllBound(void);
+void slotFencedPosClear(void);
 
 // ─── Axes request ─────────────────────────────────────────────────────────────
 // The node each axis should be (axes_map), and which of them are pending: named
@@ -206,9 +212,7 @@ void parkForget(uint8_t n);
 // False when no entry is held -- an unknown park cannot accuse.
 bool parkMoved(uint8_t n, int32_t pos);
 
-// ─── Validity reconciliation ──────────────────────────────────────────────────
-// Core 1 only ever SIGNALS a fault, by entering ALARM with a reason; this folds
-// the signal into masks that Core 0 alone writes. Level-triggered, so it is
-// idempotent and cannot miss a transition. Call from Core 0's loop before
-// anything the host can observe.
-void reconcileValidity(void);
+// ─── Energisation projection ─────────────────────────────────────────────────
+// axes_enabled from nodeEnabled, for bound axes. Called by the observer every
+// loop pass, before anything the host can observe.
+void projectEnabled(void);

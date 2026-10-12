@@ -225,7 +225,7 @@ packets by inserting the byte at a packet boundary.
 [1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE
 [2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
-[4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
+[4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED 9=FACT_RING_FULL
 [5]      runningReason uint8   — 0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER (only meaningful while state=RUNNING or JOGGING)
 [6..7]   bufCount      uint16 LE — MicroSegments queued in masterBuf; planner blocks while a planner job runs or is paused
 [8..23]  pos[4]        int32 LE  — machinePos: x, y, z, a (steps)
@@ -386,7 +386,7 @@ request line is at most 255 characters.
 state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
-alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
+alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED 9=FACT_RING_FULL
 running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaningful while state=RUNNING or JOGGING)
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with alarm=HOMING_FAIL)

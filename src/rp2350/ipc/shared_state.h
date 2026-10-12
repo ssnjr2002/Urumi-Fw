@@ -15,8 +15,8 @@
 // Channel 1 (command/reply RPC) is ipc/core1_rpc.h.
 //
 // Core 1 cannot open a transaction on channel 1, so everything it must report
-// -- estop, soft-limit trip, position advance -- leaves as a level signal that
-// Core 0 polls. That is why reconcileValidity() runs every loop pass.
+// -- leaves as a level signal Core 0 polls, or as a fact on the ring in
+// ipc/core1_facts.h, which Core 0's observer pops every loop pass.
 //
 // Split out of shared.h, which had become the file everything included: it also
 // held the USB wire contract (core0 only), the pin map and motion limits (core1
@@ -92,10 +92,9 @@ enum AlarmReason : uint8_t {
     // exactly the gating a mid-home pause wants, for free.
     ALARM_LIMIT_LATCHED = 6,
     // A probe leg ended wrong (docs/tool_probe.md §5.11.1). Mirrors
-    // ALARM_HOMING_FAIL and is deliberately NOT one of the reasons
-    // position.cpp invalidates the origin on: most probe failures leave the Z
-    // datum intact, and only the two that lost track of steps void it -- which
-    // the probe supervisor does itself, per cause, rather than by reason.
+    // ALARM_HOMING_FAIL. Most probe failures leave the Z datum intact; only
+    // the two that lost track of steps void it, which the probe supervisor
+    // does itself, per cause.
     //
     // A host that does not know this value must not read it as "no alarm". The
     // web host currently degrades an unrecognised AlarmReason silently, so it
@@ -105,6 +104,9 @@ enum AlarmReason : uint8_t {
     // The default map is not applied. Held until `bus_exclude`, or a `reset`
     // the node answers. Same host caveat as above.
     ALARM_BUS_DEGRADED = 8,
+    // Core 0 fell behind the fact ring (ipc/core1_facts.h) and a fact was
+    // dropped. A bug, not an operating condition. Same host caveat as above.
+    ALARM_FACT_RING_FULL = 9,
 };
 
 // What a job is doing (meaningful while STATE_JOB). Core 0 writes the entries
@@ -183,7 +185,7 @@ extern volatile uint32_t bufferIdleMs;
 // a present-but-disabled axis silently drops steps, so pre-flight checks it.
 // setorigin sets homed bits + zeros pos; estop clears both.
 //
-// `axes_enabled` is DERIVED, not commanded: reconcileValidity() rebuilds it each
+// `axes_enabled` is DERIVED, not commanded: projectEnabled() rebuilds it each
 // Core 0 loop pass by projecting `nodeEnabled` (below) through the bound axes. No
 // command handler writes it. Same shape as axes_homed ← nodeHomed and
 // homingLatched ← nodeLatched (core0/ops/position.h), which is the standing rule

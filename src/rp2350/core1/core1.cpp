@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include "../ipc/shared_state.h"
 #include "../ipc/core1_rpc.h"
+#include "../ipc/core1_facts.h"
 #include "../board.h"
 #include "emit/emit.h"
 #include "cycles.h"
@@ -85,6 +86,7 @@ void processBus() {
 
         __dmb();
         machineState = STATE_ALARM;
+        core1FactPush(FACT_ESTOP_SWEPT);   // Core 1 is done with machinePos
         return;
     }
 
@@ -100,8 +102,10 @@ void processBus() {
         abortRequested = pauseRequested = false;
         dropPlanner();
         __dmb();
-        if (machineState == STATE_JOB || machineState == STATE_JOGGING)
+        if (machineState == STATE_JOB || machineState == STATE_JOGGING) {
             machineState = STATE_IDLE;
+            core1FactPush(FACT_RING_DRAINED);
+        }
     }
 
     busKeepalive();

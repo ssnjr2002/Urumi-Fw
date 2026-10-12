@@ -17,8 +17,13 @@
 #include "../usb_protocol.h" // BUS_ADDR_MAX
 #include "../../ipc/shared_state.h"
 
+// Core 1 flushes, sweeps the bus safe and publishes ALARM. The datum dies
+// here, before the reply; the fenced slots' positions are cleared once Core 1
+// has stopped writing them (FACT_ESTOP_SWEPT, ops/observe.cpp).
 bool cmdStop(const char*) {
-    machineState = STATE_ESTOP;            // Core 1 flushes, clears axes, → ALARM
+    machineState = STATE_ESTOP;
+    originInvalidateAll();
+    slotFenceAllBound();
     Serial.println("ok");
     return true;
 }

@@ -178,10 +178,8 @@ static void probeFail(uint8_t cause) {
     // — is gone.
     lastCause = cause;
 
-    // Only the causes that lost track of steps void the datum. Most probe
-    // failures do not, and position.cpp already draws that line correctly by
-    // keying origin invalidation on ESTOP / SOFT_LIMIT rather than on ALARM
-    // generally — so a probe-fail alarm must not use either of those reasons.
+    // Only the causes that lost track of steps void the datum; most probe
+    // failures do not. An estop's datum is voided by `stop` itself.
     if (probeCauseVoidsDatum(cause)) originInvalidate(zNodeId);
 
     probeRestore(nullptr);
