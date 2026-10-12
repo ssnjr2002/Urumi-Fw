@@ -247,7 +247,29 @@ stomped.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Deviations:
+  * The estop's origin invalidation and fence run in `cmdStop`, right after
+    the ESTOP write (`slotFenceAllBound`); only the fenced slots' `machinePos`
+    waits for `ESTOP_SWEPT` (`slotFencedPosClear`), since Core 1 writes it
+    until the sweep. Today's fence raced Core 1's last slot.
+  * Every `stop` invalidates and fences, including a second one during
+    recovery, which wipes a `setorigin` taken before `unstop`.
+  * `ALARM_FACT_RING_FULL` is raised only from IDLE, under `plannerLock`; in
+    ALARM the flag is dropped and the reason kept; elsewhere it waits for
+    IDLE.
+* Interfaces later branches rely on: `core1FactPush/Pop`,
+  `core1FactsLost/LostClear/Reset` (`ipc/core1_facts.h`); `observeTick()`
+  (`ops/observe.h`), first in the loop; `RING_DRAINED` is popped and ignored,
+  for R2b to consume.
+* Bench (COM8): `stop` mid-jog → `homed=0` at the `ok`, ALARM(ESTOP) with
+  `pos=0` 70 ms later; `slot_map !1 !2 !3 !4`; second `stop`; `unstop` → IDLE.
+  Overflow is covered by `test_ipc` only.
+* Out of scope: `web/test` still has 13 files failing to load and 1 failing
+  test, as on `main`; `pnpm typecheck` has the same 40 errors as `main`.
 
 ## Branch R2a: `refactor/session`
 
