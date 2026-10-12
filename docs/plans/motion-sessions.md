@@ -324,10 +324,9 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
   due: hold, lift the selected head on the planner, park both heads' Z by
   node park legs (in parallel), then for each head of the pair: an XY line
   to its probe switch, wait for `loaded`. Then `BUFFERING`.
-* **Park legs run outside homing:** the leg runner (`core0/ops/leg.cpp`,
-  ticked today only by `homingTick`, which drops legs outside HOMING,
-  `homing.cpp:123`) is ticked by whichever session armed the legs, and
-  dropped when that session loses the machine. Records are held off while a
+* **Park legs run outside homing:** as steps of the tool-change sequence,
+  ticked by the runner and dropped when the session loses the machine
+  (docs/plans/sequences.md). Records are held off while a
   leg is armed. A failed park leg alarms as `ALARM_HOMING_FAIL`
   (`LEGFAIL_PARK`) with the job kept. `pause` is refused in `TOOL_CHANGE`.
 * The host orders layers by tool; returning to an earlier tool is another
@@ -537,7 +536,7 @@ Done (merged). Unblocks J1b and J2.
 
 * Type: feature.
 * Purpose: `jogto park|load|probe`.
-* Depends on: J1.
+* Depends on: J1, and R3 of docs/plans/sequences.md.
 * What the code has today: stored positions are decoded
   (`core0/config/config_decode.h:78`, `:95`) but nothing resolves them.
   `homingParkBegin` (`core0/ops/homing.h:24`) arms a park leg in the homing
@@ -547,13 +546,14 @@ Done (merged). Unblocks J1b and J2.
      (`park` defaulting to where homing parks, `load`, `probe` as the
      selected head's `probeSwitch` minus its offset). Missing: `err
      no_position`.
-  2. `controller/seq/jogto.cpp`: a homing session with one park leg per
-     head's Z node (in parallel, `homingHold` keeping raw legs out), then the
-     session closed and the XY line queued as a J1 jog. HOMING → IDLE →
-     JOGGING → IDLE; the gap is the sequencer's (`err busy`). A failed park
-     alarms as `ALARM_HOMING_FAIL` (`LEGFAIL_PARK`). `stop` mid-sequence
-     aborts the legs.
-  3. Docs: `docs/wire_protocol.md`.
+  2. `controller/seq/jogto.cpp`: the first sequence (docs/plans/sequences.md),
+     owner JOGGING, reason `JOGGING_GOTO` throughout: step 1 parks every
+     head's Z node (legs, in parallel), step 2 is the XY line (ring move).
+     A failed park alarms as `ALARM_HOMING_FAIL` (`LEGFAIL_PARK`). `stop`
+     mid-sequence aborts the live step.
+  3. `err busy` for commands that meet the live sequence (sequences.md,
+     Admission), mirrored in the web host.
+  4. Docs: `docs/wire_protocol.md`.
 * Checks: as J1. Human checks: each name with each head selected, Z parked
   first; a missing position refused; `stop` during the park.
 
@@ -767,14 +767,12 @@ Planned.
 * Roughly: park both Zs (park legs), move XY to the load spot, wait for
   `mount`, then the operator touches off by hand (jog and `zero`, accepted in
   `TOOL_CHANGE` only), then `BUFFERING`.
-* This needs JOB to own a sequence that mixes legs, a planner move and a wait.
-  The leg runner's Later items (steps that grow waits and ring moves; tool
-  change as a recipe, docs/plans/leg-runner.md) point that way; how much of it
-  is needed, and whether a `refactor/` lands first, is settled when this
-  branch is planned.
+* The second sequence (docs/plans/sequences.md), owner `JOB.TOOL_CHANGE`:
+  park Zs (legs), then per head an XY line to load (ring move) and a wait for
+  `mount`.
 * Probing in the job (`TOOL_PROBE`) is later, once probe legs are a leg kind.
 
-**Depends on:** JB3, and the leg runner (merged).
+**Depends on:** JB3, and R3 of docs/plans/sequences.md.
 
 ### Status
 

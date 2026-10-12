@@ -297,17 +297,7 @@ Not yet branches; recorded so the shape is not lost.
   `unalarm` the head returns to TOOL_CHANGE. Core 1 treats TOOL_PROBE as it
   treats PROBING today.
 
-* Layers: observer (Core 1 signals to events; today `reconcileValidity`,
-  `ops/position.cpp:355`) → planes (`cmd/`, `controller/cmd/`: parse, reply)
-  → session (`ops/session`: state, admission, the only Core 0 state writer,
-  abort fan-out) → recipes (`controller/seq/`: config-aware sequences that
-  own a session) → runner → mechanisms (`ops/*`). Dependencies point down;
-  upward news goes by mailbox.
-* Reads (`get`, queries, relays) skip the session.
-* Loop order: observe, planes, runner, session, recipes.
-* Steps grow waits (event or time) and ring moves (pushed to Core 1, done
-  when the ring drains at rest). Legs and the planner ring never move at the
-  same time.
-* Tool change as a recipe.
-* `cjogTick` (`data_plane.cpp:415`) is session logic living in the plane.
-* Probe legs (`ops/probe.cpp`) as a second leg kind.
+* The layers (observer, session, sequences), steps with waits and ring moves,
+  tool change as a sequence, `cjogTick` and probe legs: planned in
+  docs/plans/sequences.md. The `unalarm` item above is its recovery
+  sequences.

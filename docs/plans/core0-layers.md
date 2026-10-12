@@ -25,7 +25,9 @@ takes over.
 * Primitive commands are atomic and config-free: everything they need is an
   argument. Controller commands read the config.
 * Only ops write the state machine (`machineState`, `alarmReason`). The
-  controller changes state only by calling ops.
+  controller changes state only by calling ops. Superseded by
+  docs/plans/sequences.md ("Who may write state"): the session is the only
+  Core 0 writer.
 * `ops/` = code that writes state or holds a session: the position model, the
   axis-map commit, the state settle (`resumeOrHold`), the homing and probe
   supervisors. Reads (`query.cpp`) and single-RPC relays (`periph.cpp`) stay
