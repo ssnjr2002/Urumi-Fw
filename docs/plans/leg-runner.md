@@ -148,7 +148,6 @@ Arming:
 | ALARM (limit latched) | retract | HOMING |
 | ALARM (limit latched) | unlatch (latched nodes only) | TRAVERSE |
 | PROBING (opened by `probe_map`) | probe | stays PROBING |
-| PAUSED | park | stays PAUSED |
 | TRAVERSE, PROBING with a leg live | anything else | `err busy` |
 | everything else | any | `err bad_state` |
 
@@ -162,8 +161,6 @@ Step end:
 | TRAVERSE | park or unlatch failed | ALARM (homing fail) |
 | HOMING | all succeeded | stays HOMING, waiting |
 | HOMING | any failure | ALARM (homing fail) |
-| PAUSED | park succeeded | stays PAUSED |
-| PAUSED | park failed | ALARM (homing fail), job kept |
 | any | `stop` or another fault | the fault's state; the step is dropped |
 
 ## Branch 2: `refactor/leg-owner`
@@ -246,7 +243,33 @@ before.
 
 **Depends on:** branch 2.
 
-**Status:** not started.
+**Status:** ready to merge.
+
+**Outcome:**
+
+* Park from PAUSED is deferred to TOOL_CHANGE (Later); its rows are gone
+  from the tables above.
+* Mailbox kept. `RunEvent` carries the leg's intent and
+  `runnerPop(owner, …)` returns events only to the state that owns the step;
+  `ops/traverse.cpp` owns TRAVERSE.
+* `span` needs a node bound as an axis (`err unbound`): its latch reaches
+  `resumeOrHold` only through `homingLatched`. Revisit if unbound spans are
+  needed.
+* `LegEnd` gains `datum`, and every polled end carries the node's counter.
+  Park, span and unlatch keep the origin only with the witness intact; a
+  dropped leg keeps none.
+* TRAVERSE needed no new `err busy` gates: every Core 0 transition command
+  already refuses a state other than IDLE, PAUSED or ALARM.
+* Probe legs keep their own supervisor (`ops/probe.cpp`); `leg probe` only
+  replaces `probe_leg`'s parsing.
+* Web: only `MachineState.TRAVERSE`. `commands.ts` and `sim.ts` still send
+  `leg <node> <verb>` and `probe_leg`, so the web probe sequence fails against
+  this firmware until updated. `homing/sequence.ts` is stale (waits for
+  `state !== HOMING`) and is a removal candidate.
+* Bench (COM8, X): span hit → `ALARM_LIMIT_LATCHED`, origin kept; `unlatch` →
+  TRAVERSE → IDLE; park from IDLE; `stop` mid-park → `ALARM_ESTOP`; on Z, span
+  not found → IDLE, origin kept. Not run: span hit and unlatch on Z (its switch
+  is finicky), Y.
 
 ## Later
 
