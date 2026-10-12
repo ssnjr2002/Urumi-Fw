@@ -72,7 +72,33 @@ the runner and the seam, and drop the mailbox.
 
 **Depends on:** nothing.
 
-**Status:** planned.
+**Status:** ready to merge. `pio run -e pico` and `pio test -e native` pass.
+Bench: `home`, parallel dummy legs, a failing dummy, parallel raw parks,
+`leg_abort` and `stop` mid-leg behave as before. A raw seek or retract onto
+a switch was not run on its own (`home` runs the same legs).
+
+**Outcome:**
+
+* One live step, no queue: no step depends on nothing before it, so a
+  lookahead had nothing to queue. A raw `leg` joins the live step, so raw legs
+  still run in parallel. Arming stays synchronous; refusals come back from the
+  arm call.
+* The seam is link-time on `leg.h` (already native-clean): the test fakes the
+  leg layer. `leg.cpp`'s bus logic is still bench-tested only; no `ipc/`
+  changes.
+* Origin effects stay in `homing.cpp` (`homingRelease`): `position.h` pulls in
+  `core1_rpc.h` and would not build natively. Move them with a second client.
+* `homingTick` ticks the runner, after its `STATE_HOMING` drop check, so a
+  dropped leg is never polled; the loop does not call `runnerTick`.
+* `runnerAbort` returns the released end directly, as `legAbort`, so
+  `leg_abort` alarms in the same pass; only the step end is posted.
+* `home.cpp` unchanged: `armPhase` arms a phase while nothing is live, so each
+  phase is already one step.
+* Mailbox verdict: neutral for now. It is drained right after the tick that
+  fills it, and adds two subtleties (an abort's step end drained while idle;
+  `runnerAbortAll` clearing the box mid-pop). Judge it at the next client:
+  keep it if that client and `homeTick` read events with less code than they
+  poll with; otherwise return the end from `runnerTick` and drop the box.
 
 ## Later
 
