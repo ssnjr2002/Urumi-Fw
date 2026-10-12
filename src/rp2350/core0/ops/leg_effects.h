@@ -15,7 +15,15 @@ enum LegIntent : uint8_t {
     LEG_SWEEP,     // rotary index
     LEG_PARK,      // to a node counter target, within the datum
     LEG_DUMMY,     // no node, no motion
+    LEG_SPAN,      // onto the switch, measuring travel, within the datum
+    LEG_UNLATCH,   // off the switch, within the datum
 };
+
+// A span that ran out of budget found no switch: an answer, not a failure.
+static inline bool legEndFailed(uint8_t intent, const LegEnd& e) {
+    if (intent == LEG_SPAN && e.failWhy == LEGFAIL_BUDGET) return false;
+    return e.failWhy != LEGFAIL_NONE;
+}
 
 // A leg ended with a verdict (legPoll): success records the latch, then the
 // origin is released.

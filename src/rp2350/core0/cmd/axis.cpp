@@ -15,6 +15,9 @@
 #include "../ops/position.h"
 #include "../ops/frames.h"
 #include "../ops/homing.h"
+#include "../ops/traverse.h"
+#include "../ops/runner.h"
+#include "../ops/leg_effects.h"
 #include "../ops/state.h"
 #include "../ops/probe.h"
 #include "../ops/slot_map.h"
@@ -359,15 +362,19 @@ bool cmdHomeEnd(const char*) {
     return true;
 }
 
-// ── leg <node> seek|retract|sweep <dir> <start_us> <floor_us> <ramp> <max>
-//    leg <node> park <target> <start_us> <floor_us> <ramp>
+// ── leg seek|retract|sweep|span|unlatch <node> <dir> <start_us> <floor_us> <ramp> <max>
+//    leg park <node> <target> <start_us> <floor_us> <ramp>
+//    leg probe <node> <dir> <start_us> <ceil_us> <ramp> <poll_div> <max> <deadline_us> <intent>
 //    leg_abort <node>
 //
 // docs/homing.md §2.2. ONE LEG, NOT A HOME. The firmware runs a leg and reports
 // what it measured; sequencing legs into a home, deciding when a pair is done,
-// and turning the result into a datum all belong to the host (§3). `sweep` is
-// the rotary leg and has no seek/retract intent: there is no pin to predict.
-// `park` runs to an absolute node counter and needs the node homed.
+// and turning the result into a datum all belong to the host (§3). The intent
+// decides the leg's end effects and the state it runs in (legAdmitDenies).
+// `sweep` is the rotary leg and has no seek/retract intent: there is no pin to
+// predict. `park` runs to an absolute node counter and needs the node homed;
+// `span` seeks a switch within the datum, its travel read from `nodestat`;
+// `unlatch` retracts a latched node within the datum.
 //
 // ADDRESSES A BUS ID, not an axis. Every output of a leg is node-framed: the
 // span, the index in the node's own counter, the limit latch (a switch is wired
@@ -403,7 +410,8 @@ bool cmdHomeEnd(const char*) {
 // (NAK_INTENT_MISMATCH) rather than silently running under the wrong leg's
 // budget semantics. The Pico is a pure relay for it.
 
-// Which states may start a leg. Prints its own error; callers return on true.
+// `dummy_leg`'s states, those of a homing leg. Prints its own error; callers
+// return on true.
 static bool legGateDenies() {
     // A `home` run owns its session's legs.
     if (homingHeld()) { Serial.println("err busy"); return true; }
@@ -428,25 +436,66 @@ static bool parseNode(const char** p, uint8_t* node) {
     return true;
 }
 
-bool cmdLeg(const char* args) {
-    if (legGateDenies()) return true;
+// Routed to the probe session, not the runner.
+#define LEG_PROBE 0xFF
 
+static bool parseIntent(const char** p, uint8_t* intent) {
+    static const struct { const char* name; uint8_t intent; } names[] = {
+        { "seek",    LEG_SEEK    }, { "retract", LEG_RETRACT },
+        { "sweep",   LEG_SWEEP   }, { "park",    LEG_PARK    },
+        { "span",    LEG_SPAN    }, { "unlatch", LEG_UNLATCH },
+        { "probe",   LEG_PROBE   },
+    };
+    while (**p == ' ') (*p)++;
+    const char* w = *p;
+    while (**p && **p != ' ') (*p)++;
+    const size_t n = (size_t)(*p - w);
+    for (const auto& e : names)
+        if (strlen(e.name) == n && strncmp(w, e.name, n) == 0) { *intent = e.intent; return true; }
+    return false;
+}
+
+// The arming table (docs/homing.md §2.2): the states each intent may start
+// from. Seek, retract and sweep run in HOMING; park joins HOMING or runs in
+// TRAVERSE; span and unlatch run in TRAVERSE; probe runs in PROBING. A live
+// step holds its state, so a leg that would run in another is `err busy`.
+// Prints its own error; callers return on true.
+static bool legAdmitDenies(uint8_t intent) {
+    // A `home` run owns its session's legs.
+    if (homingHeld()) { Serial.println("err busy"); return true; }
+    const uint8_t s       = machineState;
+    const bool    latched = s == STATE_ALARM && alarmReason == ALARM_LIMIT_LATCHED;
+    bool ok = false;
+    switch (intent) {
+        case LEG_SEEK:
+        case LEG_SWEEP:   ok = s == STATE_IDLE || s == STATE_HOMING; break;
+        case LEG_RETRACT: ok = s == STATE_IDLE || s == STATE_HOMING || latched; break;
+        case LEG_PARK:    ok = s == STATE_IDLE || s == STATE_HOMING || s == STATE_TRAVERSE; break;
+        case LEG_SPAN:    ok = s == STATE_IDLE || s == STATE_TRAVERSE; break;
+        case LEG_UNLATCH: ok = latched; break;
+        case LEG_PROBE:   ok = s == STATE_PROBING; break;
+    }
+    if (ok) return false;
+    if ((s == STATE_TRAVERSE && runnerLive()) || (s == STATE_PROBING && probeLegInFlight()))
+        Serial.println("err busy");
+    else if (intent == LEG_PROBE)
+        Serial.println("err not_probing");
+    else
+        Serial.println("err bad_state");
+    return true;
+}
+
+static bool probeLeg(uint8_t node, const char* p);
+
+bool cmdLeg(const char* args) {
     const char* p = args;
-    uint8_t node;
-    if (!parseNode(&p, &node)) { Serial.println("err usage"); return true; }
-    while (*p == ' ') p++;
-    const char* verb = p;
-    while (*p && *p != ' ') p++;
-    const size_t vlen = (size_t)(p - verb);
-    auto is = [&](const char* w) { return strlen(w) == vlen && strncmp(verb, w, vlen) == 0; };
-    const bool park = is("park");
-    uint8_t expectKind;
-    bool intent = false;
-    if      (is("seek"))    expectKind = HOMING_KIND_LIMIT;
-    else if (is("retract")) { expectKind = HOMING_KIND_LIMIT; intent = true; }
-    else if (is("sweep"))   expectKind = HOMING_KIND_INDEX;
-    else if (park)          expectKind = HOMING_KIND_NONE;   // any terminator
-    else { Serial.println("err usage"); return true; }
+    uint8_t intent, node;
+    if (!parseIntent(&p, &intent) || !parseNode(&p, &node)) {
+        Serial.println("err usage"); return true;
+    }
+    if (legAdmitDenies(intent)) return true;
+    if (intent == LEG_PROBE) return probeLeg(node, p);
+    const bool park = intent == LEG_PARK;
 
     // A de-energised node accepts CMD_HOME_LEG and pulses into a motor that
     // cannot turn: the terminator is never reached, so the leg burns its entire
@@ -467,6 +516,12 @@ bool cmdLeg(const char* args) {
     // The target is in the node's own frame, so it means something only while
     // the Pico holds that node's origin. Checked before any bus I/O.
     if (park && !originValid(node)) { Serial.println("err not_homed"); return true; }
+    // A span's latch reaches the machine (ALARM_LIMIT_LATCHED) only through a
+    // bound axis.
+    if (intent == LEG_SPAN && !node_isAxis(node)) { Serial.println("err unbound"); return true; }
+    if (intent == LEG_UNLATCH && !nodeLatchGet(node)) {
+        Serial.println("err not_latched"); return true;
+    }
 
     // Five numbers: the first is <dir> (0/1) or a park's signed <target>; the
     // rest are start, floor, ramp, and for a non-park leg the budget.
@@ -497,12 +552,19 @@ bool cmdLeg(const char* args) {
         }
     }
 
-    const char* why = park
-        ? homingParkBegin(node, (int32_t)first, (uint16_t)v[0],
-                          (uint16_t)v[1], (uint16_t)v[2])
-        : homingBegin(node, expectKind, (uint8_t)first, intent,
-                      (uint16_t)v[0], (uint16_t)v[1],
-                      (uint16_t)v[2], (uint32_t)v[3]);
+    const uint16_t startUs = (uint16_t)v[0], floorUs = (uint16_t)v[1], ramp = (uint16_t)v[2];
+    const char* why;
+    if (park && machineState == STATE_HOMING)
+        why = homingParkBegin(node, (int32_t)first, startUs, floorUs, ramp);
+    else if (park)
+        why = traverseParkBegin(node, (int32_t)first, startUs, floorUs, ramp);
+    else if (intent == LEG_SPAN || intent == LEG_UNLATCH)
+        why = traverseBegin(intent, node, (uint8_t)first, startUs, floorUs, ramp, (uint32_t)v[3]);
+    else
+        why = homingBegin(node,
+                          intent == LEG_SWEEP ? HOMING_KIND_INDEX : HOMING_KIND_LIMIT,
+                          (uint8_t)first, intent == LEG_RETRACT,
+                          startUs, floorUs, ramp, (uint32_t)v[3]);
     replyWhy(why);
     return true;
 }
@@ -834,30 +896,25 @@ bool cmdProbeMap(const char* args) {
     return true;
 }
 
-// ── probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps>
-//             <deadline_us> <intent> ─────────────────────────────────────────
-// Positional, following the leg verb's idiom. The host owns the sequence and the Pico
-// runs ONE leg: there is no leg index, and the Pico never learns which leg of
-// four this is.
+// ── leg probe <node> <dir> <start_us> <ceil_us> <ramp_steps> <poll_div>
+//              <max_steps> <deadline_us> <intent> ────────────────────────────
+// The host owns the sequence and the Pico runs ONE leg: there is no leg index,
+// and the Pico never learns which leg of four this is.
 //
-// No node argument, and that is the difference from `leg` rather than an
-// oversight. A home is node-framed and runs before any map is committed; a probe
-// is the opposite — the session already bound both nodes, so naming them again
-// would be a second source of truth that could disagree with the binding.
+// The node is a check, not an input: the session already bound Z, so the
+// binding stays the one source of truth and a node that disagrees with it is
+// refused.
 //
 // `start_us` is not in the design document's argument table. It is here for the
 // reason `leg` carries both a start and a floor: a ramp needs somewhere to
 // ramp FROM, and the alternative was a hidden multiplier of ceil_us buried in
 // the emitter, which is a worse place for a number that decides whether Z loses
 // steps.
-bool cmdProbeLeg(const char* args) {
-    // The bus gate does not admit STATE_PROBING -- correctly, since it is a
-    // motion state for every other command. Checked first so the commonest
-    // mistake here, a leg with no session, is named rather than answered with a
-    // generic bad_state.
-    if (machineState != STATE_PROBING) { Serial.println("err not_probing"); return true; }
+static bool probeLeg(uint8_t node, const char* p) {
+    if (node != axisNode(SLOT_Z)) {
+        Serial.printf("err node %d not_probe_z\n", node); return true;
+    }
     char* end;
-    const char* p = args;
     unsigned long v[8];
     for (int i = 0; i < 8; i++) {
         v[i] = strtoul(p, &end, 10);

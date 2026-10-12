@@ -20,12 +20,13 @@ static uint8_t intentFor(const LegEnd& e) {
     return e.dummy ? (uint8_t)LEG_DUMMY : intentOf[e.node];
 }
 
-static void post(uint8_t kind, const LegEnd* end) {
+static void post(uint8_t kind, const LegEnd* end, uint8_t intent) {
     // An owner that stopped draining: a bug, so stop here rather than lose an end.
     if (boxCount == RUN_MAILBOX) for (;;) {}
     RunEvent& ev = box[(boxHead + boxCount++) % RUN_MAILBOX];
     ev.kind = kind;
-    ev.gen  = gen;
+    ev.gen    = gen;
+    ev.intent = intent;
     if (end) ev.end = *end;
 }
 
@@ -70,7 +71,7 @@ const char* runnerArmDummy(uint8_t own, bool succeed, uint32_t ms) {
 static void stepCheck(void) {
     if (!live || legAny()) return;
     live = false;
-    post(RUN_STEP_END, nullptr);
+    post(RUN_STEP_END, nullptr, 0);
 }
 
 // Ends the step without a step end, releasing every leg in `ends`.
@@ -94,13 +95,15 @@ void runnerTick(void) {
     }
     LegEnd e;
     if (legPoll(&e) != LEG_RUNNING) {
-        legEffectEnd(intentFor(e), e);
-        post(RUN_LEG_END, &e);
+        const uint8_t intent = intentFor(e);
+        legEffectEnd(intent, e);
+        post(RUN_LEG_END, &e, intent);
     }
     stepCheck();
 }
 
-bool runnerPop(RunEvent* ev) {
+bool runnerPop(uint8_t own, RunEvent* ev) {
+    if (own != owner) return false;
     while (boxCount) {
         *ev = box[boxHead];
         boxHead = (uint8_t)((boxHead + 1) % RUN_MAILBOX);

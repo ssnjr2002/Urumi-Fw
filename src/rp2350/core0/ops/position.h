@@ -116,6 +116,7 @@ static inline bool node_isAxis(uint8_t n) { return nodeAxis(n) != SLOT_NONE; }
 // is bound again -- which is right, because the node really will still refuse
 // stream steps.
 void nodeLatchSet(uint8_t n, bool latched);
+bool nodeLatchGet(uint8_t n);
 
 // Per-AXIS view of the above (bit0=X .. bit3=A), bound axes only.
 // Read-only to everything but position.cpp.

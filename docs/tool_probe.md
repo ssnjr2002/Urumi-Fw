@@ -307,7 +307,7 @@ Three commands, one session:
 | command | §  | effect |
 |---|---|---|
 | `probe_map <switch-id>` | 5.3 | enter the session, rebind slots |
-| `probe_leg <dir> <ceil_us> …` | 5.7 | run one leg |
+| `leg probe <z> <dir> <start_us> …` | 5.7 | run one leg |
 | `probe_end` | 5.5 | exit, re-apply the axes request |
 | `axes_map …` | 5.5 | exit, committing a new axes request instead |
 
@@ -507,11 +507,14 @@ waits out the poll deadline (§5.7) before anything happens — the machine woul
 still, which is safe, but it would sit still for the wrong reason and report the
 wrong one.
 
-### 5.7 `probe_leg` — arming one leg
+### 5.7 `leg probe` — arming one leg
 
 ```
-probe_leg <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps> <deadline_us> <intent>
+leg probe <z> <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps> <deadline_us> <intent>
 ```
+
+`<z>` is a check, not an input: it must be the node the session bound as Z,
+else `err node <n> not_probe_z`. Outside a session, `err not_probing`.
 
 Positional, `err usage` / `err range`, following `leg`'s idiom in
 [axis.cpp](../src/rp2350/core0/cmd/axis.cpp). The host owns the sequence and the

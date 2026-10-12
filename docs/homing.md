@@ -446,9 +446,10 @@ plane is for high-rate windowed streams and would need new binary framing for no
 gain.
 
 ```
-leg <node> seek|retract <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
-leg <node> sweep <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
-leg <node> park <target> <start_us> <floor_us> <ramp_steps>
+leg seek|retract|span|unlatch <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+leg sweep <node> <dir> <start_us> <floor_us> <ramp_steps> <max_steps>
+leg park <node> <target> <start_us> <floor_us> <ramp_steps>
+leg probe <node> <dir> <start_us> <ceil_us> <ramp_steps> <poll_div> <max_steps> <deadline_us> <intent>
 leg_abort <node>
 ```
 
@@ -496,8 +497,8 @@ every stepper's status tail, so `homingBegin()` spends one extra transaction
 `err kind_mismatch node <n> is <k> want <k>` on a mismatch. The kind also arrives
 in the arm ack — which is where the seek/retract classification reads it — but
 that ack is sampled *after* the pulser has started, so checking only there would
-let a `leg <n> seek` aimed at a rotary node run a full sweep before anyone noticed,
-and a `leg <n> sweep` aimed at a linear one drive into a hard stop hunting a dip that
+let a `leg seek <n>` aimed at a rotary node run a full sweep before anyone noticed,
+and a `leg sweep <n>` aimed at a linear one drive into a hard stop hunting a dip that
 does not exist. A node with no terminator at all (`HOMING_KIND_NONE`) fails the
 same check, and more usefully than the bare NAK it would otherwise get: the error
 names what the node *is*, not merely that it said no.
@@ -561,6 +562,47 @@ axis is left on its switch (§2.6). Between legs `nodestat`, `pingnode` and
 
 `STATE_HOMING` joins the data-plane allowed-state matrix, so a job stream
 arriving mid-home gets the existing `MSEG_NACK_BAD_STATE`.
+
+**Intents.** The word after `leg` is the intent: it decides the leg's end
+effects and the state it runs in.
+
+| Intent | Ends with | Origin |
+| --- | --- | --- |
+| `seek` | on the switch: latch set; budget out: `ALARM_HOMING_FAIL` | dropped |
+| `retract` | off the switch: latch cleared | dropped |
+| `sweep` | rotary index found | dropped |
+| `park` | on target; off target: `ALARM_HOMING_FAIL` (`homefail=8`) | kept |
+| `span` | on the switch: latch set, `ALARM_LIMIT_LATCHED`; budget out: no alarm | kept |
+| `unlatch` | off the switch: latch cleared | kept |
+| `probe` | as the probe session (docs/tool_probe.md) | as there |
+
+Kept means `machinePos` is re-derived from the node's counter, if the node's
+datum witness survived the leg; a node without an origin stays un-homed. A
+span's travel is read afterwards from `nodestat … span` (§2.7). `span` needs a
+node bound as an axis (`err unbound`), since its latch reaches the machine
+only through one; `unlatch` needs a latched node (`err not_latched`); `probe`'s
+node must be the Z the session bound (`err node <n> not_probe_z`).
+
+| Current state | Intent | Runs in |
+| --- | --- | --- |
+| IDLE | seek, retract, sweep | HOMING |
+| IDLE | park, span | TRAVERSE |
+| HOMING | seek, retract, sweep, park | HOMING |
+| TRAVERSE | park, span | TRAVERSE (joins the legs running) |
+| ALARM (limit latched) | retract | HOMING |
+| ALARM (limit latched) | unlatch | TRAVERSE |
+| PROBING | probe | PROBING |
+
+Anything else is `err bad_state`, or `err busy` in TRAVERSE, or in PROBING with
+a leg in flight. A `home` run answers `err busy` to every leg.
+
+**`STATE_TRAVERSE` (8)** has no reason byte. The first leg opens it and the
+state closes itself when its last leg ends, through `resumeOrHold()`: IDLE, or
+`ALARM_LIMIT_LATCHED` after a span that ended on its switch. A failed park or
+unlatch alarms as in HOMING (`ALARM_HOMING_FAIL`, the others aborted); a span
+that found no switch does not. `leg_abort` releases the leg, dropping its
+origin, and the state closes as usual. `stop` drops every leg; the estop
+drops the origins.
 
 ### 2.3 The supervisor
 

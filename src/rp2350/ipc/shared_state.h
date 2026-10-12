@@ -122,6 +122,10 @@ static inline uint32_t microSegmentUs(int32_t dx, int32_t dy, int32_t dz,
 //   IDLE    → HOMING    Core 0 `home`, once the node acks the arm
 //   HOMING  → IDLE      Core 0 supervisor, node's pulser stopped as expected
 //   HOMING  → ALARM     Core 0 supervisor, ALARM_HOMING_FAIL (see homing.cpp)
+//   IDLE    → TRAVERSE  Core 0 `leg park|span`, once the node acks the arm
+//   ALARM   → TRAVERSE  Core 0 `leg unlatch`, from ALARM_LIMIT_LATCHED
+//   TRAVERSE → IDLE     Core 0 supervisor, step ended (or ALARM, resumeOrHold)
+//   TRAVERSE → ALARM    Core 0 supervisor, ALARM_HOMING_FAIL (see traverse.cpp)
 //
 // Enum values are the wire contract (get state=<n>). HOMING is entered only
 // by `home` and is a MOTION state: the data plane refuses MSEG and JOG in it for
@@ -142,6 +146,10 @@ enum MachineState : uint8_t {
     // Planner jog motion (`line`, `bez`, `jog`, `jogto`; docs/plans/
     // motion-sessions.md). Never pauses: it runs, or is aborted to IDLE.
     STATE_JOGGING = 7,
+    // Node legs that keep the origin (park, span, unlatch) outside a homing
+    // session (core0/ops/traverse.cpp). Opened by the first leg and closed by
+    // the step's end. A motion state with no reason byte.
+    STATE_TRAVERSE = 8,
 };
 
 // Reason codes (state_redesign Layer 2): metadata on WHY we are in a state, so

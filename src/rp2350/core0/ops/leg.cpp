@@ -81,6 +81,7 @@ static void legRelease(Leg& leg, LegEnd* end, uint8_t why) {
     end->retract = leg.retract;
     end->park    = leg.park;
     end->pos     = leg.target;
+    end->datum   = false;
     end->failWhy = why;
 }
 
@@ -260,7 +261,7 @@ uint8_t legAbortAll(LegEnd* ends) {
         const bool acked = rpcLegAbort(g.node, &st) == RPC_OK && st.hasStepperTail;
         const bool kept  = acked && g.park && (st.flags & NODE_FLAG_DATUM);
         legRelease(g, &ends[n], kept ? LEGFAIL_NONE : LEGFAIL_ABORTED);
-        if (kept) ends[n].pos = st.pos;
+        if (kept) { ends[n].pos = st.pos; ends[n].datum = true; }
         n++;
     }
     return n;
@@ -339,7 +340,8 @@ static LegPoll legPollOne(Leg& leg, LegEnd* end, uint32_t now) {
     }
 
     // Stopped. The kinds of leg are ended by different things and there is
-    // no flag they share.
+    // no flag they share; each end carries where the node stopped.
+    uint8_t why = LEGFAIL_NONE;
     if (leg.park) {
         // The target is absolute, so where it stopped is the whole verdict. A
         // switch on the way, or a reset (which clears the datum and the
@@ -347,15 +349,12 @@ static LegPoll legPollOne(Leg& leg, LegEnd* end, uint32_t now) {
         const bool ok = st.pos == leg.target &&
                         (st.flags & NODE_FLAG_DATUM) &&
                         (leg.rotary || !(st.flags & NODE_FLAG_LIMIT));
-        if (!ok) { legRelease(leg, end, LEGFAIL_PARK); return LEG_FAILED; }
+        if (!ok) why = LEGFAIL_PARK;
     } else if (leg.rotary) {
         // No settle window: the node resolves the index BEFORE it publishes
         // NODE_FLAG_LEG clear (stepper.cpp node_loop), so the cause is final by
         // the time this poll can see the leg stopped.
-        if (st.indexCause != ROTARY_IDX_OK) {
-            legRelease(leg, end, rotaryIdxFail(st.indexCause, st.crossings));
-            return LEG_FAILED;
-        }
+        if (st.indexCause != ROTARY_IDX_OK) why = rotaryIdxFail(st.indexCause, st.crossings);
     } else {
         // §1.5: after a seek, LIMIT set means found and clear means the budget
         // ran out without ever reaching the switch; after a retract it is the
@@ -364,11 +363,12 @@ static LegPoll legPollOne(Leg& leg, LegEnd* end, uint32_t now) {
                                     :  (st.flags & NODE_FLAG_LIMIT);
         if (!ok) {
             if (leg.settleLeft) { leg.settleLeft--; return LEG_RUNNING; }  // legFinish() may not have run
-            legRelease(leg, end, LEGFAIL_BUDGET);
-            return LEG_FAILED;
+            why = LEGFAIL_BUDGET;
         }
     }
 
-    legRelease(leg, end, LEGFAIL_NONE);
-    return LEG_DONE;
+    legRelease(leg, end, why);
+    end->pos   = st.pos;
+    end->datum = (st.flags & NODE_FLAG_DATUM) != 0;
+    return why == LEGFAIL_NONE ? LEG_DONE : LEG_FAILED;
 }

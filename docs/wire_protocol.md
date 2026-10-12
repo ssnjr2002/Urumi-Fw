@@ -222,7 +222,7 @@ packets by inserting the byte at a packet boundary.
 ### STATUS_RSP — `0xA7` (30 bytes)
 ```
 [0]      magic         = 0xA7
-[1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING
+[1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE
 [2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [4]      alarmReason   uint8   — 0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
@@ -383,7 +383,7 @@ the key does not apply now, `!` the key is not recognised (older firmware). A
 request line is at most 255 characters.
 
 ```
-state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING
+state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 alarm=<a>     alarmReason     0=NONE 1=ESTOP 2=CONFIG 3=SOFT_LIMIT 4=HOMING_FAIL 5=NODE_FAULT 6=LIMIT_LATCHED 7=PROBE_FAIL 8=BUS_DEGRADED
@@ -479,7 +479,8 @@ Phase 2.
 | `pingnode` / `busstat` / `nodestat` | ✓ | ✗ | ✓ | ✓ | between legs |
 | `enable` / `disable` / `makesafe` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `setorigin` | ✓ | ✗ | ✓ | ✓ | between legs |
-| `leg` / `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✓ (one per node) |
+| `leg` | by intent (docs/homing.md §2.2) | ✗ | ✗ | `retract`, `unlatch`: `LIMIT_LATCHED` only | by intent (one per node) |
+| `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✓ |
 | `leg_abort` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `home_end` | ✗ | ✗ | ✗ | ✗ | between legs |
 | `home` / `home_unhomed` / `home_cycle` / `home_head` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✗ |

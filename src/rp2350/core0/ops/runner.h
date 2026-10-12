@@ -23,9 +23,10 @@ enum RunEventKind : uint8_t {
 };
 
 struct RunEvent {
-    uint8_t kind;   // RunEventKind
+    uint8_t kind;    // RunEventKind
     uint8_t gen;
-    LegEnd  end;    // RUN_LEG_END only
+    uint8_t intent;  // RUN_LEG_END only: the leg's LegIntent
+    LegEnd  end;     // RUN_LEG_END only
 };
 
 // Arm a leg into the live step, or open one under `owner` (a MachineState: the
@@ -45,8 +46,10 @@ const char* runnerArmDummy(uint8_t owner, bool succeed, uint32_t ms);
 // instead: its legs released, nothing posted. Call from the Core 0 loop.
 void runnerTick(void);
 
-// Take the oldest event of the live generation. False when there is none.
-bool runnerPop(RunEvent* ev);
+// Take the oldest event of the live generation, for `owner` only: events
+// belong to the state the step ran in, so any other caller gets none. False
+// when there is none.
+bool runnerPop(uint8_t owner, RunEvent* ev);
 
 // As legAbort: a released leg is released and comes back in `*end`, not as an
 // event.

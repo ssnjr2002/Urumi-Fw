@@ -11,13 +11,20 @@
 // plausible wrong number, and §3.4's closing `setorigin` is what re-derives it
 // from the node's counter.
 //
-// The one exception is a park that finished: it moved within the datum, with
-// the witness intact and the counter on target, so the origin stands and only
-// machinePos is re-derived. legAbortAll ends an acked park the same way.
+// The exception is a leg that moves within the datum -- a park, span or
+// unlatch -- and ended with the witness intact: the origin stands and only
+// machinePos is re-derived from the node's counter. legAbortAll ends an acked
+// park the same way. A leg dropped without a verdict carries no witness.
+static bool keepsOrigin(uint8_t intent) {
+    return intent == LEG_PARK || intent == LEG_SPAN || intent == LEG_UNLATCH;
+}
+
 void legEffectRelease(uint8_t intent, const LegEnd& e) {
     if (intent == LEG_DUMMY) return;
-    if (intent == LEG_PARK && e.failWhy == LEGFAIL_NONE) originAdopt(e.node, e.pos);
-    else                                                 originInvalidate(e.node);
+    if (keepsOrigin(intent) && e.datum && !legEndFailed(intent, e))
+        originAdopt(e.node, e.pos);
+    else
+        originInvalidate(e.node);
 }
 
 // A failed leg leaves the latch untouched, and that is already right: a seek
@@ -31,8 +38,9 @@ void legEffectRelease(uint8_t intent, const LegEnd& e) {
 // rotary axis has no switch to stand on) nor a park (it finished off its
 // switch).
 void legEffectEnd(uint8_t intent, const LegEnd& e) {
-    if (e.failWhy == LEGFAIL_NONE && (intent == LEG_SEEK || intent == LEG_RETRACT))
-        nodeLatchSet(e.node, !e.retract);
+    const bool switched = intent == LEG_SEEK || intent == LEG_RETRACT ||
+                          intent == LEG_SPAN || intent == LEG_UNLATCH;
+    if (e.failWhy == LEGFAIL_NONE && switched) nodeLatchSet(e.node, !e.retract);
     legEffectRelease(intent, e);
 }
 

@@ -59,7 +59,9 @@ struct LegEnd {
     bool    rotary;    // a sweep: no switch, so no latch to record
     bool    retract;   // the node armed a retract (its pin was asserted)
     bool    park;      // a park leg
-    int32_t pos;       // a finished park: the node's counter at the final poll
+    int32_t pos;       // the node's counter at the final poll, or an acked
+                       // park's at the abort
+    bool    datum;     // `pos` came with the node's datum witness intact
     uint8_t failWhy;   // LEGFAIL_*; LEGFAIL_NONE on success
 };
 
@@ -92,7 +94,7 @@ enum LegPoll : uint8_t {
 // checks it against its own pin read and NAKs on disagreement
 // (NAK_INTENT_MISMATCH, include/common.h) rather than silently running the
 // wrong leg's semantics under the right leg's budget. Meaningless for
-// HOMING_KIND_INDEX -- there is no pin to agree with -- and `leg <n> sweep`
+// HOMING_KIND_INDEX -- there is no pin to agree with -- and `leg sweep`
 // passes false.
 //
 // `*intentMismatch`, when given, is set on a NAK_INTENT_MISMATCH refusal: the

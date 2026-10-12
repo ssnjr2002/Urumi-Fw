@@ -100,9 +100,9 @@ const char* homingDummyBegin(bool succeed, uint32_t ms) {
 // session's verdict on them.
 void homingTick(void) {
     RunEvent ev;
-    while (runnerPop(&ev)) {
+    while (runnerPop(STATE_HOMING, &ev)) {
         if (ev.kind == RUN_LEG_END) {
-            if (ev.end.failWhy != LEGFAIL_NONE) homingFail(ev.end);
+            if (legEndFailed(ev.intent, ev.end)) homingFail(ev.end);
             continue;
         }
         // The session stays open for the next leg, `setorigin` or `home_end`;

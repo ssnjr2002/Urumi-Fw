@@ -133,7 +133,7 @@ static const char* seek(uint8_t node, uint8_t intent = LEG_SEEK) {
 
 static int drain(RunEvent* out, int max) {
     int n = 0;
-    while (n < max && runnerPop(&out[n])) n++;
+    while (n < max && runnerPop(OWNER, &out[n])) n++;
     return n;
 }
 
@@ -347,6 +347,20 @@ TEST_CASE("a joining leg runs under the live step's owner") {
     CHECK(runnerArm(OWNER + 1, LEG_SEEK, 4, 0, 0, false, 0, 0, 0, 0) == nullptr);
     runnerTick();
     CHECK(runnerLive());     // OWNER still holds; OWNER + 1 was never the owner
+}
+
+TEST_CASE("only the step's owner pops its events, each with its leg's intent") {
+    reset();
+    seek(3, LEG_SPAN);
+    finish(3);
+    runnerTick();
+    RunEvent ev;
+    CHECK_FALSE(runnerPop(OWNER + 1, &ev));   // not this state's step
+    REQUIRE(runnerPop(OWNER, &ev));
+    CHECK(ev.kind == RUN_LEG_END);
+    CHECK(ev.intent == LEG_SPAN);
+    REQUIRE(runnerPop(OWNER, &ev));
+    CHECK(ev.kind == RUN_STEP_END);
 }
 
 TEST_CASE("a dummy's end is LEG_DUMMY whatever node 0 last ran") {

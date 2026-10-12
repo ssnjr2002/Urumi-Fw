@@ -84,7 +84,6 @@ bool cmdDisable(const char*);
 // session state and its supervisor live in core0/ops/probe.cpp; these are the three
 // handlers that reach it.
 bool cmdProbeMap(const char*);
-bool cmdProbeLeg(const char*);
 bool cmdProbeEnd(const char*);
 bool cmdSetProbe(const char*);
 bool cmdUnprobe(const char*);

@@ -19,6 +19,7 @@
 #include "ops/state.h"
 #include "ops/homing.h"
 #include "ops/runner.h"
+#include "ops/traverse.h"
 #include "ops/probe.h"
 #include "data_plane.h"
 #include "status.h"
@@ -180,6 +181,7 @@ void loop() {
         // that is driving an axis at a hard stop.
         runnerTick();
         homingTick();
+        traverseTick();
         // A `home` run, after the legs it sequences have been polled.
         homeTick();
         // And a probe leg, for the same reason and on the same terms: a leg runs

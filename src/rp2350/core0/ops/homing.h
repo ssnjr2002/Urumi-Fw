@@ -43,9 +43,9 @@ const char* homingDummyBegin(bool succeed, uint32_t ms);
 void homingHold(uint8_t cycle);
 uint8_t homingHeld(void);
 
-// Fail the cycle on `node` for a cause found outside a leg (LEGFAIL_*): as a
-// failed leg, the other legs are aborted, `node`'s origin is dropped and the
-// machine alarms.
+// Fail the cycle on `node` for a cause found outside a leg, or a TRAVERSE leg
+// (LEGFAIL_*): as a failed leg, the other legs are aborted, `node`'s origin is
+// dropped and the machine alarms.
 void homingAbandon(uint8_t node, uint8_t why);
 
 // True while any leg runs. Lets the gates refuse `setorigin` and `home_end`
