@@ -280,13 +280,34 @@ Done (merged, d9591d4..54aa1dc). Unblocks R2a.
 **Purpose:** `ops/session` as the only Core 0 writer of `machineState` and
 `alarmReason`.
 
-* `ops/session.{h,cpp}` (new): `sessionOpen(owner, reason)` (returns the
-  refusal: `bad_state`, `busy`), `sessionClose()` (through `resumeOrHold`),
-  `sessionFail(alarm)`, `sessionLost()`, and a default closer per owner.
-* Move the writers onto it: `ops/state.cpp:21`, `homing.cpp:37,58`,
-  `probe.cpp:147,193,242`, `slot_map.cpp:177`, `traverse.cpp:18,48`,
-  `cmd/lifecycle.cpp:21,115`, `core0.cpp:121`, and the `resumeOrHold` calls in
-  `cmd/` and `controller/cmd/`.
+* `ops/session.{h,cpp}` (new), with a default closer per owner:
+
+  | Call | Does |
+  |---|---|
+  | `sessionOpen(owner, reason)` | admits by state, opens; returns the refusal (`bad_state`, `busy`) |
+  | `sessionClose()` | ends the open session, then settles |
+  | `sessionSettle()` | at rest only: re-evaluates the held reasons after a condition changed; a no-op while a session is open |
+  | `sessionAlarm(reason)` | an event alarm, from any state but ESTOP; ends an open session first |
+  | `sessionEstop()` | ESTOP, then `originInvalidateAll()` and `slotFenceAllBound()` (R1's order in `cmdStop`) |
+  | `sessionReset()` | the soft-reset wipe: drops any session, ALARM/NODE_FAULT and the sub-reasons |
+
+* `resumeOrHold` (`ops/state.cpp:11`) becomes the session's private
+  `settle()`. Held reasons (bus degraded, config, slot map, limit latched) are
+  standing conditions and clear through settle; event reasons
+  (`sessionAlarm`) clear only through `unalarm`, which clears the reason and
+  calls `sessionSettle()`.
+* Move the writers onto it:
+  * `sessionOpen`: `homing.cpp:58`, `probe.cpp:240`, `traverse.cpp:18`.
+  * `sessionClose`: `home.cpp:300`, `axis.cpp:350`, `probe.cpp:145,147`,
+    `traverse.cpp:48`, `cmd/lifecycle.cpp:57,120,137`.
+  * `sessionSettle`: `axis.cpp:231,360`, `core0.cpp:162`, `slot_map.cpp:179`,
+    `controller/seq/controller.cpp:14`, `controller/cmd/unalarm.cpp:31`.
+  * `sessionAlarm`: `homing.cpp:37`, `probe.cpp:191`, `slot_map.cpp:177`,
+    `ops/observe.cpp:21-23` (`ALARM_FACT_RING_FULL`).
+  * `sessionEstop`: `cmd/lifecycle.cpp:24` and the invalidation and fence
+    after it.
+  * `sessionReset`: `core0.cpp:124-128`.
+  Line numbers as of `7a72e85`; Read confirms each call's kind.
 * Admission by state moves into `sessionOpen`; checks that depend on arguments
   stay in the handlers (`cmd/gate.h` says why). Today's refusals stay;
   `err busy` (see Admission) is a wire change and comes with J1b, the first
@@ -295,8 +316,9 @@ Done (merged, d9591d4..54aa1dc). Unblocks R2a.
 * A seam (state read/write, `plannerLock`) so the session compiles in
   `native`.
 
-**Tests (native):** open/close per owner, refusal per state, fail and lost,
-the default closers.
+**Tests (native):** open/close per owner, refusal per state, alarm from IDLE
+and from an open session, settle per held reason, estop, reset, the default
+closers.
 
 **Checks:** as R1. Human: home, probe, `leg park`, a job with pause and
 cancel, estop and `unstop`: as before.
