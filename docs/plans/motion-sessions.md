@@ -670,7 +670,7 @@ with the reasons `BUFFERING`, `RUNNING`, `HOLDING` and `PAUSED`.
 
 ### Status
 
-Ready to merge.
+Done (merged). Unblocks JB3, together with JB2.
 
 ### Outcome
 
