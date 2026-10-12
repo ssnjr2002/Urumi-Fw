@@ -297,3 +297,19 @@ TEST_CASE("ring wraps around") {
         checkPlan(p, -1);
     }
 }
+
+TEST_CASE("queued time sums the unclaimed blocks' committed profiles") {
+    Planner p;
+    p.reset({0, 0});
+    CHECK(p.queuedTime() == 0);
+    REQUIRE(p.pushLine({100, 0}, 300, lim(), kDev));
+    REQUIRE(p.pushLine({100, 100}, 300, lim(), kDev));
+    replanCommit(p);
+    Planner q = p;
+    const float first = q.claim()->profile.duration();
+    q.release();
+    const float second = q.claim()->profile.duration();
+    CHECK(p.queuedTime() == doctest::Approx(first + second));
+    p.claim();
+    CHECK(p.queuedTime() == doctest::Approx(second));
+}

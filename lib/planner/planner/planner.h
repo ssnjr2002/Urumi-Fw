@@ -128,6 +128,12 @@ public:
     bool claimed() const { return claimed_; }
     /** Where the last queued block ends. */
     Pos end() const { return end_; }
+    /** Seconds of motion in the blocks not yet claimed, as last committed. */
+    float queuedTime() const {
+        float t = 0;
+        for (int i = firstUnclaimed(); i < count_; i++) t += ring_[index(i)].profile.duration();
+        return t;
+    }
 
 private:
     int index(int i) const { return (tail_ + i) % kSize; }
