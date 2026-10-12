@@ -646,16 +646,22 @@ Done (merged).
 
 **Type:** feature.
 
-**Purpose:** `STATE_JOB` replaces `RUNNING_PLANNER` around today's records
-(`START`/`END` only, no headers yet), with the reasons `BUFFERING`, `RUNNING`,
-`HOLDING` and `PAUSED`.
+**Purpose:** `STATE_JOB` (new) with a `jobReason` byte replaces
+`RUNNING_PLANNER` around today's records (`START`/`END` only, no headers yet),
+with the reasons `BUFFERING`, `RUNNING`, `HOLDING` and `PAUSED`.
 
-* Buffering exits: `bufferTime` queued (the shared counter), the last record,
-  a timeout (Buffering, above). Jogs are unaffected.
-* `pause`: hold, then `PAUSED`, the ring dropped and `{index, s}` kept. No
-  lift yet; Z stays where it is.
-* Resume from `PAUSED` by the records' restart point; `cancel` ends the job to
-  IDLE.
+* MicroSegment goes first: its emitter, buffer, packets, `STATE_RUNNING`,
+  `STATE_PAUSED` and `RunningReason`. Web: the MicroSegment wire format and
+  its tests are deleted; callers are left broken and listed in the Outcome.
+* The first record in IDLE opens `JOB.BUFFERING`. Buffering exits:
+  `bufferTime` queued (a new shared counter) or a timeout. The last-record
+  exit waits for JB3's `JOB_HDR`. Jogs are unaffected.
+* A dry ring returns to `BUFFERING`; the job ends only by `cancel` (until
+  JB3).
+* `pause`: hold, then `JOB.PAUSED`, keeping the ring; `resume` continues it
+  (`err moved` if XY moved, as today). Dropping the ring for `{index, s}`
+  comes with JB3. No lift yet.
+* A late adoption holds, then `BUFFERING`.
 * `STATUS_RSP` carries the reason; job id and index wait for JB3's headers.
 
 **Depends on:** nothing.
