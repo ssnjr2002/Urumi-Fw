@@ -18,6 +18,7 @@
 #include "ops/bus.h"
 #include "ops/state.h"
 #include "ops/homing.h"
+#include "ops/runner.h"
 #include "ops/probe.h"
 #include "data_plane.h"
 #include "status.h"
@@ -172,10 +173,12 @@ void loop() {
         reconcileValidity();
         processSerial();
         dataPlaneTick();   // abort a stalled CFG_SET transfer (inter-byte timeout)
-        // Poll a node-run home to completion. Out here rather than inside the
-        // `home` handler because the control plane owes one reply line per
-        // command: blocking there would hold `get` and `stop` shut for the
-        // whole seek, on the one command that is driving an axis at a hard stop.
+        // Poll node-run legs to completion, then let the homing session judge
+        // their ends. Out here rather than inside the `leg` handler because the
+        // control plane owes one reply line per command: blocking there would
+        // hold `get` and `stop` shut for the whole seek, on the one command
+        // that is driving an axis at a hard stop.
+        runnerTick();
         homingTick();
         // A `home` run, after the legs it sequences have been polled.
         homeTick();

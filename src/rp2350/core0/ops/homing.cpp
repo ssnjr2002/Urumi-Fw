@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "homing.h"
 #include "runner.h"
+#include "leg_effects.h"
 #include "position.h"
 #include "../../ipc/shared_state.h"
 
@@ -19,28 +20,7 @@ uint8_t homingFailWhy(void) { return failWhy; }
 
 uint8_t homingFailNode(void) { return failNode; }
 
-// The leg is over, one way or the other. Both exits invalidate the origin, and
-// that is not conservatism -- it is required. A leg moves the axis with the
-// NODE's own pulser, so the node counts those steps and Core 1 does not; the
-// machinePos it maintains is stale the moment the pulser runs. (`step` differs:
-// it goes through the stream, so Core 1 adds the same steps and both frames stay
-// consistent -- see cmdStep.) Dropping the datum makes that staleness visible as
-// an un-homed axis instead of a plausible wrong number, and §3.4's closing
-// `setorigin` is what re-derives it from the node's counter.
-//
-// The one exception is a park that finished: it moved within the datum, with
-// the witness intact and the counter on target, so the origin stands and only
-// machinePos is re-derived.
-static void homingRelease(const LegEnd& e) {
-    if (e.dummy) return;
-    if (e.park && e.failWhy == LEGFAIL_NONE) originAdopt(e.node, e.pos);
-    else                                      originInvalidate(e.node);
-}
-
-// homingLatched is deliberately untouched here, and it is already right in both
-// failure modes: a seek that failed never reached the switch, so its bit should
-// stay clear, and a retract that failed never escaped one, so its bit should
-// stay set. Both are what the last successful leg left behind.
+// The failed leg was already released by the runner (leg_effects.h).
 //
 // The node's own span survives this untouched: how far the leg got before it
 // stopped is the whole diagnostic, and `nodestat` still reports it alongside
@@ -48,19 +28,18 @@ static void homingRelease(const LegEnd& e) {
 // nowhere near its limit.
 //
 // A failure fails its cycle: every other running leg is aborted, node by node,
-// and released without a verdict. legAbortAll keeps an aborted park's origin.
+// and released without a verdict.
 static void homingFail(const LegEnd& e) {
     failWhy  = e.failWhy;
     failNode = e.dummy ? 0 : e.node;
-    homingRelease(e);
     LegEnd ends[LEG_MAX];
-    const uint8_t n = runnerAbortAll(ends);
-    for (uint8_t i = 0; i < n; i++) homingRelease(ends[i]);
+    runnerAbortAll(ends);
     alarmReason  = ALARM_HOMING_FAIL;
     machineState = STATE_ALARM;
 }
 
 void homingAbandon(uint8_t node, uint8_t why) {
+    originInvalidate(node);
     LegEnd e = {};
     e.node    = node;
     e.failWhy = why;
@@ -84,15 +63,19 @@ const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                         uint16_t startUs, uint16_t floorUs,
                         uint16_t rampSteps, uint32_t maxSteps,
                         bool* intentMismatch) {
-    const char* why = runnerArm(node, expectKind, dir, intendedRetract,
-                                startUs, floorUs, rampSteps, maxSteps, intentMismatch);
+    const uint8_t intent = expectKind == HOMING_KIND_INDEX ? LEG_SWEEP
+                         : intendedRetract                 ? LEG_RETRACT
+                                                           : LEG_SEEK;
+    const char* why = runnerArm(STATE_HOMING, intent, node, expectKind, dir,
+                                intendedRetract, startUs, floorUs, rampSteps,
+                                maxSteps, intentMismatch);
     if (!why) homingOpen();
     return why;
 }
 
 const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                             uint16_t floorUs, uint16_t rampSteps) {
-    const char* why = runnerArmPark(node, target, startUs, floorUs, rampSteps);
+    const char* why = runnerArmPark(STATE_HOMING, node, target, startUs, floorUs, rampSteps);
     if (!why) homingOpen();
     return why;
 }
@@ -102,62 +85,30 @@ const char* homingAbort(uint8_t node) {
     bool released;
     if (const char* why = runnerAbort(node, &e, &released)) return why;
     if (!released) return nullptr;
-    // As homingTick: if something else already owns the machine, drop quietly.
-    if (machineState != STATE_HOMING) homingRelease(e);
-    else                              homingFail(e);
+    // If something else already owns the machine, the release was all.
+    if (machineState == STATE_HOMING) homingFail(e);
     return nullptr;
 }
 
 const char* homingDummyBegin(bool succeed, uint32_t ms) {
-    const char* why = runnerArmDummy(succeed, ms);
+    const char* why = runnerArmDummy(STATE_HOMING, succeed, ms);
     if (!why) homingOpen();
     return why;
 }
 
-// A leg's end, as the session takes it.
-static void homingLegEnd(const LegEnd& e) {
-    if (e.failWhy != LEGFAIL_NONE) { homingFail(e); return; }
-
-    // The leg succeeded, so its outcome is known without re-reading the pin: a
-    // seek ended ON the switch and a retract ended OFF it. Recorded against the
-    // NODE, which is what the switch is wired to; position.cpp keeps the
-    // slot-framed homingLatched in step and re-derives it across a rebind.
-    //
-    // Never for a sweep: the latch means "this axis is standing on its limit
-    // switch", and a rotary axis has no switch to stand on. Setting it would put
-    // the machine in ALARM/LIMIT_LATCHED after a home that succeeded.
-    // Nor for a park: it finished off its switch, and the latch is unchanged.
-    if (!e.dummy && !e.rotary && !e.park) nodeLatchSet(e.node, !e.retract);
-
-    homingRelease(e);
-}
-
+// The runner has applied each end's effects (latch, origin); this is the
+// session's verdict on them.
 void homingTick(void) {
-    if (!runnerLive()) {
-        // A step that ended by an abort still posts its end.
-        RunEvent ev;
-        while (runnerPop(&ev)) {}
-        return;
-    }
-
-    // Something else has taken the machine -- `stop` sets ESTOP, Core 1 folds it
-    // to ALARM. Drop the legs rather than fight for them: leaving them armed
-    // would fire timeouts later, at a moment with nothing to do with homing.
-    if (machineState != STATE_HOMING) {
-        LegEnd ends[LEG_MAX];
-        const uint8_t n = runnerDropAll(ends);
-        for (uint8_t i = 0; i < n; i++) homingRelease(ends[i]);
-        return;
-    }
-
-    runnerTick();
     RunEvent ev;
     while (runnerPop(&ev)) {
-        if (ev.kind == RUN_LEG_END) { homingLegEnd(ev.end); continue; }
+        if (ev.kind == RUN_LEG_END) {
+            if (ev.end.failWhy != LEGFAIL_NONE) homingFail(ev.end);
+            continue;
+        }
         // The session stays open for the next leg, `setorigin` or `home_end`;
-        // the latch is published at that exit, not here. If `stop` landed
-        // during the poll above, the fault owns the machine and the phase is
-        // not ours to set.
+        // the latch is published at that exit, not here. A step that ended by
+        // an abort, or under a fault, leaves the phase to whoever owns the
+        // machine.
         if (machineState == STATE_HOMING) homingReason = HOMING_WAIT;
     }
 }

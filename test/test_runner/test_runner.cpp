@@ -7,7 +7,8 @@
 #include "doctest.h"
 #include <cstring>
 
-// Unity build: runner.cpp includes only leg.h, which is native-clean.
+// Unity build: runner.cpp includes only leg.h and leg_effects.h, which are
+// native-clean; both are faked below.
 #include "../../src/rp2350/core0/ops/runner.cpp"
 
 // ── fake leg layer ──────────────────────────────────────────────────────────
@@ -22,12 +23,22 @@ FakeLeg     fake[LEG_MAX];
 int         due = -1;           // the slot legPoll reports next, or -1
 const char* refuseNext;         // the next arm's refusal
 
+// Each effect is logged as the intent and node it was applied to; `verdict`
+// says whether it came through legEffectEnd.
+struct Effect { uint8_t intent; uint8_t node; bool verdict; };
+Effect      effects[16];
+int         effectCount;
+#define OWNER 5
+uint8_t     heldState = OWNER;  // the state legOwnerHolds sees
+
 void reset() {
     std::memset(fake, 0, sizeof fake);
     due = -1;
     refuseNext = nullptr;
+    heldState = OWNER;
     LegEnd ends[LEG_MAX];
     runnerDropAll(ends);
+    effectCount = 0;
 }
 
 const char* arm(uint8_t node, bool park = false) {
@@ -108,10 +119,16 @@ bool legAny(void) {
 
 bool legActive(uint8_t node) { return slotOf(node) >= 0; }
 
+// ── fake effects ────────────────────────────────────────────────────────────
+
+void legEffectEnd(uint8_t intent, const LegEnd& e)     { effects[effectCount++] = { intent, e.node, true }; }
+void legEffectRelease(uint8_t intent, const LegEnd& e) { effects[effectCount++] = { intent, e.node, false }; }
+bool legOwnerHolds(uint8_t owner) { return heldState == owner; }
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-static const char* seek(uint8_t node) {
-    return runnerArm(node, 0, 0, false, 0, 0, 0, 0);
+static const char* seek(uint8_t node, uint8_t intent = LEG_SEEK) {
+    return runnerArm(OWNER, intent, node, 0, 0, false, 0, 0, 0, 0);
 }
 
 static int drain(RunEvent* out, int max) {
@@ -206,12 +223,15 @@ TEST_CASE("abort all cuts the step and discards its events") {
 
 TEST_CASE("drop all releases without a verdict") {
     reset();
-    runnerArmPark(5, 100, 0, 0, 0);
+    runnerArmPark(OWNER, 5, 100, 0, 0, 0);
     LegEnd ends[LEG_MAX];
     REQUIRE(runnerDropAll(ends) == 1);
     CHECK(ends[0].park);
     CHECK(ends[0].failWhy == LEGFAIL_NONE);
     CHECK_FALSE(runnerLive());
+    REQUIRE(effectCount == 1);
+    CHECK(effects[0].intent == LEG_PARK);
+    CHECK_FALSE(effects[0].verdict);
 }
 
 TEST_CASE("aborting one leg returns it and posts only the step end") {
@@ -267,4 +287,74 @@ TEST_CASE("the mailbox holds a full table's ends before it is drained") {
     REQUIRE(drain(ev, RUN_MAILBOX + 1) == LEG_MAX + 1);
     for (uint8_t n = 0; n < LEG_MAX; n++) CHECK(ev[n].end.node == n + 1);
     CHECK(ev[LEG_MAX].kind == RUN_STEP_END);
+}
+
+TEST_CASE("an ended leg's effects are applied by its intent before it is posted") {
+    reset();
+    seek(3, LEG_RETRACT);
+    seek(4, LEG_SWEEP);
+    finish(4, LEGFAIL_BUDGET);
+    runnerTick();
+    REQUIRE(effectCount == 1);
+    CHECK(effects[0].intent == LEG_SWEEP);
+    CHECK(effects[0].node == 4);
+    CHECK(effects[0].verdict);
+
+    finish(3);
+    runnerTick();
+    REQUIRE(effectCount == 2);
+    CHECK(effects[1].intent == LEG_RETRACT);
+    CHECK(effects[1].verdict);
+}
+
+TEST_CASE("aborts release without a verdict") {
+    reset();
+    seek(3);
+    seek(4, LEG_RETRACT);
+    LegEnd e;
+    bool released;
+    runnerAbort(3, &e, &released);
+    REQUIRE(effectCount == 1);
+    CHECK(effects[0].intent == LEG_SEEK);
+    CHECK_FALSE(effects[0].verdict);
+
+    LegEnd ends[LEG_MAX];
+    runnerAbortAll(ends);
+    REQUIRE(effectCount == 2);
+    CHECK(effects[1].intent == LEG_RETRACT);
+    CHECK_FALSE(effects[1].verdict);
+}
+
+TEST_CASE("a step whose owner lost the machine is dropped on the next tick") {
+    reset();
+    seek(3);
+    seek(4);
+    finish(3);               // would end, but the owner is gone first
+    heldState = OWNER + 1;
+    runnerTick();
+    CHECK_FALSE(runnerLive());
+    CHECK(effectCount == 2);
+    CHECK_FALSE(effects[0].verdict);
+    CHECK_FALSE(effects[1].verdict);
+
+    RunEvent ev[4];
+    CHECK(drain(ev, 4) == 0);
+}
+
+TEST_CASE("a joining leg runs under the live step's owner") {
+    reset();
+    seek(3);
+    CHECK(runnerArm(OWNER + 1, LEG_SEEK, 4, 0, 0, false, 0, 0, 0, 0) == nullptr);
+    runnerTick();
+    CHECK(runnerLive());     // OWNER still holds; OWNER + 1 was never the owner
+}
+
+TEST_CASE("a dummy's end is LEG_DUMMY whatever node 0 last ran") {
+    reset();
+    runnerArmDummy(OWNER, true, 0);
+    LegEnd ends[LEG_MAX];
+    for (FakeLeg& f : fake) if (f.armed) f.end.dummy = true;
+    runnerDropAll(ends);
+    REQUIRE(effectCount == 1);
+    CHECK(effects[0].intent == LEG_DUMMY);
 }

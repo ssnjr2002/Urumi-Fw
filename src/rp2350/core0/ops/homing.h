@@ -29,8 +29,8 @@ const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
 // homingBegin.
 const char* homingAbort(uint8_t node);
 
-// Poll the legs in progress and turn each end into the session's state. No-op
-// unless a leg is armed. Call from the Core 0 loop.
+// Turn each leg end the runner posted into the session's state. Call from the
+// Core 0 loop, after runnerTick.
 void homingTick(void);
 
 // A dummy leg (legArmDummy) in the session. Touches no latch and no origin.
