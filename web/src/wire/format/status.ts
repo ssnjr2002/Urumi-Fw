@@ -44,6 +44,12 @@ export const MachineState = {
     PROBING: 6,
     /** Planner jog motion (`line`, `bez`, `jog`, `jogto`). Never pauses. */
     JOGGING: 7,
+    /**
+     * Node legs that keep the origin (`leg park|span|unlatch`) outside a homing
+     * session. Opened by the first leg, closed by the Pico when the legs end.
+     * Load-bearing, as PROBING above.
+     */
+    TRAVERSE: 8,
 } as const;
 export type MachineState = (typeof MachineState)[keyof typeof MachineState];
 const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
