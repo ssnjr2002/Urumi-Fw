@@ -72,7 +72,8 @@ the runner and the seam, and drop the mailbox.
 
 **Depends on:** nothing.
 
-**Status:** ready to merge. `pio run -e pico` and `pio test -e native` pass.
+**Status:** merged (faad490). Unblocks node park and leg span as the runner's
+next client. `pio run -e pico` and `pio test -e native` pass.
 Bench: `home`, parallel dummy legs, a failing dummy, parallel raw parks,
 `leg_abort` and `stop` mid-leg behave as before. A raw seek or retract onto
 a switch was not run on its own (`home` runs the same legs).
