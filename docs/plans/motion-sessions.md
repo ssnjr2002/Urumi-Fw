@@ -670,7 +670,45 @@ with the reasons `BUFFERING`, `RUNNING`, `HOLDING` and `PAUSED`.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces: `STATE_JOB = 9` and `JobReason` (BUFFERING 0, RUNNING 1,
+  HOLDING 2, PAUSED 3, ABORTING 4). States 1 and 4 are retired, unused.
+  `STATUS_RSP` byte 5 is the current state's reason (job, jogging, homing,
+  probing; 0 otherwise); `bufCount` is planner blocks; `queuedUs` is the
+  ring's unclaimed motion, read live under the lock. `get running` is gone;
+  `get job` prints the reason while JOB, `-` otherwise. New
+  `Planner::queuedTime()`. Web: `MachineState.JOB`, `JobReason`,
+  `MachineStatus.reason`, `jobName`.
+* Deviations:
+  * The buffer exits (1 s queued, a full ring, or 500 ms with no new
+    record) are constants in `core1/emit/follower.cpp`, not config fields.
+  * No shared counter: Core 1 sums the ring with `queuedTime()`.
+  * `cancel` also ends an open contour, so the next job's `START` is
+    accepted.
+  * The `MSEG_ACK`/`MSEG_NACK` names are kept for the data-plane replies.
+* Web: `wire/link` was fixed to stay green: `atRest` counts a paused job or
+  a dry buffering job as at rest, and the sim runs BEZIER records as a job.
+  Left broken, to be removed: `choreograph`, `controller` (`runWalk`),
+  `orchestrate` (`walk`, `estimate`), `production` (`compileBlock`,
+  `dutyBreaks`; tests for `bakePlan`, `headResolve`, `snapshot`,
+  `dutyInsert`, `dutyStream`), `toolpath/discretize`, `probe/probe.test`.
+  `pnpm typecheck` and `pnpm test` are red only there (13 files).
+* Bench (agent, on the machine, scripted over COM8): a short job runs, goes
+  dry to BUFFERING and `cancel` ends it; pause holds then PAUSED with the
+  ring kept, a record while paused gets NACK_PAUSED, resume continues with no
+  jump, cancel from PAUSED; abort mid-cut ramps to IDLE and the next job runs;
+  a trickled job alternates RUNNING and BUFFERING with `late=0`; `stop` in a
+  job gives ALARM and drops the ring. Found and fixed there: `queuedUs` was
+  only written on commit, so it never fell and survived cancel.
+* Checks: `pio run -e pico` clean; `pio test -e native` 88/88;
+  `test/wire` 223/223.
+* Human scope still open: probing from a paused job; the late-adoption
+  hold; `err moved` after a jog while paused.
+* Out of scope: `docs/wire_protocol.md` and other docs still describe
+  MicroSegment, `RUNNING` and `PAUSED`.
 
 ## Branch JB2: `feature/tool-mount`
 
