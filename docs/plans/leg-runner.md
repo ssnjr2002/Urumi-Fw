@@ -192,7 +192,25 @@ raw legs, `leg_abort`, `stop` mid-leg as before.
 
 **Depends on:** branch 1.
 
-**Status:** not started.
+**Status:** ready to merge. `pio run -e pico` and `pio test -e native`
+(86/86) pass. Bench: `home`, parallel dummies, a failing dummy, parallel
+parks, `leg_abort` mid-park and `stop` mid-park behave as before.
+
+**Outcome:**
+
+* The runner keeps each leg's intent per node and copies nothing into
+  `LegEnd`; `leg.h` is unchanged. `homingBegin` derives the intent: index
+  → sweep, `intendedRetract` → retract, else seek.
+* Effects split in two: `legEffectEnd` (a verdict: latch on success, then
+  release) and `legEffectRelease` (abort, drop: release only), so a dropped
+  seek never latches.
+* The owner check is a seam too (`legOwnerHolds`, in `leg_effects`), since
+  `machineState` is not native-clean.
+* `homingAbort` still checks HOMING before failing the session: the runner
+  has released the leg, and the verdict is policy.
+* One owner per step, and the owner drains the box; `runnerPop` takes no
+  owner. Branch 3 decides whether TRAVERSE needs it.
+* `homingAbandon` drops its node's origin itself, as no leg ended.
 
 ## Branch 3: `feature/leg-intents`
 
