@@ -72,7 +72,7 @@ describe("wire/link/demux: status routing", () => {
             axesEnabled: 0x0f,
             axesHomed: 0x06,
             alarm: 0,
-            running: 0,
+            reason: 0,
             bufCount: 3,
             pos: [10, -5, 0, 0],
             expectedSeq: 9,
@@ -88,7 +88,7 @@ describe("wire/link/demux: status routing", () => {
     it("consumes the frame even when split across chunks (byte-by-byte)", () => {
         const sinks = makeSinks();
         const d = new Demux(sinks);
-        const ref = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, alarm: 0, running: 0 });
+        const ref = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, alarm: 0, reason: 0 });
         for (let i = 0; i < ref.length; i++) {
             d.feed(ref.subarray(i, i + 1));
         }

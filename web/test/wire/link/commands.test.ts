@@ -44,7 +44,7 @@ import {
     wset,
     wclear,
 } from "../../../src/wire/link/commands.js";
-import { MachineState, AlarmReason } from "../../../src/wire/format/status.js";
+import { MachineState, AlarmReason, JobReason } from "../../../src/wire/format/status.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -154,18 +154,20 @@ describe("wire/link/commands: enable / disable / setorigin / unalarm", () => {
 });
 
 describe("wire/link/commands: pause / resume / cancel", () => {
-    it("pause rejected in IDLE; after forceRunning, pause → PAUSED, resume → IDLE", async () => {
+    it("pause rejected in IDLE; after forceRunning, pause → PAUSED, resume → BUFFERING", async () => {
         await withLink(async (link, sim) => {
             expect(await pause(link)).toBe(false); // IDLE
             sim._forceRunning();
             expect(await pause(link)).toBe(true);
-            expect((await getStatus(link)).state).toBe(MachineState.PAUSED);
+            let st = await getStatus(link);
+            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PAUSED]);
             expect(await resume(link)).toBe(true);
-            expect((await getStatus(link)).state).toBe(MachineState.IDLE);
+            st = await getStatus(link);
+            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
         });
     });
 
-    it("cancel in PAUSED → IDLE", async () => {
+    it("cancel of a paused job → IDLE", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
             await pause(link);
@@ -242,10 +244,10 @@ describe("wire/link/commands: peripheral relays (knife + vacuum)", () => {
         });
     });
 
-    // The reason these exist: the firmware's IDLE/PAUSED/ALARM gate on all five
-    // verbs is commented out so the operator can work the knife and vacuum
-    // mid-cut. A relay that refused while RUNNING would defeat that.
-    it("reach the node while the machine is RUNNING", async () => {
+    // The reason these exist: the firmware's state gate on all five verbs is
+    // commented out so the operator can work the knife and vacuum mid-cut. A
+    // relay that refused during a job would defeat that.
+    it("reach the node while a job runs", async () => {
         await withPeripherals(async (link, sim) => {
             sim._forceRunning();
             expect(await knifeOsc(link, 7, true)).toBe(true);

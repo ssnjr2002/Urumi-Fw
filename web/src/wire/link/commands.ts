@@ -58,7 +58,7 @@ export const GET_MAX_KEYS = 32;
 
 /** The keys {@link getState} reads: everything MachineStatus carries. */
 export const STATE_KEYS = [
-    "state", "enabled", "homed", "alarm", "running", "latched",
+    "state", "enabled", "homed", "alarm", "job", "latched",
     "homefail", "homenode", "cfgerr", "homing",
     "probing", "probe", "retries", "psteps", "probed", "pz",
     "homecycle", "nodehomed",
@@ -293,10 +293,9 @@ export async function vacSwitch(link: Link, nodeId: number): Promise<boolean | n
 /**
  * Toggle the knife node's oscillator. Syntax: `knife_osc <node> <on|off>`.
  *
- * Refused while RUNNING — the firmware gates every peripheral relay on
- * IDLE/PAUSED/ALARM (control_plane.cpp), because the relay blocks Core 0 on a
- * Core 1 round trip that would otherwise interleave with the stream. Mid-job
- * control therefore has to happen at a PAUSED boundary.
+ * Refused during a job unless it is paused — the firmware gates every
+ * peripheral relay on IDLE/ALARM/a paused job, because the relay blocks Core 0
+ * on a Core 1 round trip that would otherwise interleave with the stream.
  */
 export function knifeOsc(link: Link, nodeId: number, on: boolean): Promise<boolean> {
     return _nodeOk(link, `knife_osc ${nodeId} ${on ? "on" : "off"}`);
@@ -304,7 +303,7 @@ export function knifeOsc(link: Link, nodeId: number, on: boolean): Promise<boole
 
 /**
  * Set the knife node's blower PWM duty, 0..100 %.
- * Syntax: `knife_blower <node> <0..100>`. Same RUNNING restriction as knifeOsc.
+ * Syntax: `knife_blower <node> <0..100>`. Same gate as knifeOsc.
  */
 export function knifeBlower(link: Link, nodeId: number, dutyPct: number): Promise<boolean> {
     const duty = Math.max(0, Math.min(100, Math.round(dutyPct)));
@@ -621,7 +620,7 @@ export type SlotBinding = number | null;
  * A partial failure leaves the map incomplete and the machine in
  * ALARM_NODE_FAULT; retrying redoes all of it.
  *
- * Only valid in IDLE/PAUSED/ALARM — rebinding slots mid-RUNNING would corrupt
+ * Only valid in IDLE/ALARM or a paused job — rebinding slots mid-job would corrupt
  * in-flight motion (§6.2).
  */
 export async function axisMap(

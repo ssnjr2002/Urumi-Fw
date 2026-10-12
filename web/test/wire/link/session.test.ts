@@ -25,14 +25,17 @@ import {
 import { Writer } from "../../../src/wire/link/writer.js";
 import { Sink } from "../../../src/wire/link/sink.js";
 import { Ack, Nack } from "../../../src/wire/link/demux.js";
-import { NACK_FULL, NACK_BAD_MAGIC, NACK_BAD_STATE, PACKET_SIZE } from "../../../src/wire/format/constants.js";
-import { packMicrosegment } from "../../../src/wire/format/packet.js";
-import { microSegment } from "../../../src/wire/format/microsegment.js";
+import {
+    NACK_FULL, NACK_BAD_MAGIC, NACK_BAD_STATE, BEZIER_SIZE, BEZIER_SEQ_OFFSET, MAGIC_BEZIER,
+} from "../../../src/wire/format/constants.js";
+import { stampSeq } from "../../../src/wire/format/packet.js";
 
 type AckOrNack = Ack | Nack;
 
 function pkt(seq: number): Uint8Array {
-    return packMicrosegment(microSegment(1, 0, 0, 0, 1000), seq);
+    const rec = new Uint8Array(BEZIER_SIZE);
+    rec[0] = MAGIC_BEZIER;
+    return stampSeq(rec, seq);
 }
 
 function pkts(n: number): Uint8Array[] {
@@ -40,7 +43,7 @@ function pkts(n: number): Uint8Array[] {
 }
 
 /**
- * FakePico: a Writable that consumes a writeBatch's concatenated 26-byte
+ * FakePico: a Writable that consumes a writeBatch's concatenated BEZIER
  * packets, replying with cumulative ACKs on the shared ack sink. Optionally
  * injects a NACK_FULL at a given WRITE index (one-shot — the resend at a new
  * index is accepted), simulating a ring that was full once then drained.
@@ -59,9 +62,9 @@ class FakePico {
 
     write(bytes: Uint8Array): Promise<void> {
         this.writes.push(bytes);
-        for (let off = 0; off + PACKET_SIZE <= bytes.length; off += PACKET_SIZE) {
-            const p = bytes.subarray(off, off + PACKET_SIZE);
-            const seq = p[22]!;
+        for (let off = 0; off + BEZIER_SIZE <= bytes.length; off += BEZIER_SIZE) {
+            const p = bytes.subarray(off, off + BEZIER_SIZE);
+            const seq = p[BEZIER_SEQ_OFFSET]!;
             const writeIdx = this.sentPackets.length;
             this.sentPackets.push(p);
             if (this.injected.has(writeIdx)) {
@@ -180,8 +183,8 @@ describe("wire/link/session: fatal NACKs", () => {
         const origWrite = pico.write.bind(pico);
         pico.write = (bytes: Uint8Array) => {
             pico.writes.push(bytes);
-            for (let off = 0; off + PACKET_SIZE <= bytes.length; off += PACKET_SIZE) {
-                pico.sentPackets.push(bytes.subarray(off, off + PACKET_SIZE));
+            for (let off = 0; off + BEZIER_SIZE <= bytes.length; off += BEZIER_SIZE) {
+                pico.sentPackets.push(bytes.subarray(off, off + BEZIER_SIZE));
                 ackSink.put(new Nack(NACK_BAD_MAGIC));
             }
             return Promise.resolve();
@@ -202,8 +205,8 @@ describe("wire/link/session: fatal NACKs", () => {
         void origWrite;
         pico.write = (bytes: Uint8Array) => {
             pico.writes.push(bytes);
-            for (let off = 0; off + PACKET_SIZE <= bytes.length; off += PACKET_SIZE) {
-                pico.sentPackets.push(bytes.subarray(off, off + PACKET_SIZE));
+            for (let off = 0; off + BEZIER_SIZE <= bytes.length; off += BEZIER_SIZE) {
+                pico.sentPackets.push(bytes.subarray(off, off + BEZIER_SIZE));
                 ackSink.put(new Nack(NACK_BAD_STATE));
             }
             return Promise.resolve();

@@ -19,7 +19,7 @@
  * usable against a recorded status log.
  */
 
-import { MachineState, type MachineStatus } from "../format/status.js";
+import { JobReason, MachineState, type MachineStatus } from "../format/status.js";
 import { stateName } from "../format/names.js";
 import type { AbortToken } from "./transport.js";
 
@@ -131,16 +131,20 @@ export async function settle(
 // ── conditions ───────────────────────────────────────────────────────────────
 
 /**
- * Genuinely at rest: not RUNNING *and* the ring is empty. Both halves matter —
- * the firmware leaves RUNNING when it stops consuming, which is not the same
- * instant the buffer drains, and a command issued in that gap is rejected.
+ * Genuinely at rest: no job motion and nothing queued, or a paused job (its
+ * ring is kept for `resume`). A job buffering with records queued may start at
+ * any moment, so it is not at rest; a dry one is.
  *
  * Note `bufCount` is `undefined` on a get-parsed status (the text plane
  * cannot carry it), and undefined reads as empty here. That is correct for
  * settle(), which polls the binary STATUS_REQ, but means this condition is not
  * meaningful against a text-derived sample.
  */
-export const atRest: SettleCondition = (s) => s.state !== MachineState.RUNNING && !s.bufCount;
+export const atRest: SettleCondition = (s) => {
+    if (s.state !== MachineState.JOB) return !s.bufCount;
+    if (s.reason === JobReason.PAUSED) return true;
+    return s.reason === JobReason.BUFFERING && !s.bufCount;
+};
 
 /** In one specific state, buffer ignored. */
 export function inState(target: MachineState): SettleCondition {

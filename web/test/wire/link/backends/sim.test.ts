@@ -10,10 +10,10 @@
  *   - coalesced ACKs (K=8: one ACK frame per 8 accepted packets, not 1:1)
  *   - backpressure (NACK_FULL when ring full, resent on drain)
  *   - stale-seq duplicate guard (a retransmit is ACKed but NOT executed)
- *   - motion executor: a stream's step deltas integrate into reported position
- *     over wall-clock (paced by interval * steps / F_CPU)
+ *   - the job: BUFFERING until enough is queued, then RUNNING, each record
+ *     landing the head on its end point; a dry ring buffers again
  *   - abort: ring discarded, position kept, state → IDLE
- *   - status-during-stream: a poll mid-stream returns RUNNING + non-zero
+ *   - status-during-stream: a poll mid-stream returns a running job + non-zero
  *     queuedUs (the case impossible under port seizure)
  */
 
@@ -23,10 +23,9 @@ import { SimTransport } from "../../../../src/wire/link/backends/sim.js";
 import {
     MachineState,
     AlarmReason,
+    JobReason,
 } from "../../../../src/wire/format/status.js";
-import { packMicrosegment, stampSeq } from "../../../../src/wire/format/packet.js";
-import { microSegment, MICRO_PAUSE } from "../../../../src/wire/format/microsegment.js";
-import { MAGIC_MICROSEG } from "../../../../src/wire/format/constants.js";
+import { stampSeq } from "../../../../src/wire/format/packet.js";
 import { packBezier } from "../../../../src/wire/format/bezier.js";
 import { BezierFlag } from "../../../../src/toolpath/annotate.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
@@ -36,9 +35,31 @@ import { crc8 } from "../../../../src/wire/format/crc.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 
-function mseg(dx = 1, interval = 1000): Uint8Array {
-    return packMicrosegment(microSegment(dx, 0, 0, 0, interval));
+/** A straight BEZIER record along X ending at `x` mm (= steps at jogSpm 1). */
+function rec(x = 1): Uint8Array {
+    return packBezier({
+        curve: cubic({ x: x - 1, y: 0 }, { x: x - 2 / 3, y: 0 }, { x: x - 1 / 3, y: 0 }, { x, y: 0 }),
+        flags: 0,
+        length: 1, kappaMax: 0, dkappaMax: 0, ts: [1, 0, 0],
+        kappaStart: 0, kappaEnd: 0, fitError: 0,
+    });
 }
+
+const upTo = (n: number) => Array.from({ length: n }, (_, i) => rec(i + 1));
+
+/** Poll until `cond` holds or `ms` pass; returns the last status. */
+async function until(link: Link, cond: (st: Awaited<ReturnType<Link["getStatus"]>>) => boolean, ms = 1000) {
+    const deadline = Date.now() + ms;
+    let st = await link.getStatus();
+    while (!cond(st) && Date.now() < deadline) {
+        await tick(5);
+        st = await link.getStatus();
+    }
+    return st;
+}
+
+const running = (st: { state: number; reason: number }) =>
+    st.state === MachineState.JOB && st.reason === JobReason.RUNNING;
 
 async function withLink<T>(
     fn: (link: Link, sim: SimTransport) => Promise<T>,
@@ -47,7 +68,8 @@ async function withLink<T>(
     // Boot into a COMMITTED map by default, as the firmware's controller does
     // with a config. A test passes `{ axisMap: undefined }` to get the
     // unconfigured, unmapped boot.
-    const sim = new SimTransport({ axisMap: [1, 2, 3, 4], ...simOpts });
+    // Short records and buffer timeout keep a job's tests fast.
+    const sim = new SimTransport({ axisMap: [1, 2, 3, 4], recordMs: 5, bufferIdleMs: 20, ...simOpts });
     const link = new Link(sim);
     try {
         return await fn(link, sim);
@@ -57,7 +79,7 @@ async function withLink<T>(
 }
 
 /** The state and mask keys the Sim models. */
-const STATE = "get state enabled homed alarm running latched probed";
+const STATE = "get state enabled homed alarm job latched probed";
 
 describe("wire/link/backends/sim: control plane", () => {
     it("ping → pong", async () => {
@@ -69,7 +91,7 @@ describe("wire/link/backends/sim: control plane", () => {
     it("get reports the state + masks", async () => {
         await withLink(async (link) => {
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x00 homed=0x00 alarm=0 running=0 latched=0x00 probed=0",
+                "state=0 enabled=0x00 homed=0x00 alarm=0 job=- latched=0x00 probed=0",
             );
         });
     });
@@ -78,11 +100,11 @@ describe("wire/link/backends/sim: control plane", () => {
         await withLink(async (link) => {
             expect(await link.command("axes_enable on")).toBe("ok");
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x0f homed=0x00 alarm=0 running=0 latched=0x00 probed=0",
+                "state=0 enabled=0x0f homed=0x00 alarm=0 job=- latched=0x00 probed=0",
             );
             expect(await link.command("setorigin")).toBe("ok");
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x0f homed=0x0f alarm=0 running=0 latched=0x00 probed=0",
+                "state=0 enabled=0x0f homed=0x0f alarm=0 job=- latched=0x00 probed=0",
             );
 
             // stop → ALARM, then setorigin recovers
@@ -94,7 +116,7 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("axes_enable is rejected while RUNNING (bad_state)", async () => {
+    it("axes_enable is rejected while a job runs (bad_state)", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
             expect(await link.command("axes_enable on")).toBe("err bad_state");
@@ -106,10 +128,12 @@ describe("wire/link/backends/sim: control plane", () => {
             expect(await link.command("pause")).toBe("err bad_state"); // IDLE
             sim._forceRunning();
             expect(await link.command("pause")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.PAUSED);
+            let st = await link.getStatus();
+            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PAUSED]);
             expect(await link.command("resume")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
-            sim._forceRunning();
+            st = await link.getStatus();
+            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
+            expect(await link.command("resume")).toBe("err bad_state"); // not paused
             await link.command("pause");
             expect(await link.command("cancel")).toBe("ok");
             expect((await link.getStatus()).state).toBe(MachineState.IDLE);
@@ -255,15 +279,15 @@ describe("wire/link/backends/sim: binary status poll (STATUS_RSP v2)", () => {
 });
 
 describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
-    it("streams N packets, all ACKed; run() returns true", async () => {
+    it("streams N records, all ACKed; the job runs them and buffers again", async () => {
         await withLink(async (link) => {
-            const pkts = Array.from({ length: 16 }, () => mseg(1, 1000));
-            expect(await link.stream(pkts, 8)).toMatchObject({ ok: true });
-            await tick(50);
-            // sim is now RUNNING (or already drained to IDLE). The 16 step
-            // deltas integrated into pos[0].
-            const st = await link.getStatus();
+            expect(await link.stream(upTo(16), 8)).toMatchObject({ ok: true });
+            const st = await until(link, (s) => s.bufCount === 0 && s.pos![0] === 16);
             expect(st.pos![0]).toBe(16);
+            // A dry ring does not end the job: only cancel does.
+            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
+            expect(await link.command("cancel")).toBe("ok");
+            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
         });
     });
 
@@ -273,8 +297,7 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
                 // 16 packets at K=8 → exactly 2 ACK frames flushed by the K counter
                 // (the end-of-batch flush handles the tail). Capture the demux
                 // frames-count to prove coalescing fired.
-                const pkts = Array.from({ length: 16 }, () => mseg(1, 1000));
-                await link.stream(pkts, 16);
+                await link.stream(upTo(16), 16);
                 // sim.framesReplied counts every frame the sim emitted;
                 // 2 ACKs for 16 packets means coalescing worked (1:1 would be 16).
                 expect(sim.framesReplied).toBeLessThanOrEqual(4); // 2 K-flushes + maybe 1 batch-flush
@@ -285,20 +308,20 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
     });
 });
 
-describe("wire/link/backends/sim: BEZIER records", () => {
-    it("frames a mixed stream by magic; BEZIER is ACKed without moving", async () => {
-        await withLink(async (link) => {
-            const bez = packBezier({
-                curve: cubic({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }),
-                flags: BezierFlag.START | BezierFlag.END,
-                length: 3, kappaMax: 0, dkappaMax: 0, ts: [1 / 3, 0, 0],
-                kappaStart: 0, kappaEnd: 0, fitError: 0,
-            });
-            const pkts = [mseg(1, 1000), bez, mseg(1, 1000), bez, mseg(1, 1000)];
-            expect(await link.stream(pkts, 8)).toMatchObject({ ok: true, acked: 5 });
-            await tick(50);
-            expect((await link.getStatus()).pos![0]).toBe(3);
-        });
+describe("wire/link/backends/sim: buffering", () => {
+    it("the first record opens the job in BUFFERING; it runs once enough is queued", async () => {
+        await withLink(
+            async (link) => {
+                await link.stream([rec(1)], 4);
+                let st = await link.getStatus();
+                expect([st.state, st.reason, st.bufCount]).toEqual([MachineState.JOB, JobReason.BUFFERING, 1]);
+                expect(st.queuedUs).toBe(100_000);
+                await link.stream([rec(2)], 4); // 200 ms queued: enough
+                st = await until(link, running);
+                expect(running(st)).toBe(true);
+            },
+            { recordMs: 100, bufferMs: 200, bufferIdleMs: 10_000 },
+        );
     });
 });
 
@@ -307,17 +330,17 @@ describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
         await withLink(async (link, sim) => {
             await link.resetSeq();
             // Send seq 0 directly via writeBatch — accepted + executed
-            const p0 = stampSeq(mseg(5, 1000), 0);
+            const p0 = stampSeq(rec(5), 0);
             // (use the link's writer through a one-packet session)
             await link.stream([p0], 4);
-            await tick(50);
+            await until(link, (s) => s.pos![0] === 5);
             expect(sim.pos[0]).toBe(5);
 
             // Now reset and send seq 0 again — the sim's expectedSeq is back to
-            // 0, so this is a fresh accept, motion = +5 → 10.
+            // 0, so this is a fresh accept and runs.
             await link.resetSeq();
-            await link.stream([stampSeq(mseg(5, 1000), 0)], 4);
-            await tick(50);
+            await link.stream([stampSeq(rec(10), 0)], 4);
+            await until(link, (s) => s.pos![0] === 10);
             expect(sim.pos[0]).toBe(10);
         });
     });
@@ -327,18 +350,13 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
     it("a stream against a tiny ring retries to completion under NACK_FULL", async () => {
         await withLink(
             async (link) => {
-                // ringSize=2, executor slow (frameMs=40) — the ring fills, the
+                // ringSize=2, a record per tick — the ring fills, the
                 // session sees NACK_FULL, retries, and eventually completes.
-                const pkts = Array.from({ length: 10 }, () =>
-                    packMicrosegment(microSegment(1, 0, 0, 0, 50000)),
-                );
-                expect(await link.stream(pkts, 8)).toMatchObject({ ok: true });
-                // wait for the executor to drain the ring
-                await new Promise<void>((r) => setTimeout(r, 400));
-                const st = await link.getStatus();
+                expect(await link.stream(upTo(10), 8)).toMatchObject({ ok: true });
+                const st = await until(link, (s) => s.pos![0] === 10);
                 expect(st.pos![0]).toBe(10);
             },
-            { ringSize: 2, frameMs: 20 },
+            { ringSize: 2, frameMs: 20, recordMs: 20 },
         );
     });
 });
@@ -347,19 +365,12 @@ describe("wire/link/backends/sim: abort", () => {
     it("abort discards the ring, keeps position, lands IDLE", async () => {
         await withLink(async (link) => {
             await link.resetSeq();
-            // 50 packets, each interval 500000 cycles / 150e6 ≈ 3.3ms — total
-            // motion ≈ 167ms. Start non-awaited so we can abort MID-stream.
-            const pkts = Array.from({ length: 50 }, () => mseg(1, 500_000));
-            const runP = link.stream(pkts, 16);
+            // 50 records of 5 ms. Start non-awaited so we can abort MID-stream.
+            const runP = link.stream(upTo(50), 16);
 
-            // Wait until the sim is RUNNING with queued motion, then abort.
-            let st = await link.getStatus();
-            const deadline = Date.now() + 500;
-            while (st.state !== MachineState.RUNNING && Date.now() < deadline) {
-                await tick(5);
-                st = await link.getStatus();
-            }
-            expect(st.state).toBe(MachineState.RUNNING);
+            // Wait until the job runs with queued motion, then abort.
+            const st = await until(link, (s) => running(s) && (s.bufCount ?? 0) > 0);
+            expect(running(st)).toBe(true);
             expect(st.bufCount).toBeGreaterThan(0);
             // remember position at abort time — the sim models the OUTCOME
             // (ring discarded, position KEPT), not the ramp distance the real
@@ -384,46 +395,23 @@ describe("wire/link/backends/sim: abort", () => {
 });
 
 describe("wire/link/backends/sim: status during a stream", () => {
-    it("a poll mid-stream returns RUNNING + non-zero queuedUs (impossible under seizure)", async () => {
+    it("a poll mid-stream returns a running job + non-zero queuedUs (impossible under seizure)", async () => {
         await withLink(
             async (link) => {
                 await link.resetSeq();
-                // a stream of 20 long packets — the executor takes many ticks
-                const pkts = Array.from({ length: 20 }, () => mseg(1, 200_000));
-                const runP = link.stream(pkts, 8);
-                await tick(10); // let the first packets land
-                const st = await link.getStatus();
-                expect(st.state).toBe(MachineState.RUNNING);
+                // 20 long records — the job takes many ticks
+                const runP = link.stream(upTo(20), 8);
+                const st = await until(link, running);
+                expect(running(st)).toBe(true);
                 expect(st.bufCount).toBeGreaterThan(0);
+                expect(st.queuedUs).toBeGreaterThan(0);
                 await runP;
             },
-            { frameMs: 40 },
+            { frameMs: 40, recordMs: 200, bufferMs: 200 },
         );
     });
 });
 
-describe("wire/link/backends/sim: MSEG_FLAG_PAUSE", () => {
-    it("a PAUSE-flagged packet moves to PAUSED after executing it", async () => {
-        await withLink(async (link) => {
-            await link.resetSeq();
-            // one packet with PAUSE → after it executes, state = PAUSED
-            const pausePkt = new Uint8Array([
-                MAGIC_MICROSEG,
-                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x00, 0, 0, 0,
-                MICRO_PAUSE, 0, 0, 0, 0,
-            ]);
-            // (hand-built for clarity; matches a paused segment delta=1)
-            void pausePkt;
-            const pkt = packMicrosegment(
-                microSegment(1, 0, 0, 0, 1000, MICRO_PAUSE),
-            );
-            await link.stream([pkt], 4);
-            await tick(100);
-            const st = await link.getStatus();
-            expect(st.state).toBe(MachineState.PAUSED);
-        });
-    });
-});
 describe("wire/link/backends/sim: the unmapped boot", () => {
     it("boots IDLE with nothing bound; axis_map binds without an alarm", async () => {
         await withLink(
@@ -440,19 +428,19 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
         );
     });
 
-    it("axis_map is rejected while RUNNING — rebinding mid-motion corrupts it", async () => {
+    it("axis_map is rejected while a job runs — rebinding mid-motion corrupts it", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
             expect(await link.command("axis_map 1 2 5 6")).toBe("err bad_state");
         });
     });
 
-    it("a job stream against a PAUSED machine gets NACK_PAUSED, not BAD_STATE", async () => {
+    it("a record against a paused job gets NACK_PAUSED, not BAD_STATE", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
             expect(await link.command("pause")).toBe("ok");
             await link.resetSeq();
-            const r = await link.stream([mseg()], 4);
+            const r = await link.stream([rec()], 4);
             expect(r.ok).toBe(false);
             expect(r.nacks).toBeGreaterThan(0);
         });

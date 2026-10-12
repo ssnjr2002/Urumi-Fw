@@ -6,14 +6,8 @@
  * byte, so the magic constants here are imported by every per-format module
  * (packet, bezier, status, cfg) and by the link-layer demux.
  *
- * Constants for frames the host does not yet emit land in the commits that
- * add their packers; TOOL (0xAC) has none yet.
+ * 0xAB (MicroSegment), 0xAC (tool packet) and 0xAE (jog burst) are retired.
  */
-
-// ── MicroSegment — 26-byte packet ─────────────────────────────────────────────
-export const MAGIC_MICROSEG = 0xab; // host → Pico: pre-computed step event
-export const PACKET_SIZE = 26;
-export const MSEG_SEQ_OFFSET = 22;
 
 // ── BEZIER — 56-byte record, one annotated cubic (format/bezier.ts) ────────────
 export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planner
@@ -54,13 +48,13 @@ export const MAGIC_NACK = 0xbb;
 export const MAGIC_SEQRESET = 0xa8;
 export const MAGIC_ABORT = 0xa9;
 
-// ── MSEG stream NACK reasons (byte[1] of a NACK frame) ─────────────────────────
-// Two namespaces: these are the stream/MSEG/jog reasons. CFG command NACK
+// ── Stream NACK reasons (byte[1] of a NACK frame) ──────────────────────────────
+// Two namespaces: these are the record/jog reasons. CFG command NACK
 // reasons live in cfg.ts (a different namespace, same byte values).
 export const NACK_CRC = 0x01; // CRC8 mismatch — packet corrupt
 export const NACK_FULL = 0x02; // ring buffer full — backpressure, sender retries
 export const NACK_BAD_MAGIC = 0x03; // unrecognised magic byte — fatal
-export const NACK_PAUSED = 0x04; // stream rejected — machine is PAUSED
+export const NACK_PAUSED = 0x04; // record rejected — the job is paused or pausing
 export const NACK_BAD_STATE = 0x06; // command rejected — wrong machine state
 // Barrier, not an error: stream rejected because the machine is mid-abort-ramp.
 // The host waits for IDLE and reopens rather than surfacing a failure (§4.5).

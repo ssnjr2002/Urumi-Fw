@@ -6,8 +6,7 @@ import { describe, it, expect } from "vitest";
 import { crc8 } from "../../../src/wire/format/crc.js";
 import { MAGIC_BEZIER } from "../../../src/wire/format/constants.js";
 import { packBezier } from "../../../src/wire/format/bezier.js";
-import { packMicrosegment, stampSeq } from "../../../src/wire/format/packet.js";
-import { microSegment } from "../../../src/wire/format/microsegment.js";
+import { stampSeq } from "../../../src/wire/format/packet.js";
 import { BezierFlag, type AnnotatedBezier } from "../../../src/toolpath/annotate.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
 
@@ -35,13 +34,11 @@ describe("wire/format/bezier: packBezier", () => {
     });
 });
 
-describe("wire/format/packet: stampSeq by magic", () => {
-    it.each([
-        { name: "BEZIER at byte 2", pkt: packBezier(piece), at: 2 },
-        { name: "MSEG at byte 22", pkt: packMicrosegment(microSegment(1, 0, 0, 0, 1000)), at: 22 },
-    ])("$name", ({ pkt, at }) => {
+describe("wire/format/packet: stampSeq", () => {
+    it("stamps byte 2 and recomputes the CRC", () => {
+        const pkt = packBezier(piece);
         const out = stampSeq(pkt, 0x42);
-        expect(out[at]).toBe(0x42);
+        expect(out[2]).toBe(0x42);
         expect(out[out.length - 1]).toBe(crc8(out, 0, out.length - 1));
         expect(Array.from(out).filter((b, i) => b !== pkt[i]).length).toBeLessThanOrEqual(2);
     });

@@ -3,10 +3,11 @@
  * Ported from host/protocol/link.py SimBackend.
  *
  * Answers text commands per the wire_protocol.md allowed-state matrix AND
- * "executes" streamed data-plane packets: their step deltas integrate into the
- * tracked position over time while state holds RUNNING, so a job actually
- * moves and finishes; `jog` and held jogs move too, as JOGGING. pause holds the executor; resume continues it; stop/cancel flush the
- * remaining motion. A test double — not real-time accurate.
+ * "runs" streamed BEZIER records as a job: JOB.BUFFERING until enough is
+ * queued, then RUNNING, each record taking `recordMs` and landing the head on
+ * its end point; a dry ring goes back to BUFFERING. `jog` and held jogs move
+ * too, as JOGGING. pause holds the ring; resume buffers again; cancel and
+ * abort drop it. A test double — not real-time accurate, and no planning.
  *
  * This is the backend that lets vitest exercise backpressure, coalesced ACKs,
  * open sessions, step and continuous jogs, status-during-stream and abort — all
@@ -29,10 +30,8 @@ import {
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
     MAGIC_BEZIER,
-    MAGIC_MICROSEG,
     BEZIER_SIZE,
     BEZIER_SEQ_OFFSET,
-    PACKET_SIZE,
     NACK_FULL,
     NACK_BAD_STATE,
     NACK_PAUSED,
@@ -47,15 +46,11 @@ import {
 import {
     MachineState,
     AlarmReason,
-    RunningReason,
+    JobReason,
     axisMask,
     packStatusRsp,
 } from "../../format/status.js";
-import { unpackMicrosegment } from "../../format/packet.js";
 import { crc8 } from "../../format/crc.js";
-import type { MicroSegment } from "../../format/microsegment.js";
-
-const MSEG_FLAG_PAUSE = 0x04; // sender-inserted at a tool-change boundary
 
 interface SimOptions {
     ringSize?: number;
@@ -88,6 +83,12 @@ interface SimOptions {
     cjogTravel?: readonly [readonly [number, number], readonly [number, number]];
     /** Allow a continuous jog on an unhomed axis (the config's jogUnhomed). */
     jogUnhomed?: boolean;
+    /** How long one BEZIER record takes to run, ms. Default frameMs. */
+    recordMs?: number;
+    /** Queued time that ends BUFFERING, ms (follower.cpp: 1 s). */
+    bufferMs?: number;
+    /** Quiet time after the last record that ends BUFFERING, ms (follower.cpp: 500). */
+    bufferIdleMs?: number;
 }
 
 /** `get jogging=` values (shared_state.h JoggingReason). */
@@ -102,7 +103,7 @@ const BUS_ADDR_MAX = 8;
 const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
-    "state", "enabled", "homed", "alarm", "running", "latched",
+    "state", "enabled", "homed", "alarm", "job", "latched",
     "probed", "pz", "nodehomed", "pos", "jogging",
 ] as const;
 
@@ -118,7 +119,8 @@ export class SimTransport implements Transport {
     /** Unmapped is not an alarm: an empty map boots IDLE (core0.cpp). */
     state: MachineState = MachineState.IDLE;
     alarm: AlarmReason = AlarmReason.NONE;
-    running: RunningReason = RunningReason.JOB;
+    /** What the job is doing; meaningful only while JOB. */
+    job: JobReason = JobReason.BUFFERING;
     /**
      * DERIVED, per slot. Never assign it directly — call `_rederiveHomed()`.
      * The firmware holds the datum against the NODE (`nodeOrigin`/`nodeHomed`
@@ -194,10 +196,13 @@ export class SimTransport implements Transport {
     vacPump = new Map<number, boolean>();
     vacServo = new Map<string, boolean>();
 
-    private motion: Array<{ ms: MicroSegment; interval: number; flags: number }> = [];
-    private executing = false;
-    private timeCredit = 0; // banked sim-seconds not yet spent
-    private returnState: MachineState = MachineState.IDLE;
+    /** The job's ring: each queued record's end point, machine mm. */
+    private motion: Array<{ x: number; y: number }> = [];
+    private timeCredit = 0; // banked sim-ms not yet spent
+    private lastRecordMs = 0;
+    readonly recordMs: number;
+    readonly bufferMs: number;
+    readonly bufferIdleMs: number;
 
     private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -227,6 +232,9 @@ export class SimTransport implements Transport {
         this.cjogTravel = opts.cjogTravel;
         this.jogUnhomed = opts.jogUnhomed ?? false;
         this.jogSpm = opts.jogSpm ?? [1, 1, 1, 1];
+        this.recordMs = opts.recordMs ?? this.frameMs;
+        this.bufferMs = opts.bufferMs ?? 1000;
+        this.bufferIdleMs = opts.bufferIdleMs ?? 500;
         if (opts.axisMap) {
             for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axisMap[i] ?? null;
             this.state = MachineState.IDLE;
@@ -269,15 +277,12 @@ export class SimTransport implements Transport {
             // motion ends, the ring is discarded, position is kept. The ramp
             // distance the real machine would still travel is not simulated.
             this.motion = [];
-            this.executing = false;
             this.timeCredit = 0;
             this.jogQueue = [];
             this.aborting = true;
-            if (this.state === MachineState.RUNNING || this.state === MachineState.PAUSED ||
-                this.state === MachineState.JOGGING) {
+            if (this.state === MachineState.JOB || this.state === MachineState.JOGGING) {
                 this.state = MachineState.IDLE;
             }
-            this.running = RunningReason.JOB;
             this.aborting = false;
             return Promise.resolve();
         }
@@ -301,7 +306,7 @@ export class SimTransport implements Transport {
                     axesEnabled: this.axesEnabled,
                     axesHomed: this.axesHomed,
                     alarm: this.alarm,
-                    running: this.running,
+                    reason: this._reason(),
                     bufCount: this.motion.length,
                     pos: this.pos,
                     expectedSeq: this.expectedSeq,
@@ -315,14 +320,12 @@ export class SimTransport implements Transport {
         for (let off = 0; off < data.length; ) {
             const m = data[off];
             const size = m === MAGIC_BEZIER ? BEZIER_SIZE
-                : m === MAGIC_MICROSEG ? PACKET_SIZE
                 : m === MAGIC_CJOG ? CJOG_SIZE
                 : 0;
             if (size === 0 || off + size > data.length) break; // unframeable — drop the rest
             const pkt = data.subarray(off, off + size);
             if (m === MAGIC_BEZIER) this._writeBezier(pkt);
             else if (m === MAGIC_CJOG) this._writeCjog(pkt);
-            else this._writePacket(pkt);
             off += size;
         }
         this._flushAck(); // end of batch == the firmware's drain-empty flush
@@ -500,124 +503,91 @@ export class SimTransport implements Transport {
         }
     }
 
-    /** BEZIER records are framed, CRC- and seq-checked, and ACKed; the sim does not move. */
+    /**
+     * BEZIER ingest (data_plane.cpp + queue.cpp admit): CRC and seq checked,
+     * then gated like the firmware. The first record from IDLE opens the job.
+     */
     private _writeBezier(data: Uint8Array): void {
         if (crc8(data, 0, BEZIER_SIZE - 1) !== data[BEZIER_SIZE - 1]) return; // corrupt — drop
+        // A stale retransmit after a go-back is ACKed but not queued again.
         if (data[BEZIER_SEQ_OFFSET] !== this.expectedSeq) {
             this.pendingAcks = 0; // immediate: the host's resync signal
             this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
             return;
         }
-        this.expectedSeq = (this.expectedSeq + 1) & 0xff;
-        this._markAck();
-    }
-
-    private _writePacket(data: Uint8Array): void {
-        let ms: MicroSegment;
-        try {
-            ms = unpackMicrosegment(data);
-        } catch {
-            return; // not a recognised packet — drop
-        }
-
-        // Mirror the firmware's seq duplicate guard (data_plane.cpp): a stale
-        // retransmit after a go-back is ACKed but NOT executed. Without this the
-        // sim would duplicate motion on every retry and silently disagree with
-        // hardware about final position.
-        if (data[22] !== this.expectedSeq) {
-            this.pendingAcks = 0; // immediate: the host's resync signal
-            this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
-            return;
-        }
-        // State gate, per magic (data_plane.cpp). The two stream types differ:
-        //   MSEG (job) — IDLE/RUNNING only; PAUSED gets its own NACK_PAUSED so
-        //     the host can hold rather than treat it as an error.
-        // ALARM lands here too, which is how every alarm refuses all motion
-        // without a separate predicate.
+        // A paused job gets its own NACK so the host holds rather than fails.
+        // ALARM lands in BAD_STATE, which is how every alarm refuses motion.
         const st = this.state;
-        if (st === MachineState.PAUSED) {
+        const jobOpen = st === MachineState.JOB &&
+            (this.job === JobReason.BUFFERING || this.job === JobReason.RUNNING);
+        if (st === MachineState.JOB && this.job === JobReason.PAUSED) {
             this._flushAck();
-            this.reply(new Uint8Array([MAGIC_NACK, NACK_PAUSED, 0]));
-            return;
+            return this._nack(NACK_PAUSED);
         }
-        if (st !== MachineState.IDLE && st !== MachineState.RUNNING) {
+        if (st !== MachineState.IDLE && !jobOpen) {
             this._flushAck(); // ACKs earned before a rewind land first
-            this.reply(new Uint8Array([MAGIC_NACK, NACK_BAD_STATE, 0]));
-            return;
+            return this._nack(NACK_BAD_STATE);
         }
         if (this.motion.length >= this.ringSize) {
             this._flushAck();
-            this.reply(new Uint8Array([MAGIC_NACK, NACK_FULL, 0]));
-            return; // backpressure — sender retries
+            return this._nack(NACK_FULL); // backpressure — sender retries
         }
-        if (!this.executing) {
-            // Start a burst. From IDLE → returns to IDLE (a job). From RUNNING →
-            // the resumed continuation after a tool-change PAUSE; returns to IDLE.
-            this.returnState = MachineState.IDLE;
-            this.running = RunningReason.JOB;
-            this.state = MachineState.RUNNING;
-            this.executing = true;
+        if (st === MachineState.IDLE) {
+            this.state = MachineState.JOB;
+            this.job = JobReason.BUFFERING;
+            this.timeCredit = 0;
         }
-        this.motion.push({ ms, interval: ms.interval, flags: ms.flags });
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        this.motion.push({ x: dv.getFloat32(3 + 4 * 6, true), y: dv.getFloat32(3 + 4 * 7, true) });
+        this.lastRecordMs = Date.now();
         this.expectedSeq = (this.expectedSeq + 1) & 0xff;
         this._markAck();
     }
 
-    /** Queued motion time, microseconds — the sim's mirror of queuedUs (§4.6). */
+    /** Queued motion time, microseconds (plannerQueuedUs). */
     private _queuedUs(): number {
-        let total = 0;
-        for (const { ms, interval } of this.motion) {
-            const steps = Math.max(Math.abs(ms.dx), Math.abs(ms.dy), Math.abs(ms.dz), Math.abs(ms.da), 1);
-            total += (interval * steps) / this.fCpu;
+        return Math.trunc(this.motion.length * this.recordMs * 1000);
+    }
+
+    /** STATUS_RSP byte 5: the current state's reason. */
+    private _reason(): number {
+        if (this.state === MachineState.JOB) return this.job;
+        if (this.state === MachineState.JOGGING) {
+            return this.jogQueue.length > 0 ? JOGGING_STEP : JOGGING_CONT;
         }
-        return Math.trunc(total * 1_000_000);
+        return 0;
     }
 
     // ── the executor ───────────────────────────────────────────────────────────
-    // Paced by each packet's own `interval` (CPU cycles/step) converted to
-    // seconds via F_CPU, not by packet count — a packet's real duration is
-    // `interval * steps / F_CPU`, so a 10mm@10mm/s jog takes ~1s here just
-    // like on real hardware, regardless of how many packets the planner split
-    // it into. `_time_credit` banks unspent wall-clock time across ticks so a
-    // packet whose duration exceeds one FRAME_S tick still gets applied
-    // atomically (position updates can't be split mid-packet) once enough
-    // ticks have accrued to cover it.
+    // BUFFERING ends as follower.cpp's does: enough queued, a full ring, or
+    // nothing new for bufferIdleMs. RUNNING spends banked time a record at a
+    // time; a dry ring buffers again, the job staying open until cancel.
 
     private _tick(): void {
         this._tickHoming();
         const frameS = this.frameMs / 1000;
         this._tickCjog(frameS);
         this._tickJog(frameS);
-        if (!this.executing || this.state !== MachineState.RUNNING) {
+        if (this.state !== MachineState.JOB) return;
+        if (this.job === JobReason.BUFFERING) {
+            const n = this.motion.length;
+            if (n === 0) return;
+            if (n * this.recordMs < this.bufferMs && n < this.ringSize &&
+                Date.now() - this.lastRecordMs < this.bufferIdleMs) return;
+            this.job = JobReason.RUNNING;
             this.timeCredit = 0;
-            return; // idle, or paused/alarmed — hold
+        }
+        if (this.job !== JobReason.RUNNING) return;
+        this.timeCredit += this.frameMs;
+        while (this.motion.length > 0 && this.timeCredit >= this.recordMs) {
+            const { x, y } = this.motion.shift()!;
+            this.timeCredit -= this.recordMs;
+            this.pos[0] = Math.round(x * this.jogSpm[0]!);
+            this.pos[1] = Math.round(y * this.jogSpm[1]!);
         }
         if (this.motion.length === 0) {
-            this.executing = false; // burst complete
-            this.state = this.returnState;
-            this.running = RunningReason.JOB;
+            this.job = JobReason.BUFFERING;
             this.timeCredit = 0;
-            return;
-        }
-        this.timeCredit += frameS;
-        while (this.motion.length > 0) {
-            const { ms, interval, flags } = this.motion[0]!;
-            const steps = Math.max(Math.abs(ms.dx), Math.abs(ms.dy), Math.abs(ms.dz), Math.abs(ms.da), 1);
-            const duration = (interval * steps) / this.fCpu;
-            if (duration > this.timeCredit) break; // not enough banked time yet
-            this.motion.shift();
-            this.timeCredit -= duration;
-            this.pos[0] += ms.dx;
-            this.pos[1] += ms.dy;
-            this.pos[2] += ms.dz;
-            this.pos[3] += ms.da;
-            if (flags & MSEG_FLAG_PAUSE) {
-                // MSEG_FLAG_PAUSE — predetermined stop; resume + next stream starts anew
-                this.state = MachineState.PAUSED;
-                this.executing = false;
-                this.timeCredit = 0;
-                break;
-            }
         }
     }
 
@@ -632,12 +602,9 @@ export class SimTransport implements Transport {
         // with the Python, not a binding hazard.
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         const S = this;
-        const idlePausedAlarm: readonly MachineState[] = [
-    MachineState.IDLE,
-    MachineState.PAUSED,
-    MachineState.ALARM,
-];
-const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(s) >= 0;
+        const jobPaused = (): boolean => S.state === MachineState.JOB && S.job === JobReason.PAUSED;
+        const isIdlePausedAlarm = (s: MachineState): boolean =>
+            s === MachineState.IDLE || s === MachineState.ALARM || jobPaused();
 
         switch (cmd) {
             case "ping":
@@ -680,7 +647,7 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 if (args.length === 0) {
                     return "axis_map " + S.slotNode.map((n) => (n === null ? "-" : String(n))).join(" ");
                 }
-                // Rebinding mid-RUNNING would corrupt in-flight motion (§6.2).
+                // Rebinding mid-job would corrupt in-flight motion (§6.2).
                 if (!isIdlePausedAlarm(S.state)) return "err bad_state";
 
                 const desired: (number | null)[] = [];
@@ -786,9 +753,7 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 return keys.map((k) => `${k}=${S._getKey(k) ?? "!"}`).join(" ");
             }
             case "setprobe": {
-                if (S.state !== MachineState.IDLE && S.state !== MachineState.PAUSED) {
-                    return "err bad_state";
-                }
+                if (S.state !== MachineState.IDLE && !jobPaused()) return "err bad_state";
                 const z = parseInt(args[0] ?? "", 10);
                 if (!Number.isFinite(z)) return "err usage";
                 const n = S.slotNode[2];
@@ -820,7 +785,6 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 S.homing = null;          // an estop abandons a home in flight
                 S.axesEnabled = 0;
                 S.motion = [];
-                S.executing = false;
                 S.jogQueue = [];
                 return "ok";
             // enable/disable are TYPE-BLIND relays (§9): they go to any bus id,
@@ -897,26 +861,22 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
                 return "ok";
             }
             case "pause":
-                if (S.state === MachineState.RUNNING) {
-                    S.state = MachineState.PAUSED; // executor holds; motion retained
+                if (S.state === MachineState.JOB &&
+                    (S.job === JobReason.BUFFERING || S.job === JobReason.RUNNING)) {
+                    S.job = JobReason.PAUSED; // the ring is kept for resume
                     return "ok";
                 }
                 return "err bad_state";
             case "resume":
-                if (S.state === MachineState.PAUSED) {
-                    // Phase 1: host pre-positions before resuming; Pico returns to
-                    // IDLE and accepts a fresh stream for the next operation.
-                    S.state = MachineState.IDLE;
-                    S.motion = [];
-                    S.executing = false;
-                    return "ok";
-                }
-                return "err bad_state";
+                if (!jobPaused()) return "err bad_state";
+                S.job = JobReason.BUFFERING;
+                S.lastRecordMs = Date.now();
+                return "ok";
             case "cancel":
-                if (S.state === MachineState.PAUSED) {
+                if (S.state === MachineState.JOB &&
+                    (S.job === JobReason.PAUSED || S.job === JobReason.BUFFERING)) {
                     S.state = MachineState.IDLE;
                     S.motion = [];
-                    S.executing = false;
                     return "ok";
                 }
                 return "err bad_state";
@@ -938,7 +898,7 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             // Deliberately NOT state-gated: the firmware's gates on these five
             // verbs are commented out so the operator can work the oscillator,
             // blower and vacuum DURING a cut (control_plane.cpp). A sim that
-            // still refused them while RUNNING would make the demo look broken
+            // still refused them during a job would make the demo look broken
             // in exactly the case the change was made for.
             //
             // Replies follow the relay convention — `node <id> ok`, not `ok` —
@@ -1055,7 +1015,7 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
             case "enabled":   return hex(this.axesEnabled, 2);
             case "homed":     return hex(this.axesHomed, 2);
             case "alarm":     return String(this.alarm);
-            case "running":   return String(this.running);
+            case "job":       return this.state === MachineState.JOB ? String(this.job) : "-";
             case "latched":   return hex(this.axesLatched, 2);
             case "probed":    return this._probeZ() === undefined ? "0" : "1";
             case "pz":        return String(this._probeZ() ?? "-");
@@ -1095,8 +1055,9 @@ const isIdlePausedAlarm = (s: MachineState): boolean => idlePausedAlarm.indexOf(
         return true;
     }
 
-    /** Test hook: drive the sim into RUNNING so pause/resume can be exercised. */
+    /** Test hook: drive the sim into a running job so pause/resume can be exercised. */
     _forceRunning(): void {
-        this.state = MachineState.RUNNING;
+        this.state = MachineState.JOB;
+        this.job = JobReason.RUNNING;
     }
 }

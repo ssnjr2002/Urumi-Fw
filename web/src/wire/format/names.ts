@@ -20,7 +20,7 @@
 import {
     MachineState,
     AlarmReason,
-    RunningReason,
+    JobReason,
     AXIS_BITS,
     type AxisLetter,
 } from "./status.js";
@@ -34,7 +34,7 @@ function invert(obj: Record<string, number>): Record<number, string> {
 
 export const STATE_NAMES: Readonly<Record<number, string>> = invert(MachineState);
 export const ALARM_NAMES: Readonly<Record<number, string>> = invert(AlarmReason);
-export const RUNNING_NAMES: Readonly<Record<number, string>> = invert(RunningReason);
+export const JOB_NAMES: Readonly<Record<number, string>> = invert(JobReason);
 
 /**
  * Unknown values fall back to `STATE(7)` rather than "" or "undefined".
@@ -44,7 +44,7 @@ export const RUNNING_NAMES: Readonly<Record<number, string>> = invert(RunningRea
  */
 export const stateName = (s: number): string => STATE_NAMES[s] ?? `STATE(${s})`;
 export const alarmName = (a: number): string => ALARM_NAMES[a] ?? `ALARM(${a})`;
-export const runningName = (r: number): string => RUNNING_NAMES[r] ?? `RUNNING(${r})`;
+export const jobName = (r: number): string => JOB_NAMES[r] ?? `JOB(${r})`;
 
 const LETTERS: readonly AxisLetter[] = ["x", "y", "z", "a"];
 

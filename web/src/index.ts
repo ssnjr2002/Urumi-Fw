@@ -237,19 +237,6 @@ export {
     type WalkOptions,
 } from "./orchestrate/walk.js";
 
-// ── wire format: MicroSegment + packet packer ───────────────────────────────
-export {
-    type MicroSegment,
-    microSegment,
-    interval,
-    MICRO_PATH_END,
-    MICRO_PAUSE,
-    MICRO_LIFT,
-    MICRO_JOG,
-    MICRO_DUTY_RELEASE,
-    MICRO_DUTY_ASSERT,
-} from "./wire/format/microsegment.js";
-
 export {
     scheduleDutyBreaks,
     segmentSeconds,
@@ -257,19 +244,8 @@ export {
 } from "./production/dutyBreaks.js";
 
 export { crc8, crc32 } from "./wire/format/crc.js";
-export { MAGIC_MICROSEG, PACKET_SIZE } from "./wire/format/constants.js";
 
-export {
-    packMicrosegment,
-    serialiseMicrosegments,
-    writeStream,
-    decodePacket,
-    type DecodedPacket,
-    FRAME_PREFIX_SIZE,
-    FRAMED_PACKET_SIZE,
-} from "./wire/format/packet.js";
-
-export { stampSeq, unpackMicrosegment } from "./wire/format/packet.js";
+export { stampSeq } from "./wire/format/packet.js";
 export { packCjog, CJOG_SPEED_MAX, type JogDir } from "./wire/format/cjog.js";
 
 // ── wire format: STATUS_RSP + machine enums ──────────────────────────────────
@@ -279,7 +255,7 @@ export {
     HomeFail,
     Probing,
     ProbeCause,
-    RunningReason,
+    JobReason,
     MachineStatus,
     parseGetReply,
     getValue,
@@ -295,11 +271,11 @@ export {
 export {
     stateName,
     alarmName,
-    runningName,
+    jobName,
     maskStr,
     STATE_NAMES,
     ALARM_NAMES,
-    RUNNING_NAMES,
+    JOB_NAMES,
 } from "./wire/format/names.js";
 
 // ── wire format: remaining framing constants ──────────────────────────────────

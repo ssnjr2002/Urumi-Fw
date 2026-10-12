@@ -22,7 +22,7 @@ import {
     packStatusRsp,
     MachineState,
     AlarmReason,
-    RunningReason,
+    JobReason,
 } from "../../../src/wire/format/status.js";
 import {
     MAGIC_ACK,
@@ -162,11 +162,11 @@ describe("wire/link/link: getStatus (binary status plane)", () => {
         expect(t.writes[0]).toEqual(new Uint8Array([MAGIC_STATUS_REQ]));
         t.feedReply(
             packStatusRsp({
-                state: MachineState.RUNNING,
+                state: MachineState.JOB,
                 axesEnabled: 0x0f,
                 axesHomed: 0x0f,
                 alarm: AlarmReason.NONE,
-                running: RunningReason.JOB,
+                reason: JobReason.RUNNING,
                 bufCount: 3,
                 pos: [10, 20, 0, 0],
                 expectedSeq: 5,
@@ -174,7 +174,8 @@ describe("wire/link/link: getStatus (binary status plane)", () => {
             }),
         );
         const st = await p;
-        expect(st.state).toBe(MachineState.RUNNING);
+        expect(st.state).toBe(MachineState.JOB);
+        expect(st.reason).toBe(JobReason.RUNNING);
         expect(st.bufCount).toBe(3);
         expect(st.pos).toEqual([10, 20, 0, 0]);
         expect(st.expectedSeq).toBe(5);
@@ -204,7 +205,7 @@ describe("wire/link/link: status getter", () => {
                 axesEnabled: 0,
                 axesHomed: 0x0f,
                 alarm: 0,
-                running: 0,
+                reason: 0,
             }),
         );
         // let read loop pump + demux route to the status sink

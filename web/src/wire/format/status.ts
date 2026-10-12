@@ -1,14 +1,13 @@
 /**
  * format/status.ts — binary STATUS_RSP (0xA7, 30B) + the operational enums.
- * Ported from host/protocol/{state,packets}.py: MachineState / AlarmReason /
- * RunningReason, MachineStatus, parse_status_rsp,
- * pack_status_rsp, axis_mask.
+ * MachineState / AlarmReason / JobReason, MachineStatus, parseStatusRsp,
+ * packStatusRsp, axisMask.
  *
  * STATUS_RSP folds state + position + expectedSeq + queued motion time into
  * one coherent sample (docs/comms_architecture.md §4.2/§4.6). It supersedes
  * the text `get` query for any caller that can do a binary
  * poll — including mid-stream, where the ASCII line would be a heavier
- * insertion between MSEG packets. The text `get` query carries the fields
+ * insertion between records. The text `get` query carries the fields
  * STATUS_RSP has no room for; statusFromGet builds the same MachineStatus.
  *
  * The fields text cannot carry (`pos`, `expectedSeq`, `queuedUs`, `bufCount`)
@@ -27,10 +26,9 @@ import {
 
 export const MachineState = {
     IDLE: 0,
-    RUNNING: 1,
+    // 1 (RUNNING) and 4 (PAUSED) are retired.
     ESTOP: 2, // transient inter-core flush signal; rarely seen by the host
     ALARM: 3,
-    PAUSED: 4,
     HOMING: 5,
     /**
      * A tool-height probe session is open (docs/tool_probe.md §5.1). Entered by
@@ -50,6 +48,8 @@ export const MachineState = {
      * Load-bearing, as PROBING above.
      */
     TRAVERSE: 8,
+    /** A job on the planner (BEZIER records); JobReason says what it is doing. */
+    JOB: 9,
 } as const;
 export type MachineState = (typeof MachineState)[keyof typeof MachineState];
 const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
@@ -106,20 +106,19 @@ export const AlarmReason = {
 export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
 const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];
 
-export const RunningReason = {
-    JOB: 0,
-    JOG: 1,
-    // Decelerating to rest after a pause/abort request (§4.5). A RunningReason
-    // and not a MachineState: the machine IS running, so every existing
-    // IDLE/RUNNING/PAUSED gate stays correct, and an older host reads it as
-    // plain RUNNING.
-    ABORT_DECEL: 2,
-    // Running lines planned on the Pico (debug `line`); bufCount then counts
-    // planner blocks.
-    PLANNER: 3,
+/** What a job is doing, while JOB (JobReason in ipc/shared_state.h). */
+export const JobReason = {
+    /** At rest, waiting for enough queued motion. */
+    BUFFERING: 0,
+    RUNNING: 1,
+    /** Braking for a pause or a late block. */
+    HOLDING: 2,
+    /** At rest with the ring kept; `resume` or `cancel`. */
+    PAUSED: 3,
+    /** Braking for an abort; ends IDLE. */
+    ABORTING: 4,
 } as const;
-export type RunningReason = (typeof RunningReason)[keyof typeof RunningReason];
-const RUNNING_REASON_VALUES = Object.values(RunningReason) as readonly number[];
+export type JobReason = (typeof JobReason)[keyof typeof JobReason];
 
 /**
  * Which fault ended a home, alongside AlarmReason.HOMING_FAIL (core0/homing.h).
@@ -244,7 +243,12 @@ export class MachineStatus {
         readonly axesHomed: number,
         readonly axesEnabled: number,
         readonly alarm: AlarmReason,
-        readonly running: RunningReason,
+        /**
+         * The current state's reason byte (JobReason while JOB, the jogging,
+         * homing or probing reason in those states), 0 for a state without
+         * one. The text plane fills it from `job` only.
+         */
+        readonly reason: number,
         readonly bufCount: number | undefined = undefined,
         readonly pos: readonly [number, number, number, number] | undefined = undefined,
         readonly expectedSeq: number | undefined = undefined,
@@ -374,7 +378,7 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         toInt(homed),
         toInt(fields.enabled ?? "0"),
         enumFromStr(ALARM_REASON_VALUES, fields.alarm, AlarmReason.NONE),
-        enumFromStr(RUNNING_REASON_VALUES, fields.running, RunningReason.JOB),
+        fields.job !== undefined && fields.job !== "-" ? toInt(fields.job) : 0,
         undefined, // bufCount, pos, expectedSeq, queuedUs — text cannot carry these
         undefined,
         undefined,
@@ -410,8 +414,8 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
 // [2]      axes_enabled u8   bitmask
 // [3]      axes_homed   u8   bitmask
 // [4]      alarm        u8   AlarmReason
-// [5]      running      u8   RunningReason
-// [6..7]   bufCount     u16 LE — segments queued (incl. executing)
+// [5]      reason       u8   the current state's reason
+// [6..7]   bufCount     u16 LE — planner blocks queued
 // [8..23]  pos[4]       i32 LE — x, y, z, a (steps)
 // [24]     expectedSeq  u8   — informational, not flow control
 // [25..28] queuedUs     u32 LE — queued motion time, microseconds
@@ -447,7 +451,7 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         dv.getUint8(3),
         dv.getUint8(2),
         enumFromInt(ALARM_REASON_VALUES, dv.getUint8(4), AlarmReason.NONE),
-        enumFromInt(RUNNING_REASON_VALUES, dv.getUint8(5), RunningReason.JOB),
+        dv.getUint8(5),
         dv.getUint16(6, true),
         [dv.getInt32(8, true), dv.getInt32(12, true), dv.getInt32(16, true), dv.getInt32(20, true)],
         dv.getUint8(24),
@@ -460,7 +464,7 @@ export interface PackStatusRspOptions {
     axesEnabled: number;
     axesHomed: number;
     alarm: number;
-    running: number;
+    reason: number;
     bufCount?: number;
     pos?: readonly [number, number, number, number];
     expectedSeq?: number;
@@ -482,7 +486,7 @@ export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
     dv.setUint8(2, opts.axesEnabled & 0xff);
     dv.setUint8(3, opts.axesHomed & 0xff);
     dv.setUint8(4, opts.alarm & 0xff);
-    dv.setUint8(5, opts.running & 0xff);
+    dv.setUint8(5, opts.reason & 0xff);
     dv.setUint16(6, (opts.bufCount ?? 0) & 0xffff, true);
     const p = opts.pos ?? [0, 0, 0, 0];
     dv.setInt32(8, p[0] | 0, true);

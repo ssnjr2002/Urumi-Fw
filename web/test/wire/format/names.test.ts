@@ -6,14 +6,14 @@ import { describe, it, expect } from "vitest";
 import {
     stateName,
     alarmName,
-    runningName,
+    jobName,
     maskStr,
     STATE_NAMES,
 } from "../../../src/wire/format/names.js";
 import {
     MachineState,
     AlarmReason,
-    RunningReason,
+    JobReason,
     axisMask,
 } from "../../../src/wire/format/status.js";
 
@@ -24,12 +24,12 @@ describe("enum names", () => {
         }
     });
 
-    it("covers alarm and running reasons the same way", () => {
+    it("covers alarm and job reasons the same way", () => {
         for (const [key, value] of Object.entries(AlarmReason)) {
             expect(alarmName(value)).toBe(key);
         }
-        for (const [key, value] of Object.entries(RunningReason)) {
-            expect(runningName(value)).toBe(key);
+        for (const [key, value] of Object.entries(JobReason)) {
+            expect(jobName(value)).toBe(key);
         }
     });
 
@@ -38,13 +38,13 @@ describe("enum names", () => {
         // by *position*, so ALARM=3 only reads "ALARM" while ALARM happens to
         // be the fourth key written down.
         expect(STATE_NAMES[MachineState.ALARM]).toBe("ALARM");
-        expect(STATE_NAMES[MachineState.PAUSED]).toBe("PAUSED");
+        expect(STATE_NAMES[MachineState.JOB]).toBe("JOB");
     });
 
     it("keeps an unknown value visible instead of rendering undefined", () => {
         expect(stateName(99)).toBe("STATE(99)");
         expect(alarmName(99)).toBe("ALARM(99)");
-        expect(runningName(99)).toBe("RUNNING(99)");
+        expect(jobName(99)).toBe("JOB(99)");
     });
 });
 
