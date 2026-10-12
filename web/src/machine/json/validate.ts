@@ -141,6 +141,11 @@ const clearanceNonNegative: Rule = ({ machine }) =>
         ? []
         : [error(`machine.clearanceMm: must be >= 0 (got ${machine.clearanceMm})`)];
 
+const bufferPositive: Rule = ({ machine }) =>
+    (["queueTime", "idleTime"] as const)
+        .filter((k) => !(Number.isFinite(machine.buffer[k]) && machine.buffer[k] > 0))
+        .map((k) => error(`machine.buffer.${k}: must be > 0 (got ${machine.buffer[k]})`));
+
 const defaultHeadInRange: Rule = ({ machine }) => {
     const n = machine.heads.length;
     const i = machine.defaultHead;
@@ -433,6 +438,7 @@ const RULES: readonly Rule[] = [
     uniqueNodeIds,
     defaultHeadInRange,
     clearanceNonNegative,
+    bufferPositive,
     headsHaveAxesForAccepted,
     headsAcceptSomething,
     everyToolHasAHead,

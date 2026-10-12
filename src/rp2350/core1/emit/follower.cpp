@@ -63,18 +63,14 @@ FOLLOWER_INLINE int64_t incrementFor(int64_t err) {
 
 FOLLOWER_INLINE int32_t stepOf(int64_t q) { return (int32_t)(q >> 32); }
 
-// A job buffers until this much motion is queued, the ring is full, or no
-// record has arrived for kBufferIdleMs with something queued.
-static constexpr float    kBufferS      = 1.0f;
-static constexpr uint32_t kBufferIdleMs = 500;
-
 static void __time_critical_func(publishJob)(uint8_t why) {
     jobReason = why;
     __dmb();
     machineState = STATE_JOB;
 }
 
-// A job at rest in BUFFERING: start it once enough is queued. Under the lock.
+// A job at rest in BUFFERING: start it once bufferQueueS is queued, the ring is
+// full, or no record has arrived for bufferIdleMs. Under the lock.
 static bool __time_critical_func(bufferDone)() {
     static int seenCount = -1;
     static uint32_t seenMs = 0;
@@ -82,8 +78,8 @@ static bool __time_critical_func(bufferDone)() {
     const uint32_t now = millis();
     if (n != seenCount) { seenCount = n; seenMs = now; }
     if (n == 0) return false;
-    return plannerRing.full() || now - seenMs >= kBufferIdleMs ||
-           plannerRing.queuedTime() >= kBufferS;
+    return plannerRing.full() || now - seenMs >= bufferIdleMs ||
+           plannerRing.queuedTime() >= bufferQueueS;
 }
 
 // Enter planner motion: a jog from IDLE, or a job once it has buffered. A job's

@@ -14,6 +14,11 @@ static CfgDecodeError lastError   = CFG_DEC_OK;
 static CfgDecodeError bootError   = CFG_DEC_OK;   // the stored blob's, for cfgerr=
 static bool           ignored     = false;
 
+static void publish() {
+    bufferQueueS = active.bufferQueueTime;
+    bufferIdleMs = (uint32_t)(active.bufferIdleTime * 1000.0f);
+}
+
 void machineCfgLoad() {
     activeValid = false;
     lastError   = CFG_DEC_OK;
@@ -28,6 +33,7 @@ void machineCfgLoad() {
     lastError   = configDecode(buf, g_cfg.length, &active);
     activeValid = (lastError == CFG_DEC_OK);
     bootError   = lastError;
+    if (activeValid) publish();
 }
 
 CfgDecodeError machineCfgStage(const uint8_t* blob, uint32_t len) {
@@ -41,6 +47,7 @@ void machineCfgAdopt() {
     activeValid = true;
     lastError   = CFG_DEC_OK;
     ignored     = false;
+    publish();
 }
 
 bool              machineCfgValid() { return activeValid; }

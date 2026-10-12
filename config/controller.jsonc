@@ -16,6 +16,10 @@
   "machine": {
     "fCpu": 150000000,
     "meshOn": true,
+    "buffer": {            // jobs only; jogs start at once
+      "queueTime": 1.0,    // s of queued motion before a job starts
+      "idleTime": 0.5      // s with no new record before it starts anyway
+    },
     "path": { "feed": 80 },
     "rapid": { "feed": 80 },
     "z": { "feed": 10 },

@@ -172,6 +172,11 @@ extern volatile uint8_t joggingReason;    // one of JoggingReason; see its comme
 // datum is trustworthy.
 extern volatile int32_t machinePos[4];
 
+// The config's job buffer thresholds (machine.buffer), published by Core 0 when
+// a config loads or is adopted; Core 1 is parked then.
+extern volatile float    bufferQueueS;
+extern volatile uint32_t bufferIdleMs;
+
 // Position model (state_redesign Layer 4): orthogonal per-axis physical state,
 // bit0=X bit1=Y bit2=Z bit3=A. `axes_homed` replaces the old positionValid bool
 // (datum known per axis); `axes_enabled` tracks which axis nodes are energised —

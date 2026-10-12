@@ -670,6 +670,16 @@ export interface MachineConfig {
     readonly jogUnhomed: boolean;
     /** Bed mesh on at boot; the Pico's `mesh on|off` changes it until reboot. */
     readonly meshOn: boolean;
+    readonly buffer: JobBuffer;
+}
+
+/**
+ * When a job leaves BUFFERING: once `queueTime` s of motion is queued, or once
+ * no record has arrived for `idleTime` s. Jobs only; jogs start at once.
+ */
+export interface JobBuffer {
+    readonly queueTime: number;
+    readonly idleTime: number;
 }
 
 export function machineConfig(

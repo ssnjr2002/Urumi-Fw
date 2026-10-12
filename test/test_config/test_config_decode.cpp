@@ -49,6 +49,8 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(c.y.jogFeedUnhomed == doctest::Approx(80));
     CHECK_FALSE(c.jogUnhomed);
     CHECK_FALSE(c.meshOn);
+    CHECK(c.bufferQueueTime == doctest::Approx(1.0));   // defaults
+    CHECK(c.bufferIdleTime == doctest::Approx(0.5));
     CHECK(c.y.node.id == 2);
     CHECK_FALSE(c.y.invertDir);
     CHECK(c.heads[0].z.node.id == 3);
@@ -153,6 +155,7 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"travel", "ceiling"}, {"no_jog_feed", "missing"},
         {"no_jog_unhomed", "missing"},
         {"no_mesh_on",     "missing"},
+        {"no_buffer",      "missing"}, {"buffer", "buffer"},
     };
     for (auto& t : cases) {
         CAPTURE(t[0]);

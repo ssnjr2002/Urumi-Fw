@@ -210,6 +210,7 @@ static CfgDecodeError validate(const MachineCfg& c) {
         if (seen & bit) return CFG_DEC_DUP_NODE;
         seen |= bit;
     }
+    if (!positive(c.bufferQueueTime) || !positive(c.bufferIdleTime)) return CFG_DEC_BUFFER;
     return checkFrames(c);
 }
 
@@ -233,6 +234,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["positions"]   = true;
     fm["jogUnhomed"]  = true;
     fm["meshOn"]      = true;
+    fm["buffer"]      = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
 
     JsonDocument doc;
@@ -288,6 +290,10 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     if (!readBool(m["jogUnhomed"], &out->jogUnhomed) ||
         !readBool(m["meshOn"], &out->meshOn)) return CFG_DEC_MISSING;
 
+    JsonObjectConst buf = m["buffer"];
+    if (buf.isNull() || !readFloat(buf["queueTime"], &out->bufferQueueTime) ||
+        !readFloat(buf["idleTime"], &out->bufferIdleTime)) return CFG_DEC_MISSING;
+
     JsonVariantConst dh = m["defaultHead"];
     if (!dh.is<unsigned>()) return CFG_DEC_MISSING;
     if (dh.as<unsigned>() >= out->headCount) return CFG_DEC_HEADS;
@@ -319,6 +325,7 @@ const char* configDecodeErrorName(CfgDecodeError e) {
         case CFG_DEC_CEILING:   return "ceiling";
         case CFG_DEC_HOMING:    return "homing";
         case CFG_DEC_FRAMES:    return "frames";
+        case CFG_DEC_BUFFER:    return "buffer";
     }
     return "?";
 }

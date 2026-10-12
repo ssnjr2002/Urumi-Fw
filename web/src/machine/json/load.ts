@@ -18,7 +18,7 @@
  *   beats making every config.json restate it), machine targets
  *   (path/rapid/z/slew), axis ceilings
  *   (maxFeed/maxAccel), invert, maxTravel, jogFeed/jogFeedUnhomed (default
- *   maxFeed), jogUnhomed (false), laser, peripherals (the ARRAY is
+ *   maxFeed), jogUnhomed (false), buffer (1 s / 0.5 s), laser, peripherals (the ARRAY is
  *   optional, but each entry needs id + type), tools.*,
  *   quality. Absent → documented code default. See feed_accel_value_model.md.
  *
@@ -64,6 +64,7 @@ import {
     type LaserPointer,
     type WorkOffset,
     type StoredPositions,
+    type JobBuffer,
 } from "../schema.js";
 import { TOOL_PROFILES } from "../tools.js";
 import { validateConfig } from "./validate.js";
@@ -178,6 +179,7 @@ interface JsonMachine {
     readonly positions?: { readonly park?: JsonPoint; readonly load?: JsonPoint };
     readonly jogUnhomed?: boolean;
     readonly meshOn: boolean;
+    readonly buffer?: { readonly queueTime?: number; readonly idleTime?: number };
 }
 
 interface JsonPeripheral {
@@ -394,6 +396,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         positions: buildPositions(machine.positions, errors),
         jogUnhomed: machine.jogUnhomed ?? false,
         meshOn: machine.meshOn === true,
+        buffer: buildBuffer(machine.buffer, errors),
     });
 
     if (errors.length > 0) {
@@ -479,6 +482,17 @@ function opTarget(j: JsonOpTarget | undefined, fallback: JsonOpTarget): OpTarget
     if (feed !== undefined) out.feed = feed;
     if (accel !== undefined) out.accel = accel;
     return out;
+}
+
+function buildBuffer(j: JsonMachine["buffer"], errors: string[]): JobBuffer {
+    const d = DEFAULTS.machine.buffer;
+    const time = (k: keyof JobBuffer): number => {
+        const v = j?.[k];
+        if (v === undefined) return d[k];
+        if (typeof v !== "number") errors.push(`machine.buffer.${k}: must be a number`);
+        return v as number;
+    };
+    return { queueTime: time("queueTime"), idleTime: time("idleTime") };
 }
 
 /**

@@ -17,7 +17,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 4u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 5u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
 #define CFG_BUS_ADDR_MAX   8u   // must equal BUS_ADDR_MAX (shared_state.h)
@@ -101,6 +101,10 @@ struct MachineCfg {
     CfgPoint load;
     bool     jogUnhomed;     // relative jogs before homing, no soft limits (testing)
     bool     meshOn;         // bed mesh on at boot (the `mesh` command changes it)
+    // A job leaves BUFFERING once this much motion is queued, or once no record
+    // has arrived for this long. Seconds; jobs only.
+    float    bufferQueueTime;
+    float    bufferIdleTime;
 };
 
 enum CfgDecodeError : uint8_t {
@@ -117,6 +121,7 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_CEILING,        // a ceiling or jog feed negative or not finite; maxTravel 0 on a linear axis
     CFG_DEC_HOMING,         // a homing field out of range, or the wrong kind for the axis
     CFG_DEC_FRAMES,         // no anchor, a work Z per head missing, or a point out of reach
+    CFG_DEC_BUFFER,         // a buffer time not a positive finite number
 };
 
 // Decode and validate `len` bytes at `blob` into *out. On failure *out is left

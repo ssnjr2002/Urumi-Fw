@@ -33,6 +33,8 @@ volatile int32_t resumePos[4]   = {0, 0, 0, 0};
 volatile bool    pauseRequested = false;
 volatile bool    abortRequested = false;
 volatile uint8_t joggingReason  = JOGGING_NONE;
+volatile float    bufferQueueS   = 1.0f;
+volatile uint32_t bufferIdleMs   = 500;
 
 // Planner motion (see shared.h) — plannerLock is claimed in setup()
 planner::Planner  plannerRing;

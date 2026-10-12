@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { readFixture } from "../../helpers.js";
 
-import { parseConfig } from "../../../src/machine/json/load.js";
+import { parseConfig, loadConfig } from "../../../src/machine/json/load.js";
 import {
     KNIFE,
     PEN,
@@ -477,6 +477,26 @@ describe("load: error cases", () => {
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.some((e) => e.includes("machine.meshOn"))).toBe(true);
+    });
+
+    it("defaults an absent buffer, or one field of it", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        delete json.machine.buffer;
+        let r = loadConfig(JSON.stringify(json));
+        expect(r.ok && r.config.machine.buffer).toEqual({ queueTime: 1, idleTime: 0.5 });
+        json.machine.buffer = { queueTime: 2 };
+        r = loadConfig(JSON.stringify(json));
+        expect(r.ok && r.config.machine.buffer).toEqual({ queueTime: 2, idleTime: 0.5 });
+    });
+
+    it("rejects a buffer time that is not a positive number", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.machine.buffer = { queueTime: "1" };
+        let r = loadConfig(JSON.stringify(json));
+        expect(!r.ok && r.errors.some((e) => e.includes("machine.buffer.queueTime"))).toBe(true);
+        json.machine.buffer = { idleTime: 0 };
+        r = loadConfig(JSON.stringify(json));
+        expect(!r.ok && r.errors.some((e) => e.includes("machine.buffer.idleTime"))).toBe(true);
     });
 
     it("rejects zero stepsPerUnit", () => {
