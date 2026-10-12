@@ -20,7 +20,7 @@
 #include "../../../ipc/shared_state.h"
 
 static bool framesGateDenies() {
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+    if (!idlePausedOrAlarm()) {
         Serial.println("err bad_state");
         return true;
     }

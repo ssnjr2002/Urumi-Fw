@@ -144,7 +144,7 @@ static void probeSettle(void) {
     if (!slotMapComplete())
         resumeOrHold();
     else
-        machineState = (returnState == STATE_PAUSED) ? STATE_PAUSED : STATE_IDLE;
+        machineState = (returnState == STATE_JOB) ? STATE_JOB : STATE_IDLE;
 }
 
 // A failed leg tears the session down ITSELF, then alarms.
@@ -212,7 +212,7 @@ const char* probeBegin(uint8_t vacNode, uint8_t* zOut, bool* openOut) {
     // switch rather than a motor nobody turned on. legCommon refuses a home for
     // this reason; the same reason applies here and the same mask answers it.
     if (!(nodeEnabled & (1u << zNode))) return "not_enabled";
-    returnState = machineState;        // IDLE or PAUSED — a mid-job tool swap
+    returnState = machineState;        // IDLE or a paused JOB — a mid-job tool swap
                                        // must land back in PAUSED, and neither
                                        // exit route can infer where it started
 

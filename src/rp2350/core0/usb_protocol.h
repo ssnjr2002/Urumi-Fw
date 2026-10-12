@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <stdint.h>
-#include "../ipc/shared_state.h"   // MicroSegment (MSEG packets carry one)
+#include "../ipc/shared_state.h"   // BUS_ADDR_MAX
 
 // usb_protocol.h — the USB CDC wire contract between the host PC and Core 0.
 //
@@ -11,19 +11,9 @@
 // THIS FILE IS MIRRORED BY web/src/wire/format/constants.ts.
 // The two must agree byte for byte. Change one, change the other.
 
-// ─── USB Wire Packet ──────────────────────────────────────────────────────────
-// Binary packet framing for MicroSegments sent from host PC over USB CDC.
-//
-// Layout (26 bytes total):
-//   [0]      magic  = 0xAB
-//   [1..24]  MicroSegment (24 bytes, little-endian)
-//   [25]     CRC8 over bytes [0..24]
-
-#define MSEG_MAGIC       0xAB   // host production  — pre-computed step events
-#define JOG_MAGIC        0xAE   // retired jog burst (MSEG layout); always NACKed
-#define TOOL_MAGIC       0xAC   // local production — ToolConfig packets
-#define MSEG_PACKET_SIZE 26     // magic(1) + MicroSegment(24) + CRC8(1)
-#define MSEG_SEQ_OFFSET  22
+// ─── USB Wire Packets ─────────────────────────────────────────────────────────
+// 0xAB (MicroSegment), 0xAC (tool packet) and 0xAE (jog burst) are retired;
+// the data plane drops them as unknown bytes.
 
 // BEZIER record (56 bytes, little-endian, floats in machine mm):
 //   [0]      magic = 0xAD
@@ -40,7 +30,7 @@
 #define BEZIER_FLAG_BREAK  0x02   // corner or cusp before this piece
 #define BEZIER_FLAG_END    0x04   // closes the contour
 
-// Inter-byte timeout for a half-received MSEG/jog/BEZIER packet. A whole
+// Inter-byte timeout for a half-received BEZIER or jog packet. A whole
 // packet arrives in microseconds over USB CDC, so a gap this long means the
 // host died or desynced mid-frame — orders of magnitude below
 // CFG_RX_TIMEOUT_MS, which covers a multi-kilobyte transfer.
@@ -72,23 +62,19 @@
 //     [2]      axes_enabled
 //     [3]      axes_homed
 //     [4]      alarmReason
-//     [5]      runningReason
-//     [6..7]   bufCount   u16 LE   — segments queued in masterBuf; planner
-//                                   blocks instead while runningReason = PLANNER
-//                                   or a planner job is held in PAUSED
+//     [5]      reason              — the current state's: job, jogging,
+//                                   homing or probing; 0 otherwise
+//     [6..7]   bufCount   u16 LE   — planner blocks queued
 //     [8..23]  pos[4]     i32 LE   — machinePos, x/y/z/a
 //     [24]     expectedSeq         — next wire seq the data plane will execute
-//     [25..28] queuedUs   u32 LE   — motion time queued, microseconds
+//     [25..28] queuedUs   u32 LE   — planned motion time queued, microseconds
 //     [29]     CRC8 over [0..28]
 //
 // One frame, one coherent sample. Position used to need a separate text query on
 // the text plane, so state and position could disagree by tens of ms; per §1
 // the extra bytes are free because cost is per-transaction, not per-byte.
 //
-// bufCount counts segments — including the one Core 1 is mid-executing — but
-// segments have wildly different durations, so queuedUs is what a jog source
-// actually paces against. Whole-segment granularity: the executing segment is
-// counted in full, without subtracting elapsed time. Error ≤ one segment.
+// queuedUs counts the blocks not yet started, as last planned.
 //
 // expectedSeq is INFORMATIONAL — for resynchronising after a timeout, abort or
 // reconnect. It is not flow control; ACKs remain the only advance mechanism (D9).
@@ -151,7 +137,7 @@
 #define MSEG_NACK_CRC    0x01
 #define MSEG_NACK_FULL   0x02
 #define MSEG_NACK_MAGIC  0x03
-#define MSEG_NACK_PAUSED 0x04   // job stream rejected — machine is PAUSED
+#define MSEG_NACK_PAUSED 0x04   // record rejected — the job is paused or pausing
 #define MSEG_NACK_BAD_STATE 0x06 // stream/jog rejected — wrong machine state
 // Abort is a BARRIER: everything sent before it is discarded, everything after
 // waits for IDLE. Distinct from BAD_STATE so the host can treat it as "retry

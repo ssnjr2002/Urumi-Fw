@@ -60,14 +60,14 @@ static bool degradedDenies() {
 }
 
 static inline bool busGateDenies() {
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+    if (!idlePausedOrAlarm()) {
         Serial.println("err bad_state");
         return true;
     }
     return false;
 }
 
-// ── axes_enable <on|off> (IDLE/PAUSED/ALARM) ─────────────────────────────────
+// ── axes_enable <on|off> (IDLE/paused job/ALARM) ─────────────────────────────────
 // Targets the bound axes (position.h), and no one else: a node lent a slot by
 // slot_map is not an axis. This replaces the old `enable all` / `disable all`, whose name read
 // bus-wide while the code always walked the axis map — a distinction that
@@ -569,10 +569,10 @@ bool cmdLeg(const char* args) {
     return true;
 }
 
-// Allowed in every state but RUNNING and JOGGING, where no leg can run and the
+// Allowed in every state but JOB and JOGGING, where no leg can run and the
 // bus belongs to the stream. An idle node just acks.
 bool cmdLegAbort(const char* args) {
-    if (machineState == STATE_RUNNING || machineState == STATE_JOGGING) { Serial.println("err bad_state"); return true; }
+    if (machineState == STATE_JOB || machineState == STATE_JOGGING) { Serial.println("err bad_state"); return true; }
     const char* p = args;
     uint8_t node;
     if (!parseNode(&p, &node)) { Serial.println("err usage"); return true; }
@@ -883,7 +883,7 @@ bool cmdProbeMap(const char* args) {
     // is not an alarm exit. probeBegin writes STATE_PROBING unconditionally, so
     // entering from ALARM would clear the state while leaving alarmReason set,
     // and probe_end would then land an alarmed machine in IDLE reading as ready.
-    if (machineState != STATE_IDLE && machineState != STATE_PAUSED) {
+    if (machineState != STATE_IDLE && !jobPaused()) {
         Serial.println("err bad_state"); return true;
     }
     char* end;
@@ -953,7 +953,7 @@ bool cmdProbeEnd(const char*) {
 // Record the contact height, machine-frame steps, for the Z node in slot 2. The
 // host issues it after a clean probe with the latch leg's `get pos` Z.
 bool cmdSetProbe(const char* args) {
-    if (machineState != STATE_IDLE && machineState != STATE_PAUSED) {
+    if (machineState != STATE_IDLE && !jobPaused()) {
         Serial.println("err bad_state"); return true;
     }
     if (probeActive()) { Serial.println("err probing"); return true; }

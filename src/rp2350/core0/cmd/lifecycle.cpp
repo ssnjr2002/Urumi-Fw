@@ -8,6 +8,7 @@
 #include "table.h"
 #include "gate.h"
 #include "../data_plane.h"   // dataPlaneResetSeq (seqreset)
+#include "../planner/queue.h"  // plannerEndContour
 #include "../ops/slot_map.h"
 #include "../ops/position.h"
 #include "../ops/state.h"
@@ -69,64 +70,53 @@ bool cmdSeqReset(const char*) {            // data-plane support (see wire doc)
     return true;
 }
 
+// A buffering or running job holds and lands JOB.PAUSED (Core 1), keeping its
+// ring for `resume`.
 bool cmdPause(const char*) {
-    if (machineState != STATE_RUNNING) { Serial.println("err bad_state"); return true; }
-    // Core 1 ramps the current segment to rest, flushes the ring, snapshots
-    // resumePos and enters PAUSED (§4.5). It no longer finishes the segment
-    // and drains — resume re-plans from position, so stopping early is safe.
-    // Gated on RUNNING, so unlike abort this flag can never strand.
-    // Planner motion instead holds and keeps its ring, for `resume`.
+    const uint8_t why = jobReason;
+    if (machineState != STATE_JOB || (why != JOB_BUFFERING && why != JOB_RUNNING)) {
+        Serial.println("err bad_state"); return true;
+    }
     pauseRequested = true;
     Serial.println("ok");
     return true;
 }
 
-// A held planner job resumes where it stopped, so the head must still be there.
-static bool resumePlanner() {
+// The job continues where it stopped, so the head must still be there. Core 1
+// replans from rest and buffers again.
+bool cmdResume(const char*) {
+    if (!jobPaused()) { Serial.println("err bad_state"); return true; }
     if (machinePos[0] != resumePos[0] || machinePos[1] != resumePos[1]) {
         Serial.println("err moved");
         return true;
     }
     const uint32_t s = spin_lock_blocking(plannerLock);
-    const bool held = plannerActive && machineState == STATE_PAUSED;
-    if (held) resumeRequested = true;
+    const bool paused = jobPaused();
+    if (paused) resumeRequested = true;
     spin_unlock(plannerLock, s);
-    Serial.println(held ? "ok" : "err bad_state");
+    Serial.println(paused ? "ok" : "err bad_state");
     return true;
 }
 
-bool cmdResume(const char*) {
-    if (machineState != STATE_PAUSED) { Serial.println("err bad_state"); return true; }
-    if (plannerActive) return resumePlanner();
-    // Phase 1: the host has already pre-positioned the head, so resume simply
-    // leaves PAUSED. The next operation streams in fresh (IDLE accepts MSEG).
-    jobActive    = false;
-    machineState = STATE_IDLE;
-    Serial.println("ok");
-    return true;
-}
-
+// End a job at rest (buffering or paused): its ring is dropped. Core 1 starts a
+// buffered job only under the lock, so the check holds.
 bool cmdCancel(const char*) {
-    if (machineState != STATE_PAUSED) { Serial.println("err bad_state"); return true; }
-    if (plannerActive) {
-        // Core 1 leaves PAUSED for a resume only under the lock.
-        const uint32_t s = spin_lock_blocking(plannerLock);
-        const bool held = plannerActive && machineState == STATE_PAUSED;
-        if (held) {
-            const planner::Pos at = plannerExec.position();
-            plannerRing.reset(at);
-            plannerExec.reset(at);
-            plannerActive   = false;
-            resumeRequested = false;
-        }
-        spin_unlock(plannerLock, s);
-        if (!held) { Serial.println("err bad_state"); return true; }
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const uint8_t why = jobReason;
+    const bool atRest = machineState == STATE_JOB && (why == JOB_PAUSED || why == JOB_BUFFERING);
+    if (atRest) {
+        const planner::Pos at = plannerExec.position();
+        plannerRing.reset(at);
+        plannerExec.reset(at);
+        plannerActive   = false;
+        resumeRequested = false;
+        pauseRequested  = false;
+        __dmb();
+        machineState = STATE_IDLE;
     }
-    mBufHead = mBufTail;                   // buffer already drained at pause; defensive
-    queuedUsOut = queuedUsIn;              // …and its queued time with it (§4.6)
-    jobActive    = false;
-    machineState = STATE_IDLE;
-    Serial.println("ok");
+    spin_unlock(plannerLock, s);
+    if (atRest) plannerEndContour();
+    Serial.println(atRest ? "ok" : "err bad_state");
     return true;
 }
 

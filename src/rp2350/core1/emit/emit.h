@@ -18,26 +18,17 @@ enum EmitResult : uint8_t {
     EMIT_SOFT_LIMIT,  // ramp overshoot crossed a bound (harness — not yet raised)
 };
 
-// ─── MicroSegment emitter ────────────────────────────────────────
-// Drains the MicroSegment ring, emitting each segment at its planned interval,
-// and owns every state transition that motion itself can cause: RUNNING on
-// entry, and PAUSED / IDLE / ALARM on the way out. Returns when the ring is
-// empty, when a ramp has brought motion to rest, or on estop.
-//
-// Caller must check mBufHead != mBufTail first -- an empty ring here would
-// still publish the RUNNING transition.
-void processMicroSegments(void);
-
 // ─── Planner follower ─────────────────────────────────────────────────────────
-// Runs lib/planner motion (plannerRing): from IDLE with lines queued, or from
-// PAUSED once `resume` set resumeRequested. Owns the RUNNING transition and the
-// way out: IDLE when the ring drains or an abort finishes, PAUSED when a pause
-// hold stops. Returns at once if there is nothing to run, and on estop.
+// Runs lib/planner motion (plannerRing): a jog from IDLE, or a job, which it
+// opens in BUFFERING and starts once enough is queued. Owns those transitions
+// and the way out: IDLE when a jog drains or an abort finishes, BUFFERING when
+// a job's ring runs dry or a late block's hold stops, PAUSED when a pause hold
+// stops. Returns at once if there is nothing to run, and on estop.
 void processPlanner(void);
 
 // ─── Debug step burst ─────────────────────────────────────────────────────────
 // Emits `count` raw stream bytes into one stream SLOT at debugStepSps steps/sec.
-// Bypasses the MicroSegment path entirely — used to verify the Pico→node stream
+// Bypasses the planner entirely — used to verify the Pico→node stream
 // path in isolation. Only the node ENGAGE-bound to this slot moves, and it must
 // also be enabled (CMD_ENABLE). Core 0 resolves the target bus node → slot (via
 // the axis map) before posting the request, so here the arg is already a slot.

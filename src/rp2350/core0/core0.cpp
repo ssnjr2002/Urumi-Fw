@@ -2,7 +2,7 @@
 //
 // Owns the USB CDC ingest loop and the soft-reset sequence. The two planes that
 // share the pipe live in their own translation units (docs/wire_protocol.md):
-//   data_plane.*    — binary MicroSegment / jog packets (magic-dispatched)
+//   data_plane.*    — binary records, jog and config packets (magic-dispatched)
 //   control_plane.* — text command lines
 //   status.*        — binary STATUS_RSP + buffer telemetry
 // This file only routes bytes to them and manages Core 0's setup()/loop().
@@ -111,10 +111,6 @@ void loop() {
     rpcReset();
 
     // 5. WIPE ALL GLOBAL STATE (Clean Slate!)
-    mBufHead = 0;
-    mBufTail = 0;
-    queuedUsIn = 0;
-    queuedUsOut = 0;
     // Held in ALARM until section B settles it: with a valid config the
     // controller commits the defaultHead map as soon as Core 1 is released;
     // without one nothing is requested and the machine lands in ALARM_CONFIG
@@ -124,7 +120,7 @@ void loop() {
     slotMapForget();
     machineState = STATE_ALARM;
     alarmReason = ALARM_NODE_FAULT;
-    runningReason = RUNNING_JOB;
+    jobReason = JOB_BUFFERING;
     probingReason = PROBING_CLEAR;
     homingReason = HOMING_WAIT;
     machinePos[0] = machinePos[1] = machinePos[2] = machinePos[3] = 0;
@@ -136,11 +132,9 @@ void loop() {
     // confirms its make-safe (ops/bus.h).
     // Zeroing the projection here would just assert a value one pass early, and
     // give a derived byte a second writer.
-    jobActive = false;
     resumePos[0] = resumePos[1] = resumePos[2] = resumePos[3] = 0;
     pauseRequested = false;
     abortRequested = false;
-    streamIsJog = false;
     plannerRing.reset({0, 0});
     plannerExec.reset({0, 0});
     plannerActive = false;
@@ -159,7 +153,7 @@ void loop() {
     // ══════════════════════════════════════════════════════════
     // ─── B: MAIN EXECUTION ──────────────────────────────
     // ══════════════════════════════════════════════════════════
-    Serial.printf("RS485 MicroSegment Host Drive (%d baud)\n", RS485_BAUD);
+    Serial.printf("RS485 controller (%d baud)\n", RS485_BAUD);
 
     busSweep();
     if (busDegraded()) resumeOrHold();     // ALARM_BUS_DEGRADED, no map

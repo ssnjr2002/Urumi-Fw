@@ -21,7 +21,7 @@ namespace {
 // Everything a key can report, read up front so the reply describes one
 // instant rather than the span of the print.
 struct Snap {
-    uint8_t  state, enabled, homed, alarm, running, latched;
+    uint8_t  state, enabled, homed, alarm, job, latched;
     uint8_t  homingReason, homeFailWhy, homeFailNode, homeCycle;
     uint8_t  probingReason, probeCause, probeRetries, joggingReason;
     int32_t  probeSteps;
@@ -37,9 +37,6 @@ struct Snap {
     bool     meshOn;
     uint16_t meshNx, meshNy;
     float    meshSlope;
-#ifdef DEBUG_TIMING
-    uint32_t texp, tmeas, twall;
-#endif
 };
 
 void takeSnap(Snap& s) {
@@ -47,7 +44,7 @@ void takeSnap(Snap& s) {
     s.enabled       = axes_enabled;
     s.homed         = axes_homed;
     s.alarm         = alarmReason;
-    s.running       = runningReason;
+    s.job           = jobReason;
     s.latched       = homingLatched;
     s.homingReason  = homingReason;
     s.homeFailWhy   = homingFailWhy();
@@ -72,11 +69,6 @@ void takeSnap(Snap& s) {
     s.meshNx   = meshNx();
     s.meshNy   = meshNy();
     s.meshSlope = meshSlope();
-#ifdef DEBUG_TIMING
-    s.texp  = jobExpectedUs;
-    s.tmeas = jobMeasuredUs;
-    s.twall = jobWallUs;
-#endif
 }
 
 enum KeyResult : uint8_t { KEY_OK, KEY_NA, KEY_FAILED };
@@ -122,7 +114,8 @@ const Key kKeys[] = {
     { "enabled",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.enabled, 2); } },
     { "homed",     [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.homed, 2); } },
     { "alarm",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.alarm); } },
-    { "running",   [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.running); } },
+    { "job",       [](const Snap& s, char* o, size_t n) {
+        return s.state == STATE_JOB ? fmtU(o, n, s.job) : KEY_NA; } },
     { "latched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.latched, 2); } },
     // See homing.h for what the codes point at; homenode is 0 for a dummy leg.
     { "homefail",  [](const Snap& s, char* o, size_t n) {
@@ -175,13 +168,6 @@ const Key kKeys[] = {
     { "meshslope", [](const Snap& s, char* o, size_t n) {
         if (s.meshFile != MESH_FILE_OK) return KEY_NA;
         snprintf(o, n, "%.5f", s.meshSlope); return KEY_OK; } },
-#ifdef DEBUG_TIMING
-    // Expected vs measured duration (us) of the last completed burst, and its
-    // wall time including any pause inside it. tmeas > texp: Core 1 fell behind.
-    { "texp",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.texp); } },
-    { "tmeas",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.tmeas); } },
-    { "twall",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.twall); } },
-#endif
 };
 constexpr uint8_t kKeyCount = sizeof(kKeys) / sizeof(kKeys[0]);
 constexpr uint8_t KEY_UNKNOWN = 0xFF;

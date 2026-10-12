@@ -7,11 +7,25 @@
 #include "status.h"
 #include "data_plane.h"
 
-uint16_t getBufCount() {
-    if (plannerActive) return (uint16_t)plannerRing.count();   // blocks, while planner motion owns Core 1
-    uint16_t h = mBufHead, t = mBufTail;
-    if (t >= h) return t - h;
-    return MASTER_BUF_SIZE - h + t;
+uint16_t getBufCount() { return (uint16_t)plannerRing.count(); }
+
+// The ring's unclaimed motion, µs. Under the lock: Core 1 claims and pops.
+static uint32_t queuedUs() {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const float t = plannerRing.queuedTime();
+    spin_unlock(plannerLock, s);
+    return (uint32_t)(t * 1e6f);
+}
+
+// The current state's reason byte; 0 for a state without one.
+static uint8_t stateReason(uint8_t st) {
+    switch (st) {
+        case STATE_JOB:     return jobReason;
+        case STATE_JOGGING: return joggingReason;
+        case STATE_HOMING:  return homingReason;
+        case STATE_PROBING: return probingReason;
+        default:            return 0;
+    }
 }
 
 // One coherent sample, one transaction (§4.2/§4.6 — layout in shared.h).
@@ -27,11 +41,12 @@ void sendStatusRsp() {
                           machinePos[2], machinePos[3] };
 
     buf[0] = STATUS_RSP;
-    buf[1] = machineState;
+    const uint8_t st = machineState;
+    buf[1] = st;
     buf[2] = axes_enabled;
     buf[3] = axes_homed;
     buf[4] = alarmReason;
-    buf[5] = runningReason;
+    buf[5] = stateReason(st);
     buf[6] = (uint8_t)(bufCount & 0xFF);
     buf[7] = (uint8_t)(bufCount >> 8);
     memcpy(&buf[8],  pos, 16);              // pos[4] i32 LE — native byte order

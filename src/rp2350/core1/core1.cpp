@@ -3,7 +3,7 @@
 // What is left here after the emitters moved to emit/ is scheduling: the order
 // in which Core 1 attends to estop, queued motion, and channel-1 requests, and
 // the park/init/run/disable cycle that brackets it. The work itself lives in
-// emit/microsegment.cpp, emit/debug_step.cpp, and rpc_server.cpp.
+// emit/follower.cpp, emit/debug_step.cpp, and rpc_server.cpp.
 //
 // The ordering in processBus() is the policy, not an implementation detail --
 // see the comment at step 3.
@@ -43,7 +43,7 @@ static void __not_in_flash_func(core1FlashPark)() {
     __dmb();
 }
 
-// Discard planner motion that is not running: after estop, or a held job aborted.
+// Discard planner motion that is not running: after estop, or a job at rest aborted.
 static void dropPlanner() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     const planner::Pos at = plannerExec.position();
@@ -55,15 +55,11 @@ static void dropPlanner() {
 }
 
 void processBus() {
-    // 1. Estop — flush the queue, invalidate position, settle into ALARM.
+    // 1. Estop — drop the ring, invalidate position, settle into ALARM.
     //    ALARM is sticky until Core 0 issues setorigin / unalarm.
     if (machineState == STATE_ESTOP) {
-        mBufHead = mBufTail;            // flush the queue
-        queuedUsOut  = queuedUsIn;     // flushed segments are never retired (§4.6)
         pauseRequested = abortRequested = false;  // estop outranks a pending ramp
-        runningReason  = RUNNING_JOB;
-        jobActive    = false;          // any suspended job is unrecoverable
-        dropPlanner();
+        dropPlanner();                 // any job is unrecoverable
         alarmReason  = ALARM_ESTOP;    // set reason before the ALARM transition
 
         // Actually de-energise, rather than only claiming to. axes_enabled is
@@ -92,26 +88,19 @@ void processBus() {
         return;
     }
 
-    // 2. Emit any queued MicroSegments, else any planner motion
-    if (mBufHead != mBufTail) processMicroSegments();
-    else if ((machineState == STATE_IDLE && plannerRing.count() > 0) ||
-             (machineState == STATE_PAUSED && resumeRequested))
+    // 2. Planner motion: a jog or job to start, or a job to buffer.
+    if ((machineState == STATE_IDLE && plannerRing.count() > 0) || machineState == STATE_JOB)
         processPlanner();
 
     // An abort with nothing to stop still has to be consumed. The ramp lives
-    // inside the emitter, so a request arriving while the ring is empty would
-    // otherwise never be cleared — and the ingest barrier keyed off it would
-    // NACK every packet forever. Nothing to decelerate: just discard the flag.
-    if (abortRequested && mBufHead == mBufTail) {
-        mBufHead = mBufTail;
-        queuedUsOut    = queuedUsIn;
-        abortRequested = false;
-        jobActive      = false;
-        runningReason  = RUNNING_JOB;
-        if (plannerActive) dropPlanner();   // a held planner job
+    // inside the emitter, so a request arriving at rest would otherwise never
+    // be cleared — and the ingest barrier keyed off it would NACK every packet
+    // forever. Nothing to decelerate: drop the ring and end any job.
+    if (abortRequested) {
+        abortRequested = pauseRequested = false;
+        dropPlanner();
         __dmb();
-        if (machineState == STATE_RUNNING || machineState == STATE_PAUSED ||
-            machineState == STATE_JOGGING)
+        if (machineState == STATE_JOB || machineState == STATE_JOGGING)
             machineState = STATE_IDLE;
     }
 

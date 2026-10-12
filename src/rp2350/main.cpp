@@ -14,19 +14,10 @@
 
 // ─── Cross-Core Global Variables (Memory Allocation) ──────────────────────────
 
-// The Ring Buffer
-MicroSegment masterBuf[MASTER_BUF_SIZE];
-volatile uint16_t mBufHead = 0;
-volatile uint16_t mBufTail = 0;
-
-// Queued motion time (§4.6) — single-writer pair, see shared.h
-volatile uint32_t queuedUsIn  = 0;   // Core 0 adds on enqueue
-volatile uint32_t queuedUsOut = 0;   // Core 1 adds on retire
-
 // Machine state + reason codes (see shared.h for the transition map)
 volatile uint8_t machineState   = STATE_IDLE;
 volatile uint8_t alarmReason    = ALARM_NONE;
-volatile uint8_t runningReason  = RUNNING_JOB;
+volatile uint8_t jobReason      = JOB_BUFFERING;
 volatile uint8_t probingReason  = PROBING_CLEAR;
 volatile uint8_t homingReason   = HOMING_WAIT;
 
@@ -36,15 +27,12 @@ volatile uint8_t axes_homed     = 0;              // none homed until first seto
 volatile uint8_t axes_enabled   = 0;              // derived — reconcileValidity()
 volatile uint16_t nodeEnabled   = 0;              // none energised until a node acks
 
-// Paused-job context (slimmed for Phase 1 — see shared.h)
-volatile bool    jobActive      = false;
 volatile int32_t resumePos[4]   = {0, 0, 0, 0};
 
 // Inter-core request flags
 volatile bool    pauseRequested = false;
 volatile bool    abortRequested = false;
 volatile uint8_t joggingReason  = JOGGING_NONE;
-volatile bool    streamIsJog    = false;
 
 // Planner motion (see shared.h) — plannerLock is claimed in setup()
 planner::Planner  plannerRing;
@@ -65,13 +53,6 @@ volatile bool    core1_parked_for_reset      = false; // core1 parked for soft r
 // Flash-Quiesce Handshake Flags (config store) — see shared.h.
 volatile bool    flash_op_requested     = false;
 volatile bool    core1_parked_for_flash = false;
-
-// Job timing diagnostic (see shared.h) — gated behind DEBUG_TIMING
-#ifdef DEBUG_TIMING
-volatile uint32_t jobExpectedUs = 0;
-volatile uint32_t jobMeasuredUs = 0;
-volatile uint32_t jobWallUs     = 0;
-#endif
 
 // Note: 
 // setup() and loop() are defined in core0.cpp

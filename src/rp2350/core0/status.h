@@ -3,8 +3,8 @@
 
 // Core 0 status reporting.
 
-// Ring-buffer occupancy (MicroSegments queued, tail-head wrapped) — telemetry
-// shared by the binary STATUS_RSP and the human-readable text `status` alias.
+// Planner blocks queued — telemetry shared by the binary STATUS_RSP and the
+// human-readable text `status` alias.
 uint16_t getBufCount();
 
 // Binary mirror of the `get` state keys (docs/wire_protocol.md STATUS_REQ/STATUS_RSP).

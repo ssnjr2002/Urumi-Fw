@@ -63,29 +63,62 @@ FOLLOWER_INLINE int64_t incrementFor(int64_t err) {
 
 FOLLOWER_INLINE int32_t stepOf(int64_t q) { return (int32_t)(q >> 32); }
 
-// Enter planner motion, from IDLE with lines queued (JOGGING for a jog, else
-// RUNNING) or from PAUSED on a resume. False if there is nothing to run.
+// A job buffers until this much motion is queued, the ring is full, or no
+// record has arrived for kBufferIdleMs with something queued.
+static constexpr float    kBufferS      = 1.0f;
+static constexpr uint32_t kBufferIdleMs = 500;
+
+static void __time_critical_func(publishJob)(uint8_t why) {
+    jobReason = why;
+    __dmb();
+    machineState = STATE_JOB;
+}
+
+// A job at rest in BUFFERING: start it once enough is queued. Under the lock.
+static bool __time_critical_func(bufferDone)() {
+    static int seenCount = -1;
+    static uint32_t seenMs = 0;
+    const int n = plannerRing.count();
+    const uint32_t now = millis();
+    if (n != seenCount) { seenCount = n; seenMs = now; }
+    if (n == 0) return false;
+    return plannerRing.full() || now - seenMs >= kBufferIdleMs ||
+           plannerRing.queuedTime() >= kBufferS;
+}
+
+// Enter planner motion: a jog from IDLE, or a job once it has buffered. A job's
+// first record opens it in BUFFERING; a pause or a resume at rest is taken
+// here. All under the lock: `cancel` ends a job at rest under it. False if
+// there is nothing to run.
 static bool __time_critical_func(enter)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     bool ok = false;
-    bool jog = false;
-    if (machineState == STATE_PAUSED) {
-        if (resumeRequested && plannerActive) {
-            resumeRequested = false;
-            plannerExec.resume(plannerRing);   // replans; the machine is at rest
+    const uint8_t st = machineState;
+    if (st == STATE_IDLE && plannerRing.count() > 0) {
+        if (joggingReason != JOGGING_NONE) {
+            plannerActive = true;
+            __dmb();
+            machineState = STATE_JOGGING;
             ok = true;
+        } else {
+            publishJob(JOB_BUFFERING);
         }
-    } else if (machineState == STATE_IDLE && plannerRing.count() > 0) {
-        plannerActive = true;
-        jog = joggingReason != JOGGING_NONE;
-        ok = true;
-    }
-    // Leaving PAUSED under the lock: `cancel` checks for PAUSED under it.
-    if (ok) {
-        jobActive = false;
-        runningReason = RUNNING_PLANNER;
-        __dmb();
-        machineState = jog ? STATE_JOGGING : STATE_RUNNING;
+    } else if (st == STATE_JOB && !abortRequested) {
+        const uint8_t why = jobReason;
+        if (why == JOB_BUFFERING && pauseRequested) {
+            for (int i = 0; i < 4; i++) resumePos[i] = machinePos[i];
+            pauseRequested = false;
+            publishJob(JOB_PAUSED);
+        } else if (why == JOB_BUFFERING && bufferDone()) {
+            plannerActive = true;
+            publishJob(JOB_RUNNING);
+            ok = true;
+        } else if (why == JOB_PAUSED && resumeRequested) {
+            resumeRequested = false;
+            // A hold leaves the executor held; replan from rest.
+            if (plannerExec.state() == Executor::State::Held) plannerExec.resume(plannerRing);
+            publishJob(JOB_BUFFERING);
+        }
     }
     spin_unlock(plannerLock, s);
     return ok;
@@ -100,21 +133,33 @@ static bool __time_critical_func(leaveIdle)() {
     if (!empty) return false;
 
     pauseRequested = abortRequested = false;
-    jobActive = false;
-    runningReason = RUNNING_JOB;
     __dmb();
     machineState = STATE_IDLE;
     return true;
 }
 
+// A job's ring ran dry: wait in BUFFERING, unless records arrived meanwhile.
+static bool __time_critical_func(leaveDry)() {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const bool empty = plannerRing.count() == 0;
+    if (empty) plannerActive = false;
+    spin_unlock(plannerLock, s);
+    if (empty) publishJob(JOB_BUFFERING);
+    return empty;
+}
+
 static void __time_critical_func(leavePaused)() {
-    resumePos[0] = machinePos[0]; resumePos[1] = machinePos[1];
-    resumePos[2] = machinePos[2]; resumePos[3] = machinePos[3];
+    for (int i = 0; i < 4; i++) resumePos[i] = machinePos[i];
     pauseRequested = false;
-    jobActive = true;
-    runningReason = RUNNING_JOB;
-    __dmb();
-    machineState = STATE_PAUSED;
+    publishJob(JOB_PAUSED);
+}
+
+// A late block's hold has stopped: replan from rest and buffer again.
+static void __time_critical_func(rebuffer)() {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    plannerExec.resume(plannerRing);
+    spin_unlock(plannerLock, s);
+    publishJob(JOB_BUFFERING);
 }
 
 void __time_critical_func(processPlanner)() {
@@ -162,26 +207,28 @@ void __time_critical_func(processPlanner)() {
         if (++slot < kSlotsPerTick) continue;
 
         // One found after its switch time is refused and the executor holds:
-        // a job lands PAUSED as for `pause`, resumable from rest; a jog resumes
-        // itself once at rest.
+        // a jog resumes itself once at rest, a job buffers again.
         plannerExec.adopt(plannerRing);
         if (plannerExec.lateAdoptions() != late) {
             late = plannerExec.lateAdoptions();
-            if (jog) {
-                if (!holding) { plannerExec.hold(); holding = lateHold = true; }
-            } else {
-                pauseRequested = true;
+            if (!holding) {
+                plannerExec.hold();
+                holding = lateHold = true;
+                if (!jog) jobReason = JOB_HOLDING;
             }
         }
 
         if (abortRequested && !aborting) {
             plannerExec.abort();
             aborting = holding = true;
-            runningReason = RUNNING_ABORT_DECEL;
-        } else if (pauseRequested && !holding) {
-            plannerExec.hold();
+            lateHold = false;
+            if (!jog) jobReason = JOB_ABORTING;
+        } else if (pauseRequested && !jog && !aborting && (!holding || lateHold)) {
+            // A pause during a late block's hold lands PAUSED instead.
+            if (!holding) plannerExec.hold();
             holding = true;
-            runningReason = RUNNING_ABORT_DECEL;
+            lateHold = false;
+            jobReason = JOB_HOLDING;
         }
 
         Pos pos;
@@ -214,6 +261,7 @@ void __time_critical_func(processPlanner)() {
             if (st == Executor::State::Running && leaveIdle()) return;
         } else if (lateHold) {
             if (st == Executor::State::Held) {
+                if (!jog) { rebuffer(); return; }
                 const uint32_t s = spin_lock_blocking(plannerLock);
                 plannerExec.resume(plannerRing);
                 spin_unlock(plannerLock, s);
@@ -221,7 +269,7 @@ void __time_critical_func(processPlanner)() {
             }
         } else if (holding) {
             if (st == Executor::State::Held) { leavePaused(); return; }
-        } else if (plannerRing.count() == 0 && leaveIdle()) {
+        } else if (plannerRing.count() == 0 && (jog ? leaveIdle() : leaveDry())) {
             return;
         }
     }

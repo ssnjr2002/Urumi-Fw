@@ -46,14 +46,14 @@ bool cmdCfg(const char*) {
 // `status` / `?` — human-readable, not host-facing.
 bool cmdStatus(const char*) {
     // mute / excluded / touched: bit n = bus id n (ops/bus.h).
-    // buf= counts planner blocks, of planner::Planner::kSize, while planner motion runs or is held.
+    // buf= counts planner blocks, of planner::Planner::kSize.
     Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u"
                   " mute=0x%03x excluded=0x%03x touched=0x%03x",
                   stateName(machineState),
                   (long)machinePos[0], (long)machinePos[1],
                   (long)machinePos[2], (long)machinePos[3],
                   axes_homed, axes_enabled, getBufCount(),
-                  plannerActive ? planner::Planner::kSize : MASTER_BUF_SIZE,
+                  planner::Planner::kSize,
                   busMute(), busExcluded(), busTouched());
     // Frames, units; `-` where a slot has no value.
     const uint8_t sel = framesSelected();
@@ -78,10 +78,10 @@ bool cmdStatus(const char*) {
     return true;
 }
 
-// The bus queries' gate: IDLE/PAUSED/ALARM, and a homing session between legs,
+// The bus queries' gate: IDLE, a paused job, ALARM, and a homing session between legs,
 // when no leg holds the bus.
 static bool busQueryDenies() {
-    if (stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM) || homingWaiting()) return false;
+    if (idlePausedOrAlarm() || homingWaiting()) return false;
     Serial.println("err bad_state");
     return true;
 }
@@ -127,7 +127,7 @@ bool cmdNodePos(const char* args) {
     // The original reason was Core 0 blocking in pop_blocking, which put `stop`
     // behind a relay -- measured at 4 s of queued motion. That half is gone
     // (ipc/core1_rpc.h); the gate stays for Core 1's half.
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+    if (!idlePausedOrAlarm()) {
         Serial.println("err bad_state"); return true;
     }
     uint8_t node = parseNode(args, nullptr);
@@ -236,7 +236,7 @@ bool cmdNodeStat(const char* args) {
 bool cmdVacSwitch(const char* args) {
     // Gated like every other transaction that blocks Core 0 on the bus — see
     // cmdNodePos.
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+    if (!idlePausedOrAlarm()) {
         Serial.println("err bad_state"); return true;
     }
     uint8_t node = parseNode(args, nullptr);

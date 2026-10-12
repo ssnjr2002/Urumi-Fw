@@ -25,13 +25,8 @@
 // while a job is streaming is a dwell at a segment boundary, which leaves a mark
 // in the material. Mid-job peripheral changes belong at a PAUSED boundary, which
 // is where the host orchestrator issues them.
-//
-// KNOWN GAP (plan §7.2): machineState leaves RUNNING whenever the ring drains, so
-// an underfed job sits in IDLE between refills and this gate admits the command
-// in exactly the window it exists to close. The right predicate is "is a job in
-// flight", which nothing represents today. Recorded in plan §11, not fixed here.
 static inline bool periphGateDenies() {
-    if (!stateIs(STATE_IDLE, STATE_PAUSED, STATE_ALARM)) {
+    if (!idlePausedOrAlarm()) {
         Serial.println("err bad_state");
         return true;
     }

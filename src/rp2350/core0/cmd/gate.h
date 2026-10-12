@@ -17,6 +17,13 @@ static inline bool stateIs(uint8_t a, uint8_t b, uint8_t c) {
     return s == a || s == b || s == c;
 }
 
+static inline bool jobPaused() { return machineState == STATE_JOB && jobReason == JOB_PAUSED; }
+
+// IDLE, ALARM or a paused job: nothing is moving and the bus is free.
+static inline bool idlePausedOrAlarm() {
+    return machineState == STATE_IDLE || machineState == STATE_ALARM || jobPaused();
+}
+
 // ALARM is a fault state, and the peripheral gates admit it so an operator can
 // park a machine that faulted with the pump running or the blade hot. That
 // direction is recovery; the other is not. Turning a peripheral ON in ALARM
@@ -38,13 +45,12 @@ static inline bool alarmDeniesOn(bool turningOn) {
 static inline const char* stateName(uint8_t s) {
     switch (s) {
         case STATE_IDLE:    return "IDLE";
-        case STATE_RUNNING: return "RUNNING";
         case STATE_ESTOP:   return "ESTOP";
         case STATE_ALARM:   return "ALARM";
-        case STATE_PAUSED:  return "PAUSED";
         case STATE_HOMING:  return "HOMING";
         case STATE_JOGGING: return "JOGGING";
         case STATE_TRAVERSE: return "TRAVERSE";
+        case STATE_JOB:     return "JOB";
         default:            return "?";
     }
 }

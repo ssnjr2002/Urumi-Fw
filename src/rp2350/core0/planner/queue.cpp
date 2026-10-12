@@ -27,12 +27,13 @@ static void replanAndCommit() {
 }
 
 // The state, config and limit checks every push shares; fills `limits`. A jog
-// joins JOGGING, a record a running planner job.
+// joins JOGGING, a record a job that is buffering or running.
 static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
     const uint8_t st = machineState;
-    const bool running = jog ? st == STATE_JOGGING
-                             : st == STATE_RUNNING && runningReason == RUNNING_PLANNER;
-    if ((st != STATE_IDLE && !running) || pauseRequested || abortRequested)
+    const uint8_t why = jobReason;
+    const bool joins = jog ? st == STATE_JOGGING
+                           : st == STATE_JOB && (why == JOB_BUFFERING || why == JOB_RUNNING);
+    if ((st != STATE_IDLE && !joins) || pauseRequested || abortRequested)
         return PQ_BAD_STATE;
     if (!machineCfgValid()) return PQ_NO_CONFIG;
 

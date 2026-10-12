@@ -5,13 +5,13 @@
 // ring.
 //
 // Core 1 runs what is queued (core1/emit/follower.cpp). Lines and Béziers are
-// jogs, run as STATE_JOGGING; records are a job, run as STATE_RUNNING. Accepted
-// in IDLE and while motion of the same kind runs; refused while the ring holds
-// the other kind, and once a pause or abort is requested.
+// jogs, run as STATE_JOGGING; records are a job, run as STATE_JOB. Accepted in
+// IDLE, while jogs run (jogs) or a job buffers or runs (records); refused while
+// the ring holds the other kind, and once a pause or abort is requested.
 
 enum PlannerQueueResult : uint8_t {
     PQ_OK = 0,
-    PQ_BAD_STATE,   // not IDLE or running motion of this kind, or stopping
+    PQ_BAD_STATE,   // not IDLE or motion of this kind, or stopping
     PQ_NO_CONFIG,   // no valid machine config
     PQ_NO_LIMITS,   // maxFeed or maxAccel is 0 on an axis the move needs
     PQ_FULL,        // the ring is full; try again as it drains

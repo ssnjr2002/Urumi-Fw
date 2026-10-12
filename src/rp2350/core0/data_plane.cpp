@@ -2,8 +2,7 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — MSEG (0xAB) / jog (0xAE), 26 bytes; BEZIER (0xAD), 56 bytes;
-//                continuous jog (0xAF), 7 bytes
+//   RX_PACKET  — BEZIER (0xAD), 56 bytes; continuous jog (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
 //
@@ -23,7 +22,7 @@
 #include "data_plane.h"
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
-#include "ops/position.h"          // axisNode
+#include "ops/position.h"          // SLOT_Z, SLOT_A
 #include "ops/frames.h"
 #include "planner/queue.h"
 #include <planner/bezier.h>
@@ -33,7 +32,7 @@
 enum RxKind : uint8_t { RX_NONE, RX_PACKET, RX_CFG };
 static RxKind rxKind = RX_NONE;
 
-// ─── Packet (MSEG / jog / BEZIER) state ───────────────────────────────────────
+// ─── Packet (BEZIER / jog) state ───────────────────────────────────────────────
 
 static uint8_t  pktBuf[BEZIER_PACKET_SIZE];   // the largest packet
 static uint8_t  pktIdx      = 0;
@@ -97,7 +96,6 @@ static void sendCfgRdy()           { Serial.write(CFG_RDY); }   // header ok —
 static void sendCfgAck()           { Serial.write(CFG_ACK); }   // committed
 static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
-static void acceptMseg();
 static void acceptBezier();
 static void acceptCjog();
 
@@ -122,29 +120,19 @@ static void feedPacket(uint8_t b) {
     // Before the abort barrier: a direction change brakes with it raised.
     if (pktBuf[0] == CJOG_MAGIC) { acceptCjog(); return; }
 
-    // State gate (wire_protocol.md allowed-state matrix). The magic byte selects
-    // the stream type; we record it as the streamIsJog intent so Core 1 sets
-    // runningReason together with the RUNNING transition it owns.
-    //   MSEG job stream — IDLE/RUNNING; NACK_PAUSED while paused, else bad_state.
-    //   BEZIER records  — the same; the planner's admit narrows RUNNING to its own.
-    //   JOG burst       — retired: jogs run on the planner (`jog`, CJOG).
     // Abort is a barrier — reject everything until the machine reaches IDLE,
     // with a reason distinct from BAD_STATE so the host waits and reopens rather
-    // than surfacing an error. Checked before the per-magic gates because it
-    // applies equally to jobs and jogs.
-    if (abortRequested || runningReason == RUNNING_ABORT_DECEL) {
+    // than surfacing an error.
+    if (abortRequested) {
         sendNack(MSEG_NACK_ABORTING);
         return;
     }
 
-    uint8_t st = machineState;
-    if (pktBuf[0] == MSEG_MAGIC || pktBuf[0] == BEZIER_MAGIC) {
-        if (st == STATE_PAUSED)                      { sendNack(MSEG_NACK_PAUSED);    return; }
-        if (st != STATE_IDLE && st != STATE_RUNNING) { sendNack(MSEG_NACK_BAD_STATE); return; }
-        if (pktBuf[0] == MSEG_MAGIC) streamIsJog = false;
-    } else { // JOG_MAGIC
-        sendNack(MSEG_NACK_BAD_STATE); return;
-    }
+    // Records join a job, or open one from IDLE; the planner's admit narrows
+    // JOB to the reasons that take records.
+    const uint8_t st = machineState;
+    if (st == STATE_JOB && jobReason == JOB_PAUSED) { sendNack(MSEG_NACK_PAUSED);    return; }
+    if (st != STATE_IDLE && st != STATE_JOB)        { sendNack(MSEG_NACK_BAD_STATE); return; }
 
     // Duplicate guard: the seq byte carries the host's rolling 8-bit seq. After a
     // NACK the host rewinds (Go-Back-N) and may resend packets we already
@@ -152,51 +140,12 @@ static void feedPacket(uint8_t b) {
     // position offset. A seq we are not expecting is a stale retransmit: ACK it
     // (so the host's window advances) but do not execute. The host resets this
     // counter with the "seqreset" text command before each stream.
-    const uint8_t seqAt = pktBuf[0] == BEZIER_MAGIC ? BEZIER_SEQ_OFFSET : MSEG_SEQ_OFFSET;
-    if (pktBuf[seqAt] != expectedSeq) {
+    if (pktBuf[BEZIER_SEQ_OFFSET] != expectedSeq) {
         flushAck();     // immediate: this duplicate ACK is the host's resync signal
         return;
     }
 
-    if (pktBuf[0] == BEZIER_MAGIC) acceptBezier();
-    else acceptMseg();
-}
-
-static void acceptMseg() {
-    // Check buffer space
-    uint16_t next = (mBufTail + 1) % MASTER_BUF_SIZE;
-    if (next == mBufHead) {
-        sendNack(MSEG_NACK_FULL);     // backpressure — windowed sender retries
-        return;
-    }
-
-    // Deserialise MicroSegment from bytes [1..24] (little-endian)
-    MicroSegment ms;
-    const uint8_t* p = &pktBuf[1];
-    memcpy(&ms.dx,       p,      4); p += 4;
-    memcpy(&ms.dy,       p,      4); p += 4;
-    memcpy(&ms.dz,       p,      4); p += 4;
-    memcpy(&ms.da,       p,      4); p += 4;
-    memcpy(&ms.interval, p,      4); p += 4;
-    ms.flags  = *p++;
-    ms.pad[0] = ms.pad[1] = ms.pad[2] = 0;
-
-    // Steps for an unbound axis would reach whatever holds its slot (a probe's
-    // vacuum reads them as poll requests), or no one.
-    const int32_t d[MOTION_SLOTS] = { ms.dx, ms.dy, ms.dz, ms.da };
-    for (uint8_t k = 0; k < MOTION_SLOTS; k++)
-        if (d[k] != 0 && axisNode(k) == SLOT_NONE) { sendNack(MSEG_NACK_BAD_STATE); return; }
-
-    masterBuf[mBufTail] = ms;
-    // Queued-time accounting (§4.6) — must land BEFORE the tail publishes the
-    // segment, or a status poll between the two reports a segment that is
-    // visible in bufCount but contributes no time.
-    queuedUsIn += microSegmentUs(ms.dx, ms.dy, ms.dz, ms.da, ms.interval);
-    __dmb();
-    mBufTail = next;
-
-    expectedSeq++;
-    markAck();
+    acceptBezier();
 }
 
 static void acceptBezier() {
@@ -436,11 +385,10 @@ bool dataPlaneConsume(uint8_t b) {
     }
 
     // Idle — dispatch on the leading magic byte.
-    if (b == MSEG_MAGIC || b == JOG_MAGIC || b == BEZIER_MAGIC || b == CJOG_MAGIC) {
-        pktBuf[0] = b;                          // remember stream type for the state gate
+    if (b == BEZIER_MAGIC || b == CJOG_MAGIC) {
+        pktBuf[0] = b;
         pktIdx    = 1;
-        pktSize   = b == BEZIER_MAGIC ? BEZIER_PACKET_SIZE
-                  : b == CJOG_MAGIC   ? CJOG_PACKET_SIZE : MSEG_PACKET_SIZE;
+        pktSize   = b == BEZIER_MAGIC ? BEZIER_PACKET_SIZE : CJOG_PACKET_SIZE;
         pktLastMs = millis();
         rxKind    = RX_PACKET;
         return true;
