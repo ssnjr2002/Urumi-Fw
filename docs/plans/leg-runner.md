@@ -243,7 +243,7 @@ before.
 
 **Depends on:** branch 2.
 
-**Status:** ready to merge.
+**Status:** merged (d81b0bc). Unblocks the Later items.
 
 **Outcome:**
 
