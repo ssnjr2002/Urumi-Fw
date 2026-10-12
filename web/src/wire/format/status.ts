@@ -102,6 +102,12 @@ export const AlarmReason = {
      * Load-bearing, as LIMIT_LATCHED above.
      */
     BUS_DEGRADED: 8,
+    /**
+     * Core 0 fell behind the Core 1 fact ring and a fact was dropped: a
+     * firmware bug, not an operating condition. Load-bearing, as LIMIT_LATCHED
+     * above.
+     */
+    FACT_RING_FULL: 9,
 } as const;
 export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
 const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];

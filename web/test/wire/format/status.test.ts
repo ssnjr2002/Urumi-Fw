@@ -54,6 +54,7 @@ describe("wire/format/status: enums", () => {
         expect(AlarmReason.SOFT_LIMIT).toBe(3);
         expect(AlarmReason.HOMING_FAIL).toBe(4);
         expect(AlarmReason.BUS_DEGRADED).toBe(8);
+        expect(AlarmReason.FACT_RING_FULL).toBe(9);
     });
 
     it("JobReason mirrors the firmware values", () => {
@@ -189,7 +190,7 @@ describe("wire/format/status: parseStatusRsp", () => {
             state: 99,
             axesEnabled: 0,
             axesHomed: 0,
-            alarm: 9, // also out of range
+            alarm: 99, // also out of range
             reason: 99, // passed through raw
         });
         void pkt;
