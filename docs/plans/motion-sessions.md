@@ -427,8 +427,11 @@ what is sent continuously.
 
 ## Branches
 
-A dependent chain, one session: J1, then J1b and J2 in either order. The job branches come later
-and get their own sections.
+A dependent chain, one session: J1, then J1b and J2 in either order.
+
+The job branches are built inside out: the JOB state around today's records
+first, then mount state, then the layer header, then tool change. JB1 and JB2
+are independent; JB3 needs both; JB4 needs JB3.
 
 ## Branch J1: `feature/pico-jog`
 
@@ -637,6 +640,102 @@ Done (merged).
     a worktree's demo can't be previewed; the demo also imports `dist/`,
     which a worktree has to build first.
 
+## Branch JB1: `feature/job-state`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** `STATE_JOB` replaces `RUNNING_PLANNER` around today's records
+(`START`/`END` only, no headers yet), with the reasons `BUFFERING`, `RUNNING`,
+`HOLDING` and `PAUSED`.
+
+* Buffering exits: `bufferTime` queued (the shared counter), the last record,
+  a timeout (Buffering, above). Jogs are unaffected.
+* `pause`: hold, then `PAUSED`, the ring dropped and `{index, s}` kept. No
+  lift yet; Z stays where it is.
+* Resume from `PAUSED` by the records' restart point; `cancel` ends the job to
+  IDLE.
+* `STATUS_RSP` carries the reason; job id and index wait for JB3's headers.
+
+**Depends on:** nothing.
+
+**Overlap:** `ipc/shared_state.h`, `web/src/wire/` (state and reason).
+
+### Status
+
+Planned.
+
+## Branch JB2: `feature/tool-mount`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** the Pico knows its tools and what is mounted.
+
+* Config `tools` gain an explicit `id` (u8, unique, checked at load);
+  `slotOffsets` becomes `chamberOffsets`. The Pico decodes the profiles.
+* `mount <head> <tool id>` (0 = empty) sets the machine's mount state, in RAM,
+  kept across jobs. A separate command from `select`: a head can be given a
+  tool without being selected (tool change loads a pair one head at a time).
+  This is the `loaded` of Tool change, above.
+* `select` is unchanged; `get` and the status report each head's tool.
+
+**Depends on:** nothing.
+
+**Overlap:** `web/src/machine/schema.ts`, config encoder, `cmd/table.h`.
+
+### Status
+
+Planned.
+
+## Branch JB3: `feature/layer-header`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** `JOB_HDR`, `TOOL_HDR` and the layer header (`TOOL_REC` above;
+proposed name `LAYER_HDR`, `0xA2`), with preflight.
+
+* A `BEZIER` before any layer header is `NACK_JOB`.
+* The layer header selects the head and sets feed and `k`; resume from
+  `PAUSED` becomes a layer header at the resume point.
+* A layer whose tool is not mounted holds the job and reports that a change
+  is due; the change itself is JB4.
+* `STATUS_RSP` gains job id and index.
+
+**Depends on:** JB1, JB2.
+
+### Status
+
+Planned.
+
+## Branch JB4: `feature/tool-change`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** `JOB.TOOL_CHANGE` with a manual touch-off.
+
+* Roughly: park both Zs (park legs), move XY to the load spot, wait for
+  `mount`, then the operator touches off by hand (jog and `zero`, accepted in
+  `TOOL_CHANGE` only), then `BUFFERING`.
+* This needs JOB to own a sequence that mixes legs, a planner move and a wait.
+  The leg runner's Later items (steps that grow waits and ring moves; tool
+  change as a recipe, docs/plans/leg-runner.md) point that way; how much of it
+  is needed, and whether a `refactor/` lands first, is settled when this
+  branch is planned.
+* Probing in the job (`TOOL_PROBE`) is later, once probe legs are a leg kind.
+
+**Depends on:** JB3, and the leg runner (merged).
+
+### Status
+
+Planned.
+
 ## Open
 
 * Preflight refuses and never prepares (proposed, not confirmed).
@@ -663,7 +762,6 @@ Done (merged).
   top left of how they would draw it.
 
 * Bench: how clean a re-plunge into the slit is; A backlash after an unwind.
-* Order: state-handling branches 3 and 4 first; motion gating (planner pushes
-  refuse unbound, fenced or unhomed axes) before the job branches; a minimal
-  tool-profile branch before the first job branch; a `refactor/` moving the
-  leg runner out of homing before J1b and the tool-change branch.
+* Not yet placed: state-handling branch 4 (alarm exits); motion gating
+  (planner pushes refuse unbound, fenced or unhomed axes); lifts and duty
+  after JB4.
