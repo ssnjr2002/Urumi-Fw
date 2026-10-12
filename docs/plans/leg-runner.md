@@ -192,8 +192,8 @@ raw legs, `leg_abort`, `stop` mid-leg as before.
 
 **Depends on:** branch 1.
 
-**Status:** ready to merge. `pio run -e pico` and `pio test -e native`
-(86/86) pass. Bench: `home`, parallel dummies, a failing dummy, parallel
+**Status:** merged (45b32ce). Unblocks branch 3. `pio run -e pico` and
+`pio test -e native` (86/86) pass. Bench: `home`, parallel dummies, a failing dummy, parallel
 parks, `leg_abort` mid-park and `stop` mid-park behave as before.
 
 **Outcome:**
