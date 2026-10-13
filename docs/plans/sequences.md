@@ -1,5 +1,9 @@
 # Sequences: one state writer, Core 1 facts, steps that move
 
+**Superseded from R2a on by docs/plans/machine-model.md.** R1 is done and
+kept; R2a–R4 and the Decisions on session, admission and sequences are
+replaced there.
+
 Machine state is written today from many places: `ops/` (`homing.cpp:37,58`,
 `probe.cpp:147,193,242`, `slot_map.cpp:177`, `state.cpp:21`,
 `traverse.cpp:18`), `cmd/lifecycle.cpp:21,115`, `core0.cpp:121`, and Core 1
