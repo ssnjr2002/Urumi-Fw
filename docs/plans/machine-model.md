@@ -378,7 +378,62 @@ mid-step; a wait timing out; `abort()` on teardown.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Deviations:
+  * The driver is `ops/sequence.{h,cpp}`, not `controller/seq/`: it reads no
+    config, and `ops/machine`, `ops/homing` and `ops/traverse` call it.
+    `home` stays in `controller/seq/`.
+  * `recovery` lives in `controller/seq/home.cpp`, sharing `home`'s leg
+    numbers (`intervalUs`, `distSteps`, `parkSteps`). Its legs are `home`'s
+    back-off leg: away from the switch at `latchFeed`, `backoffDist` as the
+    budget. A latched node that is not a homeable linear axis refuses
+    `unalarm` with `err node N not_homeable`.
+  * A wait's posting command is not admitted yet: M3 has none (the timeout is
+    its only event). JB2 adds it with `mount`.
+  * No test runs a sequence through a RING step: the `SEQ` ring owner is J1b's.
+  * `leg_abort` fails a `leg`, `home` or `recovery` sequence, as before for
+    the homing context; on a traverse leg it only ends the step.
+* Interfaces M4 relies on:
+  * `ops/sequence.h`: `Sequence { id, next(end), abort }`, `sequenceStart`,
+    `sequenceEnd` (a refused start), `sequenceAbort`, `sequenceWait(ms)`,
+    `sequenceLive`/`sequenceId`/`sequenceWaiting`; M4 adds its id to
+    `SequenceId` (and PROBING to publish).
+  * `ops/homing.h`: `homingArm`, `homingArmPark`, `homingArmUnlatch` arm into
+    the live step with no context; `homingFail`/`homingAbandon` fail the live
+    sequence.
+  * The runner: no owner argument; `runnerPop(ev)`.
+  * `machineStep()` returns `STEP_WAIT`; publish names `home`/`recovery`
+    HOMING in any context.
+* Behaviour:
+  * A step command is `busy` while any step or sequence is live: one raw leg
+    and one probe leg at a time.
+  * `home_end` is `busy` while a leg runs.
+  * `unalarm` with `F_LATCHED` starts `recovery`, `ok faults=0x0008` once it
+    runs (the latch clears as it does).
+* Fixed in passing: `legTimeoutMs` timed every ramp step at
+  (start + floor) / 2, so a park shorter than its two ramps (recovery's are)
+  could hit `LEGFAIL_DEADLINE` 2 steps short. Each end now ramps over its share
+  of the move.
+* Bench (agent, COM8, `controller-1head.jsonc`, node 8 excluded):
+  * `home`: HOMING while running, `busy` for `home` and `leg`, IDLE with all
+    four homed;
+  * manual session: a second leg and `home_end` `busy` during a dummy leg,
+    `homing=1` between legs, `home_end` to IDLE; a failing dummy gave
+    `homefail=7`;
+  * traverse: a park published TRAVERSE, with `leg`, `dummy_leg` and `home`
+    `busy`; `leg_abort` ended it with no fault (the aborted park drops its
+    origin, as before);
+  * `recovery`: retract (seek latched, no origin) to IDLE; unlatch and park
+    (span latched, origin kept) 5/5 after the deadline fix (1 of 3 failed
+    before it);
+  * the deadline: a scratch build with a 0.6 margin fired it (`homefail=3`);
+    the real build ended the same leg on its budget (`homefail=1`).
+* Not tested: a real failing switch during `home` (only dummy failures);
+  `recovery` with several latched nodes at once.
+* Checks: `pio run -e pico` clean; `pio test -e native` 112/112.
 
 ## Branch M4: `feature/probe-sequence`
 
