@@ -255,7 +255,60 @@ from slots; a stale drain dropped.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Deviations:
+  * The two Plan commits are one: once Core 1 stops writing the state, Core 0
+    must publish it in the same change.
+  * The step is derived, not stored: `machineStep()` reads the runner, the
+    probe leg and the ring (`plannerActive`, count). So there is no stale
+    drain to drop, and that test is gone.
+  * The leg owner is a context (`legOwnerHolds`: no estop requested and the
+    context unchanged), not a step kind and generation. Traverse legs run
+    under CTX_IDLE.
+  * Core 1 sets `estopSwept` itself before pushing `ESTOP_SWEPT`.
+    `estopRequested` (Core 0's `stop`) replaces Core 1's reads of ESTOP.
+  * The data plane has no kind column; its gates and `configStoreCommit`
+    read the slots.
+* Interfaces M3 relies on (`ops/machine.h`):
+  * contexts and the ring owner: `machineContext` and `ringOwner` (values as
+    `joggingReason`) in `ipc/shared_state.h`; `contextOpen`/`contextClose`;
+  * the step and teardown: `machineStep`, `machineTeardown(estop)`
+    (the step first, then the context), `jobAbort`;
+  * admission: `machineAdmit(kind)` with `CmdKind` and the
+    `K_IN_PROBE`/`K_IN_HOMING`/`K_BARE_READ` flags on each `cmd/table.h` row;
+    `machineView` (the state from the slots) and `machineAtRest`/
+    `machineBusFree` for argument checks.
+  * `homingHeld()` stands in for the sequence slot (`sequenceLive` in
+    `machine.cpp`); M3 replaces it.
+* Behaviour:
+  * A live step or `home` run refuses as `err busy` (some were `bad_state`).
+  * `F_FACTS` tears down what runs.
+  * `probe_map` opens from IDLE only. An estop in a probe ends it with no bus
+    traffic.
+  * Peripherals refuse `on` with any fault. `status` names PROBING.
+  * A paused job's parked ring is not a live step. Found on the bench, where
+    every write in a paused job answered `busy`.
+* Bench (agent, COM8, `controller-1head.jsonc`, node 8 excluded):
+  * homing: all four axes homed, with `busy` refusals during the run;
+  * estop: `stop` during homing, a job and a dummy leg each closed the
+    context, and `unstop` returned to IDLE;
+  * dummy legs: a failing one gave `F_HOMING`, with `home` refused until
+    `unalarm`;
+  * jogs: X, Y, Z, A and `jogto` showed JOGGING, then IDLE;
+  * a job: refusals while running; pause with writes and `nodepos` allowed,
+    `jog`/`home` as `bad_state`; resume; `cancel` once dry; the abort byte
+    braked to IDLE with homes kept.
+* Not tested (deferred by the user): probing (`probe_map`, probe legs,
+  `probe_end`); the continuous jog packet; a leg failing mid-move.
+* JB1's open human check "probing from a paused job" no longer applies:
+  probing opens from IDLE only until M4.
+* Checks: `pio run -e pico` clean; `pio test -e native` 105/105.
+* Out of scope: `docs/tool_probe.md` still describes `returnState`, probing
+  from PAUSED and `busGateDenies`. `vac_pump on|off` answered `err usage` on
+  the bench, so the right syntax is unknown and peripherals went untested.
 
 ## Branch M3: `feature/sequence-driver`
 
