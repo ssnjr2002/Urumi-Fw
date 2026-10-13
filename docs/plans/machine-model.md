@@ -378,7 +378,7 @@ mid-step; a wait timing out; `abort()` on teardown.
 
 ### Status
 
-Ready to merge.
+Done (merged at `288a6bd`). Unblocks M4.
 
 ### Outcome
 
