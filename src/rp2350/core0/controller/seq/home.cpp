@@ -111,13 +111,13 @@ static const char* armLeg(RunNode& r, bool* armed) {
     switch (r.job) {
         case JOB_PARK:
             if (phase != 0) return nullptr;
-            why = homingArmPark(r.node, originTarget(r.node, parkSteps(a)),
+            why = homingArmPark(r.node, true, originTarget(r.node, parkSteps(a)),
                                 intervalUs(h.startFeed, spu),
                                 intervalUs(h.seekFeed, spu), h.rampSteps);
             break;
         case JOB_ROTARY:
             if (phase > 1) return nullptr;
-            why = homingArm(r.node, HOMING_KIND_INDEX, phase == 0 ? 1 : 0, false,
+            why = homingArm(r.node, true, HOMING_KIND_INDEX, phase == 0 ? 1 : 0, false,
                             intervalUs(h.startFeed, spu),
                             intervalUs(h.sweepFeed, spu), h.rampSteps,
                             distSteps(360.0 * h.budgetRevs, spu));
@@ -131,7 +131,7 @@ static const char* armLeg(RunNode& r, bool* armed) {
                 // The node's pin decides: a seek it refuses as a mismatch means
                 // it stands on its switch, so its back-off runs now instead.
                 bool mismatch;
-                why = homingArm(r.node, HOMING_KIND_LIMIT, toward, false,
+                why = homingArm(r.node, true, HOMING_KIND_LIMIT, toward, false,
                                 intervalUs(h.startFeed, spu),
                                 intervalUs(h.seekFeed, spu), h.rampSteps,
                                 distSteps(((double)a.maxTravel + h.pullOffDist)
@@ -142,16 +142,16 @@ static const char* armLeg(RunNode& r, bool* armed) {
             }
             switch (leg) {
                 case 1:
-                    why = homingArm(r.node, HOMING_KIND_LIMIT, !toward, true,
+                    why = homingArm(r.node, true, HOMING_KIND_LIMIT, !toward, true,
                                     latch, latch, 0, back);
                     break;
                 case 2:
-                    why = homingArm(r.node, HOMING_KIND_LIMIT, toward, false,
+                    why = homingArm(r.node, true, HOMING_KIND_LIMIT, toward, false,
                                     latch, latch, 0,
                                     (uint32_t)lround(back * LATCH_MARGIN));
                     break;
                 case 3:
-                    why = homingArm(r.node, HOMING_KIND_LIMIT, !toward, true,
+                    why = homingArm(r.node, true, HOMING_KIND_LIMIT, !toward, true,
                                     latch, latch, 0, distSteps(h.pullOffDist, spu));
                     break;
                 default:
@@ -392,7 +392,7 @@ static bool recoveryPark(void) {
         if (!originValid(id)) continue;
         const CfgAxis&   a = *homeAxisFor(id);
         const CfgHoming& h = a.homing;
-        const char* why = homingArmPark(id, originTarget(id, parkSteps(a)),
+        const char* why = homingArmPark(id, true, originTarget(id, parkSteps(a)),
                                         intervalUs(h.startFeed, a.stepsPerUnit),
                                         intervalUs(h.seekFeed, a.stepsPerUnit),
                                         h.rampSteps);
@@ -453,8 +453,8 @@ const char* recoveryStart(void) {
         const uint16_t   latch  = intervalUs(h.latchFeed, a.stepsPerUnit);
         const uint32_t   back   = distSteps(h.backoffDist, a.stepsPerUnit);
         const char* why = originValid(id)
-            ? homingArmUnlatch(id, away, latch, latch, 0, back)
-            : homingArm(id, HOMING_KIND_LIMIT, away, true, latch, latch, 0, back);
+            ? homingArmUnlatch(id, true, away, latch, latch, 0, back)
+            : homingArm(id, true, HOMING_KIND_LIMIT, away, true, latch, latch, 0, back);
         if (!why) continue;
         if (i == 0) {
             sequenceEnd();

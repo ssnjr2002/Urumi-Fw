@@ -5,7 +5,7 @@
 // homing.h — homing legs and the manual homing session (docs/homing.md §2.3).
 //
 // homingArm and homingArmPark arm a homing leg into the live step, in no
-// context; a sequence (`home`, `recovery`) uses them. A failed leg fails its
+// context; a sequence (`home`, `recovery`) uses them. `last` is runnerArm's. A failed leg fails its
 // sequence (homingFail): every other running leg is aborted and the machine
 // alarms with F_HOMING. Running and judging a leg is leg.h's.
 //
@@ -15,7 +15,7 @@
 
 // Arm a seek, retract or sweep leg (legArm) into the live step, or open one.
 // Returns nullptr, or legArm's refusal text with nothing moved.
-const char* homingArm(uint8_t node, uint8_t expectKind, uint8_t dir,
+const char* homingArm(uint8_t node, bool last, uint8_t expectKind, uint8_t dir,
                       bool intendedRetract,
                       uint16_t startUs, uint16_t floorUs,
                       uint16_t rampSteps, uint32_t maxSteps,
@@ -23,11 +23,11 @@ const char* homingArm(uint8_t node, uint8_t expectKind, uint8_t dir,
 
 // Arm a park leg (legArmPark), as homingArm. A finished park keeps the node's
 // origin; the caller checks it is homed.
-const char* homingArmPark(uint8_t node, int32_t target, uint16_t startUs,
+const char* homingArmPark(uint8_t node, bool last, int32_t target, uint16_t startUs,
                           uint16_t floorUs, uint16_t rampSteps);
 
 // Arm an unlatch leg (off the switch, within the datum), as homingArm.
-const char* homingArmUnlatch(uint8_t node, uint8_t dir, uint16_t startUs,
+const char* homingArmUnlatch(uint8_t node, bool last, uint8_t dir, uint16_t startUs,
                              uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps);
 
 // Start ONE raw LEG on `node` as homingArm, as a `leg` sequence; the first

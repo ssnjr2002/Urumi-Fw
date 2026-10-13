@@ -51,7 +51,7 @@ static const char* armed(const char* why) {
     return why;
 }
 
-const char* homingArm(uint8_t node, uint8_t expectKind, uint8_t dir,
+const char* homingArm(uint8_t node, bool last, uint8_t expectKind, uint8_t dir,
                       bool intendedRetract,
                       uint16_t startUs, uint16_t floorUs,
                       uint16_t rampSteps, uint32_t maxSteps,
@@ -59,18 +59,18 @@ const char* homingArm(uint8_t node, uint8_t expectKind, uint8_t dir,
     const uint8_t intent = expectKind == HOMING_KIND_INDEX ? LEG_SWEEP
                          : intendedRetract                 ? LEG_RETRACT
                                                            : LEG_SEEK;
-    return armed(runnerArm(intent, node, expectKind, dir, intendedRetract,
+    return armed(runnerArm(intent, node, last, expectKind, dir, intendedRetract,
                            startUs, floorUs, rampSteps, maxSteps, intentMismatch));
 }
 
-const char* homingArmPark(uint8_t node, int32_t target, uint16_t startUs,
+const char* homingArmPark(uint8_t node, bool last, int32_t target, uint16_t startUs,
                           uint16_t floorUs, uint16_t rampSteps) {
-    return armed(runnerArmPark(node, target, startUs, floorUs, rampSteps));
+    return armed(runnerArmPark(node, last, target, startUs, floorUs, rampSteps));
 }
 
-const char* homingArmUnlatch(uint8_t node, uint8_t dir, uint16_t startUs,
+const char* homingArmUnlatch(uint8_t node, bool last, uint8_t dir, uint16_t startUs,
                              uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps) {
-    return armed(runnerArm(LEG_UNLATCH, node, HOMING_KIND_LIMIT, dir, true,
+    return armed(runnerArm(LEG_UNLATCH, node, last, HOMING_KIND_LIMIT, dir, true,
                            startUs, floorUs, rampSteps, maxSteps));
 }
 
@@ -100,17 +100,17 @@ const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                         uint16_t startUs, uint16_t floorUs,
                         uint16_t rampSteps, uint32_t maxSteps,
                         bool* intentMismatch) {
-    return legStarted(homingArm(node, expectKind, dir, intendedRetract, startUs,
+    return legStarted(homingArm(node, true, expectKind, dir, intendedRetract, startUs,
                                 floorUs, rampSteps, maxSteps, intentMismatch));
 }
 
 const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                             uint16_t floorUs, uint16_t rampSteps) {
-    return legStarted(homingArmPark(node, target, startUs, floorUs, rampSteps));
+    return legStarted(homingArmPark(node, true, target, startUs, floorUs, rampSteps));
 }
 
 const char* homingDummyBegin(bool succeed, uint32_t ms) {
-    return legStarted(armed(runnerArmDummy(succeed, ms)));
+    return legStarted(armed(runnerArmDummy(true, succeed, ms)));
 }
 
 const char* homingAbort(uint8_t node) {

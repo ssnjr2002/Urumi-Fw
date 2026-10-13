@@ -20,12 +20,12 @@ const char* traverseBegin(uint8_t intent, uint8_t node, uint8_t dir,
                           uint16_t startUs, uint16_t floorUs,
                           uint16_t rampSteps, uint32_t maxSteps,
                           bool* intentMismatch) {
-    return started(runnerArm(intent, node, HOMING_KIND_LIMIT, dir,
+    return started(runnerArm(intent, node, true, HOMING_KIND_LIMIT, dir,
                              intent == LEG_UNLATCH, startUs, floorUs, rampSteps,
                              maxSteps, intentMismatch));
 }
 
 const char* traverseParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                               uint16_t floorUs, uint16_t rampSteps) {
-    return started(runnerArmPark(node, target, startUs, floorUs, rampSteps));
+    return started(runnerArmPark(node, true, target, startUs, floorUs, rampSteps));
 }

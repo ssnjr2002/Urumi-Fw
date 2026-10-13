@@ -1,7 +1,8 @@
 /**
  * The leg runner (src/rp2350/core0/ops/runner.cpp) against a scripted leg
- * layer: steps open and close, legs join the live step, ends reach the
- * mailbox in order, and a cut step's events are discarded.
+ * layer: steps open and close, legs join the live step, a node's thread
+ * holds the step open until its last leg, ends reach the mailbox in order,
+ * and a cut step's events are discarded.
  */
 
 #include "doctest.h"
@@ -123,9 +124,12 @@ void legEffectRelease(uint8_t intent, const LegEnd& e) { effects[effectCount++] 
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-static const char* seek(uint8_t node, uint8_t intent = LEG_SEEK) {
-    return runnerArm(intent, node, 0, 0, false, 0, 0, 0, 0);
+static const char* seek(uint8_t node, uint8_t intent = LEG_SEEK, bool last = true) {
+    return runnerArm(intent, node, last, 0, 0, false, 0, 0, 0, 0);
 }
+
+// A leg with more to follow on its node's thread.
+static const char* first(uint8_t node) { return seek(node, LEG_SEEK, false); }
 
 static int drain(RunEvent* out, int max) {
     int n = 0;
@@ -219,7 +223,7 @@ TEST_CASE("abort all cuts the step and discards its events") {
 
 TEST_CASE("drop all releases without a verdict") {
     reset();
-    runnerArmPark(5, 100, 0, 0, 0);
+    runnerArmPark(5, true, 100, 0, 0, 0);
     LegEnd ends[LEG_MAX];
     REQUIRE(runnerDropAll(ends) == 1);
     CHECK(ends[0].park);
@@ -321,10 +325,83 @@ TEST_CASE("each event carries its leg's intent") {
 
 TEST_CASE("a dummy's end is LEG_DUMMY whatever node 0 last ran") {
     reset();
-    runnerArmDummy(true, 0);
+    runnerArmDummy(true, true, 0);
     LegEnd ends[LEG_MAX];
     for (FakeLeg& f : fake) if (f.armed) f.end.dummy = true;
     runnerDropAll(ends);
     REQUIRE(effectCount == 1);
     CHECK(effects[0].intent == LEG_DUMMY);
+}
+
+TEST_CASE("an open thread holds the step past its node's leg end") {
+    reset();
+    first(3);
+    finish(3);
+    runnerTick();
+
+    RunEvent ev[4];
+    REQUIRE(drain(ev, 4) == 1);
+    CHECK(ev[0].kind == RUN_LEG_END);
+    CHECK(runnerLive());       // no leg runs, but node 3 has more
+
+    seek(3);                   // its next, armed on the end
+    finish(3);
+    runnerTick();
+    REQUIRE(drain(ev, 4) == 2);
+    CHECK(ev[1].kind == RUN_STEP_END);
+    CHECK_FALSE(runnerLive());
+}
+
+TEST_CASE("the step ends with the last thread, whatever order nodes end in") {
+    reset();
+    first(3);
+    seek(4);
+    finish(4);                 // node 4's thread closes first
+    runnerTick();
+    finish(3);
+    runnerTick();
+
+    RunEvent ev[4];
+    REQUIRE(drain(ev, 4) == 2);
+    CHECK(ev[0].end.node == 4);
+    CHECK(ev[1].end.node == 3);
+    CHECK(runnerLive());
+
+    seek(3);
+    finish(3);
+    runnerTick();
+    REQUIRE(drain(ev, 4) == 2);
+    CHECK(ev[0].end.node == 3);
+    CHECK(ev[1].kind == RUN_STEP_END);
+}
+
+TEST_CASE("a released leg closes its thread") {
+    reset();
+    first(3);
+    LegEnd e;
+    bool released;
+    CHECK(runnerAbort(3, &e, &released) == nullptr);
+    CHECK(released);
+
+    RunEvent ev[4];
+    REQUIRE(drain(ev, 4) == 1);
+    CHECK(ev[0].kind == RUN_STEP_END);
+    CHECK_FALSE(runnerLive());
+}
+
+TEST_CASE("a cut step closes every thread") {
+    reset();
+    first(3);
+    finish(3);
+    runnerTick();              // node 3 waits for its next leg
+    LegEnd ends[LEG_MAX];
+    CHECK(runnerAbortAll(ends) == 0);
+    CHECK_FALSE(runnerLive());
+
+    seek(4);                   // a new step is not held by node 3
+    finish(4);
+    runnerTick();
+    RunEvent ev[4];
+    REQUIRE(drain(ev, 4) == 2);
+    CHECK(ev[1].kind == RUN_STEP_END);
 }
