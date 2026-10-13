@@ -1,7 +1,8 @@
 /**
  * The sequence driver (src/rp2350/core0/ops/sequence.cpp) against a faked
- * runner: steps advance next(), a failed leg fails the sequence, a wait times
- * out, and an abort cuts the step before abort() runs.
+ * runner: steps advance next(), a succeeded leg reaches leg(), a failed leg
+ * fails the sequence, a wait times out, and an abort cuts the step before
+ * abort() runs.
  */
 
 #include "doctest.h"
@@ -24,11 +25,12 @@ int      boxHead, boxCount;
 bool     stepLive;
 int      stepCuts;
 
-void post(uint8_t kind, uint8_t failWhy = LEGFAIL_NONE) {
+void post(uint8_t kind, uint8_t failWhy = LEGFAIL_NONE, uint8_t node = 0) {
     RunEvent& ev = box[(boxHead + boxCount++) % 8];
     ev = {};
     ev.kind        = kind;
     ev.intent      = LEG_SEEK;
+    ev.end.node    = node;
     ev.end.failWhy = failWhy;
     if (kind == RUN_STEP_END) stepLive = false;
 }
@@ -55,10 +57,23 @@ void scriptAbort(void) { aborts++; }
 
 const Sequence scripted = { SEQ_HOME, scriptNext, scriptAbort };
 
+// leg() records each node; on `failOn` it fails the sequence, as a refused
+// next leg does.
+uint8_t legNodes[8];
+int     legs;
+uint8_t failOn;
+void scriptLeg(const LegEnd& e) {
+    legNodes[legs++] = e.node;
+    if (e.node == failOn) homingFail(e);
+}
+
+const Sequence threaded = { SEQ_HOME, scriptNext, scriptAbort, scriptLeg };
+
 void reset(const char* s) {
     boxHead = boxCount = 0;
     stepLive = false;
-    stepCuts = fails = nexts = aborts = 0;
+    stepCuts = fails = nexts = aborts = legs = 0;
+    failOn = 0;
     now = 0;
     sequenceEnd();
     script = s;
@@ -181,4 +196,49 @@ TEST_CASE("events with no sequence are drained") {
     sequenceTick();
     CHECK(boxCount == 0);
     CHECK(nexts == 0);
+}
+
+TEST_CASE("each succeeded leg reaches leg(); the step end still reaches next()") {
+    reset("S.");
+    stepLive = true;
+    sequenceStart(&threaded);
+    post(RUN_LEG_END, LEGFAIL_NONE, 4);
+    post(RUN_LEG_END, LEGFAIL_NONE, 3);
+    sequenceTick();
+    REQUIRE(legs == 2);
+    CHECK(legNodes[0] == 4);
+    CHECK(legNodes[1] == 3);
+    CHECK(nexts == 0);
+
+    post(RUN_STEP_END);
+    sequenceTick();
+    CHECK(legs == 2);
+    CHECK(nexts == 1);
+}
+
+TEST_CASE("a failed leg does not reach leg()") {
+    reset("S.");
+    stepLive = true;
+    sequenceStart(&threaded);
+    post(RUN_LEG_END, LEGFAIL_BUDGET, 3);
+    sequenceTick();
+    CHECK(legs == 0);
+    CHECK(fails == 1);
+    CHECK_FALSE(sequenceLive());
+}
+
+TEST_CASE("a failure in leg() ends the sequence and drops later events") {
+    reset("S.");
+    stepLive = true;
+    sequenceStart(&threaded);
+    failOn = 3;
+    post(RUN_LEG_END, LEGFAIL_NONE, 3);
+    post(RUN_LEG_END, LEGFAIL_NONE, 4);
+    post(RUN_STEP_END);
+    sequenceTick();
+    CHECK(legs == 1);
+    CHECK(fails == 1);
+    CHECK(nexts == 0);
+    CHECK(aborts == 1);
+    CHECK_FALSE(sequenceLive());
 }

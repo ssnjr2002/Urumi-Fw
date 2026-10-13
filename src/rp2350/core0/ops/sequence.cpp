@@ -52,6 +52,7 @@ void sequenceTick(void) {
         if (!live) continue;   // every step has a sequence; drain regardless
         if (ev.kind == RUN_STEP_END) { advance(SEQ_END_STEP); continue; }
         if (legEndFailed(ev.intent, ev.end)) homingFail(ev.end);
+        else if (live->leg) live->leg(ev.end);
     }
     if (live && waiting && millis() - waitFrom >= waitMs) {
         waiting = false;

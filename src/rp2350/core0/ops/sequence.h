@@ -1,13 +1,16 @@
 #pragma once
 #include <stdint.h>
+#include "leg.h"
 
 // sequence.h — the sequence slot: what was asked for, run as steps
 // (docs/plans/machine-model.md, Slots).
 //
 // A sequence arms its first step, then starts here; the driver is the
-// runner's one reader. A leg that fails fails the sequence (homingFail). At
-// each step end, or when a wait ends, the driver calls next(), which runs any
-// instant work and arms the next step (or waits), or ends the sequence.
+// runner's one reader. A leg that fails fails the sequence (homingFail); one
+// that succeeds goes to leg(), which may arm that node's next leg in the step
+// (runner.h, threads). At each step end, or when a wait ends, the driver
+// calls next(), which runs any instant work and arms the next step (or
+// waits), or ends the sequence.
 // A sequence has no context of its own: it runs in the one it started in.
 //
 // Closing or aborting a level tears down the levels below it: the teardown and
@@ -35,6 +38,9 @@ struct Sequence {
     bool (*next)(uint8_t end);     // SequenceEnd
     // Clean up after a teardown; the step is already cut. May be null.
     void (*abort)(void);
+    // A leg of the step succeeded: arm its node's next leg, or nothing. A
+    // failure faults, which ends the sequence. May be null.
+    void (*leg)(const LegEnd& end);
 };
 
 // Make `s` the live sequence. Its first step is armed already, or it waits.
