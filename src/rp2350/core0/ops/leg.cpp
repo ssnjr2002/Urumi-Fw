@@ -87,14 +87,21 @@ static void legRelease(Leg& leg, LegEnd* end, uint8_t why) {
 
 // docs/homing.md §2.3. Bounding by `max_steps × start_interval` instead would
 // give a useless 88 s on X, because every step after the ramp runs at the floor.
+//
+// The node's interval falls linearly per step, from start to floor over
+// `rampSteps`; a park ramps back down at its other end (`ends` 2). A move too
+// short for its ramps turns before the floor, so each end runs only its share,
+// at a slower average than (start + floor) / 2.
 static uint32_t legTimeoutMs(uint16_t startUs, uint16_t floorUs,
-                             uint32_t rampSteps, uint32_t maxSteps) {
-    uint32_t ramp = rampSteps;
-    if (ramp > maxSteps) ramp = maxSteps;
+                             uint32_t rampSteps, uint32_t steps, uint8_t ends) {
+    uint64_t k = rampSteps;
+    if (k > steps / ends) k = steps / ends;
     // 64-bit throughout: 88000 steps × 65535 µs already overflows uint32.
-    const uint64_t avgUs = ((uint64_t)startUs + (uint64_t)floorUs) / 2;
-    uint64_t us = (uint64_t)ramp * avgUs
-                + (uint64_t)(maxSteps - ramp) * (uint64_t)floorUs;
+    const uint64_t s = startUs, f = floorUs;
+    const uint64_t drop = s > f ? s - f : 0;
+    // The first k steps of the ramp: k × start, less what the decay shaved.
+    const uint64_t rampUs = k ? k * s - drop * k * k / (2 * rampSteps) : 0;
+    uint64_t us = rampUs * ends + (steps - k * ends) * f;
     us = us * 12 / 10;                         // §2.3's 1.2 margin
     uint64_t ms = (us / 1000) + LEG_POLL_MS;   // never shorter than one poll
     if (ms > LEG_TIMEOUT_CAP_MS) ms = LEG_TIMEOUT_CAP_MS;
@@ -189,7 +196,7 @@ const char* legArm(uint8_t node, uint8_t expectKind, uint8_t dir, bool intendedR
     leg.misses     = 0;
     leg.settleLeft = LEG_SETTLE_POLLS;
     leg.nextPollMs = now + LEG_POLL_MS;
-    leg.deadlineMs = now + legTimeoutMs(startUs, floorUs, rampSteps, maxSteps);
+    leg.deadlineMs = now + legTimeoutMs(startUs, floorUs, rampSteps, maxSteps, 1);
     return nullptr;
 }
 
@@ -222,8 +229,6 @@ const char* legArmPark(uint8_t node, int32_t target, uint16_t startUs,
     // have moved a step or two, which only lengthens the deadline.
     const int64_t  d     = (int64_t)target - (int64_t)st.pos;
     const uint32_t steps = (uint32_t)(d < 0 ? -d : d) + 1;
-    // Ramped at both ends.
-    const uint32_t ramp  = 2u * rampSteps;
 
     const uint32_t now = millis();
     leg.claimed    = true;
@@ -236,7 +241,7 @@ const char* legArmPark(uint8_t node, int32_t target, uint16_t startUs,
     leg.misses     = 0;
     leg.settleLeft = 0;
     leg.nextPollMs = now + LEG_POLL_MS;
-    leg.deadlineMs = now + legTimeoutMs(startUs, floorUs, ramp, steps);
+    leg.deadlineMs = now + legTimeoutMs(startUs, floorUs, rampSteps, steps, 2);   // ramped at both ends
     return nullptr;
 }
 
