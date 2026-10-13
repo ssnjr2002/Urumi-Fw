@@ -193,7 +193,33 @@ bit clearing; `unalarm` order; estop latch and swept.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Two publish calls, not one: `machinePublish()` rewrites only IDLE/ALARM
+  (each pass, and after a held bit may change); `machineSettle()` replaces
+  `resumeOrHold` where Core 0 closes HOMING, TRAVERSE or PROBING. Both take
+  `plannerLock` (Core 1 leaves IDLE for motion under it) and never overwrite
+  ESTOP.
+* The estop latch is `F_ESTOP` = bit 15 of the mask, not a separate byte.
+  No `swept` flag yet: Core 1 still publishes ALARM after its sweep, so
+  "latched and ALARM" is swept. M2 adds the flag with Core 1's state writes.
+* `STATUS_RSP` is 31 bytes, same magic: the mask at [4..5], the rest one byte
+  later. `get faults=0x....` replaces `alarm=`; `unalarm` replies
+  `ok faults=0x....` (web `unalarm()` resolves to the mask, null on err).
+  F_BUS stops `unalarm` with `err degraded` (its fix is `bus_exclude`).
+* `slotMapGate` is gone (callers publish). `F_FACTS` is set at any time and
+  shows at rest.
+* Native: `test_machine` (publish per bit, settle, event bits, latch) with
+  stubs in `test/stubs/`; `unalarm` itself is untested natively.
+* Web: the homing sequence's HOMING_FAIL diagnostics were removed;
+  `web/demo/comms.js` still uses the old names.
+* Bench (COM8): boot `F_BUS` → `bus_exclude 8` → IDLE; a failed `home`
+  (node 3 budget, the known broken switch) → `F_HOMING`, cleared by
+  `unalarm`; `stop`/`unstop` with `err estop` in between; node 1 seek →
+  `F_LATCHED` under HOMING, ALARM at `home_end`, kept by `unalarm`, cleared
+  by a retract.
 
 ## Branch M2: `feature/machine-slots`
 
