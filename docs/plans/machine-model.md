@@ -447,7 +447,9 @@ lockstep, so a cycle takes its slowest node's chain rather than the sum of
 each phase's slowest leg. The cycle stays the barrier: `cycleCommit` is the
 join.
 
-* `runnerArm` takes a `last` flag, default true. The runner keeps a
+* Every arm (`runnerArm*`, `homingArm*`) takes an explicit `last` flag, with
+  no default: true on a leg that is not last commits a cycle mid-move, so
+  each caller states it. The runner keeps a
   thread-open bit per node: arming opens it, a `last` leg's end closes it, and
   the step ends only when no leg is live and no thread is open. Without it, a
   node that arms its next leg on a leg end would follow a step end already
@@ -459,7 +461,7 @@ join.
 * Home knows each node's last leg at arm time (linear pull-off, rotary
   reverse sweep, park). A leg released through `runnerAbort` must close its
   thread.
-* Every other sequence keeps `last` true and runs in lockstep as today;
+* Every other sequence passes `last` true and runs in lockstep as today;
   probe, whose legs end on their result, too.
 * Tests: nodes ending out of order, the join firing only on the last thread,
   a failure while other threads run. Bench with axes started at uneven
