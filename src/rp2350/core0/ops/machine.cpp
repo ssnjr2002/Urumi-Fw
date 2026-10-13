@@ -6,7 +6,7 @@
 #include "bus.h"
 #include "runner.h"
 #include "probe.h"
-#include "homing.h"            // homingHeld
+#include "sequence.h"
 #include "../planner/queue.h"  // plannerStopJog
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
@@ -61,6 +61,7 @@ void contextOpen(uint8_t ctx) {
 void contextClose(uint8_t ctx) {
     if (machineContext != ctx) return;
     // Closing a level tears down the levels below it.
+    sequenceAbort();
     if (runnerLive()) {
         LegEnd ends[LEG_MAX];
         runnerAbortAll(ends);
@@ -73,6 +74,7 @@ void contextClose(uint8_t ctx) {
 uint8_t machineStep(void) {
     if (runnerLive() || probeLegInFlight()) return STEP_LEGS;
     if (plannerActive || plannerRing.count() != 0) return STEP_RING;
+    if (sequenceWaiting()) return STEP_WAIT;
     return STEP_NONE;
 }
 
@@ -88,6 +90,7 @@ void machineTeardown(bool estop) {
         if (estop) runnerDropAll(ends);
         else       runnerAbortAll(ends);
     }
+    sequenceAbort();
     switch (machineContext) {
         case CTX_PROBE:
             probeTeardown(!estop);          // closes the context
@@ -124,24 +127,23 @@ void machineReset(void) {
 
 static uint8_t stateOf(uint16_t faults) {
     if (latched) return estopSwept ? STATE_ALARM : STATE_ESTOP;
-    switch (machineContext) {
-        case CTX_JOB:    return STATE_JOB;
-        case CTX_PROBE:  return STATE_PROBING;
-        case CTX_HOMING: return STATE_HOMING;
-        default:         break;
-    }
+    // A sequence by name, whatever the context.
+    const uint8_t seq = sequenceId();
+    if (seq == SEQ_HOME || seq == SEQ_RECOVERY) return STATE_HOMING;
+    // A manual context keeps its name over its raw legs.
+    if (machineContext == CTX_PROBE)  return STATE_PROBING;
+    if (machineContext == CTX_HOMING) return STATE_HOMING;
+    // A step outranks the job context.
     const uint8_t step = machineStep();
     if (step == STEP_LEGS) return STATE_TRAVERSE;
     if (step == STEP_RING && ringOwner != RING_JOB) return STATE_JOGGING;
+    if (machineContext == CTX_JOB) return STATE_JOB;
     return faults ? STATE_ALARM : STATE_IDLE;
 }
 
 uint8_t machineView(void) { return stateOf(machineFaults()); }
 
 static bool jobPaused(void) { return machineContext == CTX_JOB && jobReason == JOB_PAUSED; }
-
-// A `home` run holds its cycle between legs; the sequence slot until M3.
-static bool sequenceLive(void) { return homingHeld() != 0; }
 
 static bool estopUnswept(void) { return latched && !estopSwept; }
 
@@ -176,7 +178,7 @@ const char* machineAdmit(uint8_t kind) {
                  (ctx == CTX_IDLE || ctx == CTX_PROBE || ctx == CTX_HOMING || jobPaused());
             break;
         case K_STEP:
-            ok = !latched && !sequenceLive() && ctx != CTX_JOB;
+            ok = !latched && !busy && ctx != CTX_JOB;
             break;
         case K_SEQUENCE:
             ok = !latched && !busy && ctx == CTX_IDLE && (machineFaults() & ~F_LATCHED) == 0;

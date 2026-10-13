@@ -22,12 +22,13 @@ enum MachineFault : uint16_t {
 #define F_HELD   (F_BUS | F_CONFIG | F_UNMAPPED | F_LATCHED)
 #define F_EVENTS (F_HOMING | F_PROBE | F_FACTS)
 
-// The live step, read from its owners: node legs (the runner, a probe leg) or
-// planner motion (the ring, or Core 1 running it).
+// The live step, read from its owners: node legs (the runner, a probe leg),
+// planner motion (the ring, or Core 1 running it) or the sequence's wait.
 enum MachineStep : uint8_t {
     STEP_NONE = 0,
     STEP_LEGS = 1,
     STEP_RING = 2,
+    STEP_WAIT = 3,
 };
 
 uint16_t machineFaults(void);
@@ -54,8 +55,8 @@ uint8_t machineStep(void);
 // the job's context closes once it has.
 void jobAbort(void);
 
-// Step, then context: legs dropped (estop: Core 1 is sweeping) or aborted,
-// a job's ring aborted, the context closed.
+// Step, sequence, then context: legs dropped (estop: Core 1 is sweeping) or
+// aborted, the sequence aborted, a job's ring aborted, the context closed.
 void machineTeardown(bool estop);
 
 // Soft reset: no event bits, no latch, no context; ALARM until the boot
@@ -86,7 +87,7 @@ enum CmdKind : uint8_t {
     K_ANY      = 0,   // always: stop, and settings with no state rule
     K_READ     = 1,   // always; a bus read checks machineBusFree itself
     K_WRITE    = 2,   // at rest (machineAtRest)
-    K_STEP     = 3,   // a primitive that takes time: no estop, no sequence, no job
+    K_STEP     = 3,   // a primitive that takes time: no estop, no step or sequence, no job
     K_SEQUENCE = 4,   // IDLE context, no step, no fault but F_LATCHED
     K_CONTEXT  = 5,   // opens or closes a context, by the handler's rules; no estop
     K_CLEAR    = 6,   // unalarm, unstop: no step, no sequence, no context

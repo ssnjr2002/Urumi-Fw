@@ -2,54 +2,62 @@
 #include <stdint.h>
 #include "leg.h"
 
-// homing.h — the homing session around node-run legs (docs/homing.md §2.3).
+// homing.h — homing legs and the manual homing session (docs/homing.md §2.3).
 //
-// The machine stays in STATE_HOMING across legs (a session); homingReason says
-// whether any leg runs. Legs on different nodes run in parallel; a failure
-// aborts every other running leg (the cycle) and alarms. `setorigin` and
-// `home_end` close it, as do estop and F_HOMING. Running and judging
-// a leg is leg.h's.
+// homingArm and homingArmPark arm a homing leg into the live step, in no
+// context; a sequence (`home`, `recovery`) uses them. A failed leg fails its
+// sequence (homingFail): every other running leg is aborted and the machine
+// alarms with F_HOMING. Running and judging a leg is leg.h's.
+//
+// The manual session: each raw leg is a one-step `leg` sequence in the homing
+// context, which stays open across legs (homingReason says whether one runs)
+// until `setorigin` or `home_end`, an estop or F_HOMING closes it.
 
-// Arm ONE LEG on `node` (legArm); the first opens the session. Returns nullptr,
-// or legArm's refusal text with nothing moved. Prints nothing: the caller
-// replies.
+// Arm a seek, retract or sweep leg (legArm) into the live step, or open one.
+// Returns nullptr, or legArm's refusal text with nothing moved.
+const char* homingArm(uint8_t node, uint8_t expectKind, uint8_t dir,
+                      bool intendedRetract,
+                      uint16_t startUs, uint16_t floorUs,
+                      uint16_t rampSteps, uint32_t maxSteps,
+                      bool* intentMismatch = nullptr);
+
+// Arm a park leg (legArmPark), as homingArm. A finished park keeps the node's
+// origin; the caller checks it is homed.
+const char* homingArmPark(uint8_t node, int32_t target, uint16_t startUs,
+                          uint16_t floorUs, uint16_t rampSteps);
+
+// Start ONE raw LEG on `node` as homingArm, as a `leg` sequence; the first
+// opens the session. Returns as homingArm. Prints nothing: the caller replies.
 const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                         bool intendedRetract,
                         uint16_t startUs, uint16_t floorUs,
                         uint16_t rampSteps, uint32_t maxSteps,
                         bool* intentMismatch = nullptr);
 
-// Arm a park leg (legArmPark) in the session, as homingBegin. A finished park
-// keeps the node's origin; the caller checks it is homed.
+// A raw park leg in the session, as homingBegin.
 const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                             uint16_t floorUs, uint16_t rampSteps);
 
-// leg_abort: stop `node`'s pulser. If it ran a leg, that leg fails as
-// LEGFAIL_ABORTED, failing its cycle; any other node just acks. Returns as
-// homingBegin.
+// leg_abort: stop `node`'s pulser. If it ran a homing leg, that leg fails as
+// LEGFAIL_ABORTED, failing its sequence; any other node just acks. Returns as
+// homingArm.
 const char* homingAbort(uint8_t node);
-
-// Turn each leg end the runner posted into the session's state. Call from the
-// Core 0 loop, after runnerTick.
-void homingTick(void);
 
 // A dummy leg (legArmDummy) in the session. Touches no latch and no origin.
 // The caller gates it as a leg. Returns as homingBegin.
 const char* homingDummyBegin(bool succeed, uint32_t ms);
 
-// A controller run holds the session between its legs: raw legs, `setorigin`
-// and `home_end` answer `err busy` while it is held. The run holds it with the
-// cycle in progress and releases it with 0; homingHeld returns that cycle.
+// The cycle a `home` run is in, for get's homecycle=; 0 when none runs.
 void homingHold(uint8_t cycle);
 uint8_t homingHeld(void);
 
-// Fail the cycle on `node` for a cause found outside a leg, or a TRAVERSE leg
-// (LEGFAIL_*): as a failed leg, the other legs are aborted, `node`'s origin is
-// dropped and the machine alarms.
-void homingAbandon(uint8_t node, uint8_t why);
+// Fail the live sequence on a leg's end: abort the other legs, record
+// homefail=/homenode= and alarm with F_HOMING.
+void homingFail(const LegEnd& e);
 
-// True while any leg runs.
-bool homingActive(void);
+// Fail the live sequence on `node` for a cause found outside a leg, or a
+// traverse leg (LEGFAIL_*): as homingFail, and `node`'s origin is dropped.
+void homingAbandon(uint8_t node, uint8_t why);
 
 // The session is open and no leg runs (HOMING_WAIT): the next leg, `setorigin`
 // or `home_end` may follow, and the bus is free.

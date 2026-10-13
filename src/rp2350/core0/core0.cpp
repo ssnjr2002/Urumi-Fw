@@ -19,16 +19,14 @@
 #include "ops/slot_map.h"
 #include "ops/bus.h"
 #include "ops/machine.h"
-#include "ops/homing.h"
 #include "ops/runner.h"
-#include "ops/traverse.h"
+#include "ops/sequence.h"
 #include "ops/probe.h"
 #include "data_plane.h"
 #include "status.h"
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "controller/seq/controller.h"
-#include "controller/seq/home.h"
 
 // ─── Text line assembly ───────────────────────────────────────────────────────
 
@@ -169,16 +167,13 @@ void loop() {
         observeTick();
         processSerial();
         dataPlaneTick();   // abort a stalled CFG_SET transfer (inter-byte timeout)
-        // Poll node-run legs to completion, then let the homing session judge
-        // their ends. Out here rather than inside the `leg` handler because the
+        // Poll node-run legs to completion, then let the live sequence judge
+        // their ends and arm its next step. Out here rather than inside the `leg` handler because the
         // control plane owes one reply line per command: blocking there would
         // hold `get` and `stop` shut for the whole seek, on the one command
         // that is driving an axis at a hard stop.
         runnerTick();
-        homingTick();
-        traverseTick();
-        // A `home` run, after the legs it sequences have been polled.
-        homeTick();
+        sequenceTick();
         // And a probe leg, for the same reason and on the same terms: a leg runs
         // for seconds with a tool descending onto a bed, and holding `get`
         // and `stop` shut for the whole of it is exactly what a supervisor out

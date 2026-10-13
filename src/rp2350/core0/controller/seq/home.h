@@ -10,9 +10,9 @@
 // Without `only`, every homeable node of an earlier cycle joins the run: a
 // homed linear node parks, an unhomed one homes, a homed rotary one stays.
 //
-// The run holds the homing session (homingHold) from its first leg to its
-// last datum; a failure is the session's (F_HOMING with homefail= and
-// homenode=), and `stop` ends it as it ends any session.
+// The run is the `home` sequence (ops/sequence.h), one phase per step, in the
+// context it started in; the cycle in progress is homingHeld(). A failure is
+// F_HOMING with homefail= and homenode=; `stop` ends it as any sequence.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Start a run for `nodes[0..n)`, each a homeable axis node of the config.
@@ -20,13 +20,6 @@
 // started, or the refusal text after `err ` with nothing moved. Gating the
 // machine state is the caller's.
 const char* homeStart(const uint8_t* nodes, uint8_t n, bool only);
-
-// Advance the run. Call from the Core 0 loop after homingTick.
-void homeTick(void);
-
-// True from homeStart until the run commits its last cycle or is ended. The
-// cycle in progress is homingHeld().
-bool homeRunning(void);
 
 // The config's axes, in order X, Y, then each head's Z and A, present nodes
 // only; returns how many (at most HOME_AXES_MAX).

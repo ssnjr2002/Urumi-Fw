@@ -15,12 +15,6 @@
 #include "../../ops/machine.h"
 #include "../../../ipc/shared_state.h"
 
-// K_SEQUENCE admits from IDLE, or with only F_LATCHED set (a leg leaves it).
-static bool homeGateDenies() {
-    if (homeRunning()) { Serial.println("err busy"); return true; }
-    return false;
-}
-
 static void homeRun(const uint8_t* nodes, uint8_t n, bool only) {
     if (n == 0) { Serial.println("ok"); return; }
     const char* why = homeStart(nodes, n, only);
@@ -40,7 +34,6 @@ static const char* word(const char** p, size_t* len) {
 }
 
 bool cmdHome(const char* args) {
-    if (homeGateDenies()) return true;
     const char* p = args;
     size_t len;
     const char* w = word(&p, &len);
@@ -79,7 +72,6 @@ bool cmdHome(const char* args) {
 
 // home_unhomed: `home` of every homeable node with no origin; none is `ok`.
 bool cmdHomeUnhomed(const char* args) {
-    if (homeGateDenies()) return true;
     if (*args) { Serial.println("err usage"); return true; }
     const CfgAxis* axes[HOME_AXES_MAX];
     const uint8_t k = homeAxes(axes);
@@ -94,7 +86,6 @@ bool cmdHomeUnhomed(const char* args) {
 
 // home_cycle <k>: `home` of cycle k's nodes; an empty cycle is `err usage`.
 bool cmdHomeCycle(const char* args) {
-    if (homeGateDenies()) return true;
     char* end;
     const unsigned long c = strtoul(args, &end, 10);
     if (end == args || *end || c == 0 || c > 255) { Serial.println("err usage"); return true; }
@@ -112,7 +103,6 @@ bool cmdHomeCycle(const char* args) {
 
 // home_head <n>: `home only <Zn> <An>`, n the index into heads[].
 bool cmdHomeHead(const char* args) {
-    if (homeGateDenies()) return true;
     char* end;
     const unsigned long h = strtoul(args, &end, 10);
     const MachineCfg& cfg = machineCfg();

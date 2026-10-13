@@ -16,7 +16,7 @@
 #include "../ops/frames.h"
 #include "../ops/homing.h"
 #include "../ops/traverse.h"
-#include "../ops/runner.h"
+#include "../ops/sequence.h"
 #include "../ops/leg_effects.h"
 #include "../ops/machine.h"
 #include "../ops/probe.h"
@@ -341,7 +341,7 @@ bool cmdSetOrigin(const char* args) {
 // ── home_end — close a homing session without a datum ───────────────────────
 // Every leg already dropped its node's origin, so nothing is recorded.
 bool cmdHomeEnd(const char*) {
-    if (homingActive() || homingHeld()) { Serial.println("err busy"); return true; }
+    if (sequenceLive()) { Serial.println("err busy"); return true; }
     if (!homingWaiting()) { Serial.println("err bad_state"); return true; }
     contextClose(CTX_HOMING);
     Serial.println("ok");
@@ -440,10 +440,10 @@ static bool parseIntent(const char** p, uint8_t* intent) {
 }
 
 // The arming table (docs/homing.md §2.2): the states each intent may start
-// from. Seek, retract and sweep run in HOMING; park joins HOMING or runs in
-// TRAVERSE; span and unlatch run in TRAVERSE; probe runs in PROBING. A live
-// step holds its state, so a leg that would run in another is `err busy`.
-// Prints its own error; callers return on true.
+// from. Seek, retract and sweep run in HOMING; park runs in HOMING or as a
+// traverse; span and unlatch run as a traverse; probe runs in PROBING. A live
+// leg is already `err busy` (K_STEP). Prints its own error; callers return
+// on true.
 static bool legAdmitDenies(uint8_t intent) {
     const uint8_t s       = machineView();
     const bool    latched = s == STATE_ALARM && machineFaults() == F_LATCHED;
@@ -452,15 +452,13 @@ static bool legAdmitDenies(uint8_t intent) {
         case LEG_SEEK:
         case LEG_SWEEP:   ok = s == STATE_IDLE || s == STATE_HOMING; break;
         case LEG_RETRACT: ok = s == STATE_IDLE || s == STATE_HOMING || latched; break;
-        case LEG_PARK:    ok = s == STATE_IDLE || s == STATE_HOMING || s == STATE_TRAVERSE; break;
-        case LEG_SPAN:    ok = s == STATE_IDLE || s == STATE_TRAVERSE; break;
+        case LEG_PARK:    ok = s == STATE_IDLE || s == STATE_HOMING; break;
+        case LEG_SPAN:    ok = s == STATE_IDLE; break;
         case LEG_UNLATCH: ok = latched; break;
         case LEG_PROBE:   ok = s == STATE_PROBING; break;
     }
     if (ok) return false;
-    if ((s == STATE_TRAVERSE && runnerLive()) || (s == STATE_PROBING && probeLegInFlight()))
-        Serial.println("err busy");
-    else if (intent == LEG_PROBE)
+    if (intent == LEG_PROBE)
         Serial.println("err not_probing");
     else
         Serial.println("err bad_state");

@@ -8,6 +8,7 @@
 #include "../../ops/homing.h"
 #include "../../ops/position.h"
 #include "../../ops/machine.h"
+#include "../../ops/sequence.h"
 #include "../../ops/bus.h"
 #include "../../usb_protocol.h"       // NODE_FLAG_*, HOMING_KIND_*
 #include "../../../ipc/shared_state.h"
@@ -43,8 +44,6 @@ static uint8_t cycleNow;       // 0: no run
 static uint8_t phase;
 
 static char refusal[40];
-
-bool homeRunning(void) { return running; }
 
 uint8_t homeAxes(const CfgAxis** out) {
     if (!machineCfgValid()) return 0;
@@ -112,16 +111,16 @@ static const char* armLeg(RunNode& r, bool* armed) {
     switch (r.job) {
         case JOB_PARK:
             if (phase != 0) return nullptr;
-            why = homingParkBegin(r.node, originTarget(r.node, parkSteps(a)),
-                                  intervalUs(h.startFeed, spu),
-                                  intervalUs(h.seekFeed, spu), h.rampSteps);
+            why = homingArmPark(r.node, originTarget(r.node, parkSteps(a)),
+                                intervalUs(h.startFeed, spu),
+                                intervalUs(h.seekFeed, spu), h.rampSteps);
             break;
         case JOB_ROTARY:
             if (phase > 1) return nullptr;
-            why = homingBegin(r.node, HOMING_KIND_INDEX, phase == 0 ? 1 : 0, false,
-                              intervalUs(h.startFeed, spu),
-                              intervalUs(h.sweepFeed, spu), h.rampSteps,
-                              distSteps(360.0 * h.budgetRevs, spu));
+            why = homingArm(r.node, HOMING_KIND_INDEX, phase == 0 ? 1 : 0, false,
+                            intervalUs(h.startFeed, spu),
+                            intervalUs(h.sweepFeed, spu), h.rampSteps,
+                            distSteps(360.0 * h.budgetRevs, spu));
             break;
         case JOB_LINEAR: {
             const uint8_t  toward = (h.seekPositive != a.invertDir) ? 1 : 0;
@@ -132,28 +131,28 @@ static const char* armLeg(RunNode& r, bool* armed) {
                 // The node's pin decides: a seek it refuses as a mismatch means
                 // it stands on its switch, so its back-off runs now instead.
                 bool mismatch;
-                why = homingBegin(r.node, HOMING_KIND_LIMIT, toward, false,
-                                  intervalUs(h.startFeed, spu),
-                                  intervalUs(h.seekFeed, spu), h.rampSteps,
-                                  distSteps(((double)a.maxTravel + h.pullOffDist)
-                                            * h.seekScaler, spu), &mismatch);
+                why = homingArm(r.node, HOMING_KIND_LIMIT, toward, false,
+                                intervalUs(h.startFeed, spu),
+                                intervalUs(h.seekFeed, spu), h.rampSteps,
+                                distSteps(((double)a.maxTravel + h.pullOffDist)
+                                          * h.seekScaler, spu), &mismatch);
                 if (!why || !mismatch) break;
                 r.onSwitch = true;
                 leg = 1;
             }
             switch (leg) {
                 case 1:
-                    why = homingBegin(r.node, HOMING_KIND_LIMIT, !toward, true,
-                                      latch, latch, 0, back);
+                    why = homingArm(r.node, HOMING_KIND_LIMIT, !toward, true,
+                                    latch, latch, 0, back);
                     break;
                 case 2:
-                    why = homingBegin(r.node, HOMING_KIND_LIMIT, toward, false,
-                                      latch, latch, 0,
-                                      (uint32_t)lround(back * LATCH_MARGIN));
+                    why = homingArm(r.node, HOMING_KIND_LIMIT, toward, false,
+                                    latch, latch, 0,
+                                    (uint32_t)lround(back * LATCH_MARGIN));
                     break;
                 case 3:
-                    why = homingBegin(r.node, HOMING_KIND_LIMIT, !toward, true,
-                                      latch, latch, 0, distSteps(h.pullOffDist, spu));
+                    why = homingArm(r.node, HOMING_KIND_LIMIT, !toward, true,
+                                    latch, latch, 0, distSteps(h.pullOffDist, spu));
                     break;
                 default:
                     break;    // leg 0 armed above; past 3, done early
@@ -280,32 +279,29 @@ static bool cycleCommit(void) {
     return true;
 }
 
-void homeTick(void) {
-    if (!running) return;
-    // A failed leg alarmed, or `stop` took the machine: the run is over.
-    if (machineContext != CTX_HOMING) { runEnd(); return; }
-    if (homingActive()) return;
-
-    if (phase == 0 && !sweepsRead()) return;
+// A phase's legs have all ended: arm the next phase, or commit the cycle and
+// start the next. A failure faults, and the teardown ends the run (homeAbort).
+static bool homeNext(uint8_t) {
+    if (phase == 0 && !sweepsRead()) return false;
     for (;;) {
         phase++;
         bool any;
         armFrom(&any);
-        if (!running || any) return;
+        if (!running) return false;
+        if (any) return true;
         // The cycle is done.
-        if (!cycleCommit() || machineContext != CTX_HOMING) { runEnd(); return; }
+        if (!cycleCommit()) { runEnd(); return false; }
         const uint8_t next = cycleAfter(cycleNow);
-        if (next == 0) {
-            runEnd();
-            contextClose(CTX_HOMING);   // IDLE, or what the legs left latched
-            return;
-        }
+        if (next == 0) { runEnd(); return false; }
         cycleStart(next);
         armFrom(&any);
-        if (!running || any) return;
+        if (!running) return false;
+        if (any) return true;
         // A cycle with no leg to run leaves phase at PHASES: commit it next.
     }
 }
+
+static const Sequence homeSequence = { SEQ_HOME, homeNext, runEnd };
 
 const char* homeStart(const uint8_t* nodes, uint8_t n, bool only) {
     runCount = 0;
@@ -357,17 +353,20 @@ const char* homeStart(const uint8_t* nodes, uint8_t n, bool only) {
         }
     }
 
+    // Live before the first arm, so a refusal after a leg moved ends it.
     running = true;
     started = false;
+    homingReason = HOMING_LEG;
+    sequenceStart(&homeSequence);
     uint8_t first = cycleAfter(0);
     for (;;) {
         cycleStart(first);
         bool any;
         const char* why = armFrom(&any);
-        if (why) { runEnd(); return why; }
+        if (why) { sequenceEnd(); runEnd(); return why; }
         if (!running || any) return nullptr;
         // Nothing to move in this cycle (it cannot happen for a home): skip it.
         first = cycleAfter(first);
-        if (first == 0) { runEnd(); return nullptr; }
+        if (first == 0) { sequenceEnd(); runEnd(); return nullptr; }
     }
 }

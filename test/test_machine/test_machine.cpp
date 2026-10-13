@@ -23,15 +23,17 @@ uint8_t           homingLatched;
 namespace {
 bool degraded, blocking, complete = true;
 bool legsLive, probeLeg;
-uint8_t heldCycle;
-int  dropped, aborted, probeDowns, jogStops;
+uint8_t seqId;                              // the live sequence, SEQ_NONE for none
+bool    seqWaits;
+int  dropped, aborted, probeDowns, jogStops, seqAborts;
 bool probeRestored;
 
 void reset() {
     degraded = blocking = legsLive = probeLeg = probeRestored = false;
     complete = true;
-    dropped = aborted = probeDowns = jogStops = 0;
-    heldCycle = 0;
+    dropped = aborted = probeDowns = jogStops = seqAborts = 0;
+    seqId = SEQ_NONE;
+    seqWaits = false;
     jobReason = JOB_BUFFERING;
     homingLatched = 0;
     abortRequested = plannerActive = false;
@@ -55,7 +57,17 @@ void probeTeardown(bool restore) {
     contextClose(CTX_PROBE);
 }
 void plannerStopJog() { jogStops++; }
-uint8_t homingHeld(void) { return heldCycle; }
+bool    sequenceLive(void)    { return seqId != SEQ_NONE; }
+uint8_t sequenceId(void)      { return seqId; }
+bool    sequenceWaiting(void) { return seqId != SEQ_NONE && seqWaits; }
+// The step is cut before the sequence goes.
+void    sequenceAbort(void) {
+    if (seqId == SEQ_NONE) return;
+    CHECK(!legsLive);
+    seqAborts++;
+    seqId = SEQ_NONE;
+    seqWaits = false;
+}
 
 // ── tests ───────────────────────────────────────────────────────────────────
 
@@ -241,13 +253,69 @@ TEST_CASE("a live step or sequence refuses as busy") {
     legsLive = true;
     CHECK(strcmp(machineAdmit(K_WRITE), "busy") == 0);
     CHECK(strcmp(machineAdmit(K_SEQUENCE), "busy") == 0);
-    CHECK(machineAdmit(K_STEP) == nullptr);   // a leg joins the step
+    CHECK(strcmp(machineAdmit(K_STEP), "busy") == 0);   // one raw leg at a time
     CHECK(machineAdmit(K_READ) == nullptr);
 
     reset();
-    heldCycle = 1;                          // a `home` run between legs
+    seqId = SEQ_HOME;                       // a `home` run between phases
     CHECK(strcmp(machineAdmit(K_STEP), "busy") == 0);
     CHECK(!machineBusFree());
+}
+
+TEST_CASE("a sequence publishes by name, over the job context") {
+    reset();
+    seqId = SEQ_HOME;
+    legsLive = true;
+    machinePublish();         CHECK(machineState == STATE_HOMING);
+    machineContext = CTX_JOB;
+    jobReason = JOB_PAUSED;
+    machinePublish();         CHECK(machineState == STATE_HOMING);
+    seqId = SEQ_RECOVERY;
+    machinePublish();         CHECK(machineState == STATE_HOMING);
+
+    reset();
+    seqId = SEQ_TRAVERSE;                   // a traverse is its legs
+    legsLive = true;
+    machinePublish();         CHECK(machineState == STATE_TRAVERSE);
+
+    reset();
+    contextOpen(CTX_HOMING);
+    seqId = SEQ_LEG;                        // the manual context keeps its name
+    legsLive = true;
+    machinePublish();         CHECK(machineState == STATE_HOMING);
+}
+
+TEST_CASE("a sequence's wait is the step") {
+    reset();
+    seqId = SEQ_HOME;
+    seqWaits = true;
+    CHECK(machineStep() == STEP_WAIT);
+    CHECK(strcmp(machineAdmit(K_WRITE), "busy") == 0);
+    legsLive = true;
+    CHECK(machineStep() == STEP_LEGS);
+}
+
+TEST_CASE("teardown and a context close: step, sequence, context") {
+    reset();
+    seqId = SEQ_HOME;
+    legsLive = true;
+    faultSet(F_HOMING);
+    CHECK(aborted == 1);
+    CHECK(seqAborts == 1);
+
+    reset();
+    seqId = SEQ_HOME;
+    legsLive = true;
+    estopLatch();
+    CHECK(dropped == 1);
+    CHECK(seqAborts == 1);
+
+    reset();
+    contextOpen(CTX_HOMING);
+    seqId = SEQ_LEG;
+    contextClose(CTX_HOMING);
+    CHECK(seqAborts == 1);
+    CHECK(machineContext == CTX_IDLE);
 }
 
 TEST_CASE("a manual context admits only its own rows") {
@@ -263,6 +331,8 @@ TEST_CASE("a manual context admits only its own rows") {
     machineContext = CTX_PROBE;
     probeLeg = true;
     CHECK(strcmp(machineAdmit(K_WRITE | K_IN_PROBE), "busy") == 0);
+    CHECK(strcmp(machineAdmit(K_STEP | K_IN_PROBE), "busy") == 0);
+    probeLeg = false;
     CHECK(machineAdmit(K_STEP | K_IN_PROBE) == nullptr);
 }
 

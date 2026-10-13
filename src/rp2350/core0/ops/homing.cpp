@@ -2,6 +2,7 @@
 #include "homing.h"
 #include "machine.h"
 #include "runner.h"
+#include "sequence.h"
 #include "leg_effects.h"
 #include "position.h"
 #include "../../ipc/shared_state.h"
@@ -10,8 +11,6 @@ static uint8_t failWhy = LEGFAIL_NONE;
 static uint8_t failNode;
 
 static uint8_t heldCycle;
-
-bool homingActive(void) { return runnerLive(); }
 
 void homingHold(uint8_t cycle) { heldCycle = cycle; }
 
@@ -30,12 +29,12 @@ uint8_t homingFailNode(void) { return failNode; }
 //
 // A failure fails its cycle: every other running leg is aborted, node by node,
 // and released without a verdict.
-static void homingFail(const LegEnd& e) {
+void homingFail(const LegEnd& e) {
     failWhy  = e.failWhy;
     failNode = e.dummy ? 0 : e.node;
     LegEnd ends[LEG_MAX];
     runnerAbortAll(ends);
-    faultSet(F_HOMING);   // closes the context
+    faultSet(F_HOMING);   // ends the sequence and closes the context
 }
 
 void homingAbandon(uint8_t node, uint8_t why) {
@@ -46,12 +45,48 @@ void homingAbandon(uint8_t node, uint8_t why) {
     homingFail(e);
 }
 
+// The armed leg has not failed yet.
+static const char* armed(const char* why) {
+    if (!why) failWhy = LEGFAIL_NONE;
+    return why;
+}
+
+const char* homingArm(uint8_t node, uint8_t expectKind, uint8_t dir,
+                      bool intendedRetract,
+                      uint16_t startUs, uint16_t floorUs,
+                      uint16_t rampSteps, uint32_t maxSteps,
+                      bool* intentMismatch) {
+    const uint8_t intent = expectKind == HOMING_KIND_INDEX ? LEG_SWEEP
+                         : intendedRetract                 ? LEG_RETRACT
+                                                           : LEG_SEEK;
+    return armed(runnerArm(intent, node, expectKind, dir, intendedRetract,
+                           startUs, floorUs, rampSteps, maxSteps, intentMismatch));
+}
+
+const char* homingArmPark(uint8_t node, int32_t target, uint16_t startUs,
+                          uint16_t floorUs, uint16_t rampSteps) {
+    return armed(runnerArmPark(node, target, startUs, floorUs, rampSteps));
+}
+
+// ── the raw leg: a one-step sequence in the manual homing context ───────────
+
+// The context stays open for the next leg, `setorigin` or `home_end`; the
+// latch is published at that exit, not here.
+static bool legNext(uint8_t) {
+    homingReason = HOMING_WAIT;
+    return false;
+}
+
+static const Sequence legSequence = { SEQ_LEG, legNext, nullptr };
+
 // The first leg opens the context, from IDLE or with only F_LATCHED set
 // (cmdLeg).
-static void homingOpen(void) {
-    failWhy      = LEGFAIL_NONE;   // this leg has not failed yet
+static const char* legStarted(const char* why) {
+    if (why) return why;
     homingReason = HOMING_LEG;
-    contextOpen(CTX_HOMING);
+    if (machineContext != CTX_HOMING) contextOpen(CTX_HOMING);
+    sequenceStart(&legSequence);
+    return nullptr;
 }
 
 const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
@@ -59,21 +94,17 @@ const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
                         uint16_t startUs, uint16_t floorUs,
                         uint16_t rampSteps, uint32_t maxSteps,
                         bool* intentMismatch) {
-    const uint8_t intent = expectKind == HOMING_KIND_INDEX ? LEG_SWEEP
-                         : intendedRetract                 ? LEG_RETRACT
-                                                           : LEG_SEEK;
-    const char* why = runnerArm(intent, node, expectKind, dir,
-                                intendedRetract, startUs, floorUs, rampSteps,
-                                maxSteps, intentMismatch);
-    if (!why) homingOpen();
-    return why;
+    return legStarted(homingArm(node, expectKind, dir, intendedRetract, startUs,
+                                floorUs, rampSteps, maxSteps, intentMismatch));
 }
 
 const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                             uint16_t floorUs, uint16_t rampSteps) {
-    const char* why = runnerArmPark(node, target, startUs, floorUs, rampSteps);
-    if (!why) homingOpen();
-    return why;
+    return legStarted(homingArmPark(node, target, startUs, floorUs, rampSteps));
+}
+
+const char* homingDummyBegin(bool succeed, uint32_t ms) {
+    return legStarted(armed(runnerArmDummy(succeed, ms)));
 }
 
 const char* homingAbort(uint8_t node) {
@@ -81,34 +112,12 @@ const char* homingAbort(uint8_t node) {
     bool released;
     if (const char* why = runnerAbort(node, &e, &released)) return why;
     if (!released) return nullptr;
-    // If something else already owns the machine, the release was all.
-    if (machineContext == CTX_HOMING) homingFail(e);
+    // A homing leg fails its sequence; a traverse leg's step just ends.
+    const uint8_t seq = sequenceId();
+    if (seq != SEQ_NONE && seq != SEQ_TRAVERSE) homingFail(e);
     return nullptr;
 }
 
-const char* homingDummyBegin(bool succeed, uint32_t ms) {
-    const char* why = runnerArmDummy(succeed, ms);
-    if (!why) homingOpen();
-    return why;
-}
-
-// The runner has applied each end's effects (latch, origin); this is the
-// session's verdict on them.
-void homingTick(void) {
-    RunEvent ev;
-    while (machineContext == CTX_HOMING && runnerPop(&ev)) {
-        if (ev.kind == RUN_LEG_END) {
-            if (legEndFailed(ev.intent, ev.end)) homingFail(ev.end);
-            continue;
-        }
-        // The session stays open for the next leg, `setorigin` or `home_end`;
-        // the latch is published at that exit, not here. A step that ended by
-        // an abort, or under a fault, leaves the phase to whoever owns the
-        // machine.
-        if (machineContext == CTX_HOMING) homingReason = HOMING_WAIT;
-    }
-}
-
 bool homingWaiting(void) {
-    return machineContext == CTX_HOMING && !runnerLive();
+    return machineContext == CTX_HOMING && !sequenceLive();
 }
