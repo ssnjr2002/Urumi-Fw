@@ -18,7 +18,7 @@
 #include "../ops/traverse.h"
 #include "../ops/runner.h"
 #include "../ops/leg_effects.h"
-#include "../ops/state.h"
+#include "../ops/machine.h"
 #include "../ops/probe.h"
 #include "../ops/slot_map.h"
 #include "../ops/axes_map.h"
@@ -52,7 +52,7 @@ static void replyProbeExit(const uint8_t* newMap) {
 // A mute node is decided (bus_exclude, or reset) before any map: nothing could
 // run on one anyway.
 static bool degradedDenies() {
-    if (machineState == STATE_ALARM && alarmReason == ALARM_BUS_DEGRADED) {
+    if (machineFaults() & F_BUS) {
         Serial.println("err degraded");
         return true;
     }
@@ -189,7 +189,7 @@ static bool parseFourNodes(const char* args, uint8_t* out) {
 // ── slot_map [<n0> <n1> <n2> <n3>] — bind bus nodes to stream slots ──────────
 // The primitive under axes_map: any node type, no config. No-arg: read back
 // the binding ('-' = empty slot). The four ids become the slot request; if
-// every node engages ALARM_NODE_FAULT clears, otherwise it is raised
+// every node engages F_UNMAPPED clears, otherwise it is raised
 // (slotMapComplete). It knows nothing about axes: a node in a slot other than
 // its axes_map one is not an axis (position.h). Valid IDLE/PAUSED/ALARM;
 // rebinding mid-RUNNING corrupts motion (§6.2), and a probe owns its binding.
@@ -214,7 +214,7 @@ bool cmdSlotMap(const char* args) {
 // ── bus_exclude <id> … — run without mute nodes ──────────────────────────────
 // Mute ids only (`err not_mute`). Commands to an excluded node then answer
 // `excluded`, make-safe exempt, until the next sweep. Not state-gated. With no
-// unexcluded mute node left, ALARM_BUS_DEGRADED settles to IDLE, unmapped.
+// unexcluded mute node left, F_BUS clears and the machine settles unmapped.
 bool cmdBusExclude(const char* args) {
     uint16_t ids = 0;
     const char* p = args;
@@ -228,7 +228,7 @@ bool cmdBusExclude(const char* args) {
     }
     if (!ids) { Serial.println("err usage"); return true; }
     if (!busExclude(ids)) { Serial.println("err not_mute"); return true; }
-    if (machineState == STATE_ALARM && alarmReason == ALARM_BUS_DEGRADED) resumeOrHold();
+    machinePublish();
     Serial.println("ok");
     return true;
 }
@@ -333,21 +333,21 @@ bool cmdSetOrigin(const char* args) {
     // flight for tens of milliseconds. An estop landing inside that window
     // would otherwise be ERASED by the alarm-clearing block at the end, which
     // cannot tell "the fault I was invoked to recover from" apart from "a
-    // fault that arrived while I was working". Snapshot the reason on entry
+    // fault that arrived while I was working". Snapshot the latch on entry
     // and only clear what we came in with.
-    uint8_t alarmAtEntry = alarmReason;
+    const bool estopAtEntry = estopLatched();
     uint8_t badNode;
     const char* badWhy = originDatum(nodes, steps, count, &badNode);
     // A fault that arrived while we were on the bus outranks this command. The
     // datum we just recorded describes a machine that has since stopped hard,
     // so refuse rather than clear it; the estop has dropped the masks, and the
     // operator retries after unalarm.
-    if (alarmReason != alarmAtEntry || machineState == STATE_ESTOP) {
+    if (estopLatched() != estopAtEntry || machineState == STATE_ESTOP) {
         Serial.println("err estop"); return true;
     }
     if (badWhy) { Serial.printf("err node %d %s\n", badNode, badWhy); return true; }
     // Closing a session publishes what its legs left: IDLE, or LIMIT_LATCHED.
-    if (machineState == STATE_HOMING) resumeOrHold();
+    if (machineState == STATE_HOMING) machineSettle();
     Serial.println("ok");
     return true;
 }
@@ -357,7 +357,7 @@ bool cmdSetOrigin(const char* args) {
 bool cmdHomeEnd(const char*) {
     if (homingActive() || homingHeld()) { Serial.println("err busy"); return true; }
     if (!homingWaiting()) { Serial.println("err bad_state"); return true; }
-    resumeOrHold();
+    machineSettle();
     Serial.println("ok");
     return true;
 }
@@ -416,11 +416,11 @@ static bool legGateDenies() {
     // A `home` run owns its session's legs.
     if (homingHeld()) { Serial.println("err busy"); return true; }
     // IDLE opens a session; HOMING continues one, beside any legs on other
-    // nodes (a busy node is leg.h's refusal). LIMIT_LATCHED is the one alarm a
-    // leg leaves (by retracting); every other alarm has its own exit.
+    // nodes (a busy node is leg.h's refusal). F_LATCHED is the one fault a
+    // leg leaves (by retracting); every other fault has its own exit.
     const bool admitted = machineState == STATE_IDLE ||
         machineState == STATE_HOMING ||
-        (machineState == STATE_ALARM && alarmReason == ALARM_LIMIT_LATCHED);
+        (machineState == STATE_ALARM && machineFaults() == F_LATCHED);
     if (!admitted) { Serial.println("err bad_state"); return true; }
     return false;
 }
@@ -464,7 +464,7 @@ static bool legAdmitDenies(uint8_t intent) {
     // A `home` run owns its session's legs.
     if (homingHeld()) { Serial.println("err busy"); return true; }
     const uint8_t s       = machineState;
-    const bool    latched = s == STATE_ALARM && alarmReason == ALARM_LIMIT_LATCHED;
+    const bool    latched = s == STATE_ALARM && machineFaults() == F_LATCHED;
     bool ok = false;
     switch (intent) {
         case LEG_SEEK:
@@ -516,7 +516,7 @@ bool cmdLeg(const char* args) {
     // The target is in the node's own frame, so it means something only while
     // the Pico holds that node's origin. Checked before any bus I/O.
     if (park && !originValid(node)) { Serial.println("err not_homed"); return true; }
-    // A span's latch reaches the machine (ALARM_LIMIT_LATCHED) only through a
+    // A span's latch reaches the machine (F_LATCHED) only through a
     // bound axis.
     if (intent == LEG_SPAN && !node_isAxis(node)) { Serial.println("err unbound"); return true; }
     if (intent == LEG_UNLATCH && !nodeLatchGet(node)) {
@@ -878,11 +878,8 @@ bool cmdHallScan(const char* args) {
 bool cmdProbeMap(const char* args) {
     if (probeActive()) { Serial.println("err busy"); return true; }
     if (degradedDenies()) return true;
-    // NOT busGateDenies(). That gate admits STATE_ALARM, correctly, because
-    // `slot_map` / `axes_map` is how a machine LEAVES ALARM_NODE_FAULT -- but a probe session
-    // is not an alarm exit. probeBegin writes STATE_PROBING unconditionally, so
-    // entering from ALARM would clear the state while leaving alarmReason set,
-    // and probe_end would then land an alarmed machine in IDLE reading as ready.
+    // NOT busGateDenies(), which admits ALARM: a probe session is not an
+    // alarm exit.
     if (machineState != STATE_IDLE && !jobPaused()) {
         Serial.println("err bad_state"); return true;
     }

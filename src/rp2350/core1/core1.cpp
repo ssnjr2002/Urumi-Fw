@@ -57,11 +57,10 @@ static void dropPlanner() {
 
 void processBus() {
     // 1. Estop — drop the ring, invalidate position, settle into ALARM.
-    //    ALARM is sticky until Core 0 issues setorigin / unalarm.
+    //    Core 0 holds ALARM until `unstop` clears its estop latch.
     if (machineState == STATE_ESTOP) {
         pauseRequested = abortRequested = false;  // estop outranks a pending ramp
         dropPlanner();                 // any job is unrecoverable
-        alarmReason  = ALARM_ESTOP;    // set reason before the ALARM transition
 
         // Actually de-energise, rather than only claiming to. axes_enabled is
         // host-side bookkeeping; clearing it alone left every node's EN pin
@@ -72,8 +71,8 @@ void processBus() {
         //
         // axes_enabled is Core 0's projection of nodeEnabled, which this sweep
         // clears per confirming node. The sweep is make-safe, so it also
-        // disengages; Core 0 fences every bound slot on the ALARM_ESTOP edge,
-        // since these replies are not handed over.
+        // disengages; Core 0 fences every bound slot at `stop`, since these
+        // replies are not handed over.
         //
         // Broadcast first so the stop is parallel, then confirm it serially. Both
         // run before the ALARM transition, so the invariant above is unchanged:

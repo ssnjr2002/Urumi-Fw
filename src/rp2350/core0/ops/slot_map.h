@@ -3,7 +3,7 @@
 #include "../../ipc/core1_rpc.h"    // RpcResult
 
 // slot_map.h — which node listens on each stream slot, any type, and the
-// ALARM_NODE_FAULT that follows when the binding does not match the request.
+// F_UNMAPPED that follows when the binding does not match the request.
 // It knows nothing about axes; axes_map.h applies through it.
 //
 // Applying is "deliberately dumb, not a diff": park every node that holds a
@@ -21,8 +21,8 @@
 // Store `desired` (four bus ids or SLOT_NONE) as the slot request and apply it.
 // Returns nullptr, or the refusal if a node refused to engage or a fence
 // stayed: slots up to the failing one keep their new binding and the rest are
-// unbound or fenced, so the request is unmet and the machine is in
-// ALARM_NODE_FAULT. `failed`, when non-null, gets that node.
+// unbound or fenced, so the request is unmet and F_UNMAPPED is
+// set. `failed`, when non-null, gets that node.
 const char* slotMapApply(const uint8_t* desired, uint8_t* failed = nullptr);
 
 // The silent form, for the axes layer: store `req` as the slot request, marked
@@ -61,7 +61,3 @@ bool slotMapRetry(void);
 
 // Drop the slot request. The soft-reset wipe.
 void slotMapForget(void);
-
-// Settle the state after the binding changed: an unmet request raises
-// ALARM_NODE_FAULT; a met one clears ALARM_NODE_FAULT.
-void slotMapGate(void);

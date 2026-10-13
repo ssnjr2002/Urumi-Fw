@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "homing.h"
+#include "machine.h"
 #include "runner.h"
 #include "leg_effects.h"
 #include "position.h"
@@ -34,8 +35,8 @@ static void homingFail(const LegEnd& e) {
     failNode = e.dummy ? 0 : e.node;
     LegEnd ends[LEG_MAX];
     runnerAbortAll(ends);
-    alarmReason  = ALARM_HOMING_FAIL;
-    machineState = STATE_ALARM;
+    faultSet(F_HOMING);
+    machineSettle();
 }
 
 void homingAbandon(uint8_t node, uint8_t why) {
@@ -46,14 +47,11 @@ void homingAbandon(uint8_t node, uint8_t why) {
     homingFail(e);
 }
 
-// The first leg opens the session. The only alarm a leg is admitted from is
-// ALARM_LIMIT_LATCHED (cmdLeg), and the latch mask keeps that fact, so the
-// reason is cleared here: anything found in it later is new. The exit
-// re-derives it.
+// The first leg opens the session, from IDLE or with only F_LATCHED set
+// (cmdLeg); the exit re-derives the state from the mask.
 static void homingOpen(void) {
     failWhy      = LEGFAIL_NONE;   // this leg has not failed yet
     homingReason = HOMING_LEG;
-    alarmReason  = ALARM_NONE;
     __dmb();
     machineState = STATE_HOMING;
 }

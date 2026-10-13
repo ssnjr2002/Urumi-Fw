@@ -56,19 +56,19 @@
 // docs/comms_architecture.md §4.2 + §4.6.
 //
 //   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
-//   STATUS_RSP:  [0xA7]                                    (30 bytes)
+//   STATUS_RSP:  [0xA7]                                    (31 bytes)
 //     [0]      magic 0xA7
 //     [1]      machineState
 //     [2]      axes_enabled
 //     [3]      axes_homed
-//     [4]      alarmReason
-//     [5]      reason              — the current state's: job, jogging,
+//     [4..5]   faults     u16 LE   — machineFaults() (core0/ops/machine.h)
+//     [6]      reason              — the current state's: job, jogging,
 //                                   homing or probing; 0 otherwise
-//     [6..7]   bufCount   u16 LE   — planner blocks queued
-//     [8..23]  pos[4]     i32 LE   — machinePos, x/y/z/a
-//     [24]     expectedSeq         — next wire seq the data plane will execute
-//     [25..28] queuedUs   u32 LE   — planned motion time queued, microseconds
-//     [29]     CRC8 over [0..28]
+//     [7..8]   bufCount   u16 LE   — planner blocks queued
+//     [9..24]  pos[4]     i32 LE   — machinePos, x/y/z/a
+//     [25]     expectedSeq         — next wire seq the data plane will execute
+//     [26..29] queuedUs   u32 LE   — planned motion time queued, microseconds
+//     [30]     CRC8 over [0..29]
 //
 // One frame, one coherent sample. Position used to need a separate text query on
 // the text plane, so state and position could disagree by tens of ms; per §1
@@ -86,7 +86,7 @@
 #define STATUS_RSP_V1    0xA6   // retired 9-byte frame — never emit; reserved so
                                 // the value is not reused for something else
 #define STATUS_RSP       0xA7
-#define STATUS_RSP_SIZE  30
+#define STATUS_RSP_SIZE  31
 
 // Binary `seqreset` (§4.3): one byte, zeroes expectedSeq, replies ACK(0).
 // The text command sits on the critical path of every stream start — the one

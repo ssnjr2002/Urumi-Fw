@@ -13,6 +13,7 @@
 #include "../ops/probe.h"
 #include "../ops/frames.h"
 #include "../ops/mesh.h"
+#include "../ops/machine.h"
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
 
@@ -21,7 +22,8 @@ namespace {
 // Everything a key can report, read up front so the reply describes one
 // instant rather than the span of the print.
 struct Snap {
-    uint8_t  state, enabled, homed, alarm, job, latched;
+    uint8_t  state, enabled, homed, job, latched;
+    uint16_t faults;
     uint8_t  homingReason, homeFailWhy, homeFailNode, homeCycle;
     uint8_t  probingReason, probeCause, probeRetries, joggingReason;
     int32_t  probeSteps;
@@ -43,7 +45,7 @@ void takeSnap(Snap& s) {
     s.state         = machineState;
     s.enabled       = axes_enabled;
     s.homed         = axes_homed;
-    s.alarm         = alarmReason;
+    s.faults        = machineFaults();
     s.job           = jobReason;
     s.latched       = homingLatched;
     s.homingReason  = homingReason;
@@ -77,10 +79,10 @@ enum KeyResult : uint8_t { KEY_OK, KEY_NA, KEY_FAILED };
 typedef KeyResult (*KeyFn)(const Snap&, char* out, size_t n);
 
 bool homeFailed(const Snap& s) {
-    return s.alarm == ALARM_HOMING_FAIL && s.homeFailWhy != LEGFAIL_NONE;
+    return (s.faults & F_HOMING) && s.homeFailWhy != LEGFAIL_NONE;
 }
 bool probeReported(const Snap& s) {
-    return s.state == STATE_PROBING || s.alarm == ALARM_PROBE_FAIL;
+    return s.state == STATE_PROBING || (s.faults & F_PROBE);
 }
 
 KeyResult fmtU(char* out, size_t n, unsigned v)            { snprintf(out, n, "%u", v); return KEY_OK; }
@@ -113,7 +115,7 @@ const Key kKeys[] = {
     { "state",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.state); } },
     { "enabled",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.enabled, 2); } },
     { "homed",     [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.homed, 2); } },
-    { "alarm",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.alarm); } },
+    { "faults",    [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.faults, 4); } },
     { "job",       [](const Snap& s, char* o, size_t n) {
         return s.state == STATE_JOB ? fmtU(o, n, s.job) : KEY_NA; } },
     { "latched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.latched, 2); } },
@@ -123,7 +125,7 @@ const Key kKeys[] = {
     { "homenode",  [](const Snap& s, char* o, size_t n) {
         return homeFailed(s) ? fmtU(o, n, s.homeFailNode) : KEY_NA; } },
     { "cfgerr",    [](const Snap& s, char* o, size_t n) {
-        if (s.alarm != ALARM_CONFIG) return KEY_NA;
+        if (!(s.faults & F_CONFIG)) return KEY_NA;
         snprintf(o, n, "%s", machineCfgBlockName()); return KEY_OK; } },
     { "homing",    [](const Snap& s, char* o, size_t n) {
         return s.state == STATE_HOMING ? fmtU(o, n, s.homingReason) : KEY_NA; } },

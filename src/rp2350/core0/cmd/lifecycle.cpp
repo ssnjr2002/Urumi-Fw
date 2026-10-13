@@ -11,7 +11,7 @@
 #include "../planner/queue.h"  // plannerEndContour
 #include "../ops/slot_map.h"
 #include "../ops/position.h"
-#include "../ops/state.h"
+#include "../ops/machine.h"
 #include "../ops/bus.h"
 #include "../config/machine_cfg.h"
 #include "../usb_protocol.h" // BUS_ADDR_MAX
@@ -21,7 +21,7 @@
 // here, before the reply; the fenced slots' positions are cleared once Core 1
 // has stopped writing them (FACT_ESTOP_SWEPT, ops/observe.cpp).
 bool cmdStop(const char*) {
-    machineState = STATE_ESTOP;
+    estopLatch();
     originInvalidateAll();
     slotFenceAllBound();
     Serial.println("ok");
@@ -31,11 +31,11 @@ bool cmdStop(const char*) {
 // Make safe every touched node (energised, or holding a slot) that is not
 // excluded; an excluded node's slot stays fenced. Each
 // confirmation frees that node's slot and clears its fence. Refused, with the
-// unconfirmed ids, until all confirm; then the requests are forgotten and the
-// machine settles IDLE (or ALARM_BUS_DEGRADED), unmapped, de-energised,
-// un-homed.
+// unconfirmed ids, until all confirm; then the requests are forgotten, the
+// latch clears and the machine settles IDLE (or ALARM on a held fault),
+// unmapped, de-energised, un-homed. Refused until Core 1's sweep published ALARM.
 bool cmdUnstop(const char*) {
-    if (machineState != STATE_ALARM || alarmReason != ALARM_ESTOP) {
+    if (!estopLatched() || machineState != STATE_ALARM) {
         Serial.println("err bad_state"); return true;
     }
     uint16_t unconfirmed = 0;
@@ -54,7 +54,8 @@ bool cmdUnstop(const char*) {
     }
     slotMapForget();
     axesReqForget();
-    resumeOrHold();
+    estopClear();
+    machineSettle();
     Serial.println("ok");
     return true;
 }
@@ -126,15 +127,15 @@ bool cmdCancel(const char*) {
 }
 
 #ifdef PICO_ALLOW_UNCONFIGURED
-// Leave ALARM_CONFIG unconfigured: the stored file is kept, and ignored until
+// Leave F_CONFIG unconfigured: the stored file is kept, and ignored until
 // power-off.
 bool cmdUncfg(const char*) {
-    if (machineState != STATE_ALARM || alarmReason != ALARM_CONFIG) {
+    if (!(machineFaults() & F_CONFIG)) {
         Serial.println("err bad_state");
         return true;
     }
     machineCfgIgnore();
-    resumeOrHold();
+    machinePublish();
     Serial.println("ok");
     return true;
 }

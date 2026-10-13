@@ -29,7 +29,7 @@ Contains config for 4 MCU types:
 
 Controller Build Flags:
 
-* `PICO_ALLOW_UNCONFIGURED`: Compile `uncfg`, which leaves `ALARM_CONFIG` (no usable config at boot) for IDLE unconfigured until power-off. Off by default.
+* `PICO_ALLOW_UNCONFIGURED`: Compile `uncfg`, which clears the CONFIG fault (no usable config at boot), leaving the machine unconfigured until power-off. Off by default.
 
 Controller Config:
 

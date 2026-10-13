@@ -24,7 +24,8 @@
 
 // ─── Machine State ──────────────────────────────────────────────────────────
 // Single authoritative state for the controller, owned across both cores.
-//   ESTOP/ALARM are sticky — only cleared by setorigin / unalarm (Core 0).
+//   ALARM is published from the fault mask (core0/ops/machine.h): held while
+//   any fault is set or the estop is latched.
 //   JOB holds a job from its first record until `cancel`, an abort or estop;
 //   its jobReason says what it is doing (docs/plans/motion-sessions.md).
 //
@@ -35,14 +36,14 @@
 //   JOB     → IDLE      Core 1, abort finished; Core 0 `cancel` at rest
 //   any     → ESTOP     Core 0 `stop`
 //   ESTOP   → ALARM     Core 1, after dropping the ring (position now invalid)
-//   ALARM   → IDLE      Core 0 `setorigin` (sets the datum) or `unalarm`
+//   ALARM  ↔ IDLE       Core 0 machinePublish, from the fault mask
 //   IDLE    → HOMING    Core 0 `home`, once the node acks the arm
 //   HOMING  → IDLE      Core 0 supervisor, node's pulser stopped as expected
-//   HOMING  → ALARM     Core 0 supervisor, ALARM_HOMING_FAIL (see homing.cpp)
+//   HOMING  → ALARM     Core 0 supervisor, F_HOMING (see homing.cpp)
 //   IDLE    → TRAVERSE  Core 0 `leg park|span`, once the node acks the arm
-//   ALARM   → TRAVERSE  Core 0 `leg unlatch`, from ALARM_LIMIT_LATCHED
-//   TRAVERSE → IDLE     Core 0 supervisor, step ended (or ALARM, resumeOrHold)
-//   TRAVERSE → ALARM    Core 0 supervisor, ALARM_HOMING_FAIL (see traverse.cpp)
+//   ALARM   → TRAVERSE  Core 0 `leg unlatch`, with only F_LATCHED set
+//   TRAVERSE → IDLE     Core 0 supervisor, step ended (or ALARM, machineSettle)
+//   TRAVERSE → ALARM    Core 0 supervisor, F_HOMING (see traverse.cpp)
 //
 // Enum values are the wire contract (get state=<n>). HOMING is entered only
 // by `home` and is a MOTION state. 1 and 4 (RUNNING, PAUSED) are retired.
@@ -65,48 +66,6 @@ enum MachineState : uint8_t {
     STATE_TRAVERSE = 8,
     // A job on the planner (BEZIER records), with its jobReason.
     STATE_JOB = 9,
-};
-
-// Reason codes (state_redesign Layer 2): metadata on WHY we are in a state, so
-// no sub-states are needed. Values are the wire contract (get alarm=/reason=).
-enum AlarmReason : uint8_t {
-    ALARM_NONE       = 0,
-    ALARM_ESTOP      = 1,   // stop command or poison pill
-    // Boot found no usable config: none, an unmountable filesystem, a bad file,
-    // or one that does not decode (get cfgerr=). Held until a CFG_SET
-    // commit, or `uncfg` with PICO_ALLOW_UNCONFIGURED.
-    ALARM_CONFIG     = 2,
-    ALARM_SOFT_LIMIT = 3,   // reserved — position exceeded bounds (soft limits later)
-    ALARM_HOMING_FAIL= 4,   // home ended wrong: no switch found, or none cleared
-    // The slot binding does not match the slot request (slotMapComplete): a
-    // node failed to engage, or an axes_map axis is pending. Held until a map
-    // that is met, or `unalarm`'s retry, clears it.
-    ALARM_NODE_FAULT = 5,
-    // A limit switch is held down. Not a failure: it is where a SEEK is
-    // supposed to end, and legs 1 and 3 of a home both finish here
-    // (docs/homing.md §2.6). It is an alarm because the machine genuinely
-    // cannot do work in this condition — the node refuses stream steps
-    // outright while its limit is latched, so a job admitted here would run
-    // three axes and silently drop the fourth. ALARM already gates the data
-    // plane while busGateDenies() still admits control commands, which is
-    // exactly the gating a mid-home pause wants, for free.
-    ALARM_LIMIT_LATCHED = 6,
-    // A probe leg ended wrong (docs/tool_probe.md §5.11.1). Mirrors
-    // ALARM_HOMING_FAIL. Most probe failures leave the Z datum intact; only
-    // the two that lost track of steps void it, which the probe supervisor
-    // does itself, per cause.
-    //
-    // A host that does not know this value must not read it as "no alarm". The
-    // web host currently degrades an unrecognised AlarmReason silently, so it
-    // needs teaching alongside this.
-    ALARM_PROBE_FAIL = 7,
-    // The boot sweep left a node mute (core0/ops/bus.h) that is not excluded.
-    // The default map is not applied. Held until `bus_exclude`, or a `reset`
-    // the node answers. Same host caveat as above.
-    ALARM_BUS_DEGRADED = 8,
-    // Core 0 fell behind the fact ring (ipc/core1_facts.h) and a fact was
-    // dropped. A bug, not an operating condition. Same host caveat as above.
-    ALARM_FACT_RING_FULL = 9,
 };
 
 // What a job is doing (meaningful while STATE_JOB). Core 0 writes the entries
@@ -163,7 +122,6 @@ enum JoggingReason : uint8_t {
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
 extern volatile uint8_t machineState;     // one of MachineState
-extern volatile uint8_t alarmReason;      // one of AlarmReason   (set before STATE_ALARM)
 extern volatile uint8_t jobReason;        // one of JobReason (meaningful while JOB)
 extern volatile uint8_t probingReason;    // one of ProbingReason (meaningful while PROBING)
 extern volatile uint8_t homingReason;     // one of HomingReason (meaningful while HOMING)

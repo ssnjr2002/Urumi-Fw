@@ -11,7 +11,7 @@
 // homed linear node parks, an unhomed one homes, a homed rotary one stays.
 //
 // The run holds the homing session (homingHold) from its first leg to its
-// last datum; a failure is the session's (ALARM_HOMING_FAIL with homefail= and
+// last datum; a failure is the session's (F_HOMING with homefail= and
 // homenode=), and `stop` ends it as it ends any session.
 // ─────────────────────────────────────────────────────────────────────────────
 

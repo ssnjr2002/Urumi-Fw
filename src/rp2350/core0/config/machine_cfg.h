@@ -27,8 +27,8 @@ const MachineCfg& machineCfg();       // meaningful only when machineCfgValid()
 // or CFG_DEC_OK once a config is adopted. For `cfg`.
 CfgDecodeError    machineCfgError();
 
-// No usable config and `uncfg` has not set it aside: resumeOrHold() holds
-// ALARM_CONFIG. Cleared by an adopted CFG_SET, or by machineCfgIgnore() until
+// No usable config and `uncfg` has not set it aside: F_CONFIG
+// (ops/machine.h). Cleared by an adopted CFG_SET, or by machineCfgIgnore() until
 // power-off (soft reset keeps it; the config loads only in setup()).
 bool machineCfgBlocking();
 void machineCfgIgnore();

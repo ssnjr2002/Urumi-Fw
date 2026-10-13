@@ -7,7 +7,7 @@
 // The machine stays in STATE_HOMING across legs (a session); homingReason says
 // whether any leg runs. Legs on different nodes run in parallel; a failure
 // aborts every other running leg (the cycle) and alarms. `setorigin` and
-// `home_end` close it, as do estop and ALARM_HOMING_FAIL. Running and judging
+// `home_end` close it, as do estop and F_HOMING. Running and judging
 // a leg is leg.h's.
 
 // Arm ONE LEG on `node` (legArm); the first opens the session. Returns nullptr,
@@ -59,9 +59,9 @@ bool homingWaiting(void);
 // The node whose leg failed (0 for a dummy). Meaningful as homingFailWhy.
 uint8_t homingFailNode(void);
 
-// Why the last leg failed, LEGFAIL_*. ALARM_HOMING_FAIL says THAT one did;
+// Why the last leg failed, LEGFAIL_*. F_HOMING says THAT one did;
 // this says which fault, because they are diagnosed in completely different
-// places. Meaningful only while alarmReason is ALARM_HOMING_FAIL; reset at the
+// places. Meaningful only while F_HOMING is set; reset at the
 // next arm.
 uint8_t homingFailWhy(void);
 

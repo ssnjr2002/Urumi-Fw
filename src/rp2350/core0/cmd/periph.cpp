@@ -15,6 +15,7 @@
 #include "parse.h"
 #include "gate.h"
 #include "../ops/slot_map.h"
+#include "../ops/machine.h"
 #include "../ops/position.h"
 #include "../../ipc/core1_rpc.h"
 
@@ -106,7 +107,7 @@ bool cmdMakeSafe(const char* args) {
         slotMapDrop(node);
         axesReqDrop(node);
     }
-    slotMapGate();
+    machinePublish();
     if (r != RPC_OK) {
         Serial.printf("node %d %s\n", node, rpcResultText(r)); return true;
     }

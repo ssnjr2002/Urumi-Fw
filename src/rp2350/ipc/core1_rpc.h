@@ -87,11 +87,8 @@ typedef enum {
                                 //  route -- named so the leg result does not
                                 //  have to lie about why it stopped)
 
-// True for the two causes that lose the Z datum. One place, because
-// position.cpp keys origin invalidation on a short list of reasons and a probe
-// must not join it wholesale -- a probe-fail alarm that used ALARM_ESTOP or
-// ALARM_SOFT_LIMIT would invalidate on every failure, including the five that
-// leave the measurement sound.
+// True for the causes that lose the Z datum; the rest leave the measurement
+// sound, so a probe failure does not void it wholesale.
 static inline bool probeCauseVoidsDatum(uint8_t c) {
     return c == PROBE_POS_MISMATCH || c == PROBE_DEADLINE || c == PROBE_ESTOP;
 }

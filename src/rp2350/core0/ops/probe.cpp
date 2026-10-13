@@ -2,11 +2,11 @@
 #include <Arduino.h>
 #include <string.h>
 #include "probe.h"
+#include "machine.h"
 #include "position.h"
 #include "slot_map.h"
 #include "axes_map.h"
 #include "refusal.h"
-#include "state.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
 #include "hardware/sync.h"     // __dmb
@@ -138,11 +138,11 @@ static void probeRestore(const uint8_t* map) {
 // Back to wherever the session started. A jog during pause returns to PAUSED
 // because the job is still suspended, and a mid-job tool swap is that case
 // exactly — so the session cannot simply land in IDLE. A restore that left the
-// slot request unmet lands in ALARM_NODE_FAULT instead (resumeOrHold).
+// slot request unmet lands in ALARM with F_UNMAPPED instead (machineSettle).
 static void probeSettle(void) {
     __dmb();
     if (!slotMapComplete())
-        resumeOrHold();
+        machineSettle();
     else
         machineState = (returnState == STATE_JOB) ? STATE_JOB : STATE_IDLE;
 }
@@ -165,12 +165,12 @@ static void probeSettle(void) {
 // command.
 // An estop arrives here as a leg result, but it is not this module's verdict to
 // publish. Core 1's estop path owns the transition -- it flushes, sweeps the bus
-// and sets ALARM_ESTOP -- and that outranks a probe-fail reason, because the
+// and publishes ALARM under the estop latch -- and that outranks F_PROBE, because the
 // recovery ladders genuinely differ: a probe failure de-energises nothing and is
 // cleared by `unalarm`, while an estop de-energises the whole bus, makes every
 // axis back-drivable and needs a re-home. So the session is still torn down (the
 // invariant is that ALARM is never entered with a probe binding live) but the
-// reason and the state are left alone.
+// fault and the state are left alone.
 static void probeFail(uint8_t cause) {
     // Capture the reason BEFORE restoring, and do not let the restore overwrite
     // it. Otherwise a POLL failure whose restore also fails reports as a config
@@ -186,9 +186,8 @@ static void probeFail(uint8_t cause) {
 
     if (cause == PROBE_ESTOP) return;   // Core 1 owns this transition
 
-    alarmReason = ALARM_PROBE_FAIL;
-    __dmb();
-    machineState = STATE_ALARM;
+    faultSet(F_PROBE);
+    machineSettle();
 }
 
 // ── probe_map ────────────────────────────────────────────────────────────────

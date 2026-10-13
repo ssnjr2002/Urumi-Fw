@@ -5,9 +5,9 @@
 // unlatch), outside a homing session (docs/homing.md §2.2).
 //
 // The first leg opens the state and every leg armed while the step runs joins
-// it. The state closes itself when the step ends, through resumeOrHold: IDLE,
-// or ALARM_LIMIT_LATCHED when a span ended on its switch. A failed park or
-// unlatch fails the step as a homing leg does (ALARM_HOMING_FAIL); a span that
+// it. The state closes itself when the step ends, through machineSettle: IDLE,
+// or ALARM with F_LATCHED when a span ended on its switch. A failed park or
+// unlatch fails the step as a homing leg does (F_HOMING); a span that
 // found no switch is not a failure.
 
 // Arm a span or unlatch leg (LegIntent) on `node`, as homingBegin. Returns

@@ -18,7 +18,7 @@
 #include "ops/mesh.h"
 #include "ops/slot_map.h"
 #include "ops/bus.h"
-#include "ops/state.h"
+#include "ops/machine.h"
 #include "ops/homing.h"
 #include "ops/runner.h"
 #include "ops/traverse.h"
@@ -116,13 +116,13 @@ void loop() {
     // 5. WIPE ALL GLOBAL STATE (Clean Slate!)
     // Held in ALARM until section B settles it: with a valid config the
     // controller commits the defaultHead map as soon as Core 1 is released;
-    // without one nothing is requested and the machine lands in ALARM_CONFIG
-    // (IDLE, unmapped, after `uncfg`).
+    // without one nothing is requested and the machine lands in ALARM with
+    // F_CONFIG (IDLE, unmapped, after `uncfg`).
     // The slot table (bindings and fences) survives: only power-on clears it.
     slotMapReset();
     slotMapForget();
     machineState = STATE_ALARM;
-    alarmReason = ALARM_NODE_FAULT;
+    machineReset();
     jobReason = JOB_BUFFERING;
     probingReason = PROBING_CLEAR;
     homingReason = HOMING_WAIT;
@@ -159,7 +159,7 @@ void loop() {
     Serial.printf("RS485 controller (%d baud)\n", RS485_BAUD);
 
     busSweep();
-    if (busDegraded()) resumeOrHold();     // ALARM_BUS_DEGRADED, no map
+    if (busDegraded()) machineSettle();    // F_BUS, no map
     else               controllerApplyDefaultMap();
     // The boot sequence is done; the banner above is informational.
     Serial.println("ready");
@@ -184,6 +184,8 @@ void loop() {
         // and `stop` shut for the whole of it is exactly what a supervisor out
         // here avoids.
         probeTick();
+        // Last: what the pass left, as IDLE or ALARM.
+        machinePublish();
         // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
         // responses synchronously inside handleCommand (relayNode), so there is no
         // async response stream to drain here. Backpressure is handled by the

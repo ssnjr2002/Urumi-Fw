@@ -16,7 +16,6 @@
 
 // Machine state + reason codes (see shared.h for the transition map)
 volatile uint8_t machineState   = STATE_IDLE;
-volatile uint8_t alarmReason    = ALARM_NONE;
 volatile uint8_t jobReason      = JOB_BUFFERING;
 volatile uint8_t probingReason  = PROBING_CLEAR;
 volatile uint8_t homingReason   = HOMING_WAIT;

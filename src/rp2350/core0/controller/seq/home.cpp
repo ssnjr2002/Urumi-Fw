@@ -7,7 +7,7 @@
 #include "../../config/machine_cfg.h"
 #include "../../ops/homing.h"
 #include "../../ops/position.h"
-#include "../../ops/state.h"
+#include "../../ops/machine.h"
 #include "../../ops/bus.h"
 #include "../../usb_protocol.h"       // NODE_FLAG_*, HOMING_KIND_*
 #include "../../../ipc/shared_state.h"
@@ -297,7 +297,7 @@ void homeTick(void) {
         const uint8_t next = cycleAfter(cycleNow);
         if (next == 0) {
             runEnd();
-            resumeOrHold();        // IDLE, or what the legs left latched
+            machineSettle();       // IDLE, or what the legs left latched
             return;
         }
         cycleStart(next);

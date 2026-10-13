@@ -1,29 +1,17 @@
 #include <Arduino.h>
 #include "observe.h"
 #include "position.h"
+#include "machine.h"
 #include "../../ipc/core1_facts.h"
 #include "../../ipc/shared_state.h"
-#include "hardware/sync.h"
 
-// A fact was dropped. Only an estop's sweep has an effect here, and ALARM_ESTOP
-// still says whether one happened. The alarm is raised from IDLE only, under
-// the lock Core 1 enters motion under; elsewhere it waits, and an alarm already
-// raised keeps its own reason.
+// A fact was dropped. Only an estop's sweep has an effect here: past it (the
+// latch set, ALARM published) the fenced positions are cleared as the fact
+// would have.
 static void factsLost(void) {
-    const uint8_t st = machineState;
-    __dmb();   // state before reason, the reverse of how they are published
-    if (st == STATE_ALARM && alarmReason == ALARM_ESTOP) slotFencedPosClear();
-    if (st == STATE_ALARM) { core1FactsLostClear(); return; }
-
-    const uint32_t s = spin_lock_blocking(plannerLock);
-    const bool idle = machineState == STATE_IDLE;
-    if (idle) {
-        alarmReason = ALARM_FACT_RING_FULL;
-        __dmb();
-        machineState = STATE_ALARM;
-    }
-    spin_unlock(plannerLock, s);
-    if (idle) core1FactsLostClear();
+    if (estopLatched() && machineState == STATE_ALARM) slotFencedPosClear();
+    faultSet(F_FACTS);
+    core1FactsLostClear();
 }
 
 void observeTick(void) {

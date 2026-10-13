@@ -5,9 +5,9 @@
 #include <stdio.h>             // snprintf
 #include <string.h>            // memcpy
 #include "slot_map.h"
+#include "machine.h"
 #include "refusal.h"
 #include "position.h"
-#include "state.h"
 #include "../../ipc/shared_state.h"
 #include "hardware/sync.h"     // __dmb
 
@@ -104,7 +104,7 @@ uint8_t slotMapCommit(const uint8_t* req, bool axes, uint8_t skip, RpcResult* re
     haveSlotReq = true;
     fromAxes    = axes;
     const uint8_t bad = applySlots(slotReq, skip, res, fenced);
-    slotMapGate();
+    machinePublish();
     return bad;
 }
 
@@ -157,25 +157,11 @@ bool slotMapRetry(void) {
     RpcResult r;
     uint8_t fenced;
     applySlots(slotReq, /*skip=*/0, &r, &fenced);
-    slotMapGate();
+    machinePublish();
     return slotMapComplete();
 }
 
 void slotMapForget(void) {
     haveSlotReq = false;
     fromAxes    = false;
-}
-
-void slotMapGate(void) {
-    // An unmet request would let motion ingest accept a job and stream to slots
-    // no node is listening on. A probe's binding is a met slot request like any
-    // other, so NODE_FAULT never needs to know about it.
-    if (!slotMapComplete()) {
-        // Reason before state, matching how Core 1 publishes the pair.
-        alarmReason  = ALARM_NODE_FAULT;
-        __dmb();
-        machineState = STATE_ALARM;
-    } else if (machineState == STATE_ALARM && alarmReason == ALARM_NODE_FAULT) {
-        resumeOrHold();
-    }
 }

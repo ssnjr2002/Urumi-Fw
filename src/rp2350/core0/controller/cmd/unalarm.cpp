@@ -1,34 +1,39 @@
-// unalarm.cpp — leave an alarm once the conditions behind it are gone.
+// unalarm.cpp — clear the event faults and fix what can be fixed at once.
 
 #include <Arduino.h>
 #include "table.h"
-#include "../../ops/state.h"
+#include "../../ops/machine.h"
 #include "../../ops/slot_map.h"
 #include "../../ops/axes_map.h"
 #include "../../../ipc/shared_state.h"
 
+// The event bits' cleanup ran when they were raised, so they just clear. The
+// held bits are fixed in dependency order and the first that cannot be stops
+// it: a mute node is `bus_exclude`'s, then an unmet slot request is retried
+// once (docs/engage_and_axis_map.md §6.1; one from axes_map re-checks its
+// pending axes first). F_CONFIG and F_LATCHED have no instant fix (a config;
+// a retract) and are reported in what is left.
 bool cmdUnalarm(const char*) {
     if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
     // The estop's exit is `unstop`: a map retry here would leave its nodes
     // unconfirmed.
-    if (alarmReason == ALARM_ESTOP) { Serial.println("err estop"); return true; }
-    // An unmet slot request is retried once (docs/engage_and_axis_map.md §6.1);
-    // one from axes_map re-checks its pending axes first.
-    bool met = slotMapComplete();
-    if (!met) {
+    if (estopLatched()) { Serial.println("err estop"); return true; }
+    faultsClearEvents();
+    if (machineFaults() & F_BUS) {
+        machinePublish();
+        Serial.println("err degraded"); return true;
+    }
+    if (!slotMapComplete()) {
+        bool met;
         if (slotMapFromAxes()) { axesMapRetry(); met = slotMapComplete(); }
         else                   met = slotMapRetry();
+        if (!met) {
+            machinePublish();
+            Serial.println("err unmapped"); return true;
+        }
     }
-    if (!met) {
-        Serial.println("err unmapped");
-        return true;
-    }
-    // Not a plain clear-to-IDLE: an axis may still be standing on its switch,
-    // and `unalarm` does not move anything, so the condition that raised
-    // ALARM_LIMIT_LATCHED is still true afterwards. Answering `ok` and dropping
-    // to IDLE would let a job start against a node that refuses stream steps.
-    // Retract it (a `home` in the opposite direction) to leave that alarm.
-    resumeOrHold();
-    Serial.println("ok");                  // position still invalid — run setorigin
+    machinePublish();
+    // Position is still invalid: run setorigin.
+    Serial.printf("ok faults=0x%04x\n", machineFaults());
     return true;
 }

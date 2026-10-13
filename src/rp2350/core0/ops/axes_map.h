@@ -19,7 +19,7 @@ enum AxesMapResult : uint8_t {
 // unless `keepWrongType`, when it stays pending like a node that did not answer
 // (`node <id> timeout`); a fenced node that does not confirm stays pending
 // with `fenced …`. A pending axis's slot is parked, not engaged, the other
-// slots bind as requested, and the machine is in ALARM_NODE_FAULT until
+// slots bind as requested, and F_UNMAPPED is set until
 // `unalarm` re-checks.
 // `keepWrongType` is for the config's default map only, which has no one to
 // refuse. `*why`, when non-null, gets nullptr or the refusal (refusal.h).

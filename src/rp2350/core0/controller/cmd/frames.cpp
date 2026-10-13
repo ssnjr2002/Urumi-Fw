@@ -17,6 +17,7 @@
 #include "../../ops/frames.h"
 #include "../../ops/mesh.h"
 #include "../../ops/position.h"
+#include "../../ops/machine.h"
 #include "../../../ipc/shared_state.h"
 
 static bool framesGateDenies() {
@@ -51,7 +52,7 @@ bool cmdSelect(const char* args) {
     if (framesGateDenies()) return true;
     // A committed map ends a probe session; selecting is not the way out.
     if (machineState == STATE_PROBING) { Serial.println("err bad_state"); return true; }
-    if (machineState == STATE_ALARM && alarmReason == ALARM_BUS_DEGRADED) {
+    if (machineFaults() & F_BUS) {
         Serial.println("err degraded"); return true;
     }
 

@@ -1,20 +1,17 @@
 #include <Arduino.h>
 #include "traverse.h"
+#include "machine.h"
 #include "common.h"            // HOMING_KIND_LIMIT
 #include "runner.h"
 #include "leg_effects.h"
 #include "homing.h"
-#include "state.h"
 #include "../../ipc/shared_state.h"
 #include "hardware/sync.h"     // __dmb
 
-// The first leg opens the state. An unlatch opens it from
-// ALARM_LIMIT_LATCHED; the latch mask keeps that fact, and the close re-derives
-// the reason.
+// The first leg opens the state. An unlatch opens it with F_LATCHED set; the
+// close re-derives the state from the mask.
 static void traverseOpen(void) {
     if (machineState == STATE_TRAVERSE) return;
-    alarmReason  = ALARM_NONE;
-    __dmb();
     machineState = STATE_TRAVERSE;
 }
 
@@ -45,6 +42,6 @@ void traverseTick(void) {
             if (legEndFailed(ev.intent, ev.end)) homingAbandon(ev.end.node, ev.end.failWhy);
             continue;
         }
-        if (machineState == STATE_TRAVERSE) resumeOrHold();
+        if (machineState == STATE_TRAVERSE) machineSettle();
     }
 }

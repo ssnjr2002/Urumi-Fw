@@ -112,7 +112,7 @@ static inline bool node_isAxis(uint8_t n) { return nodeAxis(n) != SLOT_NONE; }
 // occupies. Stored per slot it went stale on the first rebind: homing Z on
 // head 0 (slot 2 = node 3) and then binding slot 2 to node 5 left the slot bit
 // asserting that head 1's Z was on a switch it had never touched -- and since
-// the mask gates ALARM_LIMIT_LATCHED, that held the machine in an alarm no
+// the mask gates F_LATCHED, that held the machine in an alarm no
 // `unalarm` could clear.
 //
 // So `homingLatched` (per SLOT) is DERIVED from this on every bind, exactly as

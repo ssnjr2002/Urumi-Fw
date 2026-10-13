@@ -12,7 +12,7 @@
 // The boot sequence only, after Core 1 is released.
 void busSweep(void);
 
-// True while a mute node is not excluded: ALARM_BUS_DEGRADED.
+// True while a mute node is not excluded: F_BUS.
 bool busDegraded(void);
 
 uint16_t busMute(void);

@@ -6,6 +6,7 @@
 #include "usb_protocol.h"
 #include "status.h"
 #include "data_plane.h"
+#include "ops/machine.h"
 
 uint16_t getBufCount() { return (uint16_t)plannerRing.count(); }
 
@@ -45,14 +46,16 @@ void sendStatusRsp() {
     buf[1] = st;
     buf[2] = axes_enabled;
     buf[3] = axes_homed;
-    buf[4] = alarmReason;
-    buf[5] = stateReason(st);
-    buf[6] = (uint8_t)(bufCount & 0xFF);
-    buf[7] = (uint8_t)(bufCount >> 8);
-    memcpy(&buf[8],  pos, 16);              // pos[4] i32 LE — native byte order
-    buf[24] = dataPlaneExpectedSeq();
-    memcpy(&buf[25], &qUs, 4);              // queuedUs u32 LE
-    buf[29] = crc8(buf, STATUS_RSP_SIZE - 1);
+    const uint16_t faults = machineFaults();
+    buf[4] = (uint8_t)(faults & 0xFF);
+    buf[5] = (uint8_t)(faults >> 8);
+    buf[6] = stateReason(st);
+    buf[7] = (uint8_t)(bufCount & 0xFF);
+    buf[8] = (uint8_t)(bufCount >> 8);
+    memcpy(&buf[9],  pos, 16);              // pos[4] i32 LE — native byte order
+    buf[25] = dataPlaneExpectedSeq();
+    memcpy(&buf[26], &qUs, 4);              // queuedUs u32 LE
+    buf[30] = crc8(buf, STATUS_RSP_SIZE - 1);
 
     Serial.write(buf, STATUS_RSP_SIZE);     // one write — cost is per-transaction
 }

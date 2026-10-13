@@ -12,13 +12,14 @@
 #include "../../config/machine_cfg.h"
 #include "../../ops/homing.h"
 #include "../../ops/position.h"
+#include "../../ops/machine.h"
 #include "../../../ipc/shared_state.h"
 
-// Admitted from IDLE, or from the one alarm a leg leaves (LIMIT_LATCHED).
+// Admitted from IDLE, or with only F_LATCHED set (a leg leaves it).
 static bool homeGateDenies() {
     if (homeRunning() || homingHeld()) { Serial.println("err busy"); return true; }
     const bool admitted = machineState == STATE_IDLE ||
-        (machineState == STATE_ALARM && alarmReason == ALARM_LIMIT_LATCHED);
+        (machineState == STATE_ALARM && machineFaults() == F_LATCHED);
     if (!admitted) { Serial.println("err bad_state"); return true; }
     return false;
 }
