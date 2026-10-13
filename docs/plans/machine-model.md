@@ -339,14 +339,33 @@ steps, and `home` on the driver.
   arming from the manual HOMING session (`homingBegin`/`homingParkBegin`
   open CTX_HOMING today, and `homeTick` ends on its close). Raw `leg` keeps
   the session; latch and origin effects stay shared (`leg_effects`).
-* Ownership by the chain: `legOwnerHolds`, the runner's owner and its
-  generation go (`boxClear` on a cut already drops stale ends).
-  `contextClose` aborts a live sequence and step; `sequenceAbort` cuts the
-  step; `machineTeardown` goes step, sequence, context.
+* Every step belongs to a sequence. A raw `leg` is a one-step `leg`
+  sequence (in the manual HOMING context), and a traverse leg a one-step
+  `traverse` sequence (in IDLE); their `next()` replaces `homingTick` and
+  `traverseTick`. Raw legs run one at a time: a `leg` while any sequence is
+  live is refused as `busy` (parallel raw legs go). A sequence like `home`
+  still arms several legs per step itself.
+* Ownership by the chain: the runner's mailbox has one reader, the live
+  sequence. `legOwnerHolds`, the runner's owner (and the owner argument to
+  `runnerArm`/`runnerPop`) and its generation go (`boxClear` on a cut already
+  drops stale ends). `contextClose` aborts a live sequence and step;
+  `sequenceAbort` cuts the step; `machineTeardown` goes step, sequence,
+  context. `home_end` refuses as `busy` while a leg runs, as `setorigin`
+  does.
+* `homingFail` (abort the other legs, `failWhy`/`failNode`, `F_HOMING`) is
+  shared by `home`, `leg` and `traverse`; the fail data stays in
+  `ops/homing`.
 * WAIT comes from the sequence: `machineStep()` returns it while the live
-  sequence waits.
+  sequence waits. A wait has a timeout and an event from a fixed enum, each
+  value tied to the command that posts it; `machineAdmit` admits that
+  command while the wait is live. M3's only event is the timeout (JB2 adds
+  `mount`).
 * Publish: a sequence by name; step and sequence before the job context.
-* The `recovery` sequence for `F_LATCHED` (`unalarm` step 4).
+* The `recovery` sequence for `F_LATCHED` (`unalarm` step 4): step 1 takes
+  every latched node off its switch in parallel, `LEG_UNLATCH` where the
+  origin is valid (a span latched it; the origin stays) and `LEG_RETRACT`
+  where not (a seek latched it); step 2 parks the nodes that kept their
+  origin at their park position.
 * Not here: the `SEQ` ring owner (J1b, `jogto park`); admission in
   `JOB.PAUSED` (JB3, M4).
 
@@ -392,7 +411,6 @@ Planned.
 
 ## Open
 
-* Wait events: a fixed enum or an id carried by the event.
 * Peripheral off under LEGS: allowed (Core 1 serves requests between leg
   polls) or refused as today.
 * Whether the job's at-rest reasons also move to Core 0 later.
