@@ -22,7 +22,7 @@ import { Link } from "../../../../src/wire/link/link.js";
 import { SimTransport } from "../../../../src/wire/link/backends/sim.js";
 import {
     MachineState,
-    AlarmReason,
+    Fault,
     JobReason,
 } from "../../../../src/wire/format/status.js";
 import { stampSeq } from "../../../../src/wire/format/packet.js";
@@ -79,7 +79,7 @@ async function withLink<T>(
 }
 
 /** The state and mask keys the Sim models. */
-const STATE = "get state enabled homed alarm job latched probed";
+const STATE = "get state enabled homed faults job latched probed";
 
 describe("wire/link/backends/sim: control plane", () => {
     it("ping → pong", async () => {
@@ -91,7 +91,7 @@ describe("wire/link/backends/sim: control plane", () => {
     it("get reports the state + masks", async () => {
         await withLink(async (link) => {
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x00 homed=0x00 alarm=0 job=- latched=0x00 probed=0",
+                "state=0 enabled=0x00 homed=0x00 faults=0x0000 job=- latched=0x00 probed=0",
             );
         });
     });
@@ -100,11 +100,11 @@ describe("wire/link/backends/sim: control plane", () => {
         await withLink(async (link) => {
             expect(await link.command("axes_enable on")).toBe("ok");
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x0f homed=0x00 alarm=0 job=- latched=0x00 probed=0",
+                "state=0 enabled=0x0f homed=0x00 faults=0x0000 job=- latched=0x00 probed=0",
             );
             expect(await link.command("setorigin")).toBe("ok");
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x0f homed=0x0f alarm=0 job=- latched=0x00 probed=0",
+                "state=0 enabled=0x0f homed=0x0f faults=0x0000 job=- latched=0x00 probed=0",
             );
 
             // stop → ALARM, then setorigin recovers
@@ -140,11 +140,22 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("unalarm clears ALARM → IDLE", async () => {
+    it("unalarm refuses the estop latch", async () => {
         await withLink(async (link) => {
             await link.command("stop");
-            expect((await link.getStatus()).alarm).toBe(AlarmReason.ESTOP);
-            expect(await link.command("unalarm")).toBe("ok");
+            expect((await link.getStatus()).hasFault(Fault.ESTOP)).toBe(true);
+            expect(await link.command("unalarm")).toBe("err estop");
+            expect((await link.getStatus()).state).toBe(MachineState.ALARM);
+        });
+    });
+
+    it("unalarm clears an event fault → IDLE", async () => {
+        await withLink(async (link, sim) => {
+            sim.homingLegMs = 1000;
+            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.command("leg_abort 1")).toBe("ok");
+            expect((await link.getStatus()).faults).toBe(Fault.HOMING);
+            expect(await link.command("unalarm")).toBe("ok faults=0x0000");
             expect((await link.getStatus()).state).toBe(MachineState.IDLE);
         });
     });
@@ -163,13 +174,13 @@ describe("wire/link/backends/sim: control plane", () => {
             // A seek ends ON the switch, which is an alarm and not a failure.
             const st = await link.getStatus();
             expect(st.state).toBe(MachineState.ALARM);
-            expect(st.alarm).toBe(AlarmReason.LIMIT_LATCHED);
+            expect(st.faults).toBe(Fault.LATCHED);
             expect(await link.command(STATE)).toContain("latched=0x01");
 
             // `unalarm` cannot clear it: nothing moved, so the switch is still
             // held. Only a retract gets out.
-            expect(await link.command("unalarm")).toBe("ok");
-            expect((await link.getStatus()).alarm).toBe(AlarmReason.LIMIT_LATCHED);
+            expect(await link.command("unalarm")).toBe("ok faults=0x0008");
+            expect((await link.getStatus()).faults).toBe(Fault.LATCHED);
 
             // Armed while latched, so the node reads its pin and runs a RETRACT.
             expect(await link.command("leg 1 retract 0 8013 8013 0 320")).toBe("ok");
@@ -189,7 +200,7 @@ describe("wire/link/backends/sim: control plane", () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 20;
             expect(await link.command("axis_map - - - -")).toBe("ok");
-            expect((await link.getStatus()).alarm).toBe(AlarmReason.NONE);
+            expect((await link.getStatus()).faults).toBe(0);
 
             expect(await link.command("leg 3 seek 1 2500 500 400 88000")).toBe("ok");
             await tick(60);
@@ -231,7 +242,7 @@ describe("wire/link/backends/sim: control plane", () => {
             expect(await link.command("leg_abort 1")).toBe("ok");
             const st = await link.getStatus();
             expect(st.state).toBe(MachineState.ALARM);
-            expect(st.alarm).toBe(AlarmReason.HOMING_FAIL);
+            expect(st.hasFault(Fault.HOMING)).toBe(true);
         });
     });
 
@@ -417,7 +428,7 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
         await withLink(
             async (link, sim) => {
                 expect(sim.state).toBe(MachineState.IDLE);
-                expect(sim.alarm).toBe(AlarmReason.NONE);
+                expect(sim.faults).toBe(0);
                 expect(await link.command("axes_enable on")).toBe("err unbound");
 
                 expect(await link.command("axis_map 1 2 3 4")).toBe("ok");

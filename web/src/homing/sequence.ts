@@ -19,12 +19,9 @@ import {
 import { settle, SettleError } from "../wire/link/settled.js";
 import {
     MachineState,
-    AlarmReason,
-    HomeFail,
     AXIS_BITS,
     type MachineStatus,
 } from "../wire/format/status.js";
-import { alarmName } from "../wire/format/names.js";
 import {
     LegKind, type HomingLeg, type HomingPlan, type RotaryHomingPlan,
 } from "./types.js";
@@ -102,8 +99,7 @@ async function runLeg(
         throw new HomingError(leg, st,
             `${leg.axis} ${leg.kind}: expected the switch ` +
             `${leg.endsLatched ? "held" : "clear"} at the end of this leg, ` +
-            `but latched=0x${(st.axesLatched ?? 0).toString(16)} ` +
-            `(alarm ${alarmName(st.alarm)})`);
+            `but latched=0x${(st.axesLatched ?? 0).toString(16)}`);
     }
     return st;
 }
@@ -139,62 +135,6 @@ async function awaitLeg(
     // switch" from "some axis is". One extra round trip per leg, four per home.
     const st = await getState(link);
     opts.onLegDone?.(leg, st);
-
-    if (st.alarm === AlarmReason.HOMING_FAIL) {
-        // The budget wording is only honest for HomeFail.BUDGET. The other two
-        // causes stop the leg wherever it happens to be, and quoting maxSteps at
-        // them blames the switch for a bus dropout — which is exactly what it
-        // did, reporting "within 211200 steps" for a leg that died at ~16000.
-        if (st.homeFail === HomeFail.POLL) {
-            throw new HomingError(leg, st,
-                `${leg.axis} ${leg.kind}: node stopped answering mid-leg — the bus, ` +
-                `not the axis. The move itself may have been fine; retry, and if it ` +
-                `recurs at the same place look at wiring or termination`);
-        }
-        if (st.homeFail === HomeFail.DEADLINE) {
-            throw new HomingError(leg, st,
-                `${leg.axis} ${leg.kind}: still pulsing past the supervisor's timeout — ` +
-                `the node's own ${leg.maxSteps}-step budget should have stopped it first`);
-        }
-        // Rotary. These never mean "ran out of budget", so they must be caught
-        // before the fallthrough below quotes maxSteps at them -- the same
-        // mistake the POLL/DEADLINE branches above exist to prevent. Each names
-        // a different thing to go and look at, which is the only reason the
-        // node distinguishes them at all.
-        if (st.homeFail === HomeFail.INDEX_ABSENT) {
-            throw new HomingError(leg, st,
-                `${leg.axis} ${leg.kind}: the index sweep ran but never found the ` +
-                `magnet — look at the Hall sensor, its magnet and its wiring, not at ` +
-                `the budget. Run \`nodestat\` for the crossing count and the live ` +
-                `hall/base readings`);
-        }
-        if (st.homeFail === HomeFail.INDEX_SHAPE) {
-            throw new HomingError(leg, st,
-                `${leg.axis} ${leg.kind}: the index feature no longer fits the node's ` +
-                `capture window — the dip's shape has changed. Run \`hallscan\` on ` +
-                `the node and compare it with the reference waveform`);
-        }
-        if (st.homeFail === HomeFail.INDEX_SLIP) {
-            throw new HomingError(leg, st,
-                `${leg.axis} ${leg.kind}: the index was found but did not repeat at a ` +
-                `consistent interval — the axis slipped or stalled during the sweep. ` +
-                `This is mechanical: check belt tension and driver current`);
-        }
-        // BUDGET, or firmware predating homefail= (undefined). The original
-        // wording, which is correct for this case.
-        //
-        // How far it ACTUALLY went is no longer quoted here, because it is no
-        // longer in this reply: the span moved to the node, where `nodestat`
-        // reports it (commands.ts nodeStat). That is worth reading alongside
-        // this message -- "never reached within 211200 steps" describes a switch
-        // driven at and missed, and if the axis in fact stopped at 26000 the
-        // budget was never the story.
-        throw new HomingError(leg, st, leg.endsLatched
-            ? `${leg.axis} ${leg.kind}: switch never reached within ${leg.maxSteps} steps` +
-              ` — run \`nodestat\` for how far it actually went`
-            : `${leg.axis} ${leg.kind}: never cleared the switch in ${leg.maxSteps} steps ` +
-              `— back-off is likely shorter than the switch's release hysteresis`);
-    }
 
     return st;
 }

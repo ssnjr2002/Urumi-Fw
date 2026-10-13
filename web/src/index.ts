@@ -251,7 +251,7 @@ export { packCjog, CJOG_SPEED_MAX, type JogDir } from "./wire/format/cjog.js";
 // ── wire format: STATUS_RSP + machine enums ──────────────────────────────────
 export {
     MachineState,
-    AlarmReason,
+    Fault,
     HomeFail,
     Probing,
     ProbeCause,
@@ -270,11 +270,11 @@ export {
 
 export {
     stateName,
-    alarmName,
+    faultNames,
     jobName,
     maskStr,
     STATE_NAMES,
-    ALARM_NAMES,
+    FAULT_NAMES,
     JOB_NAMES,
 } from "./wire/format/names.js";
 

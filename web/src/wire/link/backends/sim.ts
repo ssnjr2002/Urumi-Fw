@@ -45,7 +45,7 @@ import {
 } from "../../format/constants.js";
 import {
     MachineState,
-    AlarmReason,
+    Fault,
     JobReason,
     axisMask,
     packStatusRsp,
@@ -103,7 +103,7 @@ const BUS_ADDR_MAX = 8;
 const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
-    "state", "enabled", "homed", "alarm", "job", "latched",
+    "state", "enabled", "homed", "faults", "job", "latched",
     "probed", "pz", "nodehomed", "pos", "jogging",
 ] as const;
 
@@ -118,7 +118,8 @@ export class SimTransport implements Transport {
 
     /** Unmapped is not an alarm: an empty map boots IDLE (core0.cpp). */
     state: MachineState = MachineState.IDLE;
-    alarm: AlarmReason = AlarmReason.NONE;
+    /** The fault mask (Fault bits). */
+    faults = 0;
     /** What the job is doing; meaningful only while JOB. */
     job: JobReason = JobReason.BUFFERING;
     /**
@@ -238,7 +239,7 @@ export class SimTransport implements Transport {
         if (opts.axisMap) {
             for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axisMap[i] ?? null;
             this.state = MachineState.IDLE;
-            this.alarm = AlarmReason.NONE;
+            this.faults = 0;
         }
         this.timer = setInterval(() => this._tick(), this.frameMs);
         // Don't hold the event loop open — a test's vitest worker should exit
@@ -305,7 +306,7 @@ export class SimTransport implements Transport {
                     state: this.state,
                     axesEnabled: this.axesEnabled,
                     axesHomed: this.axesHomed,
-                    alarm: this.alarm,
+                    faults: this.faults,
                     reason: this._reason(),
                     bufCount: this.motion.length,
                     pos: this.pos,
@@ -741,7 +742,7 @@ export class SimTransport implements Transport {
                     S.nodeHomed.delete(node);
                     S._rederiveHomed();
                     S.state = MachineState.ALARM;
-                    S.alarm = AlarmReason.HOMING_FAIL;
+                    S.faults |= Fault.HOMING;
                 }
                 return "ok";
             }
@@ -777,7 +778,7 @@ export class SimTransport implements Transport {
                 return S._jog(args);
             case "stop": // always available; de-energises
                 S.state = MachineState.ALARM;
-                S.alarm = AlarmReason.ESTOP;
+                S.faults |= Fault.ESTOP;
                 // An estop de-energises everything, so every node loses its
                 // datum — not just the four currently bound.
                 S.nodeHomed.clear();
@@ -856,7 +857,7 @@ export class SimTransport implements Transport {
                 // setorigin recovers from an ESTOP-alarm.
                 if (S.state === MachineState.ALARM) {
                     S.state = MachineState.IDLE;
-                    S.alarm = AlarmReason.NONE;
+                    S.faults = 0;
                 }
                 return "ok";
             }
@@ -882,16 +883,13 @@ export class SimTransport implements Transport {
                 return "err bad_state";
             case "unalarm":
                 if (S.state === MachineState.ALARM) {
+                    if (S.faults & Fault.ESTOP) return "err estop";
                     // A latched limit is not cleared by asking: `unalarm` moves
-                    // nothing, so the condition still holds afterwards. Answers
-                    // `ok` and stays in ALARM — a retract is the way out.
-                    if (S.axesLatched !== 0) {
-                        S.alarm = AlarmReason.LIMIT_LATCHED;
-                        return "ok";
-                    }
-                    S.state = MachineState.IDLE;
-                    S.alarm = AlarmReason.NONE;
-                    return "ok";
+                    // nothing, so LATCHED stays and so does ALARM — a retract
+                    // is the way out.
+                    S.faults = S.axesLatched !== 0 ? Fault.LATCHED : 0;
+                    if (S.faults === 0) S.state = MachineState.IDLE;
+                    return `ok faults=0x${S.faults.toString(16).padStart(4, "0")}`;
                 }
                 return "err bad_state";
             // ── peripheral relays (knife / vacuum) ───────────────────────────
@@ -974,13 +972,9 @@ export class SimTransport implements Transport {
             this._rederiveHomed();
         }
 
-        if (this.axesLatched !== 0) {
-            this.state = MachineState.ALARM;
-            this.alarm = AlarmReason.LIMIT_LATCHED;
-        } else {
-            this.state = MachineState.IDLE;
-            this.alarm = AlarmReason.NONE;
-        }
+        this.faults = (this.faults & ~Fault.LATCHED) |
+            (this.axesLatched !== 0 ? Fault.LATCHED : 0);
+        this.state = this.faults !== 0 ? MachineState.ALARM : MachineState.IDLE;
     }
 
     /** Per-slot view of `nodeLatched`, rebuilt on every bind — as for the datum. */
@@ -1014,7 +1008,7 @@ export class SimTransport implements Transport {
             case "state":     return String(this.state);
             case "enabled":   return hex(this.axesEnabled, 2);
             case "homed":     return hex(this.axesHomed, 2);
-            case "alarm":     return String(this.alarm);
+            case "faults":    return hex(this.faults, 4);
             case "job":       return this.state === MachineState.JOB ? String(this.job) : "-";
             case "latched":   return hex(this.axesLatched, 2);
             case "probed":    return this._probeZ() === undefined ? "0" : "1";

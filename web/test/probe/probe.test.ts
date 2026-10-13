@@ -132,7 +132,7 @@ describe("deriveProbePlan", () => {
 
 describe("get probe keys", () => {
     const parse = (line: string) => statusFromGet(parseGetReply(line));
-    const base = "state=6 enabled=0x0f homed=0x0f alarm=0 running=0 latched=0x00";
+    const base = "state=6 enabled=0x0f homed=0x0f faults=0x0000 running=0 latched=0x00";
 
     it("reads the stored contact height", () => {
         expect(parse(`${base} probed=1 pz=47150`).probeZ).toBe(47150);

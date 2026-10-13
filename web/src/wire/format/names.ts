@@ -19,7 +19,7 @@
 
 import {
     MachineState,
-    AlarmReason,
+    Fault,
     JobReason,
     AXIS_BITS,
     type AxisLetter,
@@ -33,7 +33,7 @@ function invert(obj: Record<string, number>): Record<number, string> {
 }
 
 export const STATE_NAMES: Readonly<Record<number, string>> = invert(MachineState);
-export const ALARM_NAMES: Readonly<Record<number, string>> = invert(AlarmReason);
+export const FAULT_NAMES: Readonly<Record<number, string>> = invert(Fault);
 export const JOB_NAMES: Readonly<Record<number, string>> = invert(JobReason);
 
 /**
@@ -43,7 +43,13 @@ export const JOB_NAMES: Readonly<Record<number, string>> = invert(JobReason);
  * and the number survives into the log where it can be looked up.
  */
 export const stateName = (s: number): string => STATE_NAMES[s] ?? `STATE(${s})`;
-export const alarmName = (a: number): string => ALARM_NAMES[a] ?? `ALARM(${a})`;
+/** The set bits of a fault mask, e.g. "UNMAPPED|LATCHED"; "NONE" for 0. */
+export const faultNames = (mask: number): string => {
+    const out: string[] = [];
+    for (let bit = 1; bit <= 0x8000; bit <<= 1)
+        if (mask & bit) out.push(FAULT_NAMES[bit] ?? `0x${bit.toString(16)}`);
+    return out.length ? out.join("|") : "NONE";
+};
 export const jobName = (r: number): string => JOB_NAMES[r] ?? `JOB(${r})`;
 
 const LETTERS: readonly AxisLetter[] = ["x", "y", "z", "a"];

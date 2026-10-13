@@ -1,5 +1,5 @@
 /**
- * Tests for wire/format/status — STATUS_RSP (0xA7, 30B), the operational
+ * Tests for wire/format/status — STATUS_RSP (0xA7, 31B), the operational
  * enums, MachineStatus, the get reply / parseStatusRsp / packStatusRsp.
  *
  * The reference byte sequences below are the actual output of
@@ -11,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import {
     MachineState,
-    AlarmReason,
+    Fault,
     JobReason,
     AXIS_BITS,
     axisMask,
@@ -25,17 +25,17 @@ import {
 import { MAGIC_STATUS_RSP, STATUS_RSP_SIZE } from "../../../src/wire/format/constants.js";
 
 // ── reference vectors ──────────────────────────────────────────────────────────
-// state=JOB, axes_enabled=0x0f, axes_homed=0x0f, alarm=0, reason=RUNNING,
+// state=JOB, axes_enabled=0x0f, axes_homed=0x0f, faults=0, reason=RUNNING,
 //   buf_count=5, pos=[100,-200,0,0], expected_seq=42, queued_us=1234567
 const REF_JOB = new Uint8Array([
-    167, 9, 15, 15, 0, 1, 5, 0, 100, 0, 0, 0, 56, 255, 255, 255,
-    0, 0, 0, 0, 0, 0, 0, 0, 42, 135, 214, 18, 0, 207,
+    167, 9, 15, 15, 0, 0, 1, 5, 0, 100, 0, 0, 0, 56, 255, 255,
+    255, 0, 0, 0, 0, 0, 0, 0, 0, 42, 135, 214, 18, 0, 245,
 ]);
-// pack_status_rsp(state=0, axes_enabled=0, axes_homed=0, alarm=0, running=0,
-//   buf_count=0, pos=[0,0,0,0], expected_seq=0, queued_us=0)
+// state=0, axes_enabled=0, axes_homed=0, faults=0, reason=0, buf_count=0,
+//   pos=[0,0,0,0], expected_seq=0, queued_us=0
 const REF_IDLE = new Uint8Array([
     167, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 191,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115,
 ]);
 
 describe("wire/format/status: enums", () => {
@@ -47,14 +47,15 @@ describe("wire/format/status: enums", () => {
         expect(MachineState.JOB).toBe(9);
     });
 
-    it("AlarmReason mirrors the firmware values", () => {
-        expect(AlarmReason.NONE).toBe(0);
-        expect(AlarmReason.ESTOP).toBe(1);
-        expect(AlarmReason.CONFIG).toBe(2);
-        expect(AlarmReason.SOFT_LIMIT).toBe(3);
-        expect(AlarmReason.HOMING_FAIL).toBe(4);
-        expect(AlarmReason.BUS_DEGRADED).toBe(8);
-        expect(AlarmReason.FACT_RING_FULL).toBe(9);
+    it("Fault mirrors the firmware bits", () => {
+        expect(Fault.BUS).toBe(0x0001);
+        expect(Fault.CONFIG).toBe(0x0002);
+        expect(Fault.UNMAPPED).toBe(0x0004);
+        expect(Fault.LATCHED).toBe(0x0008);
+        expect(Fault.HOMING).toBe(0x0010);
+        expect(Fault.PROBE).toBe(0x0020);
+        expect(Fault.FACTS).toBe(0x0040);
+        expect(Fault.ESTOP).toBe(0x8000);
     });
 
     it("JobReason mirrors the firmware values", () => {
@@ -82,12 +83,12 @@ describe("wire/format/status: axisMask", () => {
 });
 
 describe("wire/format/status: packStatusRsp", () => {
-    it("produces a 30-byte frame", () => {
+    it("produces a 31-byte frame", () => {
         const pkt = packStatusRsp({
             state: 0,
             axesEnabled: 0,
             axesHomed: 0,
-            alarm: 0,
+            faults: 0,
             reason: 0,
         });
         expect(pkt.length).toBe(STATUS_RSP_SIZE);
@@ -98,7 +99,7 @@ describe("wire/format/status: packStatusRsp", () => {
             state: MachineState.JOB,
             axesEnabled: 0x0f,
             axesHomed: 0x0f,
-            alarm: AlarmReason.NONE,
+            faults: 0,
             reason: JobReason.RUNNING,
             bufCount: 5,
             pos: [100, -200, 0, 0],
@@ -113,7 +114,7 @@ describe("wire/format/status: packStatusRsp", () => {
             state: MachineState.IDLE,
             axesEnabled: 0,
             axesHomed: 0,
-            alarm: AlarmReason.NONE,
+            faults: 0,
             reason: 0,
         });
         expect([...pkt]).toEqual([...REF_IDLE]);
@@ -124,14 +125,14 @@ describe("wire/format/status: packStatusRsp", () => {
             state: 0,
             axesEnabled: 0,
             axesHomed: 0,
-            alarm: 0,
+            faults: 0,
             reason: 0,
             pos: [-1, 0, 0, 0],
         });
-        expect(pkt[8]).toBe(0xff);
         expect(pkt[9]).toBe(0xff);
         expect(pkt[10]).toBe(0xff);
         expect(pkt[11]).toBe(0xff);
+        expect(pkt[12]).toBe(0xff);
     });
 });
 
@@ -141,7 +142,7 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(st.state).toBe(MachineState.JOB);
         expect(st.axesEnabled).toBe(0x0f);
         expect(st.axesHomed).toBe(0x0f);
-        expect(st.alarm).toBe(AlarmReason.NONE);
+        expect(st.faults).toBe(0);
         expect(st.reason).toBe(JobReason.RUNNING);
         expect(st.bufCount).toBe(5);
         expect(st.pos).toEqual([100, -200, 0, 0]);
@@ -166,7 +167,7 @@ describe("wire/format/status: parseStatusRsp", () => {
     });
 
     it("rejects an unknown magic", () => {
-        const bad = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, alarm: 0, reason: 0 });
+        const bad = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, faults: 0, reason: 0 });
         bad[0] = 0xcf;
         expect(() => parseStatusRsp(bad)).toThrow(/Bad magic: 0xcf/);
     });
@@ -174,29 +175,29 @@ describe("wire/format/status: parseStatusRsp", () => {
     it("rejects a wrong-size buffer", () => {
         const short = new Uint8Array(9);
         short[0] = MAGIC_STATUS_RSP;
-        expect(() => parseStatusRsp(short)).toThrow(/Expected 30 bytes, got 9/);
+        expect(() => parseStatusRsp(short)).toThrow(/Expected 31 bytes, got 9/);
     });
 
     it("rejects a CRC mismatch", () => {
-        const pkt = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, alarm: 0, reason: 0 });
+        const pkt = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, faults: 0, reason: 0 });
         pkt[10] = pkt[10]! ^ 0xff; // flip a payload byte
         expect(() => parseStatusRsp(pkt)).toThrow(/CRC mismatch/);
     });
 
     it("falls back to IDLE on an out-of-range state byte (forward-compat)", () => {
-        const pkt = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, alarm: 0, reason: 0 });
+        const pkt = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, faults: 0, reason: 0 });
         // 99 is not a known MachineState — keep CRC valid by recomputing via pack
         const forged = packStatusRsp({
             state: 99,
             axesEnabled: 0,
             axesHomed: 0,
-            alarm: 99, // also out of range
+            faults: 0,
             reason: 99, // passed through raw
         });
         void pkt;
         const st = parseStatusRsp(forged);
         expect(st.state).toBe(MachineState.IDLE);
-        expect(st.alarm).toBe(AlarmReason.NONE);
+        expect(st.faults).toBe(0);
         expect(st.reason).toBe(99);
     });
 });
@@ -205,16 +206,16 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
     const parse = (line: string) => statusFromGet(parseGetReply(line));
 
     it("parses a standard reply", () => {
-        const st = parse("state=9 enabled=0x0f homed=0x0f alarm=0 job=3");
+        const st = parse("state=9 enabled=0x0f homed=0x0f faults=0x0000 job=3");
         expect(st.state).toBe(MachineState.JOB);
         expect(st.axesEnabled).toBe(0x0f);
         expect(st.axesHomed).toBe(0x0f);
-        expect(st.alarm).toBe(AlarmReason.NONE);
+        expect(st.faults).toBe(0);
         expect(st.reason).toBe(JobReason.PAUSED);
     });
 
     it("leaves binary-only fields undefined (distinguishing text from real zero)", () => {
-        const st = parse("state=0 enabled=0x0f homed=0x0f alarm=0 job=-");
+        const st = parse("state=0 enabled=0x0f homed=0x0f faults=0x0000 job=-");
         expect(st.bufCount).toBeUndefined();
         expect(st.pos).toBeUndefined();
         expect(st.expectedSeq).toBeUndefined();
@@ -234,9 +235,9 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
     });
 
     it("falls back to IDLE/NONE on unknown enum values", () => {
-        const st = parse("state=42 homed=0x0f alarm=99 job=99");
+        const st = parse("state=42 homed=0x0f faults=0x0000 job=99");
         expect(st.state).toBe(MachineState.IDLE);
-        expect(st.alarm).toBe(AlarmReason.NONE);
+        expect(st.faults).toBe(0);
     });
 
     it("throws on a non-status line", () => {
@@ -284,11 +285,11 @@ describe("wire/format/status: get reply", () => {
 
     it("reads markers as absent fields", () => {
         const withMarkers = statusFromGet(parseGetReply(
-            "state=3 enabled=0x00 homed=0x01 alarm=4 job=- latched=0x00 homefail=2 " +
+            "state=3 enabled=0x00 homed=0x01 faults=0x0010 job=- latched=0x00 homefail=2 " +
             "homenode=3 cfgerr=- homing=- probing=- probe=- retries=- psteps=- probed=0 " +
             "pz=- homecycle=? nodehomed=0x008 future=!"));
         const without = statusFromGet(parseGetReply(
-            "state=3 enabled=0x00 homed=0x01 alarm=4 job=- latched=0x00 homefail=2 " +
+            "state=3 enabled=0x00 homed=0x01 faults=0x0010 job=- latched=0x00 homefail=2 " +
             "homenode=3 probed=0 nodehomed=0x008"));
         expect(withMarkers).toEqual(without);
     });
@@ -304,7 +305,7 @@ describe("wire/format/status: MachineStatus helpers", () => {
         MachineState.IDLE,
         0x06,
         0x0f,
-        AlarmReason.NONE,
+        0,
         0,
     );
 

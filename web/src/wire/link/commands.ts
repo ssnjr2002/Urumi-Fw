@@ -58,7 +58,7 @@ export const GET_MAX_KEYS = 32;
 
 /** The keys {@link getState} reads: everything MachineStatus carries. */
 export const STATE_KEYS = [
-    "state", "enabled", "homed", "alarm", "job", "latched",
+    "state", "enabled", "homed", "faults", "job", "latched",
     "homefail", "homenode", "cfgerr", "homing",
     "probing", "probe", "retries", "psteps", "probed", "pz",
     "homecycle", "nodehomed",
@@ -592,9 +592,14 @@ export function stop(link: Link): Promise<void> {
     return link.send("stop");
 }
 
-/** Clear ALARM → IDLE. */
-export function unalarm(link: Link): Promise<boolean> {
-    return _ok(link, "unalarm");
+/**
+ * Clear the event faults and fix what can be fixed at once. Resolves to the
+ * fault mask left (0 = IDLE), or null on `err`.
+ */
+export async function unalarm(link: Link): Promise<number | null> {
+    const r = await link.command("unalarm");
+    const m = /^ok faults=(0x[0-9a-fA-F]+)/.exec(r);
+    return m ? parseInt(m[1]!, 16) : null;
 }
 
 // ── axis_map — bind bus nodes to the four stream slots ───────────────────────

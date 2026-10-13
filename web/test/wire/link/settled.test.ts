@@ -19,14 +19,13 @@ import {
 import {
     MachineState,
     MachineStatus,
-    AlarmReason,
     JobReason,
 } from "../../../src/wire/format/status.js";
 import { AbortFlag } from "../../../src/wire/link/transport.js";
 
 /** A status sample; only state, reason and bufCount matter to these conditions. */
 function st(state: MachineState, bufCount = 0, reason = 0): MachineStatus {
-    return new MachineStatus(state, 0, 0, AlarmReason.NONE, reason, bufCount);
+    return new MachineStatus(state, 0, 0, 0, reason, bufCount);
 }
 
 /** A job sample: running unless another reason is given. */

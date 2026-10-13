@@ -27,9 +27,9 @@ export const MAGIC_CJOG_STOP = 0xb3; // host → Pico: one byte, no reply
 // magic is reserved, never emitted, and parsed as unknown rather than
 // mis-parsed as 9 bytes — see format/status.ts parseStatusRsp for the message.
 export const MAGIC_STATUS_REQ = 0xa5; // host → Pico: one-byte request, no payload/CRC
-export const MAGIC_STATUS_RSP = 0xa7; // Pico → host: 30-byte status snapshot
+export const MAGIC_STATUS_RSP = 0xa7; // Pico → host: 31-byte status snapshot
 export const MAGIC_STATUS_RSP_V1 = 0xa6; // retired 9-byte frame; reserved, never emitted
-export const STATUS_RSP_SIZE = 30;
+export const STATUS_RSP_SIZE = 31;
 
 // ── Stream control replies (Pico → host) — fixed 3-byte frames ────────────────
 // docs/wire_protocol.md "ACK" / "NACK". Cumulative ACK: byte[1] = the next wire

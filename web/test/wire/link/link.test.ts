@@ -21,7 +21,6 @@ import type { Transport } from "../../../src/wire/link/transport.js";
 import {
     packStatusRsp,
     MachineState,
-    AlarmReason,
     JobReason,
 } from "../../../src/wire/format/status.js";
 import {
@@ -165,7 +164,7 @@ describe("wire/link/link: getStatus (binary status plane)", () => {
                 state: MachineState.JOB,
                 axesEnabled: 0x0f,
                 axesHomed: 0x0f,
-                alarm: AlarmReason.NONE,
+                faults: 0,
                 reason: JobReason.RUNNING,
                 bufCount: 3,
                 pos: [10, 20, 0, 0],
@@ -204,7 +203,7 @@ describe("wire/link/link: status getter", () => {
                 state: MachineState.IDLE,
                 axesEnabled: 0,
                 axesHomed: 0x0f,
-                alarm: 0,
+                faults: 0,
                 reason: 0,
             }),
         );

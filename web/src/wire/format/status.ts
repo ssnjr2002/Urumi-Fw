@@ -1,6 +1,6 @@
 /**
- * format/status.ts — binary STATUS_RSP (0xA7, 30B) + the operational enums.
- * MachineState / AlarmReason / JobReason, MachineStatus, parseStatusRsp,
+ * format/status.ts — binary STATUS_RSP (0xA7, 31B) + the operational enums.
+ * MachineState / Fault / JobReason, MachineStatus, parseStatusRsp,
  * packStatusRsp, axisMask.
  *
  * STATUS_RSP folds state + position + expectedSeq + queued motion time into
@@ -54,63 +54,31 @@ export const MachineState = {
 export type MachineState = (typeof MachineState)[keyof typeof MachineState];
 const MACHINE_STATE_VALUES = Object.values(MachineState) as readonly number[];
 
-export const AlarmReason = {
-    NONE: 0,
-    ESTOP: 1,
-    /**
-     * Boot found no usable config (get `cfgerr=` says why). Left by a
-     * CFG_SET commit, or `uncfg` on a PICO_ALLOW_UNCONFIGURED build.
-     * Load-bearing, as LIMIT_LATCHED below.
-     */
-    CONFIG: 2,
-    SOFT_LIMIT: 3,
-    HOMING_FAIL: 4,
-    /**
-     * A node failed to answer. Raised when the axis map could not be committed;
-     * no way out of ALARM succeeds while the map is incomplete, and a
-     * successful axis_map that completes it clears the alarm.
-     */
-    NODE_FAULT: 5,
-    /**
-     * An axis is standing on a latched limit switch — where legs 1 and 3 of a
-     * home are SUPPOSED to end (docs/homing.md §2.6). Not a fault, but a real
-     * alarm: the node refuses stream steps while its limit is latched, so a job
-     * admitted here would run the other axes and silently drop this one.
-     *
-     * This member is load-bearing, not decorative. enumFromInt() coerces an
-     * unrecognised value to NONE, so a host missing this entry does not render
-     * "ALARM(6)" — it renders NO ALARM AT ALL, on a machine that is alarmed and
-     * refusing motion. It must be added in lockstep with the firmware.
-     */
-    LIMIT_LATCHED: 6,
-    /**
-     * A probe leg ended wrong (docs/tool_probe.md §5.11.1). Mirrors HOMING_FAIL,
-     * and like it says only THAT one failed — which of the seven causes it was
-     * travels separately, in the `probe=` key of `get`.
-     *
-     * Most probe failures leave the Z datum intact; the firmware voids it per
-     * cause rather than by reason, so this value must NOT be treated as
-     * position-invalidating the way ESTOP is.
-     *
-     * Load-bearing, exactly as LIMIT_LATCHED above: without this entry a probe
-     * failure renders as no alarm at all.
-     */
-    PROBE_FAIL: 7,
-    /**
-     * The boot sweep left a node mute that is not excluded; the default map is
-     * not applied. Left by `bus_exclude`, or a `reset` the node answers.
-     * Load-bearing, as LIMIT_LATCHED above.
-     */
-    BUS_DEGRADED: 8,
-    /**
-     * Core 0 fell behind the Core 1 fact ring and a fact was dropped: a
-     * firmware bug, not an operating condition. Load-bearing, as LIMIT_LATCHED
-     * above.
-     */
-    FACT_RING_FULL: 9,
+/**
+ * The fault mask, `faults` (MachineFault in core0/ops/machine.h). Several bits
+ * may be set at once. Held faults clear by themselves when their cause goes;
+ * event faults stay until `unalarm`. ESTOP is the estop latch, not a fault,
+ * cleared by `unstop`. ALARM at rest means the mask is non-zero.
+ */
+export const Fault = {
+    /** Held: the boot sweep left a node mute that is not excluded. */
+    BUS: 0x0001,
+    /** Held: no usable config (get `cfgerr=` says why). */
+    CONFIG: 0x0002,
+    /** Held: the slot request is unmet (a node did not engage). */
+    UNMAPPED: 0x0004,
+    /** Held: an axis stands on its limit switch; the node refuses stream steps. */
+    LATCHED: 0x0008,
+    /** Event: a homing or traverse leg failed (`homefail=` says how). */
+    HOMING: 0x0010,
+    /** Event: a probe leg failed (`probe=` says how). */
+    PROBE: 0x0020,
+    /** Event: the Pico dropped an internal fact; a firmware bug. */
+    FACTS: 0x0040,
+    /** The estop latch. */
+    ESTOP: 0x8000,
 } as const;
-export type AlarmReason = (typeof AlarmReason)[keyof typeof AlarmReason];
-const ALARM_REASON_VALUES = Object.values(AlarmReason) as readonly number[];
+export type Fault = (typeof Fault)[keyof typeof Fault];
 
 /** What a job is doing, while JOB (JobReason in ipc/shared_state.h). */
 export const JobReason = {
@@ -127,7 +95,7 @@ export const JobReason = {
 export type JobReason = (typeof JobReason)[keyof typeof JobReason];
 
 /**
- * Which fault ended a home, alongside AlarmReason.HOMING_FAIL (core0/homing.h).
+ * Which fault ended a home, alongside Fault.HOMING (core0/homing.h).
  *
  * These three were one value until a seek died 190k steps short of its budget
  * and the host confidently reported "switch never reached within 211200 steps"
@@ -248,7 +216,8 @@ export class MachineStatus {
         readonly state: MachineState,
         readonly axesHomed: number,
         readonly axesEnabled: number,
-        readonly alarm: AlarmReason,
+        /** The fault mask (Fault bits). */
+        readonly faults: number,
         /**
          * The current state's reason byte (JobReason while JOB, the jogging,
          * homing or probing reason in those states), 0 for a state without
@@ -269,16 +238,16 @@ export class MachineStatus {
          * information, never a zero. Here the distinction has teeth — 0 means
          * "no axis is on a switch", which a UI would render as safe, and a
          * binary poll has no basis for saying that. The consequential fact (the
-         * ALARM) is in `alarm`, which both planes carry.
+         * ALARM) is in `faults`, which both planes carry.
          */
         readonly axesLatched: number | undefined = undefined,
         /**
-         * Which fault ended the last home, when `alarm` is HOMING_FAIL. See
+         * Which fault ended the last home, with Fault.HOMING set. See
          * HomeFail — the three causes are diagnosed in completely different
          * places, and the reason byte alone cannot tell them apart.
          */
         readonly homeFail: HomeFail | undefined = undefined,
-        /** Probe session phase; present only while PROBING or after PROBE_FAIL. */
+        /** Probe session phase; present only while PROBING or with Fault.PROBE. */
         readonly probing: number | undefined = undefined,
         /** Last probe leg's outcome (ProbeCause), alongside `probing`. */
         readonly probeCause: number | undefined = undefined,
@@ -297,6 +266,11 @@ export class MachineStatus {
          */
         readonly nodeHomed: number | undefined = undefined,
     ) {}
+
+    /** True if any of `mask`'s Fault bits is set. */
+    hasFault(mask: number): boolean {
+        return (this.faults & mask) !== 0;
+    }
 
     homed(axis: AxisLetter): boolean {
         return !!(this.axesHomed & AXIS_BITS[axis]);
@@ -383,7 +357,7 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         enumFromStr(MACHINE_STATE_VALUES, state, MachineState.IDLE),
         toInt(homed),
         toInt(fields.enabled ?? "0"),
-        enumFromStr(ALARM_REASON_VALUES, fields.alarm, AlarmReason.NONE),
+        toInt(fields.faults ?? "0"),
         fields.job !== undefined && fields.job !== "-" ? toInt(fields.job) : 0,
         undefined, // bufCount, pos, expectedSeq, queuedUs — text cannot carry these
         undefined,
@@ -413,22 +387,22 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
     );
 }
 
-// ── binary STATUS_RSP (0xA7, 30 bytes) ─────────────────────────────────────────
+// ── binary STATUS_RSP (0xA7, 31 bytes) ─────────────────────────────────────────
 //
 // [0]      magic        0xA7
 // [1]      state        u8   MachineState
 // [2]      axes_enabled u8   bitmask
 // [3]      axes_homed   u8   bitmask
-// [4]      alarm        u8   AlarmReason
-// [5]      reason       u8   the current state's reason
-// [6..7]   bufCount     u16 LE — planner blocks queued
-// [8..23]  pos[4]       i32 LE — x, y, z, a (steps)
-// [24]     expectedSeq  u8   — informational, not flow control
-// [25..28] queuedUs     u32 LE — queued motion time, microseconds
-// [29]     CRC8 over [0..28]
+// [4..5]   faults       u16 LE — Fault bits
+// [6]      reason       u8   the current state's reason
+// [7..8]   bufCount     u16 LE — planner blocks queued
+// [9..24]  pos[4]       i32 LE — x, y, z, a (steps)
+// [25]     expectedSeq  u8   — informational, not flow control
+// [26..29] queuedUs     u32 LE — queued motion time, microseconds
+// [30]     CRC8 over [0..29]
 
 /**
- * Parse a 30-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
+ * Parse a 31-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
  *
  * The retired 0xA6 (9-byte v1) frame is detected explicitly and rejected with
  * a message naming the firmware that emitted it — a host consuming fixed-length
@@ -456,12 +430,12 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         enumFromInt(MACHINE_STATE_VALUES, dv.getUint8(1), MachineState.IDLE),
         dv.getUint8(3),
         dv.getUint8(2),
-        enumFromInt(ALARM_REASON_VALUES, dv.getUint8(4), AlarmReason.NONE),
-        dv.getUint8(5),
-        dv.getUint16(6, true),
-        [dv.getInt32(8, true), dv.getInt32(12, true), dv.getInt32(16, true), dv.getInt32(20, true)],
-        dv.getUint8(24),
-        dv.getUint32(25, true),
+        dv.getUint16(4, true),
+        dv.getUint8(6),
+        dv.getUint16(7, true),
+        [dv.getInt32(9, true), dv.getInt32(13, true), dv.getInt32(17, true), dv.getInt32(21, true)],
+        dv.getUint8(25),
+        dv.getUint32(26, true),
     );
 }
 
@@ -469,7 +443,7 @@ export interface PackStatusRspOptions {
     state: number;
     axesEnabled: number;
     axesHomed: number;
-    alarm: number;
+    faults: number;
     reason: number;
     bufCount?: number;
     pos?: readonly [number, number, number, number];
@@ -478,7 +452,7 @@ export interface PackStatusRspOptions {
 }
 
 /**
- * Pack a status snapshot into the 30-byte STATUS_RSP wire format. Mainly used
+ * Pack a status snapshot into the 31-byte STATUS_RSP wire format. Mainly used
  * by the in-process SimTransport (mirrors host.protocol.link.SimBackend) and
  * by tests; the real Pico emits this frame.
  */
@@ -491,17 +465,17 @@ export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
     dv.setUint8(1, opts.state & 0xff);
     dv.setUint8(2, opts.axesEnabled & 0xff);
     dv.setUint8(3, opts.axesHomed & 0xff);
-    dv.setUint8(4, opts.alarm & 0xff);
-    dv.setUint8(5, opts.reason & 0xff);
-    dv.setUint16(6, (opts.bufCount ?? 0) & 0xffff, true);
+    dv.setUint16(4, opts.faults & 0xffff, true);
+    dv.setUint8(6, opts.reason & 0xff);
+    dv.setUint16(7, (opts.bufCount ?? 0) & 0xffff, true);
     const p = opts.pos ?? [0, 0, 0, 0];
-    dv.setInt32(8, p[0] | 0, true);
-    dv.setInt32(12, p[1] | 0, true);
-    dv.setInt32(16, p[2] | 0, true);
-    dv.setInt32(20, p[3] | 0, true);
-    dv.setUint8(24, (opts.expectedSeq ?? 0) & 0xff);
-    dv.setUint32(25, (opts.queuedUs ?? 0) >>> 0, true);
-    dv.setUint8(29, crc8(u8, 0, STATUS_RSP_SIZE - 1));
+    dv.setInt32(9, p[0] | 0, true);
+    dv.setInt32(13, p[1] | 0, true);
+    dv.setInt32(17, p[2] | 0, true);
+    dv.setInt32(21, p[3] | 0, true);
+    dv.setUint8(25, (opts.expectedSeq ?? 0) & 0xff);
+    dv.setUint32(26, (opts.queuedUs ?? 0) >>> 0, true);
+    dv.setUint8(30, crc8(u8, 0, STATUS_RSP_SIZE - 1));
 
     return u8;
 }

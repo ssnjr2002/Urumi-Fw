@@ -44,7 +44,7 @@ import {
     wset,
     wclear,
 } from "../../../src/wire/link/commands.js";
-import { MachineState, AlarmReason, JobReason } from "../../../src/wire/format/status.js";
+import { MachineState, Fault, JobReason } from "../../../src/wire/format/status.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -142,13 +142,14 @@ describe("wire/link/commands: enable / disable / setorigin / unalarm", () => {
         });
     });
 
-    it("stop → state=ALARM; unalarm → IDLE", async () => {
+    it("stop → state=ALARM with the estop latch; unalarm refuses it", async () => {
         await withLink(async (link) => {
             await stop(link);
             await tick(20);
-            expect((await getStatus(link)).state).toBe(MachineState.ALARM);
-            expect(await unalarm(link)).toBe(true);
-            expect((await getStatus(link)).state).toBe(MachineState.IDLE);
+            const st = await getStatus(link);
+            expect(st.state).toBe(MachineState.ALARM);
+            expect(st.hasFault(Fault.ESTOP)).toBe(true);
+            expect(await unalarm(link)).toBe(null);
         });
     });
 });
@@ -283,7 +284,7 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
         await withUnconfigured(async (link) => {
             const st = await getStatus(link);
             expect(st.state).toBe(MachineState.IDLE);
-            expect(st.alarm).toBe(AlarmReason.NONE);
+            expect(st.faults).toBe(0);
             expect(await readAxisMap(link)).toEqual([null, null, null, null]);
         });
     });
@@ -293,7 +294,7 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
             expect(await axisMap(link, 1, 2, 3, 4)).toBe(true);
             const st = await getStatus(link);
             expect(st.state).toBe(MachineState.IDLE);
-            expect(st.alarm).toBe(AlarmReason.NONE);
+            expect(st.faults).toBe(0);
             expect(await readAxisMap(link)).toEqual([1, 2, 3, 4]);
         });
     });

@@ -5,14 +5,14 @@
 import { describe, it, expect } from "vitest";
 import {
     stateName,
-    alarmName,
+    faultNames,
     jobName,
     maskStr,
     STATE_NAMES,
 } from "../../../src/wire/format/names.js";
 import {
     MachineState,
-    AlarmReason,
+    Fault,
     JobReason,
     axisMask,
 } from "../../../src/wire/format/status.js";
@@ -24,10 +24,12 @@ describe("enum names", () => {
         }
     });
 
-    it("covers alarm and job reasons the same way", () => {
-        for (const [key, value] of Object.entries(AlarmReason)) {
-            expect(alarmName(value)).toBe(key);
+    it("names each fault bit, and a mask by its set bits", () => {
+        for (const [key, value] of Object.entries(Fault)) {
+            expect(faultNames(value)).toBe(key);
         }
+        expect(faultNames(0)).toBe("NONE");
+        expect(faultNames(Fault.UNMAPPED | Fault.LATCHED)).toBe("UNMAPPED|LATCHED");
         for (const [key, value] of Object.entries(JobReason)) {
             expect(jobName(value)).toBe(key);
         }
@@ -43,7 +45,7 @@ describe("enum names", () => {
 
     it("keeps an unknown value visible instead of rendering undefined", () => {
         expect(stateName(99)).toBe("STATE(99)");
-        expect(alarmName(99)).toBe("ALARM(99)");
+        expect(faultNames(0x0100)).toBe("0x100");
         expect(jobName(99)).toBe("JOB(99)");
     });
 });
