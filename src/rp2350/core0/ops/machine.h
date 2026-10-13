@@ -42,7 +42,8 @@ bool estopLatched(void);
 void estopClear(void);
 
 // Open or close a context (MachineContext) and publish. A close names the
-// context it closes and is a no-op if another is open. Not for CTX_JOB, which
+// context it closes and is a no-op if another is open; a close aborts a live
+// step first. Not for CTX_JOB, which
 // opens and closes under plannerLock (planner/queue.cpp, `cancel`).
 void contextOpen(uint8_t ctx);
 void contextClose(uint8_t ctx);

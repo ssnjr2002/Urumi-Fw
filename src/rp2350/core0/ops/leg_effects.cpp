@@ -1,6 +1,5 @@
 #include "leg_effects.h"
 #include "position.h"
-#include "../../ipc/shared_state.h"
 
 // Both exits invalidate the origin, and that is not conservatism -- it is
 // required. A leg moves the axis with the NODE's own pulser, so the node counts
@@ -43,5 +42,3 @@ void legEffectEnd(uint8_t intent, const LegEnd& e) {
     if (e.failWhy == LEGFAIL_NONE && switched) nodeLatchSet(e.node, !e.retract);
     legEffectRelease(intent, e);
 }
-
-bool legOwnerHolds(uint8_t owner) { return !estopRequested && machineContext == owner; }

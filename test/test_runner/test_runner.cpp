@@ -1,7 +1,7 @@
 /**
  * The leg runner (src/rp2350/core0/ops/runner.cpp) against a scripted leg
  * layer: steps open and close, legs join the live step, ends reach the
- * mailbox in order, and a cut step's events are never popped.
+ * mailbox in order, and a cut step's events are discarded.
  */
 
 #include "doctest.h"
@@ -28,14 +28,11 @@ const char* refuseNext;         // the next arm's refusal
 struct Effect { uint8_t intent; uint8_t node; bool verdict; };
 Effect      effects[16];
 int         effectCount;
-#define OWNER 5
-uint8_t     heldState = OWNER;  // the state legOwnerHolds sees
 
 void reset() {
     std::memset(fake, 0, sizeof fake);
     due = -1;
     refuseNext = nullptr;
-    heldState = OWNER;
     LegEnd ends[LEG_MAX];
     runnerDropAll(ends);
     effectCount = 0;
@@ -123,17 +120,16 @@ bool legActive(uint8_t node) { return slotOf(node) >= 0; }
 
 void legEffectEnd(uint8_t intent, const LegEnd& e)     { effects[effectCount++] = { intent, e.node, true }; }
 void legEffectRelease(uint8_t intent, const LegEnd& e) { effects[effectCount++] = { intent, e.node, false }; }
-bool legOwnerHolds(uint8_t owner) { return heldState == owner; }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 static const char* seek(uint8_t node, uint8_t intent = LEG_SEEK) {
-    return runnerArm(OWNER, intent, node, 0, 0, false, 0, 0, 0, 0);
+    return runnerArm(intent, node, 0, 0, false, 0, 0, 0, 0);
 }
 
 static int drain(RunEvent* out, int max) {
     int n = 0;
-    while (n < max && runnerPop(OWNER, &out[n])) n++;
+    while (n < max && runnerPop(&out[n])) n++;
     return n;
 }
 
@@ -223,7 +219,7 @@ TEST_CASE("abort all cuts the step and discards its events") {
 
 TEST_CASE("drop all releases without a verdict") {
     reset();
-    runnerArmPark(OWNER, 5, 100, 0, 0, 0);
+    runnerArmPark(5, 100, 0, 0, 0);
     LegEnd ends[LEG_MAX];
     REQUIRE(runnerDropAll(ends) == 1);
     CHECK(ends[0].park);
@@ -260,22 +256,6 @@ TEST_CASE("an abort to a node with no leg releases nothing") {
     CHECK(runnerAbort(9, &e, &released) == nullptr);
     CHECK_FALSE(released);
     CHECK(runnerLive());
-}
-
-TEST_CASE("each step has its own generation") {
-    reset();
-    seek(3);
-    finish(3);
-    runnerTick();
-    RunEvent a[4];
-    REQUIRE(drain(a, 4) == 2);
-
-    seek(4);
-    finish(4);
-    runnerTick();
-    RunEvent b[4];
-    REQUIRE(drain(b, 4) == 2);
-    CHECK(a[0].gen != b[0].gen);
 }
 
 TEST_CASE("the mailbox holds a full table's ends before it is drained") {
@@ -325,47 +305,23 @@ TEST_CASE("aborts release without a verdict") {
     CHECK_FALSE(effects[1].verdict);
 }
 
-TEST_CASE("a step whose owner lost the machine is dropped on the next tick") {
-    reset();
-    seek(3);
-    seek(4);
-    finish(3);               // would end, but the owner is gone first
-    heldState = OWNER + 1;
-    runnerTick();
-    CHECK_FALSE(runnerLive());
-    CHECK(effectCount == 2);
-    CHECK_FALSE(effects[0].verdict);
-    CHECK_FALSE(effects[1].verdict);
-
-    RunEvent ev[4];
-    CHECK(drain(ev, 4) == 0);
-}
-
-TEST_CASE("a joining leg runs under the live step's owner") {
-    reset();
-    seek(3);
-    CHECK(runnerArm(OWNER + 1, LEG_SEEK, 4, 0, 0, false, 0, 0, 0, 0) == nullptr);
-    runnerTick();
-    CHECK(runnerLive());     // OWNER still holds; OWNER + 1 was never the owner
-}
-
-TEST_CASE("only the step's owner pops its events, each with its leg's intent") {
+TEST_CASE("each event carries its leg's intent") {
     reset();
     seek(3, LEG_SPAN);
     finish(3);
     runnerTick();
     RunEvent ev;
-    CHECK_FALSE(runnerPop(OWNER + 1, &ev));   // not this state's step
-    REQUIRE(runnerPop(OWNER, &ev));
+    REQUIRE(runnerPop(&ev));
     CHECK(ev.kind == RUN_LEG_END);
     CHECK(ev.intent == LEG_SPAN);
-    REQUIRE(runnerPop(OWNER, &ev));
+    REQUIRE(runnerPop(&ev));
     CHECK(ev.kind == RUN_STEP_END);
+    CHECK_FALSE(runnerPop(&ev));
 }
 
 TEST_CASE("a dummy's end is LEG_DUMMY whatever node 0 last ran") {
     reset();
-    runnerArmDummy(OWNER, true, 0);
+    runnerArmDummy(true, 0);
     LegEnd ends[LEG_MAX];
     for (FakeLeg& f : fake) if (f.armed) f.end.dummy = true;
     runnerDropAll(ends);

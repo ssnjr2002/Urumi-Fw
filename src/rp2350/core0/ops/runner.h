@@ -11,11 +11,10 @@
 // the arm call with nothing moved.
 //
 // The runner applies each end's physical effects (leg_effects.h), whoever
-// armed the leg; what an end means for the session is the owner's.
+// armed the leg; what an end means is the live sequence's, its one reader.
 //
-// Ends are posted, never called back: the owner pops them on its own tick.
-// Every event carries the generation of the step it belongs to; a step that is
-// dropped or aborted bumps it, so events of an older step are never popped.
+// Ends are posted, never called back: the reader pops them on its own tick. A
+// step that is dropped or aborted clears the box, so no event outlives its step.
 
 enum RunEventKind : uint8_t {
     RUN_LEG_END,    // one leg ended; `end` says how
@@ -24,32 +23,27 @@ enum RunEventKind : uint8_t {
 
 struct RunEvent {
     uint8_t kind;    // RunEventKind
-    uint8_t gen;
     uint8_t intent;  // RUN_LEG_END only: the leg's LegIntent
     LegEnd  end;     // RUN_LEG_END only
 };
 
-// Arm a leg into the live step, or open one under `owner` (a MachineContext:
-// the context the step runs in). A leg joining a live step runs under its owner.
-// `intent` is a LegIntent (leg_effects.h); a park and a dummy imply theirs.
-// As legArm, legArmPark and legArmDummy.
-const char* runnerArm(uint8_t owner, uint8_t intent, uint8_t node, uint8_t expectKind,
+// Arm a leg into the live step, or open one. `intent` is a LegIntent
+// (leg_effects.h); a park and a dummy imply theirs. As legArm, legArmPark and
+// legArmDummy.
+const char* runnerArm(uint8_t intent, uint8_t node, uint8_t expectKind,
                       uint8_t dir, bool intendedRetract,
                       uint16_t startUs, uint16_t floorUs, uint16_t rampSteps,
                       uint32_t maxSteps, bool* intentMismatch = nullptr);
-const char* runnerArmPark(uint8_t owner, uint8_t node, int32_t target, uint16_t startUs,
+const char* runnerArmPark(uint8_t node, int32_t target, uint16_t startUs,
                           uint16_t floorUs, uint16_t rampSteps);
-const char* runnerArmDummy(uint8_t owner, bool succeed, uint32_t ms);
+const char* runnerArmDummy(bool succeed, uint32_t ms);
 
 // Poll the live step's legs, apply each end's effects and post it, then the
-// step's end. A step whose owner no longer holds the machine is dropped
-// instead: its legs released, nothing posted. Call from the Core 0 loop.
+// step's end. Call from the Core 0 loop.
 void runnerTick(void);
 
-// Take the oldest event of the live generation, for `owner` only: events
-// belong to the context the step ran in, so any other caller gets none. False
-// when there is none.
-bool runnerPop(uint8_t owner, RunEvent* ev);
+// Take the oldest event. False when there is none.
+bool runnerPop(RunEvent* ev);
 
 // As legAbort: a released leg is released and comes back in `*end`, not as an
 // event.

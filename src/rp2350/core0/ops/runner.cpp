@@ -1,17 +1,14 @@
 #include "runner.h"
 #include "leg_effects.h"
 
-// A tick posts at most a leg end and a step end, and the owner drains the box
-// every tick; legs that join a running step can outnumber LEG_MAX over its
-// life, so this bounds what is undrained, not what a step posts.
+// A tick posts at most a leg end and a step end, and the reader drains the box
+// every tick.
 #define RUN_MAILBOX (LEG_MAX + 1)
 
 static RunEvent box[RUN_MAILBOX];
 static uint8_t  boxHead;    // next to pop
 static uint8_t  boxCount;
-static uint8_t  gen;        // the live step's
 static bool     live;
-static uint8_t  owner;      // the context the live step runs in
 
 // Each node's leg intent, indexed by node; a dummy is LEG_DUMMY by its flag.
 static uint8_t  intentOf[256];
@@ -21,11 +18,10 @@ static uint8_t intentFor(const LegEnd& e) {
 }
 
 static void post(uint8_t kind, const LegEnd* end, uint8_t intent) {
-    // An owner that stopped draining: a bug, so stop here rather than lose an end.
+    // A reader that stopped draining: a bug, so stop here rather than lose an end.
     if (boxCount == RUN_MAILBOX) for (;;) {}
     RunEvent& ev = box[(boxHead + boxCount++) % RUN_MAILBOX];
-    ev.kind = kind;
-    ev.gen    = gen;
+    ev.kind   = kind;
     ev.intent = intent;
     if (end) ev.end = *end;
 }
@@ -35,36 +31,31 @@ static void boxClear(void) {
     boxCount = 0;
 }
 
-// A leg was armed: open a step if none runs. A leg joining a live step runs
-// under that step's owner.
-static const char* joined(const char* why, uint8_t own, uint8_t node, uint8_t intent) {
+// A leg was armed: open a step if none runs.
+static const char* joined(const char* why, uint8_t node, uint8_t intent) {
     if (why) return why;
     intentOf[node] = intent;
-    if (!live) {
-        live  = true;
-        owner = own;
-        gen++;
-    }
+    live = true;
     return nullptr;
 }
 
-const char* runnerArm(uint8_t own, uint8_t intent, uint8_t node, uint8_t expectKind,
+const char* runnerArm(uint8_t intent, uint8_t node, uint8_t expectKind,
                       uint8_t dir, bool intendedRetract,
                       uint16_t startUs, uint16_t floorUs, uint16_t rampSteps,
                       uint32_t maxSteps, bool* intentMismatch) {
     return joined(legArm(node, expectKind, dir, intendedRetract,
                          startUs, floorUs, rampSteps, maxSteps, intentMismatch),
-                  own, node, intent);
+                  node, intent);
 }
 
-const char* runnerArmPark(uint8_t own, uint8_t node, int32_t target, uint16_t startUs,
+const char* runnerArmPark(uint8_t node, int32_t target, uint16_t startUs,
                           uint16_t floorUs, uint16_t rampSteps) {
     return joined(legArmPark(node, target, startUs, floorUs, rampSteps),
-                  own, node, LEG_PARK);
+                  node, LEG_PARK);
 }
 
-const char* runnerArmDummy(uint8_t own, bool succeed, uint32_t ms) {
-    return joined(legArmDummy(succeed, ms), own, 0, LEG_DUMMY);
+const char* runnerArmDummy(bool succeed, uint32_t ms) {
+    return joined(legArmDummy(succeed, ms), 0, LEG_DUMMY);
 }
 
 // The step is over once its last leg is.
@@ -78,21 +69,12 @@ static void stepCheck(void) {
 static uint8_t stepCut(LegEnd* ends, uint8_t n) {
     for (uint8_t i = 0; i < n; i++) legEffectRelease(intentFor(ends[i]), ends[i]);
     live = false;
-    gen++;
     boxClear();
     return n;
 }
 
 void runnerTick(void) {
     if (!live) return;
-    // The context closed or an estop latched. Drop the legs rather than fight
-    // for them: leaving them armed
-    // would fire timeouts later, at a moment with nothing to do with the owner.
-    if (!legOwnerHolds(owner)) {
-        LegEnd ends[LEG_MAX];
-        stepCut(ends, legDropAll(ends));
-        return;
-    }
     LegEnd e;
     if (legPoll(&e) != LEG_RUNNING) {
         const uint8_t intent = intentFor(e);
@@ -102,15 +84,12 @@ void runnerTick(void) {
     stepCheck();
 }
 
-bool runnerPop(uint8_t own, RunEvent* ev) {
-    if (own != owner) return false;
-    while (boxCount) {
-        *ev = box[boxHead];
-        boxHead = (uint8_t)((boxHead + 1) % RUN_MAILBOX);
-        boxCount--;
-        if (ev->gen == gen) return true;
-    }
-    return false;
+bool runnerPop(RunEvent* ev) {
+    if (!boxCount) return false;
+    *ev = box[boxHead];
+    boxHead = (uint8_t)((boxHead + 1) % RUN_MAILBOX);
+    boxCount--;
+    return true;
 }
 
 const char* runnerAbort(uint8_t node, LegEnd* end, bool* released) {

@@ -112,6 +112,12 @@ TEST_CASE("publish from the slots: context, then step, then faults") {
     contextOpen(CTX_PROBE);   CHECK(machineState == STATE_PROBING);
     contextClose(CTX_PROBE);
 
+    contextOpen(CTX_HOMING);
+    legsLive = true;
+    contextClose(CTX_PROBE);  CHECK(aborted == 0);                   // not open
+    contextClose(CTX_HOMING); CHECK(aborted == 1);                   // the step goes first
+    CHECK(machineState == STATE_ALARM);
+
     legsLive = true;
     machinePublish();         CHECK(machineState == STATE_TRAVERSE);
     legsLive = false;

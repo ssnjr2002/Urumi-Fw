@@ -62,7 +62,7 @@ const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
     const uint8_t intent = expectKind == HOMING_KIND_INDEX ? LEG_SWEEP
                          : intendedRetract                 ? LEG_RETRACT
                                                            : LEG_SEEK;
-    const char* why = runnerArm(CTX_HOMING, intent, node, expectKind, dir,
+    const char* why = runnerArm(intent, node, expectKind, dir,
                                 intendedRetract, startUs, floorUs, rampSteps,
                                 maxSteps, intentMismatch);
     if (!why) homingOpen();
@@ -71,7 +71,7 @@ const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
 
 const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                             uint16_t floorUs, uint16_t rampSteps) {
-    const char* why = runnerArmPark(CTX_HOMING, node, target, startUs, floorUs, rampSteps);
+    const char* why = runnerArmPark(node, target, startUs, floorUs, rampSteps);
     if (!why) homingOpen();
     return why;
 }
@@ -87,7 +87,7 @@ const char* homingAbort(uint8_t node) {
 }
 
 const char* homingDummyBegin(bool succeed, uint32_t ms) {
-    const char* why = runnerArmDummy(CTX_HOMING, succeed, ms);
+    const char* why = runnerArmDummy(succeed, ms);
     if (!why) homingOpen();
     return why;
 }
@@ -96,7 +96,7 @@ const char* homingDummyBegin(bool succeed, uint32_t ms) {
 // session's verdict on them.
 void homingTick(void) {
     RunEvent ev;
-    while (runnerPop(CTX_HOMING, &ev)) {
+    while (machineContext == CTX_HOMING && runnerPop(&ev)) {
         if (ev.kind == RUN_LEG_END) {
             if (legEndFailed(ev.intent, ev.end)) homingFail(ev.end);
             continue;

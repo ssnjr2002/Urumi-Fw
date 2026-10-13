@@ -3,8 +3,7 @@
 #include "leg.h"
 
 // leg_effects.h — what a leg's end does to the machine, by the intent it was
-// armed with, and whether a step's owner still holds the machine. The runner
-// calls these; the Pico implementation reaches position.h and shared state,
+// armed with. The runner calls these; the Pico implementation reaches position.h and shared state,
 // and the native test fakes them.
 
 // What the operator asked a leg to do. The node only knows its pin, so the
@@ -31,7 +30,3 @@ void legEffectEnd(uint8_t intent, const LegEnd& e);
 
 // A leg ended without a verdict (abort, drop): the origin is released only.
 void legEffectRelease(uint8_t intent, const LegEnd& e);
-
-// True while `owner`, the context the step runs in, is still open and no
-// estop is latched.
-bool legOwnerHolds(uint8_t owner);

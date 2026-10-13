@@ -15,7 +15,7 @@ const char* traverseBegin(uint8_t intent, uint8_t node, uint8_t dir,
                           uint16_t startUs, uint16_t floorUs,
                           uint16_t rampSteps, uint32_t maxSteps,
                           bool* intentMismatch) {
-    const char* why = runnerArm(CTX_IDLE, intent, node, HOMING_KIND_LIMIT, dir,
+    const char* why = runnerArm(intent, node, HOMING_KIND_LIMIT, dir,
                                 intent == LEG_UNLATCH, startUs, floorUs, rampSteps,
                                 maxSteps, intentMismatch);
     if (!why) traverseOpen();
@@ -24,7 +24,7 @@ const char* traverseBegin(uint8_t intent, uint8_t node, uint8_t dir,
 
 const char* traverseParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                               uint16_t floorUs, uint16_t rampSteps) {
-    const char* why = runnerArmPark(CTX_IDLE, node, target, startUs, floorUs, rampSteps);
+    const char* why = runnerArmPark(node, target, startUs, floorUs, rampSteps);
     if (!why) traverseOpen();
     return why;
 }
@@ -33,7 +33,7 @@ const char* traverseParkBegin(uint8_t node, int32_t target, uint16_t startUs,
 // posts no end; its step still ends.
 void traverseTick(void) {
     RunEvent ev;
-    while (runnerPop(CTX_IDLE, &ev)) {
+    while (machineContext != CTX_HOMING && runnerPop(&ev)) {
         if (ev.kind == RUN_LEG_END) {
             if (legEndFailed(ev.intent, ev.end)) homingAbandon(ev.end.node, ev.end.failWhy);
             continue;

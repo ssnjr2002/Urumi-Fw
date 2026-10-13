@@ -60,6 +60,11 @@ void contextOpen(uint8_t ctx) {
 
 void contextClose(uint8_t ctx) {
     if (machineContext != ctx) return;
+    // Closing a level tears down the levels below it.
+    if (runnerLive()) {
+        LegEnd ends[LEG_MAX];
+        runnerAbortAll(ends);
+    }
     __dmb();
     machineContext = CTX_IDLE;
     machinePublish();
