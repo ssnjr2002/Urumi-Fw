@@ -26,6 +26,10 @@ const char* homingArm(uint8_t node, uint8_t expectKind, uint8_t dir,
 const char* homingArmPark(uint8_t node, int32_t target, uint16_t startUs,
                           uint16_t floorUs, uint16_t rampSteps);
 
+// Arm an unlatch leg (off the switch, within the datum), as homingArm.
+const char* homingArmUnlatch(uint8_t node, uint8_t dir, uint16_t startUs,
+                             uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps);
+
 // Start ONE raw LEG on `node` as homingArm, as a `leg` sequence; the first
 // opens the session. Returns as homingArm. Prints nothing: the caller replies.
 const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,

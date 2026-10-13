@@ -21,6 +21,12 @@
 // machine state is the caller's.
 const char* homeStart(const uint8_t* nodes, uint8_t n, bool only);
 
+// The `recovery` sequence (unalarm, F_LATCHED): step 1 takes every latched
+// node off its switch in parallel, unlatching one whose origin is valid (it
+// stays) and retracting one with none; step 2 parks the nodes that kept their
+// origin. Returns as homeStart; nullptr with nothing to do.
+const char* recoveryStart(void);
+
 // The config's axes, in order X, Y, then each head's Z and A, present nodes
 // only; returns how many (at most HOME_AXES_MAX).
 #define HOME_AXES_MAX (2 + 2 * CFG_MAX_HEADS)

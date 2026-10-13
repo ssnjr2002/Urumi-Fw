@@ -370,3 +370,99 @@ const char* homeStart(const uint8_t* nodes, uint8_t n, bool only) {
         if (first == 0) { sequenceEnd(); runEnd(); return nullptr; }
     }
 }
+
+// ── recovery ────────────────────────────────────────────────────────────────
+
+static uint8_t recNodes[LEG_MAX];
+static uint8_t recCount;
+static bool    recParking;      // step 2
+
+// A latched node's axis, linear and homeable, or nullptr.
+static const CfgAxis* latchedAxis(uint8_t node) {
+    const CfgAxis* a = homeAxisFor(node);
+    if (!a || a->rotary || !a->homing.present) return nullptr;
+    return a;
+}
+
+// Step 2: park each node that kept its origin. False when there is none.
+static bool recoveryPark(void) {
+    bool any = false;
+    for (uint8_t i = 0; i < recCount; i++) {
+        const uint8_t id = recNodes[i];
+        if (!originValid(id)) continue;
+        const CfgAxis&   a = *homeAxisFor(id);
+        const CfgHoming& h = a.homing;
+        const char* why = homingArmPark(id, originTarget(id, parkSteps(a)),
+                                        intervalUs(h.startFeed, a.stepsPerUnit),
+                                        intervalUs(h.seekFeed, a.stepsPerUnit),
+                                        h.rampSteps);
+        if (why) { homingAbandon(id, LEGFAIL_REFUSED); return false; }
+        any = true;
+    }
+    return any;
+}
+
+static bool recoveryNext(uint8_t) {
+    if (recParking) return false;
+    recParking = true;
+    return recoveryPark();
+}
+
+static const Sequence recoverySequence = { SEQ_RECOVERY, recoveryNext, nullptr };
+
+const char* recoveryStart(void) {
+    recCount   = 0;
+    recParking = false;
+    const CfgAxis* axes[HOME_AXES_MAX];
+    const uint8_t k = homeAxes(axes);
+    for (uint8_t i = 0; i < k; i++) {
+        const uint8_t id = axes[i]->node.id;
+        if (!nodeLatchGet(id)) continue;
+        if (!latchedAxis(id)) {
+            snprintf(refusal, sizeof refusal, "node %d not_homeable", id); return refusal;
+        }
+        recNodes[recCount++] = id;
+    }
+    if (recCount == 0) return nullptr;
+    // Every node answers before anything moves.
+    for (uint8_t i = 0; i < recCount; i++) {
+        const uint8_t  id  = recNodes[i];
+        const uint16_t bit = 1u << id;
+        if (busExcluded() & bit) {
+            snprintf(refusal, sizeof refusal, "node %d excluded", id); return refusal;
+        }
+        if (busMute() & bit) {
+            snprintf(refusal, sizeof refusal, "node %d mute", id); return refusal;
+        }
+        const RpcResult res = rpcNodeCmd(CMD_ENABLE, id, 0);
+        if (res != RPC_OK) {
+            snprintf(refusal, sizeof refusal, "node %d %s", id, rpcResultText(res));
+            return refusal;
+        }
+    }
+
+    // Step 1: off every switch. A span latched a node that kept its origin
+    // (unlatch, within the datum); a seek latched one that has none (retract).
+    homingReason = HOMING_LEG;
+    sequenceStart(&recoverySequence);
+    for (uint8_t i = 0; i < recCount; i++) {
+        const uint8_t    id     = recNodes[i];
+        const CfgAxis&   a      = *homeAxisFor(id);
+        const CfgHoming& h      = a.homing;
+        const uint8_t    away   = (h.seekPositive != a.invertDir) ? 0 : 1;
+        const uint16_t   latch  = intervalUs(h.latchFeed, a.stepsPerUnit);
+        const uint32_t   back   = distSteps(h.backoffDist, a.stepsPerUnit);
+        const char* why = originValid(id)
+            ? homingArmUnlatch(id, away, latch, latch, 0, back)
+            : homingArm(id, HOMING_KIND_LIMIT, away, true, latch, latch, 0, back);
+        if (!why) continue;
+        if (i == 0) {
+            sequenceEnd();
+            snprintf(refusal, sizeof refusal, "%s", why);
+            return refusal;
+        }
+        homingAbandon(id, LEGFAIL_REFUSED);
+        return nullptr;
+    }
+    return nullptr;
+}

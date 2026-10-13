@@ -5,14 +5,15 @@
 #include "../../ops/machine.h"
 #include "../../ops/slot_map.h"
 #include "../../ops/axes_map.h"
+#include "../seq/home.h"
 #include "../../../ipc/shared_state.h"
 
 // The event bits' cleanup ran when they were raised, so they just clear. The
 // held bits are fixed in dependency order and the first that cannot be stops
 // it: a mute node is `bus_exclude`'s, then an unmet slot request is retried
 // once (docs/engage_and_axis_map.md §6.1; one from axes_map re-checks its
-// pending axes first). F_CONFIG and F_LATCHED have no instant fix (a config;
-// a retract) and are reported in what is left.
+// pending axes first). F_LATCHED starts the `recovery` sequence, `ok` once it
+// runs; F_CONFIG has no fix here (a config) and is reported in what is left.
 bool cmdUnalarm(const char*) {
     if (!machineFaults()) { Serial.println("err bad_state"); return true; }
     // The estop's exit is `unstop`: a map retry here would leave its nodes
@@ -30,6 +31,12 @@ bool cmdUnalarm(const char*) {
         if (!met) {
             machinePublish();
             Serial.println("err unmapped"); return true;
+        }
+    }
+    if (machineFaults() & F_LATCHED) {
+        if (const char* why = recoveryStart()) {
+            machinePublish();
+            Serial.printf("err %s\n", why); return true;
         }
     }
     machinePublish();

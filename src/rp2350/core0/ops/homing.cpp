@@ -68,6 +68,12 @@ const char* homingArmPark(uint8_t node, int32_t target, uint16_t startUs,
     return armed(runnerArmPark(node, target, startUs, floorUs, rampSteps));
 }
 
+const char* homingArmUnlatch(uint8_t node, uint8_t dir, uint16_t startUs,
+                             uint16_t floorUs, uint16_t rampSteps, uint32_t maxSteps) {
+    return armed(runnerArm(LEG_UNLATCH, node, HOMING_KIND_LIMIT, dir, true,
+                           startUs, floorUs, rampSteps, maxSteps));
+}
+
 // ── the raw leg: a one-step sequence in the manual homing context ───────────
 
 // The context stays open for the next leg, `setorigin` or `home_end`; the
