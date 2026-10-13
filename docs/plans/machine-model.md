@@ -172,8 +172,8 @@ After a fault the context is always IDLE (the teardown closed it), so
 
 ## Branches
 
-M1 → M2 → M3 is a dependent chain (Single Session). M4 and the features
-follow M3.
+M1 → M2 → M3 is a dependent chain (Single Session). M3a, M4 and the
+features follow M3.
 
 ## Branch M1: `feature/fault-mask`
 
@@ -434,6 +434,42 @@ Done (merged at `288a6bd`). Unblocks M4.
 * Not tested: a real failing switch during `home` (only dummy failures);
   `recovery` with several latched nodes at once.
 * Checks: `pio run -e pico` clean; `pio test -e native` 112/112.
+
+## Branch M3a: `feature/homing-threads`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** per-node homing. Each node of a cycle runs its own chain of legs
+(seek, back-off, latch, pull-off) instead of all nodes advancing a phase in
+lockstep, so a cycle takes its slowest node's chain rather than the sum of
+each phase's slowest leg. The cycle stays the barrier: `cycleCommit` is the
+join.
+
+* `runnerArm` takes a `last` flag, default true. The runner keeps a
+  thread-open bit per node: arming opens it, a `last` leg's end closes it, and
+  the step ends only when no leg is live and no thread is open. Without it, a
+  node that arms its next leg on a leg end would follow a step end already
+  posted for the moment nothing ran, and the cycle would commit while it
+  moves.
+* The sequence gains a per-leg hook, so a node arms its next leg on its own
+  ends; home keeps `phase` per `RunNode`, and `sweepsRead` runs per rotary
+  node.
+* Home knows each node's last leg at arm time (linear pull-off, rotary
+  reverse sweep, park). A leg released through `runnerAbort` must close its
+  thread.
+* Every other sequence keeps `last` true and runs in lockstep as today;
+  probe, whose legs end on their result, too.
+* Tests: nodes ending out of order, the join firing only on the last thread,
+  a failure while other threads run. Bench with axes started at uneven
+  distances from their switches.
+
+**Depends on:** M3.
+
+### Status
+
+Planned.
 
 ## Branch M4: `feature/probe-sequence`
 
