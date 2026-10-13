@@ -59,14 +59,6 @@ static bool degradedDenies() {
     return false;
 }
 
-static inline bool busGateDenies() {
-    if (!idlePausedOrAlarm()) {
-        Serial.println("err bad_state");
-        return true;
-    }
-    return false;
-}
-
 // ── axes_enable <on|off> (IDLE/paused job/ALARM) ─────────────────────────────────
 // Targets the bound axes (position.h), and no one else: a node lent a slot by
 // slot_map is not an axis. This replaces the old `enable all` / `disable all`, whose name read
@@ -74,7 +66,6 @@ static inline bool busGateDenies() {
 // stopped being academic once vacuum and knife nodes joined the bus.
 // Peripherals hold no slot, so they are addressed only by `enable <id>`.
 bool cmdAxesEnable(const char* args) {
-    if (busGateDenies()) return true;
     if (*args == '\0') { Serial.println("err usage"); return true; }
     // Nothing bound refuses: this command's target IS the axis map. Walking zero
     // slots and answering `ok` would read as "the axes are now off" on a
@@ -120,7 +111,6 @@ bool cmdAxesEnable(const char* args) {
 // nothing. What stays here is the half Core 1 has no business in — origins are
 // Core 0's, and a de-energised bus is back-drivable, so every datum dies.
 bool cmdBusEnable(const char* args) {
-    if (busGateDenies()) return true;
     if (*args == '\0') { Serial.println("err usage"); return true; }
     bool on = parseState(args);
     rpcNodeCmd(on ? CMD_ENABLE : CMD_DISABLE, BUS_ADDR_BROADCAST, 0);
@@ -134,7 +124,6 @@ bool cmdBusEnable(const char* args) {
 // (motor energize / pump on …); the axis bookkeeping applies only when the id
 // is an axis node (docs/engage_and_axis_map.md §9).
 bool cmdEnable(const char* args) {
-    if (busGateDenies()) return true;
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err bad_node"); return true; }
     // The axis bookkeeping this used to do by hand is gone: it keyed on the slot
@@ -147,7 +136,6 @@ bool cmdEnable(const char* args) {
 }
 
 bool cmdDisable(const char* args) {
-    if (busGateDenies()) return true;
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err bad_node"); return true; }
     rpcNodeCmd(CMD_DISABLE, node, 0);
@@ -204,7 +192,7 @@ bool cmdSlotMap(const char* args) {
         Serial.println();
         return true;
     }
-    if (busGateDenies() || degradedDenies()) return true;
+    if (degradedDenies()) return true;
     uint8_t desired[4];
     if (!parseFourNodes(args, desired)) return true;
     replyWhy(slotMapApply(desired));
@@ -252,7 +240,7 @@ bool cmdAxesMap(const char* args) {
         return true;
     }
 
-    if (busGateDenies() || degradedDenies()) return true;
+    if (degradedDenies()) return true;
     if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
 
     uint8_t desired[4];
@@ -265,7 +253,7 @@ bool cmdAxesMap(const char* args) {
     // Committing a map is also the OTHER way out of a probe session (§5.5):
     // any committed map ends the session, and `probe_end` is sugar for
     // committing the one that was already there.
-    if (machineState == STATE_PROBING) { replyProbeExit(desired); return true; }
+    if (machineContext == CTX_PROBE) { replyProbeExit(desired); return true; }
 
     const char* why;
     axesMapApply(desired, /*keepWrongType=*/false, &why);
@@ -295,8 +283,6 @@ bool cmdAxesMap(const char* args) {
 static bool parseNode(const char** p, uint8_t* node);
 
 bool cmdSetOrigin(const char* args) {
-    if (homingActive() || homingHeld()) { Serial.println("err busy"); return true; }
-    if (!homingWaiting() && busGateDenies()) return true;
 
     // Parse and check every pair before any bus I/O. No pair, a repeated
     // node, or a token without `:` is a usage error, so the old slot form is
@@ -413,14 +399,12 @@ bool cmdHomeEnd(const char*) {
 // `dummy_leg`'s states, those of a homing leg. Prints its own error; callers
 // return on true.
 static bool legGateDenies() {
-    // A `home` run owns its session's legs.
-    if (homingHeld()) { Serial.println("err busy"); return true; }
     // IDLE opens a session; HOMING continues one, beside any legs on other
     // nodes (a busy node is leg.h's refusal). F_LATCHED is the one fault a
     // leg leaves (by retracting); every other fault has its own exit.
-    const bool admitted = machineState == STATE_IDLE ||
-        machineState == STATE_HOMING ||
-        (machineState == STATE_ALARM && machineFaults() == F_LATCHED);
+    const uint8_t s = machineView();
+    const bool admitted = s == STATE_IDLE || s == STATE_HOMING ||
+        (s == STATE_ALARM && machineFaults() == F_LATCHED);
     if (!admitted) { Serial.println("err bad_state"); return true; }
     return false;
 }
@@ -461,9 +445,7 @@ static bool parseIntent(const char** p, uint8_t* intent) {
 // step holds its state, so a leg that would run in another is `err busy`.
 // Prints its own error; callers return on true.
 static bool legAdmitDenies(uint8_t intent) {
-    // A `home` run owns its session's legs.
-    if (homingHeld()) { Serial.println("err busy"); return true; }
-    const uint8_t s       = machineState;
+    const uint8_t s       = machineView();
     const bool    latched = s == STATE_ALARM && machineFaults() == F_LATCHED;
     bool ok = false;
     switch (intent) {
@@ -554,7 +536,7 @@ bool cmdLeg(const char* args) {
 
     const uint16_t startUs = (uint16_t)v[0], floorUs = (uint16_t)v[1], ramp = (uint16_t)v[2];
     const char* why;
-    if (park && machineState == STATE_HOMING)
+    if (park && machineContext == CTX_HOMING)
         why = homingParkBegin(node, (int32_t)first, startUs, floorUs, ramp);
     else if (park)
         why = traverseParkBegin(node, (int32_t)first, startUs, floorUs, ramp);
@@ -572,7 +554,7 @@ bool cmdLeg(const char* args) {
 // Allowed in every state but JOB and JOGGING, where no leg can run and the
 // bus belongs to the stream. An idle node just acks.
 bool cmdLegAbort(const char* args) {
-    if (machineState == STATE_JOB || machineState == STATE_JOGGING) { Serial.println("err bad_state"); return true; }
+    if (machineContext == CTX_JOB || machineStep() == STEP_RING) { Serial.println("err bad_state"); return true; }
     const char* p = args;
     uint8_t node;
     if (!parseNode(&p, &node)) { Serial.println("err usage"); return true; }
@@ -617,7 +599,6 @@ bool cmdDummyLeg(const char* args) {
 // counters while the shaft stayed put — the one case where the two agree and
 // are both wrong. Refuse it rather than record a fiction.
 bool cmdStep(const char* args) {
-    if (busGateDenies()) return true;
     char* end;
     uint8_t node = (uint8_t)strtoul(args, &end, 10);
     long count = strtol(end, &end, 10);
@@ -822,7 +803,6 @@ bool cmdFeed(const char* args) {
 #define HALLSCAN_MAX 300
 
 bool cmdHallScan(const char* args) {
-    if (busGateDenies()) return true;
     char* end;
     uint8_t node = (uint8_t)strtoul(args, &end, 10);
     long stepPer = strtol(end, &end, 10);
@@ -880,7 +860,7 @@ bool cmdProbeMap(const char* args) {
     if (degradedDenies()) return true;
     // IDLE only: a manual context opens from nothing, and a probe is not an
     // alarm exit.
-    if (machineState != STATE_IDLE) {
+    if (machineView() != STATE_IDLE) {
         Serial.println("err bad_state"); return true;
     }
     char* end;
@@ -950,10 +930,7 @@ bool cmdProbeEnd(const char*) {
 // Record the contact height, machine-frame steps, for the Z node in slot 2. The
 // host issues it after a clean probe with the latch leg's `get pos` Z.
 bool cmdSetProbe(const char* args) {
-    if (machineState != STATE_IDLE && !jobPaused()) {
-        Serial.println("err bad_state"); return true;
-    }
-    if (probeActive()) { Serial.println("err probing"); return true; }
+    if (machineFaults()) { Serial.println("err bad_state"); return true; }
     char* end;
     const long z = strtol(args, &end, 10);
     if (end == args) { Serial.println("err usage"); return true; }

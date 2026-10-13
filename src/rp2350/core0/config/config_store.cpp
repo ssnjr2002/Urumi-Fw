@@ -7,6 +7,7 @@
 #include "hardware/sync.h"
 #include "../../ipc/shared_state.h"
 #include "../usb_protocol.h"
+#include "../ops/machine.h"
 #include "config_store.h"
 
 static const char* const CFG_PATH = "/config.bin";
@@ -116,7 +117,7 @@ bool configStoreCommit(uint32_t len, uint32_t crc, uint8_t* nack) {
     // The caller has already verified `crc` against the staged bytes, so it is
     // not recomputed here; the readback of TMP_PATH is the remaining integrity
     // gate before the rename makes it active.
-    if (machineState != STATE_IDLE && machineState != STATE_ALARM) {
+    if (!machineAtRest() || machineContext != CTX_IDLE) {
         *nack = CFG_NACK_BAD_STATE; return false;
     }
     if (len == 0 || len > CFG_MAX_BYTES) { *nack = CFG_NACK_TOO_BIG; return false; }

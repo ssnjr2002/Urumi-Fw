@@ -19,20 +19,11 @@
 #include "../ops/position.h"
 #include "../../ipc/core1_rpc.h"
 
-// The shared gate, and the reason is Core 1's, not Core 0's. Core 0 no longer
-// blocks on a relay (ipc/core1_rpc.h), but the RS485 exchange still runs on the
-// core that owns the step budget and takes up to RESPONSE_TIMEOUT_MS -- many step
-// intervals. Core 1 services channel 1 only between segments, so issuing one
-// while a job is streaming is a dwell at a segment boundary, which leaves a mark
-// in the material. Mid-job peripheral changes belong at a PAUSED boundary, which
-// is where the host orchestrator issues them.
-static inline bool periphGateDenies() {
-    if (!idlePausedOrAlarm()) {
-        Serial.println("err bad_state");
-        return true;
-    }
-    return false;
-}
+// All are K_WRITE, at rest only, and the reason is Core 1's: the RS485 exchange
+// runs on the core that owns the step budget and takes up to
+// RESPONSE_TIMEOUT_MS. Core 1 services channel 1 only between segments, so one
+// issued while a job streams is a dwell at a segment boundary, which leaves a
+// mark in the material. Mid-job peripheral changes belong at a PAUSED boundary.
 
 // Every one of these answers with the same line, so the reply lives here too.
 static bool relay(uint8_t cmd, uint8_t node, uint8_t arg) {
@@ -42,7 +33,6 @@ static bool relay(uint8_t cmd, uint8_t node, uint8_t arg) {
 
 // The bare form: `<cmd> <node> <on|off>`. Serves vac_pump, knife_osc, laser.
 static bool relayOnOff(const char* args, uint8_t cmd) {
-    if (periphGateDenies()) return true;
     char* end;
     uint8_t node = parseNode(args, &end);
     while (*end == ' ') end++;
@@ -56,7 +46,6 @@ static bool relayOnOff(const char* args, uint8_t cmd) {
 // idx 0 = all servos, 1..6 = one. Packed high nibble = idx, low bit = on/off;
 // Core 1 expands on → SERVO_ON_ANGLE before the wire (rpc_server.cpp).
 bool cmdVacServo(const char* args) {
-    if (periphGateDenies()) return true;
     char* end;
     uint8_t node = parseNode(args, &end);
     uint8_t idx  = (uint8_t)strtoul(end, &end, 10);
@@ -71,7 +60,6 @@ bool cmdVacServo(const char* args) {
 // A range, not a toggle, so it cannot share relayOnOff. An absent duty token
 // parses as 0, which turns the blower off — deliberate, and unchanged.
 bool cmdKnifeBlower(const char* args) {
-    if (periphGateDenies()) return true;
     char* end;
     uint8_t node = parseNode(args, &end);
     long    duty = strtol(end, &end, 10);
@@ -98,7 +86,6 @@ bool cmdLaser(const char* args) { return relayOnOff(args, CMD_LASER); }
 // Confirmed, the node's slot is unbound and the node dropped from the slot and
 // axes requests, so no alarm follows. Unconfirmed, its slot is fenced.
 bool cmdMakeSafe(const char* args) {
-    if (periphGateDenies()) return true;
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err usage"); return true; }
     NodeStatus st;

@@ -48,8 +48,7 @@ uint8_t homingHeld(void);
 // dropped and the machine alarms.
 void homingAbandon(uint8_t node, uint8_t why);
 
-// True while any leg runs. Lets the gates refuse `setorigin` and `home_end`
-// without reading machineState, which anything may write.
+// True while any leg runs.
 bool homingActive(void);
 
 // The session is open and no leg runs (HOMING_WAIT): the next leg, `setorigin`

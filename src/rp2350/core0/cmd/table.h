@@ -16,11 +16,14 @@
 // twenty-odd magic numbers, each a silent bug on rename. Handlers now receive
 // `args` already positioned.
 //
-// NO `gate` FIELD, on purpose. See gate.h.
+// The kind column (CmdKind, ops/machine.h) says which state rule admits the
+// row; control_plane applies it before the handler. Checks that depend on the
+// arguments stay in the handlers.
 
 struct Cmd {
     const char* name;
     bool (*fn)(const char* args);   // args: past the command word and its spaces
+    uint8_t kind;                   // CmdKind with its K_IN_* / K_BARE_READ flags
 };
 
 // ─── query.cpp — reads; nothing here changes machine state ────────────────────

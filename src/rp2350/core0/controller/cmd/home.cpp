@@ -15,12 +15,9 @@
 #include "../../ops/machine.h"
 #include "../../../ipc/shared_state.h"
 
-// Admitted from IDLE, or with only F_LATCHED set (a leg leaves it).
+// K_SEQUENCE admits from IDLE, or with only F_LATCHED set (a leg leaves it).
 static bool homeGateDenies() {
-    if (homeRunning() || homingHeld()) { Serial.println("err busy"); return true; }
-    const bool admitted = machineState == STATE_IDLE ||
-        (machineState == STATE_ALARM && machineFaults() == F_LATCHED);
-    if (!admitted) { Serial.println("err bad_state"); return true; }
+    if (homeRunning()) { Serial.println("err busy"); return true; }
     return false;
 }
 

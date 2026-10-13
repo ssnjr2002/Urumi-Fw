@@ -3,87 +3,89 @@
 //
 // Two tables: primitives (cmd/), atomic and config-free, and controller
 // commands (controller/cmd/), which read the config and are refused without
-// one. What is left here is the lookup -- see cmd/table.h for why it is a
-// table and not the chain of startsWith() it replaced.
+// one. What is left here is the lookup and the kind's admission -- see
+// cmd/table.h for why it is a table and not the chain of startsWith() it
+// replaced.
 
 #include <Arduino.h>
 #include "control_plane.h"
 #include "cmd/table.h"
 #include "controller/cmd/table.h"
 #include "config/machine_cfg.h"
+#include "ops/machine.h"
 #include <string.h>
 
 // Order is irrelevant: the match is the whole command word, so no row can
 // shadow another. Grouped to read alongside cmd/'s files, nothing more.
 static const Cmd kCommands[] = {
     // query.cpp
-    { "ping",         cmdPing        },
-    { "status",       cmdStatus      },
-    { "cfg",          cmdCfg         },
-    { "?",            cmdStatus      },   // human alias, not host-facing
-    { "pingnode",     cmdPingNode    },
-    { "nodepos",      cmdNodePos     },
-    { "nodestat",     cmdNodeStat    },
-    { "busstat",      cmdBusStat     },
-    { "vac_switch",   cmdVacSwitch   },
+    { "ping",         cmdPing,        K_READ },
+    { "status",       cmdStatus,      K_READ },
+    { "cfg",          cmdCfg,         K_READ },
+    { "?",            cmdStatus,      K_READ },   // human alias, not host-facing
+    { "pingnode",     cmdPingNode,    K_READ },
+    { "nodepos",      cmdNodePos,     K_READ },
+    { "nodestat",     cmdNodeStat,    K_READ },
+    { "busstat",      cmdBusStat,     K_READ },
+    { "vac_switch",   cmdVacSwitch,   K_READ },
     // get.cpp
-    { "get",          cmdGet         },
+    { "get",          cmdGet,         K_READ },
     // lifecycle.cpp
-    { "stop",         cmdStop        },
-    { "unstop",       cmdUnstop      },
-    { "reset",        cmdReset       },
-    { "rst",          cmdReset       },
+    { "stop",         cmdStop,        K_ANY },
+    { "unstop",       cmdUnstop,      K_CLEAR },
+    { "reset",        cmdReset,       K_WRITE },
+    { "rst",          cmdReset,       K_WRITE },
 #ifdef PICO_ALLOW_UNCONFIGURED
-    { "uncfg",        cmdUncfg       },
+    { "uncfg",        cmdUncfg,       K_WRITE },
 #endif
-    { "seqreset",     cmdSeqReset    },
-    { "pause",        cmdPause       },
-    { "resume",       cmdResume      },
-    { "cancel",       cmdCancel      },
+    { "seqreset",     cmdSeqReset,    K_ANY },
+    { "pause",        cmdPause,       K_CONTEXT },
+    { "resume",       cmdResume,      K_CONTEXT },
+    { "cancel",       cmdCancel,      K_CONTEXT },
     // periph.cpp
-    { "vac_servo",    cmdVacServo    },
-    { "vac_pump",     cmdVacPump     },
-    { "knife_osc",    cmdKnifeOsc    },
-    { "knife_blower", cmdKnifeBlower },
-    { "laser",        cmdLaser       },
-    { "makesafe",     cmdMakeSafe    },
+    { "vac_servo",    cmdVacServo,    K_WRITE },
+    { "vac_pump",     cmdVacPump,     K_WRITE },
+    { "knife_osc",    cmdKnifeOsc,    K_WRITE },
+    { "knife_blower", cmdKnifeBlower, K_WRITE },
+    { "laser",        cmdLaser,       K_WRITE },
+    { "makesafe",     cmdMakeSafe,    K_WRITE },
     // axis.cpp
-    { "slot_map",     cmdSlotMap     },
-    { "axes_map",     cmdAxesMap     },
-    { "setorigin",    cmdSetOrigin   },
-    { "home_end",     cmdHomeEnd     },
-    { "step",         cmdStep        },
-    { "line",         cmdLine        },
-    { "bez",          cmdBez         },
-    { "jog",          cmdJog         },
-    { "jogto",        cmdJogTo       },
-    { "feed",         cmdFeed        },
-    { "hallscan",     cmdHallScan    },
-    { "leg",          cmdLeg         },
-    { "leg_abort",    cmdLegAbort    },
-    { "dummy_leg",    cmdDummyLeg    },
-    { "axes_enable",  cmdAxesEnable  },
-    { "bus_enable",   cmdBusEnable   },
-    { "bus_exclude",  cmdBusExclude  },
-    { "enable",       cmdEnable      },
-    { "disable",      cmdDisable     },
-    { "probe_map",    cmdProbeMap    },
-    { "probe_end",    cmdProbeEnd    },
-    { "setprobe",     cmdSetProbe    },
-    { "unprobe",      cmdUnprobe     },
+    { "slot_map",     cmdSlotMap,     K_WRITE | K_BARE_READ },
+    { "axes_map",     cmdAxesMap,     K_WRITE | K_BARE_READ | K_IN_PROBE },   // a map ends a probe
+    { "setorigin",    cmdSetOrigin,   K_WRITE | K_IN_HOMING },
+    { "home_end",     cmdHomeEnd,     K_CONTEXT | K_IN_HOMING },
+    { "step",         cmdStep,        K_WRITE },
+    { "line",         cmdLine,        K_STEP },
+    { "bez",          cmdBez,         K_STEP },
+    { "jog",          cmdJog,         K_STEP },
+    { "jogto",        cmdJogTo,       K_STEP },
+    { "feed",         cmdFeed,        K_ANY },
+    { "hallscan",     cmdHallScan,    K_WRITE },
+    { "leg",          cmdLeg,         K_STEP | K_IN_HOMING | K_IN_PROBE },
+    { "leg_abort",    cmdLegAbort,    K_ANY },
+    { "dummy_leg",    cmdDummyLeg,    K_STEP | K_IN_HOMING },
+    { "axes_enable",  cmdAxesEnable,  K_WRITE },
+    { "bus_enable",   cmdBusEnable,   K_WRITE },
+    { "bus_exclude",  cmdBusExclude,  K_ANY },
+    { "enable",       cmdEnable,      K_WRITE },
+    { "disable",      cmdDisable,     K_WRITE },
+    { "probe_map",    cmdProbeMap,    K_CONTEXT },
+    { "probe_end",    cmdProbeEnd,    K_CONTEXT | K_IN_PROBE },
+    { "setprobe",     cmdSetProbe,    K_WRITE },
+    { "unprobe",      cmdUnprobe,     K_ANY },
 };
 
 static const Cmd kControllerCommands[] = {
-    { "unalarm",      cmdUnalarm     },
-    { "home",         cmdHome        },
-    { "home_unhomed", cmdHomeUnhomed },
-    { "home_cycle",   cmdHomeCycle   },
-    { "home_head",    cmdHomeHead    },
-    { "select",       cmdSelect      },
-    { "wzero",        cmdWzero       },
-    { "wset",         cmdWset        },
-    { "wclear",       cmdWclear      },
-    { "mesh",         cmdMesh        },
+    { "unalarm",      cmdUnalarm,     K_CLEAR },
+    { "home",         cmdHome,        K_SEQUENCE },
+    { "home_unhomed", cmdHomeUnhomed, K_SEQUENCE },
+    { "home_cycle",   cmdHomeCycle,   K_SEQUENCE },
+    { "home_head",    cmdHomeHead,    K_SEQUENCE },
+    { "select",       cmdSelect,      K_WRITE },
+    { "wzero",        cmdWzero,       K_WRITE },
+    { "wset",         cmdWset,        K_WRITE },
+    { "wclear",       cmdWclear,      K_WRITE },
+    { "mesh",         cmdMesh,        K_WRITE },
 };
 
 template <size_t N>
@@ -117,5 +119,12 @@ bool handleCommand(const String& input) {
 
     const char* args = s + wordLen;        // hand the handler its arguments
     while (*args == ' ') args++;           // already positioned -- no offsets
+
+    if (!((c->kind & K_BARE_READ) && *args == '\0')) {
+        if (const char* why = machineAdmit(c->kind)) {
+            Serial.printf("err %s\n", why);
+            return true;
+        }
+    }
     return c->fn(args);
 }

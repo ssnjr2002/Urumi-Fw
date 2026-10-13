@@ -20,14 +20,6 @@
 #include "../../ops/machine.h"
 #include "../../../ipc/shared_state.h"
 
-static bool framesGateDenies() {
-    if (!idlePausedOrAlarm()) {
-        Serial.println("err bad_state");
-        return true;
-    }
-    return false;
-}
-
 // Axis letter to slot (x, y, z), or SLOT_NONE.
 static uint8_t axisSlot(const char* w, size_t len) {
     if (len != 1) return SLOT_NONE;
@@ -49,9 +41,6 @@ static const char* word(const char** p, size_t* len) {
 }
 
 bool cmdSelect(const char* args) {
-    if (framesGateDenies()) return true;
-    // A committed map ends a probe session; selecting is not the way out.
-    if (machineState == STATE_PROBING) { Serial.println("err bad_state"); return true; }
     if (machineFaults() & F_BUS) {
         Serial.println("err degraded"); return true;
     }
@@ -102,7 +91,6 @@ bool cmdSelect(const char* args) {
 }
 
 bool cmdWzero(const char* args) {
-    if (framesGateDenies()) return true;
     bool want[3] = { false, false, false };
     if (*args == '\0') {
         want[SLOT_X] = want[SLOT_Y] = true;
@@ -139,7 +127,6 @@ bool cmdWzero(const char* args) {
 }
 
 bool cmdWset(const char* args) {
-    if (framesGateDenies()) return true;
     uint8_t ks[3];
     float vs[3];
     uint8_t n = 0;
@@ -165,7 +152,6 @@ bool cmdWset(const char* args) {
 }
 
 bool cmdWclear(const char* args) {
-    if (framesGateDenies()) return true;
     if (*args != '\0') { Serial.println("err usage"); return true; }
     framesClearWork();
     Serial.println("ok");
@@ -173,7 +159,6 @@ bool cmdWclear(const char* args) {
 }
 
 bool cmdMesh(const char* args) {
-    if (framesGateDenies()) return true;
     const bool on = strcmp(args, "on") == 0;
     if (!on && strcmp(args, "off") != 0) { Serial.println("err usage"); return true; }
     meshEnable(on);

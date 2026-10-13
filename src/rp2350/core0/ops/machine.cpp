@@ -6,6 +6,7 @@
 #include "bus.h"
 #include "runner.h"
 #include "probe.h"
+#include "homing.h"            // homingHeld
 #include "../planner/queue.h"  // plannerStopJog
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
@@ -128,6 +129,62 @@ static uint8_t stateOf(uint16_t faults) {
     if (step == STEP_LEGS) return STATE_TRAVERSE;
     if (step == STEP_RING && ringOwner != RING_JOB) return STATE_JOGGING;
     return faults ? STATE_ALARM : STATE_IDLE;
+}
+
+uint8_t machineView(void) { return stateOf(machineFaults()); }
+
+static bool jobPaused(void) { return machineContext == CTX_JOB && jobReason == JOB_PAUSED; }
+
+// A `home` run holds its cycle between legs; the sequence slot until M3.
+static bool sequenceLive(void) { return homingHeld() != 0; }
+
+static bool estopUnswept(void) { return latched && !estopSwept; }
+
+// A paused job's ring is parked, not moving.
+static bool stepLive(void) {
+    const uint8_t step = machineStep();
+    return step == STEP_LEGS || (step == STEP_RING && !jobPaused());
+}
+
+bool machineAtRest(void) {
+    return !estopUnswept() && !stepLive() && !sequenceLive() &&
+           (machineContext == CTX_IDLE || jobPaused());
+}
+
+bool machineBusFree(void) {
+    return machineAtRest() ||
+           (machineContext == CTX_HOMING && machineStep() == STEP_NONE && !sequenceLive());
+}
+
+const char* machineAdmit(uint8_t kind) {
+    const uint8_t k   = K_KIND(kind);
+    const uint8_t ctx = machineContext;
+    if (k == K_ANY || k == K_READ) return nullptr;
+    const bool busy = stepLive() || sequenceLive();
+    if ((ctx == CTX_PROBE && !(kind & K_IN_PROBE)) ||
+        (ctx == CTX_HOMING && !(kind & K_IN_HOMING)))
+        return busy ? "busy" : "bad_state";
+    bool ok = false;
+    switch (k) {
+        case K_WRITE:
+            ok = !estopUnswept() && !busy &&
+                 (ctx == CTX_IDLE || ctx == CTX_PROBE || ctx == CTX_HOMING || jobPaused());
+            break;
+        case K_STEP:
+            ok = !latched && !sequenceLive() && ctx != CTX_JOB;
+            break;
+        case K_SEQUENCE:
+            ok = !latched && !busy && ctx == CTX_IDLE && (machineFaults() & ~F_LATCHED) == 0;
+            break;
+        case K_CONTEXT:
+            ok = !latched;
+            break;
+        case K_CLEAR:
+            ok = !busy && ctx == CTX_IDLE;
+            break;
+    }
+    if (ok) return nullptr;
+    return busy ? "busy" : "bad_state";
 }
 
 void machinePublish(void) {

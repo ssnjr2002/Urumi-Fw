@@ -65,3 +65,37 @@ void machineReset(void);
 // ipc/shared_state.h), under plannerLock. Last in each loop pass and after
 // every command; also closes a job whose abort Core 1 has finished.
 void machinePublish(void);
+
+// The state publish would write now. Core 0 logic asks this (or the slots),
+// never machineState.
+uint8_t machineView(void);
+
+// Nothing moves and the bus is free: estop swept or not latched, no step, no
+// sequence, and no context but a paused job.
+bool machineAtRest(void);
+
+// As machineAtRest, and also a homing context between legs: the bus queries.
+bool machineBusFree(void);
+
+// ── command kinds ────────────────────────────────────────────────────────────
+// A column of the command tables (control_plane.cpp); machineAdmit applies the
+// kind's rule before the handler runs. Argument-dependent checks stay in the
+// handlers.
+enum CmdKind : uint8_t {
+    K_ANY      = 0,   // always: stop, and settings with no state rule
+    K_READ     = 1,   // always; a bus read checks machineBusFree itself
+    K_WRITE    = 2,   // at rest (machineAtRest)
+    K_STEP     = 3,   // a primitive that takes time: no estop, no sequence, no job
+    K_SEQUENCE = 4,   // IDLE context, no step, no fault but F_LATCHED
+    K_CONTEXT  = 5,   // opens or closes a context, by the handler's rules; no estop
+    K_CLEAR    = 6,   // unalarm, unstop: no step, no sequence, no context
+};
+#define K_IN_PROBE  0x40   // also admitted inside the probe context
+#define K_IN_HOMING 0x80   // also admitted inside the homing context
+#define K_BARE_READ 0x20   // the bare form (no arguments) is a read
+#define K_KIND(k)   ((k) & 0x0F)
+
+// nullptr, or the refusal: "busy" when a step or sequence is what refuses,
+// else "bad_state". Inside a manual context only K_ANY, K_READ and the rows
+// flagged for it are admitted.
+const char* machineAdmit(uint8_t kind);

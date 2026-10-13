@@ -9,6 +9,7 @@
 #include "../ops/frames.h"
 #include "../ops/mesh.h"
 #include "../ops/position.h"
+#include "../ops/machine.h"
 #include "../../ipc/shared_state.h"
 #include "planner/bezier.h"
 #include "planner/mesh.h"
@@ -29,7 +30,7 @@ static void replanAndCommit() {
 // The state, config and limit checks every push shares; fills `limits`. A jog
 // joins JOGGING, a record a job that is buffering or running.
 static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
-    const uint8_t st = machineState;
+    const uint8_t st = machineView();
     const uint8_t why = jobReason;
     const bool joins = jog ? st == STATE_JOGGING
                            : st == STATE_JOB && (why == JOB_BUFFERING || why == JOB_RUNNING);

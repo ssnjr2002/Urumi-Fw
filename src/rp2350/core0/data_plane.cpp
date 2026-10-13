@@ -131,7 +131,7 @@ static void feedPacket(uint8_t b) {
 
     // Records join a job, or open one from IDLE; the planner's admit narrows
     // JOB to the reasons that take records.
-    const uint8_t st = machineState;
+    const uint8_t st = machineView();
     if (st == STATE_JOB && jobReason == JOB_PAUSED) { sendNack(MSEG_NACK_PAUSED);    return; }
     if (st != STATE_IDLE && st != STATE_JOB)        { sendNack(MSEG_NACK_BAD_STATE); return; }
 
@@ -204,7 +204,7 @@ static void feedCfg(uint8_t b) {
         if (cfgLen == 0 || cfgLen > CFG_MAX_BYTES) {
             sendCfgNack(CFG_NACK_TOO_BIG); rxKind = RX_NONE; return;
         }
-        if (machineState != STATE_IDLE && machineState != STATE_ALARM) {
+        if (!machineAtRest() || machineContext != CTX_IDLE) {
             sendCfgNack(CFG_NACK_BAD_STATE); rxKind = RX_NONE; return;
         }
         cfgRxCnt  = 0;
@@ -369,7 +369,7 @@ static void cjogTick() {
     if (cjogHeld && silent) cjogStop();
     if (!cjogWanted()) return;
     if (silent) { for (uint8_t k = 0; k < 4; k++) cjogWant[k] = 0; return; }
-    if (!empty || abortRequested || machineState != STATE_IDLE) return;
+    if (!empty || abortRequested || machineView() != STATE_IDLE) return;
     int8_t d[4];
     for (uint8_t k = 0; k < 4; k++) { d[k] = cjogWant[k]; cjogWant[k] = 0; }
     if (const uint8_t why = cjogStart(d, cjogSpeed)) sendNack(why);

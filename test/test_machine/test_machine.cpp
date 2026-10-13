@@ -4,6 +4,7 @@
  */
 
 #include "doctest.h"
+#include <string.h>
 
 #include "../../src/rp2350/core0/ops/machine.cpp"
 
@@ -12,6 +13,7 @@
 volatile uint8_t  machineState;
 volatile uint8_t  machineContext;
 volatile uint8_t  ringOwner;
+volatile uint8_t  jobReason;
 volatile bool     estopRequested, estopSwept, abortRequested, plannerActive;
 planner::Planner  plannerRing;
 spin_lock_t       lockStorage;
@@ -21,6 +23,7 @@ uint8_t           homingLatched;
 namespace {
 bool degraded, blocking, complete = true;
 bool legsLive, probeLeg;
+uint8_t heldCycle;
 int  dropped, aborted, probeDowns, jogStops;
 bool probeRestored;
 
@@ -28,6 +31,8 @@ void reset() {
     degraded = blocking = legsLive = probeLeg = probeRestored = false;
     complete = true;
     dropped = aborted = probeDowns = jogStops = 0;
+    heldCycle = 0;
+    jobReason = JOB_BUFFERING;
     homingLatched = 0;
     abortRequested = plannerActive = false;
     plannerRing.reset({0, 0});
@@ -50,6 +55,7 @@ void probeTeardown(bool restore) {
     contextClose(CTX_PROBE);
 }
 void plannerStopJog() { jogStops++; }
+uint8_t homingHeld(void) { return heldCycle; }
 
 // ── tests ───────────────────────────────────────────────────────────────────
 
@@ -197,4 +203,71 @@ TEST_CASE("a fault stops a jog; an abort with no job opens nothing") {
     machinePublish();
     CHECK(machineContext == CTX_IDLE);
     CHECK(machineState == STATE_IDLE);
+}
+
+TEST_CASE("admission per kind at rest, in ALARM and in a paused job") {
+    reset();
+    for (uint8_t k = K_ANY; k <= K_CLEAR; k++) CHECK(machineAdmit(k) == nullptr);
+
+    homingLatched = 0x01;                   // only F_LATCHED: a home may run
+    CHECK(machineAdmit(K_SEQUENCE) == nullptr);
+    complete = false;                       // any other fault refuses it
+    CHECK(strcmp(machineAdmit(K_SEQUENCE), "bad_state") == 0);
+    CHECK(machineAdmit(K_WRITE) == nullptr);   // writes are recovery
+
+    reset();
+    machineContext = CTX_JOB;
+    jobReason = JOB_PAUSED;
+    plannerRing.pushLine({10, 0}, 10, {}, 0.05f, {});   // the rest of the job, parked
+    CHECK(machineAdmit(K_WRITE) == nullptr);
+    CHECK(machineAtRest());
+    CHECK(strcmp(machineAdmit(K_STEP), "bad_state") == 0);
+    CHECK(strcmp(machineAdmit(K_CLEAR), "bad_state") == 0);
+    jobReason = JOB_RUNNING;
+    CHECK(strcmp(machineAdmit(K_WRITE), "busy") == 0);
+    plannerRing.reset({0, 0});              // buffering, nothing queued
+    jobReason = JOB_BUFFERING;
+    CHECK(strcmp(machineAdmit(K_WRITE), "bad_state") == 0);
+}
+
+TEST_CASE("a live step or sequence refuses as busy") {
+    reset();
+    legsLive = true;
+    CHECK(strcmp(machineAdmit(K_WRITE), "busy") == 0);
+    CHECK(strcmp(machineAdmit(K_SEQUENCE), "busy") == 0);
+    CHECK(machineAdmit(K_STEP) == nullptr);   // a leg joins the step
+    CHECK(machineAdmit(K_READ) == nullptr);
+
+    reset();
+    heldCycle = 1;                          // a `home` run between legs
+    CHECK(strcmp(machineAdmit(K_STEP), "busy") == 0);
+    CHECK(!machineBusFree());
+}
+
+TEST_CASE("a manual context admits only its own rows") {
+    reset();
+    machineContext = CTX_HOMING;
+    CHECK(strcmp(machineAdmit(K_WRITE), "bad_state") == 0);
+    CHECK(machineAdmit(K_WRITE | K_IN_HOMING) == nullptr);
+    CHECK(strcmp(machineAdmit(K_WRITE | K_IN_PROBE), "bad_state") == 0);
+    CHECK(machineAdmit(K_ANY) == nullptr);
+    CHECK(machineBusFree());
+    CHECK(!machineAtRest());
+
+    machineContext = CTX_PROBE;
+    probeLeg = true;
+    CHECK(strcmp(machineAdmit(K_WRITE | K_IN_PROBE), "busy") == 0);
+    CHECK(machineAdmit(K_STEP | K_IN_PROBE) == nullptr);
+}
+
+TEST_CASE("the estop: only reads, stop and writes once swept") {
+    reset();
+    estopLatch();
+    CHECK(strcmp(machineAdmit(K_WRITE), "bad_state") == 0);
+    CHECK(strcmp(machineAdmit(K_STEP), "bad_state") == 0);
+    CHECK(strcmp(machineAdmit(K_CONTEXT), "bad_state") == 0);
+    estopSwept = true;
+    CHECK(machineAdmit(K_WRITE) == nullptr);
+    CHECK(machineAdmit(K_CLEAR) == nullptr);
+    CHECK(strcmp(machineAdmit(K_STEP), "bad_state") == 0);
 }

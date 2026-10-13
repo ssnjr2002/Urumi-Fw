@@ -60,7 +60,7 @@ bool cmdUnstop(const char*) {
 }
 
 bool cmdReset(const char*) {
-    if (machineState != STATE_IDLE && machineState != STATE_ALARM) {
+    if (machineContext != CTX_IDLE) {      // K_WRITE also admits a paused job
         Serial.println("err bad_state");
         return true;
     }
@@ -79,7 +79,7 @@ bool cmdSeqReset(const char*) {            // data-plane support (see wire doc)
 // ring for `resume`.
 bool cmdPause(const char*) {
     const uint8_t why = jobReason;
-    if (machineState != STATE_JOB || (why != JOB_BUFFERING && why != JOB_RUNNING)) {
+    if (machineContext != CTX_JOB || (why != JOB_BUFFERING && why != JOB_RUNNING)) {
         Serial.println("err bad_state"); return true;
     }
     pauseRequested = true;

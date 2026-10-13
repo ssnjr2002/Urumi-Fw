@@ -14,7 +14,7 @@
 // pending axes first). F_CONFIG and F_LATCHED have no instant fix (a config;
 // a retract) and are reported in what is left.
 bool cmdUnalarm(const char*) {
-    if (machineState != STATE_ALARM) { Serial.println("err bad_state"); return true; }
+    if (!machineFaults()) { Serial.println("err bad_state"); return true; }
     // The estop's exit is `unstop`: a map retry here would leave its nodes
     // unconfirmed.
     if (estopLatched()) { Serial.println("err estop"); return true; }

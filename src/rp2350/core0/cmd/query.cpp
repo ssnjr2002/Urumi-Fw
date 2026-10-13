@@ -81,7 +81,7 @@ bool cmdStatus(const char*) {
 // The bus queries' gate: IDLE, a paused job, ALARM, and a homing session between legs,
 // when no leg holds the bus.
 static bool busQueryDenies() {
-    if (idlePausedOrAlarm() || homingWaiting()) return false;
+    if (machineBusFree()) return false;
     Serial.println("err bad_state");
     return true;
 }
@@ -127,7 +127,7 @@ bool cmdNodePos(const char* args) {
     // The original reason was Core 0 blocking in pop_blocking, which put `stop`
     // behind a relay -- measured at 4 s of queued motion. That half is gone
     // (ipc/core1_rpc.h); the gate stays for Core 1's half.
-    if (!idlePausedOrAlarm()) {
+    if (!machineAtRest()) {
         Serial.println("err bad_state"); return true;
     }
     uint8_t node = parseNode(args, nullptr);
@@ -236,7 +236,7 @@ bool cmdNodeStat(const char* args) {
 bool cmdVacSwitch(const char* args) {
     // Gated like every other transaction that blocks Core 0 on the bus — see
     // cmdNodePos.
-    if (!idlePausedOrAlarm()) {
+    if (!machineAtRest()) {
         Serial.println("err bad_state"); return true;
     }
     uint8_t node = parseNode(args, nullptr);
