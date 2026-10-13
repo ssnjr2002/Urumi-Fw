@@ -60,8 +60,14 @@ step       — | LEGS | RING (owner) | WAIT         the runner's live step, clos
   event or a timeout). RING carries the ring owner: `JOB`, `JOG_STEP`,
   `JOG_CONT`, `SEQ` (J2's `joggingReason`, generalised). "Jogging" is RING
   with a JOG owner, in any context.
-* A leg's owner check is the step slot (LEGS) and the step's generation, not
-  `machineState`.
+* **Ownership is the chain step → sequence → context.** The step belongs to
+  the live sequence, or to the manual context when no sequence runs. Closing
+  or aborting a level tears down the levels below it (`contextClose` aborts
+  the sequence, `sequenceAbort` cuts the step), so a step never checks its
+  owner.
+* **A sequence has no context of its own:** it runs in the one it started in,
+  which admits it. `home` runs in IDLE or `JOB.PAUSED`; the manual HOMING
+  context is only for raw legs.
 
 Examples:
 
@@ -73,6 +79,8 @@ jogto park, step 2         IDLE         / jogto   / RING SEQ
 the job cutting            JOB.RUNNING  / —       / RING JOB
 jog while paused           JOB.PAUSED   / —       / RING JOG_STEP
 probe while paused         JOB.PAUSED   / probe   / LEGS
+home                       IDLE         / home    / LEGS
+home while paused          JOB.PAUSED   / home    / LEGS
 tool change, waiting       JOB.TOOL_CHANGE / toolchg / WAIT
 manual probe leg           PROBE        / —       / LEGS
 ```
@@ -87,6 +95,10 @@ else                    → IDLE
 + machineFaults
 ```
 
+* A live sequence publishes by name, whatever the context: `home` and
+  `recovery` as HOMING, `probe` as PROBING. A step or sequence outranks the
+  job context (a jog while paused is JOGGING); a manual context keeps its
+  name over its raw legs (HOMING, not TRAVERSE).
 * Computed by `machinePublish()`, last in each loop pass; nothing else writes
   `machineState`. Core 0 logic never reads it: it asks the slots.
 * `resumeOrHold`, `returnState`, `slotMapGate`'s alarm write and the
@@ -255,7 +267,7 @@ from slots; a stale drain dropped.
 
 ### Status
 
-Ready to merge.
+Done (merged at `69a37a1`). Unblocks M3.
 
 ### Outcome
 
@@ -321,8 +333,22 @@ steps, and `home` on the driver.
 
 * `controller/seq/sequence.{h,cpp}` (new); `controller/seq/home.cpp` rebuilt
   on it (cycles, phases, `onSwitch`, sweep reads and datum commits in
-  `next()`); `homingHold` becomes "a sequence is live".
+  `next()`); `sequenceLive()` in `ops/machine.cpp` (today `homingHeld()`)
+  reads the sequence slot.
+* `home` runs as a sequence in IDLE with no context: split the shared leg
+  arming from the manual HOMING session (`homingBegin`/`homingParkBegin`
+  open CTX_HOMING today, and `homeTick` ends on its close). Raw `leg` keeps
+  the session; latch and origin effects stay shared (`leg_effects`).
+* Ownership by the chain: `legOwnerHolds`, the runner's owner and its
+  generation go (`boxClear` on a cut already drops stale ends).
+  `contextClose` aborts a live sequence and step; `sequenceAbort` cuts the
+  step; `machineTeardown` goes step, sequence, context.
+* WAIT comes from the sequence: `machineStep()` returns it while the live
+  sequence waits.
+* Publish: a sequence by name; step and sequence before the job context.
 * The `recovery` sequence for `F_LATCHED` (`unalarm` step 4).
+* Not here: the `SEQ` ring owner (J1b, `jogto park`); admission in
+  `JOB.PAUSED` (JB3, M4).
 
 **Tests (native):** a run with legs, ring and wait; a failing leg; `stop`
 mid-step; a wait timing out; `abort()` on teardown.
@@ -344,6 +370,11 @@ Planned.
 **Purpose:** `probe` as a sequence (bind, park Zs, XY to the switch, probe
 legs, read, restore), usable inside a job; a probe profile in the config.
 
+* Admission in `JOB.PAUSED` for the probe sequence and `home`, once JB3
+  drops the ring on pause. A failure there keeps the job and its index.
+* An estop during the probe sequence: `abort()` drops the binding without
+  the bus, as M2's manual probe teardown does; confirm here.
+
 **Depends on:** M3.
 
 ### Status
@@ -356,14 +387,12 @@ Planned.
 |---|---|---|
 | J1b `feature/jogto-named` | sequence: `parkZs()`, `lineTo()` | M3 |
 | JB2 `feature/tool-mount` | `mount` posts the event a WAIT takes | nothing |
-| JB3 `feature/layer-header` | unchanged | JB2 |
+| JB3 `feature/layer-header` | pause drops the ring; jogs admitted in `JOB.PAUSED` | JB2 |
 | JB4 `feature/tool-change` | sequence in JOB.TOOL_CHANGE: park, per head XY, WAIT `mount`, later probe | M3, JB3 (M4 for probing) |
 
 ## Open
 
 * Wait events: a fixed enum or an id carried by the event.
-* An estop during a probe sequence: `abort()` drops the binding without the
-  bus (`unstop` forgets the map anyway); confirm in M3's Read.
 * Peripheral off under LEGS: allowed (Core 1 serves requests between leg
   polls) or refused as today.
 * Whether the job's at-rest reasons also move to Core 0 later.
