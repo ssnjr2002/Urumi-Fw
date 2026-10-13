@@ -24,6 +24,7 @@
 #include "config/machine_cfg.h"
 #include "ops/position.h"          // SLOT_Z, SLOT_A
 #include "ops/frames.h"
+#include "ops/machine.h"           // jobAbort
 #include "planner/queue.h"
 #include <planner/bezier.h>
 
@@ -298,7 +299,7 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
     if (!machineCfgValid()) return MSEG_NACK_BAD_STATE;
     const MachineCfg& cfg = machineCfg();
     float at[4];
-    if (!plannerJogFrom(at, JOGGING_CONT)) return MSEG_NACK_BAD_STATE;
+    if (!plannerJogFrom(at, RING_JOG_CONT)) return MSEG_NACK_BAD_STATE;
 
     // How far each moving axis may go: to its soft end when homed with
     // softLimits, else maxTravel; A one CJOG_A_RUN. A diagonal stops at the
@@ -323,9 +324,9 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
     if (!(feed > 0)) return MSEG_NACK_BAD_STATE;
 
     const PlannerQueueResult r =
-        d[2] != 0 ? plannerQueueAxis(SLOT_Z, d[2] * run, feed, JOGGING_CONT)
-      : d[3] != 0 ? plannerQueueAxis(SLOT_A, d[3] * run, feed, JOGGING_CONT)
-      : plannerQueueLine(at[0] + d[0] * run, at[1] + d[1] * run, feed, JOGGING_CONT);
+        d[2] != 0 ? plannerQueueAxis(SLOT_Z, d[2] * run, feed, RING_JOG_CONT)
+      : d[3] != 0 ? plannerQueueAxis(SLOT_A, d[3] * run, feed, RING_JOG_CONT)
+      : plannerQueueLine(at[0] + d[0] * run, at[1] + d[1] * run, feed, RING_JOG_CONT);
     if (r == PQ_SOFT_LIMIT) return MSEG_NACK_SOFT_LIMIT;   // the mesh leaves Z no room
     if (r != PQ_OK) return MSEG_NACK_BAD_STATE;
     for (uint8_t k = 0; k < 4; k++) cjogDir[k] = d[k];
@@ -350,7 +351,7 @@ static void acceptCjog() {
     // Another direction, or step jogs running: stop them, start once at rest.
     const bool busy = cjogOn || plannerQueueDepth() != 0 || plannerActive || abortRequested;
     if (busy) {
-        if (cjogOn || joggingReason == JOGGING_STEP) plannerStopJog();
+        if (cjogOn || ringOwner == RING_JOG_STEP) plannerStopJog();
         cjogOn = cjogHeld = false;
         for (uint8_t k = 0; k < 4; k++) cjogWant[k] = d[k];
         cjogSpeed = speed;
@@ -407,8 +408,7 @@ bool dataPlaneConsume(uint8_t b) {
         // Record intent only; Core 1 owns the ramp and the transition (Layer 5).
         // No reply: like `stop` this correlates nothing, and confirmation
         // arrives on the status plane as the state settles to IDLE.
-        abortRequested = true;
-        __dmb();
+        jobAbort();
         plannerEndContour();
         return true;
     }

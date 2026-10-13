@@ -11,7 +11,7 @@
 void controllerApplyDefaultMap() {
     framesReset();
     if (!machineCfgValid()) {
-        machineSettle();                   // F_CONFIG, or IDLE after uncfg
+        machinePublish();                  // F_CONFIG, or IDLE after uncfg
         return;
     }
     const MachineCfg& cfg = machineCfg();

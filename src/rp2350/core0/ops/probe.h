@@ -59,8 +59,12 @@ const char* probeExit(const uint8_t* newMap, int8_t* switchOut);
 // Poll a leg in flight. No-op unless one is. Call from the Core 0 loop.
 void probeTick(void);
 
-// True while this module holds a session. Lets the gates refuse without reading
-// machineState, which anything may write.
+// machineTeardown's: abandon any leg and end the session. `restore` re-applies
+// the axes request; without it (estop: `unstop` forgets the map) the bus is
+// left alone.
+void probeTeardown(bool restore);
+
+// True while this module holds a session.
 bool probeActive(void);
 
 // True while a leg is actually executing — the window in which the bus is

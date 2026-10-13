@@ -81,7 +81,7 @@ static planner::Pos posFromSteps() {
 // `reason`'s kind. True if it did.
 static bool resetIfIdle(uint8_t reason) {
     if (plannerActive || plannerRing.count() != 0) return false;
-    joggingReason = reason;
+    ringOwner = reason;
     // Signed, so planner units are machine units on an invertDir axis too.
     for (uint8_t k = 0; k < MOTION_SLOTS; k++) plannerSpm[k] = spmOf(k);
     plannerTurnQ32 = (int64_t)llround((double)plannerSpm[3] * 360.0 * 4294967296.0);
@@ -165,11 +165,11 @@ PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     resetIfIdle(reason);
-    const bool mine = joggingReason == reason;
+    const bool mine = ringOwner == reason;
     planner::Vec2 to = {x, y};
     planner::PathCap cap;
     PlannerQueueResult fit = mine ? meshLine(to, limits, cap) : PQ_OK;
-    if (fit == PQ_SOFT_LIMIT && reason == JOGGING_CONT) {
+    if (fit == PQ_SOFT_LIMIT && reason == RING_JOG_CONT) {
         to = meshClip(to);
         cap = planner::PathCap();
         const planner::Pos e = plannerRing.end();
@@ -194,7 +194,7 @@ PlannerQueueResult plannerQueueAxis(uint8_t k, float d, float feed, uint8_t reas
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     resetIfIdle(reason);
-    const bool mine = joggingReason == reason;
+    const bool mine = ringOwner == reason;
     planner::Pos to = plannerRing.end();
     if (k == SLOT_Z) to.z += d;
     else to.addA(d);
@@ -214,8 +214,8 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
     if (r != PQ_OK) return r;
 
     uint32_t s = spin_lock_blocking(plannerLock);
-    resetIfIdle(JOGGING_STEP);
-    const bool mine = joggingReason == JOGGING_STEP;
+    resetIfIdle(RING_JOG_STEP);
+    const bool mine = ringOwner == RING_JOG_STEP;
     const planner::Vec2 p0 = plannerRing.end().xy();
     spin_unlock(plannerLock, s);
     if (!mine) return PQ_BAD_STATE;
@@ -262,12 +262,12 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     if (planner::checkBezier(b) != planner::BezierError::None) return PQ_BAD_CURVE;
 
     const uint32_t s = spin_lock_blocking(plannerLock);
-    const bool reset = resetIfIdle(JOGGING_NONE);
+    const bool reset = resetIfIdle(RING_JOB);
     const planner::Pos e = plannerRing.end();
     const float dx = b.p[0].x - e.x, dy = b.p[0].y - e.y;
     PlannerQueueResult out = PQ_OK;
     bool travel = false;
-    if (joggingReason != JOGGING_NONE) {
+    if (ringOwner != RING_JOB) {
         out = PQ_BAD_STATE;                         // a jog owns the ring
     } else if (dx == 0 && dy == 0) {
         if (plannerRing.full()) out = PQ_FULL;
@@ -290,6 +290,12 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     if (out == PQ_OK) {
         if (travel) plannerRing.pushLine(b.p[0], travelFeed, limits, kDeviation, travelCap);
         plannerRing.pushBezier(b, cutFeed, limits, kDeviation, curveCap);
+        // The first record opens the job context; Core 1 buffers it from here.
+        if (machineContext != CTX_JOB) {
+            jobReason = JOB_BUFFERING;
+            __dmb();
+            machineContext = CTX_JOB;
+        }
     }
     spin_unlock(plannerLock, s);
     if (out != PQ_OK) return out;
@@ -302,7 +308,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
 bool plannerJogFrom(float at[4], uint8_t reason) {
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool idle = !plannerActive && plannerRing.count() == 0;
-    const bool ok = idle || joggingReason == reason;
+    const bool ok = idle || ringOwner == reason;
     if (ok) {
         // Z is actual: the soft range holds on the motors' Z.
         if (idle) meshLatch();

@@ -14,8 +14,9 @@
 
 // ─── Cross-Core Global Variables (Memory Allocation) ──────────────────────────
 
-// Machine state + reason codes (see shared.h for the transition map)
+// Machine state, context + reason codes (see shared_state.h)
 volatile uint8_t machineState   = STATE_IDLE;
+volatile uint8_t machineContext = CTX_IDLE;
 volatile uint8_t jobReason      = JOB_BUFFERING;
 volatile uint8_t probingReason  = PROBING_CLEAR;
 volatile uint8_t homingReason   = HOMING_WAIT;
@@ -31,7 +32,9 @@ volatile int32_t resumePos[4]   = {0, 0, 0, 0};
 // Inter-core request flags
 volatile bool    pauseRequested = false;
 volatile bool    abortRequested = false;
-volatile uint8_t joggingReason  = JOGGING_NONE;
+volatile uint8_t ringOwner      = RING_JOB;
+volatile bool    estopRequested = false;
+volatile bool    estopSwept     = false;
 volatile float    bufferQueueS   = 1.0f;
 volatile uint32_t bufferIdleMs   = 500;
 

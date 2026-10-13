@@ -1,6 +1,7 @@
 #pragma once
 
-// machine.h — the fault mask, the estop latch, and the state they publish.
+// machine.h — the fault mask, the estop latch, the context and step slots,
+// and the state they publish.
 
 #include <stdint.h>
 
@@ -21,23 +22,46 @@ enum MachineFault : uint16_t {
 #define F_HELD   (F_BUS | F_CONFIG | F_UNMAPPED | F_LATCHED)
 #define F_EVENTS (F_HOMING | F_PROBE | F_FACTS)
 
+// The live step, read from its owners: node legs (the runner, a probe leg) or
+// planner motion (the ring, or Core 1 running it).
+enum MachineStep : uint8_t {
+    STEP_NONE = 0,
+    STEP_LEGS = 1,
+    STEP_RING = 2,
+};
+
 uint16_t machineFaults(void);
-void     faultSet(uint16_t f);          // event bits only
+// Event bits only; an event fault tears down what runs (machineTeardown).
+void     faultSet(uint16_t f);
 void     faultsClearEvents(void);
 
-// `stop` latches and signals Core 1 (STATE_ESTOP); Core 1 sweeps and publishes
-// ALARM. `unstop` clears it.
+// `stop` latches, signals Core 1 (estopRequested) and tears down; Core 1
+// sweeps and sets estopSwept. `unstop` clears both.
 void estopLatch(void);
 bool estopLatched(void);
 void estopClear(void);
 
-// Soft reset: no event bits, no latch.
+// Open or close a context (MachineContext) and publish. A close names the
+// context it closes and is a no-op if another is open. Not for CTX_JOB, which
+// opens and closes under plannerLock (planner/queue.cpp, `cancel`).
+void contextOpen(uint8_t ctx);
+void contextClose(uint8_t ctx);
+
+uint8_t machineStep(void);
+
+// Abort a job's motion (the host's ABORT): Core 1 brakes and drops the ring;
+// the job's context closes once it has.
+void jobAbort(void);
+
+// Step, then context: legs dropped (estop: Core 1 is sweeping) or aborted,
+// a job's ring aborted, the context closed.
+void machineTeardown(bool estop);
+
+// Soft reset: no event bits, no latch, no context; ALARM until the boot
+// sequence publishes.
 void machineReset(void);
 
-// ALARM while any bit is set, else IDLE. machineSettle() writes it from any
-// state, for a Core 0 state that closes (HOMING, TRAVERSE, PROBING);
-// machinePublish() only over IDLE or ALARM, once per loop pass and after
-// anything that changes a held bit. Both under plannerLock: Core 1 leaves IDLE
-// for motion under it.
-void machineSettle(void);
+// Writes machineState from the latch, the slots and the faults (see
+// ipc/shared_state.h), under plannerLock. Last in each loop pass and after
+// every command; also closes a job whose abort Core 1 has finished.
 void machinePublish(void);

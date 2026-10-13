@@ -26,9 +26,9 @@ void emitDebugSteps(uint8_t slot, uint16_t sps, int32_t steps) {
     uint32_t t0 = rp2040.getCycleCount();
     uint32_t emitted = 0;
     for (uint32_t i = 0; i < count; i++) {
-        if (machineState == STATE_ESTOP) break;
+        if (estopRequested) break;
         while ((rp2040.getCycleCount() - t0) < interval) {
-            if (machineState == STATE_ESTOP) break;
+            if (estopRequested) break;
         }
         t0 += interval;
         rs485.writeStream(streamByte);

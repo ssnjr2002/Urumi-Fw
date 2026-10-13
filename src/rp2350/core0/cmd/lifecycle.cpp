@@ -17,7 +17,7 @@
 #include "../usb_protocol.h" // BUS_ADDR_MAX
 #include "../../ipc/shared_state.h"
 
-// Core 1 flushes, sweeps the bus safe and publishes ALARM. The datum dies
+// Core 1 flushes and sweeps the bus safe; ALARM shows once it has. The datum dies
 // here, before the reply; the fenced slots' positions are cleared once Core 1
 // has stopped writing them (FACT_ESTOP_SWEPT, ops/observe.cpp).
 bool cmdStop(const char*) {
@@ -33,9 +33,9 @@ bool cmdStop(const char*) {
 // confirmation frees that node's slot and clears its fence. Refused, with the
 // unconfirmed ids, until all confirm; then the requests are forgotten, the
 // latch clears and the machine settles IDLE (or ALARM on a held fault),
-// unmapped, de-energised, un-homed. Refused until Core 1's sweep published ALARM.
+// unmapped, de-energised, un-homed. Refused until Core 1's sweep is done.
 bool cmdUnstop(const char*) {
-    if (!estopLatched() || machineState != STATE_ALARM) {
+    if (!estopLatched() || !estopSwept) {
         Serial.println("err bad_state"); return true;
     }
     uint16_t unconfirmed = 0;
@@ -55,7 +55,6 @@ bool cmdUnstop(const char*) {
     slotMapForget();
     axesReqForget();
     estopClear();
-    machineSettle();
     Serial.println("ok");
     return true;
 }
@@ -104,12 +103,12 @@ bool cmdResume(const char*) {
     return true;
 }
 
-// End a job at rest (buffering or paused): its ring is dropped. Core 1 starts a
-// buffered job only under the lock, so the check holds.
+// End a job at rest (buffering or paused): its ring is dropped and its context
+// closed. Core 1 starts a buffered job only under the lock, so the check holds.
 bool cmdCancel(const char*) {
     const uint32_t s = spin_lock_blocking(plannerLock);
     const uint8_t why = jobReason;
-    const bool atRest = machineState == STATE_JOB && (why == JOB_PAUSED || why == JOB_BUFFERING);
+    const bool atRest = machineContext == CTX_JOB && (why == JOB_PAUSED || why == JOB_BUFFERING);
     if (atRest) {
         const planner::Pos at = plannerExec.position();
         plannerRing.reset(at);
@@ -118,7 +117,7 @@ bool cmdCancel(const char*) {
         resumeRequested = false;
         pauseRequested  = false;
         __dmb();
-        machineState = STATE_IDLE;
+        machineContext = CTX_IDLE;
     }
     spin_unlock(plannerLock, s);
     if (atRest) plannerEndContour();

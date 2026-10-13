@@ -283,7 +283,7 @@ static bool cycleCommit(void) {
 void homeTick(void) {
     if (!running) return;
     // A failed leg alarmed, or `stop` took the machine: the run is over.
-    if (machineState != STATE_HOMING) { runEnd(); return; }
+    if (machineContext != CTX_HOMING) { runEnd(); return; }
     if (homingActive()) return;
 
     if (phase == 0 && !sweepsRead()) return;
@@ -293,11 +293,11 @@ void homeTick(void) {
         armFrom(&any);
         if (!running || any) return;
         // The cycle is done.
-        if (!cycleCommit() || machineState != STATE_HOMING) { runEnd(); return; }
+        if (!cycleCommit() || machineContext != CTX_HOMING) { runEnd(); return; }
         const uint8_t next = cycleAfter(cycleNow);
         if (next == 0) {
             runEnd();
-            machineSettle();       // IDLE, or what the legs left latched
+            contextClose(CTX_HOMING);   // IDLE, or what the legs left latched
             return;
         }
         cycleStart(next);

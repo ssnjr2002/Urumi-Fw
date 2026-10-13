@@ -56,9 +56,9 @@ static void dropPlanner() {
 }
 
 void processBus() {
-    // 1. Estop — drop the ring, invalidate position, settle into ALARM.
-    //    Core 0 holds ALARM until `unstop` clears its estop latch.
-    if (machineState == STATE_ESTOP) {
+    // 1. Estop — drop the ring, sweep the bus safe, once per latch. Core 0
+    //    publishes ALARM once estopSwept is set, and clears both at `unstop`.
+    if (estopRequested && !estopSwept) {
         pauseRequested = abortRequested = false;  // estop outranks a pending ramp
         dropPlanner();                 // any job is unrecoverable
 
@@ -84,27 +84,26 @@ void processBus() {
         busStopAll(CMD_MAKE_SAFE);
 
         __dmb();
-        machineState = STATE_ALARM;
+        estopSwept = true;
         core1FactPush(FACT_ESTOP_SWEPT);   // Core 1 is done with machinePos
         return;
     }
 
     // 2. Planner motion: a jog or job to start, or a job to buffer.
-    if ((machineState == STATE_IDLE && plannerRing.count() > 0) || machineState == STATE_JOB)
+    if (plannerRing.count() > 0 || machineContext == CTX_JOB)
         processPlanner();
 
     // An abort with nothing to stop still has to be consumed. The ramp lives
     // inside the emitter, so a request arriving at rest would otherwise never
     // be cleared — and the ingest barrier keyed off it would NACK every packet
-    // forever. Nothing to decelerate: drop the ring and end any job.
+    // forever. Nothing to decelerate: drop the ring; Core 0 closes a job's
+    // context once the flag is clear.
     if (abortRequested) {
-        abortRequested = pauseRequested = false;
+        const bool had = plannerRing.count() > 0 || plannerActive;
         dropPlanner();
         __dmb();
-        if (machineState == STATE_JOB || machineState == STATE_JOGGING) {
-            machineState = STATE_IDLE;
-            core1FactPush(FACT_RING_DRAINED);
-        }
+        abortRequested = pauseRequested = false;
+        if (had) core1FactPush(FACT_RING_DRAINED);
     }
 
     busKeepalive();

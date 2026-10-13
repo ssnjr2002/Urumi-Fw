@@ -9,7 +9,7 @@
 
 enum Core1Fact : uint8_t {
     FACT_NONE = 0,
-    FACT_ESTOP_SWEPT,    // the estop sweep is done and ALARM published
+    FACT_ESTOP_SWEPT,    // the estop sweep is done, estopSwept set
     FACT_RING_DRAINED,   // planner motion at rest, ring empty, plannerActive clear
 };
 

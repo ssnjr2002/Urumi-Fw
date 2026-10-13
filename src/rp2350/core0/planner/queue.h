@@ -24,7 +24,7 @@ namespace planner { struct Bezier; }
 
 // Queue a straight move to (x, y) in machine mm at `feed` mm/s. On an empty,
 // idle ring the move starts from machinePos.
-// `reason` is the JoggingReason it runs as; it joins only a ring of that kind.
+// `reason` is the RingOwner it runs as; it joins only a ring of that kind.
 // A continuous jog ends where the bed mesh would take Z outside its soft range;
 // any other XY move is refused there (PQ_SOFT_LIMIT), as are Béziers and
 // records.
@@ -53,7 +53,7 @@ void plannerEndContour();
 
 // Where the next jog starts on slots X, Y, Z, A, machine units (A in degrees,
 // turns included): the ring's end, or machinePos on an empty, idle ring. False
-// while another kind (JoggingReason) owns the ring.
+// while another kind (RingOwner) owns the ring.
 bool plannerJogFrom(float at[4], uint8_t reason);
 
 // Stop the jogs in the ring: brake and discard if Core 1 runs them, else empty

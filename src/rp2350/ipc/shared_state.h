@@ -23,53 +23,42 @@
 // only), and the FIFO word encoding (now ipc/core1_rpc.h).
 
 // ─── Machine State ──────────────────────────────────────────────────────────
-// Single authoritative state for the controller, owned across both cores.
-//   ALARM is published from the fault mask (core0/ops/machine.h): held while
-//   any fault is set or the estop is latched.
-//   JOB holds a job from its first record until `cancel`, an abort or estop;
-//   its jobReason says what it is doing (docs/plans/motion-sessions.md).
+// What the host is told, computed by Core 0's machinePublish() from the
+// estop latch, the context, the live step and the fault mask
+// (core0/ops/machine.h); nothing else writes it, and no logic reads it.
 //
-// Transition map:
-//   IDLE    → JOB       Core 1, planner ring (a job) non-empty: BUFFERING
-//   IDLE    → JOGGING   Core 1, planner ring (a jog) non-empty
-//   JOGGING → IDLE      Core 1, ring drained or the jog aborted
-//   JOB     → IDLE      Core 1, abort finished; Core 0 `cancel` at rest
-//   any     → ESTOP     Core 0 `stop`
-//   ESTOP   → ALARM     Core 1, after dropping the ring (position now invalid)
-//   ALARM  ↔ IDLE       Core 0 machinePublish, from the fault mask
-//   IDLE    → HOMING    Core 0 `home`, once the node acks the arm
-//   HOMING  → IDLE      Core 0 supervisor, node's pulser stopped as expected
-//   HOMING  → ALARM     Core 0 supervisor, F_HOMING (see homing.cpp)
-//   IDLE    → TRAVERSE  Core 0 `leg park|span`, once the node acks the arm
-//   ALARM   → TRAVERSE  Core 0 `leg unlatch`, with only F_LATCHED set
-//   TRAVERSE → IDLE     Core 0 supervisor, step ended (or ALARM, machineSettle)
-//   TRAVERSE → ALARM    Core 0 supervisor, F_HOMING (see traverse.cpp)
+//   estop latched           → ESTOP, ALARM once Core 1's sweep is done
+//   context JOB|PROBE|HOMING → JOB, PROBING, HOMING
+//   a leg step (IDLE)       → TRAVERSE
+//   jog motion (IDLE)       → JOGGING
+//   any fault               → ALARM
+//   else                    → IDLE
 //
-// Enum values are the wire contract (get state=<n>). HOMING is entered only
-// by `home` and is a MOTION state. 1 and 4 (RUNNING, PAUSED) are retired.
+// Enum values are the wire contract (get state=<n>). 1 and 4 (RUNNING,
+// PAUSED) are retired.
 enum MachineState : uint8_t {
-    STATE_IDLE    = 0,
-    STATE_ESTOP   = 2,   // transient — Core 0 → Core 1 flush signal
-    STATE_ALARM   = 3,
-    STATE_HOMING  = 5,   // a node-run home is in progress (core0/ops/homing.cpp)
-    // A tool-height probe session is open (core0/ops/probe.cpp, docs/tool_probe.md).
-    // A SESSION state, not a motion state: it is entered by `probe_map`, spans
-    // several legs with the host deciding between them, and is left only by an
-    // explicit exit.
-    STATE_PROBING = 6,
-    // Planner jog motion (`line`, `bez`, `jog`, `jogto`; docs/plans/
-    // motion-sessions.md). Never pauses: it runs, or is aborted to IDLE.
-    STATE_JOGGING = 7,
-    // Node legs that keep the origin (park, span, unlatch) outside a homing
-    // session (core0/ops/traverse.cpp). Opened by the first leg and closed by
-    // the step's end. A motion state with no reason byte.
-    STATE_TRAVERSE = 8,
-    // A job on the planner (BEZIER records), with its jobReason.
-    STATE_JOB = 9,
+    STATE_IDLE     = 0,
+    STATE_ESTOP    = 2,   // latched, Core 1's sweep not yet done
+    STATE_ALARM    = 3,
+    STATE_HOMING   = 5,   // the manual homing context (core0/ops/homing.cpp)
+    STATE_PROBING  = 6,   // the probe context (core0/ops/probe.cpp, docs/tool_probe.md)
+    STATE_JOGGING  = 7,   // planner jog motion; never pauses
+    STATE_TRAVERSE = 8,   // node legs outside a context (core0/ops/traverse.cpp)
+    STATE_JOB      = 9,   // the job context, with its jobReason
 };
 
-// What a job is doing (meaningful while STATE_JOB). Core 0 writes the entries
-// it is asked for (pause); Core 1 every change decided from the ring or at rest.
+// What is held between commands; written by Core 0 only, by the context's own
+// module. JOB opens and closes under plannerLock: Core 1 runs a job's ring
+// only while it is open.
+enum MachineContext : uint8_t {
+    CTX_IDLE   = 0,
+    CTX_JOB    = 1,   // first record → `cancel`, an abort, estop or fault
+    CTX_PROBE  = 2,   // `probe_map` → `probe_end`
+    CTX_HOMING = 3,   // a seek, retract or sweep leg → `setorigin` / `home_end`
+};
+
+// What a job is doing (meaningful while CTX_JOB). Core 0 writes BUFFERING as it
+// opens the job; Core 1 every change decided from the ring or at rest.
 enum JobReason : uint8_t {
     JOB_BUFFERING = 0,   // at rest, waiting for enough queued motion
     JOB_RUNNING   = 1,
@@ -110,22 +99,28 @@ enum HomingReason : uint8_t {
     HOMING_WAIT = 1,   // between legs: next leg, setorigin or home_end
 };
 
-// The kind of planner motion in the ring (meaningful while STATE_JOGGING).
-// Core 0 writes it when it restarts an empty, idle ring, so it is settled
-// before Core 1 publishes JOGGING; NONE means a job owns the ring.
-enum JoggingReason : uint8_t {
-    JOGGING_NONE = 0,   // a job (STATE_JOB)
-    JOGGING_STEP = 1,   // `jog`, `jogto`, `line`, `bez`
-    JOGGING_CONT = 2,   // a continuous jog, held by deadman packets
+// Who owns the planner ring. Core 0 writes it when it restarts an empty, idle
+// ring, before the first push. Values are the wire's JOGGING reason.
+enum RingOwner : uint8_t {
+    RING_JOB      = 0,   // the job context's records
+    RING_JOG_STEP = 1,   // `jog`, `jogto`, `line`, `bez`
+    RING_JOG_CONT = 2,   // a continuous jog, held by deadman packets
 };
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────
 
-extern volatile uint8_t machineState;     // one of MachineState
-extern volatile uint8_t jobReason;        // one of JobReason (meaningful while JOB)
+extern volatile uint8_t machineState;     // one of MachineState; machinePublish only
+extern volatile uint8_t machineContext;   // one of MachineContext
+extern volatile uint8_t jobReason;        // one of JobReason (meaningful while CTX_JOB)
 extern volatile uint8_t probingReason;    // one of ProbingReason (meaningful while PROBING)
 extern volatile uint8_t homingReason;     // one of HomingReason (meaningful while HOMING)
-extern volatile uint8_t joggingReason;    // one of JoggingReason; see its comment
+extern volatile uint8_t ringOwner;        // one of RingOwner
+
+// The estop, Core 0 → Core 1: `stop` sets estopRequested; Core 1 drops the
+// ring, sweeps the bus safe, then sets estopSwept. Every emitter stops on
+// estopRequested. Both clear at `unstop` and the soft reset.
+extern volatile bool    estopRequested;
+extern volatile bool    estopSwept;
 
 // Machine position in steps (X,Y,Z,A), owned and accumulated by Core 1 as it
 // emits. Counts are always relatively accurate; the homed bit is what says the
@@ -188,8 +183,8 @@ extern volatile int32_t resumePos[4];
 // Inter-core request flags: Core 0 records intent, Core 1 enacts the state
 // transition.
 //   pauseRequested — operator `pause`; Core 1 holds and lands JOB.PAUSED.
-//   abortRequested — host `ABORT`; Core 1 brakes, drops the ring, and lands
-//     IDLE with position intact. Not resumable.
+//   abortRequested — host `ABORT` or a jog stop; Core 1 brakes, drops the
+//     ring with position intact, and clears it. Not resumable.
 extern volatile bool    pauseRequested;
 extern volatile bool    abortRequested;
 
@@ -206,7 +201,7 @@ extern volatile bool    abortRequested;
 //   machine units; 0 on a slot no head binds. plannerTurnQ32 — one turn of A in
 //   steps, Q32.32, signed as plannerSpm[3]: A's step target is exact however
 //   many turns it has made.
-// joggingReason — which kind owns the ring; set by Core 0 with that reset,
+// ringOwner — which kind owns the ring; set by Core 0 with that reset,
 //   under the lock.
 // plannerMesh — the bed mesh for this ring (core0/ops/mesh.h), latched by
 //   Core 0 with that reset: Core 1 adds meshAt(*mesh, pos + tip) − ref to Z.

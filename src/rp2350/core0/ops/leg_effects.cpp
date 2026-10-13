@@ -44,4 +44,4 @@ void legEffectEnd(uint8_t intent, const LegEnd& e) {
     legEffectRelease(intent, e);
 }
 
-bool legOwnerHolds(uint8_t owner) { return machineState == owner; }
+bool legOwnerHolds(uint8_t owner) { return !estopRequested && machineContext == owner; }

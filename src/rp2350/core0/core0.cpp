@@ -46,7 +46,7 @@ void processSerial() {
 
         // Data plane (binary): consumes mid-packet bytes and packets started by a
         // magic byte. Returns false if the byte belongs to the control plane.
-        if (dataPlaneConsume(b)) continue;
+        if (dataPlaneConsume(b)) { machinePublish(); continue; }
 
         // STATUS_REQ is a single byte, no payload/CRC — answer immediately.
         if (b == STATUS_REQ) {
@@ -63,6 +63,7 @@ void processSerial() {
                 serialRxLen = 0;
 
                 if (!handleCommand(input)) Serial.println("err unknown");
+                machinePublish();   // the next command reads what this one left
             }
         } else if (serialRxLen < sizeof(serialRxBuf) - 1) {
             serialRxBuf[serialRxLen++] = c;
@@ -121,7 +122,6 @@ void loop() {
     // The slot table (bindings and fences) survives: only power-on clears it.
     slotMapReset();
     slotMapForget();
-    machineState = STATE_ALARM;
     machineReset();
     jobReason = JOB_BUFFERING;
     probingReason = PROBING_CLEAR;
@@ -159,7 +159,7 @@ void loop() {
     Serial.printf("RS485 controller (%d baud)\n", RS485_BAUD);
 
     busSweep();
-    if (busDegraded()) machineSettle();    // F_BUS, no map
+    if (busDegraded()) machinePublish();   // F_BUS, no map
     else               controllerApplyDefaultMap();
     // The boot sequence is done; the banner above is informational.
     Serial.println("ready");
@@ -184,7 +184,7 @@ void loop() {
         // and `stop` shut for the whole of it is exactly what a supervisor out
         // here avoids.
         probeTick();
-        // Last: what the pass left, as IDLE or ALARM.
+        // Last: what the pass left.
         machinePublish();
         // Node-relay commands (pingnode/enable/disable) consume their Core 1 FIFO
         // responses synchronously inside handleCommand (relayNode), so there is no

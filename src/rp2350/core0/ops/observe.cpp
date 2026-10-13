@@ -5,11 +5,10 @@
 #include "../../ipc/core1_facts.h"
 #include "../../ipc/shared_state.h"
 
-// A fact was dropped. Only an estop's sweep has an effect here: past it (the
-// latch set, ALARM published) the fenced positions are cleared as the fact
-// would have.
+// A fact was dropped. Only an estop's sweep has an effect here: past it the
+// fenced positions are cleared as the fact would have.
 static void factsLost(void) {
-    if (estopLatched() && machineState == STATE_ALARM) slotFencedPosClear();
+    if (estopLatched() && estopSwept) slotFencedPosClear();
     faultSet(F_FACTS);
     core1FactsLostClear();
 }

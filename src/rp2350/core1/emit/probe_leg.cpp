@@ -135,11 +135,11 @@ void emitProbeLeg(const ProbeLegReq* rq, ProbeLegOut* out) {
     uint32_t t0 = rp2040.getCycleCount();
 
     while (emitted < rq->maxSteps) {
-        if (machineState == STATE_ESTOP) { cause = PROBE_ESTOP; break; }
+        if (estopRequested) { cause = PROBE_ESTOP; break; }
 
         const uint32_t interval = intervalUs * cyclesPerUs;
         while ((rp2040.getCycleCount() - t0) < interval) {
-            if (machineState == STATE_ESTOP) break;
+            if (estopRequested) break;
         }
         t0 += interval;
 

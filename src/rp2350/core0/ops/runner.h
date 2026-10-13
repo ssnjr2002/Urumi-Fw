@@ -29,8 +29,8 @@ struct RunEvent {
     LegEnd  end;     // RUN_LEG_END only
 };
 
-// Arm a leg into the live step, or open one under `owner` (a MachineState: the
-// state the step runs in). A leg joining a live step runs under its owner.
+// Arm a leg into the live step, or open one under `owner` (a MachineContext:
+// the context the step runs in). A leg joining a live step runs under its owner.
 // `intent` is a LegIntent (leg_effects.h); a park and a dummy imply theirs.
 // As legArm, legArmPark and legArmDummy.
 const char* runnerArm(uint8_t owner, uint8_t intent, uint8_t node, uint8_t expectKind,
@@ -47,7 +47,7 @@ const char* runnerArmDummy(uint8_t owner, bool succeed, uint32_t ms);
 void runnerTick(void);
 
 // Take the oldest event of the live generation, for `owner` only: events
-// belong to the state the step ran in, so any other caller gets none. False
+// belong to the context the step ran in, so any other caller gets none. False
 // when there is none.
 bool runnerPop(uint8_t owner, RunEvent* ev);
 

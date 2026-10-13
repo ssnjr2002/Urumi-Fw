@@ -32,5 +32,6 @@ void legEffectEnd(uint8_t intent, const LegEnd& e);
 // A leg ended without a verdict (abort, drop): the origin is released only.
 void legEffectRelease(uint8_t intent, const LegEnd& e);
 
-// True while the machine is still in `owner`, the state the step runs in.
+// True while `owner`, the context the step runs in, is still open and no
+// estop is latched.
 bool legOwnerHolds(uint8_t owner);

@@ -64,10 +64,9 @@ FOLLOWER_INLINE int64_t incrementFor(int64_t err) {
 
 FOLLOWER_INLINE int32_t stepOf(int64_t q) { return (int32_t)(q >> 32); }
 
-static void __time_critical_func(publishJob)(uint8_t why) {
+static void __time_critical_func(jobAt)(uint8_t why) {
     jobReason = why;
     __dmb();
-    machineState = STATE_JOB;
 }
 
 // A job at rest in BUFFERING: start it once bufferQueueS is queued, the ring is
@@ -83,46 +82,45 @@ static bool __time_critical_func(bufferDone)() {
            plannerRing.queuedTime() >= bufferQueueS;
 }
 
-// Enter planner motion: a jog from IDLE, or a job once it has buffered. A job's
-// first record opens it in BUFFERING; a pause or a resume at rest is taken
-// here. All under the lock: `cancel` ends a job at rest under it. False if
-// there is nothing to run.
+// Enter planner motion: a jog's ring, or a job once it has buffered. Core 0
+// opens a job in BUFFERING with its first record; a pause or a resume at rest
+// is taken here. All under the lock: `cancel` ends a job at rest under it.
+// False if there is nothing to run.
 static bool __time_critical_func(enter)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     bool ok = false;
-    const uint8_t st = machineState;
-    if (st == STATE_IDLE && plannerRing.count() > 0) {
-        if (joggingReason != JOGGING_NONE) {
+    if (estopRequested) {
+        // The estop sweep drops the ring.
+    } else if (ringOwner != RING_JOB) {
+        if (!plannerActive && plannerRing.count() > 0) {
             plannerActive = true;
-            __dmb();
-            machineState = STATE_JOGGING;
             ok = true;
-        } else {
-            publishJob(JOB_BUFFERING);
         }
-    } else if (st == STATE_JOB && !abortRequested) {
+    } else if (machineContext == CTX_JOB && !abortRequested) {
         const uint8_t why = jobReason;
         if (why == JOB_BUFFERING && pauseRequested) {
             for (int i = 0; i < 4; i++) resumePos[i] = machinePos[i];
             pauseRequested = false;
-            publishJob(JOB_PAUSED);
+            jobAt(JOB_PAUSED);
         } else if (why == JOB_BUFFERING && bufferDone()) {
             plannerActive = true;
-            publishJob(JOB_RUNNING);
+            jobAt(JOB_RUNNING);
             ok = true;
         } else if (why == JOB_PAUSED && resumeRequested) {
             resumeRequested = false;
             // A hold leaves the executor held; replan from rest.
             if (plannerExec.state() == Executor::State::Held) plannerExec.resume(plannerRing);
-            publishJob(JOB_BUFFERING);
+            jobAt(JOB_BUFFERING);
         }
     }
     spin_unlock(plannerLock, s);
     return ok;
 }
 
-// Leave planner motion for IDLE, unless lines arrived meanwhile.
-static bool __time_critical_func(leaveIdle)() {
+// Leave planner motion with the ring drained (a jog's end, or an abort),
+// unless lines arrived meanwhile. A job's context closes on Core 0, once
+// abortRequested is clear.
+static bool __time_critical_func(leaveDrained)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool empty = plannerRing.count() == 0;
     if (empty) plannerActive = false;
@@ -131,7 +129,6 @@ static bool __time_critical_func(leaveIdle)() {
 
     pauseRequested = abortRequested = false;
     __dmb();
-    machineState = STATE_IDLE;
     core1FactPush(FACT_RING_DRAINED);
     return true;
 }
@@ -142,14 +139,14 @@ static bool __time_critical_func(leaveDry)() {
     const bool empty = plannerRing.count() == 0;
     if (empty) plannerActive = false;
     spin_unlock(plannerLock, s);
-    if (empty) publishJob(JOB_BUFFERING);
+    if (empty) jobAt(JOB_BUFFERING);
     return empty;
 }
 
 static void __time_critical_func(leavePaused)() {
     for (int i = 0; i < 4; i++) resumePos[i] = machinePos[i];
     pauseRequested = false;
-    publishJob(JOB_PAUSED);
+    jobAt(JOB_PAUSED);
 }
 
 // A late block's hold has stopped: replan from rest and buffer again.
@@ -157,7 +154,7 @@ static void __time_critical_func(rebuffer)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     plannerExec.resume(plannerRing);
     spin_unlock(plannerLock, s);
-    publishJob(JOB_BUFFERING);
+    jobAt(JOB_BUFFERING);
 }
 
 void __time_critical_func(processPlanner)() {
@@ -169,7 +166,7 @@ void __time_critical_func(processPlanner)() {
     for (int i = 0; i < 4; i++) accum[i] = (int64_t)machinePos[i] * kOne + kHalf;
 
     // A jog never pauses: a late adoption holds it, then it runs on.
-    const bool jog = machineState == STATE_JOGGING;
+    const bool jog = ringOwner != RING_JOB;
     const PlannerMesh mesh = plannerMesh;
     bool holding = false, aborting = false, lateHold = false;
     uint32_t late = plannerExec.lateAdoptions();
@@ -192,14 +189,14 @@ void __time_critical_func(processPlanner)() {
         }
 
         while ((cycleCount() - t0) < kSlotCycles) {
-            if (machineState == STATE_ESTOP) return;
+            if (estopRequested) return;
         }
         t0 += kSlotCycles;
         rs485.writeStream(streamByte);
         for (int i = 0; i < 4; i++)
             if (stepped & (1u << i)) machinePos[i] = stepOf(accum[i]);
 
-        if (machineState == STATE_ESTOP) return;
+        if (estopRequested) return;
 
         pending += kSlotS;
         if (++slot < kSlotsPerTick) continue;
@@ -256,7 +253,7 @@ void __time_critical_func(processPlanner)() {
         const Executor::State st = plannerExec.state();
         if (aborting) {
             // A finished abort has emptied the ring and reset the executor.
-            if (st == Executor::State::Running && leaveIdle()) return;
+            if (st == Executor::State::Running && leaveDrained()) return;
         } else if (lateHold) {
             if (st == Executor::State::Held) {
                 if (!jog) { rebuffer(); return; }
@@ -267,7 +264,7 @@ void __time_critical_func(processPlanner)() {
             }
         } else if (holding) {
             if (st == Executor::State::Held) { leavePaused(); return; }
-        } else if (plannerRing.count() == 0 && (jog ? leaveIdle() : leaveDry())) {
+        } else if (plannerRing.count() == 0 && (jog ? leaveDrained() : leaveDry())) {
             return;
         }
     }

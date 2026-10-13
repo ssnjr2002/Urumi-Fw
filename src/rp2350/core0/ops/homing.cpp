@@ -35,8 +35,7 @@ static void homingFail(const LegEnd& e) {
     failNode = e.dummy ? 0 : e.node;
     LegEnd ends[LEG_MAX];
     runnerAbortAll(ends);
-    faultSet(F_HOMING);
-    machineSettle();
+    faultSet(F_HOMING);   // closes the context
 }
 
 void homingAbandon(uint8_t node, uint8_t why) {
@@ -47,13 +46,12 @@ void homingAbandon(uint8_t node, uint8_t why) {
     homingFail(e);
 }
 
-// The first leg opens the session, from IDLE or with only F_LATCHED set
-// (cmdLeg); the exit re-derives the state from the mask.
+// The first leg opens the context, from IDLE or with only F_LATCHED set
+// (cmdLeg).
 static void homingOpen(void) {
     failWhy      = LEGFAIL_NONE;   // this leg has not failed yet
     homingReason = HOMING_LEG;
-    __dmb();
-    machineState = STATE_HOMING;
+    contextOpen(CTX_HOMING);
 }
 
 const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
@@ -64,7 +62,7 @@ const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
     const uint8_t intent = expectKind == HOMING_KIND_INDEX ? LEG_SWEEP
                          : intendedRetract                 ? LEG_RETRACT
                                                            : LEG_SEEK;
-    const char* why = runnerArm(STATE_HOMING, intent, node, expectKind, dir,
+    const char* why = runnerArm(CTX_HOMING, intent, node, expectKind, dir,
                                 intendedRetract, startUs, floorUs, rampSteps,
                                 maxSteps, intentMismatch);
     if (!why) homingOpen();
@@ -73,7 +71,7 @@ const char* homingBegin(uint8_t node, uint8_t expectKind, uint8_t dir,
 
 const char* homingParkBegin(uint8_t node, int32_t target, uint16_t startUs,
                             uint16_t floorUs, uint16_t rampSteps) {
-    const char* why = runnerArmPark(STATE_HOMING, node, target, startUs, floorUs, rampSteps);
+    const char* why = runnerArmPark(CTX_HOMING, node, target, startUs, floorUs, rampSteps);
     if (!why) homingOpen();
     return why;
 }
@@ -84,12 +82,12 @@ const char* homingAbort(uint8_t node) {
     if (const char* why = runnerAbort(node, &e, &released)) return why;
     if (!released) return nullptr;
     // If something else already owns the machine, the release was all.
-    if (machineState == STATE_HOMING) homingFail(e);
+    if (machineContext == CTX_HOMING) homingFail(e);
     return nullptr;
 }
 
 const char* homingDummyBegin(bool succeed, uint32_t ms) {
-    const char* why = runnerArmDummy(STATE_HOMING, succeed, ms);
+    const char* why = runnerArmDummy(CTX_HOMING, succeed, ms);
     if (!why) homingOpen();
     return why;
 }
@@ -98,7 +96,7 @@ const char* homingDummyBegin(bool succeed, uint32_t ms) {
 // session's verdict on them.
 void homingTick(void) {
     RunEvent ev;
-    while (runnerPop(STATE_HOMING, &ev)) {
+    while (runnerPop(CTX_HOMING, &ev)) {
         if (ev.kind == RUN_LEG_END) {
             if (legEndFailed(ev.intent, ev.end)) homingFail(ev.end);
             continue;
@@ -107,10 +105,10 @@ void homingTick(void) {
         // the latch is published at that exit, not here. A step that ended by
         // an abort, or under a fault, leaves the phase to whoever owns the
         // machine.
-        if (machineState == STATE_HOMING) homingReason = HOMING_WAIT;
+        if (machineContext == CTX_HOMING) homingReason = HOMING_WAIT;
     }
 }
 
 bool homingWaiting(void) {
-    return machineState == STATE_HOMING && !runnerLive();
+    return machineContext == CTX_HOMING && !runnerLive();
 }

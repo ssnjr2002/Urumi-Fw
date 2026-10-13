@@ -342,12 +342,12 @@ bool cmdSetOrigin(const char* args) {
     // datum we just recorded describes a machine that has since stopped hard,
     // so refuse rather than clear it; the estop has dropped the masks, and the
     // operator retries after unalarm.
-    if (estopLatched() != estopAtEntry || machineState == STATE_ESTOP) {
+    if (estopLatched() != estopAtEntry) {
         Serial.println("err estop"); return true;
     }
     if (badWhy) { Serial.printf("err node %d %s\n", badNode, badWhy); return true; }
-    // Closing a session publishes what its legs left: IDLE, or LIMIT_LATCHED.
-    if (machineState == STATE_HOMING) machineSettle();
+    // Closing the context publishes what its legs left: IDLE, or F_LATCHED.
+    contextClose(CTX_HOMING);
     Serial.println("ok");
     return true;
 }
@@ -357,7 +357,7 @@ bool cmdSetOrigin(const char* args) {
 bool cmdHomeEnd(const char*) {
     if (homingActive() || homingHeld()) { Serial.println("err busy"); return true; }
     if (!homingWaiting()) { Serial.println("err bad_state"); return true; }
-    machineSettle();
+    contextClose(CTX_HOMING);
     Serial.println("ok");
     return true;
 }
@@ -677,7 +677,7 @@ bool cmdLine(const char* args) {
     float v[3];
     if (!parseFloats(args, v, 3)) { Serial.println("err usage"); return true; }
     if (const char* why = toMachine(v, 1)) { Serial.printf("err %s\n", why); return true; }
-    replyQueued(plannerQueueLine(v[0], v[1], v[2], JOGGING_STEP));
+    replyQueued(plannerQueueLine(v[0], v[1], v[2], RING_JOG_STEP));
     return true;
 }
 
@@ -706,7 +706,7 @@ bool cmdBez(const char* args) {
 static void queueJog(const float to[2], bool rel, float feed) {
     if (plannerQueueDepth() >= JOG_MAX_QUEUED) { Serial.println("err busy"); return; }
     float at[4];
-    if (!plannerJogFrom(at, JOGGING_STEP)) { Serial.println("err bad_state"); return; }
+    if (!plannerJogFrom(at, RING_JOG_STEP)) { Serial.println("err bad_state"); return; }
     float target[2];
     for (uint8_t k = 0; k < 2; k++) {
         target[k] = isnan(to[k]) ? at[k] : rel ? at[k] + to[k] : to[k];
@@ -715,19 +715,19 @@ static void queueJog(const float to[2], bool rel, float feed) {
             Serial.printf("err %s %.2f\n", why, left); return;
         }
     }
-    replyQueued(plannerQueueLine(target[0], target[1], feed, JOGGING_STEP));
+    replyQueued(plannerQueueLine(target[0], target[1], feed, RING_JOG_STEP));
 }
 
 // Queue a jog of slot k (Z or A) by `d`. Replies.
 static void queueAxisJog(uint8_t k, float d, float feed) {
     if (plannerQueueDepth() >= JOG_MAX_QUEUED) { Serial.println("err busy"); return; }
     float at[4];
-    if (!plannerJogFrom(at, JOGGING_STEP)) { Serial.println("err bad_state"); return; }
+    if (!plannerJogFrom(at, RING_JOG_STEP)) { Serial.println("err bad_state"); return; }
     float left;
     if (const char* why = framesCheckMove(k, at[k], at[k] + d, &left)) {
         Serial.printf("err %s %.2f\n", why, left); return;
     }
-    replyQueued(plannerQueueAxis(k, d, feed, JOGGING_STEP));
+    replyQueued(plannerQueueAxis(k, d, feed, RING_JOG_STEP));
 }
 
 bool cmdJog(const char* args) {
@@ -878,9 +878,9 @@ bool cmdHallScan(const char* args) {
 bool cmdProbeMap(const char* args) {
     if (probeActive()) { Serial.println("err busy"); return true; }
     if (degradedDenies()) return true;
-    // NOT busGateDenies(), which admits ALARM: a probe session is not an
+    // IDLE only: a manual context opens from nothing, and a probe is not an
     // alarm exit.
-    if (machineState != STATE_IDLE && !jobPaused()) {
+    if (machineState != STATE_IDLE) {
         Serial.println("err bad_state"); return true;
     }
     char* end;

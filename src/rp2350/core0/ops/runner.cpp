@@ -11,7 +11,7 @@ static uint8_t  boxHead;    // next to pop
 static uint8_t  boxCount;
 static uint8_t  gen;        // the live step's
 static bool     live;
-static uint8_t  owner;      // the state the live step runs in
+static uint8_t  owner;      // the context the live step runs in
 
 // Each node's leg intent, indexed by node; a dummy is LEG_DUMMY by its flag.
 static uint8_t  intentOf[256];
@@ -85,8 +85,8 @@ static uint8_t stepCut(LegEnd* ends, uint8_t n) {
 
 void runnerTick(void) {
     if (!live) return;
-    // Something else has taken the machine -- `stop` sets ESTOP, Core 1 folds
-    // it to ALARM. Drop the legs rather than fight for them: leaving them armed
+    // The context closed or an estop latched. Drop the legs rather than fight
+    // for them: leaving them armed
     // would fire timeouts later, at a moment with nothing to do with the owner.
     if (!legOwnerHolds(owner)) {
         LegEnd ends[LEG_MAX];

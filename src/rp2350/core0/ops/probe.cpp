@@ -38,7 +38,6 @@ static bool     claimed     = false;
 static bool     legInFlight = false;
 static uint8_t  zNodeId     = 0;
 static uint8_t  vacNodeId   = 0;
-static uint8_t  returnState = STATE_IDLE;
 // Which mode the in-flight leg was armed in. Kept because the retract's verdict
 // is taken at the NEXT boundary, by which time the arm-time read is gone.
 static bool     legWasRetract = false;
@@ -88,7 +87,6 @@ static bool readSwitch(bool* openOut) {
 // (position.h), so slot 3 carries no position, datum or energised bit, and the
 // teardown parks it like any other slot holder.
 static void probeRestore(const uint8_t* map);
-static void probeSettle(void);
 
 static const char* probeBind(uint8_t zNode, uint8_t vacNode, NodeStatus* zst) {
     NodeStatus vst;
@@ -107,7 +105,6 @@ static const char* probeBind(uint8_t zNode, uint8_t vacNode, NodeStatus* zst) {
     uint8_t failed;
     if (slotMapApply(map, &failed)) {
         probeRestore(nullptr);
-        probeSettle();
         return refuse("node %d engage", failed);   // after the restore's refusals
     }
     return nullptr;
@@ -133,18 +130,19 @@ static void probeRestore(const uint8_t* map) {
     claimed     = false;
     legInFlight = false;
     haveNodePos = false;
+    contextClose(CTX_PROBE);   // a restore that left the request unmet: F_UNMAPPED
 }
 
-// Back to wherever the session started. A jog during pause returns to PAUSED
-// because the job is still suspended, and a mid-job tool swap is that case
-// exactly — so the session cannot simply land in IDLE. A restore that left the
-// slot request unmet lands in ALARM with F_UNMAPPED instead (machineSettle).
-static void probeSettle(void) {
-    __dmb();
-    if (!slotMapComplete())
-        machineSettle();
-    else
-        machineState = (returnState == STATE_JOB) ? STATE_JOB : STATE_IDLE;
+void probeTeardown(bool restore) {
+    if (legInFlight) rpcAbandon(legId);
+    if (restore) {
+        probeRestore(nullptr);
+        return;
+    }
+    claimed     = false;
+    legInFlight = false;
+    haveNodePos = false;
+    contextClose(CTX_PROBE);
 }
 
 // A failed leg tears the session down ITSELF, then alarms.
@@ -187,7 +185,6 @@ static void probeFail(uint8_t cause) {
     if (cause == PROBE_ESTOP) return;   // Core 1 owns this transition
 
     faultSet(F_PROBE);
-    machineSettle();
 }
 
 // ── probe_map ────────────────────────────────────────────────────────────────
@@ -209,9 +206,6 @@ const char* probeBegin(uint8_t vacNode, uint8_t* zOut, bool* openOut) {
     // switch rather than a motor nobody turned on. legCommon refuses a home for
     // this reason; the same reason applies here and the same mask answers it.
     if (!(nodeEnabled & (1u << zNode))) return "not_enabled";
-    returnState = machineState;        // IDLE or a paused JOB — a mid-job tool swap
-                                       // must land back in PAUSED, and neither
-                                       // exit route can infer where it started
 
     NodeStatus zst;
     if (const char* why = probeBind(zNode, vacNode, &zst)) return why;
@@ -231,12 +225,10 @@ const char* probeBegin(uint8_t vacNode, uint8_t* zOut, bool* openOut) {
     bool open = false;
     if (!readSwitch(&open)) {
         probeRestore(nullptr);
-        probeSettle();
         return refuse("node %d no_switch", vacNode);   // after the restore's refusals
     }
 
-    __dmb();
-    machineState = STATE_PROBING;
+    contextOpen(CTX_PROBE);
     *zOut    = zNode;
     *openOut = open;
     return nullptr;
@@ -362,7 +354,6 @@ const char* probeExit(const uint8_t* newMap, int8_t* switchOut) {
     const bool known = readSwitch(&open);
 
     probeRestore(newMap);
-    probeSettle();
 
     *switchOut = known ? (open ? 1 : 0) : -1;
     return nullptr;

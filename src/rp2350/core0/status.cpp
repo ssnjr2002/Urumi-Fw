@@ -22,7 +22,7 @@ static uint32_t queuedUs() {
 static uint8_t stateReason(uint8_t st) {
     switch (st) {
         case STATE_JOB:     return jobReason;
-        case STATE_JOGGING: return joggingReason;
+        case STATE_JOGGING: return ringOwner;
         case STATE_HOMING:  return homingReason;
         case STATE_PROBING: return probingReason;
         default:            return 0;
