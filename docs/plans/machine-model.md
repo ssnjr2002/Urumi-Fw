@@ -193,7 +193,7 @@ bit clearing; `unalarm` order; estop latch and swept.
 
 ### Status
 
-Ready to merge.
+Done (merged at `0a1d218`). Unblocks M2.
 
 ### Outcome
 
@@ -240,6 +240,13 @@ and Core 1 no longer writing the state.
 * Command kinds as a table column; gates in `cmd/gate.h` move to
   `machineAdmit`.
 * `machinePublish()` takes over the whole state.
+* From M1: the estop `swept` flag, set by the `ESTOP_SWEPT` fact; `unstop`
+  and the latch checks test it instead of "latched and ALARM".
+* `machineSettle()` goes; its callers (`homingFail`, `traverse`,
+  `probeFail`/`probeSettle`, `home_end`, setorigin, boot) close their context
+  or step instead.
+* The "ALARM with faults == `F_LATCHED`" leg gates (`cmd/axis.cpp`,
+  `legAdmitDenies`) become `machineAdmit`'s LEGS-with-`F_LATCHED` rule.
 
 **Tests (native):** admission per kind and slot; teardown order; publish
 from slots; a stale drain dropped.
