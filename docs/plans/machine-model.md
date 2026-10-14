@@ -656,10 +656,14 @@ park ends IDLE with no fault (J1b's known gap). Instant work in `next()`
   keys.
 * `lineTo` returns its refusal (`ops/refusal.h` text) or null; "already
   there" stays a normal end. `jogtoNext` fails the sequence on a refusal.
-* `get`: `seqfail=<sequence> <why>` (e.g. `seqfail=jogto soft_limit y 2.10`).
+* `get`: `seqfail=<why>`, one token (e.g. `seqfail=soft_limit`, the mesh
+  taking Z out of range; X/Y soft limits are refused before the `ok`).
+  `seq=<id>`: the running sequence, or the one that failed
+  (`F_SEQUENCE`, `F_HOMING`, `F_PROBE`).
 * Web: the fault bit's name and the `get` key.
-* Test (native, failing before the fix): a jogto line refused after the
-  park sets `F_SEQUENCE` and keeps the refusal.
+* Tests (native, failing before the fix): a `next()` that calls
+  `sequenceFail` sets `F_SEQUENCE`, keeps the text and aborts once
+  (`test_sequence`); a refused `lineTo` returns its text (new `test_steps`).
 * Docs: `docs/wire_protocol.md` (faults bits, `get` key),
   `docs/plans/sequences.md`.
 * Human check: a refused line after the park (e.g. the mesh's Z range)
