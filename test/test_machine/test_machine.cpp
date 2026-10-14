@@ -1,5 +1,5 @@
 /**
- * The fault mask, the slots and the state they publish
+ * The fault mask, the levels and the state they publish
  * (src/rp2350/core0/ops/machine.cpp) against faked owners.
  */
 
@@ -115,7 +115,7 @@ TEST_CASE("faultSet takes event bits only") {
     CHECK(machineFaults() == F_FACTS);
 }
 
-TEST_CASE("publish from the slots: context, then step, then faults") {
+TEST_CASE("publish from the levels: context, then step, then faults") {
     reset();
     complete = false;                       // a held fault under all of them
     contextOpen(CTX_HOMING);  CHECK(machineState == STATE_HOMING);

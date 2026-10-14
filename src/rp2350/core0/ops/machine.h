@@ -1,6 +1,6 @@
 #pragma once
 
-// machine.h — the fault mask, the estop latch, the context and step slots,
+// machine.h — the fault mask, the estop latch, the context and step levels,
 // and the state they publish.
 
 #include <stdint.h>
@@ -63,12 +63,12 @@ void machineTeardown(bool estop);
 // sequence publishes.
 void machineReset(void);
 
-// Writes machineState from the latch, the slots and the faults (see
+// Writes machineState from the latch, the levels and the faults (see
 // ipc/shared_state.h), under plannerLock. Last in each loop pass and after
 // every command; also closes a job whose abort Core 1 has finished.
 void machinePublish(void);
 
-// The state publish would write now. Core 0 logic asks this (or the slots),
+// The state publish would write now. Core 0 logic asks this (or the levels),
 // never machineState.
 uint8_t machineView(void);
 

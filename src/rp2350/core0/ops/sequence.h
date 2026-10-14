@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include "leg.h"
 
-// sequence.h — the sequence slot: what was asked for, run as steps
-// (docs/plans/machine-model.md, Slots).
+// sequence.h — the sequence level: what was asked for, run as steps
+// (docs/plans/machine-model.md, Levels).
 //
 // A sequence arms its first step, then starts here; the driver is the
 // runner's one reader. A leg that fails fails the sequence (homingFail); one
@@ -46,7 +46,7 @@ struct Sequence {
 // Make `s` the live sequence. Its first step is armed already, or it waits.
 void sequenceStart(const Sequence* s);
 
-// Clear the slot with no abort(): a start whose first step was refused.
+// Clear the level with no abort(): a start whose first step was refused.
 void sequenceEnd(void);
 
 // Cut the live step (abort its legs), end any wait and call abort().
