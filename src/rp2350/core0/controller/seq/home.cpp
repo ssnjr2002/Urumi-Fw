@@ -32,6 +32,8 @@ struct RunNode {
     uint8_t        job;
     bool           onSwitch;   // linear: its seek was refused because it stood on
                                // its switch, so each leg runs one phase early
+    uint8_t        phase;      // the leg in its chain, from 0
+    bool           done;       // its last leg is armed
     int32_t        fwdIndex;   // rotary: the forward sweep's evidence
     int32_t        fwdRev;
 };
@@ -41,7 +43,6 @@ static uint8_t runCount;
 static bool    running;
 static bool    started;        // a leg has run: a refusal now fails the session
 static uint8_t cycleNow;       // 0: no run
-static uint8_t phase;
 
 static char refusal[40];
 
@@ -100,24 +101,26 @@ static void runEnd(void) {
     homingHold(0);
 }
 
-// Arm `r`'s leg for `phase`. Sets *armed when one was armed; returns the
-// refusal text, or nullptr.
+// Arm `r`'s leg for its phase. Sets *armed when one was armed, and r.done when
+// it is the chain's last; returns the refusal text, or nullptr.
 static const char* armLeg(RunNode& r, bool* armed) {
     const CfgAxis&   a   = *r.ax;
     const CfgHoming& h   = a.homing;
     const float      spu = a.stepsPerUnit;
     *armed = false;
     const char* why = nullptr;
+    bool last = true;
     switch (r.job) {
         case JOB_PARK:
-            if (phase != 0) return nullptr;
+            if (r.phase != 0) return nullptr;
             why = homingArmPark(r.node, true, originTarget(r.node, parkSteps(a)),
                                 intervalUs(h.startFeed, spu),
                                 intervalUs(h.seekFeed, spu), h.rampSteps);
             break;
         case JOB_ROTARY:
-            if (phase > 1) return nullptr;
-            why = homingArm(r.node, true, HOMING_KIND_INDEX, phase == 0 ? 1 : 0, false,
+            if (r.phase > 1) return nullptr;
+            last = r.phase == 1;
+            why = homingArm(r.node, last, HOMING_KIND_INDEX, r.phase == 0 ? 1 : 0, false,
                             intervalUs(h.startFeed, spu),
                             intervalUs(h.sweepFeed, spu), h.rampSteps,
                             distSteps(360.0 * h.budgetRevs, spu));
@@ -126,12 +129,13 @@ static const char* armLeg(RunNode& r, bool* armed) {
             const uint8_t  toward = (h.seekPositive != a.invertDir) ? 1 : 0;
             const uint16_t latch  = intervalUs(h.latchFeed, spu);
             const uint32_t back   = distSteps(h.backoffDist, spu);
-            uint8_t leg = phase + (r.onSwitch ? 1 : 0);
+            uint8_t leg = r.phase + (r.onSwitch ? 1 : 0);
+            last = false;
             if (leg == 0) {
                 // The node's pin decides: a seek it refuses as a mismatch means
                 // it stands on its switch, so its back-off runs now instead.
                 bool mismatch;
-                why = homingArm(r.node, true, HOMING_KIND_LIMIT, toward, false,
+                why = homingArm(r.node, false, HOMING_KIND_LIMIT, toward, false,
                                 intervalUs(h.startFeed, spu),
                                 intervalUs(h.seekFeed, spu), h.rampSteps,
                                 distSteps(((double)a.maxTravel + h.pullOffDist)
@@ -142,15 +146,16 @@ static const char* armLeg(RunNode& r, bool* armed) {
             }
             switch (leg) {
                 case 1:
-                    why = homingArm(r.node, true, HOMING_KIND_LIMIT, !toward, true,
+                    why = homingArm(r.node, false, HOMING_KIND_LIMIT, !toward, true,
                                     latch, latch, 0, back);
                     break;
                 case 2:
-                    why = homingArm(r.node, true, HOMING_KIND_LIMIT, toward, false,
+                    why = homingArm(r.node, false, HOMING_KIND_LIMIT, toward, false,
                                     latch, latch, 0,
                                     (uint32_t)lround(back * LATCH_MARGIN));
                     break;
                 case 3:
+                    last = true;
                     why = homingArm(r.node, true, HOMING_KIND_LIMIT, !toward, true,
                                     latch, latch, 0, distSteps(h.pullOffDist, spu));
                     break;
@@ -161,49 +166,48 @@ static const char* armLeg(RunNode& r, bool* armed) {
             break;
         }
     }
-    if (!why) { *armed = true; started = true; }
+    if (!why) { *armed = true; started = true; r.done = last; }
     return why;
 }
 
-// Arm the current phase on every node of the cycle. Returns the refusal text
-// when nothing has moved yet; after that a refusal fails the session. *any is
+// Arm `r`'s next leg from its phase, skipping phases it has none in.
+static const char* armNode(RunNode& r, bool* armed) {
+    for (; r.phase < PHASES; r.phase++) {
+        const char* why = armLeg(r, armed);
+        if (why || *armed) return why;
+    }
+    *armed = false;
+    return nullptr;
+}
+
+// A refusal before anything moved is the start's, returned as its text;
+// after that it fails the run.
+static const char* refused(const RunNode& r, const char* why) {
+    if (!started) {
+        snprintf(refusal, sizeof refusal, "%s", why);
+        return refusal;
+    }
+    homingAbandon(r.node, LEGFAIL_REFUSED);
+    runEnd();
+    return nullptr;
+}
+
+// Start cycle `c`: arm every node's first leg. Returns as refused(); *any is
 // set when a leg was armed.
-static const char* armPhase(bool* any) {
+static const char* cycleStart(uint8_t c, bool* any) {
+    cycleNow = c;
+    homingHold(c);
     *any = false;
     for (uint8_t i = 0; i < runCount; i++) {
         RunNode& r = run[i];
-        if (r.ax->homing.cycle != cycleNow) continue;
+        if (r.ax->homing.cycle != c) continue;
+        r.phase = 0;
+        r.done  = false;
         bool armed;
-        const char* why = armLeg(r, &armed);
-        if (why) {
-            if (!started) {
-                snprintf(refusal, sizeof refusal, "%s", why);
-                return refusal;
-            }
-            homingAbandon(r.node, LEGFAIL_REFUSED);
-            runEnd();
-            return nullptr;
-        }
+        if (const char* why = armNode(r, &armed)) return refused(r, why);
         if (armed) *any = true;
     }
     return nullptr;
-}
-
-// Arm the next phase that has a leg, from `phase`; *any is clear when the cycle
-// has none left (or the run ended). Returns as armPhase.
-static const char* armFrom(bool* any) {
-    for (; phase < PHASES; phase++) {
-        const char* why = armPhase(any);
-        if (why || *any || !running) return why;
-    }
-    *any = false;
-    return nullptr;
-}
-
-static void cycleStart(uint8_t c) {
-    cycleNow = c;
-    homingHold(c);
-    phase    = 0;
 }
 
 // The lowest cycle above `c` with a run node, or 0.
@@ -216,21 +220,17 @@ static uint8_t cycleAfter(uint8_t c) {
     return next;
 }
 
-// After the forward sweeps: keep each rotary node's evidence.
-static bool sweepsRead(void) {
-    for (uint8_t i = 0; i < runCount; i++) {
-        RunNode& r = run[i];
-        if (r.ax->homing.cycle != cycleNow || r.job != JOB_ROTARY) continue;
-        NodeStatus st;
-        if (rpcNodeStatus(CMD_NODE_STATUS, r.node, 0, &st) != RPC_OK ||
-            !st.hasStepperTail) {
-            homingAbandon(r.node, LEGFAIL_POLL);
-            runEnd();
-            return false;
-        }
-        r.fwdIndex = st.indexPos;
-        r.fwdRev   = st.stepsPerRev;
+// After its forward sweep: keep a rotary node's evidence.
+static bool sweepRead(RunNode& r) {
+    NodeStatus st;
+    if (rpcNodeStatus(CMD_NODE_STATUS, r.node, 0, &st) != RPC_OK ||
+        !st.hasStepperTail) {
+        homingAbandon(r.node, LEGFAIL_POLL);
+        runEnd();
+        return false;
     }
+    r.fwdIndex = st.indexPos;
+    r.fwdRev   = st.stepsPerRev;
     return true;
 }
 
@@ -279,29 +279,36 @@ static bool cycleCommit(void) {
     return true;
 }
 
-// A phase's legs have all ended: arm the next phase, or commit the cycle and
-// start the next. A failure faults, and the teardown ends the run (homeAbort).
-static bool homeNext(uint8_t) {
-    if (phase == 0 && !sweepsRead()) return false;
-    for (;;) {
-        phase++;
-        bool any;
-        armFrom(&any);
-        if (!running) return false;
-        if (any) return true;
-        // The cycle is done.
-        if (!cycleCommit()) { runEnd(); return false; }
-        const uint8_t next = cycleAfter(cycleNow);
-        if (next == 0) { runEnd(); return false; }
-        cycleStart(next);
-        armFrom(&any);
-        if (!running) return false;
-        if (any) return true;
-        // A cycle with no leg to run leaves phase at PHASES: commit it next.
+// A leg of the cycle ended: arm its node's next, unless it was the last.
+static void homeLeg(const LegEnd& e) {
+    for (uint8_t i = 0; i < runCount; i++) {
+        RunNode& r = run[i];
+        if (r.node != e.node || r.ax->homing.cycle != cycleNow) continue;
+        if (r.done) return;
+        if (r.job == JOB_ROTARY && r.phase == 0 && !sweepRead(r)) return;
+        r.phase++;
+        bool armed;
+        if (const char* why = armNode(r, &armed)) refused(r, why);
+        return;
     }
 }
 
-static const Sequence homeSequence = { SEQ_HOME, homeNext, runEnd };
+// Every chain of the cycle is done: commit it and start the next, or end.
+// A failure faults, and the teardown ends the run (homeAbort).
+static bool homeNext(uint8_t) {
+    for (;;) {
+        if (!cycleCommit()) { runEnd(); return false; }
+        const uint8_t next = cycleAfter(cycleNow);
+        if (next == 0) { runEnd(); return false; }
+        bool any;
+        cycleStart(next, &any);
+        if (!running) return false;
+        if (any) return true;
+        // A cycle with no leg to run: commit it next.
+    }
+}
+
+static const Sequence homeSequence = { SEQ_HOME, homeNext, runEnd, homeLeg };
 
 const char* homeStart(const uint8_t* nodes, uint8_t n, bool only) {
     runCount = 0;
@@ -360,9 +367,8 @@ const char* homeStart(const uint8_t* nodes, uint8_t n, bool only) {
     sequenceStart(&homeSequence);
     uint8_t first = cycleAfter(0);
     for (;;) {
-        cycleStart(first);
         bool any;
-        const char* why = armFrom(&any);
+        const char* why = cycleStart(first, &any);
         if (why) { sequenceEnd(); runEnd(); return why; }
         if (!running || any) return nullptr;
         // Nothing to move in this cycle (it cannot happen for a home): skip it.

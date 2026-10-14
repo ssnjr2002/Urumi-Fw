@@ -4,19 +4,21 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The `home` recipe (docs/homing.md): homes a node list from the homing config,
-// cycle by cycle. Each cycle runs its legs in parallel, in lockstep phases
-// (seek, back-off, slow re-approach, pull-off; a rotary node sweeps forward
-// then back in the first two), then commits one datum for every node it homed.
+// cycle by cycle. In a cycle each node runs its own chain of legs (seek,
+// back-off, slow re-approach, pull-off; a rotary node sweeps forward then
+// back), each armed as the one before it ends; once every node's chain is
+// done, the cycle commits one datum for every node it homed.
 // Without `only`, every homeable node of an earlier cycle joins the run: a
 // homed linear node parks, an unhomed one homes, a homed rotary one stays.
 //
-// The run is the `home` sequence (ops/sequence.h), one phase per step, in the
-// context it started in; the cycle in progress is homingHeld(). A failure is
-// F_HOMING with homefail= and homenode=; `stop` ends it as any sequence.
+// The run is the `home` sequence (ops/sequence.h), one step per cycle, each
+// node a thread of it (ops/runner.h), in the context it started in; the
+// cycle in progress is homingHeld(). A failure is F_HOMING with homefail= and
+// homenode=; `stop` ends it as any sequence.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Start a run for `nodes[0..n)`, each a homeable axis node of the config.
-// Energises the run's nodes and arms the first phase. Returns nullptr once
+// Energises the run's nodes and arms each one's first leg. Returns nullptr once
 // started, or the refusal text after `err ` with nothing moved. Gating the
 // machine state is the caller's.
 const char* homeStart(const uint8_t* nodes, uint8_t n, bool only);
