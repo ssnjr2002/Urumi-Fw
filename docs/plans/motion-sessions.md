@@ -777,7 +777,7 @@ Done (merged). Unblocks JB3, together with JB2.
 
 ### Status
 
-Ready to merge.
+Done (merged). Unblocks JB3 (with JB1) and JB4.
 
 ### Outcome
 
