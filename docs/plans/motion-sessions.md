@@ -777,7 +777,29 @@ Done (merged). Unblocks JB3, together with JB2.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces: `CfgTool` / `MachineCfg.tools` (at most `CFG_MAX_TOOLS` 8, each
+  at most `CFG_MAX_CHAMBERS` 8) with `configTool(cfg, id)`; decoded: id,
+  `toolType`, `tangential`, `plunge`, `toolOffset`, `path.feed`, `z.feed`,
+  `chamberOffsets`. `cfgerr=tools`. Blob version 6. `ops/tools`:
+  `toolsMounted(head)` for JB3's not-mounted check. `mount`, `get tools`, a
+  `tools=` field on `status`. Web: `ToolProfile.id`, `chamberOffsets`.
+* Deviations:
+  * Only the tools a config lists exist, each with a required `id`; names
+    are still the four preset keys (free names with a `type` are later).
+  * `mount` does not check the head's `accepts`.
+  * The mount is reported in text only; STATUS_RSP waits for JB3.
+  * A tool without its own feed decodes as 0, meaning the machine's.
+* Known failing: `pnpm typecheck` has 2 errors beyond `main`'s 40:
+  `orchestrate/walk.ts` and `production/bakePlan.ts` read `slotOffsets`.
+  They are the dead host-driven pipeline (with `choreograph`), left broken;
+  removing it is its own branch.
+* Bench (COM8, 1-head config): the v6 blob loads; `mount` sets and clears,
+  refuses `no_tool`, `no_head`, `usage`; `get tools` and `status` report it.
+  Not tried: a config push clearing the mounts.
 
 ## Branch JB3: `feature/layer-header`
 
