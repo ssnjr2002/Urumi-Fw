@@ -430,8 +430,7 @@ A dependent chain, one session: J1, then J1b and J2 in either order.
 
 The job branches are built inside out: the JOB state around today's records
 first, then mount state, then the layer header, then tool change. JB1 and JB2
-are independent; JB3 needs both; JB3b and JB4 need JB3. The job and tool
-headers (JB5) come later.
+are independent; JB3 needs both; JB3b and JB4 need JB3.
 
 ## Branch J1: `feature/pico-jog`
 
@@ -792,7 +791,7 @@ Done (merged). Unblocks JB3 (with JB1).
   * Only the tools a config lists exist, each with a required `id`; names
     are still the four preset keys (free names with a `type` are later).
   * `mount` does not check the head's `accepts`.
-  * The mount is reported in text only; STATUS_RSP waits for JB5.
+  * The mount is reported in text only; STATUS_RSP waits for the job header.
   * `mount` does not post a sequence event yet (machine-model.md expected
     it here); that comes with JB4's WAIT.
   * A tool without its own feed decodes as 0, meaning the machine's.
@@ -811,7 +810,7 @@ Done (merged). Unblocks JB3 (with JB1).
 **Type:** feature.
 
 **Purpose:** the layer header (`LAYER_HDR`, `0xA2`, the `TOOL_REC` layout
-above) opens and steers a job. `JOB_HDR` and `TOOL_HDR` are JB5.
+above) opens and steers a job. `JOB_HDR` and `TOOL_HDR` are later.
 
 * A layer header in IDLE opens `JOB.BUFFERING`; Béziers no longer open a
   job. A `BEZIER` before any layer header is `NACK_JOB`.
@@ -873,27 +872,6 @@ Planned.
   `NACK_NOT_MOUNTED`. `mount` posts the event the WAIT takes.
 
 **Depends on:** JB3, and R3 of docs/plans/sequences.md.
-
-### Status
-
-Planned.
-
-## Branch JB5: `feature/job-header` (not scheduled)
-
-### Plan
-
-**Type:** feature.
-
-**Purpose:** `JOB_HDR` and `TOOL_HDR`, with preflight.
-
-* `JOB_HDR` opens the job instead of the layer header; job end on the last
-  record (record count); the job id guards resume.
-* `TOOL_HDR` preflight: id known, no duplicate, head bound, bbox with offsets
-  in the soft range (Z, mesh and heights with lifts).
-* `STATUS_RSP` (new magic) gains job id, executing index, frame and mounted
-  tool.
-
-**Depends on:** JB3 (JB3b for the index).
 
 ### Status
 
