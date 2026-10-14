@@ -673,7 +673,7 @@ park ends IDLE with no fault (J1b's known gap). Instant work in `next()`
 
 ### Status
 
-Ready to merge.
+Done, merged (`dc5c942`). Unblocks M4.
 
 ### Outcome
 
