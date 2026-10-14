@@ -491,7 +491,8 @@ join.
 
 ### Status
 
-Ready to merge.
+Done (merged at `34db55c`). Unblocks nothing; M4 and J1b build on its
+threads and `leg` hook.
 
 ### Outcome
 
