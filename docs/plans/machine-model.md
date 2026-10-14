@@ -604,7 +604,32 @@ emits the jog while legs hold the bus (`home`, `leg`, recovery, probe legs).
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* As planned, plus (agreed in Write, found on the bench): a continuous jog
+  still braking after a direction change (`RING_JOG_CONT` owns the ring) is
+  the jog's own too, so repeats of the new direction are held, not NACKed
+  `BUSY`. The stop stays limited to a running jog or step jogs.
+* A cjog during a running job is now NACKed `BUSY` (it was held and never
+  started); a paused job, a manual context or a latch is `BAD_STATE`.
+* Web: no name-table entry; `NACK_REASON_NAMES` (`session.ts`) names
+  record-stream reasons only, and records never get `BUSY`. The sim answers
+  `BUSY` for JOB, HOMING and TRAVERSE (`MachineState` has no RUNNING).
+* The new `test_cjog` cases cannot fail against the old `cjog.cpp`: it
+  calls `machineView`, which the fakes no longer provide, so it fails to
+  link.
+* The M3b follow-ups landed (`cjogWant` cleared on start, with its test;
+  the `test_sequence` warning).
+* Checks: `pio run -e pico` clean; `pio test -e native` 140/140
+  (`test_cjog` 21). `pnpm typecheck` 40 errors and `pnpm test` 1 failure
+  (`controller.test.ts`, "refuses to rebind slots while RUNNING"), the same
+  on `main`: removed web code never ported. Follow-up outside this plan.
+* Bench (COM8, homed, head 0): held jog, deadman, direction change with no
+  NACKs, stop byte, Z and diagonal jogs; cjog during `home` and during
+  `dummy_leg` NACKed `BUSY`. The bench needs `bus_exclude 8` (id 8 is mute)
+  and `select 0` after homing.
 
 ## Branch M4: `feature/probe-sequence`
 
