@@ -631,6 +631,46 @@ Done (merged at `1b1b5e2`). Unblocks M4 and J1b (motion-sessions.md).
   `dummy_leg` NACKed `BUSY`. The bench needs `bus_exclude 8` (id 8 is mute)
   and `select 0` after homing.
 
+## Branch M3d: `fix/sequence-fail`
+
+### Plan
+
+**Type:** fix.
+
+**Purpose:** a sequence refused after its `ok` alarms instead of ending
+silently. Today `next()` returning false means done, and the only failure
+path is a leg's (`homingFail`, `F_HOMING`). A ring step's refusal is lost:
+`lineTo` (`controller/seq/steps.cpp:61`) returns false for both "already
+there" and a planner refusal, so a `jogto` whose line is refused after the
+park ends IDLE with no fault (J1b's known gap). Instant work in `next()`
+(bindings, RPCs, reading a result) has the same hole.
+
+* `F_SEQUENCE = 0x0080`, an event bit in `F_EVENTS` (`ops/machine.h`): the
+  alarm reason "a sequence failed".
+* `sequenceFail(why)` (`ops/sequence.*`): copies the refusal text and calls
+  `faultSet(F_SEQUENCE)`; the existing teardown aborts the sequence (its
+  `abort()` cleans up) and closes the context. `unalarm` clears it.
+* The rule, in `sequence.h`: a refusal after the `ok`, in arming a step or
+  in instant work, calls `sequenceFail`. Refusals before `sequenceStart`
+  stay command replies; leg failures keep `F_HOMING`/`F_PROBE` and their
+  keys.
+* `lineTo` returns its refusal (`ops/refusal.h` text) or null; "already
+  there" stays a normal end. `jogtoNext` fails the sequence on a refusal.
+* `get`: `seqfail=<sequence> <why>` (e.g. `seqfail=jogto soft_limit y 2.10`).
+* Web: the fault bit's name and the `get` key.
+* Test (native, failing before the fix): a jogto line refused after the
+  park sets `F_SEQUENCE` and keeps the refusal.
+* Docs: `docs/wire_protocol.md` (faults bits, `get` key),
+  `docs/plans/sequences.md`.
+* Human check: a refused line after the park (e.g. the mesh's Z range)
+  shows ALARM with `seqfail=`; `unalarm` clears it.
+
+**Depends on:** M3c; J1b (motion-sessions.md).
+
+### Status
+
+Planned.
+
 ## Branch M4: `feature/probe-sequence`
 
 ### Plan
@@ -644,8 +684,10 @@ legs, read, restore), usable inside a job; a probe profile in the config.
   drops the ring on pause. A failure there keeps the job and its index.
 * An estop during the probe sequence: `abort()` drops the binding without
   the bus, as M2's manual probe teardown does; confirm here.
+* Failures after the `ok` that are not a leg's (bind, XY line, read) go
+  through `sequenceFail` (M3d).
 
-**Depends on:** M3.
+**Depends on:** M3, M3d.
 
 ### Status
 
