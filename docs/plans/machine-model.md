@@ -1,4 +1,4 @@
-# Machine model: faults, slots, sequences
+# Machine model: faults, levels, sequences
 
 `machineState` and `alarmReason` hold three things in two bytes: what runs,
 what is wrong, and what everyone else is told. One byte cannot hold a probe
@@ -6,7 +6,7 @@ inside a paused job (`returnState`), nor two faults at once, so the code
 re-derives the state from guesses (`resumeOrHold`, the "if in this alarm"
 checks in `cmd/axis.cpp:231`, `ops/slot_map.cpp:179`).
 
-This plan splits them: a fault mask, three slots for what runs, and a
+This plan splits them: a fault mask, three levels for what runs, and a
 published state computed from both once per loop pass. It is a redesign, not
 a refactor: behaviour changes where the old encoding hid something (listed
 per branch).
@@ -33,7 +33,27 @@ observer) is done and kept. Revises docs/plans/motion-sessions.md's States.
   work.
 * Fault details stay data: `failWhy`, `failNode`, the probe's cause.
 
-### Slots
+### Levels
+
+What runs is three nested levels, under the fault mask:
+
+```text
+  faults / estop latch   override everything (ESTOP, ALARM)
+  context                where the machine is
+    sequence             what was asked for
+      step               what moves now (legs, a thread per node; or the ring)
+```
+
+Three rules:
+
+* Ownership goes down: closing or aborting a level tears down the ones below.
+* The published state is the most specific level with a name: a fault, else
+  a named sequence (`home`, `recovery`), else a manual context, else the
+  step's kind, else the job or IDLE.
+* Admission asks the context whether the command is allowed (`bad_state`),
+  then the levels below whether anything runs (`busy`).
+
+(Not the stream slots of `slot_map`, which bind nodes to axes.)
 
 ```text
 context    IDLE | JOB.reason | PROBE | HOMING     held across commands, closed by command
@@ -100,7 +120,7 @@ else                    → IDLE
   job context (a jog while paused is JOGGING); a manual context keeps its
   name over its raw legs (HOMING, not TRAVERSE).
 * Computed by `machinePublish()`, last in each loop pass; nothing else writes
-  `machineState`. Core 0 logic never reads it: it asks the slots.
+  `machineState`. Core 0 logic never reads it: it asks the levels.
 * `resumeOrHold`, `returnState`, `slotMapGate`'s alarm write and the
   re-derive checks go.
 
@@ -114,10 +134,10 @@ Core 1 ─facts─► observer ─► planes ─► runner ─► sequence ─�
 Core 1 reads machineState and the ring owner: may I move, must I sweep.
 ```
 
-* **Each slot is written by its owner:** contexts by their modules (job,
+* **Each level is written by its owner:** contexts by their modules (job,
   `ops/probe`, manual homing), the sequence by the driver, the step by the
   runner and the planner queue, faults by whoever detects them.
-* **`ops/machine`** holds what crosses slots:
+* **`ops/machine`** holds what crosses levels:
   * `machineAdmit(kind)`: the admission rules below;
   * `machineTeardown(estop)`: step, sequence (`abort()`), context, in that
     order;
@@ -239,12 +259,12 @@ Done (merged at `0a1d218`). Unblocks M2.
 
 **Type:** feature.
 
-**Purpose:** the context and step slots, `machineAdmit`, `machineTeardown`,
+**Purpose:** the context and step levels, `machineAdmit`, `machineTeardown`,
 and Core 1 no longer writing the state.
 
 * Contexts IDLE, JOB, PROBE, HOMING; `returnState` and the probe-from-job
   path go (a probe inside a job waits for the probe sequence, M4).
-* Step slot written by the runner and the planner queue; ring owner replaces
+* Step level written by the runner and the planner queue; ring owner replaces
   `joggingReason`. Core 1 posts facts instead of writing JOB, JOGGING and
   IDLE (`follower.cpp:70,98,134`, `core1.cpp:106`).
 * Leg owner check by step kind and generation (`ops/leg`, `ops/runner`,
@@ -260,8 +280,8 @@ and Core 1 no longer writing the state.
 * The "ALARM with faults == `F_LATCHED`" leg gates (`cmd/axis.cpp`,
   `legAdmitDenies`) become `machineAdmit`'s LEGS-with-`F_LATCHED` rule.
 
-**Tests (native):** admission per kind and slot; teardown order; publish
-from slots; a stale drain dropped.
+**Tests (native):** admission per kind and level; teardown order; publish
+from levels; a stale drain dropped.
 
 **Depends on:** M1.
 
@@ -283,7 +303,7 @@ Done (merged at `69a37a1`). Unblocks M3.
   * Core 1 sets `estopSwept` itself before pushing `ESTOP_SWEPT`.
     `estopRequested` (Core 0's `stop`) replaces Core 1's reads of ESTOP.
   * The data plane has no kind column; its gates and `configStoreCommit`
-    read the slots.
+    read the levels.
 * Interfaces M3 relies on (`ops/machine.h`):
   * contexts and the ring owner: `machineContext` and `ringOwner` (values as
     `joggingReason`) in `ipc/shared_state.h`; `contextOpen`/`contextClose`;
@@ -291,9 +311,9 @@ Done (merged at `69a37a1`). Unblocks M3.
     (the step first, then the context), `jobAbort`;
   * admission: `machineAdmit(kind)` with `CmdKind` and the
     `K_IN_PROBE`/`K_IN_HOMING`/`K_BARE_READ` flags on each `cmd/table.h` row;
-    `machineView` (the state from the slots) and `machineAtRest`/
+    `machineView` (the state from the levels) and `machineAtRest`/
     `machineBusFree` for argument checks.
-  * `homingHeld()` stands in for the sequence slot (`sequenceLive` in
+  * `homingHeld()` stands in for the sequence level (`sequenceLive` in
     `machine.cpp`); M3 replaces it.
 * Behaviour:
   * A live step or `home` run refuses as `err busy` (some were `bad_state`).
@@ -328,13 +348,13 @@ Done (merged at `69a37a1`). Unblocks M3.
 
 **Type:** feature.
 
-**Purpose:** the sequence slot, `next()`/`abort()`, step builders, WAIT
+**Purpose:** the sequence level, `next()`/`abort()`, step builders, WAIT
 steps, and `home` on the driver.
 
 * `controller/seq/sequence.{h,cpp}` (new); `controller/seq/home.cpp` rebuilt
   on it (cycles, phases, `onSwitch`, sweep reads and datum commits in
   `next()`); `sequenceLive()` in `ops/machine.cpp` (today `homingHeld()`)
-  reads the sequence slot.
+  reads the sequence level.
 * `home` runs as a sequence in IDLE with no context: split the shared leg
   arming from the manual HOMING session (`homingBegin`/`homingParkBegin`
   open CTX_HOMING today, and `homeTick` ends on its close). Raw `leg` keeps
