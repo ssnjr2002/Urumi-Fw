@@ -830,7 +830,27 @@ above) opens and steers a job. `JOB_HDR` and `TOOL_HDR` are later.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces: `LAYER_HDR` 0xA2 (17 B); `MSEG_NACK_JOB` 0x0C, `TOOL_UNKNOWN`
+  0x0D, `NOT_MOUNTED` 0x0E. `layerResolve` (ops/layer),
+  `plannerLayerCheck`/`plannerOpenLayer`, `axesSelectHead` (shared with
+  `select`). Web: `packLayerHdr`, the constants; `stampSeq` takes a layer
+  header; the sim opens a job on one.
+* Deviations:
+  * A head switch needs the bus free, so it happens from IDLE only; in a job
+    it is always `NACK_BUSY`, including after the operator selects anchor
+    while paused. A fix (switch in a dry BUFFERING job, or through PAUSED) is
+    open; JB4's tool change will need it.
+  * Chambers are numbered 1..`chamberCount`.
+  * The session treats the three new NACKs as fatal.
+* Left broken: anything streaming `prepareBezierJob` packets without a layer
+  header gets `NACK_JOB`; no live caller does.
+* Checks: `pio run -e pico` clean; `pio test -e native` 151/151; `test/wire`
+  229/229; `pnpm test` and `pnpm typecheck` as `main`.
+* Not benched.
 
 ## Branch JB3b: `feature/pause-drain`
 
