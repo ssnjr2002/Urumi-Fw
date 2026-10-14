@@ -13,6 +13,10 @@
 // waits), or ends the sequence.
 // A sequence has no context of its own: it runs in the one it started in.
 //
+// Failing: a refusal before sequenceStart is the command's reply. After the
+// `ok`, a refused step or refused instant work calls sequenceFail, which
+// alarms with F_SEQUENCE; a failed leg alarms with F_HOMING (homingFail).
+//
 // Closing or aborting a level tears down the levels below it: the teardown and
 // contextClose abort the sequence, which cuts its step and calls abort().
 
@@ -35,7 +39,7 @@ enum SequenceEnd : uint8_t {
 struct Sequence {
     uint8_t id;                    // SequenceId
     // Run instant work and arm the next step, or sequenceWait. False when the
-    // sequence is done. A failure faults (homingAbandon), which ends it.
+    // sequence is done. A failure faults (sequenceFail), which ends it.
     bool (*next)(uint8_t end);     // SequenceEnd
     // Clean up after a teardown; the step is already cut. May be null.
     void (*abort)(void);
@@ -53,6 +57,14 @@ void sequenceEnd(void);
 // Cut the live step (abort its legs), end any wait and call abort().
 void sequenceAbort(void);
 
+// Fail the live sequence, refused with `why` after its `ok`: keep the text
+// (one token: get prints it as seqfail=) and alarm with F_SEQUENCE, whose
+// teardown aborts the sequence.
+void sequenceFail(const char* why);
+
+// The last sequenceFail's text; meaningful while F_SEQUENCE is set.
+const char* sequenceFailWhy(void);
+
 // From next(): wait `ms` for nothing but the timeout.
 void sequenceWait(uint32_t ms);
 
@@ -69,4 +81,7 @@ void sequenceTick(void);
 
 bool    sequenceLive(void);
 uint8_t sequenceId(void);        // SequenceId
+// The last sequence aborted (a fault's teardown, `stop`), SEQ_NONE after a
+// start; get seq= reports it with F_SEQUENCE, F_HOMING or F_PROBE.
+uint8_t sequenceAbortedId(void);
 bool    sequenceWaiting(void);

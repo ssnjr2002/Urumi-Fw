@@ -27,6 +27,7 @@ uint8_t headZNodes(uint8_t* out);
 const char* parkZs(void);
 
 // RING: a straight XY line to machine mm (x, y) at `feed` mm/s, owned by the
-// live sequence (RING_SEQ); the step ends when the ring drains. False when it
-// queued nothing: the head is there already, or the queue refused it.
-bool lineTo(float x, float y, float feed);
+// live sequence (RING_SEQ); the step ends when the ring drains. Returns
+// nullptr, or the refusal text; `*queued` is false when it queued nothing
+// (refused, or the head is there already).
+const char* lineTo(float x, float y, float feed, bool* queued);

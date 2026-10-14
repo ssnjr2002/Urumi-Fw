@@ -14,6 +14,7 @@
 #include "../ops/frames.h"
 #include "../ops/mesh.h"
 #include "../ops/machine.h"
+#include "../ops/sequence.h"
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
 
@@ -39,6 +40,8 @@ struct Snap {
     bool     meshOn;
     uint16_t meshNx, meshNy;
     float    meshSlope;
+    char     seqFail[48];
+    uint8_t  seq, seqAborted;
 };
 
 void takeSnap(Snap& s) {
@@ -71,6 +74,9 @@ void takeSnap(Snap& s) {
     s.meshNx   = meshNx();
     s.meshNy   = meshNy();
     s.meshSlope = meshSlope();
+    s.seq        = sequenceId();
+    s.seqAborted = sequenceAbortedId();
+    snprintf(s.seqFail, sizeof s.seqFail, "%s", sequenceFailWhy());
 }
 
 enum KeyResult : uint8_t { KEY_OK, KEY_NA, KEY_FAILED };
@@ -124,6 +130,15 @@ const Key kKeys[] = {
         return homeFailed(s) ? fmtU(o, n, s.homeFailWhy) : KEY_NA; } },
     { "homenode",  [](const Snap& s, char* o, size_t n) {
         return homeFailed(s) ? fmtU(o, n, s.homeFailNode) : KEY_NA; } },
+    // The live sequence (SequenceId), else the one a sequence failure ended.
+    { "seq",       [](const Snap& s, char* o, size_t n) {
+        if (s.seq != SEQ_NONE) return fmtU(o, n, s.seq);
+        if ((s.faults & (F_SEQUENCE | F_HOMING | F_PROBE)) && s.seqAborted != SEQ_NONE) return fmtU(o, n, s.seqAborted);
+        return KEY_NA; } },
+    // What refused a sequence after its ok (sequence.h).
+    { "seqfail",   [](const Snap& s, char* o, size_t n) {
+        if (!(s.faults & F_SEQUENCE)) return KEY_NA;
+        snprintf(o, n, "%s", s.seqFail); return KEY_OK; } },
     { "cfgerr",    [](const Snap& s, char* o, size_t n) {
         if (!(s.faults & F_CONFIG)) return KEY_NA;
         snprintf(o, n, "%s", machineCfgBlockName()); return KEY_OK; } },

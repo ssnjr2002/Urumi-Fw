@@ -119,6 +119,9 @@ consumer differs.
 * A step's owner judges each end (`legEndFailed`, as `homingTick` does). The
   default policy: any failure aborts the step (`runnerAbortAll`), drops the
   sequence's remaining steps, and fails the session with the owner's alarm.
+* A refusal after the `ok`, arming a step or in instant work, fails the
+  sequence with `sequenceFail(why)`: the SEQUENCE fault, `seqfail=<why>`.
+  Refusals before the sequence starts are the command's reply.
 * `stop` aborts the live step of any kind, drops the sequence, and ends as
   `stop` does today.
 

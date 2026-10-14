@@ -2,11 +2,12 @@
  * The sequence driver (src/rp2350/core0/ops/sequence.cpp) against a faked
  * runner: steps advance next(), a succeeded leg reaches leg(), a failed leg
  * fails the sequence, a wait times out, a RING step ends on the drain, and an
- * abort cuts the step before abort() runs.
+ * abort cuts the step before abort() runs, and sequenceFail alarms.
  */
 
 #include "doctest.h"
 #include <stdint.h>
+#include <string.h>
 
 namespace {
 uint32_t now;                   // millis()
@@ -14,7 +15,7 @@ uint32_t now;                   // millis()
 uint32_t millis(void) { return now; }
 
 // Unity build: sequence.cpp includes runner.h, leg_effects.h and homing.h,
-// whose functions are faked below.
+// machine.h, whose functions are faked below.
 #include "../../src/rp2350/core0/ops/sequence.cpp"
 
 // ── fake runner ─────────────────────────────────────────────────────────────
@@ -37,10 +38,12 @@ void post(uint8_t kind, uint8_t failWhy = LEGFAIL_NONE, uint8_t node = 0) {
 
 // ── fake failure: as the real one, it faults and the teardown aborts ────────
 int fails;
+uint16_t faultBits;
 
 // ── a scripted sequence ─────────────────────────────────────────────────────
 // next() records what ended each step and plays `script`: 'S' arms a step,
-// 'W' waits 100 ms, 'R' queues a RING step, '.' ends.
+// 'W' waits 100 ms, 'R' queues a RING step, 'F' is refused (sequenceFail),
+// '.' ends.
 const char* script;
 uint8_t     ends[8];
 int         nexts, aborts;
@@ -51,6 +54,7 @@ bool scriptNext(uint8_t end) {
         case 'S': stepLive = true; return true;
         case 'W': sequenceWait(100); return true;
         case 'R': sequenceRing(); return true;
+        case 'F': sequenceFail("soft_limit"); return false;
         default:  return false;
     }
 }
@@ -75,6 +79,7 @@ void reset(const char* s) {
     stepLive = false;
     stepCuts = fails = nexts = aborts = legs = 0;
     failOn = 0;
+    faultBits = 0;
     now = 0;
     sequenceEnd();
     script = s;
@@ -101,6 +106,11 @@ uint8_t runnerAbortAll(LegEnd*) {
     stepLive = false;
     boxHead = boxCount = 0;
     return 0;
+}
+// As the real faultSet: an event bit, then the teardown aborts the sequence.
+void faultSet(uint16_t f) {
+    faultBits |= f;
+    sequenceAbort();
 }
 void homingFail(const LegEnd&) {
     fails++;
@@ -269,4 +279,24 @@ TEST_CASE("a failure in leg() ends the sequence and drops later events") {
     CHECK(nexts == 0);
     CHECK(aborts == 1);
     CHECK_FALSE(sequenceLive());
+}
+
+TEST_CASE("a refusal after the ok alarms and keeps its text") {
+    start("F");
+    post(RUN_STEP_END);
+    sequenceTick();
+    REQUIRE(nexts == 1);
+    CHECK(faultBits == F_SEQUENCE);
+    CHECK(strcmp(sequenceFailWhy(), "soft_limit") == 0);
+    CHECK(aborts == 1);                    // the teardown's, once
+    CHECK(sequenceAbortedId() == SEQ_HOME);
+    CHECK_FALSE(sequenceLive());
+}
+
+TEST_CASE("sequenceFail keeps its own copy of the text") {
+    start("S.");
+    char why[] = "full";
+    sequenceFail(why);
+    why[0] = 'x';
+    CHECK(strcmp(sequenceFailWhy(), "full") == 0);
 }

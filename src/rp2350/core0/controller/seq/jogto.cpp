@@ -22,7 +22,12 @@ static char    refusal[40];
 static bool jogtoNext(uint8_t) {
     if (lining) return false;
     lining = true;
-    return lineTo(targetX, targetY, feed);
+    bool queued;
+    if (const char* why = lineTo(targetX, targetY, feed, &queued)) {
+        sequenceFail(why);
+        return false;
+    }
+    return queued;
 }
 
 static const Sequence jogtoSequence = { SEQ_JOGTO, jogtoNext, nullptr };
@@ -78,7 +83,13 @@ const char* jogtoStart(float mx, float my) {
         if (sequenceLive()) sequenceEnd();
         return why;
     }
-    // No Z to park: the line is the first step.
-    if (nz == 0 && !jogtoNext(SEQ_END_STEP)) sequenceEnd();
+    // No Z to park: the line is the first step, refused as the command.
+    if (nz == 0) {
+        lining = true;
+        bool queued;
+        const char* why = lineTo(targetX, targetY, feed, &queued);
+        if (!queued) sequenceEnd();
+        return why;
+    }
     return nullptr;
 }

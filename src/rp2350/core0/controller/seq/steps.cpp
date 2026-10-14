@@ -58,11 +58,24 @@ const char* parkZs(void) {
     return nullptr;
 }
 
-bool lineTo(float x, float y, float feed) {
+static const char* queueText(PlannerQueueResult r) {
+    switch (r) {
+        case PQ_NO_CONFIG:  return "unconfigured";
+        case PQ_NO_LIMITS:  return "no_limits";
+        case PQ_FULL:       return "full";
+        case PQ_SOFT_LIMIT: return "soft_limit";
+        default:            return "bad_state";
+    }
+}
+
+const char* lineTo(float x, float y, float feed, bool* queued) {
+    *queued = false;
     float at[4];
-    if (!plannerJogFrom(at, RING_SEQ)) return false;
-    if (fabsf(x - at[0]) < 1e-3f && fabsf(y - at[1]) < 1e-3f) return false;
-    if (plannerQueueLine(x, y, feed, RING_SEQ) != PQ_OK) return false;
+    if (!plannerJogFrom(at, RING_SEQ)) return "bad_state";
+    if (fabsf(x - at[0]) < 1e-3f && fabsf(y - at[1]) < 1e-3f) return nullptr;
+    const PlannerQueueResult r = plannerQueueLine(x, y, feed, RING_SEQ);
+    if (r != PQ_OK) return queueText(r);
     sequenceRing();
-    return true;
+    *queued = true;
+    return nullptr;
 }
