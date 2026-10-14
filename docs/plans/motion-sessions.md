@@ -890,6 +890,9 @@ Planned.
 * Probing in the job (`TOOL_PROBE`) is later, once probe legs are a leg kind.
 * A layer header for a tool not mounted starts the sequence, replacing JB3's
   `NACK_NOT_MOUNTED`. `mount` posts the event the WAIT takes.
+* A layer header whose tool is mounted on the other head holds the job,
+  selects that head (at rest, bus free), then `BUFFERING`; no park or load.
+  It replaces JB3's `NACK_BUSY` for that case.
 
 **Depends on:** JB3, and R3 of docs/plans/sequences.md.
 
