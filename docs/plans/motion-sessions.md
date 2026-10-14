@@ -100,9 +100,9 @@ layer (TOOL_REC)
   ```
   JOB_HDR                job id, record count, t, tool count n
   n × TOOL_HDR           any order; one per tool that will run
-  TOOL_REC(N)            tool, index N, feed, k
-  BEZIER …               from N
-  TOOL_REC(M) …          the next layer, at any index
+  TOOL_REC(L, N)         tool, layer L, record N, feed, k
+  BEZIER …               record N of layer L onward
+  TOOL_REC(M, 0) …       the next layer, in any order
   ```
 
 * **Every start sends the headers;** the host picks where to start. A job
@@ -112,10 +112,11 @@ layer (TOOL_REC)
   `PAUSED` is `TOOL_REC(N)` alone, guarded by the resume point and job id.
 * **No `config_crc32` and no `required_axes`.** The host no longer models the
   machine; the Pico infers axes and peripherals from each tool's profile.
-* **Only `BEZIER` records are indexed,** and the index is not on the wire:
-  the seq window keeps order with no gaps, so a record's index is its
-  `TOOL_REC`'s index plus the count since. The job's last record is index =
-  record count − 1. A `TOOL_REC`'s index is that of the next `BEZIER`.
+* **Only `BEZIER` records are numbered, per layer,** and the number is not on
+  the wire: the seq window keeps order with no gaps, so a record's number is
+  its `TOOL_REC`'s record plus the count since. A `TOOL_REC`'s record is that
+  of the next `BEZIER`. How the job header bounds a job (a record count per
+  layer, or each layer's end) is open.
 * **Tools have an explicit `id`** (u8) in each config `tools` entry, unique,
   checked at load; it survives reordering the config. The host looks a
   layer's name up in the config it pulled and packs the `id`. `toolType`
@@ -149,10 +150,10 @@ TOOL_HDR 0xA1, 20 B
 [3..18] xmin, xmax, ymin, ymax f32, work coordinates at the tip
 [19] CRC8
 
-TOOL_REC 0xA2, 17 B
+TOOL_REC (LAYER_HDR) 0xA2, 19 B
 [0] magic  [1] chamber (0 = none)  [2] seq
-[3] tool id  [4..7] index u32  [8..11] feed f32  [12..15] k f32
-[16] CRC8
+[3] tool id  [4..5] layer u16  [6..9] record u32  [10..13] feed f32
+[14..17] k f32  [18] CRC8
 ```
 
 The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
@@ -192,18 +193,20 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 ### Pause drains the ring
 
 * `pause`: `HOLDING` (brake along the path, existing hold), then at rest a
-  lift, then `PAUSED`: the ring is dropped and the resume point `{index, s}`
-  recorded (the block that was running and how far into it).
+  lift, then `PAUSED`: the ring is dropped and the resume point
+  `{layer, record, s}` recorded (the block that was running and how far into
+  it).
 * With the ring empty, a jog can use it while paused. No second ring, no
   set-aside.
 * **Contour framing resets on pause**, as on abort.
 * **Resume is a `TOOL_REC`**, not a text command: in `PAUSED` only a
-  `TOOL_REC` whose index matches the resume point is accepted, and every other
+  `TOOL_REC` whose layer and record match the resume point is accepted, and
+  every other
   record is NACKed, so a stray record cannot restart motion. Then
   `BUFFERING`.
-* The resumed block is re-cut from its start. Resuming at `s − margin` (trim
-  by `s0`, plunge mid-block) comes with Z, A and tool profiles; the resume
-  point already keeps `s`.
+* The resumed block is trimmed to start at `s − margin` (a firmware
+  constant; 0 if `s` is shorter), so the cut overlaps where it stopped. The
+  plunge there comes with lifts.
 * `select` and `apply_offset` are allowed while paused (e.g. to jog another
   head); resume re-selects through its `TOOL_REC`.
 * Planner branch 2's in-place resume (`restartFrom`, `err moved`) is unused on
@@ -271,9 +274,9 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 
 ### Record index and identity
 
-* **Ring blocks carry an absolute record index**, counted from the job start
-  (u32). The wire seq is one byte and wraps every 256 records; it stays for
-  the ACK window only. `status` reports the executing index.
+* **Ring blocks carry `{layer, record}`** (u16, u32), counted per layer. The
+  wire seq is one byte and wraps every 256 records; it stays for the ACK
+  window only. `status` will report the executing record.
 * **No CRC is kept per block.** The CRC guards transit; a resend is checked
   again on arrival.
 * **A job id** identifies the job; a resume or restart must match it, so the
@@ -858,16 +861,29 @@ Done (merged). Unblocks JB3b and JB4.
 
 **Type:** feature.
 
-**Purpose:** Pause drains the ring (Decisions, above).
+**Purpose:** Pause drains the ring (Decisions, above); records are numbered
+per layer.
 
-* Ring blocks carry the absolute record index (`lib/planner/`).
-* `pause`: hold, then `PAUSED` with the ring dropped and `{index, s}` kept.
-* Resume is a layer header whose index is the resume point; any other record
-  is NACKed. The `resume` text command goes.
+* `LAYER_HDR` grows to 19 B: `[4..5]` layer u16, `[6..9]` record u32 (the
+  first record's number within the layer), feed and k after. Layers may
+  arrive in any order.
+* Ring blocks carry `{layer, record}` (`lib/planner/`), counted per layer from
+  the header's record; a START's travel takes the tag of the record it leads
+  to.
+* The first record after any layer header counts as START.
+* `pause`: hold, then `PAUSED` with the ring dropped and `{layer, record, s}`
+  kept. `get resume_layer` / `resume_record` report it (`-` otherwise).
+* Resume is a layer header in `PAUSED` matching the layer and record; block
+  `record` is trimmed to start at `max(0, s − 2 mm)` (a firmware constant).
+  Any other record is NACKed. The head may switch there (the bus is free).
+  The `resume` command, `resumePos`, `resumeRequested` and `err moved` go.
+* Web: the encoder for the new layout; the sim drops the ring on pause and
+  resumes on a matching header; the link loses `resume`.
 
 **Depends on:** JB3.
 
-**Overlap:** `lib/planner/`, `core1/emit/follower.cpp`.
+**Overlap:** `lib/planner/`, `core1/emit/follower.cpp`, `usb_protocol.h`,
+`web/src/wire/`.
 
 ### Status
 
