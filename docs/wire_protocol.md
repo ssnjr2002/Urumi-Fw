@@ -224,11 +224,11 @@ packets by inserting the byte at a packet boundary.
 ### STATUS_RSP — `0xA7` (31 bytes)
 ```
 [0]      magic         = 0xA7
-[1]      machineState  uint8   — 0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE
+[1]      machineState  uint8   — 0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
 [2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
 [4..5]   faults        uint16 LE — fault mask (below)
-[6]      reason        uint8   — the current state's: job, jogging, homing or probing; 0 otherwise
+[6]      reason        uint8   — the current state's reason: `job=`, `jogging=`, `homing=` or `probing=`; 0 otherwise
 [7..8]   bufCount      uint16 LE — planner blocks queued
 [9..24]  pos[4]        int32 LE  — machinePos: x, y, z, a (steps)
 [25]     expectedSeq   uint8   — next wire seq the data plane will execute
@@ -245,12 +245,9 @@ UNMAPPED, LATCHED) clear by themselves when their cause goes; event faults
 fault, cleared by `unstop`. The state is ALARM at rest while any bit is set,
 IDLE otherwise; several bits may be set at once.
 
-`bufCount` counts segments, including the one Core 1 is mid-executing.
-`queuedUs` is the sum of their durations (major-axis steps × interval), which is
-what a jog source paces against — segment *count* says nothing about time when
-segment durations vary by orders of magnitude. Whole-segment granularity: the
-executing segment counts in full, with no subtraction of elapsed time, so the
-figure over-reports by at most one segment.
+`bufCount` counts planner blocks in the ring. `queuedUs` is the ring's motion
+not yet claimed by Core 1, read live under the planner lock; it is what a
+stream paces against, since block *count* says nothing about time.
 
 `expectedSeq` is **informational**, for resynchronising after a timeout, abort or
 reconnect. It is not flow control — ACKs remain the only window-advance
@@ -393,11 +390,11 @@ the key does not apply now, `!` the key is not recognised (older firmware). A
 request line is at most 255 characters.
 
 ```
-state=<s>     machineState    0=IDLE 1=RUNNING 2=ESTOP 3=ALARM 4=PAUSED 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE
+state=<s>     machineState    0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 faults=<hex>  machineFaults   fault mask, as STATUS_RSP (e.g. 0x0004)
-running=<r>   runningReason   0=JOB 1=JOG 2=ABORT_DECEL 3=PLANNER  (only meaningful while state=RUNNING or JOGGING)
+job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING  (only while state=JOB)
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with the HOMING fault)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
