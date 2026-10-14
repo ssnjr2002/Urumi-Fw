@@ -525,6 +525,42 @@ threads and `leg` hook.
   way.
 * Checks: `pio run -e pico` clean; `pio test -e native` 119/119.
 
+## Branch M3b: `fix/dataplane-admit`
+
+### Plan
+
+**Type:** fix.
+
+**Purpose:** the data plane admits through the levels, as the command
+tables do. Today a continuous jog checks nothing
+(`core0/data_plane.cpp:338`): during a leg step the ring is empty and idle,
+so `plannerJogFrom` accepts and Core 1 emits the jog while legs hold the bus
+(`home`, `leg`, recovery, probe legs).
+
+* `K_PREEMPT` (`ops/machine.h`): as `K_STEP`, but a running jog's ring
+  (`RING_JOG_STEP`, `RING_JOG_CONT`) is not busy; the caller stops it and
+  takes over. A leg step, a live sequence, a `SEQ` or `JOB` ring: `busy`.
+  Latched, a job, or a manual homing or probe context: `bad_state`.
+* `acceptCjog` and `cjogTick`'s held start call `machineAdmit(K_PREEMPT)`
+  instead of `cjogTick`'s `machineView() != STATE_IDLE`.
+* Records (`data_plane.cpp:134`) check the levels (no sequence, no leg step,
+  context IDLE or JOB) instead of the label; their NACK codes stay.
+* `MSEG_NACK_BUSY` (`core0/usb_protocol.h`), mirrored in `web/src/wire/`: the
+  host waits and retries, as for `ABORTING`.
+* Tests in `test_machine`: `K_PREEMPT` under a leg step is `busy` (fails
+  before the fix: there is no rule); a jog's own ring admitted; a `SEQ`
+  ring, a sequence between steps: `busy`; latched, manual contexts:
+  `bad_state`.
+* Docs: `docs/wire_protocol.md`.
+* Human checks: a cjog during `home` and during a raw `leg` is NACKed
+  `busy` and the legs run on; a cjog direction change still restarts.
+
+**Depends on:** nothing.
+
+### Status
+
+Planned.
+
 ## Branch M4: `feature/probe-sequence`
 
 ### Plan
@@ -549,7 +585,7 @@ Planned.
 
 | Branch | On this plan | Depends on |
 |---|---|---|
-| J1b `feature/jogto-named` | sequence: `parkZs()`, `lineTo()` | M3 |
+| J1b `feature/jogto-named` (motion-sessions.md) | sequence: `parkZs()`, `lineTo()` | M3, M3b |
 | JB2 `feature/tool-mount` | `mount` posts the event a WAIT takes | nothing |
 | JB3 `feature/layer-header` | pause drops the ring; jogs admitted in `JOB.PAUSED` | JB2 |
 | JB4 `feature/tool-change` | sequence in JOB.TOOL_CHANGE: park, per head XY, WAIT `mount`, later probe | M3, JB3 (M4 for probing) |

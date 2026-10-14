@@ -536,11 +536,11 @@ Done (merged). Unblocks J1b and J2.
 
 * Type: feature.
 * Purpose: `jogto park|load|probe`.
-* Depends on: J1, and R3 of docs/plans/sequences.md.
+* Depends on: J1; M3 and M3b of docs/plans/machine-model.md.
 * What the code has today: stored positions are decoded
   (`core0/config/config_decode.h:78`, `:95`) but nothing resolves them.
-  `homingParkBegin` (`core0/ops/homing.h:24`) arms a park leg in the homing
-  session; `controller/seq/home.cpp` parks homed nodes that way (`JOB_PARK`).
+  `homingArmPark(node, last, …)` (`core0/ops/homing.h`) arms a park leg as
+  a runner thread; `controller/seq/home.cpp` parks homed nodes that way.
 * Scope:
   1. A resolver in `core0/ops/frames`: a name to the anchor's machine XY
      (`park` defaulting to where homing parks, `load`, `probe` as the
@@ -551,6 +551,14 @@ Done (merged). Unblocks J1b and J2.
      head's Z node (legs, in parallel), step 2 is the XY line (ring move).
      A failed park alarms as `ALARM_HOMING_FAIL` (`LEGFAIL_PARK`). `stop`
      mid-sequence aborts the live step.
+     * One label: `SEQ_JOGTO` publishes JOGGING in `stateOf`
+       (`core0/ops/machine.cpp`) through both steps, not TRAVERSE then
+       JOGGING.
+     * `lineTo()` queues as a new ring owner `RING_SEQ`, so a cjog packet
+       neither stops it (`acceptCjog` stops only jog owners) nor appends
+       (`plannerJogFrom` refuses another owner's ring).
+     * The named form is `K_SEQUENCE`; the raw XY `jogto` keeps `K_STEP`,
+       applied by the handler.
   3. `err busy` for commands that meet the live sequence (sequences.md,
      Admission), mirrored in the web host.
   4. Docs: `docs/wire_protocol.md`.
