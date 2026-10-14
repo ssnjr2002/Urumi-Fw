@@ -2,7 +2,8 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — BEZIER (0xAD), 56 bytes; continuous jog (0xAF), 7 bytes
+//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 17 bytes;
+//                continuous jog (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
 //
@@ -22,7 +23,9 @@
 #include "data_plane.h"
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
+#include "ops/axes_map.h"
 #include "ops/frames.h"
+#include "ops/layer.h"
 #include "ops/tools.h"
 #include "ops/cjog.h"
 #include "ops/machine.h"           // jobAbort
@@ -99,6 +102,7 @@ static void sendCfgAck()           { Serial.write(CFG_ACK); }   // committed
 static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
 static void acceptBezier();
+static void acceptLayer();
 static void acceptCjog();
 
 // ─── Packet state machine ─────────────────────────────────────────────────────
@@ -130,8 +134,8 @@ static void feedPacket(uint8_t b) {
         return;
     }
 
-    // Records join a job, or open one from IDLE; the planner's admit narrows
-    // JOB to the reasons that take records.
+    // A layer header opens a job from IDLE, and records join it; the planner's
+    // admit narrows JOB to the reasons that take them.
     const uint8_t st = machineView();
     if (st == STATE_JOB && jobReason == JOB_PAUSED) { sendNack(MSEG_NACK_PAUSED);    return; }
     if (st != STATE_IDLE && st != STATE_JOB)        { sendNack(MSEG_NACK_BAD_STATE); return; }
@@ -147,7 +151,8 @@ static void feedPacket(uint8_t b) {
         return;
     }
 
-    acceptBezier();
+    if (pktBuf[0] == LAYER_HDR_MAGIC) acceptLayer();
+    else                              acceptBezier();
 }
 
 static void acceptBezier() {
@@ -178,7 +183,50 @@ static void acceptBezier() {
         case PQ_FULL:      sendNack(MSEG_NACK_FULL);      return;
         case PQ_BAD_CURVE: sendNack(MSEG_NACK_BAD_CURVE); return;
         case PQ_SOFT_LIMIT: sendNack(MSEG_NACK_SOFT_LIMIT); return;
+        case PQ_NO_JOB:    sendNack(MSEG_NACK_JOB);       return;
         default:           sendNack(MSEG_NACK_BAD_STATE); return;   // state, config, limits, feed
+    }
+    expectedSeq++;
+    markAck();
+}
+
+// The layer's tool picks the head; a head switch maps axes over the bus, so it
+// happens only while the bus is free (IDLE).
+static void acceptLayer() {
+    if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
+    if (!machineCfgValid()) { sendNack(MSEG_NACK_BAD_STATE); return; }
+
+    LayerHdr l;
+    l.chamber = pktBuf[1];
+    l.tool    = pktBuf[3];
+    memcpy(&l.feed, &pktBuf[8],  4);
+    memcpy(&l.k,    &pktBuf[12], 4);
+
+    const MachineCfg& c = machineCfg();
+    uint8_t mounted[CFG_MAX_HEADS];
+    for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) mounted[h] = toolsMounted(h);
+    uint8_t head;
+    float cut;
+    switch (layerResolve(c, mounted, l, plannerMachineFeed(), &head, &cut)) {
+        case LAYER_OK:           break;
+        case LAYER_TOOL_UNKNOWN: sendNack(MSEG_NACK_TOOL_UNKNOWN); return;
+        case LAYER_NOT_MOUNTED:  sendNack(MSEG_NACK_NOT_MOUNTED);  return;
+        default:                 sendNack(MSEG_NACK_JOB);          return;
+    }
+
+    // Checked before the select, so a refused layer changes nothing.
+    PlannerQueueResult r = plannerLayerCheck(cut);
+    if (r == PQ_OK && head != framesSelected()) {
+        if (!machineBusFree()) { sendNack(MSEG_NACK_BUSY); return; }
+        const char* why;
+        axesSelectHead(head, &why);
+        if (why || framesSelected() != head) { sendNack(MSEG_NACK_BAD_STATE); return; }
+    }
+    if (r == PQ_OK) r = plannerOpenLayer(cut);
+    switch (r) {
+        case PQ_OK:        break;
+        case PQ_BAD_CURVE: sendNack(MSEG_NACK_JOB);       return;   // inside a contour
+        default:           sendNack(MSEG_NACK_BAD_STATE); return;   // state, config, feed
     }
     expectedSeq++;
     markAck();
@@ -288,10 +336,12 @@ bool dataPlaneConsume(uint8_t b) {
     }
 
     // Idle — dispatch on the leading magic byte.
-    if (b == BEZIER_MAGIC || b == CJOG_MAGIC) {
+    if (b == BEZIER_MAGIC || b == LAYER_HDR_MAGIC || b == CJOG_MAGIC) {
         pktBuf[0] = b;
         pktIdx    = 1;
-        pktSize   = b == BEZIER_MAGIC ? BEZIER_PACKET_SIZE : CJOG_PACKET_SIZE;
+        pktSize   = b == BEZIER_MAGIC    ? BEZIER_PACKET_SIZE
+                  : b == LAYER_HDR_MAGIC ? LAYER_HDR_PACKET_SIZE
+                  :                        CJOG_PACKET_SIZE;
         pktLastMs = millis();
         rxKind    = RX_PACKET;
         return true;

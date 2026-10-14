@@ -5,9 +5,10 @@
 // ring.
 //
 // Core 1 runs what is queued (core1/emit/follower.cpp). Lines and Béziers are
-// jogs, run as STATE_JOGGING; records are a job, run as STATE_JOB. Accepted in
-// IDLE, while jogs run (jogs) or a job buffers or runs (records); refused while
-// the ring holds the other kind, and once a pause or abort is requested.
+// jogs, run as STATE_JOGGING; records are a job, run as STATE_JOB, opened by a
+// layer. Jogs are accepted in IDLE or while jogs run, records while a job buffers
+// or runs; refused while the ring holds the other kind, and once a pause or
+// abort is requested.
 
 enum PlannerQueueResult : uint8_t {
     PQ_OK = 0,
@@ -18,6 +19,7 @@ enum PlannerQueueResult : uint8_t {
     PQ_BAD_CURVE,   // a degenerate handle, a cusp, or an unfittable curve
     PQ_NO_FEED,     // a record before any `feed`
     PQ_SOFT_LIMIT,  // the bed mesh would take Z outside its soft range
+    PQ_NO_JOB,      // a record with no job open (no LAYER_HDR yet)
 };
 
 namespace planner { struct Bezier; }
@@ -39,8 +41,20 @@ PlannerQueueResult plannerQueueAxis(uint8_t k, float d, float feed, uint8_t reas
 PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
                                       float x3, float y3, float feed);
 
-// Cut and travel feeds for streamed records, mm/s; held until reboot.
+// The machine's cut feed and the travel feed for streamed records, mm/s; held
+// until reboot. A layer's own cut feed overrides the machine's.
 void plannerSetFeed(float cut, float travel);
+
+// The machine's cut feed (plannerSetFeed).
+float plannerMachineFeed();
+
+// Whether a layer cut at `cut` mm/s could open now: PQ_NO_FEED without a cut
+// or travel feed, PQ_BAD_CURVE inside a contour, else admit's verdict.
+PlannerQueueResult plannerLayerCheck(float cut);
+
+// Start a layer cut at `cut` mm/s (checked as plannerLayerCheck), opening the
+// job (JOB.BUFFERING) from IDLE.
+PlannerQueueResult plannerOpenLayer(float cut);
 
 // Queue a host-analysed record (checkBezier fills the rest of `b`). Contour
 // framing: `start` opens a contour and travels to p0 if it is elsewhere; any

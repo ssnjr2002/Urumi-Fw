@@ -80,11 +80,8 @@ bool cmdSelect(const char* args) {
     }
 
     if (head == FRAMES_NONE) { Serial.println("err no_head"); return true; }   // decoder forbids
-    uint8_t map[4];
-    configSlotMap(c, head, SLOT_NONE, map);
     const char* why;
-    axesMapApply(map, /*keepWrongType=*/false, &why);
-    framesSelectHead(head);
+    axesSelectHead(head, &why);
     if (why) Serial.printf("err %s\n", why);
     else     Serial.println("ok");
     return true;

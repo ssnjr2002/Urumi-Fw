@@ -45,6 +45,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
+| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens a job, sets the layer's tool and feed (17 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
@@ -153,8 +154,9 @@ One piece of a host-annotated contour (`web/src/toolpath/annotate.ts`). The
 Pico does not analyse it: `checkBezier` (`lib/planner/bezier.cpp`) derives c1
 and the end curvatures and refuses numbers that cannot belong to the control
 points. Shares `expectedSeq`, the duplicate guard and the cumulative ACK with
-MSEG, and its state gate (IDLE/RUNNING, `NACK_PAUSED` while paused); in
-RUNNING only planner motion accepts more.
+MSEG. A record needs a job open (a layer header first), else `NACK_JOB`; it is
+accepted while the job buffers or runs, `NACK_PAUSED` while paused. It runs at
+the layer's cut feed.
 
 **Contour framing.** `START` opens a contour: if p0 is not where the last move
 ends, the Pico first queues a travel line to it at the travel feed. Every
@@ -172,8 +174,29 @@ record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
 with `softLimits` is `NACK_SOFT_LIMIT`, as is a record (or its travel line)
 along which the bed mesh would take Z out of its soft range.
 
-Records are refused (`NACK_BAD_STATE`) until `feed` has set the cut and travel
-feeds, and while the planner ring holds jogs (JOGGING, or jogs queued in IDLE).
+### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 17 bytes)
+```
+[0]      magic = 0xA2
+[1]      chamber    uint8      — 1..chamberCount; 0 for a tool without chambers
+[2]      seq        uint8      — rolling stream seq, shared with BEZIER
+[3]      tool       uint8      — the config tool's `id`
+[4..7]   index      uint32 LE  — of the next BEZIER (unused yet)
+[8..11]  feed       float32 LE — cut, mm/s; 0 = the tool's path.feed, then `feed`'s cut
+[12..15] k          float32 LE — plunge scale 0..2 (unused yet)
+[16]     CRC8 over bytes [0..15]
+```
+Opens a job (JOB.BUFFERING) from IDLE; in a buffering or running job it starts
+the next layer. The BEZIERs after it run with its tool, on the head that has
+the tool mounted (`mount`; the lowest such head). A layer whose head is not the
+selected one selects it (as `select`), which maps axes over the bus, so only
+from IDLE: in a job it is `NACK_BUSY` (a head switch mid-job comes with tool
+change). A job ends only by `cancel` or abort.
+
+Refusals: `NACK_TOOL_UNKNOWN` = the id is not in the config;
+`NACK_NOT_MOUNTED` = no head has it mounted; `NACK_JOB` = inside an open
+contour, or a bad chamber, feed or k; `NACK_BAD_STATE` = no cut or travel feed
+(`feed`), no config, the select failed, or the ring holds jogs (JOGGING, or
+jogs queued in IDLE); `NACK_PAUSED` while paused.
 
 ### ACK — `0xAA` (3 bytes)
 ```
@@ -325,7 +348,10 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
 | `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset, or a record the bed mesh would take Z out of range on; a continuous jog with no room left in its direction |
 | `MSEG_NACK_MIXED_AXES` | `0x0A` | Continuous jog with directions in more than one axis set (XY, Z, A) |
-| `MSEG_NACK_BUSY` | `0x0B` | Continuous jog while a step or sequence holds the machine (a job, homing, a leg, a traverse) |
+| `MSEG_NACK_BUSY` | `0x0B` | Continuous jog while a step or sequence holds the machine (a job, homing, a leg, a traverse); a layer header whose tool is on another head, in a job |
+| `MSEG_NACK_JOB` | `0x0C` | BEZIER with no job open; layer header inside a contour, or with a bad chamber, feed or k |
+| `MSEG_NACK_TOOL_UNKNOWN` | `0x0D` | Layer header whose tool id is not in the config |
+| `MSEG_NACK_NOT_MOUNTED` | `0x0E` | Layer header whose tool no head has mounted |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 
@@ -380,7 +406,7 @@ prefixed `0x`.
 | `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset back to the config's `work` block |
 | `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again. IDLE/PAUSED/ALARM. See "Bed mesh" |
 | `mount` | `<head> <tool id>` | `ok` / `err usage\|bad_state\|no_head\|no_tool` | Controller command: what `head` has mounted, a config tool id (`tools.<name>.id`) or 0 for none. RAM only: kept across jobs, cleared at boot and by a config push. Separate from `select`; never moves. IDLE/PAUSED/ALARM. `get tools` reports it |
-| `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot; records are refused until it is sent. The `TOOL` record replaces it |
+| `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot. A layer header's feed, then its tool's `path.feed`, overrides the cut; layers are refused without a travel feed |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
 ### `get` keys

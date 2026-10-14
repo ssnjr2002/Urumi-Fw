@@ -129,3 +129,10 @@ bool axisNodeInConfig(uint8_t node) {
     }
     return false;
 }
+
+void axesSelectHead(uint8_t h, const char** why) {
+    uint8_t map[4];
+    configSlotMap(machineCfg(), h, SLOT_NONE, map);
+    axesMapApply(map, /*keepWrongType=*/false, why);
+    framesSelectHead(h);
+}

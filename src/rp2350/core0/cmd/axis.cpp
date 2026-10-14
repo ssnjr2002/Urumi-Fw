@@ -746,9 +746,9 @@ bool cmdJog(const char* args) {
     return true;
 }
 
-// ── feed <cut> <travel> — feeds for streamed BEZIER records (testing) ────────
-// mm/s, held until reboot. Records are refused until this is sent; the TOOL
-// record replaces it.
+// ── feed <cut> <travel> — feeds for streamed BEZIER records ─────────────────
+// mm/s, held until reboot. A layer header's feed, then its tool's, overrides
+// the cut; layers are refused until a travel feed is set.
 bool cmdFeed(const char* args) {
     float v[2];
     if (!parseFloats(args, v, 2) || !(v[0] > 0)) { Serial.println("err usage"); return true; }

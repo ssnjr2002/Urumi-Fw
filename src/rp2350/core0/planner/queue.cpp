@@ -245,6 +245,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
 // ── streamed records ─────────────────────────────────────────────────────────
 
 static float cutFeed = 0, travelFeed = 0;
+static float layerFeed = 0;     // the open layer's cut feed
 static bool inContour = false;
 
 void plannerSetFeed(float cut, float travel) {
@@ -252,10 +253,41 @@ void plannerSetFeed(float cut, float travel) {
     travelFeed = travel;
 }
 
+float plannerMachineFeed() { return cutFeed; }
+
 void plannerEndContour() { inContour = false; }
 
+PlannerQueueResult plannerLayerCheck(float cut) {
+    if (!(cut > 0 && travelFeed > 0)) return PQ_NO_FEED;
+    planner::AxisLimits limits;
+    const PlannerQueueResult r = admit(limits, false);
+    if (r != PQ_OK) return r;
+    return inContour ? PQ_BAD_CURVE : PQ_OK;
+}
+
+PlannerQueueResult plannerOpenLayer(float cut) {
+    const PlannerQueueResult r = plannerLayerCheck(cut);
+    if (r != PQ_OK) return r;
+
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    PlannerQueueResult out = PQ_OK;
+    if (machineContext != CTX_JOB) {
+        // From IDLE: no jog runs, so the ring is empty and becomes the job's.
+        if (resetIfIdle(RING_JOB)) {
+            jobReason = JOB_BUFFERING;
+            __dmb();
+            machineContext = CTX_JOB;
+        } else {
+            out = PQ_BAD_STATE;
+        }
+    }
+    if (out == PQ_OK) layerFeed = cut;
+    spin_unlock(plannerLock, s);
+    return out;
+}
+
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) {
-    if (!(cutFeed > 0 && travelFeed > 0)) return PQ_NO_FEED;
+    if (machineContext != CTX_JOB) return PQ_NO_JOB;
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, false);
     if (r != PQ_OK) return r;
@@ -290,13 +322,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     if (out == PQ_OK) out = meshBezier(b, limits, curveCap);
     if (out == PQ_OK) {
         if (travel) plannerRing.pushLine(b.p[0], travelFeed, limits, kDeviation, travelCap);
-        plannerRing.pushBezier(b, cutFeed, limits, kDeviation, curveCap);
-        // The first record opens the job context; Core 1 buffers it from here.
-        if (machineContext != CTX_JOB) {
-            jobReason = JOB_BUFFERING;
-            __dmb();
-            machineContext = CTX_JOB;
-        }
+        plannerRing.pushBezier(b, layerFeed, limits, kDeviation, curveCap);
     }
     spin_unlock(plannerLock, s);
     if (out != PQ_OK) return out;

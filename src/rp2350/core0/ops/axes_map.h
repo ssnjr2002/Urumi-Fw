@@ -32,3 +32,7 @@ AxesMapResult axesMapRetry(const char** why = nullptr);
 
 // True when `node` is an axis node the config marks present.
 bool axisNodeInConfig(uint8_t node);
+
+// Select head `h` (`select`): apply its slot map, then make it the controlled
+// point. Bus I/O; at rest only. `*why` as axesMapApply.
+void axesSelectHead(uint8_t h, const char** why);
