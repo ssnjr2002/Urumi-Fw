@@ -120,6 +120,46 @@ static CfgDecodeError readAxis(JsonObjectConst j, uint8_t defaultCycle, CfgAxis*
     return rotaryKind == out->rotary ? CFG_DEC_OK : CFG_DEC_HOMING;
 }
 
+// An optional feed inside an op target: absent target or feed is 0.
+static bool readOptFeed(JsonVariantConst target, float* out) {
+    *out = 0.0f;
+    if (target.isNull()) return true;
+    JsonVariantConst f = target["feed"];
+    return f.isNull() || readFloat(f, out);
+}
+
+static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
+    out->toolCount = 0;
+    if (tools.isNull()) return CFG_DEC_MISSING;
+    if (tools.size() > CFG_MAX_TOOLS) return CFG_DEC_TOOLS;
+    for (JsonPairConst kv : tools) {
+        JsonObjectConst j = kv.value();
+        CfgTool& t = out->tools[out->toolCount++];
+        t = CfgTool{};
+        JsonVariantConst id = j["id"], type = j["toolType"];
+        JsonObjectConst off = j["toolOffset"];
+        if (!id.is<unsigned>() || !type.is<unsigned>() || off.isNull() ||
+            !readBool(j["tangential"], &t.tangential) ||
+            !readBool(j["plunge"], &t.plunge) ||
+            !readFloat(off["xOffset"], &t.xOffset) ||
+            !readFloat(off["yOffset"], &t.yOffset) ||
+            !readOptFeed(j["path"], &t.pathFeed) ||
+            !readOptFeed(j["z"], &t.zFeed)) return CFG_DEC_MISSING;
+        if (id.as<unsigned>() > 0xFF || type.as<unsigned>() > 0xFF) return CFG_DEC_TOOLS;
+        t.id   = (uint8_t)id.as<unsigned>();
+        t.type = (uint8_t)type.as<unsigned>();
+        JsonVariantConst ch = j["chamberOffsets"];
+        if (ch.isNull()) continue;
+        JsonArrayConst a = ch;
+        if (a.isNull()) return CFG_DEC_MISSING;
+        if (a.size() > CFG_MAX_CHAMBERS) return CFG_DEC_TOOLS;
+        t.chamberCount = (uint8_t)a.size();
+        for (uint8_t i = 0; i < t.chamberCount; i++)
+            if (!readFloat(a[i], &t.chamberOffsets[i])) return CFG_DEC_MISSING;
+    }
+    return CFG_DEC_OK;
+}
+
 // ─── Validation ───────────────────────────────────────────────────────────────
 
 static bool positive(float v) { return isfinite(v) && v > 0.0f; }
@@ -181,7 +221,23 @@ static CfgDecodeError checkFrames(const MachineCfg& c) {
     return CFG_DEC_OK;
 }
 
+static bool feed(float v) { return isfinite(v) && v >= 0.0f; }
+
+static CfgDecodeError checkTools(const MachineCfg& c) {
+    for (uint8_t i = 0; i < c.toolCount; i++) {
+        const CfgTool& t = c.tools[i];
+        if (t.id == 0 || !isfinite(t.xOffset) || !isfinite(t.yOffset) ||
+            !feed(t.pathFeed) || !feed(t.zFeed)) return CFG_DEC_TOOLS;
+        for (uint8_t k = 0; k < t.chamberCount; k++)
+            if (!isfinite(t.chamberOffsets[k])) return CFG_DEC_TOOLS;
+        for (uint8_t k = 0; k < i; k++)
+            if (c.tools[k].id == t.id) return CFG_DEC_TOOLS;
+    }
+    return CFG_DEC_OK;
+}
+
 static CfgDecodeError validate(const MachineCfg& c) {
+    CfgDecodeError e;
     const CfgAxis* axes[2 + 2 * CFG_MAX_HEADS];
     uint8_t n = 0;
     axes[n++] = &c.x;
@@ -191,7 +247,7 @@ static CfgDecodeError validate(const MachineCfg& c) {
         axes[n++] = &c.heads[h].a;
     }
     for (uint8_t i = 0; i < n; i++) {
-        CfgDecodeError e = checkAxis(*axes[i]);
+        e = checkAxis(*axes[i]);
         if (e != CFG_DEC_OK) return e;
     }
 
@@ -211,6 +267,7 @@ static CfgDecodeError validate(const MachineCfg& c) {
         seen |= bit;
     }
     if (!positive(c.bufferQueueTime) || !positive(c.bufferIdleTime)) return CFG_DEC_BUFFER;
+    if ((e = checkTools(c)) != CFG_DEC_OK) return e;
     return checkFrames(c);
 }
 
@@ -236,6 +293,12 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["meshOn"]      = true;
     fm["buffer"]      = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
+    JsonObject ft = filter["toolProfiles"]["*"].to<JsonObject>();
+    for (const char* k : {"id", "toolType", "tangential", "plunge", "toolOffset",
+                          "chamberOffsets"})
+        ft[k] = true;
+    ft["path"]["feed"] = true;
+    ft["z"]["feed"]    = true;
 
     JsonDocument doc;
     if (deserializeMsgPack(doc, blob, len, DeserializationOption::Filter(filter)))
@@ -306,6 +369,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     for (uint8_t i = 0; i < out->periphCount; i++) {
         if (!readNode(periph[i], &out->peripherals[i])) return CFG_DEC_MISSING;
     }
+    if ((e = readTools(doc["toolProfiles"], out)) != CFG_DEC_OK) return e;
 
     return validate(*out);
 }
@@ -326,8 +390,15 @@ const char* configDecodeErrorName(CfgDecodeError e) {
         case CFG_DEC_HOMING:    return "homing";
         case CFG_DEC_FRAMES:    return "frames";
         case CFG_DEC_BUFFER:    return "buffer";
+        case CFG_DEC_TOOLS:     return "tools";
     }
     return "?";
+}
+
+const CfgTool* configTool(const MachineCfg& cfg, uint8_t id) {
+    for (uint8_t i = 0; i < cfg.toolCount; i++)
+        if (cfg.tools[i].id == id) return &cfg.tools[i];
+    return nullptr;
 }
 
 float configParkPos(const CfgAxis& a) {

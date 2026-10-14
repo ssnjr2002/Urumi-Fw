@@ -80,5 +80,9 @@
       }
     }
   ],
-  "defaultHead": 0
+  "defaultHead": 0,
+  "tools": {
+    "knife": { "id": 1 },
+    "revolver_pen": { "id": 2 }
+  }
 }

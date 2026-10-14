@@ -80,6 +80,7 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "no_mesh_on", host: false, mutate: (c) => delete c.machine.meshOn },
     { name: "no_buffer", host: false, mutate: (c) => delete c.machine.buffer.idleTime },
     { name: "buffer", host: true, mutate: (c) => (c.machine.buffer.queueTime = 0) },
+    { name: "tools", host: true, mutate: (c) => (c.toolProfiles.revolver_pen.id = c.toolProfiles.knife.id) },
     { name: "probe_reach", host: false, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 1e4, y: 0 }) },
 ];
 

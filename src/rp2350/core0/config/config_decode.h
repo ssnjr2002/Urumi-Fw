@@ -10,16 +10,19 @@
 // config, so every field decoded here must be present: there is no defaults
 // table on this side. Exceptions: the homing block (absent: not homeable),
 // and inside it `cycle` and `parkPos`; `laser`, a head's `probeSwitch`, and
-// `positions.park` / `positions.load`.
+// `positions.park` / `positions.load`; a tool's `path.feed`, `z.feed` and
+// `chamberOffsets`.
 //
 // Validation is consumer-scoped: it checks what would make the Pico's own use
 // of a field wrong, and leaves every other judgement to the host's
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 5u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 6u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
+#define CFG_MAX_TOOLS      8u
+#define CFG_MAX_CHAMBERS   8u
 #define CFG_BUS_ADDR_MAX   8u   // must equal BUS_ADDR_MAX (shared_state.h)
 #define CFG_NODE_STEPPER   0x01 // NODE_TYPE_STEPPER (include/common.h)
 
@@ -80,6 +83,21 @@ struct CfgHead {
     CfgPoint probeSwitch;    // a tip position; valid if hasProbeSwitch
 };
 
+// A tool profile (the blob's `toolProfiles`, keyed by name; the Pico keeps
+// only the id).
+struct CfgTool {
+    uint8_t id;             // 1..255, unique; 0 is no tool (`mount`)
+    uint8_t type;           // ToolType (web/src/machine/schema.ts)
+    bool    tangential;     // A steers along the path
+    bool    plunge;         // cuts into the material, not on it
+    float   xOffset;        // toolOffset: tip − head centre, mm
+    float   yOffset;
+    float   pathFeed;       // cut feed, mm/s; 0 = the machine's
+    float   zFeed;          // engage feed, mm/s; 0 = the machine's
+    uint8_t chamberCount;   // 0 without chambers
+    float   chamberOffsets[CFG_MAX_CHAMBERS];   // A angle per chamber, degrees
+};
+
 struct MachineCfg {
     uint16_t version;
     CfgAxis  x;
@@ -105,6 +123,8 @@ struct MachineCfg {
     // has arrived for this long. Seconds; jobs only.
     float    bufferQueueTime;
     float    bufferIdleTime;
+    CfgTool  tools[CFG_MAX_TOOLS];
+    uint8_t  toolCount;
 };
 
 enum CfgDecodeError : uint8_t {
@@ -122,6 +142,7 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_HOMING,         // a homing field out of range, or the wrong kind for the axis
     CFG_DEC_FRAMES,         // no anchor, a work Z per head missing, or a point out of reach
     CFG_DEC_BUFFER,         // a buffer time not a positive finite number
+    CFG_DEC_TOOLS,          // too many tools or chambers, an id 0 or repeated, a bad number
 };
 
 // Decode and validate `len` bytes at `blob` into *out. On failure *out is left
@@ -134,6 +155,9 @@ const char* configDecodeErrorName(CfgDecodeError e);
 // The slot map for `head`: [x, y, head.z, head.a] bus ids, with `none` for an
 // absent node. Mirrors slotMapFor() in web/src/machine/slots.ts.
 void configSlotMap(const MachineCfg& cfg, uint8_t head, uint8_t none, uint8_t out[4]);
+
+// The tool with `id`, or nullptr.
+const CfgTool* configTool(const MachineCfg& cfg, uint8_t id);
 
 // Where a linear home leaves the axis, in units: parkPos, or the default
 // frame (the trip at 0 homing −, at maxTravel + pullOffDist homing +).

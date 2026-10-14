@@ -146,6 +146,21 @@ const bufferPositive: Rule = ({ machine }) =>
         .filter((k) => !(Number.isFinite(machine.buffer[k]) && machine.buffer[k] > 0))
         .map((k) => error(`machine.buffer.${k}: must be > 0 (got ${machine.buffer[k]})`));
 
+/** A tool id is a u8 on the wire, 0 meaning no tool, and names one tool. */
+const toolIdsUnique: Rule = ({ toolProfiles }) => {
+    const seen = new Map<number, string>();
+    return Object.entries(toolProfiles).flatMap(([name, t]) => {
+        if (t.id === undefined) return [];
+        if (!Number.isInteger(t.id) || t.id < 1 || t.id > 255) {
+            return [error(`tools.${name}.id: must be an integer 1..255 (got ${t.id})`)];
+        }
+        const owner = seen.get(t.id);
+        if (owner !== undefined) return [error(`tools.${name}.id: ${t.id} is also ${owner}'s`)];
+        seen.set(t.id, name);
+        return [];
+    });
+};
+
 const defaultHeadInRange: Rule = ({ machine }) => {
     const n = machine.heads.length;
     const i = machine.defaultHead;
@@ -439,6 +454,7 @@ const RULES: readonly Rule[] = [
     defaultHeadInRange,
     clearanceNonNegative,
     bufferPositive,
+    toolIdsUnique,
     headsHaveAxesForAccepted,
     headsAcceptSomething,
     everyToolHasAHead,

@@ -45,10 +45,10 @@ export const CREASE: ToolProfile = toolProfile("crease", {
  * active — set via toolOffset.
  *
  * Not tangential — the A axis is used for slot selection, not tangent
- * tracking. The orchestrator jogs A to slotOffsets[i] before cutting
+ * tracking. The orchestrator jogs A to chamberOffsets[i] before cutting
  * with slot i.
  *
- * slotOffsets: 7 angles at 360/7 intervals, starting at 0°.
+ * chamberOffsets: 7 angles at 360/7 intervals, starting at 0°.
  */
 const REVOLVER_SLOT_COUNT = 7;
 const REVOLVER_SLOT_INTERVAL = 360 / REVOLVER_SLOT_COUNT;
@@ -56,7 +56,7 @@ export const REVOLVER_PEN: ToolProfile = toolProfile("revolver_pen", {
     toolType: ToolType.REVOLVER_PEN,
     tangential: false,
     cornerAngleDeg: 30,
-    slotOffsets: Array.from(
+    chamberOffsets: Array.from(
         { length: REVOLVER_SLOT_COUNT },
         (_, i) => i * REVOLVER_SLOT_INTERVAL,
     ),

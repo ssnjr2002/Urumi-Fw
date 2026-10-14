@@ -10,6 +10,7 @@
 #include "gate.h"
 #include "../ops/position.h"
 #include "../ops/frames.h"
+#include "../ops/tools.h"
 #include "../ops/mesh.h"
 #include "../ops/homing.h"
 #include "../ops/bus.h"
@@ -60,6 +61,11 @@ bool cmdStatus(const char*) {
     if (sel == FRAMES_NONE)        Serial.print(" head=-");
     else if (sel == FRAMES_ANCHOR) Serial.print(" head=anchor");
     else                           Serial.printf(" head=%u", sel);
+    if (machineCfgValid()) {
+        Serial.print(" tools=");
+        for (uint8_t h = 0; h < machineCfg().headCount; h++)
+            Serial.printf(h ? ",%u" : "%u", toolsMounted(h));
+    }
     for (int w = 0; w < 2; w++) {
         Serial.print(w ? " wpos=" : " mpos=");
         for (uint8_t k = 0; k < 4; k++) {

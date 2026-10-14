@@ -507,6 +507,12 @@ export interface DutyLimits {
 
 export interface ToolProfile {
     readonly name: string;
+    /**
+     * The tool's id on the wire (1..255, unique): a layer's name is looked up
+     * in the config and its id sent. Required on every tool a config lists;
+     * absent only on the bare presets.
+     */
+    readonly id?: number;
     readonly toolType: ToolType;
     readonly tangential: boolean;
     readonly offsetMm: number;
@@ -529,9 +535,9 @@ export interface ToolProfile {
     /**
      * A-axis slot offset angles (degrees) for a revolver tool. Absent on
      * PEN/KNIFE/CREASE. Present on REVOLVER_PEN — the orchestrator jogs A
-     * to slotOffsets[i] before cutting with slot i.
+     * to chamberOffsets[i] before cutting with slot i.
      */
-    readonly slotOffsets?: readonly number[];
+    readonly chamberOffsets?: readonly number[];
     /**
      * Duty limit for a tool that cannot run continuously. Absent = unlimited,
      * which is every tool except the ultrasonic knife.

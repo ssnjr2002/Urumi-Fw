@@ -148,14 +148,14 @@ export function toolForLayer(
  * Which axes a tool's motion actually drives, beyond the always-present X/Y:
  *   - Z, always: every tool is lowered to its cut height and lifted clear.
  *   - A when the tool steers it: tangential tools track the path tangent;
- *     the revolver selects slots by A rotation (slotOffsets present).
+ *     the revolver selects slots by A rotation (chamberOffsets present).
  *
  * Keyed on behaviour, not tool identity, so "required iff actually used".
  */
 export function requiredAxes(profile: ToolProfile): { readonly z: boolean; readonly a: boolean } {
     return {
         z: true,
-        a: profile.tangential || profile.slotOffsets !== undefined,
+        a: profile.tangential || profile.chamberOffsets !== undefined,
     };
 }
 

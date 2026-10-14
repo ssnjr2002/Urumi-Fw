@@ -114,12 +114,21 @@ describe("load: valid config", () => {
         expect(q.junctionDeviation).toBe(def.junctionDeviation);
     });
 
-    it("toolProfiles registry includes all 4 presets", () => {
+    it("toolProfiles holds only the listed tools, each with its id", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
-        expect(r.config.toolProfiles.pen).toBe(PEN);
-        expect(r.config.toolProfiles.knife).toBe(KNIFE);
-        expect(r.config.toolProfiles.revolver_pen).toBe(REVOLVER_PEN);
+        expect(Object.keys(r.config.toolProfiles)).toEqual(["knife", "revolver_pen"]);
+        expect(r.config.toolProfiles.knife).toEqual({ ...KNIFE, id: 1 });
+        expect(r.config.toolProfiles.revolver_pen).toEqual({ ...REVOLVER_PEN, id: 2 });
+        expect(r.config.toolProfiles.pen).toBeUndefined();
+    });
+
+    it("errors on a listed tool without an id", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.tools = { pen: {} };
+        const r = parseConfig(JSON.stringify(json));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors).toContain("tools.pen.id: required");
     });
 });
 
@@ -204,7 +213,7 @@ describe("load: optional defaults", () => {
 describe("load: tool preset patching", () => {
     it("patches knife path.feed without changing other fields", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.tools = { knife: { path: { feed: 60 } } };
+        json.tools = { knife: { id: 1, path: { feed: 60 } } };
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
         const knife = r.config.toolProfiles.knife!;
@@ -216,13 +225,13 @@ describe("load: tool preset patching", () => {
     it("patches revolver_pen toolOffset", () => {
         const json = JSON.parse(TEST_MACHINE);
         json.tools = {
-            revolver_pen: { toolOffset: { xOffset: 0, yOffset: -15 } },
+            revolver_pen: { id: 2, toolOffset: { xOffset: 0, yOffset: -15 } },
         };
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
         const rp = r.config.toolProfiles.revolver_pen!;
         expect(rp.toolOffset).toEqual({ xOffset: 0, yOffset: -15 });
-        expect(rp.slotOffsets).toEqual(REVOLVER_PEN.slotOffsets); // unchanged
+        expect(rp.chamberOffsets).toEqual(REVOLVER_PEN.chamberOffsets); // unchanged
     });
 
     it("errors on unknown tool preset name in tools", () => {
@@ -547,7 +556,7 @@ describe("patchToolProfile", () => {
     /** Parse TEST_MACHINE with `tools` replaced, returning the named profile. */
     function patched(name: string, override: unknown) {
         const json = JSON.parse(TEST_MACHINE);
-        json.tools = { [name]: override };
+        json.tools = { [name]: { id: 1, ...(override as object) } };
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(true);
         if (!r.ok) throw new Error(r.errors.join("; "));
@@ -567,10 +576,10 @@ describe("patchToolProfile", () => {
         expect(p.toolType).toBe(KNIFE.toolType);
     });
 
-    it("preserves an optional preset field (revolver slotOffsets)", () => {
+    it("preserves an optional preset field (revolver chamberOffsets)", () => {
         const p = patched("revolver_pen", { minRadiusMm: 1 });
-        expect(p.slotOffsets).toEqual(REVOLVER_PEN.slotOffsets);
-        expect(p.slotOffsets).toHaveLength(7);
+        expect(p.chamberOffsets).toEqual(REVOLVER_PEN.chamberOffsets);
+        expect(p.chamberOffsets).toHaveLength(7);
     });
 
     it("merges an OpTarget field-wise, not wholesale", () => {

@@ -149,7 +149,9 @@ export function pipelineConfig(overrides?: Partial<PipelineConfig>): PipelineCon
     return {
         machine: defaultMachine(),
         quality: qualityConfig(),
-        toolProfiles: { ...TOOL_PROFILES },
+        toolProfiles: Object.fromEntries(
+            Object.entries(TOOL_PROFILES).map(([k, p], i) => [k, { ...p, id: i + 1 }]),
+        ),
         ...overrides,
     };
 }

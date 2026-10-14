@@ -77,6 +77,7 @@
   "peripherals": [],
   "tools": {
     "knife": {
+      "id": 1,
       "tangential": true,
       "unwind": true,
       "offsetMm": 0,
@@ -94,6 +95,7 @@
       }
     },
     "pen": {
+      "id": 2,
       "tangential": false,
       "unwind": false,
       "offsetMm": 0,
@@ -111,6 +113,7 @@
       }
     },
     "crease": {
+      "id": 3,
       "tangential": true,
       "unwind": false,
       "offsetMm": 0,
@@ -128,6 +131,7 @@
       }
     },
     "revolver_pen": {
+      "id": 4,
       "tangential": false,
       "unwind": false,
       "offsetMm": 0,

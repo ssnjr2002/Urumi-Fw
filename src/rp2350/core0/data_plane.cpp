@@ -23,6 +23,7 @@
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "ops/frames.h"
+#include "ops/tools.h"
 #include "ops/cjog.h"
 #include "ops/machine.h"           // jobAbort
 #include "planner/queue.h"
@@ -231,6 +232,7 @@ static void feedCfg(uint8_t b) {
     uint8_t nack;
     if (!configStoreCommit(cfgLen, cfgCrc, &nack)) { sendCfgNack(nack); return; }
     machineCfgAdopt();
+    toolsReset();                           // its ids may name other tools
     sendCfgAck();
     // The boot sequence applies the new config: sweep, default map, `ready`.
     // Every push voids the datums, so no field has to be judged for whether it

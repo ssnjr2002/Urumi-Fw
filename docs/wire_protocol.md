@@ -379,6 +379,7 @@ prefixed `0x`.
 | `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
 | `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset back to the config's `work` block |
 | `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again. IDLE/PAUSED/ALARM. See "Bed mesh" |
+| `mount` | `<head> <tool id>` | `ok` / `err usage\|bad_state\|no_head\|no_tool` | Controller command: what `head` has mounted, a config tool id (`tools.<name>.id`) or 0 for none. RAM only: kept across jobs, cleared at boot and by a config push. Separate from `select`; never moves. IDLE/PAUSED/ALARM. `get tools` reports it |
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot; records are refused until it is sent. The `TOOL` record replaces it |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
@@ -415,6 +416,7 @@ pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on ho
 mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
 wpos=<x>,<y>,<z>,<a> work position: selected tip − work offset; A folded to (−180, 180]; X/Y `-` with no head
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
+tools=<id>,…         the tool id each head has mounted (`mount`), head order, 0 for none  (`-` without a config)
 mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)
 meshslope=<s>        its steepest slope between neighbouring points, mm/mm  (`-` without a loaded mesh)
 late=<n>             planner blocks Core 1 found late, since boot; a job lands PAUSED, a jog holds and runs on

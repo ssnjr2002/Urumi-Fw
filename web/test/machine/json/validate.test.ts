@@ -216,26 +216,15 @@ describe("loadConfig (parse ⨟ validate)", () => {
                 a: { node: { id: 4 }, stepsPerUnit: 45, maxFeed: 100, maxAccel: 500 },
             },
         ],
-        tools: { knife: { path: { feed: 40 }, z: { feed: 10 } } },
+        tools: { knife: { id: 1, path: { feed: 40 }, z: { feed: 10 } } },
     };
     const json = (patch: object = {}) => JSON.stringify({ ...base, ...patch });
 
     it("accepts a config that is both well-formed and sane", () => {
         const r = loadConfig(json());
         expect(r.ok).toBe(true);
-        // Both advisories here are about the three presets this machine does
-        // not fit: they exceed its Z ceiling (having inherited machine.z.feed
-        // 20, where the knife overrides to 10), and no head accepts them. Both
-        // are true statements about tools this machine could not run, and
-        // neither touches the knife, which is the tool it is configured for.
-        if (r.ok) {
-            expect(
-                r.warnings.every(
-                    (w) => w.includes(".z.feed 20") || w.includes("no head accepts it"),
-                ),
-            ).toBe(true);
-            expect(r.warnings.some((w) => w.includes("tools.knife"))).toBe(false);
-        }
+        // Only the listed knife exists, and it fits.
+        if (r.ok) expect(r.warnings).toEqual([]);
     });
 
     it("rejects a semantic error that parseConfig alone accepts", () => {
@@ -255,7 +244,7 @@ describe("loadConfig (parse ⨟ validate)", () => {
 
     it("surfaces warnings without blocking the load", () => {
         const r = loadConfig(
-            json({ tools: { knife: { path: { feed: 500 } } } }),
+            json({ tools: { knife: { id: 1, path: { feed: 500 } } } }),
         );
         expect(r.ok).toBe(true);
         if (r.ok) expect(r.warnings.some((w) => w.includes("exceeds axis ceiling"))).toBe(true);

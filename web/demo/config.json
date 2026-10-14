@@ -59,6 +59,7 @@
   ],
   "tools": {
     "knife": {
+      "id": 1,
       "path": {
         "feed": 40
       },
@@ -67,6 +68,7 @@
       }
     },
     "pen": {
+      "id": 2,
       "path": {
         "feed": 80
       },
@@ -75,6 +77,7 @@
       }
     },
     "crease": {
+      "id": 3,
       "path": {
         "feed": 80
       },
@@ -83,6 +86,7 @@
       }
     },
     "revolver_pen": {
+      "id": 4,
       "path": {
         "feed": 80
       },

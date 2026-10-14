@@ -112,6 +112,31 @@ TEST_CASE("config/controller.jsonc decodes") {
     CHECK(c.headCount == 2);
     CHECK(c.x.homing.present);
     CHECK(c.heads[1].a.homing.present);
+    REQUIRE(c.toolCount == 2);
+    const CfgTool* knife = configTool(c, 1);
+    REQUIRE(knife != nullptr);
+    CHECK(knife->tangential);
+    CHECK(knife->pathFeed == doctest::Approx(40));
+    CHECK(knife->zFeed == doctest::Approx(10));
+}
+
+TEST_CASE("tools decode by id") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    REQUIRE(c.toolCount == 2);
+    const CfgTool* knife = configTool(c, 1);
+    const CfgTool* rev   = configTool(c, 2);
+    REQUIRE(knife != nullptr);
+    REQUIRE(rev != nullptr);
+    CHECK(knife->tangential);
+    CHECK(knife->plunge);
+    CHECK(knife->chamberCount == 0);
+    CHECK_FALSE(rev->tangential);
+    CHECK(rev->chamberCount == 7);
+    CHECK(rev->chamberOffsets[1] == doctest::Approx(360.0 / 7));
+    CHECK(configTool(c, 0) == nullptr);
+    CHECK(configTool(c, 3) == nullptr);
 }
 
 TEST_CASE("frame fields decode with their defaults") {
@@ -156,6 +181,7 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"no_jog_unhomed", "missing"},
         {"no_mesh_on",     "missing"},
         {"no_buffer",      "missing"}, {"buffer", "buffer"},
+        {"tools",          "tools"},
     };
     for (auto& t : cases) {
         CAPTURE(t[0]);

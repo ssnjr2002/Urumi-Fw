@@ -148,6 +148,7 @@
   ],
   "tools": {
     "knife": {
+      "id": 1,
       "tangential": true,
       "unwind": true,
       "offsetMm": 0,
@@ -159,6 +160,7 @@
       "dutyLimits": { "maxOnS": 30, "minOnS": 20, "dwellS": 2, "settleS": 0.3 }
     },
     "pen": {
+      "id": 2,
       "tangential": false,
       "unwind": false,
       "offsetMm": 0,

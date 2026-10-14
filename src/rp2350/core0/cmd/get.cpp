@@ -15,6 +15,7 @@
 #include "../ops/mesh.h"
 #include "../ops/machine.h"
 #include "../ops/sequence.h"
+#include "../ops/tools.h"
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
 
@@ -35,6 +36,7 @@ struct Snap {
     float    mpos[4], wpos[4];
     bool     mposOk[4], wposOk[4];
     uint8_t  head;
+    uint8_t  tools[CFG_MAX_HEADS], headCount;
     uint32_t late;
     uint8_t  meshFile;
     bool     meshOn;
@@ -57,6 +59,8 @@ void takeSnap(Snap& s) {
     s.homeCycle     = homingHeld();
     s.probingReason = probingReason;
     s.ringOwner = ringOwner;
+    s.headCount = machineCfgValid() ? machineCfg().headCount : 0;
+    for (uint8_t h = 0; h < s.headCount; h++) s.tools[h] = toolsMounted(h);
     s.probeCause    = probeLastCause();
     s.probeRetries  = probeLastRetries();
     s.probeSteps    = probeLastSteps();
@@ -177,6 +181,13 @@ const Key kKeys[] = {
         if (s.head == FRAMES_NONE) return KEY_NA;
         if (s.head == FRAMES_ANCHOR) { snprintf(o, n, "anchor"); return KEY_OK; }
         return fmtU(o, n, s.head); } },
+    // The tool id each head has mounted, head order, 0 for none.
+    { "tools",     [](const Snap& s, char* o, size_t n) {
+        if (s.headCount == 0) return KEY_NA;
+        size_t k = 0;
+        for (uint8_t h = 0; h < s.headCount && k < n; h++)
+            k += snprintf(o + k, n - k, h ? ",%u" : "%u", s.tools[h]);
+        return KEY_OK; } },
     // Planner blocks Core 1 found late, since boot; each held the motion briefly.
     { "late",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.late); } },
     // The bed mesh: <nx>x<ny> loaded and on, off, flat (no file) or bad.

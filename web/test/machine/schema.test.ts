@@ -105,13 +105,13 @@ describe("config: ToolProfile presets", () => {
         expect(REVOLVER_PEN.requiredPeripheralTypes).toEqual([]);
     });
 
-    it("PEN/KNIFE/CREASE have default toolOffset (0,0) and no slotOffsets", () => {
+    it("PEN/KNIFE/CREASE have default toolOffset (0,0) and no chamberOffsets", () => {
         expect(PEN.toolOffset).toEqual({ xOffset: 0, yOffset: 0 });
         expect(KNIFE.toolOffset).toEqual({ xOffset: 0, yOffset: 0 });
         expect(CREASE.toolOffset).toEqual({ xOffset: 0, yOffset: 0 });
-        expect(PEN.slotOffsets).toBeUndefined();
-        expect(KNIFE.slotOffsets).toBeUndefined();
-        expect(CREASE.slotOffsets).toBeUndefined();
+        expect(PEN.chamberOffsets).toBeUndefined();
+        expect(KNIFE.chamberOffsets).toBeUndefined();
+        expect(CREASE.chamberOffsets).toBeUndefined();
     });
 });
 
@@ -123,10 +123,10 @@ describe("config: REVOLVER_PEN preset", () => {
     });
 
     it("has 7 slot offsets at 360/7 degree intervals", () => {
-        expect(REVOLVER_PEN.slotOffsets).toHaveLength(7);
-        expect(REVOLVER_PEN.slotOffsets![0]).toBe(0);
-        expect(REVOLVER_PEN.slotOffsets![1]).toBeCloseTo(360 / 7, 5);
-        expect(REVOLVER_PEN.slotOffsets![6]).toBeCloseTo(6 * 360 / 7, 5);
+        expect(REVOLVER_PEN.chamberOffsets).toHaveLength(7);
+        expect(REVOLVER_PEN.chamberOffsets![0]).toBe(0);
+        expect(REVOLVER_PEN.chamberOffsets![1]).toBeCloseTo(360 / 7, 5);
+        expect(REVOLVER_PEN.chamberOffsets![6]).toBeCloseTo(6 * 360 / 7, 5);
     });
 
     it("has a toolOffset (placeholder 0,0 until measured)", () => {
@@ -313,11 +313,11 @@ describe("config: defaultConfig", () => {
         expect(cfg.machine.laser).toBeUndefined();
     });
 
-    it("toolProfiles has 4 entries (pen, knife, crease, revolver_pen)", () => {
-        expect(cfg.toolProfiles.pen).toBe(PEN);
-        expect(cfg.toolProfiles.knife).toBe(KNIFE);
-        expect(cfg.toolProfiles.crease).toBe(CREASE);
-        expect(cfg.toolProfiles.revolver_pen).toBe(REVOLVER_PEN);
+    it("toolProfiles has 4 entries (pen, knife, crease, revolver_pen), ids 1..4", () => {
+        expect(cfg.toolProfiles.pen).toEqual({ ...PEN, id: 1 });
+        expect(cfg.toolProfiles.knife).toEqual({ ...KNIFE, id: 2 });
+        expect(cfg.toolProfiles.crease).toEqual({ ...CREASE, id: 3 });
+        expect(cfg.toolProfiles.revolver_pen).toEqual({ ...REVOLVER_PEN, id: 4 });
     });
 });
 

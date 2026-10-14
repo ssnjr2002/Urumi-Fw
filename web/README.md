@@ -238,7 +238,7 @@ Four presets ship with the package: `PEN`, `KNIFE`, `CREASE`, `REVOLVER_PEN`. Ov
 | `plungeDepth` | `number` | Z depth (mm) at cut start. |
 | `tangential` | `boolean` | Steer the A axis to follow path tangent. `true` for knife, `false` for pen. |
 | `toolOffset` | `{ x, y }` | Fixed XY offset (mm) of the tool tip from head center. Applied at bake time as a coordinate shift. |
-| `slotOffsets` | `number[]` | A-axis angles (degrees) for each revolver slot. Present on `REVOLVER_PEN` only. |
+| `chamberOffsets` | `number[]` | A-axis angles (degrees) for each revolver chamber. Present on `REVOLVER_PEN` only. |
 
 ---
 

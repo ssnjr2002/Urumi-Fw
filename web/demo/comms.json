@@ -180,6 +180,7 @@
   ],
   "tools": {
     "knife": {
+      "id": 1,
       "tangential": true,
       "unwind": true,
       "offsetMm": 0,
@@ -203,6 +204,7 @@
       }
     },
     "pen": {
+      "id": 2,
       "tangential": false,
       "unwind": false,
       "offsetMm": 0,

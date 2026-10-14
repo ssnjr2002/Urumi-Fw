@@ -190,6 +190,7 @@ interface JsonPeripheral {
 }
 
 interface JsonToolOverride {
+    readonly id?: number;
     readonly tangential?: boolean;
     readonly offsetMm?: number;
     readonly unwind?: boolean;
@@ -201,7 +202,7 @@ interface JsonToolOverride {
     /** Removed — see the tools build step. Typed so the check can see it. */
     readonly liftHeight?: number;
     readonly toolOffset?: { xOffset: number; yOffset: number };
-    readonly slotOffsets?: readonly number[];
+    readonly chamberOffsets?: readonly number[];
     readonly dutyLimits?: {
         maxOnS?: number; minOnS?: number; dwellS?: number; settleS?: number;
     };
@@ -404,7 +405,8 @@ export function parseConfig(jsonText: string): ConfigResult {
     }
 
     // ── build tool profiles registry ──────────────────────────────────────
-    const toolProfiles: Record<string, ToolProfile> = { ...TOOL_PROFILES };
+    // Only the tools the config lists exist on the machine, each with its id.
+    const toolProfiles: Record<string, ToolProfile> = {};
     if (json.tools) {
         for (const name of Object.keys(json.tools)) {
             if (!(name in TOOL_PROFILES)) {
@@ -416,6 +418,11 @@ export function parseConfig(jsonText: string): ConfigResult {
                     `tools.${name}.liftHeight: removed — set 'plunge'; the lift is ` +
                     "derived from the job's material thickness and machine.clearanceMm",
                 );
+                continue;
+            }
+            const id = json.tools[name]!.id;
+            if (id === undefined) {
+                errors.push(`tools.${name}.id: required`);
                 continue;
             }
             const base = TOOL_PROFILES[name]!;
@@ -749,7 +756,7 @@ function patchToolProfile(
     delete merged.name; // supplied by toolProfile()
 
     for (const key of ["tangential", "offsetMm", "unwind", "cornerAngleDeg",
-                       "minRadiusMm", "plunge", "toolOffset", "slotOffsets"] as const) {
+                       "minRadiusMm", "plunge", "toolOffset", "chamberOffsets", "id"] as const) {
         if (o[key] !== undefined) merged[key] = o[key];
     }
     // Engage targets merge FIELD-WISE over the preset: `{accel}` alone must not
