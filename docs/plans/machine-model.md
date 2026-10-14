@@ -491,7 +491,38 @@ join.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces later branches use:
+  * `last` comes right after the node: `runnerArm(intent, node, last, …)`,
+    `runnerArmPark(node, last, …)`, `runnerArmDummy(last, …)`, and the same
+    in `homingArm`, `homingArmPark`, `homingArmUnlatch`.
+  * `Sequence` gains a last field, `leg(const LegEnd&)`, may be null: called
+    for each leg that succeeds. Sequences without it are unchanged.
+* Home: `phase` and `done` per `RunNode`; `homeLeg` arms a node's next leg
+  (reading a rotary node's sweep first); `homeNext` is the cycle join only.
+  `armPhase`, `armFrom` and `sweepsRead` are gone.
+* Also here: the plan's Slots became Levels (stream slots kept the name),
+  in this doc and in comments of `machine.h`, `sequence.h`, `test_machine`.
+* Bench (COM8, `home` from a homed machine, 3 runs each):
+
+  | | cycle 1 (Z) | cycle 2 (X, Y, A) |
+  |---|---|---|
+  | `main`, lockstep | 21–24 s | 37.6–37.9 s |
+  | M3a, per node | 22–24 s | 28.3–29.0 s |
+
+  Regression: dummy legs (ok, and F_HOMING then `unalarm`), a span with the
+  origin kept, a span into the switch latching X, and recovery clearing it,
+  all as on `main`.
+* Not tested: a per-leg trace (`nodestat` is refused while homing, so the
+  evidence is the timing); axes started at deliberately uneven distances; a
+  real failure in one thread while others run (unit-tested only); no
+  `test_home` suite, as agreed.
+* Out of scope: recovery could run its unlatch and park per node the same
+  way.
+* Checks: `pio run -e pico` clean; `pio test -e native` 119/119.
 
 ## Branch M4: `feature/probe-sequence`
 
