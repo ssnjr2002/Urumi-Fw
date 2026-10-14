@@ -604,7 +604,7 @@ emits the jog while legs hold the bus (`home`, `leg`, recovery, probe legs).
 
 ### Status
 
-Ready to merge.
+Done (merged at `1b1b5e2`). Unblocks M4 and J1b (motion-sessions.md).
 
 ### Outcome
 
