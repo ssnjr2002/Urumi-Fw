@@ -525,37 +525,62 @@ threads and `leg` hook.
   way.
 * Checks: `pio run -e pico` clean; `pio test -e native` 119/119.
 
-## Branch M3b: `fix/dataplane-admit`
+## Branch M3b: `refactor/cjog-ops`
+
+### Plan
+
+**Type:** refactor.
+
+**Purpose:** the continuous jog's behaviour moves out of the data plane into
+`core0/ops/cjog.cpp`, so it can be tested natively. Same behaviour.
+
+* Moves from `core0/data_plane.cpp`: `cjogStart` (room and feed), the
+  replace-or-hold branch of `acceptCjog`, `cjogTick` (deadman, end of
+  travel, held start), `cjogStop`, and the cjog state.
+* Interface: `cjogPacket(d, speed, now)` and `cjogTick(now)` return the reply
+  (none, ACK, or a NACK code); `cjogStop()`. No `millis` or `Serial` in the
+  module; the data plane parses, validates the packet, and writes replies.
+* `test/test_cjog`, added to `test_filter` (`platformio.ini`), faking the
+  planner queue, the config and frames lookups, and `machineAdmit`: deadman,
+  repeats, direction change and held start, room and feed, `SOFT_LIMIT`,
+  unhomed.
+* Read first: whether `config/machine_cfg.h` and `ops/frames.h` compile
+  natively.
+
+**Depends on:** nothing.
+
+### Status
+
+Planned.
+
+## Branch M3c: `fix/dataplane-admit`
 
 ### Plan
 
 **Type:** fix.
 
-**Purpose:** the data plane admits through the levels, as the command
-tables do. Today a continuous jog checks nothing
-(`core0/data_plane.cpp:338`): during a leg step the ring is empty and idle,
-so `plannerJogFrom` accepts and Core 1 emits the jog while legs hold the bus
-(`home`, `leg`, recovery, probe legs).
+**Purpose:** a continuous jog admits through the levels, as the command
+tables do. Today it checks nothing (`core0/data_plane.cpp:338`): during a
+leg step the ring is empty and idle, so `plannerJogFrom` accepts and Core 1
+emits the jog while legs hold the bus (`home`, `leg`, recovery, probe legs).
 
-* `K_PREEMPT` (`ops/machine.h`): as `K_STEP`, but a running jog's ring
-  (`RING_JOG_STEP`, `RING_JOG_CONT`) is not busy; the caller stops it and
-  takes over. A leg step, a live sequence, a `SEQ` or `JOB` ring: `busy`.
-  Latched, a job, or a manual homing or probe context: `bad_state`.
-* `acceptCjog` and `cjogTick`'s held start call `machineAdmit(K_PREEMPT)`
-  instead of `cjogTick`'s `machineView() != STATE_IDLE`.
-* Records (`data_plane.cpp:134`) check the levels (no sequence, no leg step,
-  context IDLE or JOB) instead of the label; their NACK codes stay.
-* `MSEG_NACK_BUSY` (`core0/usb_protocol.h`), mirrored in `web/src/wire/`: the
-  host waits and retries, as for `ABORTING`.
-* Tests in `test_machine`: `K_PREEMPT` under a leg step is `busy` (fails
-  before the fix: there is no rule); a jog's own ring admitted; a `SEQ`
-  ring, a sequence between steps: `busy`; latched, manual contexts:
-  `bad_state`.
-* Docs: `docs/wire_protocol.md`.
+* A jog's own ring (`cjogOn`, or `RING_JOG_STEP`): stopped and held, no
+  admission; every start, direct or held, passes `machineAdmit(K_STEP)`.
+  The own-ring test only limits the stop to jogs; no new command kind.
+  `busy` → `MSEG_NACK_BUSY`, else `BAD_STATE`. The held start's `machineView() != STATE_IDLE` goes, so it
+  also starts in ALARM with event faults, as `jog` does.
+* `MSEG_NACK_BUSY` (0x0B, `core0/usb_protocol.h`), mirrored in
+  `web/src/wire/` (constant, name table, export) and the sim (`busy` for
+  TRAVERSE and HOMING).
+* Test in `test_cjog`, failing before the fix: with admission answering
+  `busy`, a packet returns `BUSY` and queues nothing.
+* Records keep their label check (`data_plane.cpp:134`): correct today, and
+  a levels version would rebuild most of `stateOf`.
+* Docs: `docs/wire_protocol.md` (also the missing `0x07 ABORTING` row).
 * Human checks: a cjog during `home` and during a raw `leg` is NACKed
   `busy` and the legs run on; a cjog direction change still restarts.
 
-**Depends on:** nothing.
+**Depends on:** M3b.
 
 ### Status
 
@@ -585,7 +610,7 @@ Planned.
 
 | Branch | On this plan | Depends on |
 |---|---|---|
-| J1b `feature/jogto-named` (motion-sessions.md) | sequence: `parkZs()`, `lineTo()` | M3, M3b |
+| J1b `feature/jogto-named` (motion-sessions.md) | sequence: `parkZs()`, `lineTo()` | M3, M3c |
 | JB2 `feature/tool-mount` | `mount` posts the event a WAIT takes | nothing |
 | JB3 `feature/layer-header` | pause drops the ring; jogs admitted in `JOB.PAUSED` | JB2 |
 | JB4 `feature/tool-change` | sequence in JOB.TOOL_CHANGE: park, per head XY, WAIT `mount`, later probe | M3, JB3 (M4 for probing) |

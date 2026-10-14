@@ -536,7 +536,7 @@ Done (merged). Unblocks J1b and J2.
 
 * Type: feature.
 * Purpose: `jogto park|load|probe`.
-* Depends on: J1; M3 and M3b of docs/plans/machine-model.md.
+* Depends on: J1; M3 and M3c of docs/plans/machine-model.md.
 * What the code has today: stored positions are decoded
   (`core0/config/config_decode.h:78`, `:95`) but nothing resolves them.
   `homingArmPark(node, last, …)` (`core0/ops/homing.h`) arms a park leg as
