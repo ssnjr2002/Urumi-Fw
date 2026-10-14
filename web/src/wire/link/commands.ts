@@ -61,7 +61,7 @@ export const STATE_KEYS = [
     "state", "enabled", "homed", "faults", "job", "latched",
     "homefail", "homenode", "cfgerr", "homing",
     "probing", "probe", "retries", "psteps", "probed", "pz",
-    "homecycle", "nodehomed",
+    "homecycle", "nodehomed", "seqfail", "seq",
 ] as const;
 
 /**

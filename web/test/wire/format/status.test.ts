@@ -55,6 +55,7 @@ describe("wire/format/status: enums", () => {
         expect(Fault.HOMING).toBe(0x0010);
         expect(Fault.PROBE).toBe(0x0020);
         expect(Fault.FACTS).toBe(0x0040);
+        expect(Fault.SEQUENCE).toBe(0x0080);
         expect(Fault.ESTOP).toBe(0x8000);
     });
 
@@ -292,6 +293,14 @@ describe("wire/format/status: get reply", () => {
             "state=3 enabled=0x00 homed=0x01 faults=0x0010 job=- latched=0x00 homefail=2 " +
             "homenode=3 probed=0 nodehomed=0x008"));
         expect(withMarkers).toEqual(without);
+    });
+
+    it("reads seqfail", () => {
+        const st = statusFromGet(parseGetReply("state=3 homed=0x03 faults=0x0080 seqfail=soft_limit seq=5"));
+        expect(st.hasFault(Fault.SEQUENCE)).toBe(true);
+        expect(st.seqFail).toBe("soft_limit");
+        expect(st.seq).toBe(5);
+        expect(statusFromGet(parseGetReply("state=0 homed=0x03 seqfail=-")).seqFail).toBeUndefined();
     });
 
     it("requires state and homed", () => {

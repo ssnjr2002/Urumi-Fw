@@ -78,6 +78,8 @@ export const Fault = {
     PROBE: 0x0020,
     /** Event: the Pico dropped an internal fact; a firmware bug. */
     FACTS: 0x0040,
+    /** Event: a sequence was refused after its ok (`seqfail=` says why). */
+    SEQUENCE: 0x0080,
     /** The estop latch. */
     ESTOP: 0x8000,
 } as const;
@@ -268,6 +270,13 @@ export class MachineStatus {
          * on the binary plane or older firmware.
          */
         readonly nodeHomed: number | undefined = undefined,
+        /** What refused a sequence after its ok, with Fault.SEQUENCE set. */
+        readonly seqFail: string | undefined = undefined,
+        /**
+         * The running sequence (SequenceId in core0/ops/sequence.h), or the one
+         * that failed (Fault.SEQUENCE, HOMING or PROBE). undefined when neither.
+         */
+        readonly seq: number | undefined = undefined,
     ) {}
 
     /** True if any of `mask`'s Fault bits is set. */
@@ -387,6 +396,8 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         fields.homenode !== undefined ? parseInt(fields.homenode, 10) : undefined,
         fields.homecycle !== undefined ? parseInt(fields.homecycle, 10) : undefined,
         fields.nodehomed !== undefined ? toInt(fields.nodehomed) : undefined,
+        fields.seqfail,
+        fields.seq !== undefined ? parseInt(fields.seq, 10) : undefined,
     );
 }
 
