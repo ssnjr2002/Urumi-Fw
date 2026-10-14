@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <math.h>
+#include <string.h>
 #include "frames.h"
 #include "mesh.h"
 #include "position.h"
@@ -175,6 +176,31 @@ const char* framesToMachine(float wx, float wy, float* mx, float* my) {
     *mx = wx + workX - dx;
     *my = wy + workY - dy;
     return nullptr;
+}
+
+const char* framesNamed(const char* name, float* mx, float* my) {
+    const MachineCfg& c = machineCfg();
+    if (strcmp(name, "park") == 0) {
+        *mx = c.hasPark ? c.park.x : configParkPos(c.x);
+        *my = c.hasPark ? c.park.y : configParkPos(c.y);
+        return nullptr;
+    }
+    if (strcmp(name, "load") == 0) {
+        if (!c.hasLoad) return "no_position";
+        *mx = c.load.x;
+        *my = c.load.y;
+        return nullptr;
+    }
+    if (strcmp(name, "probe") == 0) {
+        const uint8_t sel = framesSelected();
+        if (sel >= c.headCount) return "no_head";
+        const CfgHead& h = c.heads[sel];
+        if (!h.hasProbeSwitch) return "no_position";
+        *mx = h.probeSwitch.x - h.xOffset;
+        *my = h.probeSwitch.y - h.yOffset;
+        return nullptr;
+    }
+    return "usage";
 }
 
 const char* framesCheckNode(uint8_t node, int32_t machineSteps) {

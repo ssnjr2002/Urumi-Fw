@@ -746,30 +746,6 @@ bool cmdJog(const char* args) {
     return true;
 }
 
-// ── jogto <x> <y> — jog to a work position ───────────────────────────────────
-// Moves to work mm (x, y) through framesToMachine, homed X and Y only, at the
-// slower of the two axes' jogFeed. Joins and caps as `jog`.
-bool cmdJogTo(const char* args) {
-    float v[2];
-    char* end;
-    const char* p = args;
-    for (int i = 0; i < 2; i++) {
-        v[i] = strtof(p, &end);
-        if (end == p || !isfinite(v[i])) { Serial.println("err usage"); return true; }
-        p = end;
-    }
-    if (!machineCfgValid()) { Serial.println("err unconfigured"); return true; }
-    if ((axes_homed & 0x3) != 0x3) { Serial.println("err not_homed"); return true; }
-    if (const char* why = framesToMachine(v[0], v[1], &v[0], &v[1])) {
-        Serial.printf("err %s\n", why); return true;
-    }
-    const MachineCfg& cfg = machineCfg();
-    float feed = fminf(cfg.x.jogFeed, cfg.y.jogFeed);
-    if (!(feed > 0)) { Serial.println("err no_feed"); return true; }
-    queueJog(v, false, feed);
-    return true;
-}
-
 // ── feed <cut> <travel> — feeds for streamed BEZIER records (testing) ────────
 // mm/s, held until reboot. Records are refused until this is sent; the TOOL
 // record replaces it.

@@ -103,8 +103,9 @@ enum HomingReason : uint8_t {
 // ring, before the first push. Values are the wire's JOGGING reason.
 enum RingOwner : uint8_t {
     RING_JOB      = 0,   // the job context's records
-    RING_JOG_STEP = 1,   // `jog`, `jogto`, `line`, `bez`
+    RING_JOG_STEP = 1,   // `jog`, `line`, `bez`
     RING_JOG_CONT = 2,   // a continuous jog, held by deadman packets
+    RING_SEQ      = 3,   // a sequence's RING step (`jogto`); wire JOGGING_GOTO
 };
 
 // ─── Cross-Core Global Variables (Extern Declarations) ────────────────────────

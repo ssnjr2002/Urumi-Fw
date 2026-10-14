@@ -8,17 +8,20 @@
 
 static const Sequence* live;
 static bool     waiting;
+static bool     ring;          // the live step is RING
 static uint32_t waitFrom;
 static uint32_t waitMs;
 
 void sequenceStart(const Sequence* s) {
     live    = s;
     waiting = false;
+    ring    = false;
 }
 
 void sequenceEnd(void) {
     live    = nullptr;
     waiting = false;
+    ring    = false;
 }
 
 void sequenceAbort(void) {
@@ -37,6 +40,8 @@ void sequenceWait(uint32_t ms) {
     waitFrom = millis();
     waitMs   = ms;
 }
+
+void sequenceRing(void) { ring = true; }
 
 static void advance(uint8_t end) {
     const Sequence* s = live;
@@ -58,6 +63,12 @@ void sequenceTick(void) {
         waiting = false;
         advance(SEQ_END_TIMEOUT);
     }
+}
+
+void sequenceRingDrained(void) {
+    if (!live || !ring) return;
+    ring = false;
+    advance(SEQ_END_STEP);
 }
 
 bool sequenceLive(void) { return live != nullptr; }

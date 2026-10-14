@@ -1,8 +1,8 @@
 /**
  * The sequence driver (src/rp2350/core0/ops/sequence.cpp) against a faked
  * runner: steps advance next(), a succeeded leg reaches leg(), a failed leg
- * fails the sequence, a wait times out, and an abort cuts the step before
- * abort() runs.
+ * fails the sequence, a wait times out, a RING step ends on the drain, and an
+ * abort cuts the step before abort() runs.
  */
 
 #include "doctest.h"
@@ -40,7 +40,7 @@ int fails;
 
 // ── a scripted sequence ─────────────────────────────────────────────────────
 // next() records what ended each step and plays `script`: 'S' arms a step,
-// 'W' waits 100 ms, '.' ends.
+// 'W' waits 100 ms, 'R' queues a RING step, '.' ends.
 const char* script;
 uint8_t     ends[8];
 int         nexts, aborts;
@@ -50,6 +50,7 @@ bool scriptNext(uint8_t end) {
     switch (*script++) {
         case 'S': stepLive = true; return true;
         case 'W': sequenceWait(100); return true;
+        case 'R': sequenceRing(); return true;
         default:  return false;
     }
 }
@@ -187,6 +188,33 @@ TEST_CASE("a refused start ends with no abort()") {
     sequenceEnd();
     CHECK_FALSE(sequenceLive());
     CHECK(aborts == 0);
+}
+
+TEST_CASE("a RING step ends when the ring drains") {
+    start("R.");
+    sequenceRingDrained();                 // the legs step is live, not a ring
+    CHECK(nexts == 0);
+    post(RUN_STEP_END);
+    sequenceTick();
+    REQUIRE(nexts == 1);
+    CHECK(sequenceLive());
+    sequenceRingDrained();
+    REQUIRE(nexts == 2);
+    CHECK(ends[1] == SEQ_END_STEP);
+    CHECK_FALSE(sequenceLive());
+    CHECK(aborts == 0);
+}
+
+TEST_CASE("a drain after an abort reaches no later sequence") {
+    start("R.");
+    post(RUN_STEP_END);
+    sequenceTick();
+    sequenceAbort();
+    CHECK(aborts == 1);
+    start("S.");
+    sequenceRingDrained();
+    CHECK(nexts == 0);
+    CHECK(sequenceLive());
 }
 
 TEST_CASE("events with no sequence are drained") {

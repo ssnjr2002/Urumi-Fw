@@ -75,6 +75,12 @@ void framesClearWork(void);
 // nullptr, or "no_head".
 const char* framesToMachine(float wx, float wy, float* mx, float* my);
 
+// A named position to the anchor's machine XY: `park` (where homing parks X
+// and Y without one), `load`, or `probe` (the selected head's tip on its probe
+// switch). Returns nullptr, "usage" for another name, "no_position" for one the
+// config lacks, or "no_head" for `probe` with no head selected.
+const char* framesNamed(const char* name, float* mx, float* my);
+
 // Node `node` at machine position `machineSteps` (wire frame) inside its
 // axis's soft range, when that axis has softLimits. nullptr, or "soft_limit".
 const char* framesCheckNode(uint8_t node, int32_t machineSteps);

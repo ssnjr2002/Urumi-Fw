@@ -40,7 +40,10 @@ export const MachineState = {
      * against a machine whose axis map is currently a probe binding.
      */
     PROBING: 6,
-    /** Planner jog motion (`line`, `bez`, `jog`, `jogto`). Never pauses. */
+    /**
+     * Planner jog motion (`line`, `bez`, `jog`), and `jogto`, which parks the
+     * Zs before its line (reason 3, GOTO, throughout). Never pauses.
+     */
     JOGGING: 7,
     /**
      * Node legs that keep the origin (`leg park|span|unlatch`) outside a homing

@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "home.h"
+#include "steps.h"
 #include "../../config/machine_cfg.h"
 #include "../../ops/homing.h"
 #include "../../ops/position.h"
@@ -62,29 +63,6 @@ const CfgAxis* homeAxisFor(uint8_t node) {
     const uint8_t n = homeAxes(axes);
     for (uint8_t i = 0; i < n; i++) if (axes[i]->node.id == node) return axes[i];
     return nullptr;
-}
-
-// ── leg numbers (web/src/homing/derive.ts) ──────────────────────────────────
-
-static uint16_t intervalUs(float feed, float spu) {
-    const double us = round(1e6 / ((double)feed * (double)spu));
-    return (uint16_t)(us < 1 ? 1 : us > 65535 ? 65535 : us);
-}
-
-static uint32_t distSteps(double units, float spu) {
-    const double s = round(units * (double)spu);
-    return s < 1 ? 1 : (uint32_t)s;
-}
-
-// A machine coordinate in wire steps: + is physical, so a wiring fix flips it.
-static int32_t coordSteps(const CfgAxis& a, double units) {
-    const int32_t s = (int32_t)lround(units * (double)a.stepsPerUnit);
-    return a.invertDir ? -s : s;
-}
-
-// Where a linear home leaves the axis (configParkPos), in steps.
-static int32_t parkSteps(const CfgAxis& a) {
-    return coordSteps(a, configParkPos(a));
 }
 
 // Fold into (-period/2, +period/2] (derive.ts foldSigned).

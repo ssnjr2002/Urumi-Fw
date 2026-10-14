@@ -22,6 +22,7 @@ enum SequenceId : uint8_t {
     SEQ_TRAVERSE = 2,   // one leg that keeps the origin, outside a context
     SEQ_HOME     = 3,
     SEQ_RECOVERY = 4,
+    SEQ_JOGTO    = 5,
 };
 
 // What ended a step or a wait, as next() is told. A wait's event is tied to
@@ -54,6 +55,13 @@ void sequenceAbort(void);
 
 // From next(): wait `ms` for nothing but the timeout.
 void sequenceWait(uint32_t ms);
+
+// The step just queued is RING: it ends when the ring drains.
+void sequenceRing(void);
+
+// The observer: Core 1's ring ran dry and nothing is left in it. Ends a RING
+// step; ignored otherwise.
+void sequenceRingDrained(void);
 
 // Pop the runner's events and advance the live sequence; time out its wait.
 // Call from the Core 0 loop after runnerTick.

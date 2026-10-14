@@ -69,7 +69,6 @@ bool cmdStep(const char*);
 bool cmdLine(const char*);
 bool cmdBez(const char*);
 bool cmdJog(const char*);
-bool cmdJogTo(const char*);
 bool cmdFeed(const char*);
 bool cmdHallScan(const char*);
 bool cmdLeg(const char*);
