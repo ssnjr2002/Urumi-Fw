@@ -673,7 +673,24 @@ park ends IDLE with no fault (J1b's known gap). Instant work in `next()`
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Plan changes, agreed in Work: `seqfail=<why>` holds only the refusal, one
+  token (the host splits `get` on spaces); a new `seq=<id>` reports the
+  running sequence, or the one that failed (`F_SEQUENCE`, `F_HOMING`,
+  `F_PROBE`), via `sequenceAbortedId()`. Tests are `test_sequence` cases
+  plus a new `test_steps` env entry, not a faked jogto. Before the fix both
+  fail to compile rather than assert.
+* `lineTo(x, y, feed, &queued)` returns its refusal (`bad_state`,
+  `soft_limit`, `full`, `no_limits`, `unconfigured`); M4's XY line uses it
+  the same way. jogto with no Z runs its line in `jogtoStart`, so that
+  refusal is still `err`.
+* For M4: `sequenceFail` texts must be one token.
+* Bench (COM8): jogto with `seq=5`, a repeat to the same point, and
+  `dummy_leg 0` (`seq=1 homefail=7`, cleared by `unalarm`) as expected. Not
+  run: a line refused after the park (needs a mesh), a human check.
 
 ## Branch M4: `feature/probe-sequence`
 
