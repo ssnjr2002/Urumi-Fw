@@ -582,7 +582,7 @@ Done (merged). Unblocks J1b and J2.
 
 ### Status
 
-Done (merged). J2 is next; nothing waits on J1b.
+Done (merged). Nothing waits on J1b.
 
 ### Outcome
 
