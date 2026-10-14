@@ -551,7 +551,27 @@ threads and `leg` hook.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* As planned, plus: the packet checks (direction range, speed 0, mixed
+  axes) moved into `cjogPacket` too, so they are tested; the data plane
+  keeps the CRC and framing. Replies are `CJOG_NO_REPLY`, `CJOG_ACK`, or
+  an `MSEG_NACK_*` reason; `cjogReply` writes them.
+* The held start's check is `machineView()` (no `machineAdmit` yet); the
+  tests fake it. M3c swaps it.
+* `configAxisRange` is faked rather than linked; no other native trouble.
+* For M3c (found here, both on `main`):
+  * A direction change holds the new direction; a packet for it that
+    arrives at rest before the tick starts it directly and leaves it held,
+    so at the end of travel the tick starts it again and NACKs
+    `SOFT_LIMIT`. Fix: `cjogStart` clears `cjogWant` when it queues; a test
+    reproduces it.
+  * `test_sequence.cpp:58` warns: the `scripted` sequence lacks its `leg`
+    (`nullptr`).
+* Checks: `pio run -e pico` clean; `pio test -e native` 137/137
+  (`test_cjog` 18).
 
 ## Branch M3c: `fix/dataplane-admit`
 
