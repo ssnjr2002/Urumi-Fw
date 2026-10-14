@@ -3,7 +3,8 @@
  * Ported from host/protocol/link.py SimBackend.
  *
  * Answers text commands per the wire_protocol.md allowed-state matrix AND
- * "runs" streamed BEZIER records as a job: JOB.BUFFERING until enough is
+ * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (tool and
+ * mount not checked): JOB.BUFFERING until enough is
  * queued, then RUNNING, each record taking `recordMs` and landing the head on
  * its end point; a dry ring goes back to BUFFERING. `jog` and held jogs move
  * too, as JOGGING. pause holds the ring; resume buffers again; cancel and
@@ -32,7 +33,10 @@ import {
     MAGIC_BEZIER,
     BEZIER_SIZE,
     BEZIER_SEQ_OFFSET,
+    MAGIC_LAYER_HDR,
+    LAYER_HDR_SIZE,
     NACK_FULL,
+    NACK_JOB,
     NACK_BAD_STATE,
     NACK_PAUSED,
     NACK_SOFT_LIMIT,
@@ -322,11 +326,12 @@ export class SimTransport implements Transport {
         for (let off = 0; off < data.length; ) {
             const m = data[off];
             const size = m === MAGIC_BEZIER ? BEZIER_SIZE
+                : m === MAGIC_LAYER_HDR ? LAYER_HDR_SIZE
                 : m === MAGIC_CJOG ? CJOG_SIZE
                 : 0;
             if (size === 0 || off + size > data.length) break; // unframeable — drop the rest
             const pkt = data.subarray(off, off + size);
-            if (m === MAGIC_BEZIER) this._writeBezier(pkt);
+            if (m === MAGIC_BEZIER || m === MAGIC_LAYER_HDR) this._writeRecord(pkt);
             else if (m === MAGIC_CJOG) this._writeCjog(pkt);
             off += size;
         }
@@ -510,11 +515,13 @@ export class SimTransport implements Transport {
     }
 
     /**
-     * BEZIER ingest (data_plane.cpp + queue.cpp admit): CRC and seq checked,
-     * then gated like the firmware. The first record from IDLE opens the job.
+     * BEZIER and LAYER_HDR ingest (data_plane.cpp + queue.cpp admit): CRC and
+     * seq checked, then gated like the firmware. A layer header opens the job
+     * from IDLE; a BEZIER needs one open.
      */
-    private _writeBezier(data: Uint8Array): void {
-        if (crc8(data, 0, BEZIER_SIZE - 1) !== data[BEZIER_SIZE - 1]) return; // corrupt — drop
+    private _writeRecord(data: Uint8Array): void {
+        const size = data.length;
+        if (crc8(data, 0, size - 1) !== data[size - 1]) return; // corrupt — drop
         // A stale retransmit after a go-back is ACKed but not queued again.
         if (data[BEZIER_SEQ_OFFSET] !== this.expectedSeq) {
             this.pendingAcks = 0; // immediate: the host's resync signal
@@ -534,14 +541,23 @@ export class SimTransport implements Transport {
             this._flushAck(); // ACKs earned before a rewind land first
             return this._nack(NACK_BAD_STATE);
         }
+        if (data[0] === MAGIC_LAYER_HDR) {
+            if (st === MachineState.IDLE) {
+                this.state = MachineState.JOB;
+                this.job = JobReason.BUFFERING;
+                this.timeCredit = 0;
+            }
+            this.expectedSeq = (this.expectedSeq + 1) & 0xff;
+            this._markAck();
+            return;
+        }
+        if (st === MachineState.IDLE) {
+            this._flushAck();
+            return this._nack(NACK_JOB);
+        }
         if (this.motion.length >= this.ringSize) {
             this._flushAck();
             return this._nack(NACK_FULL); // backpressure — sender retries
-        }
-        if (st === MachineState.IDLE) {
-            this.state = MachineState.JOB;
-            this.job = JobReason.BUFFERING;
-            this.timeCredit = 0;
         }
         const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
         this.motion.push({ x: dv.getFloat32(3 + 4 * 6, true), y: dv.getFloat32(3 + 4 * 7, true) });

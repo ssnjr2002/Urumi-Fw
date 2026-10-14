@@ -38,6 +38,10 @@ import {
     NACK_ABORTING,
     NACK_BAD_CURVE,
     NACK_SOFT_LIMIT,
+    NACK_JOB,
+    NACK_TOOL_UNKNOWN,
+    NACK_NOT_MOUNTED,
+    NACK_BUSY,
 } from "../format/constants.js";
 import { stampSeq } from "../format/packet.js";
 import { Ack, Nack } from "./demux.js";
@@ -338,6 +342,11 @@ export class Session {
                 v?.(`FATAL: a record lies outside the soft range`);
                 return false; // fatal — the job does not fit where it is placed
             }
+            if (r === NACK_JOB || r === NACK_TOOL_UNKNOWN || r === NACK_NOT_MOUNTED) {
+                this.fatalReason = r;
+                v?.(`FATAL: the Pico refused the layer (${fatalReasonName(r)})`);
+                return false; // fatal — no job open, or the layer's tool cannot run
+            }
             if (r === NACK_PAUSED || r === NACK_BAD_STATE) {
                 this.fatalReason = r;
                 v?.(`FATAL: wrong machine state (${fatalReasonName(r)})`);
@@ -352,7 +361,8 @@ export class Session {
                 }
                 await this._goBack(r, 0);
             } else {
-                // NACK_FULL (backpressure) or NACK_ABORTING (§4.5 barrier):
+                // NACK_FULL (backpressure), NACK_BUSY or NACK_ABORTING (§4.5
+                // barrier):
                 // wait for the ring to drain / the abort ramp to finish, then
                 // resend from base. NACK_ABORTING is a barrier, not an error —
                 // the Pico ramps to rest and lands IDLE; retry until it accepts.
@@ -466,6 +476,10 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [NACK_ABORTING]: "NACK_ABORTING",
     [NACK_BAD_CURVE]: "NACK_BAD_CURVE",
     [NACK_SOFT_LIMIT]: "NACK_SOFT_LIMIT",
+    [NACK_JOB]: "NACK_JOB",
+    [NACK_TOOL_UNKNOWN]: "NACK_TOOL_UNKNOWN",
+    [NACK_NOT_MOUNTED]: "NACK_NOT_MOUNTED",
+    [NACK_BUSY]: "NACK_BUSY",
     [FATAL_STALL]: "FATAL_STALL",
     [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",
 };

@@ -186,6 +186,7 @@ export {
 } from "./toolpath/annotate.js";
 export { prepareBezierJob, type BezierJob, type BezierJobOptions, type BBox } from "./toolpath/job.js";
 export { packBezier } from "./wire/format/bezier.js";
+export { packLayerHdr, type LayerHdr } from "./wire/format/layer.js";
 
 // ── production bake: SVG + config → CompiledBlock[] + SwapPhase[] ───────────
 // The primary entry point most consumers want (demo/comms.js, demo/bench.js).
@@ -303,6 +304,11 @@ export {
     NACK_SOFT_LIMIT,
     NACK_MIXED_AXES,
     NACK_BUSY,
+    NACK_JOB,
+    NACK_TOOL_UNKNOWN,
+    NACK_NOT_MOUNTED,
+    MAGIC_LAYER_HDR,
+    LAYER_HDR_SIZE,
     MAGIC_CJOG,
     MAGIC_CJOG_STOP,
     CJOG_SIZE,

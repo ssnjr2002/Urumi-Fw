@@ -10,7 +10,7 @@
  *   - coalesced ACKs (K=8: one ACK frame per 8 accepted packets, not 1:1)
  *   - backpressure (NACK_FULL when ring full, resent on drain)
  *   - stale-seq duplicate guard (a retransmit is ACKed but NOT executed)
- *   - the job: BUFFERING until enough is queued, then RUNNING, each record
+ *   - the job, opened by a layer header: BUFFERING until enough is queued, then RUNNING, each record
  *     landing the head on its end point; a dry ring buffers again
  *   - abort: ring discarded, position kept, state → IDLE
  *   - status-during-stream: a poll mid-stream returns a running job + non-zero
@@ -27,6 +27,7 @@ import {
 } from "../../../../src/wire/format/status.js";
 import { stampSeq } from "../../../../src/wire/format/packet.js";
 import { packBezier } from "../../../../src/wire/format/bezier.js";
+import { packLayerHdr } from "../../../../src/wire/format/layer.js";
 import { BezierFlag } from "../../../../src/toolpath/annotate.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
 import { packCjog, type JogDir } from "../../../../src/wire/format/cjog.js";
@@ -45,7 +46,10 @@ function rec(x = 1): Uint8Array {
     });
 }
 
-const upTo = (n: number) => Array.from({ length: n }, (_, i) => rec(i + 1));
+const layer = () => packLayerHdr({ tool: 1 });
+
+/** A layer header, then records ending at 1..n mm. */
+const upTo = (n: number) => [layer(), ...Array.from({ length: n }, (_, i) => rec(i + 1))];
 
 /** Poll until `cond` holds or `ms` pass; returns the last status. */
 async function until(link: Link, cond: (st: Awaited<ReturnType<Link["getStatus"]>>) => boolean, ms = 1000) {
@@ -320,10 +324,10 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
 });
 
 describe("wire/link/backends/sim: buffering", () => {
-    it("the first record opens the job in BUFFERING; it runs once enough is queued", async () => {
+    it("a layer header opens the job in BUFFERING; it runs once enough is queued", async () => {
         await withLink(
             async (link) => {
-                await link.stream([rec(1)], 4);
+                await link.stream([layer(), rec(1)], 4);
                 let st = await link.getStatus();
                 expect([st.state, st.reason, st.bufCount]).toEqual([MachineState.JOB, JobReason.BUFFERING, 1]);
                 expect(st.queuedUs).toBe(100_000);
@@ -343,14 +347,14 @@ describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
             // Send seq 0 directly via writeBatch — accepted + executed
             const p0 = stampSeq(rec(5), 0);
             // (use the link's writer through a one-packet session)
-            await link.stream([p0], 4);
+            await link.stream([layer(), p0], 4);
             await until(link, (s) => s.pos![0] === 5);
             expect(sim.pos[0]).toBe(5);
 
             // Now reset and send seq 0 again — the sim's expectedSeq is back to
             // 0, so this is a fresh accept and runs.
             await link.resetSeq();
-            await link.stream([stampSeq(rec(10), 0)], 4);
+            await link.stream([layer(), stampSeq(rec(10), 0)], 4);
             await until(link, (s) => s.pos![0] === 10);
             expect(sim.pos[0]).toBe(10);
         });
@@ -443,6 +447,16 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
             expect(await link.command("axis_map 1 2 5 6")).toBe("err bad_state");
+        });
+    });
+
+    it("a record with no job open is refused", async () => {
+        await withLink(async (link, sim) => {
+            await link.resetSeq();
+            const r = await link.stream([rec()], 4);
+            expect(r.ok).toBe(false);
+            expect(r.nacks).toBeGreaterThan(0);
+            expect(sim.state).toBe(MachineState.IDLE);
         });
     });
 
