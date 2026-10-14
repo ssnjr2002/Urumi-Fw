@@ -582,7 +582,29 @@ Done (merged). Unblocks J1b and J2.
 
 ### Status
 
-Not started.
+Ready to merge.
+
+### Outcome
+
+* Interfaces: `RING_SEQ = 3` (`jogging=3`, GOTO); `SEQ_JOGTO = 5`, published
+  JOGGING. `framesNamed()` in `ops/frames`. `controller/seq/steps.*` holds the
+  leg numbers and the step builders `parkZs()` and `lineTo()` for later
+  recipes. A RING step ends on `FACT_RING_DRAINED` (`sequenceRing()` /
+  `sequenceRingDrained()`).
+* Deviations: none from the agreed plan. A `jogto` to where the head already
+  is still parks the Zs, then ends.
+* Known gap: a line refused after the park ran (a queue refusal, e.g. the
+  mesh's range) ends the sequence with no fault, after `ok`. The soft range is
+  checked before anything moves, so it should not happen in practice.
+* Bench (COM8, head 0): plain `jogto` and `park` ran with Z parked first and
+  `jogging=3` through park and line; `busy` to `jog` meanwhile; `stop` in the
+  park and in the line latched as any `stop`. `load` and `probe` moved
+  nothing: the bench config has no load position and head 0 no probe switch,
+  so only `no_position` was seen.
+* Also here: `wire_protocol.md`'s STATUS_RSP and `get` keys brought up to JB1
+  (state 9 JOB, `job=` replacing `running=`, `bufCount`/`queuedUs`). Out of
+  scope, still stale: the command state tables at the end of
+  `wire_protocol.md` still use RUNNING/PAUSED columns.
 
 ## Branch J2: `feature/jog-continuous`
 
