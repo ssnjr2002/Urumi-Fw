@@ -535,35 +535,50 @@ Done (merged). Unblocks J1b and J2.
 ### Plan
 
 * Type: feature.
-* Purpose: `jogto park|load|probe`.
+* Purpose: `jogto park|load|probe`, and every `jogto` parks the Zs before
+  its XY move.
 * Depends on: J1; M3 and M3c of docs/plans/machine-model.md.
 * What the code has today: stored positions are decoded
-  (`core0/config/config_decode.h:78`, `:95`) but nothing resolves them.
+  (`core0/config/config_decode.h`, `CfgPoint`) but nothing resolves them.
   `homingArmPark(node, last, …)` (`core0/ops/homing.h`) arms a park leg as
   a runner thread; `controller/seq/home.cpp` parks homed nodes that way.
-* Scope:
+  `jogto x y` is a `K_STEP` XY line that leaves Z where it is
+  (`cmd/axis.cpp`). A RING step has no end: the driver advances on leg
+  events only, and the observer drops `FACT_RING_DRAINED`.
+* Scope (agreed in Read):
   1. A resolver in `core0/ops/frames`: a name to the anchor's machine XY
      (`park` defaulting to where homing parks, `load`, `probe` as the
      selected head's `probeSwitch` minus its offset). Missing: `err
-     no_position`.
-  2. `controller/seq/jogto.cpp`: the first sequence (docs/plans/sequences.md),
-     owner JOGGING, reason `JOGGING_GOTO` throughout: step 1 parks every
-     head's Z node (legs, in parallel), step 2 is the XY line (ring move).
-     A failed park alarms as `ALARM_HOMING_FAIL` (`LEGFAIL_PARK`). `stop`
-     mid-sequence aborts the live step.
+     no_position`; `probe` with no head selected: `err no_head`.
+  2. Step builders `parkZs()` and `lineTo()` (machine-model.md), with the
+     leg numbers (`intervalUs`, `distSteps`, `parkSteps`) moved out of
+     `controller/seq/home.cpp` into a shared file in `controller/seq/`.
+  3. A RING step ends on `FACT_RING_DRAINED`: the observer hands it to the
+     driver, which advances once the ring is empty and `!plannerActive`
+     under `plannerLock`. A line of zero length ends its step at once.
+  4. `controller/seq/jogto.cpp`: the `jogto` sequence, owner JOGGING, reason
+     `JOGGING_GOTO` throughout: step 1 parks every head's Z node (legs, in
+     parallel), step 2 is the XY line (ring move). A failed park alarms as
+     `ALARM_HOMING_FAIL` (`LEGFAIL_PARK`). `stop` mid-sequence aborts the
+     live step.
      * One label: `SEQ_JOGTO` publishes JOGGING in `stateOf`
        (`core0/ops/machine.cpp`) through both steps, not TRAVERSE then
        JOGGING.
      * `lineTo()` queues as a new ring owner `RING_SEQ`, so a cjog packet
        neither stops it (`acceptCjog` stops only jog owners) nor appends
        (`plannerJogFrom` refuses another owner's ring).
-     * The named form is `K_SEQUENCE`; the raw XY `jogto` keeps `K_STEP`,
-       applied by the handler.
-  3. `err busy` for commands that meet the live sequence (sequences.md,
-     Admission), mirrored in the web host.
-  4. Docs: `docs/wire_protocol.md`.
-* Checks: as J1. Human checks: each name with each head selected, Z parked
-  first; a missing position refused; `stop` during the park.
+  5. `jogto x y` and `jogto park|load|probe` both run the sequence: the
+     named form resolves the name, the XY form converts work to anchor
+     machine XY, then one start. `jogto` moves to the controller table as
+     `K_SEQUENCE` (`controller/cmd/`). X, Y and every present head's Z must
+     be homed (`err not_homed`). Plain `jogto` no longer joins running jogs
+     (`busy`) and is refused with faults other than `F_LATCHED`.
+  6. `err busy` for commands that meet the live sequence (sequences.md,
+     Admission); the web sim gets `JOGGING_GOTO`.
+  7. Docs: `docs/wire_protocol.md`.
+* Checks: as J1. Human checks: `jogto x y` and each name with each head
+  selected, Z parked first; a missing position refused; `stop` during the
+  park and during the line.
 
 ### Status
 
