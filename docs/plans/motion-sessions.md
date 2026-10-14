@@ -830,7 +830,7 @@ above) opens and steers a job. `JOB_HDR` and `TOOL_HDR` are later.
 
 ### Status
 
-Ready to merge.
+Done (merged). Unblocks JB3b and JB4.
 
 ### Outcome
 
