@@ -430,7 +430,8 @@ A dependent chain, one session: J1, then J1b and J2 in either order.
 
 The job branches are built inside out: the JOB state around today's records
 first, then mount state, then the layer header, then tool change. JB1 and JB2
-are independent; JB3 needs both; JB4 needs JB3.
+are independent; JB3 needs both; JB3b and JB4 need JB3. The job and tool
+headers (JB5) come later.
 
 ## Branch J1: `feature/pico-jog`
 
@@ -777,7 +778,7 @@ Done (merged). Unblocks JB3, together with JB2.
 
 ### Status
 
-Done (merged). Unblocks JB3 (with JB1) and JB4.
+Done (merged). Unblocks JB3 (with JB1).
 
 ### Outcome
 
@@ -791,7 +792,9 @@ Done (merged). Unblocks JB3 (with JB1) and JB4.
   * Only the tools a config lists exist, each with a required `id`; names
     are still the four preset keys (free names with a `type` are later).
   * `mount` does not check the head's `accepts`.
-  * The mount is reported in text only; STATUS_RSP waits for JB3.
+  * The mount is reported in text only; STATUS_RSP waits for JB5.
+  * `mount` does not post a sequence event yet (machine-model.md expected
+    it here); that comes with JB4's WAIT.
   * A tool without its own feed decodes as 0, meaning the machine's.
 * Known failing: `pnpm typecheck` has 2 errors beyond `main`'s 40:
   `orchestrate/walk.ts` and `production/bakePlan.ts` read `slotOffsets`.
@@ -807,17 +810,45 @@ Done (merged). Unblocks JB3 (with JB1) and JB4.
 
 **Type:** feature.
 
-**Purpose:** `JOB_HDR`, `TOOL_HDR` and the layer header (`TOOL_REC` above;
-proposed name `LAYER_HDR`, `0xA2`), with preflight.
+**Purpose:** the layer header (`LAYER_HDR`, `0xA2`, the `TOOL_REC` layout
+above) opens and steers a job. `JOB_HDR` and `TOOL_HDR` are JB5.
 
-* A `BEZIER` before any layer header is `NACK_JOB`.
-* The layer header selects the head and sets feed and `k`; resume from
-  `PAUSED` becomes a layer header at the resume point.
-* A layer whose tool is not mounted holds the job and reports that a change
-  is due; the change itself is JB4.
-* `STATUS_RSP` gains job id and index.
+* A layer header in IDLE opens `JOB.BUFFERING`; Béziers no longer open a
+  job. A `BEZIER` before any layer header is `NACK_JOB`.
+* It selects the head the tool is mounted on, sets the cut feed (0: the
+  tool's `path.feed`, then the machine's) and checks the chamber against
+  `chamberCount` (the angular offset waits for A in jobs). It stores `k` and
+  the index, unused for now. The travel feed stays on `feed`.
+* A tool not in the config: `NACK_TOOL_UNKNOWN`. A tool not mounted:
+  `NACK_NOT_MOUNTED`; the job runs dry into BUFFERING. JB4 replaces this
+  NACK with the tool-change sequence.
+* A job still ends only by `cancel`; `STATUS_RSP` is unchanged.
+* Web: the `LAYER_HDR` encoder, with tests.
 
 **Depends on:** JB1, JB2.
+
+**Overlap:** `web/src/wire/`, `usb_protocol.h`.
+
+### Status
+
+Planned.
+
+## Branch JB3b: `feature/pause-drain`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** Pause drains the ring (Decisions, above).
+
+* Ring blocks carry the absolute record index (`lib/planner/`).
+* `pause`: hold, then `PAUSED` with the ring dropped and `{index, s}` kept.
+* Resume is a layer header whose index is the resume point; any other record
+  is NACKed. The `resume` text command goes.
+
+**Depends on:** JB3.
+
+**Overlap:** `lib/planner/`, `core1/emit/follower.cpp`.
 
 ### Status
 
@@ -838,8 +869,31 @@ Planned.
   park Zs (legs), then per head an XY line to load (ring move) and a wait for
   `mount`.
 * Probing in the job (`TOOL_PROBE`) is later, once probe legs are a leg kind.
+* A layer header for a tool not mounted starts the sequence, replacing JB3's
+  `NACK_NOT_MOUNTED`. `mount` posts the event the WAIT takes.
 
 **Depends on:** JB3, and R3 of docs/plans/sequences.md.
+
+### Status
+
+Planned.
+
+## Branch JB5: `feature/job-header` (not scheduled)
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** `JOB_HDR` and `TOOL_HDR`, with preflight.
+
+* `JOB_HDR` opens the job instead of the layer header; job end on the last
+  record (record count); the job id guards resume.
+* `TOOL_HDR` preflight: id known, no duplicate, head bound, bbox with offsets
+  in the soft range (Z, mesh and heights with lifts).
+* `STATUS_RSP` (new magic) gains job id, executing index, frame and mounted
+  tool.
+
+**Depends on:** JB3 (JB3b for the index).
 
 ### Status
 
