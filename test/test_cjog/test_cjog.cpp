@@ -24,7 +24,7 @@ float      lo[4], hi[4];             // soft range; hi < lo means none
 float      at[4];                    // where a jog starts
 bool       jogFromOk;
 int        depth;                    // blocks in the ring
-uint8_t    view;
+const char* admit;                   // machineAdmit's answer when the ring is idle
 PlannerQueueResult queueResult;
 
 // The last move queued.
@@ -60,7 +60,7 @@ void reset() {
     plannerActive = abortRequested = false;
     jogFromOk = true;
     depth = 0;
-    view = STATE_IDLE;
+    admit = nullptr;
     queueResult = PQ_OK;
     moveCount = jogStops = 0;
 }
@@ -84,7 +84,11 @@ bool configAxisRange(const CfgAxis& a, float* l, float* h) {
     *h = hi[k];
     return true;
 }
-uint8_t machineView(void) { return view; }
+// A running ring is a live step.
+const char* machineAdmit(uint8_t kind) {
+    CHECK(kind == K_STEP);
+    return depth != 0 || plannerActive ? "busy" : admit;
+}
 
 bool plannerJogFrom(float out[4], uint8_t reason) {
     if (!jogFromOk) return false;
@@ -273,6 +277,8 @@ TEST_CASE("a new direction stops the jog and starts once at rest") {
     CHECK(cjogPacket(YP, 64, 10) == CJOG_NO_REPLY);
     CHECK(jogStops == 1);
     CHECK(cjogTick(20) == CJOG_NO_REPLY);            // still braking
+    CHECK(cjogPacket(YP, 64, 30) == CJOG_NO_REPLY);  // repeats while braking are held
+    CHECK(jogStops == 1);
     CHECK(moveCount == 1);
 
     depth = 0;
@@ -283,20 +289,53 @@ TEST_CASE("a new direction stops the jog and starts once at rest") {
     CHECK(moveCount == 2);
 }
 
-TEST_CASE("a held start waits for IDLE and an abort to finish") {
+TEST_CASE("a packet that starts the held direction itself drops the held start") {
+    reset();
+    CHECK(cjogPacket(XP, 64, 0) == CJOG_ACK);
+    CHECK(cjogPacket(YP, 64, 10) == CJOG_NO_REPLY);
+    depth = 0;                                       // at rest before the tick
+    CHECK(cjogPacket(YP, 64, 20) == CJOG_ACK);
+    CHECK(moveCount == 2);
+    depth = 0;                                       // ran to its end, still held
+    CHECK(cjogPacket(YP, 64, 30) == CJOG_NO_REPLY);
+    CHECK(cjogTick(40) == CJOG_NO_REPLY);
+    CHECK(moveCount == 2);
+}
+
+TEST_CASE("a held start waits for an abort to finish") {
     reset();
     depth = 1;
     ringOwner = RING_JOG_STEP;
     CHECK(cjogPacket(XP, 64, 0) == CJOG_NO_REPLY);
     depth = 0;
-    view = STATE_JOGGING;
-    CHECK(cjogTick(10) == CJOG_NO_REPLY);
-    view = STATE_IDLE;
     abortRequested = true;
     CHECK(cjogTick(20) == CJOG_NO_REPLY);
     abortRequested = false;
     CHECK(cjogTick(30) == CJOG_ACK);
     CHECK(moveCount == 1);
+}
+
+TEST_CASE("a held start must admit a step") {
+    reset();
+    depth = 1;
+    ringOwner = RING_JOG_STEP;
+    CHECK(cjogPacket(XP, 64, 0) == CJOG_NO_REPLY);
+    depth = 0;
+    admit = "busy";                                  // a sequence took the machine
+    CHECK(cjogTick(10) == MSEG_NACK_BUSY);
+    CHECK(cjogTick(20) == CJOG_NO_REPLY);            // dropped
+    CHECK(moveCount == 0);
+}
+
+TEST_CASE("a packet the machine does not admit queues nothing") {
+    reset();
+    admit = "busy";                                  // legs hold the bus, ring idle
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BUSY);
+    CHECK(cjogTick(10) == CJOG_NO_REPLY);
+    admit = "bad_state";                             // a manual context, a latch
+    CHECK(cjogPacket(XP, 64, 20) == MSEG_NACK_BAD_STATE);
+    CHECK(moveCount == 0);
+    CHECK(jogStops == 0);
 }
 
 TEST_CASE("a held start goes when the packets stop") {
@@ -321,7 +360,7 @@ TEST_CASE("a held start's refusal is its reply") {
     CHECK(cjogTick(20) == CJOG_NO_REPLY);            // asked once
 }
 
-TEST_CASE("step jogs are stopped; another owner's ring is waited for") {
+TEST_CASE("step jogs are stopped; another owner's ring is BUSY") {
     reset();
     depth = 1;
     ringOwner = RING_JOG_STEP;
@@ -331,7 +370,10 @@ TEST_CASE("step jogs are stopped; another owner's ring is waited for") {
     reset();
     depth = 1;
     ringOwner = RING_JOB;
-    CHECK(cjogPacket(XP, 64, 0) == CJOG_NO_REPLY);
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BUSY);
+    CHECK(cjogTick(10) == CJOG_NO_REPLY);            // nothing held
+    depth = 0;
+    CHECK(cjogTick(20) == CJOG_NO_REPLY);
     CHECK(jogStops == 0);
     CHECK(moveCount == 0);
 }

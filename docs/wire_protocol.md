@@ -125,15 +125,17 @@ nothing for a repeat. 150 ms without a packet, all-zero directions, or
 `CJOG_STOP_MAGIC` (0xB3) brake and stop. A new direction stops the jog and
 starts the new one once at rest (its ACK comes then). A packet while step jogs
 run stops them first, the same way; a step jog during a continuous jog is
-refused. Speed changes while holding are ignored. No seq; the abort barrier
+refused. Anything else must admit a step (`K_STEP`), both for the packet and
+for a start held for rest. Speed changes while holding are ignored. No seq; the abort barrier
 does not apply.
 
 NACKs: `NACK_SOFT_LIMIT` (0x09) = no room left in that direction, or the bed
 mesh would take Z out of its soft range at once (an X/Y jog otherwise ends
 where Z would leave it, see "Bed mesh");
 `NACK_MIXED_AXES` (0x0A) = directions in more than one axis set;
-`NACK_BAD_STATE` (0x06) = a bad direction or speed, not IDLE or jogging,
-unhomed without `jogUnhomed`, or no config.
+`NACK_BUSY` (0x0B) = a step or sequence holds the machine;
+`NACK_BAD_STATE` (0x06) = a bad direction or speed, a job paused, a homing or
+probe context, a latched fault, unhomed without `jogUnhomed`, or no config.
 
 ### BEZIER Record — `BEZIER_MAGIC` (0xAD, 56 bytes)
 ```
@@ -322,9 +324,11 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_PAUSED` | `0x04` | Stream rejected — machine is PAUSED |
 | `MSEG_NACK_CONFIG_MISMATCH` | `0x05` | MCFG header CRC32 disagrees with Pico flash |
 | `MSEG_NACK_BAD_STATE` | `0x06` | Command rejected — wrong machine state |
+| `MSEG_NACK_ABORTING` | `0x07` | Record sent during an abort — retry once IDLE |
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
 | `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset, or a record the bed mesh would take Z out of range on; a continuous jog with no room left in its direction |
 | `MSEG_NACK_MIXED_AXES` | `0x0A` | Continuous jog with directions in more than one axis set (XY, Z, A) |
+| `MSEG_NACK_BUSY` | `0x0B` | Continuous jog while a step or sequence holds the machine (a job, homing, a leg, a traverse) |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 

@@ -152,3 +152,5 @@
 #define MSEG_NACK_SOFT_LIMIT 0x09
 // A CJOG packet moving more than one axis set: XY, Z, A.
 #define MSEG_NACK_MIXED_AXES 0x0A
+// A CJOG packet refused while a step or sequence holds the machine.
+#define MSEG_NACK_BUSY       0x0B

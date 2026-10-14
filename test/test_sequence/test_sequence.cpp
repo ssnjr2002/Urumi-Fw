@@ -55,7 +55,7 @@ bool scriptNext(uint8_t end) {
 }
 void scriptAbort(void) { aborts++; }
 
-const Sequence scripted = { SEQ_HOME, scriptNext, scriptAbort };
+const Sequence scripted = { SEQ_HOME, scriptNext, scriptAbort, nullptr };
 
 // leg() records each node; on `failOn` it fails the sequence, as a refused
 // next leg does.
