@@ -65,6 +65,8 @@ export const NACK_BAD_CURVE = 0x08;
 export const NACK_SOFT_LIMIT = 0x09;
 // A continuous-jog packet moving more than one axis set (XY, Z, A).
 export const NACK_MIXED_AXES = 0x0a;
+// A continuous-jog packet refused while a step or sequence holds the machine.
+export const NACK_BUSY = 0x0b;
 
 // ── Config plane magics (Phase-2) — CFG blob push/pull over the data plane ──────
 // docs/wire_protocol.md "CRC Algorithms" + packets.py. CFG_SET/GET are host→Pico

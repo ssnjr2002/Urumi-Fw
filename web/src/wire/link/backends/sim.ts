@@ -37,6 +37,7 @@ import {
     NACK_PAUSED,
     NACK_SOFT_LIMIT,
     NACK_MIXED_AXES,
+    NACK_BUSY,
     MAGIC_CJOG,
     MAGIC_CJOG_STOP,
     CJOG_SIZE,
@@ -400,7 +401,11 @@ export class SimTransport implements Transport {
         if (this.cjogHeld && d.every((v, k) => v === this.cjogDir[k])) return; // a repeat
 
         const jogging = this.state === MachineState.JOGGING;
-        if (this.state !== MachineState.IDLE && !jogging) return this._nack(NACK_BAD_STATE);
+        if (this.state !== MachineState.IDLE && !jogging) {
+            const busy = this.state === MachineState.JOB || this.state === MachineState.HOMING ||
+                this.state === MachineState.TRAVERSE;
+            return this._nack(busy ? NACK_BUSY : NACK_BAD_STATE);
+        }
         for (let k = 0; k < MOTION_SLOTS; k++) {
             if (d[k] !== 0 && !(this.axesHomed & (1 << k)) && !this.jogUnhomed) {
                 return this._nack(NACK_BAD_STATE);
