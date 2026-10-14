@@ -551,7 +551,7 @@ threads and `leg` hook.
 
 ### Status
 
-Ready to merge.
+Done (merged at `03116a3`). Unblocks M3c.
 
 ### Outcome
 
