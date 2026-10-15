@@ -295,10 +295,12 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 * **Preflight** checks the bbox against the soft range, with what the Pico
   adds after the wire (offsets, mesh, lift heights, travels); a failure is
   `NACK_PREFLIGHT`, since the host waits on the header's reply.
-* **In a job** the host is not waiting on a reply, so a record out of range
-  at ingest (control points, a Bézier lying in their hull), or a Pico travel
-  out of range, never enters the ring: the job holds before it, lifts, and
-  goes to `ALARM_SOFT_LIMIT` with that record's index as the resume point.
+* **In a job** a record out of range at ingest (control points, a Bézier
+  lying in their hull) never enters the ring: `NACK_SOFT_LIMIT`, which the
+  host session treats as fatal. The Pico keeps the job open; it runs what it
+  has, goes dry into `BUFFERING`, and waits for `cancel`. No alarm: nothing
+  left the range. A START's travel needs no check of its own (it runs from
+  the ring's end to a checked p0). Once lifts exist, the dry stop lifts.
 
 ### Alarms in a job
 
@@ -998,6 +1000,57 @@ placed after it.
   TOOL_WAIT, the session against the Pico.
 * Checks: `pio run -e pico` clean; `pio test -e native` 152/152; `test/wire`
   231/231; `pnpm test` and `pnpm typecheck` as `main`.
+
+## Branch JX: `feature/job-xy`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** finish X and Y in jobs before Z: feeds from the config, and the
+mounted tool's offset in the tip.
+
+* What the code has today:
+  * Records already go work → machine (`framesToMachine`) and are checked
+    against XY's soft range per control point (`data_plane.cpp:179-184`);
+    a START's travel is an XY line at `travelFeed` (`queue.cpp:401-425`).
+  * The travel feed and the machine's cut feed come only from the `feed`
+    text command (`plannerSetFeed`). The config's machine-level `path` and
+    `rapid` are not decoded by the Pico (`config_decode.cpp:146` reads only a
+    tool's `path.feed`).
+  * `framesTipOffset` (`ops/frames.cpp:114`) returns the head's offset only;
+    the tool's `toolOffset` is decoded (`config_decode.h:93`) but unused.
+    It feeds `framesToMachine`, jogs, `jogto`, `wzero`, the readout and the
+    mesh's tip (`meshLatch`, `ops/mesh.cpp:95`).
+* Scope:
+  1. Config: machine-level `path` and `rapid` become
+     `"feed": { "cutFallback": …, "travelDefault": … }`, decoded by the Pico
+     at load and applied as the planner's feeds. The `feed` text command
+     stays as a live override. Web schema, loader, defaults and validator
+     follow; blob version bumped, fixtures regenerated. `machine.z` and
+     `slew` are left as they are.
+  2. Tip offset = head offset + the mounted tool's `toolOffset`; the head's
+     alone when nothing is mounted (or the anchor is selected). One change in
+     `framesTipOffset` reaches records, jogs, `jogto`, `wzero`, the readout
+     and the mesh.
+  3. The mesh latch picks the new offset up at the next ring reset. `mount`
+     is `K_WRITE` (IDLE, probing, homing, a paused job) or `K_IN_TOOL`
+     (TOOL_WAIT): never with a ring running, so no new gate.
+  4. Docs: the config doc and `docs/wire_protocol.md` (`feed`, the frame
+     chain).
+* Not in scope: the corner between a travel and its first cut (blended within
+  `kDeviation`; the lift's stop removes it when Z comes), the soft-limit reply
+  (stays a NACK; Out of range, above).
+* Known effect: the position readout and `wzero`'s reference move on `mount`
+  when the tool has an offset.
+
+**Depends on:** JB4 (done).
+
+**Overlap:** `web/src/machine/schema.ts`, the config encoder, `ops/frames.cpp`.
+
+### Status
+
+Planned.
 
 ## Open
 
