@@ -329,7 +329,7 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
   to its probe switch, wait for `loaded`. Then `BUFFERING`.
 * **Park legs run outside homing:** as steps of the tool-change sequence,
   ticked by the runner and dropped when the session loses the machine
-  (docs/plans/sequences.md). Records are held off while a
+  (docs/plans/machine-model.md). Records are held off while a
   leg is armed. A failed park leg alarms as `ALARM_HOMING_FAIL`
   (`LEGFAIL_PARK`) with the job kept. `pause` is refused in `TOOL_CHANGE`.
 * The host orders layers by tool; returning to an earlier tool is another
@@ -576,8 +576,8 @@ Done (merged). Unblocks J1b and J2.
      `K_SEQUENCE` (`controller/cmd/`). X, Y and every present head's Z must
      be homed (`err not_homed`). Plain `jogto` no longer joins running jogs
      (`busy`) and is refused with faults other than `F_LATCHED`.
-  6. `err busy` for commands that meet the live sequence (sequences.md,
-     Admission); the web sim gets `JOGGING_GOTO`.
+  6. `err busy` for commands that meet the live sequence (machine-model.md,
+     Decisions); the web sim gets `JOGGING_GOTO`.
   7. Docs: `docs/wire_protocol.md`.
 * Checks: as J1. Human checks: `jogto x y` and each name with each head
   selected, Z parked first; a missing position refused; `stop` during the
@@ -920,17 +920,17 @@ Done (merged). Unblocks JB4.
 * Roughly: park both Zs (park legs), move XY to the load spot, wait for
   `mount`, then the operator touches off by hand (jog and `zero`, accepted in
   `TOOL_CHANGE` only), then `BUFFERING`.
-* The second sequence (docs/plans/sequences.md), owner `JOB.TOOL_CHANGE`:
-  park Zs (legs), then per head an XY line to load (ring move) and a wait for
-  `mount`.
-* Probing in the job (`TOOL_PROBE`) is later, once probe legs are a leg kind.
+* The tool-change sequence on the M3 driver (docs/plans/machine-model.md),
+  owner `JOB.TOOL_CHANGE`: park Zs (LEGS), then per head an XY line to load
+  (RING) and a WAIT for `mount`.
+* Probing in the job (`TOOL_PROBE`) is later, after M4.
 * A layer header for a tool not mounted starts the sequence, replacing JB3's
   `NACK_NOT_MOUNTED`. `mount` posts the event the WAIT takes.
 * A layer header whose tool is mounted on the other head holds the job,
   selects that head (at rest, bus free), then `BUFFERING`; no park or load.
   It replaces JB3's `NACK_BUSY` for that case.
 
-**Depends on:** JB3, and R3 of docs/plans/sequences.md.
+**Depends on:** JB3 (done), M3 of docs/plans/machine-model.md (done).
 
 ### Status
 
