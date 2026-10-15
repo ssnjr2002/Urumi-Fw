@@ -1036,13 +1036,27 @@ mounted tool's offset in the tip.
   3. The mesh latch picks the new offset up at the next ring reset. `mount`
      is `K_WRITE` (IDLE, probing, homing, a paused job) or `K_IN_TOOL`
      (TOOL_WAIT): never with a ring running, so no new gate.
-  4. Docs: the config doc and `docs/wire_protocol.md` (`feed`, the frame
-     chain).
+  4. `feed <cut> <travel>` refuses either value below 1 mm/s (`err usage`).
+     The override holds until reboot.
+  5. `probe_park <tool>`: a head's probe switch is one machine position,
+     around the anchor, shared by every tool. The command takes the selected
+     head's switch, less the head's offset and `<tool>`'s `toolOffset`, and
+     runs the `jogto` sequence there (Zs parked, then the line), so that
+     tool's tip lands on the switch whether or not it is mounted. The tool
+     change's line uses it with the wanted tool. `jogto probe` goes.
+  6. The machine-level accels (`path.accel`, `rapid.accel`) go with the
+     rename: the firmware never read them. A tool's `path.feed` falls back to
+     `feed.cutFallback`.
+  7. Docs: the config doc and `docs/wire_protocol.md` (`feed`, `probe_park`,
+     the frame chain).
 * Not in scope: the corner between a travel and its first cut (blended within
   `kDeviation`; the lift's stop removes it when Z comes), the soft-limit reply
   (stays a NACK; Out of range, above).
 * Known effect: the position readout and `wzero`'s reference move on `mount`
   when the tool has an offset.
+* Assumed: no tool's offset reaches past its head's footprint, so the load
+  check of each probe switch against the soft range stays head-offset only;
+  a tool that misses is still refused by the soft range when it moves.
 
 **Depends on:** JB4 (done).
 
