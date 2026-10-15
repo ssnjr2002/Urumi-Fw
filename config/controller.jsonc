@@ -5,17 +5,18 @@
 // homing path is removed; the Pico reads the ones beside them
 // (docs/homing.md §3.2a, docs/plans/controller-homing.md).
 //
+// maxTravel on x and y: measured as (seek span steps / stepsPerUnit) -
+// pullOffDist, seeking from the end opposite the switch, rounded down.
+//
 // Unmeasured, check when homing works:
-//   maxTravel: estimates (old hardTravel − pullOffDist). Measure by pushing the
-//     gantry to the end opposite the switch, then homing and reading the steps
-//     to the trip.
+//   maxTravel on z: estimate (old hardTravel − pullOffDist).
 //   invertDir on y and z: derived from the old frames; jog + to confirm
 //     (X right, Y away, Z up).
 //   invertDir on a: unchecked; jog A+, expect counter-clockwise from above.
 {
   "machine": {
     "fCpu": 150000000,
-    "meshOn": true,
+    "meshOn": false,
     "buffer": {            // jobs only; jogs start at once
       "queueTime": 1.0,    // s of queued motion before a job starts
       "idleTime": 0.5      // s with no new record before it starts anyway
@@ -29,8 +30,8 @@
       "stepsPerUnit": 160,
       "maxFeed": 80,
       "maxAccel": 100,
-      "maxTravel": 1195,         // estimate
-      "softLimits": false,
+      "maxTravel": 1175,         // (189000 / 160) - 5 = 1176.25, rounded down
+      "softLimits": true,
       "invert": false,           // web only
       "invertDir": false,
       "rotary": false,
@@ -56,10 +57,10 @@
       "stepsPerUnit": 160,
       "maxFeed": 80,
       "maxAccel": 100,
-      "maxTravel": 495,          // estimate
-      "softLimits": false,
+      "maxTravel": 735,          // (118929 / 160) - 5 = 738.31, rounded down
+      "softLimits": true,
       "invert": true,            // web only
-      "invertDir": false,        // derived, unconfirmed
+      "invertDir": true,         // confirmed by jogging Y+
       "rotary": false,
       "homing": {
         "kind": "linear",
@@ -68,7 +69,7 @@
         "pullInFeed": 2.5,       // web only
         "backoffMm": 2,          // web only
         "parkMm": 5,             // web only
-        "seekPositive": true,   // switch at the front
+        "seekPositive": false,   // switch at the front (- end)
         "seekScaler": 1.2,
         "startFeed": 2.5,
         "seekFeed": 12.5,
@@ -78,20 +79,20 @@
         "pullOffDist": 5
       }
     },
-    "laser": null
+    "laser": { "node": 3 }       // the anchor, (0, 0); wired to node 3 (-DNODE_HAS_LASER)
   },
   "heads": [
     {
       "accepts": ["knife", "crease"],
-      "xOffset": 0,
-      "yOffset": 0,
+      "xOffset": -70,              // rough eyeball: tip − laser dot
+      "yOffset": -30,
       "z": {
         "node": { "id": 3, "present": true },
         "stepsPerUnit": 1200,
         "maxFeed": 20,
         "maxAccel": 500,
-        "maxTravel": 36,         // estimate
-        "softLimits": false,
+        "maxTravel": 48,         // abs(-66530 / 1200) - 4 = 51.44, less 2 for the taped switch
+        "softLimits": true,
         "invert": false,         // web only
         "invertDir": true,       // derived, unconfirmed
         "rotary": false,
@@ -99,18 +100,18 @@
           "kind": "linear",
           "hardTravel": 40,      // web only
           "atOrigin": true,      // web only
-          "pullInFeed": 2.5,     // web only
+          "pullInFeed": 0.3333,  // web only
           "backoffMm": 4,        // web only
           "parkMm": 4,           // web only
           "seekPositive": true,  // switch at the top
           "seekScaler": 1.2,
-          "startFeed": 2.5,
-          "seekFeed": 6,
-          "latchFeed": 0.78,
+          "startFeed": 0.3333,   // 2500 us/step at 1200 steps/mm
+          "seekFeed": 1.6667,    // 500 us/step
+          "latchFeed": 1,
           "rampSteps": 400,
           "backoffDist": 4,
           "pullOffDist": 4,
-          "parkPos": 0           // ISO: 0 at the top, range [-36, 0]
+          "parkPos": 0           // ISO: 0 at the top, range [-48, 0]
         }
       },
       "a": {
@@ -137,11 +138,11 @@
       }
     },
     {
-      "accepts": ["pen"],
+      "accepts": [],               // the pen head, ["pen"] once it can move
       "xOffset": 60,
       "yOffset": 0,
       "z": {
-        "node": { "id": 6, "present": true },
+        "node": { "id": 6, "present": false },  // head 1 cannot move
         "stepsPerUnit": 600,
         "maxFeed": 20,
         "maxAccel": 500,
@@ -169,7 +170,7 @@
         }
       },
       "a": {
-        "node": { "id": 5, "present": true },
+        "node": { "id": 5, "present": false },
         "stepsPerUnit": 2.8611,
         "maxFeed": 360,
         "maxAccel": 500,
@@ -195,7 +196,7 @@
   "defaultHead": 0,
   "peripherals": [
     { "id": 7, "type": 2, "present": true },
-    { "id": 8, "type": 3, "present": true }
+    { "id": 8, "type": 3, "present": false }   // off the bus
   ],
   "tools": {
     "knife": {
