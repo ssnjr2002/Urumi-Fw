@@ -1067,7 +1067,8 @@ mounted tool's offset in the tip.
 
 ### Status
 
-Ready to merge.
+Done (merged). No planned branch waits on it; Z in jobs (lifts and duty,
+Open) comes next.
 
 ### Outcome
 
