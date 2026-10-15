@@ -7,8 +7,8 @@
  * mount not checked): JOB.BUFFERING until enough is
  * queued, then RUNNING, each record taking `recordMs` and landing the head on
  * its end point; a dry ring goes back to BUFFERING. `jog` and held jogs move
- * too, as JOGGING. pause holds the ring; resume buffers again; cancel and
- * abort drop it. A test double — not real-time accurate, and no planning.
+ * too, as JOGGING. pause drops the ring, keeping the record it stopped at; a
+ * layer header naming it buffers again; cancel and abort drop it. A test double — not real-time accurate, and no planning.
  *
  * This is the backend that lets vitest exercise backpressure, coalesced ACKs,
  * open sessions, step and continuous jogs, status-during-stream and abort — all
@@ -202,8 +202,13 @@ export class SimTransport implements Transport {
     vacPump = new Map<number, boolean>();
     vacServo = new Map<string, boolean>();
 
-    /** The job's ring: each queued record's end point, machine mm. */
-    private motion: Array<{ x: number; y: number }> = [];
+    /** The job's ring: each queued record's end point, machine mm, and number. */
+    private motion: Array<{ x: number; y: number; layer: number; record: number }> = [];
+    /** The record the next BEZIER is (the last layer header's, counted on). */
+    private curLayer = 0;
+    private nextRecord = 0;
+    /** Where a paused job resumes. */
+    private resumeAt: { layer: number; record: number } | null = null;
     private timeCredit = 0; // banked sim-ms not yet spent
     private lastRecordMs = 0;
     readonly recordMs: number;
@@ -517,7 +522,8 @@ export class SimTransport implements Transport {
     /**
      * BEZIER and LAYER_HDR ingest (data_plane.cpp + queue.cpp admit): CRC and
      * seq checked, then gated like the firmware. A layer header opens the job
-     * from IDLE; a BEZIER needs one open.
+     * from IDLE, or resumes a paused one if it names where it stopped; a BEZIER
+     * needs one open.
      */
     private _writeRecord(data: Uint8Array): void {
         const size = data.length;
@@ -531,17 +537,29 @@ export class SimTransport implements Transport {
         // A paused job gets its own NACK so the host holds rather than fails.
         // ALARM lands in BAD_STATE, which is how every alarm refuses motion.
         const st = this.state;
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        if (st === MachineState.JOB && this.job === JobReason.PAUSED) {
+            const at = this.resumeAt;
+            if (data[0] !== MAGIC_LAYER_HDR) {
+                this._flushAck();
+                return this._nack(NACK_PAUSED);
+            }
+            if (!at || dv.getUint16(4, true) !== at.layer || dv.getUint32(6, true) !== at.record) {
+                this._flushAck();
+                return this._nack(NACK_JOB);
+            }
+            this.job = JobReason.BUFFERING;
+            this.resumeAt = null;
+        }
         const jobOpen = st === MachineState.JOB &&
             (this.job === JobReason.BUFFERING || this.job === JobReason.RUNNING);
-        if (st === MachineState.JOB && this.job === JobReason.PAUSED) {
-            this._flushAck();
-            return this._nack(NACK_PAUSED);
-        }
         if (st !== MachineState.IDLE && !jobOpen) {
             this._flushAck(); // ACKs earned before a rewind land first
             return this._nack(NACK_BAD_STATE);
         }
         if (data[0] === MAGIC_LAYER_HDR) {
+            this.curLayer = dv.getUint16(4, true);
+            this.nextRecord = dv.getUint32(6, true);
             if (st === MachineState.IDLE) {
                 this.state = MachineState.JOB;
                 this.job = JobReason.BUFFERING;
@@ -559,8 +577,10 @@ export class SimTransport implements Transport {
             this._flushAck();
             return this._nack(NACK_FULL); // backpressure — sender retries
         }
-        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        this.motion.push({ x: dv.getFloat32(3 + 4 * 6, true), y: dv.getFloat32(3 + 4 * 7, true) });
+        this.motion.push({
+            x: dv.getFloat32(3 + 4 * 6, true), y: dv.getFloat32(3 + 4 * 7, true),
+            layer: this.curLayer, record: this.nextRecord++,
+        });
         this.lastRecordMs = Date.now();
         this.expectedSeq = (this.expectedSeq + 1) & 0xff;
         this._markAck();
@@ -885,15 +905,16 @@ export class SimTransport implements Transport {
             case "pause":
                 if (S.state === MachineState.JOB &&
                     (S.job === JobReason.BUFFERING || S.job === JobReason.RUNNING)) {
-                    S.job = JobReason.PAUSED; // the ring is kept for resume
+                    // The oldest queued record is the one running; an empty
+                    // ring resumes at the next.
+                    const m = S.motion[0];
+                    S.resumeAt = m ? { layer: m.layer, record: m.record }
+                                   : { layer: S.curLayer, record: S.nextRecord };
+                    S.motion = [];
+                    S.job = JobReason.PAUSED;
                     return "ok";
                 }
                 return "err bad_state";
-            case "resume":
-                if (!jobPaused()) return "err bad_state";
-                S.job = JobReason.BUFFERING;
-                S.lastRecordMs = Date.now();
-                return "ok";
             case "cancel":
                 if (S.state === MachineState.JOB &&
                     (S.job === JobReason.PAUSED || S.job === JobReason.BUFFERING)) {
@@ -1031,6 +1052,8 @@ export class SimTransport implements Transport {
             case "homed":     return hex(this.axesHomed, 2);
             case "faults":    return hex(this.faults, 4);
             case "job":       return this.state === MachineState.JOB ? String(this.job) : "-";
+            case "resume_layer":  return this._resumeAt()?.layer.toString() ?? "-";
+            case "resume_record": return this._resumeAt()?.record.toString() ?? "-";
             case "latched":   return hex(this.axesLatched, 2);
             case "probed":    return this._probeZ() === undefined ? "0" : "1";
             case "pz":        return String(this._probeZ() ?? "-");
@@ -1068,6 +1091,10 @@ export class SimTransport implements Transport {
             if (b >= 0x80) return false;
         }
         return true;
+    }
+
+    private _resumeAt(): { layer: number; record: number } | null {
+        return this.state === MachineState.JOB && this.job === JobReason.PAUSED ? this.resumeAt : null;
     }
 
     /** Test hook: drive the sim into a running job so pause/resume can be exercised. */

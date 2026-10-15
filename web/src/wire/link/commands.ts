@@ -579,10 +579,6 @@ export function pause(link: Link): Promise<boolean> {
     return _ok(link, "pause");
 }
 
-export function resume(link: Link): Promise<boolean> {
-    return _ok(link, "resume");
-}
-
 export function cancel(link: Link): Promise<boolean> {
     return _ok(link, "cancel");
 }

@@ -1,7 +1,7 @@
 /**
  * Tests for wire/link/commands — the control-plane command helpers over a Link
  * backed by the in-process Sim. Exercises the live verbs (ping / get /
- * enable / disable / setorigin / pause / resume / cancel / stop /
+ * enable / disable / setorigin / pause / cancel / stop /
  * unalarm / pingnode all / the proactive nodepos / vac_servo / vac_pump) and
  * axis_map on an unmapped boot.
  */
@@ -28,7 +28,6 @@ import {
     disable,
     setOrigin,
     pause,
-    resume,
     cancel,
     stop,
     unalarm,
@@ -154,17 +153,14 @@ describe("wire/link/commands: enable / disable / setorigin / unalarm", () => {
     });
 });
 
-describe("wire/link/commands: pause / resume / cancel", () => {
-    it("pause rejected in IDLE; after forceRunning, pause → PAUSED, resume → BUFFERING", async () => {
+describe("wire/link/commands: pause / cancel", () => {
+    it("pause rejected in IDLE; after forceRunning, pause → PAUSED", async () => {
         await withLink(async (link, sim) => {
             expect(await pause(link)).toBe(false); // IDLE
             sim._forceRunning();
             expect(await pause(link)).toBe(true);
-            let st = await getStatus(link);
+            const st = await getStatus(link);
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PAUSED]);
-            expect(await resume(link)).toBe(true);
-            st = await getStatus(link);
-            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
         });
     });
 

@@ -422,7 +422,6 @@ export {
     type ProbeLegArgs,
     type ProbeReply,
     pause,
-    resume,
     cancel,
     stop,
     unalarm,

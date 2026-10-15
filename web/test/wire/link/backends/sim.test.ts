@@ -4,7 +4,7 @@
  * Link → Writer → SimTransport.write → SimTransport.reply → Demux → sink.
  *
  * Pins the behaviours the Sim exists to make testable without hardware:
- *   - control plane: ping/get/enable/disable/setorigin/pause/resume/
+ *   - control plane: ping/get/enable/disable/setorigin/pause/
  *     cancel/stop/unalarm per the allowed-state matrix
  *   - binary status poll (STATUS_RSP v2 fields incl pos + queuedUs)
  *   - coalesced ACKs (K=8: one ACK frame per 8 accepted packets, not 1:1)
@@ -127,18 +127,14 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
-    it("pause/resume/cancel per the allowed-state matrix", async () => {
+    it("pause/cancel per the allowed-state matrix", async () => {
         await withLink(async (link, sim) => {
             expect(await link.command("pause")).toBe("err bad_state"); // IDLE
             sim._forceRunning();
             expect(await link.command("pause")).toBe("ok");
-            let st = await link.getStatus();
+            const st = await link.getStatus();
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PAUSED]);
-            expect(await link.command("resume")).toBe("ok");
-            st = await link.getStatus();
-            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
-            expect(await link.command("resume")).toBe("err bad_state"); // not paused
-            await link.command("pause");
+            expect(await link.command("resume")).not.toBe("ok"); // no such command
             expect(await link.command("cancel")).toBe("ok");
             expect((await link.getStatus()).state).toBe(MachineState.IDLE);
         });
@@ -457,6 +453,24 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
             expect(r.ok).toBe(false);
             expect(r.nacks).toBeGreaterThan(0);
             expect(sim.state).toBe(MachineState.IDLE);
+        });
+    });
+
+    it("pause keeps the queued record; only a header naming it resumes", async () => {
+        await withLink(async (link) => {
+            await link.resetSeq();
+            const hdr = (layer: number, record: number) => packLayerHdr({ tool: 1, layer, record });
+            expect((await link.stream([hdr(2, 10), rec(1), rec(2), rec(3)], 4)).ok).toBe(true);
+            expect(await link.command("pause")).toBe("ok");
+            expect(await link.command("get resume_layer resume_record"))
+                .toBe("resume_layer=2 resume_record=10");
+
+            expect((await link.stream([hdr(2, 11)], 4)).ok).toBe(false);   // NACK_JOB
+            await link.resetSeq();
+            expect((await link.stream([hdr(2, 10), rec(1)], 4)).ok).toBe(true);
+            const st = await link.getStatus();
+            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
+            expect(await link.command("get resume_layer")).toBe("resume_layer=-");
         });
     });
 

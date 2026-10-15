@@ -92,7 +92,7 @@ export const JobReason = {
     RUNNING: 1,
     /** Braking for a pause or a late block. */
     HOLDING: 2,
-    /** At rest with the ring kept; `resume` or `cancel`. */
+    /** At rest with the ring dropped; a matching LAYER_HDR or `cancel`. */
     PAUSED: 3,
     /** Braking for an abort; ends IDLE. */
     ABORTING: 4,

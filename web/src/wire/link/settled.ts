@@ -132,7 +132,7 @@ export async function settle(
 
 /**
  * Genuinely at rest: no job motion and nothing queued, or a paused job (its
- * ring is kept for `resume`). A job buffering with records queued may start at
+ * ring dropped). A job buffering with records queued may start at
  * any moment, so it is not at rest; a dry one is.
  *
  * Note `bufCount` is `undefined` on a get-parsed status (the text plane

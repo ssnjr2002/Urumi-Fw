@@ -16,7 +16,7 @@ export const BEZIER_SEQ_OFFSET = 2;
 
 // ── LAYER_HDR — 17-byte layer header, opens a job (format/layer.ts) ────────────
 export const MAGIC_LAYER_HDR = 0xa2; // host → Pico: tool, chamber, feed, k
-export const LAYER_HDR_SIZE = 17;
+export const LAYER_HDR_SIZE = 19;
 export const LAYER_HDR_SEQ_OFFSET = 2;
 
 // ── Continuous jog — 7-byte deadman packet and its stop byte (format/cjog.ts) ──
