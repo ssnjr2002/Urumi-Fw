@@ -887,7 +887,7 @@ per layer.
 
 ### Status
 
-Planned.
+Done (merged). Unblocks JB4.
 
 ### Outcome
 
