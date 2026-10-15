@@ -87,12 +87,15 @@ bool cmdPause(const char*) {
     return true;
 }
 
-// End a job at rest (buffering or paused): its ring is dropped and its context
-// closed. Core 1 starts a buffered job only under the lock, so the check holds.
+// End a job at rest (buffering, paused, or waiting on the operator with no jog
+// running): its ring is dropped and its context closed. Core 1 starts a
+// buffered job only under the lock, so the check holds.
 bool cmdCancel(const char*) {
     const uint32_t s = spin_lock_blocking(plannerLock);
     const uint8_t why = jobReason;
-    const bool atRest = machineContext == CTX_JOB && (why == JOB_PAUSED || why == JOB_BUFFERING);
+    const bool atRest = machineContext == CTX_JOB &&
+        (why == JOB_PAUSED || why == JOB_BUFFERING ||
+         (why == JOB_TOOL_WAIT && !plannerActive && plannerRing.count() == 0));
     if (atRest) {
         const planner::Pos at = plannerExec.position();
         plannerRing.reset(at);

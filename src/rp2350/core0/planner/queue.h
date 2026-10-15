@@ -60,6 +60,16 @@ PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record)
 // from kResumeMargin before where it stopped. Records count from `record`.
 PlannerQueueResult plannerOpenLayer(float cut, uint16_t layer, uint32_t record);
 
+// Hold the job for a tool change (a layer checked as plannerLayerCheck):
+// JOB.TOOL_CHANGE at once from IDLE (opening the job), PAUSED or a dry
+// BUFFERING; otherwise toolChangePending, and Core 1 lands it when the ring
+// runs dry. *fromPaused: it came from PAUSED.
+PlannerQueueResult plannerHoldForTool(bool* fromPaused);
+
+// JOB reason `from` to `to` with the ring idle and empty, handing the ring back
+// to the job. False if the job is not in `from` or the ring is in use.
+bool plannerJobSwap(uint8_t from, uint8_t to);
+
 // Where a paused job resumes: the layer and record a LAYER_HDR must name.
 // False unless JOB.PAUSED.
 bool plannerResumePoint(uint16_t* layer, uint32_t* record);

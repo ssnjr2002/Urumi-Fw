@@ -2,7 +2,7 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 19 bytes;
+//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 20 bytes;
 //                continuous jog (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
@@ -29,6 +29,7 @@
 #include "ops/tools.h"
 #include "ops/cjog.h"
 #include "ops/machine.h"           // jobAbort
+#include "controller/seq/toolchange.h"
 #include "planner/queue.h"
 #include <planner/bezier.h>
 
@@ -134,6 +135,10 @@ static void feedPacket(uint8_t b) {
         return;
     }
 
+    // A job holding for a tool change takes nothing until it is back; the host
+    // resends from the header then.
+    if (toolChangeHolding()) { sendNack(MSEG_NACK_TOOL_CHANGE); return; }
+
     // A layer header opens a job from IDLE or resumes a paused one, and records
     // join it; the planner's admit narrows JOB to the reasons that take them.
     const uint8_t st = machineView();
@@ -191,8 +196,10 @@ static void acceptBezier() {
     markAck();
 }
 
-// The layer's tool picks the head; a head switch maps axes over the bus, so it
-// happens only while the bus is free (IDLE, or a paused job resuming).
+// The layer names its tool and head. A head switch maps axes over the bus, so
+// it happens here only while the bus is free (IDLE, or a paused job resuming);
+// otherwise, or with the tool not mounted on the head, the job holds for a tool
+// change and the header is NACKed, not consumed.
 static void acceptLayer() {
     if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
     if (!machineCfgValid()) { sendNack(MSEG_NACK_BAD_STATE); return; }
@@ -200,32 +207,36 @@ static void acceptLayer() {
     LayerHdr l;
     l.chamber = pktBuf[1];
     l.tool    = pktBuf[3];
+    l.head    = pktBuf[4];
     uint16_t layerNo;
     uint32_t record;
-    memcpy(&layerNo, &pktBuf[4], 2);
-    memcpy(&record,  &pktBuf[6], 4);
-    memcpy(&l.feed,  &pktBuf[10], 4);
-    memcpy(&l.k,     &pktBuf[14], 4);
+    memcpy(&layerNo, &pktBuf[5], 2);
+    memcpy(&record,  &pktBuf[7], 4);
+    memcpy(&l.feed,  &pktBuf[11], 4);
+    memcpy(&l.k,     &pktBuf[15], 4);
 
     const MachineCfg& c = machineCfg();
     uint8_t mounted[CFG_MAX_HEADS];
     for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) mounted[h] = toolsMounted(h);
-    uint8_t head;
     float cut;
-    switch (layerResolve(c, mounted, l, plannerMachineFeed(), &head, &cut)) {
+    const LayerResult res = layerResolve(c, mounted, l, plannerMachineFeed(), &cut);
+    switch (res) {
         case LAYER_OK:           break;
+        case LAYER_NOT_MOUNTED:  break;
         case LAYER_TOOL_UNKNOWN: sendNack(MSEG_NACK_TOOL_UNKNOWN); return;
-        case LAYER_NOT_MOUNTED:  sendNack(MSEG_NACK_NOT_MOUNTED);  return;
         default:                 sendNack(MSEG_NACK_JOB);          return;
     }
 
-    // Checked before the select, so a refused layer changes nothing.
+    // Checked before the select or the change, so a refused layer changes nothing.
     PlannerQueueResult r = plannerLayerCheck(cut, layerNo, record);
-    if (r == PQ_OK && head != framesSelected()) {
-        if (!machineBusFree()) { sendNack(MSEG_NACK_BUSY); return; }
+    if (r == PQ_OK && (res != LAYER_OK || l.head != framesSelected())) {
+        if (res != LAYER_OK || !machineBusFree()) {
+            sendNack(toolChangeBegin(l.head, l.tool) ? MSEG_NACK_TOOL_CHANGE : MSEG_NACK_BAD_STATE);
+            return;
+        }
         const char* why;
-        axesSelectHead(head, &why);
-        if (why || framesSelected() != head) { sendNack(MSEG_NACK_BAD_STATE); return; }
+        axesSelectHead(l.head, &why);
+        if (why || framesSelected() != l.head) { sendNack(MSEG_NACK_BAD_STATE); return; }
     }
     if (r == PQ_OK) r = plannerOpenLayer(cut, layerNo, record);
     switch (r) {

@@ -56,7 +56,7 @@ static const Cmd kCommands[] = {
     { "step",         cmdStep,        K_WRITE },
     { "line",         cmdLine,        K_STEP },
     { "bez",          cmdBez,         K_STEP },
-    { "jog",          cmdJog,         K_STEP },
+    { "jog",          cmdJog,         K_STEP | K_IN_TOOL },
     { "feed",         cmdFeed,        K_ANY },
     { "hallscan",     cmdHallScan,    K_WRITE },
     { "leg",          cmdLeg,         K_STEP | K_IN_HOMING | K_IN_PROBE },
@@ -81,11 +81,11 @@ static const Cmd kControllerCommands[] = {
     { "home_head",    cmdHomeHead,    K_SEQUENCE },
     { "jogto",        cmdJogTo,       K_SEQUENCE },
     { "select",       cmdSelect,      K_WRITE },
-    { "wzero",        cmdWzero,       K_WRITE },
+    { "wzero",        cmdWzero,       K_WRITE | K_IN_TOOL },
     { "wset",         cmdWset,        K_WRITE },
     { "wclear",       cmdWclear,      K_WRITE },
     { "mesh",         cmdMesh,        K_WRITE },
-    { "mount",        cmdMount,       K_WRITE },
+    { "mount",        cmdMount,       K_WRITE | K_IN_TOOL },
 };
 
 template <size_t N>

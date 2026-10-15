@@ -6,13 +6,11 @@
 #include "jogto.h"
 #include "steps.h"
 #include "../../config/machine_cfg.h"
-#include "../../ops/bus.h"
 #include "../../ops/frames.h"
 #include "../../ops/position.h"
 #include "../../ops/sequence.h"
 #include "../../planner/queue.h"
 #include "../../../ipc/shared_state.h"
-#include "../../../ipc/core1_rpc.h"
 #include "hardware/sync.h"
 
 static float   targetX, targetY, feed;
@@ -36,8 +34,6 @@ const char* jogtoStart(float mx, float my) {
     if ((axes_homed & 0x3) != 0x3) return "not_homed";
     uint8_t zs[CFG_MAX_HEADS];
     const uint8_t nz = headZNodes(zs);
-    for (uint8_t i = 0; i < nz; i++)
-        if (!originValid(zs[i])) return "not_homed";
 
     float at[4];
     if (!plannerJogFrom(at, RING_SEQ)) return "bad_state";
@@ -52,22 +48,7 @@ const char* jogtoStart(float mx, float my) {
     const float f = fminf(c.x.jogFeed, c.y.jogFeed);
     if (!(f > 0)) return "no_feed";
 
-    // Every Z answers before anything moves.
-    for (uint8_t i = 0; i < nz; i++) {
-        const uint8_t  id  = zs[i];
-        const uint16_t bit = 1u << id;
-        if (busExcluded() & bit) {
-            snprintf(refusal, sizeof refusal, "node %d excluded", id); return refusal;
-        }
-        if (busMute() & bit) {
-            snprintf(refusal, sizeof refusal, "node %d mute", id); return refusal;
-        }
-        const RpcResult res = rpcNodeCmd(CMD_ENABLE, id, 0);
-        if (res != RPC_OK) {
-            snprintf(refusal, sizeof refusal, "node %d %s", id, rpcResultText(res));
-            return refusal;
-        }
-    }
+    if (const char* why = zsReady()) return why;
 
     targetX = mx;
     targetY = my;

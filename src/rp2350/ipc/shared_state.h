@@ -65,6 +65,8 @@ enum JobReason : uint8_t {
     JOB_HOLDING   = 2,   // braking for a pause or a late block
     JOB_PAUSED    = 3,   // at rest, ring dropped; a matching LAYER_HDR or `cancel`
     JOB_ABORTING  = 4,   // braking for an abort; ends IDLE
+    JOB_TOOL_CHANGE = 5, // the tool-change sequence: park the Zs, a line to the switch
+    JOB_TOOL_WAIT   = 6, // at rest: the operator mounts and zeroes the layer's tool
 };
 
 // Why we are in STATE_PROBING (docs/tool_probe.md §5.2). Activity, plus the one
@@ -183,8 +185,11 @@ extern volatile uint16_t nodeEnabled;
 //   pauseRequested — operator `pause`; Core 1 holds and lands JOB.PAUSED.
 //   abortRequested — host `ABORT` or a jog stop; Core 1 brakes, drops the
 //     ring with position intact, and clears it. Not resumable.
+//   toolChangePending — a layer header wants a tool change once the job's ring
+//     runs dry; Core 1 lands JOB.TOOL_CHANGE instead of BUFFERING there.
 extern volatile bool    pauseRequested;
 extern volatile bool    abortRequested;
+extern volatile bool    toolChangePending;
 
 // ─── Planner motion (docs/plans/pico-planner.md) ──────────────────────────────
 // One lib/planner ring and its executor, shared by both cores: Core 0 pushes

@@ -99,6 +99,7 @@ static void __time_critical_func(landPaused)() {
     plannerExec.reset(at);
     plannerActive = false;
     pauseRequested = false;
+    toolChangePending = false;   // the pause wins; the host resends the header
     jobAt(JOB_PAUSED);
 }
 
@@ -146,13 +147,16 @@ static bool __time_critical_func(leaveDrained)() {
     return true;
 }
 
-// A job's ring ran dry: wait in BUFFERING, unless records arrived meanwhile.
+// A job's ring ran dry: wait in BUFFERING, or TOOL_CHANGE for a layer header
+// that wants one, unless records arrived meanwhile.
 static bool __time_critical_func(leaveDry)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool empty = plannerRing.count() == 0;
-    if (empty) plannerActive = false;
+    if (empty) {
+        plannerActive = false;
+        jobAt(toolChangePending ? JOB_TOOL_CHANGE : JOB_BUFFERING);
+    }
     spin_unlock(plannerLock, s);
-    if (empty) jobAt(JOB_BUFFERING);
     return empty;
 }
 

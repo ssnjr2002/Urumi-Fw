@@ -70,6 +70,10 @@ float framesWork(uint8_t k);
 bool framesSetWork(uint8_t k, float v);
 // Back to the config's `work` block.
 void framesClearWork(void);
+// Clear head h's work Z for a new tool: 0 and unset until the next Z zero
+// (framesSetWork). framesWorkZSet reports it.
+void framesUnsetWorkZ(uint8_t h);
+bool framesWorkZSet(uint8_t h);
 
 // A work-coordinate XY target to the anchor's machine coordinates. Returns
 // nullptr, or "no_head".

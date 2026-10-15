@@ -45,7 +45,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
-| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool and feed (19 B) |
+| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head and feed (20 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
@@ -175,17 +175,18 @@ record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
 with `softLimits` is `NACK_SOFT_LIMIT`, as is a record (or its travel line)
 along which the bed mesh would take Z out of its soft range.
 
-### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 19 bytes)
+### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 20 bytes)
 ```
 [0]      magic = 0xA2
 [1]      chamber    uint8      — 1..chamberCount; 0 for a tool without chambers
 [2]      seq        uint8      — rolling stream seq, shared with BEZIER
 [3]      tool       uint8      — the config tool's `id`
-[4..5]   layer      uint16 LE
-[6..9]   record     uint32 LE  — the next BEZIER's number within the layer
-[10..13] feed       float32 LE — cut, mm/s; 0 = the tool's path.feed, then `feed`'s cut
-[14..17] k          float32 LE — plunge scale 0..2 (unused yet)
-[18]     CRC8 over bytes [0..17]
+[4]      head       uint8      — the head the tool goes on
+[5..6]   layer      uint16 LE
+[7..10]  record     uint32 LE  — the next BEZIER's number within the layer
+[11..14] feed       float32 LE — cut, mm/s; 0 = the tool's path.feed, then `feed`'s cut
+[15..18] k          float32 LE — plunge scale 0..2 (unused yet)
+[19]     CRC8 over bytes [0..18]
 ```
 Opens a job (JOB.BUFFERING) from IDLE; in a buffering or running job it starts
 the next layer. Layers may come in any order; the BEZIERs after a header are
@@ -196,14 +197,30 @@ queue dropped, keeping where the job stopped: the record, and how far into its
 curve (`get resume_layer resume_record`). The host resumes by sending a layer
 header naming that layer and record, then the records from there on; any other
 header is `NACK_JOB`. The Pico cuts that record from 2 mm before where it
-stopped, travelling there first. A record stopped in its travel runs whole. The BEZIERs after it run with its tool, on the head that has
-the tool mounted (`mount`; the lowest such head). A layer whose head is not the
-selected one selects it (as `select`), which maps axes over the bus, so only
-from IDLE or a resume: in a running job it is `NACK_BUSY` (a head switch
-mid-job comes with tool change). A job ends only by `cancel` or abort.
+stopped, travelling there first. A record stopped in its travel runs whole. A job ends only by `cancel` or abort.
 
-Refusals: `NACK_TOOL_UNKNOWN` = the id is not in the config;
-`NACK_NOT_MOUNTED` = no head has it mounted; `NACK_JOB` = inside an open
+**Heads and tool change.** The BEZIERs after a header run with its tool on its
+`head`. With the tool mounted there (`mount`) and the head selected, the header
+is ACKed. With the tool mounted and another head selected, IDLE and a resume
+select it (as `select`). Otherwise the header is `NACK_TOOL_CHANGE`, not
+consumed, and the job holds for a change; until it is back every header and
+record is `NACK_TOOL_CHANGE`. The host stops, waits for JOB.BUFFERING (or
+JOB.PAUSED, a change made from a pause), and resends from the header. A running
+job finishes its ring first. Then:
+
+* the tool mounted, another head selected: the head is selected, and back;
+* otherwise JOB.TOOL_CHANGE: the head is selected, every head's Z parks, and
+  the head moves to its probe switch (`get seq=6`). Then JOB.TOOL_WAIT, with
+  that head's work Z cleared: the operator mounts the tool (`mount`, only the
+  header's tool on its head), jogs (`jog`, continuous jogs) and zeroes Z
+  (`wzero`); with the tool mounted and Z zeroed it goes back.
+
+`pause` is refused in both; `cancel` ends the job from TOOL_WAIT, `stop` in
+either. A refusal after the NACK (a Z not homed or not answering, no probe
+switch, a failed park) alarms with F_SEQUENCE or F_HOMING and ends the job.
+
+Refusals: `NACK_TOOL_UNKNOWN` = the id is not in the config; `NACK_JOB` = a
+head the config lacks, inside an open
 contour, a bad chamber, feed or k, or a paused job's header not naming where
 it stopped; `NACK_BAD_STATE` = no cut or travel feed
 (`feed`), no config, the select failed, or the ring holds jogs (JOGGING, or
@@ -359,10 +376,10 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
 | `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset, or a record the bed mesh would take Z out of range on; a continuous jog with no room left in its direction |
 | `MSEG_NACK_MIXED_AXES` | `0x0A` | Continuous jog with directions in more than one axis set (XY, Z, A) |
-| `MSEG_NACK_BUSY` | `0x0B` | Continuous jog while a step or sequence holds the machine (a job, homing, a leg, a traverse); a layer header whose tool is on another head, in a job |
+| `MSEG_NACK_BUSY` | `0x0B` | Continuous jog while a step or sequence holds the machine (a job, homing, a leg, a traverse) |
 | `MSEG_NACK_JOB` | `0x0C` | BEZIER with no job open; layer header inside a contour, with a bad chamber, feed or k, or not naming where a paused job stopped |
 | `MSEG_NACK_TOOL_UNKNOWN` | `0x0D` | Layer header whose tool id is not in the config |
-| `MSEG_NACK_NOT_MOUNTED` | `0x0E` | Layer header whose tool no head has mounted |
+| `MSEG_NACK_TOOL_CHANGE` | `0x0F` | Layer header whose tool is not mounted on its head or whose head is not selected, not consumed; any header or record while the job holds for a tool change. Wait for BUFFERING or PAUSED and resend from the header |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 
@@ -408,14 +425,14 @@ prefixed `0x`.
 | `unalarm` | — | `ok faults=<hex>` / `err bad_state` / `err estop` / `err degraded` / `err unmapped` | In ALARM: clear the event faults, then fix what can be fixed at once, in order: BUS (`err degraded`: needs `bus_exclude`), then an unmet slot request (retried once; `err unmapped`). `ok` carries what is left (CONFIG, LATCHED). `err estop` with the latch set: use `unstop` |
 | `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico as a jog (state JOGGING). `<depth>` = blocks queued. IDLE, or JOGGING; `bad_state` while the ring holds a streamed job. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`; `soft_limit z` = the bed mesh would take Z out of its soft range along the move. No homing check |
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, work mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line`, on every handle |
-| `jog` | `<x\|y\|z\|a> <dist> [scale]` | `ok <depth>` / `err usage\|unconfigured\|no_head\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit <axis> <mm>` (and `line`'s queue errors) | Step jog: move one axis by `dist` machine mm (A: degrees) from where the queued jogs end; Z and A are the selected head's (`no_head` with none bound), as a jog (state JOGGING). Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel` (one turn on A). A has no soft range. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction |
+| `jog` | `<x\|y\|z\|a> <dist> [scale]` | `ok <depth>` / `err usage\|unconfigured\|no_head\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit <axis> <mm>` (and `line`'s queue errors) | Step jog: move one axis by `dist` machine mm (A: degrees) from where the queued jogs end; Z and A are the selected head's (`no_head` with none bound), as a jog (state JOGGING). Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel` (one turn on A). A has no soft range. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction. Also in JOB.TOOL_WAIT |
 | `jogto` | `<x> <y>` \| `park\|load\|probe` | `ok` / `err usage\|unconfigured\|not_homed\|no_head\|no_position\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>\|node <n> excluded\|mute\|<rpc>` | Controller command, a sequence: park every present head's Z (legs, in parallel), then a straight line at the slower of X's and Y's `jogFeed`, published as JOGGING with `jogging=3` throughout. `<x> <y>` is work mm for the selected tip; `park` (where homing parks X and Y without a stored one), `load` and `probe` (the selected head's tip on its probe switch; `no_head` with none selected) are stored anchor positions, `no_position` when the config has none. X, Y and every present head's Z must be homed. IDLE only, and refused with any fault but a latch; `busy` while anything runs. `ok` once it starts; a failed park is `F_HOMING` (`homefail=8`), a line refused after the park `F_SEQUENCE` (`seqfail=soft_limit\|full\|no_limits\|unconfigured\|bad_state`); with no Z to park the line's refusal is the reply. Refuses at the soft range as `jog` |
 | `select` | `<head>\|anchor` | `ok` / `err usage\|bad_state\|degraded\|no_head` / as `axes_map` | Controller command: the controlled point. A head commits its Z and A as the axes map (`axes_map`'s replies) and turns the laser off; `anchor` is the laser tip (laser on; maps X and Y if either is unmapped, Z and A unchanged) or, without a laser, the head at (0, 0). Never moves. IDLE/PAUSED/ALARM, not while probing. The selection is derived from the axes map: a head needs X, Y and its Z and A mapped, the laser X and Y, else none. A raw `axes_map` that binds a different head selects it (laser off) |
-| `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM |
+| `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM, and JOB.TOOL_WAIT |
 | `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
 | `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset back to the config's `work` block |
 | `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again. IDLE/PAUSED/ALARM. See "Bed mesh" |
-| `mount` | `<head> <tool id>` | `ok` / `err usage\|bad_state\|no_head\|no_tool` | Controller command: what `head` has mounted, a config tool id (`tools.<name>.id`) or 0 for none. RAM only: kept across jobs, cleared at boot and by a config push. Separate from `select`; never moves. IDLE/PAUSED/ALARM. `get tools` reports it |
+| `mount` | `<head> <tool id>` | `ok` / `err usage\|bad_state\|no_head\|no_tool` | Controller command: what `head` has mounted, a config tool id (`tools.<name>.id`) or 0 for none. RAM only: kept across jobs, cleared at boot and by a config push. Separate from `select`; never moves. IDLE/PAUSED/ALARM; in JOB.TOOL_WAIT only the change's tool on its head (`err wrong_tool`). `get tools` reports it |
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Testing primitive: the feeds (mm/s) BEZIER records run at — cut for the curves, travel for the line to a `START` record's p0. Held until reboot. A layer header's feed, then its tool's `path.feed`, overrides the cut; layers are refused without a travel feed |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
@@ -431,13 +448,13 @@ state=<s>     machineState    0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGIN
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 faults=<hex>  machineFaults   fault mask, as STATUS_RSP (e.g. 0x0004)
-job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING  (only while state=JOB)
+job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING 5=TOOL_CHANGE 6=TOOL_WAIT  (only while state=JOB)
 resume_layer=<l>   the layer a paused job resumes at  (only while job=3)
 resume_record=<r>  the record within it  (only while job=3)
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with the HOMING fault)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
-seq=<s>       sequenceId      the running sequence, else the one that failed (with the SEQUENCE, HOMING or PROBE fault): 1=LEG 2=TRAVERSE 3=HOME 4=RECOVERY 5=JOGTO
+seq=<s>       sequenceId      the running sequence, else the one that failed (with the SEQUENCE, HOMING or PROBE fault): 1=LEG 2=TRAVERSE 3=HOME 4=RECOVERY 5=JOGTO 6=TOOL_CHANGE
 seqfail=<r>   sequenceFailWhy what refused a sequence after its ok, one token (e.g. soft_limit)  (only with the SEQUENCE fault)
 cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with the CONFIG fault)
 jogging=<j>   ringOwner       1=STEP 2=CONT 3=GOTO  (only while state=JOGGING; STEP = jog/line/bez, CONT = a continuous jog, GOTO = jogto)

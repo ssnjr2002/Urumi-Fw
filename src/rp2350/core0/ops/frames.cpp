@@ -12,6 +12,7 @@
 
 static uint8_t selected = FRAMES_NONE;
 static float   workX = 0, workY = 0, workZ[CFG_MAX_HEADS] = {0};
+static bool    zSet[CFG_MAX_HEADS];   // false from a tool change until a Z zero
 
 static void laserSet(bool on) {
     if (!machineCfgValid() || !machineCfg().laserNode) return;
@@ -23,8 +24,16 @@ void framesClearWork(void) {
     const MachineCfg& c = machineCfg();
     workX = c.workX;
     workY = c.workY;
-    for (uint8_t h = 0; h < c.headCount; h++) workZ[h] = c.workZ[h];
+    for (uint8_t h = 0; h < c.headCount; h++) { workZ[h] = c.workZ[h]; zSet[h] = true; }
 }
+
+void framesUnsetWorkZ(uint8_t h) {
+    if (h >= CFG_MAX_HEADS) return;
+    workZ[h] = 0;
+    zSet[h]  = false;
+}
+
+bool framesWorkZSet(uint8_t h) { return h < CFG_MAX_HEADS && zSet[h]; }
 
 void framesReset(void) {
     selected = FRAMES_NONE;
@@ -146,6 +155,7 @@ bool framesSetWork(uint8_t k, float v) {
     const uint8_t h = framesZHead();
     if (k != SLOT_Z || h == FRAMES_NONE) return false;
     workZ[h] = v;
+    zSet[h]  = true;
     return true;
 }
 

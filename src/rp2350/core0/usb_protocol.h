@@ -30,21 +30,23 @@
 #define BEZIER_FLAG_BREAK  0x02   // corner or cusp before this piece
 #define BEZIER_FLAG_END    0x04   // closes the contour
 
-// LAYER_HDR (19 bytes, little-endian): opens a job from IDLE and starts a layer,
+// LAYER_HDR (20 bytes, little-endian): opens a job from IDLE and starts a layer,
 // or resumes a paused job from where it stopped (`get resume_layer
-// resume_record`). The BEZIERs after it run with its tool, on the head that has
-// it mounted, numbered on from `record`; the first is a START.
+// resume_record`). The BEZIERs after it run with its tool on `head`, numbered on
+// from `record`; the first is a START. Accepted only with the tool mounted on
+// `head` and that head selected; otherwise NACK_TOOL_CHANGE.
 //   [0]      magic = 0xA2
 //   [1]      chamber  1..chamberCount; 0 for a tool without chambers
 //   [2]      seq
 //   [3]      tool id  (config `tools`)
-//   [4..5]   layer    u16
-//   [6..9]   record   u32, the next BEZIER's number within the layer
-//   [10..13] feed     f32 mm/s; 0 = the tool's path.feed, then `feed`'s cut
-//   [14..17] k        f32 plunge scale, 0..2 (unused for now)
-//   [18]     CRC8 over bytes [0..17]
+//   [4]      head     the head the tool goes on
+//   [5..6]   layer    u16
+//   [7..10]  record   u32, the next BEZIER's number within the layer
+//   [11..14] feed     f32 mm/s; 0 = the tool's path.feed, then `feed`'s cut
+//   [15..18] k        f32 plunge scale, 0..2 (unused for now)
+//   [19]     CRC8 over bytes [0..18]
 #define LAYER_HDR_MAGIC       0xA2
-#define LAYER_HDR_PACKET_SIZE 19
+#define LAYER_HDR_PACKET_SIZE 20
 
 // Inter-byte timeout for a half-received BEZIER or jog packet. A whole
 // packet arrives in microseconds over USB CDC, so a gap this long means the
@@ -168,13 +170,15 @@
 #define MSEG_NACK_SOFT_LIMIT 0x09
 // A CJOG packet moving more than one axis set: XY, Z, A.
 #define MSEG_NACK_MIXED_AXES 0x0A
-// A CJOG packet refused while a step or sequence holds the machine; a
-// LAYER_HDR whose tool is on another head, in a job (heads switch from IDLE).
+// A CJOG packet refused while a step or sequence holds the machine.
 #define MSEG_NACK_BUSY       0x0B
 // A BEZIER with no job open, or a LAYER_HDR inside a contour, with a bad
 // chamber, feed or k, or in a paused job not naming where it stopped.
 #define MSEG_NACK_JOB          0x0C
 // A LAYER_HDR whose tool id is not in the config.
 #define MSEG_NACK_TOOL_UNKNOWN 0x0D
-// A LAYER_HDR whose tool no head has mounted.
-#define MSEG_NACK_NOT_MOUNTED  0x0E
+// A LAYER_HDR whose tool is not mounted on its head, or whose head is not
+// selected: not consumed. The job changes the tool or the head (JOB.TOOL_CHANGE,
+// TOOL_WAIT); records are refused the same way meanwhile. The host waits for
+// BUFFERING or PAUSED and resends from the header.
+#define MSEG_NACK_TOOL_CHANGE  0x0F

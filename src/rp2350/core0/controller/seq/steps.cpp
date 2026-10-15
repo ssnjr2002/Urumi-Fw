@@ -1,13 +1,16 @@
 // steps.cpp — see steps.h.
 
 #include <math.h>
+#include <stdio.h>
 #include "steps.h"
 #include "../../config/machine_cfg.h"
+#include "../../ops/bus.h"
 #include "../../ops/homing.h"
 #include "../../ops/position.h"
 #include "../../ops/sequence.h"
 #include "../../planner/queue.h"
 #include "../../../ipc/shared_state.h"
+#include "../../../ipc/core1_rpc.h"
 
 uint16_t intervalUs(float feed, float spu) {
     const double us = round(1e6 / ((double)feed * (double)spu));
@@ -35,6 +38,30 @@ uint8_t headZNodes(uint8_t* out) {
     for (uint8_t h = 0; h < c.headCount; h++)
         if (c.heads[h].z.node.present) out[n++] = c.heads[h].z.node.id;
     return n;
+}
+
+const char* zsReady(void) {
+    static char refusal[40];
+    uint8_t zs[CFG_MAX_HEADS];
+    const uint8_t nz = headZNodes(zs);
+    for (uint8_t i = 0; i < nz; i++)
+        if (!originValid(zs[i])) return "not_homed";
+    for (uint8_t i = 0; i < nz; i++) {
+        const uint8_t  id  = zs[i];
+        const uint16_t bit = 1u << id;
+        if (busExcluded() & bit) {
+            snprintf(refusal, sizeof refusal, "node %d excluded", id); return refusal;
+        }
+        if (busMute() & bit) {
+            snprintf(refusal, sizeof refusal, "node %d mute", id); return refusal;
+        }
+        const RpcResult res = rpcNodeCmd(CMD_ENABLE, id, 0);
+        if (res != RPC_OK) {
+            snprintf(refusal, sizeof refusal, "node %d %s", id, rpcResultText(res));
+            return refusal;
+        }
+    }
+    return nullptr;
 }
 
 const char* parkZs(void) {

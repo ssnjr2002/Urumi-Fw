@@ -30,6 +30,7 @@ volatile uint16_t nodeEnabled   = 0;              // none energised until a node
 // Inter-core request flags
 volatile bool    pauseRequested = false;
 volatile bool    abortRequested = false;
+volatile bool    toolChangePending = false;
 volatile uint8_t ringOwner      = RING_JOB;
 volatile bool    estopRequested = false;
 volatile bool    estopSwept     = false;

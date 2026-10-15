@@ -34,6 +34,11 @@ const char* homingArmPark(uint8_t, bool, int32_t, uint16_t, uint16_t, uint16_t) 
     return nullptr;
 }
 void homingAbandon(uint8_t, uint8_t) {}
+bool originValid(uint8_t) { return true; }
+uint16_t busExcluded() { return 0; }
+uint16_t busMute() { return 0; }
+RpcResult rpcNodeCmd(uint8_t, uint8_t, uint8_t) { return RPC_OK; }
+const char* rpcResultText(RpcResult) { return ""; }
 void sequenceRing(void) { rings++; }
 
 bool plannerJogFrom(float a[4], uint8_t) {

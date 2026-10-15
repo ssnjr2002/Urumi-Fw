@@ -27,6 +27,7 @@ enum SequenceId : uint8_t {
     SEQ_HOME     = 3,
     SEQ_RECOVERY = 4,
     SEQ_JOGTO    = 5,
+    SEQ_TOOL_CHANGE = 6,   // a job's tool change: park the Zs, a line to the switch
 };
 
 // What ended a step or a wait, as next() is told. A wait's event is tied to

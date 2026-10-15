@@ -32,7 +32,9 @@ static void replanAndCommit() {
 static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
     const uint8_t st = machineView();
     const uint8_t why = jobReason;
-    const bool joins = jog ? st == STATE_JOGGING
+    // A tool change's line and the operator's jogs run inside the job.
+    const bool tool = st == STATE_JOB && (why == JOB_TOOL_CHANGE || why == JOB_TOOL_WAIT);
+    const bool joins = jog ? st == STATE_JOGGING || tool
                            : st == STATE_JOB && (why == JOB_BUFFERING || why == JOB_RUNNING);
     if ((st != STATE_IDLE && !joins) || pauseRequested || abortRequested)
         return PQ_BAD_STATE;
@@ -335,6 +337,47 @@ PlannerQueueResult plannerOpenLayer(float cut, uint16_t layer, uint32_t record) 
     }
     spin_unlock(plannerLock, s);
     return out;
+}
+
+PlannerQueueResult plannerHoldForTool(bool* fromPaused) {
+    *fromPaused = false;
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const bool idle = !plannerActive && plannerRing.count() == 0;
+    const uint8_t why = jobReason;
+    PlannerQueueResult out = PQ_OK;
+    if (paused()) {
+        *fromPaused = true;
+        jobReason = JOB_TOOL_CHANGE;
+    } else if (machineContext != CTX_JOB) {
+        if (resetIfIdle(RING_JOB)) {
+            jobReason = JOB_TOOL_CHANGE;
+            __dmb();
+            machineContext = CTX_JOB;
+        } else {
+            out = PQ_BAD_STATE;
+        }
+    } else if (why == JOB_BUFFERING && idle) {
+        jobReason = JOB_TOOL_CHANGE;
+    } else if (why == JOB_BUFFERING || why == JOB_RUNNING || why == JOB_HOLDING) {
+        toolChangePending = true;
+    } else {
+        out = PQ_BAD_STATE;
+    }
+    spin_unlock(plannerLock, s);
+    return out;
+}
+
+bool plannerJobSwap(uint8_t from, uint8_t to) {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const bool ok = machineContext == CTX_JOB && jobReason == from &&
+                    !plannerActive && plannerRing.count() == 0;
+    if (ok) {
+        ringOwner = RING_JOB;
+        __dmb();
+        jobReason = to;
+    }
+    spin_unlock(plannerLock, s);
+    return ok;
 }
 
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) {

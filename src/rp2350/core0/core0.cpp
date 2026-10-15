@@ -15,6 +15,7 @@
 #include "control_plane.h"
 #include "ops/position.h"
 #include "ops/observe.h"
+#include "controller/seq/toolchange.h"
 #include "ops/mesh.h"
 #include "ops/slot_map.h"
 #include "ops/bus.h"
@@ -135,6 +136,7 @@ void loop() {
     // give a derived byte a second writer.
     pauseRequested = false;
     abortRequested = false;
+    toolChangePending = false;
     plannerRing.reset({0, 0});
     plannerExec.reset({0, 0});
     plannerActive = false;
@@ -172,6 +174,7 @@ void loop() {
         // that is driving an axis at a hard stop.
         runnerTick();
         sequenceTick();
+        toolChangeTick();
         // And a probe leg, for the same reason and on the same terms: a leg runs
         // for seconds with a tool descending onto a bed, and holding `get`
         // and `stop` shut for the whole of it is exactly what a supervisor out

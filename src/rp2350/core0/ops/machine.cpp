@@ -131,6 +131,7 @@ static uint8_t stateOf(uint16_t faults) {
     const uint8_t seq = sequenceId();
     if (seq == SEQ_HOME || seq == SEQ_RECOVERY) return STATE_HOMING;
     if (seq == SEQ_JOGTO) return STATE_JOGGING;
+    if (seq == SEQ_TOOL_CHANGE) return STATE_JOB;
     // A manual context keeps its name over its raw legs.
     if (machineContext == CTX_PROBE)  return STATE_PROBING;
     if (machineContext == CTX_HOMING) return STATE_HOMING;
@@ -169,6 +170,10 @@ const char* machineAdmit(uint8_t kind) {
     const uint8_t ctx = machineContext;
     if (k == K_ANY || k == K_READ) return nullptr;
     const bool busy = stepLive() || sequenceLive();
+    if (ctx == CTX_JOB && jobReason == JOB_TOOL_WAIT && (kind & K_IN_TOOL)) {
+        if (busy) return "busy";
+        return latched ? "bad_state" : nullptr;
+    }
     if ((ctx == CTX_PROBE && !(kind & K_IN_PROBE)) ||
         (ctx == CTX_HOMING && !(kind & K_IN_HOMING)))
         return busy ? "busy" : "bad_state";

@@ -32,7 +32,7 @@ static bool cjogWanted() {
 
 // machineAdmit(K_STEP) as a NACK reason, or 0.
 static uint8_t cjogAdmit() {
-    const char* why = machineAdmit(K_STEP);
+    const char* why = machineAdmit(K_STEP | K_IN_TOOL);
     if (!why) return 0;
     return strcmp(why, "busy") == 0 ? MSEG_NACK_BUSY : MSEG_NACK_BAD_STATE;
 }

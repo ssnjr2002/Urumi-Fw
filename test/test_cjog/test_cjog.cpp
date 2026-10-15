@@ -86,7 +86,7 @@ bool configAxisRange(const CfgAxis& a, float* l, float* h) {
 }
 // A running ring is a live step.
 const char* machineAdmit(uint8_t kind) {
-    CHECK(kind == K_STEP);
+    CHECK(kind == (K_STEP | K_IN_TOOL));
     return depth != 0 || plannerActive ? "busy" : admit;
 }
 

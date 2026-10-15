@@ -20,6 +20,10 @@ int32_t parkSteps(const CfgAxis& a);
 // Every present head's Z node, homed or not; returns how many.
 uint8_t headZNodes(uint8_t* out);
 
+// Every present head's Z homed, and answering an enable, before anything moves.
+// Returns nullptr, or the refusal text (`not_homed`, `node N excluded|mute|…`).
+const char* zsReady(void);
+
 // LEGS: park every present head's Z at its park position, in parallel, at its
 // homing feeds. Each must be homed and enabled (the caller checks). Returns
 // nullptr, or the refusal text; a refusal after a leg was armed has failed the
