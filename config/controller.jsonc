@@ -21,9 +21,7 @@
       "queueTime": 1.0,    // s of queued motion before a job starts
       "idleTime": 0.5      // s with no new record before it starts anyway
     },
-    "path": { "feed": 80 },
-    "rapid": { "feed": 80 },
-    "z": { "feed": 10 },
+    "feed": { "cutFallback": 80, "travelDefault": 80, "plungeFallback": 10 },   // mm/s; `feed` overrides
     "slew": {},
     "x": {
       "node": { "id": 1, "present": true },
@@ -206,8 +204,8 @@
       "offsetMm": 0,
       "cornerAngleDeg": 20,
       "minRadiusMm": 0,
-      "path": { "feed": 40 },
-      "z": { "feed": 10 },
+      "cutFeed": 40,
+      "plungeFeed": 10,
       "toolOffset": { "xOffset": 0, "yOffset": 0 },
       "dutyLimits": { "maxOnS": 30, "minOnS": 20, "dwellS": 2, "settleS": 0.3 }
     },
@@ -218,8 +216,8 @@
       "offsetMm": 0,
       "cornerAngleDeg": 20,
       "minRadiusMm": 0,
-      "path": { "feed": 80 },
-      "z": { "feed": 10 },
+      "cutFeed": 80,
+      "plungeFeed": 10,
       "toolOffset": { "xOffset": 0, "yOffset": 0 }
     }
   },

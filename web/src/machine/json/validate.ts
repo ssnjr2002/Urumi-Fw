@@ -24,7 +24,7 @@ import type {
     ToolProfile,
 } from "../schema.js";
 import { TOOL_PROFILES_BY_TYPE } from "../tools.js";
-import { requiredAxes } from "../resolve.js";
+import { requiredAxes, resolveTargets } from "../resolve.js";
 
 
 export interface ValidationResult {
@@ -63,11 +63,16 @@ const nonNegativeCeilings: Rule = ({ machine }) =>
         ...(ax.maxAccel < 0 ? [error(`${path}.maxAccel: must be >= 0`)] : []),
     ]);
 
-const nonNegativeTargets: Rule = (config) =>
-    namedTargets(config).flatMap(([path, t]) => [
-        ...(t.feed !== undefined && t.feed < 0 ? [error(`${path}.feed: must be >= 0`)] : []),
-        ...(t.accel !== undefined && t.accel < 0 ? [error(`${path}.accel: must be >= 0`)] : []),
-    ]);
+const nonNegativeTargets: Rule = (config) => [
+    ...(["feed", "accel"] as const)
+        .filter((k) => (config.machine.slew[k] ?? 0) < 0)
+        .map((k) => error(`machine.slew.${k}: must be >= 0`)),
+    ...Object.entries(config.toolProfiles).flatMap(([name, t]: [string, ToolProfile]) =>
+        (["cutFeed", "plungeFeed"] as const)
+            .filter((k) => (t[k] ?? 0) < 0)
+            .map((k) => error(`tools.${name}.${k}: must be >= 0`)),
+    ),
+];
 
 /**
  * X/Y with a 0 (uncapped) ceiling is legal but reckless: nothing then bounds
@@ -91,12 +96,10 @@ const targetsUnderCeilings: Rule = (config) => {
     const xyAccel = minPositive(machine.x.maxAccel, machine.y.maxAccel);
 
     const issues: Issue[] = [
-        ...overCeiling("machine.rapid", machine.rapid, xyFeed, xyAccel),
+        ...feedOver("machine.feed.travelDefault", machine.feed.travelDefault, xyFeed),
     ];
     for (const [name, t] of Object.entries(config.toolProfiles)) {
-        issues.push(
-            ...overCeiling(`tools.${name}.path`, inherit(t.path, machine.path), xyFeed, xyAccel),
-        );
+        issues.push(...feedOver(`tools.${name}.cutFeed`, resolveTargets(machine, t).cutFeed, xyFeed));
     }
 
     // Z/A ceilings live on the DEFAULT HEAD, which may not exist — every rule
@@ -109,9 +112,7 @@ const targetsUnderCeilings: Rule = (config) => {
 
     issues.push(...overCeiling("machine.slew", machine.slew, head.a.maxFeed, head.a.maxAccel));
     for (const [name, t] of Object.entries(config.toolProfiles)) {
-        issues.push(
-            ...overCeiling(`tools.${name}.z`, inherit(t.z, machine.z), head.z.maxFeed, head.z.maxAccel),
-        );
+        issues.push(...feedOver(`tools.${name}.plungeFeed`, resolveTargets(machine, t).plungeFeed, head.z.maxFeed));
     }
     return issues;
 };
@@ -145,6 +146,11 @@ const bufferPositive: Rule = ({ machine }) =>
     (["queueTime", "idleTime"] as const)
         .filter((k) => !(Number.isFinite(machine.buffer[k]) && machine.buffer[k] > 0))
         .map((k) => error(`machine.buffer.${k}: must be > 0 (got ${machine.buffer[k]})`));
+
+const feedAtLeastOne: Rule = ({ machine }) =>
+    (["cutFallback", "travelDefault", "plungeFallback"] as const)
+        .filter((k) => !(Number.isFinite(machine.feed[k]) && machine.feed[k] >= 1))
+        .map((k) => error(`machine.feed.${k}: must be >= 1 (got ${machine.feed[k]})`));
 
 /** A tool id is a u8 on the wire, 0 meaning no tool, and names one tool. */
 const toolIdsUnique: Rule = ({ toolProfiles }) => {
@@ -454,6 +460,7 @@ const RULES: readonly Rule[] = [
     defaultHeadInRange,
     clearanceNonNegative,
     bufferPositive,
+    feedAtLeastOne,
     toolIdsUnique,
     headsHaveAxesForAccepted,
     headsAcceptSomething,
@@ -473,31 +480,14 @@ export function validateConfig(config: PipelineConfig): ValidationResult {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function namedTargets(config: PipelineConfig): readonly [string, OpTarget][] {
-    const { machine } = config;
-    return [
-        ["machine.path", machine.path],
-        ["machine.rapid", machine.rapid],
-        ["machine.z", machine.z],
-        ["machine.slew", machine.slew],
-        ...Object.entries(config.toolProfiles).flatMap(
-            ([name, t]: [string, ToolProfile]): [string, OpTarget][] => [
-                ...(t.path ? [[`tools.${name}.path`, t.path] as [string, OpTarget]] : []),
-                ...(t.z ? [[`tools.${name}.z`, t.z] as [string, OpTarget]] : []),
-            ],
-        ),
-    ];
-}
-
 /** min of two ceilings, ignoring 0 (uncapped). 0 if both uncapped. */
 function minPositive(a: number, b: number): number {
     const capped = [a, b].filter((v) => v > 0);
     return capped.length ? Math.min(...capped) : 0;
 }
 
-/** The tool→machine chain, for reporting the value that will actually apply. */
-function inherit(tool: OpTarget | undefined, machine: OpTarget): OpTarget {
-    return { feed: tool?.feed ?? machine.feed, accel: tool?.accel ?? machine.accel };
+function feedOver(path: string, feed: number, ceil: number): Issue[] {
+    return ceil > 0 && feed > ceil ? [warn(`${path} ${feed} exceeds axis ceiling ${ceil} (clamped)`)] : [];
 }
 
 function overCeiling(path: string, t: OpTarget, feedCeil: number, accelCeil: number): Issue[] {

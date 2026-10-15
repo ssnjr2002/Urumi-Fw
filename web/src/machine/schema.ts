@@ -93,21 +93,6 @@ export interface OpTarget {
     readonly accel?: number;
 }
 
-/**
- * An operation target at the MACHINE tier, where fill-at-load guarantees a
- * feed (see defaults.ts). Distinct from OpTarget — a tool-tier target keeps
- * `feed` optional because `undefined` there means "inherit", which is real
- * information. This is the type-level statement of that difference, and it is
- * what lets consumers drop their `?? 80` fallbacks without a `!`.
- *
- * `accel` stays optional at both tiers: unset means "derive from the axis
- * ceilings", which no single number expresses.
- */
-export interface MachineTarget {
-    readonly feed: number;
-    readonly accel?: number;
-}
-
 // ── machine tier (axes) ──────────────────────────────────────────────────────
 
 /**
@@ -519,10 +504,10 @@ export interface ToolProfile {
     readonly unwind: boolean;
     readonly cornerAngleDeg: number;
     readonly minRadiusMm: number;
-    /** Cut (pen-down) target; overrides machine.path. feed omitted → machine default. */
-    readonly path?: OpTarget;
-    /** Engage (touch-down / retract) target; overrides machine.z. */
-    readonly z?: OpTarget;
+    /** Cut feed, mm/s; absent → machine.feed.cutFallback. */
+    readonly cutFeed?: number;
+    /** Plunge feed, mm/s; absent → machine.feed.plungeFallback. */
+    readonly plungeFeed?: number;
     /**
      * True if the tool cuts INTO the material (knife, crease): its cut height is
      * the mat. False for a tool that works ON the surface (pen): its cut height
@@ -657,12 +642,7 @@ export interface MachineConfig {
      */
     readonly defaultHead: number;
     readonly fCpu: number;
-    /** Cut target baseline (engage; tools override). */
-    readonly path: MachineTarget;
-    /** Pen-up XY travel target (reposition; machine-owned). */
-    readonly rapid: MachineTarget;
-    /** Z engage target baseline (tools override). */
-    readonly z: MachineTarget;
+    readonly feed: JobFeed;
     /** Standalone-A slew (reposition; machine-owned). feed unset ⇒ A ceiling. */
     readonly slew: OpTarget;
     /** Margin above the material top that counts as clear, mm. */
@@ -683,6 +663,16 @@ export interface MachineConfig {
  * When a job leaves BUFFERING: once `queueTime` s of motion is queued, or once
  * no record has arrived for `idleTime` s. Jobs only; jogs start at once.
  */
+/** Job feeds, mm/s, at least 1; the Pico's `feed` command overrides cut and travel. */
+export interface JobFeed {
+    /** Cut feed when neither the layer nor its tool sets one. */
+    readonly cutFallback: number;
+    /** Travel to a contour's start. */
+    readonly travelDefault: number;
+    /** Plunge feed when the tool sets none. */
+    readonly plungeFallback: number;
+}
+
 export interface JobBuffer {
     readonly queueTime: number;
     readonly idleTime: number;

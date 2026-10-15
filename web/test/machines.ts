@@ -140,7 +140,7 @@ export function twoHeadMachine(offsets: { xOffset: number; yOffset: number }[] =
                 { accepts: [ToolType.PEN, ToolType.REVOLVER_PEN, ToolType.CREASE], ...offsets[1] },
             ),
         ],
-        { fCpu: DEFAULTS.machine.fCpu, rapid: { feed: 80 } },
+        { fCpu: DEFAULTS.machine.fCpu },
     );
 }
 

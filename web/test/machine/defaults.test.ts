@@ -28,9 +28,7 @@ describe("factories derive from DEFAULTS", () => {
     it("machineConfig uses DEFAULTS.machine", () => {
         const m = machineConfig(axis(), axis(), [head()]);
         expect(m.fCpu).toBe(DEFAULTS.machine.fCpu);
-        expect(m.path).toEqual(DEFAULTS.machine.path);
-        expect(m.rapid).toEqual(DEFAULTS.machine.rapid);
-        expect(m.z).toEqual(DEFAULTS.machine.z);
+        expect(m.feed).toEqual(DEFAULTS.machine.feed);
         expect(m.slew).toEqual(DEFAULTS.machine.slew);
         expect(m.defaultHead).toBe(DEFAULTS.machine.defaultHead);
     });
@@ -55,8 +53,10 @@ describe("factories derive from DEFAULTS", () => {
     });
 
     it("overrides still beat the defaults", () => {
-        const m = machineConfig(axis(), axis(), [head()], { path: { feed: 12345 } });
-        expect(m.path.feed).toBe(12345);
+        const m = machineConfig(axis(), axis(), [head()], {
+            feed: { cutFallback: 12345, travelDefault: 80, plungeFallback: 20 },
+        });
+        expect(m.feed.cutFallback).toBe(12345);
     });
 });
 
@@ -85,9 +85,7 @@ describe("fill-at-load", () => {
         expect(r.ok).toBe(true);
         if (!r.ok) return;
         const { machine } = r.config;
-        expect(machine.path).toEqual(DEFAULTS.machine.path);
-        expect(machine.rapid).toEqual(DEFAULTS.machine.rapid);
-        expect(machine.z).toEqual(DEFAULTS.machine.z);
+        expect(machine.feed).toEqual(DEFAULTS.machine.feed);
     });
 
     it("omitting an optional field equals stating its default explicitly", () => {
@@ -95,9 +93,7 @@ describe("fill-at-load", () => {
             machine: {
                 fCpu: 150_000_000,
                 meshOn: false,
-                path: DEFAULTS.machine.path,
-                rapid: DEFAULTS.machine.rapid,
-                z: DEFAULTS.machine.z,
+                feed: DEFAULTS.machine.feed,
                 slew: DEFAULTS.machine.slew,
                 x: {
                     node: { id: 1, type: 1, present: true },
@@ -136,32 +132,23 @@ describe("fill-at-load", () => {
 
 describe("resolveTargets", () => {
     const m = machineConfig(axis(), axis(), [head()], {
-        path: { feed: 80 },
-        z: { feed: 20 },
-        rapid: { feed: 80 },
+        feed: { cutFallback: 80, travelDefault: 70, plungeFallback: 20 },
     });
 
-    it("tool target overrides the machine baseline", () => {
-        const t = resolveTargets(m, toolProfile("k", { path: { feed: 40 } }));
-        expect(t.path.feed).toBe(40);
+    it("tool feeds override the machine fallbacks", () => {
+        const t = resolveTargets(m, toolProfile("k", { cutFeed: 40, plungeFeed: 5 }));
+        expect(t.cutFeed).toBe(40);
+        expect(t.plungeFeed).toBe(5);
     });
 
-    it("absent tool target inherits the machine baseline", () => {
+    it("absent tool feeds inherit the machine fallbacks", () => {
         const t = resolveTargets(m, toolProfile("k"));
-        expect(t.path.feed).toBe(80);
-        expect(t.z.feed).toBe(20);
+        expect(t.cutFeed).toBe(80);
+        expect(t.plungeFeed).toBe(20);
     });
 
-    it("feed and accel inherit independently", () => {
-        const machine = machineConfig(axis(), axis(), [head()], {
-            path: { feed: 80, accel: 500 },
-        });
-        const t = resolveTargets(machine, toolProfile("k", { path: { feed: 40 } }));
-        expect(t.path).toEqual({ feed: 40, accel: 500 });
-    });
-
-    it("rapid and slew ignore tool overrides (machine-owned)", () => {
-        const t = resolveTargets(m, toolProfile("k", { path: { feed: 40 } }));
-        expect(t.rapid.feed).toBe(80);
+    it("travel and slew ignore tool overrides (machine-owned)", () => {
+        const t = resolveTargets(m, toolProfile("k", { cutFeed: 40 }));
+        expect(t.travelFeed).toBe(70);
     });
 });

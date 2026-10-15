@@ -54,7 +54,6 @@ import {
     type HomingConfig,
     type ProbeConfig,
     type OpTarget,
-    type MachineTarget,
     type ToolHead,
     type ToolProfile,
     type ToolType,
@@ -65,6 +64,7 @@ import {
     type WorkOffset,
     type StoredPositions,
     type JobBuffer,
+    type JobFeed,
 } from "../schema.js";
 import { TOOL_PROFILES } from "../tools.js";
 import { validateConfig } from "./validate.js";
@@ -166,9 +166,15 @@ interface JsonLaser {
 
 interface JsonMachine {
     readonly fCpu?: number;
-    readonly path?: JsonOpTarget;
-    readonly rapid?: JsonOpTarget;
-    readonly z?: JsonOpTarget;
+    readonly feed?: {
+        readonly cutFallback?: number;
+        readonly travelDefault?: number;
+        readonly plungeFallback?: number;
+    };
+    /** Removed — see buildFeed. Typed so the check can see them. */
+    readonly path?: unknown;
+    readonly rapid?: unknown;
+    readonly z?: unknown;
     readonly slew?: JsonOpTarget;
     readonly clearanceMm?: number;
     readonly x: JsonAxis;
@@ -196,8 +202,11 @@ interface JsonToolOverride {
     readonly unwind?: boolean;
     readonly cornerAngleDeg?: number;
     readonly minRadiusMm?: number;
-    readonly path?: JsonOpTarget;
-    readonly z?: JsonOpTarget;
+    readonly cutFeed?: number;
+    readonly plungeFeed?: number;
+    /** Removed — see the tools build step. Typed so the check can see them. */
+    readonly path?: unknown;
+    readonly z?: unknown;
     readonly plunge?: boolean;
     /** Removed — see the tools build step. Typed so the check can see it. */
     readonly liftHeight?: number;
@@ -385,9 +394,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         // Fill-at-load: machine targets are always populated from DEFAULTS, so
         // consumers never write a `??` fallback. Tool overrides are NOT filled
         // (see patchToolProfile) — absent there means "inherit".
-        path: machineTarget(machine.path, DEFAULTS.machine.path),
-        rapid: machineTarget(machine.rapid, DEFAULTS.machine.rapid),
-        z: machineTarget(machine.z, DEFAULTS.machine.z),
+        feed: buildFeed(machine, errors),
         slew: opTarget(machine.slew, DEFAULTS.machine.slew),
         clearanceMm: machine.clearanceMm ?? DEFAULTS.machine.clearanceMm,
         peripherals,
@@ -412,6 +419,11 @@ export function parseConfig(jsonText: string): ConfigResult {
             if (!(name in TOOL_PROFILES)) {
                 errors.push(`tools.${name}: not a known tool preset`);
                 continue;
+            }
+            for (const [old, now] of [["path", "cutFeed"], ["z", "plungeFeed"]] as const) {
+                if (json.tools[name]![old] !== undefined) {
+                    errors.push(`tools.${name}.${old}: removed — use tools.${name}.${now}`);
+                }
             }
             if (json.tools[name]!.liftHeight !== undefined) {
                 errors.push(
@@ -491,6 +503,27 @@ function opTarget(j: JsonOpTarget | undefined, fallback: JsonOpTarget): OpTarget
     return out;
 }
 
+// The machine's `path`, `rapid` and `z` became `feed`; rejected by name so an
+// old config does not run on the defaults unnoticed.
+function buildFeed(machine: JsonMachine, errors: string[]): JobFeed {
+    if (machine.path !== undefined) errors.push("machine.path: removed — use machine.feed.cutFallback");
+    if (machine.rapid !== undefined) errors.push("machine.rapid: removed — use machine.feed.travelDefault");
+    if (machine.z !== undefined) errors.push("machine.z: removed — use machine.feed.plungeFallback");
+    const j = machine.feed;
+    const d = DEFAULTS.machine.feed;
+    const feed = (k: keyof JobFeed): number => {
+        const v = j?.[k];
+        if (v === undefined) return d[k];
+        if (typeof v !== "number") errors.push(`machine.feed.${k}: must be a number`);
+        return v as number;
+    };
+    return {
+        cutFallback: feed("cutFallback"),
+        travelDefault: feed("travelDefault"),
+        plungeFallback: feed("plungeFallback"),
+    };
+}
+
 function buildBuffer(j: JsonMachine["buffer"], errors: string[]): JobBuffer {
     const d = DEFAULTS.machine.buffer;
     const time = (k: keyof JobBuffer): number => {
@@ -500,19 +533,6 @@ function buildBuffer(j: JsonMachine["buffer"], errors: string[]): JobBuffer {
         return v as number;
     };
     return { queueTime: time("queueTime"), idleTime: time("idleTime") };
-}
-
-/**
- * As opTarget, but for the machine tier where a feed is guaranteed. The
- * fallback's feed is required, so the result satisfies MachineTarget.
- */
-function machineTarget(
-    j: JsonOpTarget | undefined,
-    fallback: { readonly feed: number; readonly accel?: number },
-): MachineTarget {
-    const feed = typeof j?.feed === "number" ? j.feed : fallback.feed;
-    const accel = typeof j?.accel === "number" ? j.accel : fallback.accel;
-    return accel !== undefined ? { feed, accel } : { feed };
 }
 
 function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
@@ -756,14 +776,10 @@ function patchToolProfile(
     delete merged.name; // supplied by toolProfile()
 
     for (const key of ["tangential", "offsetMm", "unwind", "cornerAngleDeg",
-                       "minRadiusMm", "plunge", "toolOffset", "chamberOffsets", "id"] as const) {
+                       "minRadiusMm", "plunge", "toolOffset", "chamberOffsets", "id",
+                       "cutFeed", "plungeFeed"] as const) {
         if (o[key] !== undefined) merged[key] = o[key];
     }
-    // Engage targets merge FIELD-WISE over the preset: `{accel}` alone must not
-    // wipe the preset's feed. Tool tier is never filled from DEFAULTS — an
-    // absent target stays undefined, meaning "inherit" (see resolveTargets).
-    if (o.path !== undefined) merged.path = opTarget(o.path, base.path ?? {});
-    if (o.z !== undefined) merged.z = opTarget(o.z, base.z ?? {});
 
     // Duty limits merge field-wise over the preset, same rule as the targets.
     // Missing numbers become 0 rather than an invented default: these are

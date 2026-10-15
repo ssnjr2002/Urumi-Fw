@@ -13,8 +13,8 @@
  *
  * Interaction with optional config.json fields — fill-at-load, one exception:
  *
- *   machine.*  targets are FILLED at load. An absent `machine.path` becomes
- *              DEFAULTS.machine.path, so MachineConfig is always fully
+ *   machine.*  targets are FILLED at load. An absent `machine.feed` becomes
+ *              DEFAULTS.machine.feed, so MachineConfig is always fully
  *              populated and consumers never write `??`.
  *
  *   tool.*     overrides are LEFT UNDEFINED when absent, because `undefined`
@@ -28,12 +28,8 @@
 export const DEFAULTS = {
     machine: {
         fCpu: 150_000_000,
-        /** Cut target baseline (engage; tools override). */
-        path: { feed: 80 },
-        /** Pen-up XY travel (reposition; machine-owned). */
-        rapid: { feed: 80 },
-        /** Z engage baseline (tools override). */
-        z: { feed: 20 },
+        /** Job feeds, mm/s: the cut and plunge fallbacks and the travel. */
+        feed: { cutFallback: 80, travelDefault: 80, plungeFallback: 20 },
         /** Standalone-A slew (reposition). Empty ⇒ falls to the A axis ceiling. */
         slew: {},
         /** Margin above the material top that counts as clear, mm. */

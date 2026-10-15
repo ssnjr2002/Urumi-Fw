@@ -77,8 +77,8 @@ describe("config: ToolProfile presets", () => {
         expect(PEN.name).toBe("pen");
         expect(PEN.toolType).toBe(ToolType.PEN);
         expect(PEN.tangential).toBe(false);
-        // Presets carry no path target; the machine baseline (feed 80) supplies it.
-        expect(PEN.path).toBeUndefined();
+        // Presets carry no cut feed; the machine fallback (80) supplies it.
+        expect(PEN.cutFeed).toBeUndefined();
     });
 
     it("KNIFE: tangential, wired (unwind), type KNIFE", () => {
@@ -223,9 +223,7 @@ describe("config: MachineConfig", () => {
         );
         expect(m.defaultHead).toBe(0);
         expect(m.fCpu).toBe(150_000_000);
-        expect(m.path).toEqual({ feed: 80 });
-        expect(m.rapid).toEqual({ feed: 80 });
-        expect(m.z).toEqual({ feed: 20 });
+        expect(m.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20 });
         expect(m.slew).toEqual({});
         expect(m.peripherals).toEqual([]);
     });
@@ -304,12 +302,10 @@ describe("config: defaultConfig", () => {
         expect(cfg.machine.heads[0]!.yOffset).toBe(0);
     });
 
-    it("machine defaults: defaultHead 0, fCpu 150e6, path/rapid feed 80, z feed 20, no laser", () => {
+    it("machine defaults: defaultHead 0, fCpu 150e6, cut and travel feed 80, plunge 20, no laser", () => {
         expect(cfg.machine.defaultHead).toBe(0);
         expect(cfg.machine.fCpu).toBe(150_000_000);
-        expect(cfg.machine.path).toEqual({ feed: 80 });
-        expect(cfg.machine.rapid).toEqual({ feed: 80 });
-        expect(cfg.machine.z).toEqual({ feed: 20 });
+        expect(cfg.machine.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20 });
         expect(cfg.machine.laser).toBeUndefined();
     });
 
@@ -359,9 +355,9 @@ describe("config: pipelineConfig overrides", () => {
     });
 
     it("patches toolProfiles", () => {
-        const fastPen = toolProfile("pen", { path: { feed: 120 } });
+        const fastPen = toolProfile("pen", { cutFeed: 120 });
         const cfg = pipelineConfig({ toolProfiles: { pen: fastPen } });
-        expect(cfg.toolProfiles.pen?.path?.feed).toBe(120);
+        expect(cfg.toolProfiles.pen?.cutFeed).toBe(120);
     });
 });
 

@@ -4,7 +4,7 @@
  * Everything that answers "given this config, what actually applies?":
  *   - axesForHead / resolvedAxesDefault — the 4 live axes, Z/A per head
  *   - headsAccepting — which sockets a tool's fixture fits
- *   - resolveTargets — the tool→machine feed/accel override chain
+ *   - resolveTargets — the tool→machine feed override chain
  *   - toolForLayer  — SVG layer name → tool
  *   - requiredAxes / canRunTool — bake-time feasibility
  *
@@ -16,7 +16,6 @@
 import type {
     AxisConfig,
     MachineConfig,
-    MachineTarget,
     OpTarget,
     ToolProfile,
     ToolType,
@@ -97,12 +96,12 @@ export function headsAccepting(machine: MachineConfig, tool: ToolType): number[]
  * WHAT was asked for, not what is physically permitted.
  */
 export interface ResolvedTargets {
-    /** Cut (pen-down) XY. Tool overrides machine. */
-    readonly path: MachineTarget;
-    /** Z engage (touch-down / retract). Tool overrides machine. */
-    readonly z: MachineTarget;
-    /** Pen-up XY reposition. Machine-owned — no tool override. */
-    readonly rapid: MachineTarget;
+    /** Cut feed, mm/s. Tool overrides machine. */
+    readonly cutFeed: number;
+    /** Plunge feed, mm/s. Tool overrides machine. */
+    readonly plungeFeed: number;
+    /** Travel feed, mm/s. Machine-owned — no tool override. */
+    readonly travelFeed: number;
     /** Standalone-A slew. Machine-owned — no tool override. */
     readonly slew: OpTarget;
 }
@@ -113,15 +112,9 @@ export function resolveTargets(
     profile: ToolProfile,
 ): ResolvedTargets {
     return {
-        path: {
-            feed: profile.path?.feed ?? machine.path.feed,
-            accel: profile.path?.accel ?? machine.path.accel,
-        },
-        z: {
-            feed: profile.z?.feed ?? machine.z.feed,
-            accel: profile.z?.accel ?? machine.z.accel,
-        },
-        rapid: machine.rapid,
+        cutFeed: profile.cutFeed ?? machine.feed.cutFallback,
+        plungeFeed: profile.plungeFeed ?? machine.feed.plungeFallback,
+        travelFeed: machine.feed.travelDefault,
         slew: machine.slew,
     };
 }

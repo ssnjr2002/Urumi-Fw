@@ -72,17 +72,22 @@ describe("rule: nonNegativeCeilings", () => {
 });
 
 describe("rule: nonNegativeTargets", () => {
-    it("errors on a negative machine target feed", () => {
-        expect(errors(cfg({ path: { feed: -5 } }))).toContain("machine.path.feed: must be >= 0");
+    it("errors on a negative slew feed", () => {
+        expect(errors(cfg({ slew: { feed: -5 } }))).toContain("machine.slew.feed: must be >= 0");
+    });
+
+    it("errors on a machine feed below 1", () => {
+        expect(errors(cfg({ feed: { cutFallback: 0.5, travelDefault: 80, plungeFallback: 20 } })))
+            .toContain("machine.feed.cutFallback: must be >= 1 (got 0.5)");
     });
 
     it("errors on a negative tool target feed", () => {
         const c = cfg();
         const bad: PipelineConfig = {
             ...c,
-            toolProfiles: { knife: toolProfile("knife", { path: { feed: -1 } }) },
+            toolProfiles: { knife: toolProfile("knife", { cutFeed: -1 }) },
         };
-        expect(errors(bad)).toContain("tools.knife.path.feed: must be >= 0");
+        expect(errors(bad)).toContain("tools.knife.cutFeed: must be >= 0");
     });
 });
 
@@ -102,24 +107,24 @@ describe("rule: xyMustBeCapped", () => {
 });
 
 describe("rule: targetsUnderCeilings", () => {
-    it("warns when a tool path feed exceeds the XY ceiling", () => {
+    it("warns when a tool cut feed exceeds the XY ceiling", () => {
         const c = cfg();
         const over: PipelineConfig = {
             ...c,
-            toolProfiles: { knife: toolProfile("knife", { path: { feed: 500 } }) },
+            toolProfiles: { knife: toolProfile("knife", { cutFeed: 500 }) },
         };
         expect(warnings(over)).toContain(
-            "tools.knife.path.feed 500 exceeds axis ceiling 80 (clamped)",
+            "tools.knife.cutFeed 500 exceeds axis ceiling 80 (clamped)",
         );
     });
 
     it("uses the INHERITED value when the tool does not override", () => {
-        // machine.z.feed 20 > Z maxFeed 10 — the exact latent bug the value
+        // plungeFallback 20 > Z maxFeed 10 — the exact latent bug the value
         // model surfaced in the bench config.
-        const c = cfg({ z: { feed: 20 } });
+        const c = cfg({ feed: { cutFallback: 80, travelDefault: 80, plungeFallback: 20 } });
         const withTool: PipelineConfig = { ...c, toolProfiles: { knife: toolProfile("knife") } };
         expect(warnings(withTool)).toContain(
-            "tools.knife.z.feed 20 exceeds axis ceiling 10 (clamped)",
+            "tools.knife.plungeFeed 20 exceeds axis ceiling 10 (clamped)",
         );
     });
 
@@ -132,9 +137,9 @@ describe("rule: targetsUnderCeilings", () => {
                 x: { ...c.machine.x, maxFeed: 0 },
                 y: { ...c.machine.y, maxFeed: 0 },
             },
-            toolProfiles: { knife: toolProfile("knife", { path: { feed: 9999 } }) },
+            toolProfiles: { knife: toolProfile("knife", { cutFeed: 9999 }) },
         };
-        expect(uncapped && warnings(uncapped).some((w) => w.includes("path.feed"))).toBe(false);
+        expect(uncapped && warnings(uncapped).some((w) => w.includes("cutFeed"))).toBe(false);
     });
 });
 
@@ -216,7 +221,7 @@ describe("loadConfig (parse ⨟ validate)", () => {
                 a: { node: { id: 4 }, stepsPerUnit: 45, maxFeed: 100, maxAccel: 500 },
             },
         ],
-        tools: { knife: { id: 1, path: { feed: 40 }, z: { feed: 10 } } },
+        tools: { knife: { id: 1, cutFeed: 40, plungeFeed: 10 } },
     };
     const json = (patch: object = {}) => JSON.stringify({ ...base, ...patch });
 
@@ -244,7 +249,7 @@ describe("loadConfig (parse ⨟ validate)", () => {
 
     it("surfaces warnings without blocking the load", () => {
         const r = loadConfig(
-            json({ tools: { knife: { id: 1, path: { feed: 500 } } } }),
+            json({ tools: { knife: { id: 1, cutFeed: 500 } } }),
         );
         expect(r.ok).toBe(true);
         if (r.ok) expect(r.warnings.some((w) => w.includes("exceeds axis ceiling"))).toBe(true);

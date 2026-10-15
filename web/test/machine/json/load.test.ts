@@ -135,20 +135,33 @@ describe("load: valid config", () => {
 // ── optional fields default correctly ─────────────────────────────────────────
 
 describe("load: optional defaults", () => {
-    it("rapid.feed defaults to 80 when absent", () => {
+    it("feed defaults to 80, 80 and 20 when absent", () => {
         const json = JSON.parse(TEST_MACHINE);
-        delete json.machine.rapid;
+        delete json.machine.feed;
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
-        expect(r.config.machine.rapid.feed).toBe(80);
+        expect(r.config.machine.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20 });
     });
 
-    it("z.feed defaults to 20 when absent", () => {
+    it("the removed machine path and rapid are rejected by name", () => {
         const json = JSON.parse(TEST_MACHINE);
-        delete json.machine.z;
+        json.machine.path = { feed: 80 };
+        json.machine.rapid = { feed: 80 };
+        json.machine.z = { feed: 20 };
         const r = parseConfig(JSON.stringify(json));
-        if (!r.ok) throw new Error("expected ok");
-        expect(r.config.machine.z.feed).toBe(20);
+        if (r.ok) throw new Error("expected errors");
+        expect(r.errors).toContain("machine.z: removed — use machine.feed.plungeFallback");
+        expect(r.errors).toContain("machine.path: removed — use machine.feed.cutFallback");
+        expect(r.errors).toContain("machine.rapid: removed — use machine.feed.travelDefault");
+    });
+
+    it("a tool's removed path and z are rejected by name", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.tools = { knife: { id: 1, path: { feed: 60 }, z: { feed: 10 } } };
+        const r = parseConfig(JSON.stringify(json));
+        if (r.ok) throw new Error("expected errors");
+        expect(r.errors).toContain("tools.knife.path: removed — use tools.knife.cutFeed");
+        expect(r.errors).toContain("tools.knife.z: removed — use tools.knife.plungeFeed");
     });
 
     it("slew defaults to empty (A ceiling) when absent", () => {
@@ -211,13 +224,13 @@ describe("load: optional defaults", () => {
 // ── tool preset patching ──────────────────────────────────────────────────────
 
 describe("load: tool preset patching", () => {
-    it("patches knife path.feed without changing other fields", () => {
+    it("patches knife cutFeed without changing other fields", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.tools = { knife: { id: 1, path: { feed: 60 } } };
+        json.tools = { knife: { id: 1, cutFeed: 60 } };
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
         const knife = r.config.toolProfiles.knife!;
-        expect(knife.path?.feed).toBe(60);
+        expect(knife.cutFeed).toBe(60);
         expect(knife.tangential).toBe(KNIFE.tangential); // unchanged
         expect(knife.unwind).toBe(KNIFE.unwind); // unchanged
     });
@@ -582,19 +595,12 @@ describe("patchToolProfile", () => {
         expect(p.chamberOffsets).toHaveLength(7);
     });
 
-    it("merges an OpTarget field-wise, not wholesale", () => {
-        // accel given, feed absent → feed must not be clobbered to undefined.
-        const p = patched("knife", { path: { feed: 40, accel: 150 } });
-        expect(p.path).toEqual({ feed: 40, accel: 150 });
-        const q = patched("knife", { path: { feed: 40 } });
-        expect(q.path?.feed).toBe(40);
-    });
-
     it("leaves an absent tool override as undefined (inherit, not fill)", () => {
         // Tool tier must NOT be filled from DEFAULTS — undefined means
         // "inherit from machine", which resolveTargets applies later.
         const p = patched("pen", { minRadiusMm: 1 });
-        expect(p.path).toBeUndefined();
+        expect(p.cutFeed).toBeUndefined();
+        expect(p.plungeFeed).toBeUndefined();
     });
 
     it("an empty override is a no-op on EVERY field of the preset", () => {

@@ -55,7 +55,6 @@ export {
     type LinearHoming,
     type RotaryHoming,
     type OpTarget,
-    type MachineTarget,
     type BusNode,
     busNode,
     NodeType,
