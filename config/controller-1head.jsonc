@@ -88,7 +88,7 @@
     {
       "accepts": ["knife", "crease"],
       "xOffset": -70,              // rough eyeball: tip − laser dot
-      "yOffset": -40,
+      "yOffset": -30,
       "z": {
         "node": { "id": 3, "present": true },
         "stepsPerUnit": 1200,
@@ -143,8 +143,8 @@
   ],
   "defaultHead": 0,
   "peripherals": [
-    { "id": 7, "type": 2, "present": true },
-    { "id": 8, "type": 3, "present": true }
+    { "id": 7, "type": 2, "present": true }
+    // { "id": 8, "type": 3, "present": true }
   ],
   "tools": {
     "knife": {
