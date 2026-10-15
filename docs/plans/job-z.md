@@ -16,17 +16,20 @@ here. Until then a `BREAK` runs through without a lift.
 * **The Pico inserts every lift;** the wire stays 2D. Lifts and plunges are
   Z-only lines (a change of axis set stops), tagged with the index of the
   record they lead into, so a resume's `LAYER_HDR(N)` replays its own travel.
-* With work Z the bed top (the mesh applies by its rule):
+* Work Z is the Z where the head's tip meets the material
+  (coordinate-system.md): `WPos` Z 0 is the material's top, + up out of it,
+  − into it. In machine Z, with the mesh applied by its rule:
 
   ```
-  lift / travel   workZ + t + c
-  plunge          workZ + t − k·t      k in [0, 2]; 1 a full cut, past 1 into the mat
+  lift / travel   workZ + c
+  plunge          workZ − k·t          k in [0, 2]; 1 a full cut, past 1 into the mat
   ```
 
   `t` (material thickness) from the layer header, `k` (plunge scale) from the
   layer header, `c` (`clearance`) from the tool profile. `t` is a u16 in µm
   (to 65.5 mm; Z travels 48 mm, so preflight bounds it first). A tool with
-  `plunge: false` (a pen) has `k` 0.
+  `plunge: false` (a pen) has depth 0 whatever `k` says.
+  A head with no work Z set refuses the layer header (`NACK_JOB`).
 * **Feeds:** a plunge at the tool's `plungeFeed`, else
   `machine.feed.plungeFallback`; a lift at `machine.feed.liftFeed` (new,
   machine-wide, ≥ 1).
@@ -35,10 +38,10 @@ here. Until then a `BREAK` runs through without a lift.
 
 | cause | stop | where | branch |
 |---|---|---|---|
-| contour `START` | lift, travel, plunge | every contour start | ZA |
-| job end | lift | after the last record | ZA |
-| hold to `PAUSED`, abort at rest | lift | where it stopped | ZA |
-| dry ring (`BUFFERING` mid-job, lost host) | lift | where it stopped | ZA |
+| contour `END` | lift | after every contour's last record | ZA |
+| contour `START` | travel, plunge (a lift first if still down) | every contour start | ZA |
+| pause, abort | lift | where it stopped, mid-contour too | ZA |
+| lost host | lift | where it stopped, after a timeout | later |
 | duty, past `maxOnS` | lift, tool off, `DWELL`, tool on, plunge | anywhere | ZC |
 | corner over `cornerAngleDeg` | lift, swivel, plunge | that `BREAK` | with A |
 | cable range | lift, unwind, plunge | anywhere | with A |
@@ -46,8 +49,20 @@ here. Until then a `BREAK` runs through without a lift.
 Estop does not lift. Every other alarm lifts when Z can still move, turns the
 tool off and keeps the vacuum on.
 
-* The lift at a contour's `START` separates the travel from its first cut,
-  so the corner blend between them (kept by JX) goes.
+* `END` is the only lift the Pico adds by itself in ZA; it covers job end
+  and a ring that runs dry between contours. A ring dry mid-contour does not
+  lift. A resume comes in as a `START`: travel to the resume point less the
+  margin, plunge, continue.
+* The lift and plunge separate the travel from the cuts on either side, so
+  the corner blend between a travel and its first cut (kept by JX) goes.
+* Pause and abort lift before their state lands; Core 0 inserts the lift,
+  Core 1 only runs the ring:
+  * pause: `HOLDING`; Core 1 brakes to rest, keeps the resume point, drops
+    the ring and posts `FACT_HELD` (new), staying in `HOLDING`. Core 0 queues
+    the lift; on its `FACT_RING_DRAINED` Core 0 lands `PAUSED`.
+  * abort: `ABORTING`; the finished abort's `FACT_RING_DRAINED` has Core 0
+    queue the lift; the next drain closes the job to IDLE.
+  * motion-sessions.md's `HOLDING → PAUSED` row: writer Core 0, not Core 1.
 * A resume plunges at the resume point (`s − margin`).
 
 ### Tool on and off
@@ -87,8 +102,9 @@ A dependent chain, run as a Single Session.
 ### ZA: lifts and plunges
 
 * Name: `feature/job-lifts`
-* Purpose: Z-only lift and plunge blocks at contour starts, at job end, on
-  pause, abort and a dry ring; `t` on the wire, `k` live.
+* Purpose: a lift at every contour `END`, travel and plunge at every
+  `START`, a lift before `PAUSED` and before an abort's IDLE; `t` on the
+  wire, `k` live, work Z required.
 * Interface: `LAYER_HDR` gains `t` (u16 µm, so 22 bytes); `machine.feed.liftFeed`;
   tool `clearance`; blob and schema version 8.
 * Files:

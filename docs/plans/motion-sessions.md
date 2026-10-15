@@ -70,7 +70,7 @@ layer (TOOL_REC)
   | `BUFFERING` | `RUNNING` | Core 1 | buffered time, last record, or timeout |
   | `RUNNING` | `BUFFERING` | Core 1 | dry ring or late adoption, at rest |
   | `RUNNING` | `HOLDING` | Core 0 | `pause` |
-  | `HOLDING` | `PAUSED` | Core 1 | at rest, after the lift |
+  | `HOLDING` | `PAUSED` | Core 0 | at rest, after the lift (job-z.md) |
   | `RUNNING` | `DWELL` → `RUNNING` | Core 1 | duty lift, then the delay |
   | `PAUSED` | `BUFFERING` | Core 0 | `TOOL_REC(N)`, N the resume point |
   | `PAUSED` | JOGGING → `PAUSED` | Core 0 / Core 1 | jog, with the return slot |
