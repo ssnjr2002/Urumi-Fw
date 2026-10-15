@@ -14,9 +14,9 @@ export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planne
 export const BEZIER_SIZE = 56;
 export const BEZIER_SEQ_OFFSET = 2;
 
-// ── LAYER_HDR — 17-byte layer header, opens a job (format/layer.ts) ────────────
-export const MAGIC_LAYER_HDR = 0xa2; // host → Pico: tool, chamber, feed, k
-export const LAYER_HDR_SIZE = 19;
+// ── LAYER_HDR — 20-byte layer header, opens a job (format/layer.ts) ────────────
+export const MAGIC_LAYER_HDR = 0xa2; // host → Pico: tool, head, chamber, feed, k
+export const LAYER_HDR_SIZE = 20;
 export const LAYER_HDR_SEQ_OFFSET = 2;
 
 // ── Continuous jog — 7-byte deadman packet and its stop byte (format/cjog.ts) ──
@@ -70,16 +70,17 @@ export const NACK_BAD_CURVE = 0x08;
 export const NACK_SOFT_LIMIT = 0x09;
 // A continuous-jog packet moving more than one axis set (XY, Z, A).
 export const NACK_MIXED_AXES = 0x0a;
-// A continuous-jog packet refused while a step or sequence holds the machine; a
-// LAYER_HDR whose tool is on another head, in a job (heads switch from IDLE).
+// A continuous-jog packet refused while a step or sequence holds the machine.
 export const NACK_BUSY = 0x0b;
 // A BEZIER with no job open, or a LAYER_HDR inside a contour or with a bad
 // chamber, feed or k.
 export const NACK_JOB = 0x0c;
 // A LAYER_HDR whose tool id is not in the config.
 export const NACK_TOOL_UNKNOWN = 0x0d;
-// A LAYER_HDR whose tool no head has mounted.
-export const NACK_NOT_MOUNTED = 0x0e;
+// A LAYER_HDR whose tool is not mounted on its head, or whose head is not
+// selected: not consumed, and the job holds for a tool change; every header and
+// record meanwhile. The host waits and resends from the header.
+export const NACK_TOOL_CHANGE = 0x0f;
 
 // ── Config plane magics (Phase-2) — CFG blob push/pull over the data plane ──────
 // docs/wire_protocol.md "CRC Algorithms" + packets.py. CFG_SET/GET are host→Pico

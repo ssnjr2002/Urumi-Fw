@@ -40,7 +40,7 @@ import {
     NACK_SOFT_LIMIT,
     NACK_JOB,
     NACK_TOOL_UNKNOWN,
-    NACK_NOT_MOUNTED,
+    NACK_TOOL_CHANGE,
     NACK_BUSY,
 } from "../format/constants.js";
 import { stampSeq } from "../format/packet.js";
@@ -51,6 +51,7 @@ export const DEFAULT_WINDOW = 16;
 const ACK_TIMEOUT_MS = 200; // per-response wait before assuming loss
 const STALL_TIMEOUT_MS = 3000; // total silence before a fatal abort
 const BACKPRESSURE_MS = 50; // wait for the ring to drain on NACK_FULL
+const TOOL_CHANGE_MS = 250; // retry while the job holds for a tool change
 const MAX_CRC_ERRORS = 20;
 const IDLE_WAIT_MS = 20; // bound on an open source's idle wait
 
@@ -342,7 +343,7 @@ export class Session {
                 v?.(`FATAL: a record lies outside the soft range`);
                 return false; // fatal — the job does not fit where it is placed
             }
-            if (r === NACK_JOB || r === NACK_TOOL_UNKNOWN || r === NACK_NOT_MOUNTED) {
+            if (r === NACK_JOB || r === NACK_TOOL_UNKNOWN) {
                 this.fatalReason = r;
                 v?.(`FATAL: the Pico refused the layer (${fatalReasonName(r)})`);
                 return false; // fatal — no job open, or the layer's tool cannot run
@@ -352,7 +353,11 @@ export class Session {
                 v?.(`FATAL: wrong machine state (${fatalReasonName(r)})`);
                 return false; // fatal — wrong machine state
             }
-            if (r === NACK_CRC) {
+            if (r === NACK_TOOL_CHANGE) {
+                // The header was not consumed: the job holds while the operator
+                // changes the tool. Resend from it until it is ACKed.
+                await this._goBack(r, TOOL_CHANGE_MS);
+            } else if (r === NACK_CRC) {
                 crcErrors++;
                 if (crcErrors > MAX_CRC_ERRORS) {
                     this.fatalReason = FATAL_CRC_LIMIT;
@@ -478,7 +483,7 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [NACK_SOFT_LIMIT]: "NACK_SOFT_LIMIT",
     [NACK_JOB]: "NACK_JOB",
     [NACK_TOOL_UNKNOWN]: "NACK_TOOL_UNKNOWN",
-    [NACK_NOT_MOUNTED]: "NACK_NOT_MOUNTED",
+    [NACK_TOOL_CHANGE]: "NACK_TOOL_CHANGE",
     [NACK_BUSY]: "NACK_BUSY",
     [FATAL_STALL]: "FATAL_STALL",
     [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",

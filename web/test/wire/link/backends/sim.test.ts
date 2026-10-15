@@ -46,7 +46,7 @@ function rec(x = 1): Uint8Array {
     });
 }
 
-const layer = () => packLayerHdr({ tool: 1 });
+const layer = () => packLayerHdr({ tool: 1, head: 0 });
 
 /** A layer header, then records ending at 1..n mm. */
 const upTo = (n: number) => [layer(), ...Array.from({ length: n }, (_, i) => rec(i + 1))];
@@ -459,7 +459,7 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
     it("pause keeps the queued record; only a header naming it resumes", async () => {
         await withLink(async (link) => {
             await link.resetSeq();
-            const hdr = (layer: number, record: number) => packLayerHdr({ tool: 1, layer, record });
+            const hdr = (layer: number, record: number) => packLayerHdr({ tool: 1, head: 0, layer, record });
             expect((await link.stream([hdr(2, 10), rec(1), rec(2), rec(3)], 4)).ok).toBe(true);
             expect(await link.command("pause")).toBe("ok");
             expect(await link.command("get resume_layer resume_record"))

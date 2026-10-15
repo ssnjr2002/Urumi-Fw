@@ -3,8 +3,8 @@
  * Ported from host/protocol/link.py SimBackend.
  *
  * Answers text commands per the wire_protocol.md allowed-state matrix AND
- * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (tool and
- * mount not checked): JOB.BUFFERING until enough is
+ * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (tool,
+ * head and mount not checked): JOB.BUFFERING until enough is
  * queued, then RUNNING, each record taking `recordMs` and landing the head on
  * its end point; a dry ring goes back to BUFFERING. `jog` and held jogs move
  * too, as JOGGING. pause drops the ring, keeping the record it stopped at; a
@@ -544,7 +544,7 @@ export class SimTransport implements Transport {
                 this._flushAck();
                 return this._nack(NACK_PAUSED);
             }
-            if (!at || dv.getUint16(4, true) !== at.layer || dv.getUint32(6, true) !== at.record) {
+            if (!at || dv.getUint16(5, true) !== at.layer || dv.getUint32(7, true) !== at.record) {
                 this._flushAck();
                 return this._nack(NACK_JOB);
             }
@@ -558,8 +558,8 @@ export class SimTransport implements Transport {
             return this._nack(NACK_BAD_STATE);
         }
         if (data[0] === MAGIC_LAYER_HDR) {
-            this.curLayer = dv.getUint16(4, true);
-            this.nextRecord = dv.getUint32(6, true);
+            this.curLayer = dv.getUint16(5, true);
+            this.nextRecord = dv.getUint32(7, true);
             if (st === MachineState.IDLE) {
                 this.state = MachineState.JOB;
                 this.job = JobReason.BUFFERING;

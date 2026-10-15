@@ -96,6 +96,10 @@ export const JobReason = {
     PAUSED: 3,
     /** Braking for an abort; ends IDLE. */
     ABORTING: 4,
+    /** A tool change moving: the Zs park, the head goes to its probe switch. */
+    TOOL_CHANGE: 5,
+    /** At rest for the operator: mount the tool, jog, zero Z. */
+    TOOL_WAIT: 6,
 } as const;
 export type JobReason = (typeof JobReason)[keyof typeof JobReason];
 

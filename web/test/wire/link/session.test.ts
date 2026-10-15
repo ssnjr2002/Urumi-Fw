@@ -26,7 +26,7 @@ import { Writer } from "../../../src/wire/link/writer.js";
 import { Sink } from "../../../src/wire/link/sink.js";
 import { Ack, Nack } from "../../../src/wire/link/demux.js";
 import {
-    NACK_FULL, NACK_BAD_MAGIC, NACK_BAD_STATE, BEZIER_SIZE, BEZIER_SEQ_OFFSET, MAGIC_BEZIER,
+    NACK_FULL, NACK_BAD_MAGIC, NACK_BAD_STATE, NACK_TOOL_CHANGE, BEZIER_SIZE, BEZIER_SEQ_OFFSET, MAGIC_BEZIER,
 } from "../../../src/wire/format/constants.js";
 import { stampSeq } from "../../../src/wire/format/packet.js";
 
@@ -172,6 +172,33 @@ describe("wire/link/session: backpressure (NACK_FULL)", () => {
         // All 10 produced packets must be confirmed — not just the ones sent.
         expect(sess.stats().emitted).toBe(10);
         expect(sess.stats().acked).toBe(10);
+    });
+});
+
+describe("wire/link/session: tool change (NACK_TOOL_CHANGE)", () => {
+    it("holds and resends from the header until the Pico takes it", async () => {
+        const ackSink = new Sink<AckOrNack>("ack");
+        const pico = new FakePico(ackSink);
+        // The first three sends of packet 0 are refused: the job is changing tools.
+        let refusals = 3;
+        pico.write = (bytes: Uint8Array) => {
+            pico.writes.push(bytes);
+            for (let off = 0; off + BEZIER_SIZE <= bytes.length; off += BEZIER_SIZE) {
+                const p = bytes.subarray(off, off + BEZIER_SIZE);
+                pico.sentPackets.push(p);
+                const seq = p[BEZIER_SEQ_OFFSET]!;
+                if (seq !== pico.expectedSeq) continue;   // dropped behind the refusal
+                if (seq === 0 && refusals > 0) { refusals--; ackSink.put(new Nack(NACK_TOOL_CHANGE)); continue; }
+                pico.expectedSeq = (seq + 1) & 0xff;
+                ackSink.put(new Ack(pico.expectedSeq));
+            }
+            return Promise.resolve();
+        };
+        const sess = new Session(new Writer(pico), ackSink, new ListSource(pkts(4)), undefined, 4);
+        expect(await sess.run()).toBe(true);
+        expect(sess.fatalReason).toBeUndefined();
+        expect(sess.stats()).toMatchObject({ emitted: 4, acked: 4, nacks: 3 });
+        expect(pico.sentPackets.filter((p) => p[BEZIER_SEQ_OFFSET] === 0).length).toBe(4);
     });
 });
 
