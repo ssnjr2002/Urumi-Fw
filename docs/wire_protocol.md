@@ -15,7 +15,7 @@ Phase 1 splits the host↔Pico link into two planes that share the USB CDC pipe:
   the MCFG preamble. Pico replies ACK/NACK. Each binary packet is a fixed
   length keyed by its magic byte.
 - **Control plane — text lines.** Low-rate commands the operator/host issues:
-  `get`, `enable`, `disable`, `pause`, `resume`, `cancel`,
+  `get`, `enable`, `disable`, `pause`, `cancel`,
   `setorigin`, `stop`, `unalarm`, `ping`, `pingnode`. One command per line,
   `\n`-terminated; the Pico replies with a text line. This matches the existing
   Core 0 text CLI (`move`/`stop`/`ping`/`enable`/`disable`/`get`).
@@ -45,7 +45,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
-| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens a job, sets the layer's tool and feed (17 B) |
+| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool and feed (19 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
@@ -163,7 +163,8 @@ ends, the Pico first queues a travel line to it at the travel feed. Every
 other record must start exactly where the last one ended (after the queue
 drained to idle, within one step, snapped). `END` closes the contour. A
 `START` inside an open contour, or a record without `START` outside one, is
-`NACK_BAD_CURVE`. `seqreset` and abort forget an open contour. `BREAK` marks a
+`NACK_BAD_CURVE`. The first record after a layer header is a `START` whatever
+its flags. `seqreset` and abort forget an open contour. `BREAK` marks a
 corner or cusp; joins run on the planner's junction limit whatever the flags
 say — what a tool does at a flag is tool-profile scope.
 
@@ -174,29 +175,39 @@ record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
 with `softLimits` is `NACK_SOFT_LIMIT`, as is a record (or its travel line)
 along which the bed mesh would take Z out of its soft range.
 
-### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 17 bytes)
+### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 19 bytes)
 ```
 [0]      magic = 0xA2
 [1]      chamber    uint8      — 1..chamberCount; 0 for a tool without chambers
 [2]      seq        uint8      — rolling stream seq, shared with BEZIER
 [3]      tool       uint8      — the config tool's `id`
-[4..7]   index      uint32 LE  — of the next BEZIER (unused yet)
-[8..11]  feed       float32 LE — cut, mm/s; 0 = the tool's path.feed, then `feed`'s cut
-[12..15] k          float32 LE — plunge scale 0..2 (unused yet)
-[16]     CRC8 over bytes [0..15]
+[4..5]   layer      uint16 LE
+[6..9]   record     uint32 LE  — the next BEZIER's number within the layer
+[10..13] feed       float32 LE — cut, mm/s; 0 = the tool's path.feed, then `feed`'s cut
+[14..17] k          float32 LE — plunge scale 0..2 (unused yet)
+[18]     CRC8 over bytes [0..17]
 ```
 Opens a job (JOB.BUFFERING) from IDLE; in a buffering or running job it starts
-the next layer. The BEZIERs after it run with its tool, on the head that has
+the next layer. Layers may come in any order; the BEZIERs after a header are
+numbered on from its `record`.
+
+**Pause and resume.** `pause` brakes to a hold and lands JOB.PAUSED with the
+queue dropped, keeping where the job stopped: the record, and how far into its
+curve (`get resume_layer resume_record`). The host resumes by sending a layer
+header naming that layer and record, then the records from there on; any other
+header is `NACK_JOB`. The Pico cuts that record from 2 mm before where it
+stopped, travelling there first. A record stopped in its travel runs whole. The BEZIERs after it run with its tool, on the head that has
 the tool mounted (`mount`; the lowest such head). A layer whose head is not the
 selected one selects it (as `select`), which maps axes over the bus, so only
-from IDLE: in a job it is `NACK_BUSY` (a head switch mid-job comes with tool
-change). A job ends only by `cancel` or abort.
+from IDLE or a resume: in a running job it is `NACK_BUSY` (a head switch
+mid-job comes with tool change). A job ends only by `cancel` or abort.
 
 Refusals: `NACK_TOOL_UNKNOWN` = the id is not in the config;
 `NACK_NOT_MOUNTED` = no head has it mounted; `NACK_JOB` = inside an open
-contour, or a bad chamber, feed or k; `NACK_BAD_STATE` = no cut or travel feed
+contour, a bad chamber, feed or k, or a paused job's header not naming where
+it stopped; `NACK_BAD_STATE` = no cut or travel feed
 (`feed`), no config, the select failed, or the ring holds jogs (JOGGING, or
-jogs queued in IDLE); `NACK_PAUSED` while paused.
+jogs queued in IDLE); `NACK_PAUSED` while pausing.
 
 ### ACK — `0xAA` (3 bytes)
 ```
@@ -349,7 +360,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset, or a record the bed mesh would take Z out of range on; a continuous jog with no room left in its direction |
 | `MSEG_NACK_MIXED_AXES` | `0x0A` | Continuous jog with directions in more than one axis set (XY, Z, A) |
 | `MSEG_NACK_BUSY` | `0x0B` | Continuous jog while a step or sequence holds the machine (a job, homing, a leg, a traverse); a layer header whose tool is on another head, in a job |
-| `MSEG_NACK_JOB` | `0x0C` | BEZIER with no job open; layer header inside a contour, or with a bad chamber, feed or k |
+| `MSEG_NACK_JOB` | `0x0C` | BEZIER with no job open; layer header inside a contour, with a bad chamber, feed or k, or not naming where a paused job stopped |
 | `MSEG_NACK_TOOL_UNKNOWN` | `0x0D` | Layer header whose tool id is not in the config |
 | `MSEG_NACK_NOT_MOUNTED` | `0x0E` | Layer header whose tool no head has mounted |
 
@@ -388,8 +399,7 @@ prefixed `0x`.
 | `home_head` | `<n>` | as `home` | `home only` of `heads[n]`'s Z and A |
 | `axes_map` | `[<x> <y> <z> <a>]` | `ok` / `err degraded` / `err unconfigured` / `err node <id> not_in_config\|not_stepper\|timeout\|<rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | The axis request: `-`/`0` = no axis. Each id must be a stepper axis node the config marks present; applied as a `slot_map` of the same ids once all are confirmed. A silent node stays pending, its slot parked, and UNMAPPED is set. No-arg: `axes_map <t> <t> <t> <t>`, `t` = `-`, `n` or `?n` (pending). See engage_and_axis_map.md §5.4 |
 | `slot_map` | `[<n0> <n1> <n2> <n3>]` | `ok` / `err degraded` / `err node <id> <rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | Console primitive: bind any node to stream slots 0..3, no config. A node that does not engage leaves the request unmet (UNMAPPED). `err fenced` names the node of each requested fenced slot whose make-safe went unconfirmed, `-` elsewhere. No-arg: `slot_map <t> <t> <t> <t>`, `t` = `-`, `n` or `!n` (fenced). See engage_and_axis_map.md §5.5 |
-| `pause` | — | `ok` / `err <reason>` | Request pause of the running job (Core 0 sets flag, Core 1 drains). Planner motion brakes to a hold and keeps its queue |
-| `resume` | — | `ok` / `err <reason>` | Continue a paused job (gated on `axes_homed & required_axes`). A held planner job continues where it stopped: `err moved` if X or Y is no longer at the held position |
+| `pause` | — | `ok` / `err <reason>` | Pause a buffering or running job: planner motion brakes to a hold, lands PAUSED and drops its queue. A layer header resumes it (see "Layer Header") |
 | `cancel` | — | `ok` | Abandon the paused job → IDLE |
 | `stop` | — | `ok` | Emergency stop — flush, ALARM(ESTOP); always available |
 | `unstop` | — | `ok` / `err unconfirmed <ids>` / `err bad_state` | Clear the estop latch, once ALARM is published: make safe every touched node (energised or holding a slot) that is not excluded; refused until all confirm. Forgets the requested maps → IDLE (or ALARM on a held fault), unmapped, de-energised, un-homed |
@@ -422,6 +432,8 @@ enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 faults=<hex>  machineFaults   fault mask, as STATUS_RSP (e.g. 0x0004)
 job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING  (only while state=JOB)
+resume_layer=<l>   the layer a paused job resumes at  (only while job=3)
+resume_record=<r>  the record within it  (only while job=3)
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with the HOMING fault)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
@@ -523,7 +535,7 @@ Phase 2.
 | `home` / `home_unhomed` / `home_cycle` / `home_head` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✗ |
 | `axes_map` / `slot_map` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `pause` | ✗ | ✓ | ✗ | ✗ | ✗ |
-| `resume` / `cancel` | ✗ | ✗ | ✓ | ✗ | ✗ |
+| `cancel` | ✗ | ✗ | ✓ | ✗ | ✗ |
 | `stop` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `unalarm` | ✗ | ✗ | ✗ | ✓ | ✗ |
 | `unstop` (estop latch only) | ✗ | ✗ | ✗ | ✓ | ✗ |

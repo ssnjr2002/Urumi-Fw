@@ -20,6 +20,7 @@ enum PlannerQueueResult : uint8_t {
     PQ_NO_FEED,     // a record before any `feed`
     PQ_SOFT_LIMIT,  // the bed mesh would take Z outside its soft range
     PQ_NO_JOB,      // a record with no job open (no LAYER_HDR yet)
+    PQ_NO_RESUME,   // a LAYER_HDR in JOB.PAUSED not naming where the job stopped
 };
 
 namespace planner { struct Bezier; }
@@ -48,17 +49,25 @@ void plannerSetFeed(float cut, float travel);
 // The machine's cut feed (plannerSetFeed).
 float plannerMachineFeed();
 
-// Whether a layer cut at `cut` mm/s could open now: PQ_NO_FEED without a cut
-// or travel feed, PQ_BAD_CURVE inside a contour, else admit's verdict.
-PlannerQueueResult plannerLayerCheck(float cut);
+// Whether layer `layer`, from its record `record`, cut at `cut` mm/s could open
+// now: PQ_NO_FEED without a cut or travel feed. In JOB.PAUSED, PQ_NO_RESUME
+// unless it names where the job stopped (plannerResumePoint); otherwise
+// PQ_BAD_CURVE inside a contour, else admit's verdict.
+PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record);
 
-// Start a layer cut at `cut` mm/s (checked as plannerLayerCheck), opening the
-// job (JOB.BUFFERING) from IDLE.
-PlannerQueueResult plannerOpenLayer(float cut);
+// Start the layer (checked as plannerLayerCheck): opens the job
+// (JOB.BUFFERING) from IDLE, and resumes a paused one, its first record cut
+// from kResumeMargin before where it stopped. Records count from `record`.
+PlannerQueueResult plannerOpenLayer(float cut, uint16_t layer, uint32_t record);
+
+// Where a paused job resumes: the layer and record a LAYER_HDR must name.
+// False unless JOB.PAUSED.
+bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 
 // Queue a host-analysed record (checkBezier fills the rest of `b`). Contour
 // framing: `start` opens a contour and travels to p0 if it is elsewhere; any
-// other record must continue the ring's end; `end` closes the contour.
+// other record must continue the ring's end; `end` closes the contour. The
+// first record after a LAYER_HDR is a START whatever its flags.
 // PQ_BAD_CURVE for a failed check or broken framing.
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end);
 

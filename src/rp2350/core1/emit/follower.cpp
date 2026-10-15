@@ -82,9 +82,29 @@ static bool __time_critical_func(bufferDone)() {
            plannerRing.queuedTime() >= bufferQueueS;
 }
 
+// Land JOB.PAUSED at rest: keep where the job stopped (jobResume) and drop the
+// ring; the host resends from there. Under the lock.
+static void __time_critical_func(landPaused)() {
+    const planner::Block* b = plannerExec.current();
+    float s = b ? b->s0 + plannerExec.along() : 0;
+    if (!b && (b = plannerRing.oldest())) s = b->s0;
+    jobResume.known = b != nullptr;
+    if (b) {
+        jobResume.layer  = b->layer;
+        jobResume.record = b->record;
+        jobResume.s      = b->kind == planner::Block::BEZIER ? s : 0;
+    }
+    const Pos at = plannerExec.position();
+    plannerRing.reset(at);
+    plannerExec.reset(at);
+    plannerActive = false;
+    pauseRequested = false;
+    jobAt(JOB_PAUSED);
+}
+
 // Enter planner motion: a jog's ring, or a job once it has buffered. Core 0
-// opens a job in BUFFERING with its first record; a pause or a resume at rest
-// is taken here. All under the lock: `cancel` ends a job at rest under it.
+// opens a job in BUFFERING, and resumes a paused one there; a pause at rest is
+// taken here. All under the lock: `cancel` ends a job at rest under it.
 // False if there is nothing to run.
 static bool __time_critical_func(enter)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
@@ -99,18 +119,11 @@ static bool __time_critical_func(enter)() {
     } else if (machineContext == CTX_JOB && !abortRequested) {
         const uint8_t why = jobReason;
         if (why == JOB_BUFFERING && pauseRequested) {
-            for (int i = 0; i < 4; i++) resumePos[i] = machinePos[i];
-            pauseRequested = false;
-            jobAt(JOB_PAUSED);
+            landPaused();
         } else if (why == JOB_BUFFERING && bufferDone()) {
             plannerActive = true;
             jobAt(JOB_RUNNING);
             ok = true;
-        } else if (why == JOB_PAUSED && resumeRequested) {
-            resumeRequested = false;
-            // A hold leaves the executor held; replan from rest.
-            if (plannerExec.state() == Executor::State::Held) plannerExec.resume(plannerRing);
-            jobAt(JOB_BUFFERING);
         }
     }
     spin_unlock(plannerLock, s);
@@ -144,9 +157,9 @@ static bool __time_critical_func(leaveDry)() {
 }
 
 static void __time_critical_func(leavePaused)() {
-    for (int i = 0; i < 4; i++) resumePos[i] = machinePos[i];
-    pauseRequested = false;
-    jobAt(JOB_PAUSED);
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    landPaused();
+    spin_unlock(plannerLock, s);
 }
 
 // A late block's hold has stopped: replan from rest and buffer again.

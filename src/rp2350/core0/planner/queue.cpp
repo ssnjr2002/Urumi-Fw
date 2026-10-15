@@ -247,6 +247,15 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
 static float cutFeed = 0, travelFeed = 0;
 static float layerFeed = 0;     // the open layer's cut feed
 static bool inContour = false;
+// The record the next BEZIER is, and whether it is the first since a LAYER_HDR.
+static uint16_t curLayer = 0;
+static uint32_t nextRecord = 0;
+static bool firstRecord = false;
+// mm of the first record a resume skips.
+static float resumeTrim = 0;
+
+// How far before where a paused job stopped it resumes cutting, mm.
+static constexpr float kResumeMargin = 2.0f;
 
 void plannerSetFeed(float cut, float travel) {
     cutFeed = cut;
@@ -257,21 +266,58 @@ float plannerMachineFeed() { return cutFeed; }
 
 void plannerEndContour() { inContour = false; }
 
-PlannerQueueResult plannerLayerCheck(float cut) {
+static bool paused() { return machineContext == CTX_JOB && jobReason == JOB_PAUSED; }
+
+bool plannerResumePoint(uint16_t* layer, uint32_t* record) {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const bool ok = paused();
+    if (ok) {
+        // An empty ring at the pause: the job goes on at the next record.
+        *layer  = jobResume.known ? jobResume.layer  : curLayer;
+        *record = jobResume.known ? jobResume.record : nextRecord;
+    }
+    spin_unlock(plannerLock, s);
+    return ok;
+}
+
+static bool resumesAt(uint16_t layer, uint32_t record) {
+    uint16_t l;
+    uint32_t r;
+    return plannerResumePoint(&l, &r) && l == layer && r == record;
+}
+
+PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record) {
     if (!(cut > 0 && travelFeed > 0)) return PQ_NO_FEED;
+    if (paused()) {
+        if (!machineCfgValid()) return PQ_NO_CONFIG;
+        return resumesAt(layer, record) ? PQ_OK : PQ_NO_RESUME;
+    }
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, false);
     if (r != PQ_OK) return r;
     return inContour ? PQ_BAD_CURVE : PQ_OK;
 }
 
-PlannerQueueResult plannerOpenLayer(float cut) {
-    const PlannerQueueResult r = plannerLayerCheck(cut);
+PlannerQueueResult plannerOpenLayer(float cut, uint16_t layer, uint32_t record) {
+    const PlannerQueueResult r = plannerLayerCheck(cut, layer, record);
     if (r != PQ_OK) return r;
+    const bool resume = paused();
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     PlannerQueueResult out = PQ_OK;
-    if (machineContext != CTX_JOB) {
+    if (resume) {
+        // Paused, the ring is empty and idle: the first record resets it, from
+        // wherever the head is now.
+        if (!paused()) {
+            out = PQ_BAD_STATE;
+        } else {
+            resumeTrim = jobResume.known ? fmaxf(0.0f, jobResume.s - kResumeMargin) : 0;
+            jobResume.known = false;
+            inContour = false;
+            __dmb();
+            jobReason = JOB_BUFFERING;
+        }
+    } else if (machineContext != CTX_JOB) {
         // From IDLE: no jog runs, so the ring is empty and becomes the job's.
         if (resetIfIdle(RING_JOB)) {
             jobReason = JOB_BUFFERING;
@@ -281,7 +327,12 @@ PlannerQueueResult plannerOpenLayer(float cut) {
             out = PQ_BAD_STATE;
         }
     }
-    if (out == PQ_OK) layerFeed = cut;
+    if (out == PQ_OK) {
+        layerFeed = cut;
+        curLayer = layer;
+        nextRecord = record;
+        firstRecord = true;
+    }
     spin_unlock(plannerLock, s);
     return out;
 }
@@ -291,13 +342,18 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, false);
     if (r != PQ_OK) return r;
+    if (firstRecord) start = true;
     if (start == inContour) return PQ_BAD_CURVE;   // START inside a contour, or none outside
     if (planner::checkBezier(b) != planner::BezierError::None) return PQ_BAD_CURVE;
+
+    // A resumed record starts at its trim, travelled to as a START's p0.
+    const float from = firstRecord ? resumeTrim : 0;
+    const planner::Vec2 p0 = from > 0 ? planner::bezierPoint(b, planner::bezierT(b, from)) : b.p[0];
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool reset = resetIfIdle(RING_JOB);
     const planner::Pos e = plannerRing.end();
-    const float dx = b.p[0].x - e.x, dy = b.p[0].y - e.y;
+    const float dx = p0.x - e.x, dy = p0.y - e.y;
     PlannerQueueResult out = PQ_OK;
     bool travel = false;
     if (ringOwner != RING_JOB) {
@@ -318,15 +374,19 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     }
     // Both walked before either goes in; the curve keeps the travel's flat Z.
     planner::PathCap travelCap, curveCap;
-    if (out == PQ_OK && travel) out = meshLine(b.p[0], limits, travelCap);
+    if (out == PQ_OK && travel) out = meshLine(p0, limits, travelCap);
     if (out == PQ_OK) out = meshBezier(b, limits, curveCap);
     if (out == PQ_OK) {
-        if (travel) plannerRing.pushLine(b.p[0], travelFeed, limits, kDeviation, travelCap);
-        plannerRing.pushBezier(b, layerFeed, limits, kDeviation, curveCap);
+        plannerRing.setTag(curLayer, nextRecord);
+        if (travel) plannerRing.pushLine(p0, travelFeed, limits, kDeviation, travelCap);
+        plannerRing.pushBezierFrom(b, from, layerFeed, limits, kDeviation, curveCap);
     }
     spin_unlock(plannerLock, s);
     if (out != PQ_OK) return out;
 
+    nextRecord++;
+    firstRecord = false;
+    resumeTrim = 0;
     inContour = !end;
     replanAndCommit();
     return PQ_OK;

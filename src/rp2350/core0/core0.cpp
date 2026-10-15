@@ -133,13 +133,11 @@ void loop() {
     // confirms its make-safe (ops/bus.h).
     // Zeroing the projection here would just assert a value one pass early, and
     // give a derived byte a second writer.
-    resumePos[0] = resumePos[1] = resumePos[2] = resumePos[3] = 0;
     pauseRequested = false;
     abortRequested = false;
     plannerRing.reset({0, 0});
     plannerExec.reset({0, 0});
     plannerActive = false;
-    resumeRequested = false;
     __dmb();
 
     // 5b. WIPE LOCAL INGEST STATE

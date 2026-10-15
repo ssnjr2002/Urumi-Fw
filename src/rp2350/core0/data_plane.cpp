@@ -2,7 +2,7 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 17 bytes;
+//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 19 bytes;
 //                continuous jog (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
@@ -134,10 +134,11 @@ static void feedPacket(uint8_t b) {
         return;
     }
 
-    // A layer header opens a job from IDLE, and records join it; the planner's
-    // admit narrows JOB to the reasons that take them.
+    // A layer header opens a job from IDLE or resumes a paused one, and records
+    // join it; the planner's admit narrows JOB to the reasons that take them.
     const uint8_t st = machineView();
-    if (st == STATE_JOB && jobReason == JOB_PAUSED) { sendNack(MSEG_NACK_PAUSED);    return; }
+    const bool layer = pktBuf[0] == LAYER_HDR_MAGIC;
+    if (st == STATE_JOB && jobReason == JOB_PAUSED && !layer) { sendNack(MSEG_NACK_PAUSED); return; }
     if (st != STATE_IDLE && st != STATE_JOB)        { sendNack(MSEG_NACK_BAD_STATE); return; }
 
     // Duplicate guard: the seq byte carries the host's rolling 8-bit seq. After a
@@ -151,7 +152,7 @@ static void feedPacket(uint8_t b) {
         return;
     }
 
-    if (pktBuf[0] == LAYER_HDR_MAGIC) acceptLayer();
+    if (layer) acceptLayer();
     else                              acceptBezier();
 }
 
@@ -191,7 +192,7 @@ static void acceptBezier() {
 }
 
 // The layer's tool picks the head; a head switch maps axes over the bus, so it
-// happens only while the bus is free (IDLE).
+// happens only while the bus is free (IDLE, or a paused job resuming).
 static void acceptLayer() {
     if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
     if (!machineCfgValid()) { sendNack(MSEG_NACK_BAD_STATE); return; }
@@ -199,8 +200,12 @@ static void acceptLayer() {
     LayerHdr l;
     l.chamber = pktBuf[1];
     l.tool    = pktBuf[3];
-    memcpy(&l.feed, &pktBuf[8],  4);
-    memcpy(&l.k,    &pktBuf[12], 4);
+    uint16_t layerNo;
+    uint32_t record;
+    memcpy(&layerNo, &pktBuf[4], 2);
+    memcpy(&record,  &pktBuf[6], 4);
+    memcpy(&l.feed,  &pktBuf[10], 4);
+    memcpy(&l.k,     &pktBuf[14], 4);
 
     const MachineCfg& c = machineCfg();
     uint8_t mounted[CFG_MAX_HEADS];
@@ -215,17 +220,18 @@ static void acceptLayer() {
     }
 
     // Checked before the select, so a refused layer changes nothing.
-    PlannerQueueResult r = plannerLayerCheck(cut);
+    PlannerQueueResult r = plannerLayerCheck(cut, layerNo, record);
     if (r == PQ_OK && head != framesSelected()) {
         if (!machineBusFree()) { sendNack(MSEG_NACK_BUSY); return; }
         const char* why;
         axesSelectHead(head, &why);
         if (why || framesSelected() != head) { sendNack(MSEG_NACK_BAD_STATE); return; }
     }
-    if (r == PQ_OK) r = plannerOpenLayer(cut);
+    if (r == PQ_OK) r = plannerOpenLayer(cut, layerNo, record);
     switch (r) {
         case PQ_OK:        break;
         case PQ_BAD_CURVE: sendNack(MSEG_NACK_JOB);       return;   // inside a contour
+        case PQ_NO_RESUME: sendNack(MSEG_NACK_JOB);       return;
         default:           sendNack(MSEG_NACK_BAD_STATE); return;   // state, config, feed
     }
     expectedSeq++;

@@ -27,8 +27,6 @@ volatile uint8_t axes_homed     = 0;              // none homed until first seto
 volatile uint8_t axes_enabled   = 0;              // derived — projectEnabled()
 volatile uint16_t nodeEnabled   = 0;              // none energised until a node acks
 
-volatile int32_t resumePos[4]   = {0, 0, 0, 0};
-
 // Inter-core request flags
 volatile bool    pauseRequested = false;
 volatile bool    abortRequested = false;
@@ -46,7 +44,7 @@ volatile bool     plannerActive   = false;
 float             plannerSpm[4]   = {0, 0, 0, 0};
 int64_t           plannerTurnQ32  = 0;
 PlannerMesh       plannerMesh     = {nullptr, 0, 0, 0};
-volatile bool     resumeRequested = false;
+JobResume         jobResume       = {false, 0, 0, 0};
 
 // Soft-Reset Handshake Flags
 volatile bool    soft_reset_requested = true;  // Starts true so Core 1 parks on cold boot

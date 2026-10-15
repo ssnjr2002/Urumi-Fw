@@ -40,7 +40,6 @@ static const Cmd kCommands[] = {
 #endif
     { "seqreset",     cmdSeqReset,    K_ANY },
     { "pause",        cmdPause,       K_CONTEXT },
-    { "resume",       cmdResume,      K_CONTEXT },
     { "cancel",       cmdCancel,      K_CONTEXT },
     // periph.cpp
     { "vac_servo",    cmdVacServo,    K_WRITE },

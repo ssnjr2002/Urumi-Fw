@@ -16,6 +16,7 @@
 #include "../ops/machine.h"
 #include "../ops/sequence.h"
 #include "../ops/tools.h"
+#include "../planner/queue.h"
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
 
@@ -44,6 +45,9 @@ struct Snap {
     float    meshSlope;
     char     seqFail[48];
     uint8_t  seq, seqAborted;
+    bool     resumeOk;
+    uint16_t resumeLayer;
+    uint32_t resumeRecord;
 };
 
 void takeSnap(Snap& s) {
@@ -52,6 +56,7 @@ void takeSnap(Snap& s) {
     s.homed         = axes_homed;
     s.faults        = machineFaults();
     s.job           = jobReason;
+    s.resumeOk      = plannerResumePoint(&s.resumeLayer, &s.resumeRecord);
     s.latched       = homingLatched;
     s.homingReason  = homingReason;
     s.homeFailWhy   = homingFailWhy();
@@ -128,6 +133,11 @@ const Key kKeys[] = {
     { "faults",    [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.faults, 4); } },
     { "job",       [](const Snap& s, char* o, size_t n) {
         return s.state == STATE_JOB ? fmtU(o, n, s.job) : KEY_NA; } },
+    // Where a paused job resumes: the LAYER_HDR's layer and record.
+    { "resume_layer",  [](const Snap& s, char* o, size_t n) {
+        return s.resumeOk ? fmtU(o, n, s.resumeLayer) : KEY_NA; } },
+    { "resume_record", [](const Snap& s, char* o, size_t n) {
+        return s.resumeOk ? fmtU(o, n, (unsigned)s.resumeRecord) : KEY_NA; } },
     { "latched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.latched, 2); } },
     // See homing.h for what the codes point at; homenode is 0 for a dummy leg.
     { "homefail",  [](const Snap& s, char* o, size_t n) {

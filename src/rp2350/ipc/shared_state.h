@@ -63,7 +63,7 @@ enum JobReason : uint8_t {
     JOB_BUFFERING = 0,   // at rest, waiting for enough queued motion
     JOB_RUNNING   = 1,
     JOB_HOLDING   = 2,   // braking for a pause or a late block
-    JOB_PAUSED    = 3,   // at rest, ring kept; `resume` or `cancel`
+    JOB_PAUSED    = 3,   // at rest, ring dropped; a matching LAYER_HDR or `cancel`
     JOB_ABORTING  = 4,   // braking for an abort; ends IDLE
 };
 
@@ -178,9 +178,6 @@ extern volatile uint16_t nodeEnabled;
 // Core 1 sweeps it in busStopAll().
 #define BUS_ADDR_MAX 8
 
-// machinePos where a job paused; `resume` refuses if XY moved since.
-extern volatile int32_t resumePos[4];
-
 // Inter-core request flags: Core 0 records intent, Core 1 enacts the state
 // transition.
 //   pauseRequested — operator `pause`; Core 1 holds and lands JOB.PAUSED.
@@ -194,8 +191,8 @@ extern volatile bool    abortRequested;
 // and commits (core0/planner/), Core 1 ticks (core1/emit/follower.cpp). Every
 // ring edit is made holding plannerLock; planner/planner.h lists which calls.
 //
-// plannerActive — Core 1 owns planner motion: running, or held in JOB.PAUSED
-//   or JOB.BUFFERING. Core 0 resets the ring and executor only while it is
+// plannerActive — Core 1 owns planner motion: running, or held in
+//   JOB.BUFFERING. Core 0 resets the ring and executor only while it is
 //   false. Written under the lock.
 // plannerSpm — steps per mm (A: per degree) for slots X, Y, Z, A, set by Core 0
 //   with that reset; negative on an invertDir axis, so the planner works in
@@ -207,8 +204,10 @@ extern volatile bool    abortRequested;
 // plannerMesh — the bed mesh for this ring (core0/ops/mesh.h), latched by
 //   Core 0 with that reset: Core 1 adds meshAt(*mesh, pos + tip) − ref to Z.
 //   `mesh` is null while the mesh is inactive.
-// resumeRequested — `resume` of a paused job; Core 1 replans from where it
-//   stopped and returns to BUFFERING. Set and cleared under the lock.
+// jobResume — where a paused job stopped: the record and mm into its curve
+//   (0 for its travel). Core 1 sets it under the lock as it lands JOB.PAUSED
+//   and drops the ring; `known` is false if the ring was empty, when the job
+//   resumes at the next record Core 0 expects.
 extern planner::Planner  plannerRing;
 extern planner::Executor plannerExec;
 extern spin_lock_t*      plannerLock;
@@ -221,7 +220,13 @@ struct PlannerMesh {
     float ref;          // mm, the height at the work origin
 };
 extern PlannerMesh       plannerMesh;
-extern volatile bool     resumeRequested;
+struct JobResume {
+    bool     known;
+    uint16_t layer;
+    uint32_t record;
+    float    s;
+};
+extern JobResume         jobResume;
 
 // Soft-Reset Handshake Flags
 extern volatile bool    soft_reset_requested;

@@ -49,7 +49,6 @@ bool cmdUncfg(const char*);
 #endif
 bool cmdSeqReset(const char*);
 bool cmdPause(const char*);
-bool cmdResume(const char*);
 bool cmdCancel(const char*);
 
 // ─── periph.cpp — one generic relay behind five rows ──────────────────────────

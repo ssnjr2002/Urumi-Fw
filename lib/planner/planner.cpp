@@ -46,13 +46,26 @@ bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, 
     return pushBlock(Block::LINE, capped(path, cap), target, deviation);
 }
 
-bool Planner::pushBezier(const Bezier& bz, float feed, const AxisLimits& limits, float deviation,
-                         const PathCap& cap) {
+bool Planner::pushBezierFrom(const Bezier& bz, float from, float feed, const AxisLimits& limits,
+                             float deviation, const PathCap& cap) {
     if (full()) return false;
-    ring_[index(count_)].bez = bz;
+    Path path = capped(pathOf(bz, feed, limits), cap);
+    if (from > 0) {
+        if (from >= path.length) return true;
+        path.length -= from;
+        const Vec2 d = bezierDeriv(bz, bezierT(bz, from));
+        const float n = sqrtf(d.x * d.x + d.y * d.y);
+        if (n > 0) path.dir_start = {d.x / n, d.y / n};
+    } else {
+        from = 0;
+    }
+    Block& b = ring_[index(count_)];
+    b.bez = bz;
     Pos to = end_;
     to.setXy(bz.p[3]);
-    return pushBlock(Block::BEZIER, capped(pathOf(bz, feed, limits), cap), to, deviation);
+    pushBlock(Block::BEZIER, path, to, deviation);
+    b.s0 = from;
+    return true;
 }
 
 bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, float deviation) {
@@ -62,6 +75,8 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, f
     b.target = target;
     b.path = path;
     b.s0 = 0;
+    b.layer = tag_layer_;
+    b.record = tag_record_;
     b.max_entry_sqr = count_ > 0
         ? junctionMaxSqr(ring_[index(count_ - 1)].path, path, deviation)
         : 0;

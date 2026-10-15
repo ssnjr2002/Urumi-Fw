@@ -56,6 +56,8 @@ struct Block {
     float entry_sqr = 0;       // committed plan
     float exit_sqr = 0;
     Trapezoid profile;
+    uint16_t layer = 0;        // the record it runs, or travels to (setTag)
+    uint32_t record = 0;
 };
 
 /** A block's profile from `t0` s after its claim, starting `s0` mm into it. */
@@ -89,7 +91,18 @@ public:
     }
     /** Queue an analysed Bézier; `b.p[0]` must be end(). False if full. */
     bool pushBezier(const Bezier& b, float feed, const AxisLimits& limits, float deviation,
-                    const PathCap& cap = PathCap());
+                    const PathCap& cap = PathCap()) {
+        return pushBezierFrom(b, 0, feed, limits, deviation, cap);
+    }
+    /**
+     * The same Bézier from `from` mm along it, whose point there must be end().
+     * Nothing is queued if nothing is left of it.
+     */
+    bool pushBezierFrom(const Bezier& b, float from, float feed, const AxisLimits& limits,
+                        float deviation, const PathCap& cap = PathCap());
+
+    /** The record the blocks pushed from now on run. */
+    void setTag(uint16_t layer, uint32_t record) { tag_layer_ = layer; tag_record_ = record; }
 
     /** Horizon `ahead` of the consumer's clock, and the commit guard, in s. */
     void setTiming(float ahead, float guard) { ahead_ = ahead; guard_ = guard; }
@@ -126,6 +139,8 @@ public:
     int count() const { return count_; }
     bool full() const { return count_ == kSize; }
     bool claimed() const { return claimed_; }
+    /** The oldest block, claimed or not; null if none is queued. */
+    const Block* oldest() const { return count_ ? &ring_[tail_] : nullptr; }
     /** Where the last queued block ends. */
     Pos end() const { return end_; }
     /** Seconds of motion in the blocks not yet claimed, as last committed. */
@@ -146,6 +161,8 @@ private:
     int count_ = 0;
     bool claimed_ = false;
     Pos end_;
+    uint16_t tag_layer_ = 0;
+    uint32_t tag_record_ = 0;
 
     // Exit speed of the most recently claimed block: the entry of the next.
     float pinned_entry_sqr_ = 0;

@@ -57,6 +57,9 @@ public:
     State state() const { return state_; }
     Pos position() const { return pos_; }
     float speed() const { return v_; }   // mm/s along the path
+    /** The claimed block, and mm into what remains of it; null between blocks. */
+    const Block* current() const { return cur_; }
+    float along() const { return s_; }
     /** Seconds into the claimed block, published after each tick. */
     float clock() const { return clock_; }
     /** Pieces found only after their t0 had passed; each started a hold. */

@@ -51,7 +51,6 @@ static void dropPlanner() {
     plannerRing.reset(at);
     plannerExec.reset(at);
     plannerActive   = false;
-    resumeRequested = false;
     spin_unlock(plannerLock, s);
 }
 

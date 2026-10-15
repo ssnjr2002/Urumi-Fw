@@ -1,5 +1,5 @@
-// lifecycle.cpp — the job lifecycle: stop, unstop, reset, pause, resume,
-// cancel, and the data-plane sequence reset.
+// lifecycle.cpp — the job lifecycle: stop, unstop, reset, pause, cancel,
+// and the data-plane sequence reset.
 //
 // All but unstop are state writes that Core 1 observes on its next pass, with
 // no bus traffic. unstop is the estop's exit, and it has to hear every node.
@@ -75,8 +75,8 @@ bool cmdSeqReset(const char*) {            // data-plane support (see wire doc)
     return true;
 }
 
-// A buffering or running job holds and lands JOB.PAUSED (Core 1), keeping its
-// ring for `resume`.
+// A buffering or running job holds and lands JOB.PAUSED (Core 1), dropping its
+// ring; a LAYER_HDR naming where it stopped resumes it (data_plane.cpp).
 bool cmdPause(const char*) {
     const uint8_t why = jobReason;
     if (machineContext != CTX_JOB || (why != JOB_BUFFERING && why != JOB_RUNNING)) {
@@ -84,22 +84,6 @@ bool cmdPause(const char*) {
     }
     pauseRequested = true;
     Serial.println("ok");
-    return true;
-}
-
-// The job continues where it stopped, so the head must still be there. Core 1
-// replans from rest and buffers again.
-bool cmdResume(const char*) {
-    if (!jobPaused()) { Serial.println("err bad_state"); return true; }
-    if (machinePos[0] != resumePos[0] || machinePos[1] != resumePos[1]) {
-        Serial.println("err moved");
-        return true;
-    }
-    const uint32_t s = spin_lock_blocking(plannerLock);
-    const bool paused = jobPaused();
-    if (paused) resumeRequested = true;
-    spin_unlock(plannerLock, s);
-    Serial.println(paused ? "ok" : "err bad_state");
     return true;
 }
 
@@ -114,7 +98,6 @@ bool cmdCancel(const char*) {
         plannerRing.reset(at);
         plannerExec.reset(at);
         plannerActive   = false;
-        resumeRequested = false;
         pauseRequested  = false;
         __dmb();
         machineContext = CTX_IDLE;

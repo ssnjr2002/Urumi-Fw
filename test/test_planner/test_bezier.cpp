@@ -215,6 +215,37 @@ TEST_CASE("bezier: a hold inside the arc stops on the curve within v²/2a, and r
     CHECK(dist(tr.e.position().xy(), {70, 80}) < 1e-4f);
 }
 
+TEST_CASE("bezier: a curve pushed from s runs its rest from there, tagged") {
+    const Bezier b = quarter({0, 0}, 50, 0);
+    const Vec2 from = bezierPoint(b, bezierT(b, 20));
+    Planner p;
+    Executor e;
+    p.reset({from.x, from.y});
+    e.reset({from.x, from.y});
+    p.setTag(3, 7);
+    REQUIRE(p.pushBezierFrom(b, 20, 500, lim(), kDev));
+    p.replan();
+    REQUIRE(p.commit());
+    const Block& blk = *p.oldest();
+    CHECK(blk.s0 == 20);
+    CHECK(blk.path.length == doctest::Approx(b.length - 20));
+    CHECK(blk.layer == 3);
+    CHECK(blk.record == 7);
+
+    CHECK(dist(e.tick(p, kDt).xy(), from) < 1e-2f);
+    int guard = 0;
+    while (p.count() > 0 || p.claimed()) {
+        const Vec2 q = e.tick(p, kDt).xy();
+        CHECK(fabsf(hypotf(q.x, q.y) - 50) < 0.05f);   // on the arc
+        REQUIRE(++guard < 100000);
+    }
+    CHECK(dist(e.position().xy(), {0, 50}) < 1e-4f);
+
+    // Nothing left of it: nothing queued.
+    REQUIRE(p.pushBezierFrom(b, b.length, 500, lim(), kDev));
+    CHECK(p.count() == 0);
+}
+
 // What the host sends: the analysis without c1 and the end curvatures.
 static Bezier hostRecord(const Bezier& a) {
     Bezier r;
