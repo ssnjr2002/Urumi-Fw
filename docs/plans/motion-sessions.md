@@ -1067,7 +1067,37 @@ mounted tool's offset in the tip.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces: `MachineCfg.cutFallback`, `travelDefault`, `plungeFallback`
+  (`cfgerr=feed` below 1); `CfgTool.cutFeed`, `plungeFeed`;
+  `plannerMachineFeed()` reads the config unless `feed` overrides it;
+  `framesTipOffset` includes the mounted tool; `framesProbeFor(tool)` and
+  `probe_park`. Blob and schema version 7. Web: `MachineConfig.feed`
+  (`JobFeed`), `ToolProfile.cutFeed`/`plungeFeed`; `resolveTargets` returns
+  `{cutFeed, plungeFeed, travelFeed, slew}`; `MachineTarget` is gone.
+* Deviations: the plain tool feeds and `plungeFallback` were agreed mid-branch
+  (item 6); the soft-limit gate already existed, so only the plan's wording
+  changed (Out of range).
+* For the Z branch: a machine-wide `liftFeed`; the travel still blends into
+  its first cut within `kDeviation` until a lift's stop separates them.
+* Bench (COM8, head 0, bench-only probe switch (100, 100) and pen
+  `toolOffset` (5, 3)): `feed` below 1 refused; `jogto probe` gone; `mount`
+  shifts the readout by the tool offset; `probe_park 2` (pen, unmounted) to
+  anchor (165, 127), its tip then reading (100, 100); `probe_park 1` to
+  (170, 130); `jogto 300 300` with the pen at anchor (365, 327); a tool
+  change to the knife ended at the knife's probe position; after a reboot a
+  job ran with no `feed` command, travelling at about 80 mm/s. Run on the
+  config shape before the plain tool feeds (a key rename, covered by the
+  decoder test). Not tried: `cutFallback` alone (both tools set `cutFeed`),
+  a change from PAUSED, `probe_park` with no head selected.
+* Checks: `pio run -e pico` clean; `pio test -e native` 152/152; `pnpm
+  typecheck` clean; `pnpm test` 536 passed, 1 skipped.
+* Out of scope: `docs/feed_accel_value_model.md` still describes the old
+  targets; the web-only config fields (`invert`, the homing extras) are dead
+  and proposed as their own refactor.
 
 ## Open
 
