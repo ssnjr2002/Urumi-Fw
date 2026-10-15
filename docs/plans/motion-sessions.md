@@ -915,22 +915,50 @@ Done (merged). Unblocks JB4.
 
 **Type:** feature.
 
-**Purpose:** `JOB.TOOL_CHANGE` with a manual touch-off.
+**Purpose:** a layer header names the head its tool goes on; a mismatch
+holds the job for a tool change with a manual touch-off.
 
-* Roughly: park both Zs (park legs), move XY to the load spot, wait for
-  `mount`, then the operator touches off by hand (jog and `zero`, accepted in
-  `TOOL_CHANGE` only), then `BUFFERING`.
-* The tool-change sequence on the M3 driver (docs/plans/machine-model.md),
-  owner `JOB.TOOL_CHANGE`: park Zs (LEGS), then per head an XY line to load
-  (RING) and a WAIT for `mount`.
+* **`LAYER_HDR` grows to 20 B:** a head byte (the head the layer's tool goes
+  on) joins the header; feed and k move up one. The Pico never picks a head:
+  `layerResolve`'s "lowest head with the tool" goes.
+* **The header's reply is the host's flow control:**
+  * ACK: the tool is mounted on the named head and that head is selected.
+    The host keeps streaming; nothing drains.
+  * `NACK_TOOL_CHANGE` (new, 0x0F): the header is not consumed. The host
+    stops, waits for `BUFFERING`, then resends from the header (Go-Back-N
+    already rewinds there). From IDLE the NACK still opens the job.
+  * `NACK_NOT_MOUNTED` goes.
+* **Draining:** the NACK raises `toolChangePending` with the wanted head and
+  tool. The ring runs out (no record can join: the header was not consumed);
+  when it runs dry Core 1 lands `TOOL_CHANGE` instead of `BUFFERING`. From
+  IDLE or a dry `BUFFERING` Core 0 enters it at once.
+* **A head switch alone** (the tool is mounted on the named head, another is
+  selected): select it at rest, then `BUFFERING`. No park, no clear. Replaces
+  JB3's `NACK_BUSY`.
+* **A tool change** (the named head lacks the tool): the sequence on the M3
+  driver (docs/plans/machine-model.md): park the Zs (`parkZs`, LEGS), select
+  the named head, then a line to its probe switch (`lineTo`, RING). No WAIT
+  step.
+* **Two job reasons:**
+  * `TOOL_CHANGE`: the Pico is moving (the sequence). Jogs and writes are
+    `busy`. Published as JOB `TOOL_CHANGE` throughout, not JOGGING.
+  * `TOOL_WAIT`: the sequence ended; the operator's turn. Entering it clears
+    the named head's Z work offset (a per-head "Z set" flag; the old tool's
+    zero holds until then). `mount`, `jog` (step and continuous) and `wzero`
+    are admitted here only, within a job. `mount` must name the wanted head
+    and tool. A matching mount plus that head's Z set gives `BUFFERING`, with
+    an empty ring; the host resends the header, now ACKed.
+* `pause` is refused in both reasons; `cancel` ends the job. A failed park
+  leg alarms and loses the job (keeping it goes with M4).
 * Probing in the job (`TOOL_PROBE`) is later, after M4.
-* A layer header for a tool not mounted starts the sequence, replacing JB3's
-  `NACK_NOT_MOUNTED`. `mount` posts the event the WAIT takes.
-* A layer header whose tool is mounted on the other head holds the job,
-  selects that head (at rest, bus free), then `BUFFERING`; no park or load.
-  It replaces JB3's `NACK_BUSY` for that case.
+* Web: the 20 B encoder, the new NACK and reasons; the sim follows.
+* Docs: `docs/wire_protocol.md` (layout, NACK, reasons, admission).
 
-**Depends on:** JB3 (done), M3 of docs/plans/machine-model.md (done).
+**Depends on:** JB3 (done), JB3b (done), M3 of docs/plans/machine-model.md
+(done).
+
+**Overlap:** `usb_protocol.h`, `web/src/wire/`, `core1/emit/follower.cpp`,
+`ops/machine.cpp`.
 
 ### Status
 
@@ -939,6 +967,14 @@ Planned.
 ## Open
 
 * Preflight refuses and never prepares (proposed, not confirmed).
+* **Heads and pairs with `TOOL_HDR`:** JB4's layer header names the head.
+  Once `TOOL_HDR` exists its order could be the job's mount plan (head p mod
+  `headCount`), so preflight checks each bbox with its head's offsets and a
+  change loads the whole pair. That only pays off when the layers follow
+  the header order; if they don't, mounting whole pairs costs extra stops
+  and mounts. Options: tolerate it (A), `NACK_JOB` a layer out of order (B),
+  or stop following the pair table once it is broken (C). Also open: whether
+  the layer header keeps its head byte (then it must match the table).
 * `cancel` from `PAUSED`: ends the session to IDLE at once, tool and vacuum
   off (proposed).
 * **Vacuum zones from the bbox (later):** the servo ids drawn as seen from
