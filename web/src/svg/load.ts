@@ -5,7 +5,7 @@
  * viewBox-to-mm) and the layer name. Each element is parsed to cubics in its
  * own coordinates, then mapped by the matrix, which is exact for cubics.
  *
- * Layers are named as in ingest.ts: a <g>'s inkscape:label (else id), nested
+ * Layers are named by a <g>'s inkscape:label (else id), nested
  * groups joined by '/', geometry outside any named group under ''.
  */
 

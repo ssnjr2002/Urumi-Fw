@@ -1,14 +1,11 @@
 /**
  * Public API for the CNC toolpath library.
  *
- * SVG + machine config → compiled blocks → schedule → wire packets.
- *
- * Plus the comms layer (wire/link) — the real-time RS485 transport
- * abstraction, and operatorJog for manual tap/click jogging with blend.
+ * SVG → annotated Béziers → wire packets, the machine config document, and
+ * the comms layer (wire/link).
  *
  * This barrel is the *entire* supported surface. Anything not re-exported here
- * (individual pipeline stages like flatten/constrain/plan, geometry helpers,
- * bezier math) is internal and may change without notice. The real-port
+ * (geometry helpers, bezier math) is internal and may change without notice. The real-port
  * Transport backends (WebSerial, Node serialport) are NOT exported from this
  * barrel — import them from their own package subpaths so a Node consumer never
  * pulls browser globals:
@@ -96,76 +93,9 @@ export {
     type ResolvedTargets,
 } from "./machine/resolve.js";
 
-export {
-    toolHeights,
-    zDownSign,
-    zAtHeightSteps,
-    type ToolHeights,
-} from "./machine/heights.js";
-
-// ── coordinate frames: home ↔ tool (docs/coordinate_frames_and_limits.md) ────
-export {
-    type XY,
-    type Anchor,
-    type AxisScale,
-    machineAnchor,
-    headOffset,
-    toolFrameOffset,
-    headSeparation,
-    homeToTool,
-    toolToHome,
-    stepsToUnits,
-    unitsToSteps,
-    homePosition,
-} from "./machine/frames.js";
 
 export { DEFAULTS } from "./machine/defaults.js";
 
-// ── slots + setup: which node fills each wire slot, and what is fitted now ───
-export {
-    SLOT,
-    axisSlots,
-    slotMapFor,
-    headForSlotMap,
-    type AxisSlot,
-    type SlotMap,
-} from "./machine/slots.js";
-
-export {
-    type Setup,
-    setupFor,
-    engage,
-    mount,
-    mountedTypes,
-    engagedTool,
-    headWithTool,
-    isMounted,
-    setupAxes,
-    engagedAxis,
-    setupSlotMap,
-    isCommitted,
-    adoptCommitted,
-    sameSetup,
-} from "./machine/setup.js";
-
-// ── svg ingestion (SVG text → curves in mm) ─────────────────────────────────
-// bakePlan handles ingestion internally; these are exposed for callers who want
-// to preview/inspect geometry (e.g. render an SVG before baking).
-export {
-    loadSvg,
-    loadSvgSubpaths,
-    loadSvgLayers,
-    loadSvgMm,
-    loadSvgMmSubpaths,
-    loadSvgMmLayers,
-    parseViewport,
-    makeTransform,
-    applyTransform,
-    type Viewport,
-    // parser injection: default is the global DOMParser; Node consumers inject one
-    setDOMParser,
-    type DOMParserLike,
-} from "./svg/ingest.js";
 
 // geometry types that appear in the public signatures above
 export {
@@ -188,61 +118,6 @@ export { prepareBezierJob, type BezierJob, type BezierJobOptions, type BBox } fr
 export { packBezier } from "./wire/format/bezier.js";
 export { packLayerHdr, type LayerHdr } from "./wire/format/layer.js";
 
-// ── production bake: SVG + config → CompiledBlock[] + SwapPhase[] ───────────
-// The primary entry point most consumers want (demo/comms.js, demo/bench.js).
-export {
-    bakePlan,
-    type BakePlanOptions,
-    assembleBlocks,
-} from "./production/bakePlan.js";
-
-export {
-    compileBlock,
-    type Block,
-    type CompiledBlock,
-    type CompileBlockResult,
-} from "./production/compileBlock.js";
-
-// The `Plan` wrapper and the `.plan` file codec used to sit here. Both are GONE
-// (docs/head_binding.md stage 6): a serialised plan encodes step counts already
-// resolved against one head arrangement and records nothing about which, so a
-// file baked under one `accepts` config is silently wrong under another — and
-// silently is the whole problem. The codec stays in git history.
-//
-// planToolTypes / planRequiredAxes / feasibleOn went with it. They existed to
-// serve the .plan header and the demos' homing mask, neither of which survives,
-// and nothing called them. Each was a short fold over machine/resolve.ts's
-// canRunTool / requiredAxes, both still exported above, so a caller that ever
-// needs one writes it where the naming can fit its actual use.
-
-// ── production: ordering + mount scheduling, both ahead of the bake ─────────
-export { orderBlocks } from "./production/order.js";
-export {
-    scheduleMounts,
-    mountDiff,
-    validateMounts,
-    type SwapPhase,
-    type Mounts,
-} from "./production/schedule.js";
-
-export {
-    walkSeconds,
-    majorSteps,
-    motionSegments,
-} from "./orchestrate/estimate.js";
-
-export {
-    walkSchedule,
-    type WalkEvent,
-    type WalkState,
-    type WalkOptions,
-} from "./orchestrate/walk.js";
-
-export {
-    scheduleDutyBreaks,
-    segmentSeconds,
-    type DutyBreakResult,
-} from "./production/dutyBreaks.js";
 
 export { crc8, crc32 } from "./wire/format/crc.js";
 
@@ -435,56 +310,3 @@ export {
 // ── wire/link backends: Sim (env-agnostic; real ports import from the subpath) ─
 export { SimTransport } from "./wire/link/backends/sim.js";
 
-// ── controller: the one object that holds a MachineConfig and a Link at once ──
-export {
-    Controller,
-    BusyError,
-    runWalk,
-    verifyMounts,
-    verifyPhaseMounts,
-    type Lease,
-    type ControllerOptions,
-    type ControllerEvents,
-    type RunWalkHooks,
-    type RunWalkResult,
-    type SwapRequest,
-    prepareZ,
-    touchOffHere,
-    type PrepareZOptions,
-} from "./controller/index.js";
-
-// ── probe: tool contact height (docs/tool_probe_planner_integration.md) ──────
-export {
-    deriveProbePlan,
-    runProbe,
-    ProbeError,
-    type ProbePlan,
-    type ProbeStep,
-    type RunProbeOptions,
-} from "./probe/index.js";
-
-// ── operatorJog ──────────────────────────────────────────────────────────────
-export {
-    jogTo,
-    jogToPoint,
-    type JogTarget,
-    type JogHandle,
-    type AxisCalibration,
-} from "./operatorJog/index.js";
-
-// ── homing: config → datum (docs/homing.md §3) ───────────────────────────────
-export {
-    derivePlan,
-    deriveRotaryPlan,
-    approachDir,
-    runHoming,
-    runRotaryHoming,
-    HomingError,
-    LegKind,
-    type HomingLeg,
-    type HomingPlan,
-    type RotaryHomingPlan,
-    type RunHomingOptions,
-    type SweepResult,
-    type RotaryHomingResult,
-} from "./homing/index.js";

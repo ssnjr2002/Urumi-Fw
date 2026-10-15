@@ -4,9 +4,8 @@
  *
  * Four concerns, all geometric (not SVG concepts):
  *   - Curve types + construction helpers (Pt, CubicBezier, cubic,
- *     lineToCubic, quadToCubic, KAPPA). The SVG ingestion layer
- *     (../svg/ingest.ts) produces CubicBezier curves that conform to
- *     this contract; the toolpath stages (3+) consume them.
+ *     lineToCubic, quadToCubic, KAPPA). ../svg/load.ts
+ *     produces these curves; clean and annotate consume them.
  *   - 2D vector algebra on Pt (sub, add, scale, length, normalize,
  *     angleBetweenDeg). Shared by every downstream stage.
  *   - Bezier endpoint tangents + Bezier math (point evaluation,
