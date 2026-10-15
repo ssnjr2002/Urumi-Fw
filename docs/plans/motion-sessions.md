@@ -962,7 +962,8 @@ holds the job for a tool change with a manual touch-off.
 
 ### Status
 
-Ready to merge.
+Done (merged). No planned branch waits on it; lifts and duty (Open) were
+placed after it.
 
 ### Outcome
 
