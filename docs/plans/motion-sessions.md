@@ -214,63 +214,7 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 
 ### Lifts and heights
 
-* **The Pico inserts every lift;** the wire stays 2D. Lifts and plunges are
-  Z-only lines (a change of axis set stops), tagged with the index of the
-  record they lead into, so `TOOL_REC(N)` replays its own travel.
-* **Heights,** with work Z the bed top (the mesh applies by its rule):
-
-  ```
-  lift / travel   workZ + t + c
-  plunge          workZ + t − k·t      k in [0, 2]; 1 a full cut, past 1 into the mat
-  ```
-
-  `t` from the header, `k` (plunge scale) from the `TOOL_REC`, `c` (clearance) from the
-  tool profile. Preflight checks both against Z's soft range over the bbox,
-  with the mesh.
-* **What lifts:**
-
-  | cause | stop | where |
-  |---|---|---|
-  | `START` | lift, travel, A to the start heading, plunge | every contour start |
-  | corner turn > `cornerAngleDeg` | lift, swivel, plunge | that `BREAK` |
-  | cable range | lift, unwind by whole periods, plunge | anywhere |
-  | duty, past `maxOnS` | lift, tool off, `DWELL` for `dwellS`, tool on, plunge | anywhere |
-  | hold or abort at rest | lift | where it stopped |
-  | job end | lift | after the last record |
-
-  Estop does not lift (Alarms in a job).
-* **A `BREAK` is the host's tangent discontinuity** (a join turning more than
-  `angleTol`, or a cusp; `web/src/toolpath/clean.ts:67`,
-  `annotate.ts:281`). The Pico computes the turn from the two records'
-  tangents; at or below `cornerAngleDeg` A swivels in the material.
-* **A lift can happen anywhere on the path:** hold to rest, lift, plunge back
-  at the same XY and the same physical heading (an unwind is whole periods),
-  and continue the rest of the block from `s`. Today a hold resumes in place
-  (branch 2's `restartFrom`); putting the lift and plunge between the held
-  point and the rest of the block is new planner work. A `BREAK` is only a cheaper
-  place: a cable or duty lift due shortly is moved to an earlier `BREAK`
-  that lifts anyway. No stretch is refused for length.
-* **Triggers are live counters on Core 1:** tool on-time, and A against the
-  cable range; each requests a hold early enough to stop in time.
-* **Tool on and off are event blocks** in the ring, executed by Core 1 at
-  rest (where it owns the bus): motion stops before the plunge (a change of
-  axis set), tool on, wait `settleS`, plunge; the lift runs with the tool on
-  so the blade does not stick, and the tool goes off at clearance.
-* **Duty** (the existing `dutyLimits`, docs/tool_duty_limits.md): the tool is
-  on only while cutting, from the plunge's event to the lift's. On-time adds up across contours until a
-  reset; an off of at least `dwellS` is a reset. At a contour's `START`:
-  * the off time since the last lift is already ≥ `dwellS`: reset;
-  * else, if on-time ≥ `minOnS`: wait until the off time reaches `dwellS`
-    (`DWELL`), reset;
-  * else: plunge without a reset.
-
-  Mid-contour, past `maxOnS`: the duty lift, `DWELL` for `dwellS`.
-* **Tool profiles are the existing `ToolProfile`** (`web/src/machine/schema.ts:508`,
-  `tools` in the config), decoded by the Pico for the first time:
-  `cornerAngleDeg`, `tangential`, `unwind`, `path.feed` (cut), `z.feed`
-  (plunge), `offsetMm` (blade trail), `toolOffset`, `plunge` (false for a pen:
-  `k` is 0), `dutyLimits`. New: `clearance`, the cable range, the node that
-  switches the tool.
+* Heights, what lifts, tool on and off, and duty: docs/plans/job-z.md.
 
 ### Record index and identity
 
@@ -300,7 +244,7 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
   host session treats as fatal. The Pico keeps the job open; it runs what it
   has, goes dry into `BUFFERING`, and waits for `cancel`. No alarm: nothing
   left the range. A START's travel needs no check of its own (it runs from
-  the ring's end to a checked p0). Once lifts exist, the dry stop lifts.
+  the ring's end to a checked p0). The dry stop lifts (docs/plans/job-z.md).
 
 ### Alarms in a job
 
