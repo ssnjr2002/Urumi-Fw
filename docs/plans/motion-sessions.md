@@ -962,7 +962,41 @@ holds the job for a tool change with a manual touch-off.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces: `LAYER_HDR` 20 B (`[4]` head; layer, record, feed, k one byte
+  on); `MSEG_NACK_TOOL_CHANGE` 0x0F (`NOT_MOUNTED` 0x0E gone); `JOB_TOOL_CHANGE`
+  5, `JOB_TOOL_WAIT` 6; `SEQ_TOOL_CHANGE` 6; `K_IN_TOOL` (admits `mount`, `jog`,
+  `wzero` and continuous jogs in TOOL_WAIT); `layerResolve` takes the head;
+  `controller/seq/toolchange.*`; `plannerHoldForTool`, `plannerJobSwap`;
+  `framesUnsetWorkZ`/`framesWorkZSet`; `zsReady()` in `steps.cpp`, shared with
+  `jogto`. Web: `packLayerHdr({ head })`, the session retries
+  `NACK_TOOL_CHANGE` every 250 ms.
+* Deviations:
+  * The head is selected before the park, not after (no motion depends on it).
+  * A change made from PAUSED goes back to PAUSED, so the resent header keeps
+    its resume trim; the host waits for BUFFERING or PAUSED.
+  * With the tool mounted on its head and another head selected, IDLE and a
+    resume select it at once (the bus is free), as before; only a running
+    job's switch goes through the change.
+  * `jogto` checks Z homing after its soft limits now (`zsReady`).
+* Known gaps: a change that fails before its sequence starts (no probe
+  switch, a Z not homed) reports `seq=-`, not 6. The sim models no mounts and
+  never enters a change.
+* Bench (COM8, head 0, pen, probe switch (100, 100) in a bench-only config):
+  IDLE header for an unmounted tool → `NACK 0f`, park, line to the switch
+  (13 s), TOOL_WAIT; `mount 0 1` `wrong_tool`, `pause`/`select`/`wclear`
+  refused, the header `NACK 0f`, `jog z` allowed; `mount 0 2` holds until
+  `wzero z`, then BUFFERING; the resent header ACKed and the record ran.
+  Mid-job: header and next record `NACK 0f`, the ring finished, then the
+  change. Without a probe switch: `seqfail=no_position`, job ended. `cancel`
+  from TOOL_WAIT to IDLE. Not tried: from PAUSED, a head switch alone (head 1
+  excluded), `stop` in TOOL_CHANGE, a failed park, a continuous jog in
+  TOOL_WAIT, the session against the Pico.
+* Checks: `pio run -e pico` clean; `pio test -e native` 152/152; `test/wire`
+  231/231; `pnpm test` and `pnpm typecheck` as `main`.
 
 ## Open
 
