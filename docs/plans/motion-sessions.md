@@ -1044,9 +1044,12 @@ mounted tool's offset in the tip.
      runs the `jogto` sequence there (Zs parked, then the line), so that
      tool's tip lands on the switch whether or not it is mounted. The tool
      change's line uses it with the wanted tool. `jogto probe` goes.
-  6. The machine-level accels (`path.accel`, `rapid.accel`) go with the
-     rename: the firmware never read them. A tool's `path.feed` falls back to
-     `feed.cutFallback`.
+  6. Feeds are plain numbers, accels go (the planner uses the axes' only;
+     a per-tool cap can come later if a tool needs it): the machine's `z`
+     becomes `feed.plungeFallback`; a tool's `path` and `z` blocks become
+     `cutFeed` and `plungeFeed`, falling back to `feed.cutFallback` and
+     `feed.plungeFallback`. Old keys are refused by name. A machine-wide
+     `liftFeed` comes with Z; `slew` stays until A.
   7. Docs: the config doc and `docs/wire_protocol.md` (`feed`, `probe_park`,
      the frame chain).
 * Not in scope: the corner between a travel and its first cut (blended within
