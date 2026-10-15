@@ -26,7 +26,8 @@ here. Until then a `BREAK` runs through without a lift.
   ```
 
   `t` (material thickness) from the layer header, `k` (plunge scale) from the
-  layer header, `c` (`clearance`) from the tool profile. `t` is a u16 in µm
+  layer header, `c` from `machine.zClearance` (machine-wide; renamed from
+  `clearanceMm`, which only the host read). `t` is a u16 in µm
   (to 65.5 mm; Z travels 48 mm, so preflight bounds it first). A tool with
   `plunge: false` (a pen) has depth 0 whatever `k` says.
   A head with no work Z set refuses the layer header (`NACK_JOB`).
@@ -106,7 +107,7 @@ A dependent chain, run as a Single Session.
   `START`, a lift before `PAUSED` and before an abort's IDLE; `t` on the
   wire, `k` live, work Z required.
 * Interface: `LAYER_HDR` gains `t` (u16 µm, so 22 bytes); `machine.feed.liftFeed`;
-  tool `clearance`; blob and schema version 8.
+  `machine.zClearance` (was `clearanceMm`, the old key refused by name); blob and schema version 8.
 * Files:
   * `src/rp2350/core0/usb_protocol.h:33` (layout), `data_plane.cpp`,
     `ops/layer.{h,cpp}`

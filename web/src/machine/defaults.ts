@@ -29,11 +29,11 @@ export const DEFAULTS = {
     machine: {
         fCpu: 150_000_000,
         /** Job feeds, mm/s: the cut and plunge fallbacks and the travel. */
-        feed: { cutFallback: 80, travelDefault: 80, plungeFallback: 20 },
+        feed: { cutFallback: 80, travelDefault: 80, plungeFallback: 20, liftFeed: 20 },
         /** Standalone-A slew (reposition). Empty ⇒ falls to the A axis ceiling. */
         slew: {},
         /** Margin above the material top that counts as clear, mm. */
-        clearanceMm: 2,
+        zClearance: 2,
         /** Job buffering thresholds, s (follower.cpp). */
         buffer: { queueTime: 1, idleTime: 0.5 },
         defaultHead: 0,

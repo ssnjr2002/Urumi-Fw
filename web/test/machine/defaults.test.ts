@@ -54,7 +54,7 @@ describe("factories derive from DEFAULTS", () => {
 
     it("overrides still beat the defaults", () => {
         const m = machineConfig(axis(), axis(), [head()], {
-            feed: { cutFallback: 12345, travelDefault: 80, plungeFallback: 20 },
+            feed: { cutFallback: 12345, travelDefault: 80, plungeFallback: 20, liftFeed: 20 },
         });
         expect(m.feed.cutFallback).toBe(12345);
     });
@@ -132,7 +132,7 @@ describe("fill-at-load", () => {
 
 describe("resolveTargets", () => {
     const m = machineConfig(axis(), axis(), [head()], {
-        feed: { cutFallback: 80, travelDefault: 70, plungeFallback: 20 },
+        feed: { cutFallback: 80, travelDefault: 70, plungeFallback: 20, liftFeed: 20 },
     });
 
     it("tool feeds override the machine fallbacks", () => {

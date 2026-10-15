@@ -170,13 +170,16 @@ interface JsonMachine {
         readonly cutFallback?: number;
         readonly travelDefault?: number;
         readonly plungeFallback?: number;
+        readonly liftFeed?: number;
     };
     /** Removed — see buildFeed. Typed so the check can see them. */
     readonly path?: unknown;
     readonly rapid?: unknown;
     readonly z?: unknown;
     readonly slew?: JsonOpTarget;
-    readonly clearanceMm?: number;
+    readonly zClearance?: number;
+    /** Renamed to zClearance. Typed so the check can see it. */
+    readonly clearanceMm?: unknown;
     readonly x: JsonAxis;
     readonly y: JsonAxis;
     readonly laser?: JsonLaser;
@@ -396,7 +399,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         // (see patchToolProfile) — absent there means "inherit".
         feed: buildFeed(machine, errors),
         slew: opTarget(machine.slew, DEFAULTS.machine.slew),
-        clearanceMm: machine.clearanceMm ?? DEFAULTS.machine.clearanceMm,
+        zClearance: buildZClearance(machine, errors),
         peripherals,
         defaultHead: json.defaultHead ?? 0,
         laser: buildLaser(machine.laser, errors),
@@ -428,7 +431,7 @@ export function parseConfig(jsonText: string): ConfigResult {
             if (json.tools[name]!.liftHeight !== undefined) {
                 errors.push(
                     `tools.${name}.liftHeight: removed — set 'plunge'; the lift is ` +
-                    "derived from the job's material thickness and machine.clearanceMm",
+                    "derived from the job's material thickness and machine.zClearance",
                 );
                 continue;
             }
@@ -521,7 +524,16 @@ function buildFeed(machine: JsonMachine, errors: string[]): JobFeed {
         cutFallback: feed("cutFallback"),
         travelDefault: feed("travelDefault"),
         plungeFallback: feed("plungeFallback"),
+        liftFeed: feed("liftFeed"),
     };
+}
+
+function buildZClearance(machine: JsonMachine, errors: string[]): number {
+    if (machine.clearanceMm !== undefined) errors.push("machine.clearanceMm: renamed — use machine.zClearance");
+    const v = machine.zClearance;
+    if (v === undefined) return DEFAULTS.machine.zClearance;
+    if (typeof v !== "number") errors.push("machine.zClearance: must be a number");
+    return v;
 }
 
 function buildBuffer(j: JsonMachine["buffer"], errors: string[]): JobBuffer {

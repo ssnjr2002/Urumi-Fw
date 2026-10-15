@@ -7,6 +7,7 @@
 #include "queue.h"
 #include "../config/machine_cfg.h"
 #include "../ops/frames.h"
+#include "../ops/layer.h"
 #include "../ops/mesh.h"
 #include "../ops/position.h"
 #include "../ops/machine.h"
@@ -104,35 +105,37 @@ static bool resetIfIdle(uint8_t reason) {
 
 static planner::Vec2 tipOffset() { return {plannerMesh.tipX, plannerMesh.tipY}; }
 
-// The actual Z at the ring's end and the soft-range check of offset `off` from it.
-static bool zInRange(float off) {
+// The soft-range check of flat Z `z` at offset `off`, from the actual Z at the
+// ring's end.
+static bool zInRange(float z, float off) {
     const planner::Pos e = plannerRing.end();
     float left;
-    return !framesCheckMove(SLOT_Z, e.z + meshLatchedOffset(e.x, e.y), e.z + off, &left);
+    return !framesCheckMove(SLOT_Z, e.z + meshLatchedOffset(e.x, e.y), z + off, &left);
 }
 
-static PlannerQueueResult meshFit(const planner::MeshWalk& w, const planner::AxisLimits& limits,
-                                  planner::PathCap& cap) {
-    if (!zInRange(w.lo) || !zInRange(w.hi)) return PQ_SOFT_LIMIT;
+// A block at flat Z `z` whose offset walk is `w`.
+static PlannerQueueResult meshFit(const planner::MeshWalk& w, float z,
+                                  const planner::AxisLimits& limits, planner::PathCap& cap) {
+    if (!zInRange(z, w.lo) || !zInRange(z, w.hi)) return PQ_SOFT_LIMIT;
     if (limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0)
         cap = planner::meshCap(w, limits.max_feed[SLOT_Z], limits.max_accel[SLOT_Z]);
     return PQ_OK;
 }
 
-static PlannerQueueResult meshLine(planner::Vec2 to, const planner::AxisLimits& limits,
+static PlannerQueueResult meshLine(planner::Vec2 to, float z, const planner::AxisLimits& limits,
                                    planner::PathCap& cap) {
     if (!plannerMesh.mesh) return PQ_OK;
     const planner::MeshWalk w = planner::meshWalkLine(*plannerMesh.mesh, plannerRing.end().xy(),
                                                       to, tipOffset(), plannerMesh.ref);
-    return meshFit(w, limits, cap);
+    return meshFit(w, z, limits, cap);
 }
 
-static PlannerQueueResult meshBezier(const planner::Bezier& b, const planner::AxisLimits& limits,
-                                     planner::PathCap& cap) {
+static PlannerQueueResult meshBezier(const planner::Bezier& b, float z,
+                                     const planner::AxisLimits& limits, planner::PathCap& cap) {
     if (!plannerMesh.mesh) return PQ_OK;
     const planner::MeshWalk w = planner::meshWalkBezier(*plannerMesh.mesh, b, tipOffset(),
                                                         plannerMesh.ref);
-    return meshFit(w, limits, cap);
+    return meshFit(w, z, limits, cap);
 }
 
 // The point toward `to` where the actual Z last stays in range: sampled at the
@@ -144,7 +147,8 @@ static planner::Vec2 meshClip(planner::Vec2 to) {
     const float ex = to.x - p0.x, ey = to.y - p0.y;
     const float len = sqrtf(ex * ex + ey * ey);
     auto at = [&](float f) { return planner::Vec2{p0.x + ex * f, p0.y + ey * f}; };
-    auto fits = [&](float f) { const planner::Vec2 p = at(f); return zInRange(meshLatchedOffset(p.x, p.y)); };
+    const float z = plannerRing.end().z;
+    auto fits = [&](float f) { const planner::Vec2 p = at(f); return zInRange(z, meshLatchedOffset(p.x, p.y)); };
     const int n = (int)ceilf(len / (0.5f * fminf(m.dx, m.dy)));
     float ok = 0, bad = 0;
     for (int i = 1; i <= n; i++) {
@@ -171,12 +175,12 @@ PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason
     const bool mine = ringOwner == reason;
     planner::Vec2 to = {x, y};
     planner::PathCap cap;
-    PlannerQueueResult fit = mine ? meshLine(to, limits, cap) : PQ_OK;
+    PlannerQueueResult fit = mine ? meshLine(to, plannerRing.end().z, limits, cap) : PQ_OK;
     if (fit == PQ_SOFT_LIMIT && reason == RING_JOG_CONT) {
         to = meshClip(to);
         cap = planner::PathCap();
         const planner::Pos e = plannerRing.end();
-        fit = to.x == e.x && to.y == e.y ? PQ_SOFT_LIMIT : meshLine(to, limits, cap);
+        fit = to.x == e.x && to.y == e.y ? PQ_SOFT_LIMIT : meshLine(to, e.z, limits, cap);
     }
     const bool pushed = mine && fit == PQ_OK && plannerRing.pushLine(to, feed, limits, kDeviation, cap);
     spin_unlock(plannerLock, s);
@@ -233,7 +237,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
     const planner::Pos e = plannerRing.end();
     const bool moved = e.x != p0.x || e.y != p0.y;
     planner::PathCap cap;
-    const PlannerQueueResult fit = moved ? PQ_OK : meshBezier(b, limits, cap);
+    const PlannerQueueResult fit = moved ? PQ_OK : meshBezier(b, e.z, limits, cap);
     const bool pushed = !moved && fit == PQ_OK && plannerRing.pushBezier(b, feed, limits, kDeviation, cap);
     spin_unlock(plannerLock, s);
     if (moved) return PQ_BAD_STATE;
@@ -248,7 +252,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
 
 // The `feed` command's override of the config's feeds; 0 = none.
 static float cutFeed = 0, travelFeed = 0;
-static float layerFeed = 0;     // the open layer's cut feed
+static LayerMotion layerMo = {}; // the open layer's feeds and plunge depth
 static bool inContour = false;
 // The record the next BEZIER is, and whether it is the first since a LAYER_HDR.
 static uint16_t curLayer = 0;
@@ -309,8 +313,8 @@ PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record)
     return inContour ? PQ_BAD_CURVE : PQ_OK;
 }
 
-PlannerQueueResult plannerOpenLayer(float cut, uint16_t layer, uint32_t record) {
-    const PlannerQueueResult r = plannerLayerCheck(cut, layer, record);
+PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uint32_t record) {
+    const PlannerQueueResult r = plannerLayerCheck(mo.cutFeed, layerNo, record);
     if (r != PQ_OK) return r;
     const bool resume = paused();
 
@@ -339,8 +343,8 @@ PlannerQueueResult plannerOpenLayer(float cut, uint16_t layer, uint32_t record) 
         }
     }
     if (out == PQ_OK) {
-        layerFeed = cut;
-        curLayer = layer;
+        layerMo = mo;
+        curLayer = layerNo;
         nextRecord = record;
         firstRecord = true;
     }
@@ -389,6 +393,24 @@ bool plannerJobSwap(uint8_t from, uint8_t to) {
     return ok;
 }
 
+// Flat Z of a lift or travel (zClearance over work Z) and of the cut (the
+// layer's depth under it).
+static float clearZ() { return framesWork(SLOT_Z) + machineCfg().zClearance; }
+static float cutZ()   { return framesWork(SLOT_Z) - layerMo.depth; }
+
+// A Z-only move at (x, y) from flat `from` to flat `to` inside Z's soft range.
+static bool zMoveFits(planner::Vec2 at, float from, float to) {
+    const float off = meshLatchedOffset(at.x, at.y);
+    float left;
+    return !framesCheckMove(SLOT_Z, from + off, to + off, &left);
+}
+
+static void pushZ(float z, float feed, const planner::AxisLimits& limits) {
+    planner::Pos to = plannerRing.end();
+    to.z = z;
+    plannerRing.pushMove(to, feed, limits, kDeviation);
+}
+
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) {
     if (machineContext != CTX_JOB) return PQ_NO_JOB;
     planner::AxisLimits limits;
@@ -397,41 +419,55 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     if (firstRecord) start = true;
     if (start == inContour) return PQ_BAD_CURVE;   // START inside a contour, or none outside
     if (planner::checkBezier(b) != planner::BezierError::None) return PQ_BAD_CURVE;
+    if (!(limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0)) return PQ_NO_LIMITS;
 
     // A resumed record starts at its trim, travelled to as a START's p0.
     const float from = firstRecord ? resumeTrim : 0;
     const planner::Vec2 p0 = from > 0 ? planner::bezierPoint(b, planner::bezierT(b, from)) : b.p[0];
+    const float liftFeed = machineCfg().liftFeed;
+    const float up = clearZ(), down = cutZ();
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool reset = resetIfIdle(RING_JOB);
     const planner::Pos e = plannerRing.end();
     const float dx = p0.x - e.x, dy = p0.y - e.y;
+    // A START: Z to clearance, travel, plunge, then the curve; an END lifts after it.
+    const int blocks = (start ? 4 : 1) + (end ? 1 : 0);
+    const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
-    bool travel = false;
     if (ringOwner != RING_JOB) {
         out = PQ_BAD_STATE;                         // a jog owns the ring
-    } else if (dx == 0 && dy == 0) {
-        if (plannerRing.full()) out = PQ_FULL;
-    } else if (!start) {
+    } else if (plannerRing.count() > planner::Planner::kSize - blocks) {
+        out = PQ_FULL;                              // a record's blocks go in together
+    } else if (!start && (dx != 0 || dy != 0)) {
         // An idle reset restarts the ring at machinePos, which rounds p3 to a
         // step; a contour continuing after a drain is within one step of it.
         const float step = 1 / fminf(fabsf(plannerSpm[0]), fabsf(plannerSpm[1]));
         if (reset && fabsf(dx) <= step && fabsf(dy) <= step) b.p[0] = e.xy();
         else out = PQ_BAD_CURVE;
-        if (out == PQ_OK && plannerRing.full()) out = PQ_FULL;
-    } else if (plannerRing.count() > planner::Planner::kSize - 2) {
-        out = PQ_FULL;                              // travel and curve go in together
-    } else {
-        travel = true;
     }
-    // Both walked before either goes in; the curve keeps the travel's flat Z.
+    // Every block checked before any goes in.
     planner::PathCap travelCap, curveCap;
-    if (out == PQ_OK && travel) out = meshLine(p0, limits, travelCap);
-    if (out == PQ_OK) out = meshBezier(b, limits, curveCap);
+    if (out == PQ_OK && start) {
+        if (!zMoveFits(e.xy(), e.z, up)) out = PQ_SOFT_LIMIT;
+        else out = meshLine(p0, up, limits, travelCap);
+        if (out == PQ_OK && !zMoveFits(p0, up, down)) out = PQ_SOFT_LIMIT;
+    }
+    if (out == PQ_OK) out = meshBezier(b, curveZ, limits, curveCap);
+    if (out == PQ_OK && end && !zMoveFits(b.p[3], curveZ, up)) out = PQ_SOFT_LIMIT;
     if (out == PQ_OK) {
         plannerRing.setTag(curLayer, nextRecord);
-        if (travel) plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);
-        plannerRing.pushBezierFrom(b, from, layerFeed, limits, kDeviation, curveCap);
+        if (start) {
+            pushZ(up, e.z < up ? liftFeed : layerMo.plungeFeed, limits);
+            plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);
+            pushZ(down, layerMo.plungeFeed, limits);
+        }
+        plannerRing.pushBezierFrom(b, from, layerMo.cutFeed, limits, kDeviation, curveCap);
+        if (end) {
+            // Paused in the lift, the job resumes at the next record.
+            plannerRing.setTag(curLayer, nextRecord + 1);
+            pushZ(up, liftFeed, limits);
+        }
     }
     spin_unlock(plannerLock, s);
     if (out != PQ_OK) return out;

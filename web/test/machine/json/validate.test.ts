@@ -77,7 +77,7 @@ describe("rule: nonNegativeTargets", () => {
     });
 
     it("errors on a machine feed below 1", () => {
-        expect(errors(cfg({ feed: { cutFallback: 0.5, travelDefault: 80, plungeFallback: 20 } })))
+        expect(errors(cfg({ feed: { cutFallback: 0.5, travelDefault: 80, plungeFallback: 20, liftFeed: 20 } })))
             .toContain("machine.feed.cutFallback: must be >= 1 (got 0.5)");
     });
 
@@ -121,7 +121,7 @@ describe("rule: targetsUnderCeilings", () => {
     it("uses the INHERITED value when the tool does not override", () => {
         // plungeFallback 20 > Z maxFeed 10 — the exact latent bug the value
         // model surfaced in the bench config.
-        const c = cfg({ feed: { cutFallback: 80, travelDefault: 80, plungeFallback: 20 } });
+        const c = cfg({ feed: { cutFallback: 80, travelDefault: 80, plungeFallback: 20, liftFeed: 20 } });
         const withTool: PipelineConfig = { ...c, toolProfiles: { knife: toolProfile("knife") } };
         expect(warnings(withTool)).toContain(
             "tools.knife.plungeFeed 20 exceeds axis ceiling 10 (clamped)",

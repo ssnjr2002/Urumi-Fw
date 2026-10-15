@@ -45,7 +45,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
-| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head and feed (20 B) |
+| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head, feed and plunge (22 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
@@ -175,7 +175,7 @@ record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
 with `softLimits` is `NACK_SOFT_LIMIT`, as is a record (or its travel line)
 along which the bed mesh would take Z out of its soft range.
 
-### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 20 bytes)
+### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 22 bytes)
 ```
 [0]      magic = 0xA2
 [1]      chamber    uint8      — 1..chamberCount; 0 for a tool without chambers
@@ -185,9 +185,18 @@ along which the bed mesh would take Z out of its soft range.
 [5..6]   layer      uint16 LE
 [7..10]  record     uint32 LE  — the next BEZIER's number within the layer
 [11..14] feed       float32 LE — cut, mm/s; 0 = the tool's cutFeed, then the machine's (`feed`, else `feed.cutFallback`)
-[15..18] k          float32 LE — plunge scale 0..2 (unused yet)
-[19]     CRC8 over bytes [0..18]
+[15..18] k          float32 LE — plunge scale 0..2
+[19..20] t          uint16 LE  — material thickness, µm
+[21]     CRC8 over bytes [0..20]
 ```
+**Heights.** Work Z is the tip on the material top. Every contour's START
+moves Z to `machine.zClearance` over work Z, travels to its p0 and plunges to
+k·t under work Z (0 for a tool with `plunge: false`) at the tool's
+`plungeFeed`, else `feed.plungeFallback`; its END lifts back to clearance at
+`feed.liftFeed`. A height outside Z's soft range is `NACK_SOFT_LIMIT`. With
+the tool mounted, a head with no work Z set (after a tool change, until a Z
+zero) refuses the header: `NACK_JOB`.
+
 Opens a job (JOB.BUFFERING) from IDLE; in a buffering or running job it starts
 the next layer. Layers may come in any order; the BEZIERs after a header are
 numbered on from its `record`.

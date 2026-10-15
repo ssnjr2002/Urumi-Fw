@@ -2,7 +2,7 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 20 bytes;
+//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 22 bytes;
 //                continuous jog (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
@@ -214,21 +214,27 @@ static void acceptLayer() {
     memcpy(&record,  &pktBuf[7], 4);
     memcpy(&l.feed,  &pktBuf[11], 4);
     memcpy(&l.k,     &pktBuf[15], 4);
+    uint16_t um;
+    memcpy(&um,      &pktBuf[19], 2);
+    l.thickness = um * 0.001f;
 
     const MachineCfg& c = machineCfg();
     uint8_t mounted[CFG_MAX_HEADS];
     for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) mounted[h] = toolsMounted(h);
-    float cut;
-    const LayerResult res = layerResolve(c, mounted, l, plannerMachineFeed(), &cut);
+    LayerMotion mo;
+    const LayerResult res = layerResolve(c, mounted, l, plannerMachineFeed(), &mo);
     switch (res) {
         case LAYER_OK:           break;
         case LAYER_NOT_MOUNTED:  break;
         case LAYER_TOOL_UNKNOWN: sendNack(MSEG_NACK_TOOL_UNKNOWN); return;
         default:                 sendNack(MSEG_NACK_JOB);          return;
     }
+    // Lifts and plunges are heights over the head's work Z; a tool change
+    // zeroes it before the header comes again.
+    if (res == LAYER_OK && !framesWorkZSet(l.head)) { sendNack(MSEG_NACK_JOB); return; }
 
     // Checked before the select or the change, so a refused layer changes nothing.
-    PlannerQueueResult r = plannerLayerCheck(cut, layerNo, record);
+    PlannerQueueResult r = plannerLayerCheck(mo.cutFeed, layerNo, record);
     if (r == PQ_OK && (res != LAYER_OK || l.head != framesSelected())) {
         if (res != LAYER_OK || !machineBusFree()) {
             sendNack(toolChangeBegin(l.head, l.tool) ? MSEG_NACK_TOOL_CHANGE : MSEG_NACK_BAD_STATE);
@@ -238,7 +244,7 @@ static void acceptLayer() {
         axesSelectHead(l.head, &why);
         if (why || framesSelected() != l.head) { sendNack(MSEG_NACK_BAD_STATE); return; }
     }
-    if (r == PQ_OK) r = plannerOpenLayer(cut, layerNo, record);
+    if (r == PQ_OK) r = plannerOpenLayer(mo, layerNo, record);
     switch (r) {
         case PQ_OK:        break;
         case PQ_BAD_CURVE: sendNack(MSEG_NACK_JOB);       return;   // inside a contour

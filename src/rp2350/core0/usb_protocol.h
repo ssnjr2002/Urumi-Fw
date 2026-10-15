@@ -30,7 +30,7 @@
 #define BEZIER_FLAG_BREAK  0x02   // corner or cusp before this piece
 #define BEZIER_FLAG_END    0x04   // closes the contour
 
-// LAYER_HDR (20 bytes, little-endian): opens a job from IDLE and starts a layer,
+// LAYER_HDR (22 bytes, little-endian): opens a job from IDLE and starts a layer,
 // or resumes a paused job from where it stopped (`get resume_layer
 // resume_record`). The BEZIERs after it run with its tool on `head`, numbered on
 // from `record`; the first is a START. Accepted only with the tool mounted on
@@ -43,10 +43,12 @@
 //   [5..6]   layer    u16
 //   [7..10]  record   u32, the next BEZIER's number within the layer
 //   [11..14] feed     f32 mm/s; 0 = the tool's cutFeed, then the machine's
-//   [15..18] k        f32 plunge scale, 0..2 (unused for now)
-//   [19]     CRC8 over bytes [0..18]
+//   [15..18] k        f32 plunge scale, 0..2: the plunge goes k·t below work Z
+//   [19..20] t        u16 material thickness, µm
+//   [21]     CRC8 over bytes [0..20]
+// The head needs its work Z set (a Z zero); otherwise NACK_JOB.
 #define LAYER_HDR_MAGIC       0xA2
-#define LAYER_HDR_PACKET_SIZE 20
+#define LAYER_HDR_PACKET_SIZE 22
 
 // Inter-byte timeout for a half-received BEZIER or jog packet. A whole
 // packet arrives in microseconds over USB CDC, so a gap this long means the

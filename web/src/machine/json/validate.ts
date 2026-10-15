@@ -138,9 +138,9 @@ const uniqueNodeIds: Rule = ({ machine }) => {
 };
 
 const clearanceNonNegative: Rule = ({ machine }) =>
-    Number.isFinite(machine.clearanceMm) && machine.clearanceMm >= 0
+    Number.isFinite(machine.zClearance) && machine.zClearance >= 0
         ? []
-        : [error(`machine.clearanceMm: must be >= 0 (got ${machine.clearanceMm})`)];
+        : [error(`machine.zClearance: must be >= 0 (got ${machine.zClearance})`)];
 
 const bufferPositive: Rule = ({ machine }) =>
     (["queueTime", "idleTime"] as const)
@@ -148,7 +148,7 @@ const bufferPositive: Rule = ({ machine }) =>
         .map((k) => error(`machine.buffer.${k}: must be > 0 (got ${machine.buffer[k]})`));
 
 const feedAtLeastOne: Rule = ({ machine }) =>
-    (["cutFallback", "travelDefault", "plungeFallback"] as const)
+    (["cutFallback", "travelDefault", "plungeFallback", "liftFeed"] as const)
         .filter((k) => !(Number.isFinite(machine.feed[k]) && machine.feed[k] >= 1))
         .map((k) => error(`machine.feed.${k}: must be >= 1 (got ${machine.feed[k]})`));
 

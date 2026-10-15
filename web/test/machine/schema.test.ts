@@ -223,7 +223,7 @@ describe("config: MachineConfig", () => {
         );
         expect(m.defaultHead).toBe(0);
         expect(m.fCpu).toBe(150_000_000);
-        expect(m.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20 });
+        expect(m.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20, liftFeed: 20 });
         expect(m.slew).toEqual({});
         expect(m.peripherals).toEqual([]);
     });
@@ -305,7 +305,7 @@ describe("config: defaultConfig", () => {
     it("machine defaults: defaultHead 0, fCpu 150e6, cut and travel feed 80, plunge 20, no laser", () => {
         expect(cfg.machine.defaultHead).toBe(0);
         expect(cfg.machine.fCpu).toBe(150_000_000);
-        expect(cfg.machine.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20 });
+        expect(cfg.machine.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20, liftFeed: 20 });
         expect(cfg.machine.laser).toBeUndefined();
     });
 

@@ -645,8 +645,8 @@ export interface MachineConfig {
     readonly feed: JobFeed;
     /** Standalone-A slew (reposition; machine-owned). feed unset ⇒ A ceiling. */
     readonly slew: OpTarget;
-    /** Margin above the material top that counts as clear, mm. */
-    readonly clearanceMm: number;
+    /** Lift and travel height above the material top, mm. */
+    readonly zClearance: number;
     readonly peripherals: readonly BusNode[];
     /** Optional laser pointer module (alignment reference). */
     readonly laser?: LaserPointer;
@@ -671,6 +671,8 @@ export interface JobFeed {
     readonly travelDefault: number;
     /** Plunge feed when the tool sets none. */
     readonly plungeFallback: number;
+    /** Lift feed, every tool. */
+    readonly liftFeed: number;
 }
 
 export interface JobBuffer {

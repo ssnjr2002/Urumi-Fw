@@ -265,8 +265,9 @@ static CfgDecodeError validate(const MachineCfg& c) {
         seen |= bit;
     }
     if (!positive(c.bufferQueueTime) || !positive(c.bufferIdleTime)) return CFG_DEC_BUFFER;
-    for (float f : {c.cutFallback, c.travelDefault, c.plungeFallback})
+    for (float f : {c.cutFallback, c.travelDefault, c.plungeFallback, c.liftFeed})
         if (!(f >= 1.0f) || !isfinite(f)) return CFG_DEC_FEED;
+    if (!(c.zClearance >= 0.0f) || !isfinite(c.zClearance)) return CFG_DEC_Z_CLEARANCE;
     if ((e = checkTools(c)) != CFG_DEC_OK) return e;
     return checkFrames(c);
 }
@@ -293,6 +294,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["meshOn"]      = true;
     fm["buffer"]      = true;
     fm["feed"]        = true;
+    fm["zClearance"]  = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
     JsonObject ft = filter["toolProfiles"]["*"].to<JsonObject>();
     for (const char* k : {"id", "toolType", "tangential", "plunge", "toolOffset",
@@ -359,7 +361,9 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     JsonObjectConst fd = m["feed"];
     if (fd.isNull() || !readFloat(fd["cutFallback"], &out->cutFallback) ||
         !readFloat(fd["travelDefault"], &out->travelDefault) ||
-        !readFloat(fd["plungeFallback"], &out->plungeFallback)) return CFG_DEC_MISSING;
+        !readFloat(fd["plungeFallback"], &out->plungeFallback) ||
+        !readFloat(fd["liftFeed"], &out->liftFeed) ||
+        !readFloat(m["zClearance"], &out->zClearance)) return CFG_DEC_MISSING;
 
     JsonVariantConst dh = m["defaultHead"];
     if (!dh.is<unsigned>()) return CFG_DEC_MISSING;
@@ -396,6 +400,7 @@ const char* configDecodeErrorName(CfgDecodeError e) {
         case CFG_DEC_BUFFER:    return "buffer";
         case CFG_DEC_TOOLS:     return "tools";
         case CFG_DEC_FEED:      return "feed";
+        case CFG_DEC_Z_CLEARANCE: return "z_clearance";
     }
     return "?";
 }

@@ -21,7 +21,8 @@
       "queueTime": 1.0,    // s of queued motion before a job starts
       "idleTime": 0.5      // s with no new record before it starts anyway
     },
-    "feed": { "cutFallback": 80, "travelDefault": 80, "plungeFallback": 10 },   // mm/s; `feed` overrides
+    "feed": { "cutFallback": 80, "travelDefault": 80, "plungeFallback": 10, "liftFeed": 10 },   // mm/s; `feed` overrides
+    "zClearance": 2,       // mm above the material top for lifts and travel
     "slew": {},
     "x": {
       "node": { "id": 1, "present": true },

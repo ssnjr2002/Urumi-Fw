@@ -1,5 +1,5 @@
 /**
- * layer.ts — the 20-byte LAYER_HDR: opens a job from IDLE and starts a layer,
+ * layer.ts — the 22-byte LAYER_HDR: opens a job from IDLE and starts a layer,
  * or resumes a paused job (src/rp2350/core0/usb_protocol.h). The BEZIERs after
  * it run with its tool on `head`, numbered on from `record`. Without the tool
  * mounted there and the head selected it is NACK_TOOL_CHANGE.
@@ -12,9 +12,10 @@
  *   [4]      head     the head the tool goes on
  *   [5..6]   layer    u16
  *   [7..10]  record   u32, the next BEZIER's number within the layer
- *   [11..14] feed     f32 mm/s; 0 = the tool's path.feed, then the machine's
- *   [15..18] k        f32 plunge scale, 0..2
- *   [19]     CRC8 over bytes [0..18]
+ *   [11..14] feed     f32 mm/s; 0 = the tool's cutFeed, then the machine's
+ *   [15..18] k        f32 plunge scale, 0..2: the plunge goes k·t below work Z
+ *   [19..20] t        u16 material thickness, µm
+ *   [21]     CRC8 over bytes [0..20]
  */
 
 import { LAYER_HDR_SEQ_OFFSET, LAYER_HDR_SIZE, MAGIC_LAYER_HDR } from "./constants.js";
@@ -28,6 +29,8 @@ export interface LayerHdr {
     readonly record?: number;
     readonly feed?: number;
     readonly k?: number;
+    /** Material thickness, mm (to 65.535). */
+    readonly thickness?: number;
 }
 
 export function packLayerHdr(l: LayerHdr, seq = 0): Uint8Array {
@@ -42,6 +45,9 @@ export function packLayerHdr(l: LayerHdr, seq = 0): Uint8Array {
     dv.setUint32(7, l.record ?? 0, true);
     dv.setFloat32(11, l.feed ?? 0, true);
     dv.setFloat32(15, l.k ?? 1, true);
+    const um = Math.round((l.thickness ?? 0) * 1000);
+    if (!(um >= 0 && um <= 0xffff)) throw new RangeError(`LAYER_HDR: thickness ${l.thickness} mm out of range`);
+    dv.setUint16(19, um, true);
     u8[LAYER_HDR_SIZE - 1] = crc8(u8, 0, LAYER_HDR_SIZE - 1);
     return u8;
 }

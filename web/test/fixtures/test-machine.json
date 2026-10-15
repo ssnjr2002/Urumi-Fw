@@ -2,7 +2,7 @@
   "machine": {
     "fCpu": 150000000,
     "meshOn": false,
-    "feed": { "cutFallback": 80, "travelDefault": 80, "plungeFallback": 20 },
+    "feed": { "cutFallback": 80, "travelDefault": 80, "plungeFallback": 20, "liftFeed": 20 },
     "x": {
       "node": { "id": 1 },
       "stepsPerUnit": 160,

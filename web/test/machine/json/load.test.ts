@@ -140,7 +140,7 @@ describe("load: optional defaults", () => {
         delete json.machine.feed;
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
-        expect(r.config.machine.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20 });
+        expect(r.config.machine.feed).toEqual({ cutFallback: 80, travelDefault: 80, plungeFallback: 20, liftFeed: 20 });
     });
 
     it("the removed machine path and rapid are rejected by name", () => {
@@ -153,6 +153,17 @@ describe("load: optional defaults", () => {
         expect(r.errors).toContain("machine.z: removed — use machine.feed.plungeFallback");
         expect(r.errors).toContain("machine.path: removed — use machine.feed.cutFallback");
         expect(r.errors).toContain("machine.rapid: removed — use machine.feed.travelDefault");
+    });
+
+    it("zClearance defaults to 2; the old clearanceMm is rejected by name", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        const ok = parseConfig(JSON.stringify(json));
+        if (!ok.ok) throw new Error("expected ok");
+        expect(ok.config.machine.zClearance).toBe(2);
+        json.machine.clearanceMm = 2;
+        const r = parseConfig(JSON.stringify(json));
+        if (r.ok) throw new Error("expected errors");
+        expect(r.errors).toContain("machine.clearanceMm: renamed — use machine.zClearance");
     });
 
     it("a tool's removed path and z are rejected by name", () => {

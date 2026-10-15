@@ -14,9 +14,9 @@ export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planne
 export const BEZIER_SIZE = 56;
 export const BEZIER_SEQ_OFFSET = 2;
 
-// ── LAYER_HDR — 20-byte layer header, opens a job (format/layer.ts) ────────────
-export const MAGIC_LAYER_HDR = 0xa2; // host → Pico: tool, head, chamber, feed, k
-export const LAYER_HDR_SIZE = 20;
+// ── LAYER_HDR — 22-byte layer header, opens a job (format/layer.ts) ────────────
+export const MAGIC_LAYER_HDR = 0xa2; // host → Pico: tool, head, chamber, feed, k, t
+export const LAYER_HDR_SIZE = 22;
 export const LAYER_HDR_SEQ_OFFSET = 2;
 
 // ── Continuous jog — 7-byte deadman packet and its stop byte (format/cjog.ts) ──

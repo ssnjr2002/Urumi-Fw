@@ -24,6 +24,7 @@ enum PlannerQueueResult : uint8_t {
 };
 
 namespace planner { struct Bezier; }
+struct LayerMotion;
 
 // Queue a straight move to (x, y) in machine mm at `feed` mm/s. On an empty,
 // idle ring the move starts from machinePos.
@@ -55,10 +56,11 @@ float plannerMachineFeed();
 // PQ_BAD_CURVE inside a contour, else admit's verdict.
 PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record);
 
-// Start the layer (checked as plannerLayerCheck): opens the job
+// Start the layer (checked as plannerLayerCheck on mo.cutFeed): opens the job
 // (JOB.BUFFERING) from IDLE, and resumes a paused one, its first record cut
-// from kResumeMargin before where it stopped. Records count from `record`.
-PlannerQueueResult plannerOpenLayer(float cut, uint16_t layer, uint32_t record);
+// from kResumeMargin before where it stopped. Records count from `record`, and
+// run at `mo`'s feeds and plunge depth.
+PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layer, uint32_t record);
 
 // Hold the job for a tool change (a layer checked as plannerLayerCheck):
 // JOB.TOOL_CHANGE at once from IDLE (opening the job), PAUSED or a dry
@@ -75,10 +77,11 @@ bool plannerJobSwap(uint8_t from, uint8_t to);
 bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 
 // Queue a host-analysed record (checkBezier fills the rest of `b`). Contour
-// framing: `start` opens a contour and travels to p0 if it is elsewhere; any
-// other record must continue the ring's end; `end` closes the contour. The
-// first record after a LAYER_HDR is a START whatever its flags.
-// PQ_BAD_CURVE for a failed check or broken framing.
+// framing: `start` opens a contour: Z to zClearance over work Z, travel to p0,
+// plunge to the layer's depth; any other record must continue the ring's end;
+// `end` closes the contour and lifts back to zClearance. The first record after
+// a LAYER_HDR is a START whatever its flags. PQ_BAD_CURVE for a failed check or
+// broken framing; PQ_SOFT_LIMIT for a height outside Z's soft range.
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end);
 
 // Forget an open contour: seqreset, abort, soft reset.

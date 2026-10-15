@@ -18,7 +18,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 7u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 8u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -129,6 +129,8 @@ struct MachineCfg {
     float    cutFallback;
     float    travelDefault;
     float    plungeFallback;
+    float    liftFeed;       // every lift
+    float    zClearance;     // mm above the material top for lifts and travel
     CfgTool  tools[CFG_MAX_TOOLS];
     uint8_t  toolCount;
 };
@@ -148,8 +150,9 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_HOMING,         // a homing field out of range, or the wrong kind for the axis
     CFG_DEC_FRAMES,         // no anchor, a work Z per head missing, or a point out of reach
     CFG_DEC_BUFFER,         // a buffer time not a positive finite number
-    CFG_DEC_TOOLS,
-    CFG_DEC_FEED,           // a machine feed missing or below 1 mm/s          // too many tools or chambers, an id 0 or repeated, a bad number
+    CFG_DEC_TOOLS,          // too many tools or chambers, an id 0 or repeated, a bad number
+    CFG_DEC_FEED,           // a machine feed missing or below 1 mm/s
+    CFG_DEC_Z_CLEARANCE,    // zClearance negative or not finite
 };
 
 // Decode and validate `len` bytes at `blob` into *out. On failure *out is left
