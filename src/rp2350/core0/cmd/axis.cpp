@@ -747,11 +747,11 @@ bool cmdJog(const char* args) {
 }
 
 // ── feed <cut> <travel> — feeds for streamed BEZIER records ─────────────────
-// mm/s, held until reboot. A layer header's feed, then its tool's, overrides
-// the cut; layers are refused until a travel feed is set.
+// mm/s, at least 1, held until reboot; they override the config's cutFallback
+// and travelDefault. A layer header's feed, then its tool's, overrides the cut.
 bool cmdFeed(const char* args) {
     float v[2];
-    if (!parseFloats(args, v, 2) || !(v[0] > 0)) { Serial.println("err usage"); return true; }
+    if (!parseFloats(args, v, 2) || !(v[0] >= 1.0f && v[1] >= 1.0f)) { Serial.println("err usage"); return true; }
     plannerSetFeed(v[0], v[1]);
     Serial.println("ok");
     return true;

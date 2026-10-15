@@ -14,6 +14,6 @@ LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
                              : l.chamber < 1 || l.chamber > t->chamberCount)
         return LAYER_BAD;
 
-    *cutFeed = l.feed > 0 ? l.feed : t->pathFeed > 0 ? t->pathFeed : machineFeed;
+    *cutFeed = l.feed > 0 ? l.feed : t->cutFeed > 0 ? t->cutFeed : machineFeed;
     return mounted[l.head] == l.tool ? LAYER_OK : LAYER_NOT_MOUNTED;
 }

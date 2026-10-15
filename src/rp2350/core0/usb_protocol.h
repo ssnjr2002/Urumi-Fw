@@ -42,7 +42,7 @@
 //   [4]      head     the head the tool goes on
 //   [5..6]   layer    u16
 //   [7..10]  record   u32, the next BEZIER's number within the layer
-//   [11..14] feed     f32 mm/s; 0 = the tool's path.feed, then `feed`'s cut
+//   [11..14] feed     f32 mm/s; 0 = the tool's cutFeed, then the machine's
 //   [15..18] k        f32 plunge scale, 0..2 (unused for now)
 //   [19]     CRC8 over bytes [0..18]
 #define LAYER_HDR_MAGIC       0xA2

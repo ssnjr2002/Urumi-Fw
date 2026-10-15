@@ -15,6 +15,7 @@ bool cmdHomeHead(const char*);
 
 // ─── jogto.cpp ────────────────────────────────────────────────────────────────
 bool cmdJogTo(const char*);
+bool cmdProbePark(const char*);
 
 // ─── frames.cpp ───────────────────────────────────────────────────────────────
 bool cmdSelect(const char*);

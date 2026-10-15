@@ -65,7 +65,7 @@ static void start(void) {
         return;
     }
     if ((axes_homed & 0x3) != 0x3) { fail("not_homed"); return; }
-    if (const char* why = framesNamed("probe", &targetX, &targetY)) { fail(why); return; }
+    if (const char* why = framesProbeFor(wantTool, &targetX, &targetY)) { fail(why); return; }
     const MachineCfg& c = machineCfg();
     feed = fminf(c.x.jogFeed, c.y.jogFeed);
     if (!(feed > 0)) { fail("no_feed"); return; }

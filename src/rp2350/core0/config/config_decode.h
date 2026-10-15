@@ -10,7 +10,7 @@
 // config, so every field decoded here must be present: there is no defaults
 // table on this side. Exceptions: the homing block (absent: not homeable),
 // and inside it `cycle` and `parkPos`; `laser`, a head's `probeSwitch`, and
-// `positions.park` / `positions.load`; a tool's `path.feed`, `z.feed` and
+// `positions.park` / `positions.load`; a tool's `cutFeed`, `plungeFeed` and
 // `chamberOffsets`.
 //
 // Validation is consumer-scoped: it checks what would make the Pico's own use
@@ -18,7 +18,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 6u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 7u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -92,8 +92,8 @@ struct CfgTool {
     bool    plunge;         // cuts into the material, not on it
     float   xOffset;        // toolOffset: tip − head centre, mm
     float   yOffset;
-    float   pathFeed;       // cut feed, mm/s; 0 = the machine's
-    float   zFeed;          // engage feed, mm/s; 0 = the machine's
+    float   cutFeed;        // mm/s; 0 = the machine's
+    float   plungeFeed;     // mm/s; 0 = the machine's
     uint8_t chamberCount;   // 0 without chambers
     float   chamberOffsets[CFG_MAX_CHAMBERS];   // A angle per chamber, degrees
 };
@@ -123,6 +123,12 @@ struct MachineCfg {
     // has arrived for this long. Seconds; jobs only.
     float    bufferQueueTime;
     float    bufferIdleTime;
+    // Job feeds, mm/s: the cut feed when neither the layer nor its tool sets
+    // one, the travel to a contour's start (`feed` overrides both), and the
+    // plunge feed when the tool sets none.
+    float    cutFallback;
+    float    travelDefault;
+    float    plungeFallback;
     CfgTool  tools[CFG_MAX_TOOLS];
     uint8_t  toolCount;
 };
@@ -142,7 +148,8 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_HOMING,         // a homing field out of range, or the wrong kind for the axis
     CFG_DEC_FRAMES,         // no anchor, a work Z per head missing, or a point out of reach
     CFG_DEC_BUFFER,         // a buffer time not a positive finite number
-    CFG_DEC_TOOLS,          // too many tools or chambers, an id 0 or repeated, a bad number
+    CFG_DEC_TOOLS,
+    CFG_DEC_FEED,           // a machine feed missing or below 1 mm/s          // too many tools or chambers, an id 0 or repeated, a bad number
 };
 
 // Decode and validate `len` bytes at `blob` into *out. On failure *out is left

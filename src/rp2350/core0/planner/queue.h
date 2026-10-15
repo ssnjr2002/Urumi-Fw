@@ -46,7 +46,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
 // until reboot. A layer's own cut feed overrides the machine's.
 void plannerSetFeed(float cut, float travel);
 
-// The machine's cut feed (plannerSetFeed).
+// The machine's cut feed: plannerSetFeed's, else the config's cutFallback.
 float plannerMachineFeed();
 
 // Whether layer `layer`, from its record `record`, cut at `cut` mm/s could open

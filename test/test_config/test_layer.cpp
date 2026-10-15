@@ -15,7 +15,7 @@ static MachineCfg twoHeads() {
     c.tools[0].id = 1;                      // knife: no chambers, no feed
     c.tools[1].id = 4;                      // revolver pen: 3 chambers
     c.tools[1].chamberCount = 3;
-    c.tools[1].pathFeed = 40;
+    c.tools[1].cutFeed = 40;
     return c;
 }
 

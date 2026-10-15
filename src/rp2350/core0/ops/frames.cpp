@@ -6,6 +6,7 @@
 #include "frames.h"
 #include "mesh.h"
 #include "position.h"
+#include "tools.h"
 #include "../config/machine_cfg.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -115,9 +116,11 @@ bool framesTipOffset(float* dx, float* dy) {
     const uint8_t sel = framesSelected();
     if (sel == FRAMES_NONE) return false;
     if (sel == FRAMES_ANCHOR) { *dx = 0; *dy = 0; return true; }
-    const CfgHead& h = machineCfg().heads[sel];
-    *dx = h.xOffset;
-    *dy = h.yOffset;
+    const MachineCfg& c = machineCfg();
+    const CfgHead& h = c.heads[sel];
+    const CfgTool* t = configTool(c, toolsMounted(sel));
+    *dx = h.xOffset + (t ? t->xOffset : 0);
+    *dy = h.yOffset + (t ? t->yOffset : 0);
     return true;
 }
 
@@ -201,16 +204,20 @@ const char* framesNamed(const char* name, float* mx, float* my) {
         *my = c.load.y;
         return nullptr;
     }
-    if (strcmp(name, "probe") == 0) {
-        const uint8_t sel = framesSelected();
-        if (sel >= c.headCount) return "no_head";
-        const CfgHead& h = c.heads[sel];
-        if (!h.hasProbeSwitch) return "no_position";
-        *mx = h.probeSwitch.x - h.xOffset;
-        *my = h.probeSwitch.y - h.yOffset;
-        return nullptr;
-    }
     return "usage";
+}
+
+const char* framesProbeFor(uint8_t tool, float* mx, float* my) {
+    const MachineCfg& c = machineCfg();
+    const uint8_t sel = framesSelected();
+    if (sel >= c.headCount) return "no_head";
+    const CfgTool* t = configTool(c, tool);
+    if (!t) return "no_tool";
+    const CfgHead& h = c.heads[sel];
+    if (!h.hasProbeSwitch) return "no_position";
+    *mx = h.probeSwitch.x - h.xOffset - t->xOffset;
+    *my = h.probeSwitch.y - h.yOffset - t->yOffset;
+    return nullptr;
 }
 
 const char* framesCheckNode(uint8_t node, int32_t machineSteps) {

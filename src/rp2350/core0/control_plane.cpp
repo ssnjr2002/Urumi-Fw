@@ -80,6 +80,7 @@ static const Cmd kControllerCommands[] = {
     { "home_cycle",   cmdHomeCycle,   K_SEQUENCE },
     { "home_head",    cmdHomeHead,    K_SEQUENCE },
     { "jogto",        cmdJogTo,       K_SEQUENCE },
+    { "probe_park",   cmdProbePark,   K_SEQUENCE },
     { "select",       cmdSelect,      K_WRITE },
     { "wzero",        cmdWzero,       K_WRITE | K_IN_TOOL },
     { "wset",         cmdWset,        K_WRITE },

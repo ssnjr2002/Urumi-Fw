@@ -1,7 +1,8 @@
-// jogto.cpp — `jogto <x> <y>` and `jogto park|load|probe`.
+// jogto.cpp — `jogto <x> <y>`, `jogto park|load` and `probe_park <tool>`.
 //
 // The XY form takes work mm (framesToMachine), a name a stored position
-// (framesNamed); both hand the anchor's machine XY to the recipe
+// (framesNamed), probe_park the selected head's switch under that tool's tip
+// (framesProbeFor); each hands the anchor's machine XY to the recipe
 // (controller/seq/jogto), which parks the Zs before the line. `ok` once it
 // starts.
 
@@ -35,6 +36,19 @@ bool cmdJogTo(const char* args) {
         }
     }
     const char* why = jogtoStart(m[0], m[1]);
+    if (why) Serial.printf("err %s\n", why);
+    else     Serial.println("ok");
+    return true;
+}
+
+bool cmdProbePark(const char* args) {
+    char* end;
+    const unsigned long id = strtoul(args, &end, 10);
+    while (*end == ' ') end++;
+    if (end == args || *end || id == 0 || id > 0xFF) { Serial.println("err usage"); return true; }
+    float m[2];
+    const char* why = framesProbeFor((uint8_t)id, &m[0], &m[1]);
+    if (!why) why = jogtoStart(m[0], m[1]);
     if (why) Serial.printf("err %s\n", why);
     else     Serial.println("ok");
     return true;

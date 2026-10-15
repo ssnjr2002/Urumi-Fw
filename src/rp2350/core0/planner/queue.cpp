@@ -246,6 +246,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
 
 // ── streamed records ─────────────────────────────────────────────────────────
 
+// The `feed` command's override of the config's feeds; 0 = none.
 static float cutFeed = 0, travelFeed = 0;
 static float layerFeed = 0;     // the open layer's cut feed
 static bool inContour = false;
@@ -264,7 +265,15 @@ void plannerSetFeed(float cut, float travel) {
     travelFeed = travel;
 }
 
-float plannerMachineFeed() { return cutFeed; }
+float plannerMachineFeed() {
+    if (cutFeed > 0) return cutFeed;
+    return machineCfgValid() ? machineCfg().cutFallback : 0;
+}
+
+static float travelSpeed() {
+    if (travelFeed > 0) return travelFeed;
+    return machineCfgValid() ? machineCfg().travelDefault : 0;
+}
 
 void plannerEndContour() { inContour = false; }
 
@@ -289,7 +298,7 @@ static bool resumesAt(uint16_t layer, uint32_t record) {
 }
 
 PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record) {
-    if (!(cut > 0 && travelFeed > 0)) return PQ_NO_FEED;
+    if (!(cut > 0 && travelSpeed() > 0)) return PQ_NO_FEED;
     if (paused()) {
         if (!machineCfgValid()) return PQ_NO_CONFIG;
         return resumesAt(layer, record) ? PQ_OK : PQ_NO_RESUME;
@@ -421,7 +430,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     if (out == PQ_OK) out = meshBezier(b, limits, curveCap);
     if (out == PQ_OK) {
         plannerRing.setTag(curLayer, nextRecord);
-        if (travel) plannerRing.pushLine(p0, travelFeed, limits, kDeviation, travelCap);
+        if (travel) plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);
         plannerRing.pushBezierFrom(b, from, layerFeed, limits, kDeviation, curveCap);
     }
     spin_unlock(plannerLock, s);

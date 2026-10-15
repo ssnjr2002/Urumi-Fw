@@ -51,6 +51,9 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK_FALSE(c.meshOn);
     CHECK(c.bufferQueueTime == doctest::Approx(1.0));   // defaults
     CHECK(c.bufferIdleTime == doctest::Approx(0.5));
+    CHECK(c.cutFallback == doctest::Approx(80.0));
+    CHECK(c.travelDefault == doctest::Approx(80.0));
+    CHECK(c.plungeFallback == doctest::Approx(20.0));
     CHECK(c.y.node.id == 2);
     CHECK_FALSE(c.y.invertDir);
     CHECK(c.heads[0].z.node.id == 3);
@@ -116,8 +119,8 @@ TEST_CASE("config/controller.jsonc decodes") {
     const CfgTool* knife = configTool(c, 1);
     REQUIRE(knife != nullptr);
     CHECK(knife->tangential);
-    CHECK(knife->pathFeed == doctest::Approx(40));
-    CHECK(knife->zFeed == doctest::Approx(10));
+    CHECK(knife->cutFeed == doctest::Approx(40));
+    CHECK(knife->plungeFeed == doctest::Approx(10));
 }
 
 TEST_CASE("tools decode by id") {
@@ -181,6 +184,7 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"no_jog_unhomed", "missing"},
         {"no_mesh_on",     "missing"},
         {"no_buffer",      "missing"}, {"buffer", "buffer"},
+        {"no_feed",        "missing"}, {"feed", "feed"},
         {"tools",          "tools"},
     };
     for (auto& t : cases) {

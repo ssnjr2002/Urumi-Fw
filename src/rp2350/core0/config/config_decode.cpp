@@ -120,12 +120,10 @@ static CfgDecodeError readAxis(JsonObjectConst j, uint8_t defaultCycle, CfgAxis*
     return rotaryKind == out->rotary ? CFG_DEC_OK : CFG_DEC_HOMING;
 }
 
-// An optional feed inside an op target: absent target or feed is 0.
-static bool readOptFeed(JsonVariantConst target, float* out) {
+// An optional number: absent is 0.
+static bool readOptFloat(JsonVariantConst v, float* out) {
     *out = 0.0f;
-    if (target.isNull()) return true;
-    JsonVariantConst f = target["feed"];
-    return f.isNull() || readFloat(f, out);
+    return v.isNull() || readFloat(v, out);
 }
 
 static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
@@ -143,8 +141,8 @@ static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
             !readBool(j["plunge"], &t.plunge) ||
             !readFloat(off["xOffset"], &t.xOffset) ||
             !readFloat(off["yOffset"], &t.yOffset) ||
-            !readOptFeed(j["path"], &t.pathFeed) ||
-            !readOptFeed(j["z"], &t.zFeed)) return CFG_DEC_MISSING;
+            !readOptFloat(j["cutFeed"], &t.cutFeed) ||
+            !readOptFloat(j["plungeFeed"], &t.plungeFeed)) return CFG_DEC_MISSING;
         if (id.as<unsigned>() > 0xFF || type.as<unsigned>() > 0xFF) return CFG_DEC_TOOLS;
         t.id   = (uint8_t)id.as<unsigned>();
         t.type = (uint8_t)type.as<unsigned>();
@@ -227,7 +225,7 @@ static CfgDecodeError checkTools(const MachineCfg& c) {
     for (uint8_t i = 0; i < c.toolCount; i++) {
         const CfgTool& t = c.tools[i];
         if (t.id == 0 || !isfinite(t.xOffset) || !isfinite(t.yOffset) ||
-            !feed(t.pathFeed) || !feed(t.zFeed)) return CFG_DEC_TOOLS;
+            !feed(t.cutFeed) || !feed(t.plungeFeed)) return CFG_DEC_TOOLS;
         for (uint8_t k = 0; k < t.chamberCount; k++)
             if (!isfinite(t.chamberOffsets[k])) return CFG_DEC_TOOLS;
         for (uint8_t k = 0; k < i; k++)
@@ -267,6 +265,8 @@ static CfgDecodeError validate(const MachineCfg& c) {
         seen |= bit;
     }
     if (!positive(c.bufferQueueTime) || !positive(c.bufferIdleTime)) return CFG_DEC_BUFFER;
+    for (float f : {c.cutFallback, c.travelDefault, c.plungeFallback})
+        if (!(f >= 1.0f) || !isfinite(f)) return CFG_DEC_FEED;
     if ((e = checkTools(c)) != CFG_DEC_OK) return e;
     return checkFrames(c);
 }
@@ -292,13 +292,12 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["jogUnhomed"]  = true;
     fm["meshOn"]      = true;
     fm["buffer"]      = true;
+    fm["feed"]        = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
     JsonObject ft = filter["toolProfiles"]["*"].to<JsonObject>();
     for (const char* k : {"id", "toolType", "tangential", "plunge", "toolOffset",
-                          "chamberOffsets"})
+                          "chamberOffsets", "cutFeed", "plungeFeed"})
         ft[k] = true;
-    ft["path"]["feed"] = true;
-    ft["z"]["feed"]    = true;
 
     JsonDocument doc;
     if (deserializeMsgPack(doc, blob, len, DeserializationOption::Filter(filter)))
@@ -357,6 +356,11 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     if (buf.isNull() || !readFloat(buf["queueTime"], &out->bufferQueueTime) ||
         !readFloat(buf["idleTime"], &out->bufferIdleTime)) return CFG_DEC_MISSING;
 
+    JsonObjectConst fd = m["feed"];
+    if (fd.isNull() || !readFloat(fd["cutFallback"], &out->cutFallback) ||
+        !readFloat(fd["travelDefault"], &out->travelDefault) ||
+        !readFloat(fd["plungeFallback"], &out->plungeFallback)) return CFG_DEC_MISSING;
+
     JsonVariantConst dh = m["defaultHead"];
     if (!dh.is<unsigned>()) return CFG_DEC_MISSING;
     if (dh.as<unsigned>() >= out->headCount) return CFG_DEC_HEADS;
@@ -391,6 +395,7 @@ const char* configDecodeErrorName(CfgDecodeError e) {
         case CFG_DEC_FRAMES:    return "frames";
         case CFG_DEC_BUFFER:    return "buffer";
         case CFG_DEC_TOOLS:     return "tools";
+        case CFG_DEC_FEED:      return "feed";
     }
     return "?";
 }
