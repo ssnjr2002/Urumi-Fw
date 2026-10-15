@@ -889,6 +889,26 @@ per layer.
 
 Planned.
 
+### Outcome
+
+* As planned. The margin is `kResumeMargin` (2 mm) in
+  `core0/planner/queue.cpp`; `lib/planner` gained `setTag`,
+  `pushBezierFrom` and `oldest()`, and the executor `current()` / `along()`.
+* A pause with an empty ring resumes at the next record Core 0 expects (the
+  last header's, counted on). A pause in a START's travel resumes that record
+  whole.
+* A trimmed curve keeps the whole curve's speed cap and mesh walk
+  (conservative). A header inside a contour is still `NACK_JOB` in a running
+  job; only a resume clears an open contour.
+* Bench (head 0, pen, 10 mm/s): pause mid-curve, in a travel, in BUFFERING
+  with an empty ring and right after a header all report the expected
+  `{layer, record}`, hold still, refuse a wrong header with `NACK_JOB` and
+  finish on the right one. Not seen: the 2 mm back-off (polling too coarse),
+  a head switch on resume.
+* Out of scope: `web/src/controller/runWalk.ts` still sends `resume` (left
+  broken); the chamber change (lift, turn A, plunge) goes with the lifts
+  work; how a job header bounds a job is open.
+
 ## Branch JB4: `feature/tool-change`
 
 ### Plan
