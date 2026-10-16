@@ -81,9 +81,12 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 // plunge to the layer's depth; any other record must continue the ring's end;
 // `end` closes the contour and lifts back to zClearance. The first record after
 // a LAYER_HDR is a START whatever its flags. PQ_BAD_CURVE for a failed check or
-// broken framing; PQ_SOFT_LIMIT for a height outside Z's soft range.
+// broken framing; PQ_SOFT_LIMIT for a height outside Z's soft range, or a
+// swivel no heading equivalent inside the tool's aMaxDeg reaches. A tangential
+// tool swivels A to the curve's heading after a START's travel and at a `brk`
+// (BREAK), lifting for a turn past cornerAngleDeg; A holds between.
 // `breakDist` is the record's nextBreakDist, tagged on its blocks.
-PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
+PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, bool end,
                                       uint16_t breakDist);
 
 // A job at rest with its ring empty (held by a pause, or aborted): queue a lift

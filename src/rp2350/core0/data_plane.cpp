@@ -186,7 +186,8 @@ static void acceptBezier() {
     }
 
     const uint8_t flags = pktBuf[1];
-    switch (plannerQueueRecord(bz, flags & BEZIER_FLAG_START, flags & BEZIER_FLAG_END,
+    switch (plannerQueueRecord(bz, flags & BEZIER_FLAG_START, flags & BEZIER_FLAG_BREAK,
+                               flags & BEZIER_FLAG_END,
                                breakDist)) {
         case PQ_OK:        break;
         case PQ_FULL:      sendNack(MSEG_NACK_FULL);      return;

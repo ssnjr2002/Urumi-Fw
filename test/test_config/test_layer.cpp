@@ -13,7 +13,9 @@ static MachineCfg twoHeads() {
     c.headCount = 2;
     c.toolCount = 2;
     c.tools[0].id = 1;                      // knife: no chambers, no feed
+    c.tools[0].periodCount = 1;
     c.tools[1].id = 4;                      // revolver pen: 3 chambers
+    c.tools[1].periodCount = 1;
     c.tools[1].chamberCount = 3;
     c.tools[1].cutFeed = 40;
     return c;
@@ -47,6 +49,23 @@ TEST_CASE("layer feed falls back to the tool's, then the machine's") {
     CHECK(mo.cutFeed == 40);
     REQUIRE(layerResolve(c, mounted, hdr(1, 1), 10, &mo) == LAYER_OK);
     CHECK(mo.cutFeed == 10);
+}
+
+TEST_CASE("a tangential tool needs its head's A") {
+    MachineCfg c = twoHeads();
+    c.tools[0].tangential = true;
+    c.tools[0].periodCount = 2;
+    c.tools[0].cornerAngleDeg = 30;
+    c.tools[0].aMaxDeg = 540;
+    const uint8_t mounted[2] = { 1, 1 };
+    LayerMotion mo{};
+    c.heads[1].a.node.present = true;
+    REQUIRE(layerResolve(c, mounted, hdr(1, 1), 10, &mo) == LAYER_OK);
+    CHECK(mo.tangential);
+    CHECK(mo.periodDeg == doctest::Approx(180));
+    CHECK(mo.cornerAngleDeg == doctest::Approx(30));
+    CHECK(mo.aMaxDeg == doctest::Approx(540));
+    CHECK(layerResolve(c, mounted, hdr(1, 0), 10, &mo) == LAYER_BAD);   // head 0 has no A
 }
 
 TEST_CASE("layer refusals") {

@@ -201,6 +201,7 @@
     "knife": {
       "id": 1,
       "tangential": true,
+      "aMaxDeg": 180,            // the cable: |A| from home
       "unwind": true,
       "offsetMm": 0,
       "cornerAngleDeg": 20,

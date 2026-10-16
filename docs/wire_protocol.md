@@ -169,7 +169,11 @@ drained to idle, within one step, snapped). `END` closes the contour. A
 `NACK_BAD_CURVE`. The first record after a layer header is a `START` whatever
 its flags. `seqreset` and abort forget an open contour. `BREAK` marks a
 corner or cusp; joins run on the planner's junction limit whatever the flags
-say — what a tool does at a flag is tool-profile scope.
+say. A tangential tool's A turns only at flags: after a `START`'s travel and
+at a `BREAK` it swivels to the curve's start heading (the equivalent mod
+360/`periodCount` nearest the current A, inside ±`aMaxDeg`), lifting for a
+turn past `cornerAngleDeg`; A holds along the record. A swivel no equivalent
+inside `aMaxDeg` reaches is `NACK_SOFT_LIMIT`.
 
 **Frames.** Points are work coordinates: the Pico adds the work offset and
 subtracts the selected head's offset (docs/plans/coordinate-system.md), a
@@ -246,8 +250,8 @@ switch, a failed park) alarms with F_SEQUENCE or F_HOMING and ends the job.
 
 Refusals: `NACK_TOOL_UNKNOWN` = the id is not in the config; `NACK_JOB` = a
 head the config lacks, inside an open
-contour, a bad chamber, feed or k, or a paused job's header not naming where
-it stopped; `NACK_BAD_STATE` = no config, the select failed, or the ring
+contour, a bad chamber, feed or k, a tangential tool on a head without A,
+or a paused job's header not naming where it stopped; `NACK_BAD_STATE` = no config, the select failed, or the ring
 holds jogs (JOGGING, or jogs queued in IDLE); `NACK_PAUSED` while pausing.
 
 ### ACK — `0xAA` (3 bytes)

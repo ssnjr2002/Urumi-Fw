@@ -7,7 +7,8 @@
 
 enum LayerResult : uint8_t {
     LAYER_OK,
-    LAYER_BAD,            // head, chamber, feed, k or thickness out of range
+    LAYER_BAD,            // head, chamber, feed, k or thickness out of range, or a
+                          // tangential tool on a head without A
     LAYER_TOOL_UNKNOWN,   // the id is not in the config
     LAYER_NOT_MOUNTED,    // the head has another tool mounted, or none
 };
@@ -23,6 +24,10 @@ struct LayerMotion {
     float depth;          // mm below work Z; 0 for a tool that does not plunge
     uint8_t tool;
     CfgPower power;       // node 0 on a passive tool
+    bool  tangential;     // A swivels to the path heading
+    float periodDeg;      // tangential: 360 / periodCount
+    float cornerAngleDeg; // tangential: a corner turning more lifts to swivel
+    float aMaxDeg;        // 0 = no cable
 };
 
 // `mounted[h]` is head h's tool id (tools.h). `machineFeed` is the cut feed

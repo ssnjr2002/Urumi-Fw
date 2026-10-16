@@ -437,6 +437,31 @@ static void pushZ(float z, float feed, const planner::AxisLimits& limits) {
     plannerRing.pushMove(to, feed, limits, kDeviation);
 }
 
+// A tangential tool's heading, degrees: + counter-clockwise from X+
+// (coordinate-system.md, Directions).
+static float headingDeg(planner::Vec2 d) { return atan2f(d.y, d.x) * (180.0f / (float)M_PI); }
+
+static double aAbs(const planner::Pos& p) { return (double)p.turns * 360.0 + p.a; }
+
+// The equivalent of heading `h` mod `period` nearest `cur`, inside ±`aMax`
+// (0 = no cable); false if none fits.
+static bool pickA(double cur, float h, float period, float aMax, double* out) {
+    double c = h + period * round((cur - h) / period);
+    if (aMax > 0) {
+        if (c > aMax) c -= period * ceil((c - aMax) / period);
+        else if (c < -aMax) c += period * ceil((-aMax - c) / period);
+        if (fabs(c) > aMax) return false;
+    }
+    *out = c;
+    return true;
+}
+
+static void pushA(double a, const planner::AxisLimits& limits) {
+    planner::Pos to = plannerRing.end();
+    to.addA((float)(a - aAbs(to)));
+    plannerRing.pushMove(to, limits.max_feed[SLOT_A], limits, kDeviation);
+}
+
 // Seconds for `d` mm from rest to rest at speed `v` and acceleration `a`.
 static float restToRestS(float d, float v, float a) {
     return d >= v * v / a ? d / v + v / a : 2 * sqrtf(d / a);
@@ -457,7 +482,7 @@ static float cutS(float d, const planner::AxisLimits& limits) {
 // Slack under maxOnS for a duty lift: covers Core 0 picking up the deadline's fact.
 static constexpr float kDutyMarginS = 0.05f;
 
-PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
+PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, bool end,
                                       uint16_t breakDist) {
     if (machineContext != CTX_JOB) return PQ_NO_JOB;
     planner::AxisLimits limits;
@@ -467,6 +492,9 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     if (start == inContour) return PQ_BAD_CURVE;   // START inside a contour, or none outside
     if (planner::checkBezier(b) != planner::BezierError::None) return PQ_BAD_CURVE;
     if (!(limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0)) return PQ_NO_LIMITS;
+    const bool tangential = layerMo.tangential;
+    if (tangential && !(limits.max_feed[SLOT_A] > 0 && limits.max_accel[SLOT_A] > 0))
+        return PQ_NO_LIMITS;
 
     // A resumed record starts at its trim, travelled to as a START's p0.
     const float from = firstRecord ? resumeTrim : 0;
@@ -493,8 +521,19 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
                           estOnS >= pw.minOnS &&
                           estOnS + cutS(breakDist, limits) + liftS + kDutyMarginS > pw.maxOnS;
     // A tool with a duty keeps 4 slots for a deadline lift (plannerDutyLift).
-    const int blocks = 1 + (start ? 3 + powered : 0) + (dutyStop ? 4 : 0) +
+    int blocks = 1 + (start ? 3 + powered : 0) + (dutyStop ? 4 : 0) +
                        (end ? 1 + powered : 0) + (powered && pw.hasDuty ? 4 : 0);
+    // A tangential tool swivels to the curve's heading at a START (after the
+    // travel) and at a BREAK; a BREAK turning past cornerAngleDeg lifts for it.
+    const planner::Vec2 d0 = from > 0 ? planner::bezierDeriv(b, planner::bezierT(b, from))
+                                      : planner::Vec2{b.p[1].x - b.p[0].x, b.p[1].y - b.p[0].y};
+    const bool swivel = tangential && (start || brk);
+    double aTo = 0;
+    const bool aFits = !swivel || pickA(aAbs(e), headingDeg(d0), layerMo.periodDeg,
+                                        layerMo.aMaxDeg, &aTo);
+    const bool cornerLift = swivel && !start && !dutyStop &&
+                            fabs(aTo - aAbs(e)) > layerMo.cornerAngleDeg;
+    blocks += swivel + (cornerLift ? 2 : 0);
     const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
     if (ringOwner != RING_JOB) {
@@ -515,7 +554,9 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
         else out = meshLine(p0, up, limits, travelCap);
         if (out == PQ_OK && !zMoveFits(p0, up, down)) out = PQ_SOFT_LIMIT;
     }
-    if (out == PQ_OK && dutyStop && (!zMoveFits(p0, e.z, up) || !zMoveFits(p0, up, e.z)))
+    if (out == PQ_OK && !aFits) out = PQ_SOFT_LIMIT;
+    if (out == PQ_OK && (dutyStop || cornerLift) &&
+        (!zMoveFits(p0, e.z, up) || !zMoveFits(p0, up, e.z)))
         out = PQ_SOFT_LIMIT;
     if (out == PQ_OK) out = meshBezier(b, curveZ, limits, curveCap);
     if (out == PQ_OK && end && !zMoveFits(b.p[3], curveZ, up)) out = PQ_SOFT_LIMIT;
@@ -525,14 +566,22 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
         if (start) {
             pushZ(up, e.z < up ? liftFeed : layerMo.plungeFeed, limits);
             plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);
+            if (swivel) pushA(aTo, limits);
             if (powered) plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(down, layerMo.plungeFeed, limits);
         }
         if (dutyStop) {
             pushZ(up, liftFeed, limits);
             plannerRing.pushEvent(TOOL_EV_OFF);
+            if (swivel) pushA(aTo, limits);
             plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(e.z, layerMo.plungeFeed, limits);
+        } else if (cornerLift) {
+            pushZ(up, liftFeed, limits);
+            pushA(aTo, limits);
+            pushZ(e.z, layerMo.plungeFeed, limits);
+        } else if (swivel && !start) {
+            pushA(aTo, limits);
         }
         plannerRing.pushBezierFrom(b, from, layerMo.cutFeed, limits, kDeviation, curveCap);
         if (end) {
@@ -552,6 +601,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     else if (start) stretchCounted = false;
     if (breakDist != 0) estOnS += cutS(breakDist, limits);
     else if (!stretchCounted) estOnS += (b.length - from) / layerMo.cutFeed;
+    if (cornerLift) estOnS += liftS + plungeS;   // the tool stays on through it
     if (end) estOnS += liftS;
 
     nextRecord++;

@@ -138,6 +138,10 @@ TEST_CASE("tools decode by id") {
     CHECK(knife->tangential);
     CHECK(knife->plunge);
     CHECK(knife->chamberCount == 0);
+    CHECK(knife->periodCount == 1);
+    CHECK(knife->cornerAngleDeg == doctest::Approx(20));
+    CHECK(knife->aMaxDeg == doctest::Approx(540));
+    CHECK(rev->aMaxDeg == 0);                // no cable
     CHECK(knife->power.node == 8);
     CHECK(knife->power.nodeType == CFG_NODE_KNIFE_OSC);
     CHECK(knife->power.settleS == doctest::Approx(0.3));
@@ -198,7 +202,8 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"no_feed",        "missing"}, {"feed", "feed"},
         {"no_lift_feed",   "missing"}, {"no_z_clearance", "missing"},
         {"z_clearance",    "z_clearance"},
-        {"tools",          "tools"},
+        {"tools",          "tools"}, {"tool_chambers", "tools"},
+        {"tool_period",    "tools"}, {"no_period", "missing"},
         {"power",          "power"}, {"power_absent", "power"},
         {"power_duty",     "power"}, {"no_power_settle", "missing"},
 #ifndef ACCEPT_LASER_AS_POWER_TOOL

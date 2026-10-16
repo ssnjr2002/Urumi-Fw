@@ -138,12 +138,17 @@ static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
         JsonObjectConst off = j["toolOffset"];
         if (!id.is<unsigned>() || !type.is<unsigned>() || off.isNull() ||
             !readBool(j["tangential"], &t.tangential) ||
+            !j["periodCount"].is<unsigned>() ||
+            !readFloat(j["cornerAngleDeg"], &t.cornerAngleDeg) ||
+            !readOptFloat(j["aMaxDeg"], &t.aMaxDeg) ||
             !readBool(j["plunge"], &t.plunge) ||
             !readFloat(off["xOffset"], &t.xOffset) ||
             !readFloat(off["yOffset"], &t.yOffset) ||
             !readOptFloat(j["cutFeed"], &t.cutFeed) ||
             !readOptFloat(j["plungeFeed"], &t.plungeFeed)) return CFG_DEC_MISSING;
-        if (id.as<unsigned>() > 0xFF || type.as<unsigned>() > 0xFF) return CFG_DEC_TOOLS;
+        if (id.as<unsigned>() > 0xFF || type.as<unsigned>() > 0xFF ||
+            j["periodCount"].as<unsigned>() > 0xFF) return CFG_DEC_TOOLS;
+        t.periodCount = (uint8_t)j["periodCount"].as<unsigned>();
         t.id   = (uint8_t)id.as<unsigned>();
         t.type = (uint8_t)type.as<unsigned>();
         JsonObjectConst pw = j["power"];
@@ -241,7 +246,11 @@ static CfgDecodeError checkTools(const MachineCfg& c) {
     for (uint8_t i = 0; i < c.toolCount; i++) {
         const CfgTool& t = c.tools[i];
         if (t.id == 0 || !isfinite(t.xOffset) || !isfinite(t.yOffset) ||
-            !feed(t.cutFeed) || !feed(t.plungeFeed)) return CFG_DEC_TOOLS;
+            !feed(t.cutFeed) || !feed(t.plungeFeed) || t.periodCount == 0 ||
+            !(t.cornerAngleDeg >= 0 && t.cornerAngleDeg <= 180) ||
+            !(isfinite(t.aMaxDeg) && t.aMaxDeg >= 0) ||
+            (t.tangential && t.chamberCount > 0) ||
+            (!t.tangential && t.periodCount != 1)) return CFG_DEC_TOOLS;
         for (uint8_t k = 0; k < t.chamberCount; k++)
             if (!isfinite(t.chamberOffsets[k])) return CFG_DEC_TOOLS;
         for (uint8_t k = 0; k < i; k++)
@@ -337,8 +346,9 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["zClearance"]  = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
     JsonObject ft = filter["toolProfiles"]["*"].to<JsonObject>();
-    for (const char* k : {"id", "toolType", "tangential", "plunge", "toolOffset",
-                          "chamberOffsets", "cutFeed", "plungeFeed", "power"})
+    for (const char* k : {"id", "toolType", "tangential", "periodCount", "cornerAngleDeg",
+                          "aMaxDeg", "plunge", "toolOffset", "chamberOffsets", "cutFeed",
+                          "plungeFeed", "power"})
         ft[k] = true;
 
     JsonDocument doc;
