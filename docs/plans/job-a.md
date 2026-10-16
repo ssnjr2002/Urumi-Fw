@@ -147,7 +147,7 @@ A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → A
   `json/validate.ts`, `json/blob.ts`; `config/controller.jsonc`; fixtures;
   `docs/wire_protocol.md` if a NACK changes.
 * Depends on: job-z (merged).
-* Status: Done. Unblocks AB.
+* Status: Done (merged 9226d06). Unblocks AB.
 * Outcome:
   * Deviations: the swivel target is the equivalent nearest the current A,
     and the lift test is that swivel's size, not the drawn corner angle, so
