@@ -43,7 +43,7 @@ here. Until then a `BREAK` runs through without a lift.
 | contour `START` | travel, plunge (a lift first if still down) | every contour start | ZA |
 | pause, abort | lift | where it stopped, mid-contour too | ZA |
 | lost host | lift | where it stopped, after a timeout | later |
-| duty, past `maxOnS` | lift, tool off, `DWELL`, tool on, plunge | anywhere | ZC |
+| duty, past `maxOnS` | lift, tool off, `DWELL`, tool on, plunge | a corner, else anywhere | ZC2 |
 | corner over `cornerAngleDeg` | lift, swivel, plunge | that `BREAK` | with A |
 | cable range | lift, unwind, plunge | anywhere | with A |
 
@@ -85,11 +85,11 @@ tool off and keeps the vacuum on.
   * else: plunge without a reset.
 * Mid-contour, past `maxOnS`: the duty lift, `DWELL` for `dwellS`.
 * **A lift can happen anywhere on the path:** hold to rest, lift, plunge back
-  at the same XY, continue the rest of the block from `s`. Putting the lift
-  and plunge between the held point and the rest of the block is new planner
-  work (planner branch 2's `restartFrom` resumes in place). A duty lift due
-  shortly is moved to an earlier `START` that lifts anyway. Triggers are live
-  counters on Core 1 that request a hold early enough to stop in time.
+  at the same XY, continue the rest of the block from `s`. Core 0 inserts the
+  lift and plunge at the ring's front after `restartFrom(s)`. A START with
+  on-time ≥ `minOnS` dwells anyway; mid-path, the stop goes at the latest
+  corner that fits (`nextBreakDist`, ZC1), else at a deadline Core 1's live
+  counters trigger early enough to stop in time (ZC2).
 
 ### Out of range
 
@@ -224,7 +224,7 @@ A dependent chain, run as a Single Session.
 * Out: the blower, the alarm lift ("Every other alarm lifts"), the lost-host
   lift.
 * Depends on: ZA.
-* Status: Done (merged e718c32). Unblocks ZC.
+* Status: Done (merged e718c32). Unblocks ZC1.
 * Outcome:
   * Deviations: `power.node` is `{ id, type }`, the command from the type
     (3 → `CMD_KNIFE_OSC`, 1 → `CMD_LASER` with the flag); no separate DWELL
@@ -250,13 +250,88 @@ A dependent chain, run as a Single Session.
     a bad one; `pio test -e native`'s `test_machine` already fails to link
     on main.
 
-### ZC: mid-path duty lifts
+### ZC1: the next break's distance on the wire
+
+* Name: `feature/wire-break-distance`
+* Type: `feature/` (a protocol change, so it merges before ZC2).
+* Purpose: the host tells the Pico how far each stretch runs before its next
+  corner, so the Pico can stop for duty at the latest corner that fits.
+* Interface: `BEZIER` grows to 58 bytes:
+
+  ```
+  [55..56] nextBreakDist  u16 mm: on a START or BREAK record, from its p0 to
+           the next BREAK or END of the contour; 65535 = at least that far;
+           0 = unknown. 0 and ignored on other records.
+  [57]     CRC8 over bytes [0..56]
+  ```
+
+  u16 mm: the useful range is `maxOnS × cutFeed` (the knife's 30 s at
+  100 mm/s is 3 m); 1 mm is within the trigger's margin at cut feeds.
+* The Pico checks the size and stores the field on the block (a `Block`
+  field, `lib/planner/planner/planner.h:47`); nothing reads it yet.
+* Files:
+  * `src/rp2350/core0/usb_protocol.h:18` (layout), `data_plane.cpp:186`
+    (pass it to `plannerQueueRecord`), `core0/planner/queue.{h,cpp}`
+  * `lib/planner/planner/planner.h` (the block field), native tests
+  * `web/src/wire/format/bezier.ts`, `constants.ts:14`, `link/backends/sim.ts`
+  * `web/src/toolpath/annotate.ts:277` (compute it per contour), tests and
+    fixtures
+  * `docs/wire_protocol.md`
+* Depends on: ZB.
+* Status: Planned.
+
+### ZC2: mid-path duty lifts
 
 * Name: `feature/job-midpath-lifts`
-* Purpose: hold, lift, `DWELL` and plunge back mid-block when on-time passes
-  `maxOnS`; continue from `s`.
-* Files: `lib/planner/` (split a held block around a lift).
-* Depends on: ZB.
+* Type: `feature/`.
+* Purpose: when a contour would run past `maxOnS`, stop (at a corner where
+  one fits), lift, `DWELL`, plunge back at the same XY and continue the rest
+  of the block from `s`.
+* A START already moves duty lifts early: ZB's rule dwells at any START with
+  on-time ≥ `minOnS`. A mid-path lift is only for a contour that runs from
+  under `minOnS` past `maxOnS`.
+* **The break's cost** (docs/tool_duty_limits.md §5): braking and the lift
+  are on-time of the window ending; settle, plunge and the ramp back up are
+  the next window's, counted by ZB's counters from the switch on.
+* **Where it stops:**
+  * At a corner: Core 0 decides when it queues a START or BREAK record,
+    once the estimated on-time at that record's p0 (Core 1's live on-time +
+    the queued time to it) is past `minOnS`. If the next corner is certainly
+    too late, `onTime + nextBreakDist/cutFeed + dutyLiftS + marginS >
+    maxOnS`, it stops at this corner: the joint's entry limit is pinned to 0
+    (`Planner::pinStop`) and the ring replanned, so the stop is planned, not
+    braked. Otherwise the next corner decides again. `nextBreakDist` 0 never
+    stops at a corner.
+  * At the deadline (the fallback: a long smooth stretch, an estimate the
+    accel beat): Core 1 holds when `onTime + v/a + dutyLiftS + marginS ≥
+    maxOnS`, with the tool on and in a cut.
+  * `dutyLiftS`: the lift's time (`depth + zClearance` at `liftFeed`, Z's
+    accel), Core 0's at a layer open, in `jobPower` with `maxOnS`.
+    `marginS` (~50 ms, a firmware constant) covers Core 0 picking up the
+    fact; a Core 0 stall past it overruns `maxOnS` by the stall.
+* **The stop:** Core 1 at rest at a pinned joint or after its deadline hold
+  keeps the ring, stays `RUNNING` and posts `FACT_DUTY_HELD` (new). Core 0,
+  under `plannerLock`: `restartFrom(s)` on the held block, then
+  `Planner::insertFront` (new) with lift, `TOOL_OFF`, `TOOL_ON`, plunge at
+  the held XY, then `replanAndCommit()`. Core 1 runs on: ZB's `TOOL_ON`
+  dwells (`JOB_DWELL`) and resets the counters. The inserted blocks carry
+  the held block's tag and `s`, so a pause in them resumes at `s − margin`.
+  A hold that braked past the cut into the END lift inserts nothing.
+* Ring room: `plannerQueueRecord`'s full check (`queue.cpp:457`) keeps 4
+  slots free for a tool with `dutyLimits`.
+* Soft range: Core 0 checks the lift and plunge at the held XY
+  (`zMoveFits`); a failure is `F_TOOL` and the job aborts.
+* Files:
+  * `lib/planner/planner.{h,cpp}` (`insertFront`, `pinStop`),
+    `executor.{h,cpp}`; native tests
+  * `src/rp2350/core0/planner/queue.cpp` (the corner decision, the insert,
+    ring room, `dutyLiftS`), `core0/ops/observe.cpp` (`FACT_DUTY_HELD`)
+  * `src/rp2350/core1/emit/follower.cpp` (the deadline hold, the stop),
+    `ipc/core1_facts.h`, `ipc/shared_state.h` (`jobPower` gains `maxOnS`,
+    `dutyLiftS`)
+  * `docs/wire_protocol.md` if a reported state changes
+* Out: the web sim.
+* Depends on: ZC1.
 * Status: Planned.
 
 ## Open
