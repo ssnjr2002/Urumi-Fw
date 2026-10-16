@@ -265,6 +265,11 @@ static uint32_t nextRecord = 0;
 static bool firstRecord = false;
 // mm of the first record a resume skips.
 static float resumeTrim = 0;
+// Core 0's estimate of the tool's on-time where the queued records end, s: it
+// counts from the switch on, cut time at the cut feed, and goes back to 0 where
+// a START will dwell or a duty lift was queued. Core 1's counters see off
+// time this does not, so it errs high: a stop comes early, never late.
+static float estOnS = 0;
 
 // How far before where a paused job stopped it resumes cutting, mm.
 static constexpr float kResumeMargin = 2.0f;
@@ -349,7 +354,10 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
         }
     }
     if (out == PQ_OK) {
-        if (opening || mo.tool != layerMo.tool) dutyEpoch = dutyEpoch + 1;
+        if (opening || mo.tool != layerMo.tool) {
+            dutyEpoch = dutyEpoch + 1;
+            estOnS = 0;
+        }
         const CfgPower& p = mo.power;
         jobPower.node    = p.node;
         jobPower.cmd     = p.nodeType == CFG_NODE_KNIFE_OSC ? CMD_KNIFE_OSC : CMD_LASER;
@@ -426,6 +434,15 @@ static void pushZ(float z, float feed, const planner::AxisLimits& limits) {
     plannerRing.pushMove(to, feed, limits, kDeviation);
 }
 
+// Seconds for a Z move of `d` mm from rest to rest at `feed`.
+static float zMoveS(float d, float feed, const planner::AxisLimits& limits) {
+    const float v = fminf(feed, limits.max_feed[SLOT_Z]), a = limits.max_accel[SLOT_Z];
+    return d >= v * v / a ? d / v + v / a : 2 * sqrtf(d / a);
+}
+
+// Slack under maxOnS for a duty lift: covers Core 0 picking up the deadline's fact.
+static constexpr float kDutyMarginS = 0.05f;
+
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
                                       uint16_t breakDist) {
     if (machineContext != CTX_JOB) return PQ_NO_JOB;
@@ -453,7 +470,16 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     // A START: Z to clearance, travel, [tool on,] plunge, then the curve; an
     // END lifts after it [and switches the tool off].
     const bool powered = layerMo.power.node != 0;
-    const int blocks = 1 + (start ? 3 + powered : 0) + (end ? 1 + powered : 0);
+    const CfgPower& pw = layerMo.power;
+    const float liftS = zMoveS(up - down, liftFeed, limits);
+    const float plungeS = zMoveS(up - down, layerMo.plungeFeed, limits);
+    // At a BREAK past minOnS, a duty lift here if the next corner is certainly
+    // too late: lift, tool off, tool on (its dwell), plunge, then the curve.
+    const bool dutyStop = powered && pw.hasDuty && !start && breakDist != 0 &&
+                          estOnS >= pw.minOnS &&
+                          estOnS + breakDist / layerMo.cutFeed + liftS + kDutyMarginS > pw.maxOnS;
+    const int blocks = 1 + (start ? 3 + powered : 0) + (dutyStop ? 4 : 0) +
+                       (end ? 1 + powered : 0);
     const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
     if (ringOwner != RING_JOB) {
@@ -474,6 +500,8 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
         else out = meshLine(p0, up, limits, travelCap);
         if (out == PQ_OK && !zMoveFits(p0, up, down)) out = PQ_SOFT_LIMIT;
     }
+    if (out == PQ_OK && dutyStop && (!zMoveFits(p0, e.z, up) || !zMoveFits(p0, up, e.z)))
+        out = PQ_SOFT_LIMIT;
     if (out == PQ_OK) out = meshBezier(b, curveZ, limits, curveCap);
     if (out == PQ_OK && end && !zMoveFits(b.p[3], curveZ, up)) out = PQ_SOFT_LIMIT;
     if (out == PQ_OK) {
@@ -483,6 +511,12 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
             plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);
             if (powered) plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(down, layerMo.plungeFeed, limits);
+        }
+        if (dutyStop) {
+            pushZ(up, liftFeed, limits);
+            plannerRing.pushEvent(TOOL_EV_OFF);
+            plannerRing.pushEvent(TOOL_EV_ON);
+            pushZ(e.z, layerMo.plungeFeed, limits);
         }
         plannerRing.pushBezierFrom(b, from, layerMo.cutFeed, limits, kDeviation, curveCap);
         if (end) {
@@ -494,6 +528,10 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     }
     spin_unlock(plannerLock, s);
     if (out != PQ_OK) return out;
+
+    if (start && estOnS >= pw.minOnS) estOnS = 0;   // ZB's rule: this START dwells
+    if (start || dutyStop) estOnS = (dutyStop ? 0 : estOnS) + pw.settleS + plungeS;
+    estOnS += (b.length - from) / layerMo.cutFeed + (end ? liftS : 0);
 
     nextRecord++;
     firstRecord = false;
