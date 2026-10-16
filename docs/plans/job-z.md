@@ -278,7 +278,20 @@ A dependent chain, run as a Single Session.
     fixtures
   * `docs/wire_protocol.md`
 * Depends on: ZB.
-* Status: Planned.
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: every block of a record carries the field, through the tag
+    (`setTag(layer, record, breakDist)` → `Block::break_dist`); the END
+    lift's re-tag carries 0. A resumed record stores `ceil(d − from)`, 0 and
+    65535 as sent; `d` spans the record, so this stays positive. The host
+    rounds up. `sim.ts` needed only the size.
+  * Interface for ZC2: `Block::break_dist`, u16 mm from the record's start
+    (or resume point) to its next BREAK or END; read it on the record's
+    first block.
+  * Out of scope: `web/test/port/cppRefBezier.test.ts` cannot regenerate
+    `test/data/bezier_records.txt` on main, since `fish.svg` was removed in
+    eb51697; this branch regenerated it from that commit's parent.
+    `test_machine` still fails to link, as on main.
 
 ### ZC2: mid-path duty lifts
 
