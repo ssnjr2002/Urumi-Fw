@@ -365,6 +365,7 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
         jobPower.hasDuty = p.hasDuty;
         jobPower.minOnS  = p.minOnS;
         jobPower.dwellS  = p.dwellS;
+        jobPower.maxOnS  = p.maxOnS;
         layerMo = mo;
         curLayer = layerNo;
         nextRecord = record;
@@ -478,8 +479,9 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     const bool dutyStop = powered && pw.hasDuty && !start && breakDist != 0 &&
                           estOnS >= pw.minOnS &&
                           estOnS + breakDist / layerMo.cutFeed + liftS + kDutyMarginS > pw.maxOnS;
+    // A tool with a duty keeps 4 slots for a deadline lift (plannerDutyLift).
     const int blocks = 1 + (start ? 3 + powered : 0) + (dutyStop ? 4 : 0) +
-                       (end ? 1 + powered : 0);
+                       (end ? 1 + powered : 0) + (powered && pw.hasDuty ? 4 : 0);
     const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
     if (ringOwner != RING_JOB) {
@@ -505,6 +507,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     if (out == PQ_OK) out = meshBezier(b, curveZ, limits, curveCap);
     if (out == PQ_OK && end && !zMoveFits(b.p[3], curveZ, up)) out = PQ_SOFT_LIMIT;
     if (out == PQ_OK) {
+        jobPower.dutyLiftS = liftS;
         plannerRing.setTag(curLayer, nextRecord, breakDist);
         if (start) {
             pushZ(up, e.z < up ? liftFeed : layerMo.plungeFeed, limits);
@@ -539,6 +542,36 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     inContour = !end;
     replanAndCommit();
     return PQ_OK;
+}
+
+void plannerDutyLift() {
+    planner::AxisLimits limits;
+    const bool cfg = machineCfgValid() && fillLimits(limits) &&
+                     limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0;
+    const DutyStop d = dutyStop;
+    bool failed = false;
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    // An abort requested meanwhile is Core 1's to finish: it drops the ring.
+    if (d.cut && !abortRequested && machineContext == CTX_JOB && ringOwner == RING_JOB) {
+        const float up = cfg ? clearZ() : 0;
+        failed = !cfg || plannerRing.count() > planner::Planner::kSize - 4 ||
+                 !zMoveFits(d.at.xy(), d.at.z, up) || !zMoveFits(d.at.xy(), up, d.at.z);
+        if (!failed) {
+            // A pause in these resumes at the stop, in the held record.
+            plannerRing.setTag(d.layer, d.record, 0, d.s);
+            plannerRing.beginFront(d.at);
+            pushZ(up, machineCfg().liftFeed, limits);
+            plannerRing.pushEvent(TOOL_EV_OFF);
+            plannerRing.pushEvent(TOOL_EV_ON);
+            pushZ(d.at.z, layerMo.plungeFeed, limits);
+            plannerRing.endFront();
+        }
+    }
+    spin_unlock(plannerLock, s);
+    if (failed) faultSet(F_TOOL);
+    replanAndCommit();
+    __dmb();
+    dutyWait = false;
 }
 
 bool plannerQueueLift(uint8_t why) {

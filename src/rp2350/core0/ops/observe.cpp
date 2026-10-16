@@ -40,6 +40,7 @@ void observeTick(void) {
             case FACT_RING_DRAINED: ringDrained(); break;
             case FACT_HELD:         held(); break;
             case FACT_TOOL_FAILED:  faultSet(F_TOOL); break;
+            case FACT_DUTY_HELD:    plannerDutyLift(); break;
             default: break;
         }
     }

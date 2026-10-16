@@ -94,7 +94,7 @@ static void __time_critical_func(landHeld)() {
     if (b) {
         jobResume.layer  = b->layer;
         jobResume.record = b->record;
-        jobResume.s      = b->kind == planner::Block::BEZIER ? s : 0;
+        jobResume.s      = b->kind == planner::Block::BEZIER ? s : b->resume_s;
     }
     const Pos at = plannerExec.position();
     plannerRing.reset(at);
@@ -268,6 +268,45 @@ static bool runEvent(const planner::Block& ev, EventPhase& phase, uint32_t& unti
     return false;
 }
 
+// Past this, a hold from the cut's speed and the lift would end after
+// maxOnS: the tool on, in a cut, and its duty limited.
+static constexpr float kDutyMarginS = 0.05f;   // as queue.cpp's
+
+static bool __time_critical_func(dutyDue)() {
+    if (!jobPower.hasDuty || !toolOn) return false;
+    const planner::Block* b = plannerExec.current();
+    if (!b || b->kind != planner::Block::BEZIER) return false;
+    const uint32_t now = millis();
+    dutyCatchUp(now);
+    const float onS = (dutyOnMs + (now - toolOnAtMs)) * 0.001f;
+    const float v = plannerExec.speed();
+    return onS + v / b->path.accel + jobPower.dutyLiftS + kDutyMarginS >= jobPower.maxOnS;
+}
+
+// A duty hold at rest: release the executor where it stopped, hand Core 0
+// the stop, and wait (dutyWait) for the lift it queues ahead of the ring.
+static void __time_critical_func(dutyHeld)() {
+    const uint32_t irq = spin_lock_blocking(plannerLock);
+    // At rest between blocks, the stop is at the start of the oldest.
+    const planner::Block* b = plannerExec.current();
+    float s = b ? b->s0 + plannerExec.along() : 0;
+    if (!b && (b = plannerRing.oldest())) s = b->s0;
+    DutyStop d = {};
+    d.at  = plannerExec.position();
+    d.cut = b && b->kind == planner::Block::BEZIER;
+    if (d.cut) {
+        d.layer  = b->layer;
+        d.record = b->record;
+        d.s      = s;
+    }
+    dutyStop = d;
+    dutyWait = true;
+    plannerExec.release(plannerRing);
+    spin_unlock(plannerLock, irq);
+    __dmb();
+    core1FactPush(FACT_DUTY_HELD);
+}
+
 // A late block's hold has stopped: replan from rest and buffer again.
 static void __time_critical_func(rebuffer)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
@@ -290,7 +329,7 @@ void __time_critical_func(processPlanner)() {
     const uint8_t why0 = jobReason;
     const bool runsOn = jog || why0 == JOB_HOLDING || why0 == JOB_ABORTING;
     const PlannerMesh mesh = plannerMesh;
-    bool holding = false, aborting = false, lateHold = false;
+    bool holding = false, aborting = false, lateHold = false, dutyHold = false;
     uint32_t late = plannerExec.lateAdoptions();
     int slot = 0;
     float pending = 0;
@@ -324,6 +363,7 @@ void __time_critical_func(processPlanner)() {
 
         pending += kSlotS;
         if (++slot < kSlotsPerTick) continue;
+        if (dutyWait && !abortRequested) { slot = 0; pending = 0; continue; }
 
         // One found after its switch time is refused and the executor holds:
         // a jog resumes itself once at rest, a job buffers again.
@@ -348,6 +388,9 @@ void __time_critical_func(processPlanner)() {
             holding = true;
             lateHold = false;
             jobReason = JOB_HOLDING;
+        } else if (!runsOn && !holding && dutyDue()) {
+            plannerExec.hold();
+            holding = dutyHold = true;
         }
 
         Pos pos;
@@ -385,6 +428,11 @@ void __time_critical_func(processPlanner)() {
                 plannerExec.resume(plannerRing);
                 spin_unlock(plannerLock, s);
                 holding = lateHold = false;
+            }
+        } else if (dutyHold) {
+            if (st == Executor::State::Held) {
+                dutyHeld();
+                holding = dutyHold = false;
             }
         } else if (holding) {
             if (st == Executor::State::Held) { leaveHeld(); return; }

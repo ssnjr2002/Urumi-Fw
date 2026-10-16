@@ -255,10 +255,27 @@ struct JobPower {
     bool    hasDuty;
     float   minOnS;
     float   dwellS;
+    float   maxOnS;
+    float   dutyLiftS;   // a lift from the cut to clearance, s; Core 0's, per record
 };
 extern JobPower          jobPower;
 extern volatile uint32_t dutyEpoch;
 extern volatile bool     toolOn;
+
+// A deadline duty lift (docs/plans/job-z.md, ZC2): Core 1, held at rest with
+// its executor released, sets dutyStop and dutyWait and posts FACT_DUTY_HELD;
+// it ticks no more until Core 0 has queued the lift and plunge ahead of the
+// ring, committed, and cleared dutyWait. `cut` false: held outside a cut,
+// Core 0 only replans.
+struct DutyStop {
+    planner::Pos at;
+    bool     cut;
+    uint16_t layer;
+    uint32_t record;
+    float    s;   // mm into the record's curve
+};
+extern DutyStop          dutyStop;
+extern volatile bool     dutyWait;
 
 // Soft-Reset Handshake Flags
 extern volatile bool    soft_reset_requested;

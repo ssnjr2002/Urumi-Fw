@@ -93,6 +93,11 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
 // when nothing was queued.
 bool plannerQueueLift(uint8_t why);
 
+// FACT_DUTY_HELD: queue lift, tool off, tool on and plunge at dutyStop ahead of
+// the ring, replan, and release Core 1 (dutyWait). F_TOOL if the lift and
+// plunge do not fit Z's soft range or the ring; the fault aborts the job.
+void plannerDutyLift();
+
 // A held job at rest, its ring empty: land JOB.PAUSED. False otherwise.
 bool plannerLandPaused();
 
