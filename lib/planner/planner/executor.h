@@ -51,6 +51,12 @@ public:
     void hold();
     /** Leave a finished hold: replan from rest and run again. */
     void resume(Planner& p);
+    /**
+     * Leave a finished hold without a plan: the ring restarts where it
+     * stopped, and the producer edits it, replans and commits before the
+     * next tick.
+     */
+    void release(Planner& p);
     /** Hold, then discard every queued block once stopped. */
     void abort();
 

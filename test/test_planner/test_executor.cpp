@@ -160,6 +160,62 @@ TEST_CASE("hold across a block join brakes through it") {
     CHECK(r.e.position().x == doctest::Approx(50));
 }
 
+TEST_CASE("release leaves a hold for the producer, which queues blocks ahead of the rest") {
+    AxisLimits l = lim();
+    l.max_feed[2] = 50;
+    l.max_accel[2] = 500;
+    // Blocks run first so that the ring's tail sits at 0 and then wraps.
+    for (int ahead = 0; ahead < Planner::kSize; ahead += Planner::kSize - 2) {
+        CAPTURE(ahead);
+        Rig r;
+        for (int i = 1; i <= ahead; i++) r.pushLine({i * 0.01f, 0}, 300);
+        r.plan();
+        r.run();
+        const float x0 = r.p.end().x;
+        r.p.setTag(1, 9);
+        r.pushLine({x0 + 100, 0}, 300);
+        r.pushLine({x0 + 100, 50}, 300);
+        r.plan();
+        while (r.e.position().x < x0 + 40) r.tick();
+        r.e.hold();
+        r.run();
+        REQUIRE(r.e.state() == Executor::State::Held);
+        const Pos held = r.e.position();
+        const float s = r.e.current()->s0 + r.e.along();
+
+        r.e.release(r.p);
+        CHECK(r.e.state() == Executor::State::Running);
+        CHECK(!r.p.claimed());
+        r.p.setTag(1, 9, 0, s);
+        r.p.beginFront(held);
+        Pos up = held;
+        up.z = 5;
+        REQUIRE(r.p.pushMove(up, 50, l, kDev));
+        REQUIRE(r.p.pushEvent(7));
+        REQUIRE(r.p.pushMove(held, 50, l, kDev));
+        r.p.endFront();
+        CHECK(r.p.count() == 5);
+        CHECK(r.p.end().y == doctest::Approx(50));
+        const Block& lift = *r.p.oldest();
+        CHECK(lift.kind == Block::LINE);
+        CHECK(lift.path.axes == AXES_Z);
+        CHECK(lift.record == 9);
+        CHECK(lift.resume_s == doctest::Approx(s));
+        r.plan();
+
+        // Up, at the event, down at the held XY, then on to the end.
+        while (!r.e.event()) r.tick();
+        CHECK(r.e.position().z == doctest::Approx(5));
+        CHECK(dist(r.e.position().xy(), held.xy()) < 1e-4f);
+        CHECK(r.e.event()->event == 7);
+        r.e.eventDone();
+        r.run();
+        CHECK(r.e.position().z == doctest::Approx(0));
+        CHECK(r.e.position().x == doctest::Approx(x0 + 100));
+        CHECK(r.e.position().y == doctest::Approx(50));
+    }
+}
+
 TEST_CASE("abort stops, empties the ring, and restarts from where it stopped") {
     Rig r;
     uint32_t seed = 3;

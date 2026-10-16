@@ -160,7 +160,7 @@ void Executor::hold() {
     if (state_ == State::Running) state_ = State::Holding;
 }
 
-void Executor::resume(Planner& p) {
+void Executor::release(Planner& p) {
     if (state_ != State::Held) return;
     p.restartFrom(cur_ ? s_ : 0);
     cur_ = nullptr;
@@ -168,9 +168,15 @@ void Executor::resume(Planner& p) {
     t_ = 0;
     s_ = 0;
     v_ = 0;
+    clock_ = 0;
+    state_ = State::Running;
+}
+
+void Executor::resume(Planner& p) {
+    if (state_ != State::Held) return;
+    release(p);
     p.replan();
     p.commit();
-    state_ = State::Running;
 }
 
 void Executor::abort() {

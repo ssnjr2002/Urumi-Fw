@@ -88,6 +88,7 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, f
     b.layer = tag_layer_;
     b.record = tag_record_;
     b.break_dist = tag_break_dist_;
+    b.resume_s = tag_resume_s_;
     // An event, and whatever follows one, starts from rest.
     const bool rest = kind == Block::EVENT || count_ == 0 ||
                       ring_[index(count_ - 1)].kind == Block::EVENT;
@@ -241,6 +242,28 @@ PLANNER_RAM bool Planner::takeStaged(Piece& out) {
     fence();
     staged_flag_ = false;
     return true;
+}
+
+void Planner::beginFront(const Pos& at) {
+    front_mark_ = count_;
+    front_end_ = end_;
+    end_ = at;
+}
+
+void Planner::endFront() {
+    // The pushes went in after the newest block; move them before the oldest.
+    const int n = count_ - front_mark_;
+    if (n > 0) {
+        // Last first: a slot written is one already moved, or the block itself.
+        const int to = (tail_ + kSize - n) % kSize;
+        for (int i = n - 1; i >= 0; i--)
+            ring_[(to + i) % kSize] = ring_[index(front_mark_ + i)];
+        tail_ = to;
+        ring_[tail_].max_entry_sqr = 0;
+    }
+    end_ = front_end_;
+    plan_valid_ = false;
+    epoch_++;
 }
 
 void Planner::restartFrom(float s) {
