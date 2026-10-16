@@ -9,9 +9,9 @@
  * 0xAB (MicroSegment), 0xAC (tool packet) and 0xAE (jog burst) are retired.
  */
 
-// ── BEZIER — 56-byte record, one annotated cubic (format/bezier.ts) ────────────
+// ── BEZIER — 58-byte record, one annotated cubic (format/bezier.ts) ────────────
 export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planner
-export const BEZIER_SIZE = 56;
+export const BEZIER_SIZE = 58;
 export const BEZIER_SEQ_OFFSET = 2;
 
 // ── LAYER_HDR — 22-byte layer header, opens a job (format/layer.ts) ────────────

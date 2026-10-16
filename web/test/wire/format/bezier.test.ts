@@ -1,5 +1,5 @@
 /**
- * Tests for wire/format/bezier — the 56-byte BEZIER record.
+ * Tests for wire/format/bezier — the 58-byte BEZIER record.
  */
 
 import { describe, it, expect } from "vitest";
@@ -13,6 +13,7 @@ import { cubic } from "../../../src/toolpath/geometry.js";
 const piece: AnnotatedBezier = {
     curve: cubic({ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }, { x: 7, y: 8 }),
     flags: BezierFlag.START | BezierFlag.END,
+    nextBreakDist: 300,
     length: 9,
     kappaMax: 0.5,
     dkappaMax: 0.25,
@@ -26,11 +27,12 @@ describe("wire/format/bezier: packBezier", () => {
     it("lays out magic, flags, seq, the floats and a trailing CRC", () => {
         const u8 = packBezier(piece, 7);
         const dv = new DataView(u8.buffer);
-        expect(u8).toHaveLength(56);
+        expect(u8).toHaveLength(58);
         expect([u8[0], u8[1], u8[2]]).toEqual([MAGIC_BEZIER, 5, 7]);
         const floats = Array.from({ length: 13 }, (_, i) => dv.getFloat32(3 + 4 * i, true));
         expect(floats).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 0.5, 0.25, 0.125, -0.0625]);
-        expect(u8[55]).toBe(crc8(u8, 0, 55));
+        expect(dv.getUint16(55, true)).toBe(300);
+        expect(u8[57]).toBe(crc8(u8, 0, 57));
     });
 });
 

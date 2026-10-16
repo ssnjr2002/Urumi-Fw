@@ -124,4 +124,13 @@ describe("annotate: flags", () => {
     ])("$name", ({ sp, flags }) => {
         expect(annotate(sp).map((p) => p.flags)).toEqual(flags);
     });
+
+    it.each([
+        { name: "smooth: one stretch to the end", sp: sub([a, b], ["smooth"]), dist: [20, 0] },
+        { name: "corner: each stretch to the next BREAK", sp: sub([a, c], ["corner"]), dist: [10, 10] },
+        { name: "rounded up", sp: sub([lineToCubic(pt(0, 0), pt(10.2, 0))]), dist: [11] },
+        { name: "capped at 65535", sp: sub([lineToCubic(pt(0, 0), pt(70000, 0))]), dist: [65535] },
+    ])("nextBreakDist, $name", ({ sp, dist }) => {
+        expect(annotate(sp).map((p) => p.nextBreakDist)).toEqual(dist);
+    });
 });

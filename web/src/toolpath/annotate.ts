@@ -52,6 +52,11 @@ export interface BezierAnalysis {
 export interface AnnotatedBezier extends BezierAnalysis {
     readonly curve: CubicBezier;
     readonly flags: number;
+    /**
+     * On a START or BREAK piece: mm from p0 to the next BREAK or the end of
+     * the contour, rounded up, at most 65535 (at least that far). 0 elsewhere.
+     */
+    readonly nextBreakDist: number;
 }
 
 export type BezierError = "DegenerateHandle" | "Cusp" | "NonMonotonic";
@@ -286,7 +291,7 @@ export function annotate(sp: CleanSubpath, options: Partial<AnnotateOptions> = {
                 .flatMap((p) => byFit(p, o));
             pieces.forEach(({ curve: c, a }, k) => {
                 const brk = k === 0 && (j > 0 || corner);
-                out.push({ curve: c, flags: brk ? BezierFlag.BREAK : 0, ...a });
+                out.push({ curve: c, flags: brk ? BezierFlag.BREAK : 0, nextBreakDist: 0, ...a });
             });
         });
     });
@@ -294,6 +299,16 @@ export function annotate(sp: CleanSubpath, options: Partial<AnnotateOptions> = {
         out[0] = { ...out[0]!, flags: out[0]!.flags | BezierFlag.START };
         const last = out[out.length - 1]!;
         out[out.length - 1] = { ...last, flags: last.flags | BezierFlag.END };
+        // Walk back, summing each stretch up to its START or BREAK.
+        let run = 0;
+        for (let i = out.length - 1; i >= 0; i--) {
+            const b = out[i]!;
+            run += b.length;
+            if (b.flags & (BezierFlag.START | BezierFlag.BREAK)) {
+                out[i] = { ...b, nextBreakDist: Math.min(Math.ceil(run), 0xffff) };
+                run = 0;
+            }
+        }
     }
     return out;
 }
