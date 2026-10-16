@@ -118,7 +118,7 @@ A dependent chain, run as a Single Session.
   * `web/src/machine/schema.ts`, `defaults.ts`, `json/load.ts`, `json/validate.ts`, `json/blob.ts`
   * `config/controller.jsonc`, tests and fixtures, `docs/wire_protocol.md`
 * Depends on: JX (merged).
-* Status: Ready to merge.
+* Status: Done (merged 0a9a61b). Unblocks ZB.
 * Outcome:
   * Deviations: `c` is the machine-wide `machine.zClearance` (the host's
     `clearanceMm` renamed and sent to the Pico), not a per-tool `clearance`;
