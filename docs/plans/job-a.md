@@ -19,6 +19,49 @@ and its hold-and-insert machinery (ZC2).
   (which readout folds: settle in AA).
 * **Homed A is 0** and the cable is untwisted there.
 
+### How A is tracked
+
+```
+wire (X,Y curves) → Core 0 queue    → planner ring  → executor        → follower → motor
+       ↓                 ↓                 ↓              ↓                  ↓
+     no A          picks the start    start & end    follows the       turns that
+                   A (nearest         A per block    heading per tick  position into
+                   equivalent)                       (linear on a      steps, counts
+                                                     travel line)      them → readout
+```
+
+* The readout is the follower's step count (`framesMPos`,
+  `core0/ops/frames.cpp`): MPos unfolded, WPos folded to (−180, 180]. The
+  planner and executor are bookkeeping ahead of the motor; the block-end
+  check keeps them agreeing.
+
+### Units
+
+| layer | units |
+|---|---|
+| config, wire, planner storage, readout | mm and degrees |
+| inside the cap math (`bezier.cpp`, `planner.cpp`) | radians, converted on entry, never stored |
+| follower and `frames` | steps, via `stepsPerUnit` |
+
+### A's limits, in words
+
+* **Turn rate.** On a tight curve A spins fast to keep up: tighter curve (κ)
+  × faster cut = faster spin. A's top speed slows the cut on tight curves:
+  v ≤ ω_max/κ.
+* **Turn acceleration.** Where the curve tightens along its length, A must
+  speed up its spin, which takes acceleration A's motor has a limit on, so
+  the cut slows there too (the dκ cap); part of the XY acceleration is held
+  back for it (the reduced a_t).
+* **Curvature jump at a join.** Where two curves meet smoothly but one is
+  tighter, A would have to change spin speed instantly. It lags and the
+  blade points briefly off the path; the cut slows at the join until that
+  lag stays under the misalignment it tolerates (e_max, start 2°, tuned on
+  the bench by cutting gentle-to-tight joins at a few speeds).
+* **Travel line.** A turns during the travel; on a short hop with a big
+  turn A is the slow one and the travel slows to let it finish.
+* **Units.** Motor limits are in degrees, curvature is per mm; degrees are
+  converted to radians so the formulas give correct numbers.
+
 ### Tool fields (config, decoded by the Pico)
 
 | field | meaning | today |
