@@ -360,7 +360,30 @@ A dependent chain, run as a Single Session.
   * `docs/wire_protocol.md` if a reported state changes
 * Out: the web sim.
 * Depends on: ZC1.
-* Status: Planned.
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: the count adds each stretch whole at its START or BREAK,
+    `nextBreakDist` from rest to rest at the BEZIER's speed and accel
+    (`pathOf`: `min(XY accel) × 0.707`), not `length / cutFeed`; on the bench
+    a 150 mm edge took 2.9 s, not 1.9 s, and the corners were missed. A
+    contour without `nextBreakDist` counts by record at the cut feed. The
+    corner test uses the same time. `insertFront` is
+    `beginFront(pos)`/`endFront()` around ordinary pushes; the release is
+    `Executor::release()`, and `resume()` is now release + replan + commit.
+    A deadline insert leaves Core 0's count as it was, so it errs high.
+  * Bench (laser standing in, `maxOnS` 6, `minOnS` 3, `dwellS` 2; driver in
+    `../bench-midpath`, outside the repo): a 150 mm square lifts at each
+    corner with its dwell and never at the deadline; a 629 mm circle holds
+    mid-arc, dwells and plunges back within 0.06 mm; on-time stays under
+    `maxOnS`. A pause in a deadline dwell resumes 2 mm back in the held
+    record; a pause in a corner lift resumes at the corner; an abort in a
+    deadline dwell is clean. Not run: the deadline's `F_TOOL` (a clearance
+    past Z's soft range fails the job's first lift first), and a passive tool
+    or one without `dutyLimits` (gated by `hasDuty`).
+  * Known limits: curvature slows a cut more than the count knows; the
+    deadline catches it. A corner stop where Core 1's on-time is under
+    `minOnS` lifts without a dwell. `queue.cpp` has no native tests.
+    `test_machine` still fails to link, as on main.
 
 ## Open
 
