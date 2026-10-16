@@ -147,6 +147,29 @@ A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → A
   `json/validate.ts`, `json/blob.ts`; `config/controller.jsonc`; fixtures;
   `docs/wire_protocol.md` if a NACK changes.
 * Depends on: job-z (merged).
+* Status: Done. Unblocks AB.
+* Outcome:
+  * Deviations: the swivel target is the equivalent nearest the current A,
+    and the lift test is that swivel's size, not the drawn corner angle, so
+    a crease reversal (period 180) does not lift. A swivel no equivalent
+    inside `aMaxDeg` reaches is the record's `NACK_SOFT_LIMIT`. A BREAK
+    with a duty stop swivels inside the duty lift. `plannerQueueRecord`
+    takes the BREAK flag. The picker is inline in `queue.cpp`, untested
+    natively like the rest of it.
+  * Settled in Work: a swivel runs at A's `maxFeed`; a corner lift adds its
+    lift and plunge to Core 0's on-time count (the tool stays on).
+  * Interface: tool fields `periodCount` (required in the blob, default 1,
+    crease 2), `aMaxDeg` (optional; knife 180), `cornerAngleDeg` now
+    decoded; `LayerMotion` carries `tangential`, `periodDeg`,
+    `cornerAngleDeg`, `aMaxDeg`. Blob and schema version 10.
+  * Bench (knife on head 0, no material, `aMaxDeg` 540): a square swivels
+    after the travel and lifts at every corner; two squares in one job
+    climb to 495 and unwind to 225 at the corner where 585 would pass;
+    a 24-gon swivels in the cut at its 15° corners, lifting once where the
+    cable forced a 345° unwind (the case AE removes); a pause in a corner
+    lift resumes from its record with the swivel. Not run: the crease, a
+    powered tool through a corner lift.
+  * Out of scope: `test_machine` still fails to link, as on main.
 
 ### AB: tangential following
 
