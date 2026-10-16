@@ -360,7 +360,7 @@ A dependent chain, run as a Single Session.
   * `docs/wire_protocol.md` if a reported state changes
 * Out: the web sim.
 * Depends on: ZC1.
-* Status: Ready to merge.
+* Status: Done (merged c659b4f). The last branch of this plan.
 * Outcome:
   * Deviations: the count adds each stretch whole at its START or BREAK,
     `nextBreakDist` from rest to rest at the BEZIER's speed and accel
