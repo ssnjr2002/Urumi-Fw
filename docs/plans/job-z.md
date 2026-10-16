@@ -150,9 +150,66 @@ A dependent chain, run as a Single Session.
 ### ZB: tool events and duty at START
 
 * Name: `feature/job-tool-events`
+* Type: `feature/`.
 * Purpose: tool on/off event blocks, `settleS`, the duty counter and `DWELL`
   at contour starts.
-* Open: which node switches each tool, and how the config names it.
+* Config: a tool is **active** (powered) with a `power` block, **passive**
+  (pen) without one; only an active tool gets events and duty.
+
+  ```jsonc
+  "power": {
+    "node": 8,            // bus id; the command from that peripheral's type
+    "settleS": 0.3,       // on → plunge
+    "dutyLimits": { "maxOnS": 30, "minOnS": 20, "dwellS": 2 }   // optional
+  }
+  ```
+
+  `power.node` must be a present peripheral of a switchable type (today
+  `NODE_TYPE_KNIFE_OSC` → `CMD_KNIFE_OSC`). The tool-level `dutyLimits` is
+  refused by name (as `clearanceMm` was). Blob and schema version 9.
+* Events: a new `planner::Block::Kind EVENT` (`TOOL_ON`, `TOOL_OFF`), zero
+  length, at rest on both sides (entry and exit 0, no blend), tagged like the
+  moves so a resume replays it. The Pico inserts every event; the wire does
+  not change.
+  * START: Z to clearance, travel, `TOOL_ON`, plunge, curve (5 blocks, was 4).
+  * END: lift, `TOOL_OFF` (2, was 1).
+  * Pause and abort: the lift runs with the tool on, then `TOOL_OFF`
+    (`plannerQueueLift`). A held job with the tool already off lifts alone.
+  * Core 1 runs an event at rest, where it owns the bus: the node command
+    direct from the follower. A failed command (timeout, NAK) retries 3 times
+    at rest, then alarms; a failed `TOOL_ON` leaves the head at clearance,
+    unplunged.
+* Duty: Core 1 keeps the on-time and the last off instant (live counters,
+  also for ZC). `TOOL_ON` applies the rule under Duty when it runs, with the
+  live counters: wait if due (`DWELL`), reset, tool on, wait `settleS`. Core 0
+  reads no counters; a START that needs no wait costs nothing. The off time
+  is wall time and runs through `PAUSED`, so a pause of at least `dwellS`
+  counts as the dwell: a resume normally waits `settleS` only. Counters reset
+  only with a job's open, a tool change and an alarm.
+* **`JOB_DWELL`** (new reason, 7, after `TOOL_WAIT`; motion-sessions.md's
+  `RUNNING → DWELL → RUNNING`, writer Core 1): published while `TOOL_ON`
+  waits for the duty, back to `RUNNING` when it ends. Vacuum stays on. A
+  `pause` in `DWELL` ends the wait and lands `PAUSED` with no lift (Z is at
+  clearance, the tool off); the resume's `TOOL_ON` applies the rule again.
+  Web: the reason name, the sim's state.
+* Files:
+  * `lib/planner/planner/planner.h:48` (`Kind`), `planner.cpp` (push an
+    event, forced rest), `executor.{h,cpp}` (stop at an event, report it);
+    native tests
+  * `src/rp2350/core0/planner/queue.cpp:417` (`plannerQueueRecord`, ring
+    room at :443), `:486` (`plannerQueueLift`)
+  * `src/rp2350/core1/emit/follower.cpp` (run an event), `core1/bus/` (send
+    from Core 1), duty counters shared via `ipc/`
+  * `src/rp2350/core0/config/config_decode.{h,cpp}` (`CfgTool` gains power,
+    :145, :228, :301; `CFG_SCHEMA_VERSION` 9)
+  * `web/src/machine/schema.ts:482–530` (`DutyLimits` into a `Power` type),
+    `json/load.ts:218`, `:801`, `json/validate.ts:236`, `json/blob.ts`; `JobReason` in `web/src/wire/`;
+    `ipc/shared_state.h` (`JOB_DWELL`)
+  * `config/controller.jsonc:211`, fixtures and tests,
+    `docs/tool_duty_limits.md` (marked superseded by this doc; its host
+    scheduler is already gone from `web/src`), `docs/wire_protocol.md`
+* Out: the blower, the alarm lift ("Every other alarm lifts"), the lost-host
+  lift.
 * Depends on: ZA.
 * Status: Planned.
 
