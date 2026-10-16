@@ -278,7 +278,7 @@ A dependent chain, run as a Single Session.
     fixtures
   * `docs/wire_protocol.md`
 * Depends on: ZB.
-* Status: Ready to merge.
+* Status: Done (merged b430a53). Unblocks ZC2.
 * Outcome:
   * Deviations: every block of a record carries the field, through the tag
     (`setTag(layer, record, breakDist)` → `Block::break_dist`); the END
