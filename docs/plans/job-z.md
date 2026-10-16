@@ -288,10 +288,10 @@ A dependent chain, run as a Single Session.
   * Interface for ZC2: `Block::break_dist`, u16 mm from the record's start
     (or resume point) to its next BREAK or END; read it on the record's
     first block.
-  * Out of scope: `web/test/port/cppRefBezier.test.ts` cannot regenerate
-    `test/data/bezier_records.txt` on main, since `fish.svg` was removed in
-    eb51697; this branch regenerated it from that commit's parent.
-    `test_machine` still fails to link, as on main.
+  * Out of scope: `fish.svg`, which `web/test/port/cppRefBezier.test.ts`
+    regenerates `test/data/bezier_records.txt` from, was removed in eb51697;
+    restored by `fix/fish-svg` (3ca660e). `test_machine` still fails to link,
+    as on main.
 
 ### ZC2: mid-path duty lifts
 
