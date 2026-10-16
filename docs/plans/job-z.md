@@ -165,8 +165,15 @@ A dependent chain, run as a Single Session.
   ```
 
   `power.node` must be a present peripheral of a switchable type (today
-  `NODE_TYPE_KNIFE_OSC` → `CMD_KNIFE_OSC`). The tool-level `dutyLimits` is
-  refused by name (as `clearanceMm` was). Blob and schema version 9.
+  `NODE_TYPE_KNIFE_OSC` → `CMD_KNIFE_OSC`), else the config is refused, on
+  the host and the Pico. The tool-level `dutyLimits` is refused by name (as
+  `clearanceMm` was). Blob and schema version 9.
+  * Bench stand-in: with the build flag `ACCEPT_LASER_AS_POWER_TOOL` (off by
+    default) the Pico also accepts the machine's `laser.node`, switched by
+    `CMD_LASER`. The host validator accepts both; a Pico without the flag
+    refuses the laser node. While the knife node is off the bus, the
+    knife's `power` block in `config/controller.jsonc` is commented out; a local bench config
+    gives it `power.node` = the laser node.
 * Events: a new `planner::Block::Kind EVENT` (`TOOL_ON`, `TOOL_OFF`), zero
   length, at rest on both sides (entry and exit 0, no blend), tagged like the
   moves so a resume replays it. The Pico inserts every event; the wire does
@@ -177,8 +184,11 @@ A dependent chain, run as a Single Session.
     (`plannerQueueLift`). A held job with the tool already off lifts alone.
   * Core 1 runs an event at rest, where it owns the bus: the node command
     direct from the follower. A failed command (timeout, NAK) retries 3 times
-    at rest, then alarms; a failed `TOOL_ON` leaves the head at clearance,
-    unplunged.
+    at rest, then alarms (`F_TOOL`, 0x0100, a new event fault; Core 1 reports
+    it as a fact). A failed `TOOL_ON` leaves the head at clearance,
+    unplunged; a failed `TOOL_OFF` sends `CMD_MAKE_SAFE` to the node first.
+  * A job ending in ALARM sends `CMD_MAKE_SAFE` to the tool's node at once:
+    there is no alarm lift yet. The alarm-lift branch moves it after the lift.
 * Duty: Core 1 keeps the on-time and the last off instant (live counters,
   also for ZC). `TOOL_ON` applies the rule under Duty when it runs, with the
   live counters: wait if due (`DWELL`), reset, tool on, wait `settleS`. Core 0
@@ -204,7 +214,8 @@ A dependent chain, run as a Single Session.
     :145, :228, :301; `CFG_SCHEMA_VERSION` 9)
   * `web/src/machine/schema.ts:482–530` (`DutyLimits` into a `Power` type),
     `json/load.ts:218`, `:801`, `json/validate.ts:236`, `json/blob.ts`; `JobReason` in `web/src/wire/`;
-    `ipc/shared_state.h` (`JOB_DWELL`)
+    `ipc/shared_state.h` (`JOB_DWELL`); `ops/machine.h` (`F_TOOL`) and the
+    web fault names; `platformio.ini` (the flag, documented in AGENTS.md)
   * `config/controller.jsonc:211`, fixtures and tests,
     `docs/tool_duty_limits.md` (marked superseded by this doc; its host
     scheduler is already gone from `web/src`), `docs/wire_protocol.md`
