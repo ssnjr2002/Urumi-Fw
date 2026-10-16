@@ -34,6 +34,7 @@ export const CREASE: ToolProfile = toolProfile("crease", {
     plunge: true,
     offsetMm: 0,
     unwind: false,
+    periodCount: 2,
     cornerAngleDeg: 30,
 });
 

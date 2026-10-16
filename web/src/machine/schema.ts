@@ -516,8 +516,13 @@ export interface ToolProfile {
     readonly tangential: boolean;
     readonly offsetMm: number;
     readonly unwind: boolean;
+    /** A tangential tool looks the same every 360/periodCount degrees (knife 1, crease 2). */
+    readonly periodCount: number;
+    /** A corner turning a tangential tool more than this lifts to swivel (degrees). */
     readonly cornerAngleDeg: number;
     readonly minRadiusMm: number;
+    /** Cable: |A| at most this either way from home (degrees); absent = no cable. */
+    readonly aMaxDeg?: number;
     /** Cut feed, mm/s; absent → machine.feed.cutFallback. */
     readonly cutFeed?: number;
     /** Plunge feed, mm/s; absent → machine.feed.plungeFallback. */

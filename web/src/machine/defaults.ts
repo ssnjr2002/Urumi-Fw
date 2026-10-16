@@ -69,6 +69,7 @@ export const DEFAULTS = {
         tangential: false,
         offsetMm: 0,
         unwind: false,
+        periodCount: 1,
         cornerAngleDeg: 20,
         minRadiusMm: 0,
         plunge: false,

@@ -168,6 +168,21 @@ const toolIdsUnique: Rule = ({ toolProfiles }) => {
     });
 };
 
+/** A tangential tool's A fields, and chambers only on a tool that does not steer. */
+const toolAFields: Rule = ({ toolProfiles }) =>
+    Object.entries(toolProfiles).flatMap(([name, t]) => [
+        ...(Number.isInteger(t.periodCount) && t.periodCount >= 1 && t.periodCount <= 255
+            ? [] : [error(`tools.${name}.periodCount: must be a whole number 1..255 (got ${t.periodCount})`)]),
+        ...(!t.tangential && t.periodCount !== 1
+            ? [error(`tools.${name}.periodCount: only a tangential tool has one`)] : []),
+        ...(t.cornerAngleDeg >= 0 && t.cornerAngleDeg <= 180
+            ? [] : [error(`tools.${name}.cornerAngleDeg: must be 0..180 (got ${t.cornerAngleDeg})`)]),
+        ...(t.aMaxDeg === undefined || (Number.isFinite(t.aMaxDeg) && t.aMaxDeg > 0)
+            ? [] : [error(`tools.${name}.aMaxDeg: must be > 0 (got ${t.aMaxDeg})`)]),
+        ...(t.tangential && t.chamberOffsets !== undefined
+            ? [error(`tools.${name}.chamberOffsets: a tangential tool has no chambers`)] : []),
+    ]);
+
 const defaultHeadInRange: Rule = ({ machine }) => {
     const n = machine.heads.length;
     const i = machine.defaultHead;
@@ -477,6 +492,7 @@ const RULES: readonly Rule[] = [
     bufferPositive,
     feedAtLeastOne,
     toolIdsUnique,
+    toolAFields,
     headsHaveAxesForAccepted,
     headsAcceptSomething,
     everyToolHasAHead,
