@@ -1,7 +1,8 @@
 # Tool Duty Limits
 
-**Status:** IMPLEMENTED except §5 tier 2 (inserting a lift) and §10's masked
-dwell. `scheduleDutyBreaks` throws rather than insert; see §11.
+**Status:** SUPERSEDED by docs/plans/job-z.md: the Pico applies a tool's
+duty (`power.dutyLimits`) at contour starts; this host scheduler is gone
+from `web/src`.
 
 A design for tools that cannot run continuously: the planner schedules the
 pauses, bakes the deceleration, and marks where the tool's enable line must be
