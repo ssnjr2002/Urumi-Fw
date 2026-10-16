@@ -18,13 +18,14 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 8u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 9u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
 #define CFG_MAX_CHAMBERS   8u
 #define CFG_BUS_ADDR_MAX   8u   // must equal BUS_ADDR_MAX (shared_state.h)
 #define CFG_NODE_STEPPER   0x01 // NODE_TYPE_STEPPER (include/common.h)
+#define CFG_NODE_KNIFE_OSC 0x03 // NODE_TYPE_KNIFE_OSC
 
 struct CfgNode {
     uint8_t id;
@@ -83,6 +84,20 @@ struct CfgHead {
     CfgPoint probeSwitch;    // a tip position; valid if hasProbeSwitch
 };
 
+// A powered tool's `power` block; node 0 on a passive tool. The node's type
+// picks the command that switches it: KNIFE_OSC CMD_KNIFE_OSC, STEPPER (the
+// laser standing in, ACCEPT_LASER_AS_POWER_TOOL) CMD_LASER. Duty limits are
+// optional inside it.
+struct CfgPower {
+    uint8_t node;         // power.node.id
+    uint8_t nodeType;     // power.node.type
+    float   settleS;      // on → plunge
+    bool    hasDuty;
+    float   maxOnS;
+    float   minOnS;
+    float   dwellS;
+};
+
 // A tool profile (the blob's `toolProfiles`, keyed by name; the Pico keeps
 // only the id).
 struct CfgTool {
@@ -96,6 +111,7 @@ struct CfgTool {
     float   plungeFeed;     // mm/s; 0 = the machine's
     uint8_t chamberCount;   // 0 without chambers
     float   chamberOffsets[CFG_MAX_CHAMBERS];   // A angle per chamber, degrees
+    CfgPower power;         // kind NONE on a passive tool
 };
 
 struct MachineCfg {
@@ -153,6 +169,7 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_TOOLS,          // too many tools or chambers, an id 0 or repeated, a bad number
     CFG_DEC_FEED,           // a machine feed missing or below 1 mm/s
     CFG_DEC_Z_CLEARANCE,    // zClearance negative or not finite
+    CFG_DEC_POWER,          // a power node not a present switchable one, or a bad settle or duty
 };
 
 // Decode and validate `len` bytes at `blob` into *out. On failure *out is left

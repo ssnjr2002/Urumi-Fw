@@ -14,6 +14,7 @@ import {
     axisConfig,
     busNode,
     machineConfig,
+    NodeType,
     qualityConfig,
     toolHead,
     toolProfile,
@@ -48,6 +49,39 @@ const warnings = (c: PipelineConfig) => validateConfig(c).warnings;
 describe("baseline", () => {
     it("a sane config produces no errors and no warnings", () => {
         expect(validateConfig(cfg())).toEqual({ errors: [], warnings: [] });
+    });
+});
+
+describe("rule: powerCoherent", () => {
+    const knife = (power: object, machine?: Partial<MachineConfig>): PipelineConfig => {
+        const c = cfg(machine);
+        return { ...c, toolProfiles: { knife: toolProfile("knife", { ...KNIFE, id: 1, power } as any) } };
+    };
+    const periph = { peripherals: [busNode(8, { type: NodeType.KNIFE_OSC })] };
+
+    it("accepts a present knife oscillator", () => {
+        expect(errors(knife({ node: { id: 8, type: 3 }, settleS: 0.3 }, periph))).toEqual([]);
+    });
+
+    it("accepts the laser's node (a bench stand-in)", () => {
+        expect(errors(knife({ node: { id: 3, type: 1 }, settleS: 0 }, { laser: { node: 3 } } as any))).toEqual([]);
+    });
+
+    it("errors on a node that is absent or not a knife oscillator", () => {
+        const absent = { peripherals: [busNode(8, { type: NodeType.KNIFE_OSC, present: false })] };
+        const msg = "tools.knife.power.node: {id: 8, type: 3} is not a present KNIFE_OSC " +
+            "peripheral or the laser's STEPPER node";
+        expect(errors(knife({ node: { id: 8, type: 3 }, settleS: 0 }, absent))).toContain(msg);
+        expect(errors(knife({ node: { id: 8, type: 3 }, settleS: 0 }))).toContain(msg);
+        expect(errors(knife({ node: { id: 3, type: 3 }, settleS: 0 }, { laser: { node: 3 } } as any)))
+            .not.toEqual([]);
+    });
+
+    it("errors on a negative settle and an incoherent duty block", () => {
+        const e = errors(knife({ node: { id: 8, type: 3 }, settleS: -1, dutyLimits: { maxOnS: 20, minOnS: 20, dwellS: 0 } }, periph));
+        expect(e).toContain("tools.knife.power.settleS: must be >= 0 (got -1)");
+        expect(e).toContain("tools.knife.power.dutyLimits.dwellS: must be > 0 (got 0)");
+        expect(e).toContain("tools.knife.power.dutyLimits: minOnS (20) must be < maxOnS (20)");
     });
 });
 

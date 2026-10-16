@@ -73,6 +73,7 @@ export {
     type ToolProfile,
     toolProfile,
     type DutyLimits,
+    type ToolPower,
     needsOffsetComp,
     // tool presets + lookup tables (demo uses TOOL_PROFILES_BY_TYPE)
     PEN,

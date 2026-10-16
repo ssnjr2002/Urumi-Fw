@@ -215,8 +215,12 @@ interface JsonToolOverride {
     readonly liftHeight?: number;
     readonly toolOffset?: { xOffset: number; yOffset: number };
     readonly chamberOffsets?: readonly number[];
-    readonly dutyLimits?: {
-        maxOnS?: number; minOnS?: number; dwellS?: number; settleS?: number;
+    /** Moved into `power` — see the tools build step. Typed so the check can see it. */
+    readonly dutyLimits?: unknown;
+    readonly power?: {
+        node?: { id?: number; type?: number };
+        settleS?: number;
+        dutyLimits?: { maxOnS?: number; minOnS?: number; dwellS?: number };
     };
 }
 
@@ -427,6 +431,12 @@ export function parseConfig(jsonText: string): ConfigResult {
                 if (json.tools[name]![old] !== undefined) {
                     errors.push(`tools.${name}.${old}: removed — use tools.${name}.${now}`);
                 }
+            }
+            if (json.tools[name]!.dutyLimits !== undefined) {
+                errors.push(
+                    `tools.${name}.dutyLimits: moved — use tools.${name}.power.dutyLimits ` +
+                    `(settleS goes to tools.${name}.power.settleS)`,
+                );
             }
             if (json.tools[name]!.liftHeight !== undefined) {
                 errors.push(
@@ -793,18 +803,18 @@ function patchToolProfile(
         if (o[key] !== undefined) merged[key] = o[key];
     }
 
-    // Duty limits merge field-wise over the preset, same rule as the targets.
     // Missing numbers become 0 rather than an invented default: these are
-    // measurements of a specific tool, and validate rejects a zero budget or
-    // dwell with a message naming the field. Guessing them here would produce
-    // a config that runs and cuts wrong.
-    if (o.dutyLimits !== undefined) {
-        const b = base.dutyLimits;
-        merged.dutyLimits = {
-            maxOnS:  o.dutyLimits.maxOnS  ?? b?.maxOnS  ?? 0,
-            minOnS:  o.dutyLimits.minOnS  ?? b?.minOnS  ?? 0,
-            dwellS:  o.dutyLimits.dwellS  ?? b?.dwellS  ?? 0,
-            settleS: o.dutyLimits.settleS ?? b?.settleS ?? 0,
+    // measurements of a specific tool, and validate rejects a zero node, budget
+    // or dwell with a message naming the field.
+    const p = o.power;
+    if (p !== undefined) {
+        const d = p.dutyLimits;
+        merged.power = {
+            node: { id: p.node?.id ?? 0, type: p.node?.type ?? 0 },
+            settleS: p.settleS ?? 0,
+            ...(d !== undefined && {
+                dutyLimits: { maxOnS: d.maxOnS ?? 0, minOnS: d.minOnS ?? 0, dwellS: d.dwellS ?? 0 },
+            }),
         };
     }
 

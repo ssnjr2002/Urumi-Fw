@@ -23,6 +23,7 @@ import type {
     PipelineConfig,
     ToolProfile,
 } from "../schema.js";
+import { NodeType } from "../schema.js";
 import { TOOL_PROFILES_BY_TYPE } from "../tools.js";
 import { requiredAxes, resolveTargets } from "../resolve.js";
 
@@ -225,26 +226,40 @@ const headsAcceptSomething: Rule = ({ machine }) =>
     );
 
 /**
- * Duty limits are only meaningful as a complete set, which is the whole reason
- * they are one nested block. load.ts fills a missing number with 0 rather than
- * inventing one — these are measurements of a specific tool, not defaults — so
- * a partial block arrives here as a zero and is named precisely.
+ * A power block names a node that can switch the tool: a present KNIFE_OSC
+ * peripheral, or the laser's STEPPER node (a bench stand-in; only a Pico built with
+ * ACCEPT_LASER_AS_POWER_TOOL accepts it). Duty limits are only meaningful as a
+ * complete set; load.ts fills a missing number with 0 rather than inventing
+ * one, so a partial block arrives here as a zero and is named precisely.
  *
- * minOnS >= maxOnS would leave the scheduler an empty band with no candidate
- * lift in it, forcing an inserted break every time.
+ * minOnS >= maxOnS would leave no on-time before a reset is due.
  */
-const dutyLimitsCoherent: Rule = (config) =>
+const powerCoherent: Rule = (config) =>
     Object.entries(config.toolProfiles).flatMap(([name, t]) => {
-        const d = t.dutyLimits;
-        if (!d) return [];
-        const p = `tools.${name}.dutyLimits`;
+        const pw = t.power;
+        if (!pw) return [];
+        const p = `tools.${name}.power`;
         const out: Issue[] = [];
-        if (!(d.maxOnS > 0)) out.push(error(`${p}.maxOnS: must be > 0 (got ${d.maxOnS})`));
-        if (!(d.minOnS > 0)) out.push(error(`${p}.minOnS: must be > 0 (got ${d.minOnS})`));
-        if (!(d.dwellS > 0)) out.push(error(`${p}.dwellS: must be > 0 (got ${d.dwellS})`));
-        if (d.settleS < 0) out.push(error(`${p}.settleS: must be >= 0 (got ${d.settleS})`));
+        const m = config.machine;
+        const { id, type } = pw.node;
+        const knife = type === NodeType.KNIFE_OSC &&
+            m.peripherals.some((n) => n.id === id && n.present && n.type === type);
+        const laser = type === NodeType.STEPPER && id === m.laser?.node;
+        if (!knife && !laser) {
+            out.push(error(
+                `${p}.node: {id: ${id}, type: ${type}} is not a present KNIFE_OSC ` +
+                "peripheral or the laser's STEPPER node",
+            ));
+        }
+        if (!(pw.settleS >= 0)) out.push(error(`${p}.settleS: must be >= 0 (got ${pw.settleS})`));
+        const d = pw.dutyLimits;
+        if (!d) return out;
+        const q = `${p}.dutyLimits`;
+        if (!(d.maxOnS > 0)) out.push(error(`${q}.maxOnS: must be > 0 (got ${d.maxOnS})`));
+        if (!(d.minOnS > 0)) out.push(error(`${q}.minOnS: must be > 0 (got ${d.minOnS})`));
+        if (!(d.dwellS > 0)) out.push(error(`${q}.dwellS: must be > 0 (got ${d.dwellS})`));
         if (d.maxOnS > 0 && d.minOnS > 0 && d.minOnS >= d.maxOnS) {
-            out.push(error(`${p}: minOnS (${d.minOnS}) must be < maxOnS (${d.maxOnS})`));
+            out.push(error(`${q}: minOnS (${d.minOnS}) must be < maxOnS (${d.maxOnS})`));
         }
         return out;
     });
@@ -465,7 +480,7 @@ const RULES: readonly Rule[] = [
     headsHaveAxesForAccepted,
     headsAcceptSomething,
     everyToolHasAHead,
-    dutyLimitsCoherent,
+    powerCoherent,
 ];
 
 // ── entry ─────────────────────────────────────────────────────────────────────

@@ -79,8 +79,12 @@
     }
   ],
   "defaultHead": 0,
+  "peripherals": [{ "id": 8, "type": 3, "present": true }],
   "tools": {
-    "knife": { "id": 1 },
+    "knife": {
+      "id": 1,
+      "power": { "node": { "id": 8, "type": 3 }, "settleS": 0.3, "dutyLimits": { "maxOnS": 30, "minOnS": 20, "dwellS": 2 } }
+    },
     "revolver_pen": { "id": 2 }
   }
 }

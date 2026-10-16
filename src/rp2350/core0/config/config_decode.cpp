@@ -146,6 +146,22 @@ static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
         if (id.as<unsigned>() > 0xFF || type.as<unsigned>() > 0xFF) return CFG_DEC_TOOLS;
         t.id   = (uint8_t)id.as<unsigned>();
         t.type = (uint8_t)type.as<unsigned>();
+        JsonObjectConst pw = j["power"];
+        if (!pw.isNull()) {
+            JsonVariantConst id = pw["node"]["id"], nt = pw["node"]["type"];
+            if (!id.is<unsigned>() || !nt.is<unsigned>() ||
+                !readFloat(pw["settleS"], &t.power.settleS)) return CFG_DEC_MISSING;
+            if (id.as<unsigned>() == 0 || id.as<unsigned>() > 0xFF || nt.as<unsigned>() > 0xFF)
+                return CFG_DEC_POWER;
+            t.power.node = (uint8_t)id.as<unsigned>();
+            t.power.nodeType = (uint8_t)nt.as<unsigned>();
+            JsonObjectConst d = pw["dutyLimits"];
+            t.power.hasDuty = !d.isNull();
+            if (t.power.hasDuty &&
+                (!readFloat(d["maxOnS"], &t.power.maxOnS) ||
+                 !readFloat(d["minOnS"], &t.power.minOnS) ||
+                 !readFloat(d["dwellS"], &t.power.dwellS))) return CFG_DEC_MISSING;
+        }
         JsonVariantConst ch = j["chamberOffsets"];
         if (ch.isNull()) continue;
         JsonArrayConst a = ch;
@@ -234,7 +250,30 @@ static CfgDecodeError checkTools(const MachineCfg& c) {
     return CFG_DEC_OK;
 }
 
-static CfgDecodeError validate(const MachineCfg& c) {
+// A powered tool's node: a present knife oscillator peripheral, or (bench
+// builds) the laser's stepper node.
+static CfgDecodeError checkPower(MachineCfg& c) {
+    for (uint8_t i = 0; i < c.toolCount; i++) {
+        CfgPower& p = c.tools[i].power;
+        if (p.node == 0) continue;
+        bool ok = false;
+        for (uint8_t k = 0; k < c.periphCount; k++) {
+            const CfgNode& n = c.peripherals[k];
+            if (n.id == p.node && n.present && n.type == p.nodeType &&
+                n.type == CFG_NODE_KNIFE_OSC) ok = true;
+        }
+#ifdef ACCEPT_LASER_AS_POWER_TOOL
+        if (c.laserNode != 0 && p.node == c.laserNode && p.nodeType == CFG_NODE_STEPPER) ok = true;
+#endif
+        if (!ok) return CFG_DEC_POWER;
+        if (!(p.settleS >= 0.0f) || !isfinite(p.settleS)) return CFG_DEC_POWER;
+        if (p.hasDuty && (!positive(p.maxOnS) || !positive(p.minOnS) ||
+                          !positive(p.dwellS) || p.minOnS >= p.maxOnS)) return CFG_DEC_POWER;
+    }
+    return CFG_DEC_OK;
+}
+
+static CfgDecodeError validate(MachineCfg& c) {
     CfgDecodeError e;
     const CfgAxis* axes[2 + 2 * CFG_MAX_HEADS];
     uint8_t n = 0;
@@ -269,6 +308,7 @@ static CfgDecodeError validate(const MachineCfg& c) {
         if (!(f >= 1.0f) || !isfinite(f)) return CFG_DEC_FEED;
     if (!(c.zClearance >= 0.0f) || !isfinite(c.zClearance)) return CFG_DEC_Z_CLEARANCE;
     if ((e = checkTools(c)) != CFG_DEC_OK) return e;
+    if ((e = checkPower(c)) != CFG_DEC_OK) return e;
     return checkFrames(c);
 }
 
@@ -298,7 +338,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
     JsonObject ft = filter["toolProfiles"]["*"].to<JsonObject>();
     for (const char* k : {"id", "toolType", "tangential", "plunge", "toolOffset",
-                          "chamberOffsets", "cutFeed", "plungeFeed"})
+                          "chamberOffsets", "cutFeed", "plungeFeed", "power"})
         ft[k] = true;
 
     JsonDocument doc;
@@ -401,6 +441,7 @@ const char* configDecodeErrorName(CfgDecodeError e) {
         case CFG_DEC_TOOLS:     return "tools";
         case CFG_DEC_FEED:      return "feed";
         case CFG_DEC_Z_CLEARANCE: return "z_clearance";
+        case CFG_DEC_POWER:     return "power";
     }
     return "?";
 }

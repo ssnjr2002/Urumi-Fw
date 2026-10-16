@@ -85,6 +85,11 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "no_z_clearance", host: false, mutate: (c) => delete c.machine.zClearance },
     { name: "z_clearance", host: true, mutate: (c) => (c.machine.zClearance = -1) },
     { name: "feed", host: true, mutate: (c) => (c.machine.feed.cutFallback = 0.5) },
+    { name: "power", host: true, mutate: (c) => (c.toolProfiles.knife.power.node.id = 5) },
+    { name: "power_absent", host: true, mutate: (c) => (c.machine.peripherals[0].present = false) },
+    { name: "power_laser", host: false, mutate: (c) => (c.toolProfiles.knife.power.node = { id: c.machine.heads[0].z.node.id, type: 1 }, c.machine.laser = { node: c.machine.heads[0].z.node.id }) },
+    { name: "power_duty", host: true, mutate: (c) => (c.toolProfiles.knife.power.dutyLimits.minOnS = 30) },
+    { name: "no_power_settle", host: false, mutate: (c) => delete c.toolProfiles.knife.power.settleS },
     { name: "tools", host: true, mutate: (c) => (c.toolProfiles.revolver_pen.id = c.toolProfiles.knife.id) },
     { name: "probe_reach", host: false, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 1e4, y: 0 }) },
 ];

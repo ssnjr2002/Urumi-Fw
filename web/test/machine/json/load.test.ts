@@ -118,7 +118,7 @@ describe("load: valid config", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
         expect(Object.keys(r.config.toolProfiles)).toEqual(["knife", "revolver_pen"]);
-        expect(r.config.toolProfiles.knife).toEqual({ ...KNIFE, id: 1 });
+        expect(r.config.toolProfiles.knife).toEqual({ ...KNIFE, id: 1, power: expect.anything() });
         expect(r.config.toolProfiles.revolver_pen).toEqual({ ...REVOLVER_PEN, id: 2 });
         expect(r.config.toolProfiles.pen).toBeUndefined();
     });
@@ -175,6 +175,23 @@ describe("load: optional defaults", () => {
         expect(r.errors).toContain("tools.knife.z: removed — use tools.knife.plungeFeed");
     });
 
+    it("a tool's power block loads; the old tool-level dutyLimits is rejected by name", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        const ok = parseConfig(JSON.stringify(json));
+        if (!ok.ok) throw new Error("expected ok");
+        expect(ok.config.toolProfiles.knife!.power).toEqual({
+            node: { id: 8, type: 3 }, settleS: 0.3, dutyLimits: { maxOnS: 30, minOnS: 20, dwellS: 2 },
+        });
+        expect(ok.config.toolProfiles.revolver_pen!.power).toBeUndefined();
+        json.tools.knife.dutyLimits = { maxOnS: 30, minOnS: 20, dwellS: 2, settleS: 0.3 };
+        const r = parseConfig(JSON.stringify(json));
+        if (r.ok) throw new Error("expected errors");
+        expect(r.errors).toContain(
+            "tools.knife.dutyLimits: moved — use tools.knife.power.dutyLimits " +
+            "(settleS goes to tools.knife.power.settleS)",
+        );
+    });
+
     it("slew defaults to empty (A ceiling) when absent", () => {
         const json = JSON.parse(TEST_MACHINE);
         delete json.machine.slew;
@@ -226,7 +243,10 @@ describe("load: optional defaults", () => {
     });
 
     it("peripherals default to empty array when absent", () => {
-        const r = parseConfig(TEST_MACHINE);
+        const json = JSON.parse(TEST_MACHINE);
+        delete json.peripherals;
+        delete json.tools.knife.power;
+        const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
         expect(r.config.machine.peripherals).toEqual([]);
     });

@@ -35,7 +35,8 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(c.version == CFG_SCHEMA_VERSION);
     CHECK(c.headCount == 1);
     CHECK(c.defaultHead == 0);
-    CHECK(c.periphCount == 0);
+    REQUIRE(c.periphCount == 1);
+    CHECK(c.peripherals[0].type == CFG_NODE_KNIFE_OSC);
 
     CHECK(c.x.node.id == 1);
     CHECK(c.x.node.present);
@@ -137,6 +138,14 @@ TEST_CASE("tools decode by id") {
     CHECK(knife->tangential);
     CHECK(knife->plunge);
     CHECK(knife->chamberCount == 0);
+    CHECK(knife->power.node == 8);
+    CHECK(knife->power.nodeType == CFG_NODE_KNIFE_OSC);
+    CHECK(knife->power.settleS == doctest::Approx(0.3));
+    CHECK(knife->power.hasDuty);
+    CHECK(knife->power.maxOnS == doctest::Approx(30));
+    CHECK(knife->power.minOnS == doctest::Approx(20));
+    CHECK(knife->power.dwellS == doctest::Approx(2));
+    CHECK(rev->power.node == 0);
     CHECK_FALSE(rev->tangential);
     CHECK(rev->chamberCount == 7);
     CHECK(rev->chamberOffsets[1] == doctest::Approx(360.0 / 7));
@@ -190,6 +199,11 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"no_lift_feed",   "missing"}, {"no_z_clearance", "missing"},
         {"z_clearance",    "z_clearance"},
         {"tools",          "tools"},
+        {"power",          "power"}, {"power_absent", "power"},
+        {"power_duty",     "power"}, {"no_power_settle", "missing"},
+#ifndef ACCEPT_LASER_AS_POWER_TOOL
+        {"power_laser",    "power"},
+#endif
     };
     for (auto& t : cases) {
         CAPTURE(t[0]);

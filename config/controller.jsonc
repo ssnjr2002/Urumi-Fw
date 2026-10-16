@@ -207,8 +207,10 @@
       "minRadiusMm": 0,
       "cutFeed": 40,
       "plungeFeed": 10,
-      "toolOffset": { "xOffset": 0, "yOffset": 0 },
-      "dutyLimits": { "maxOnS": 30, "minOnS": 20, "dwellS": 2, "settleS": 0.3 }
+      "toolOffset": { "xOffset": 0, "yOffset": 0 }
+      // Passive until its node (peripheral 8) is back on the bus.
+      // "power": { "node": { "id": 8, "type": 3 }, "settleS": 0.3,
+      //            "dutyLimits": { "maxOnS": 30, "minOnS": 20, "dwellS": 2 } }
     },
     "pen": {
       "id": 2,

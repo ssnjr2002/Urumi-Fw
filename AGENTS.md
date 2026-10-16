@@ -30,6 +30,7 @@ Contains config for 4 MCU types:
 Controller Build Flags:
 
 * `PICO_ALLOW_UNCONFIGURED`: Compile `uncfg`, which clears the CONFIG fault (no usable config at boot), leaving the machine unconfigured until power-off. Off by default.
+* `ACCEPT_LASER_AS_POWER_TOOL`: Accept the laser's node as a tool's `power.node`, switched by `CMD_LASER`, so the laser stands in for a powered tool on the bench. Off by default.
 
 Controller Config:
 
