@@ -7,7 +7,7 @@
 #include "runner.h"
 #include "probe.h"
 #include "sequence.h"
-#include "../planner/queue.h"  // plannerStopJog
+#include "../planner/queue.h"  // plannerStopJog, plannerQueueLift
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
 #include "hardware/sync.h"
@@ -15,6 +15,7 @@
 static uint16_t events     = 0;
 static bool     latched    = false;
 static bool     jobAborted = false;   // a job's abort is waiting on Core 1
+static bool     abortLifted = false;  // and its lift has been queued
 
 uint16_t machineFaults(void) {
     uint16_t f = events;
@@ -101,7 +102,7 @@ void machineTeardown(bool estop) {
         case CTX_JOB:
             if (estop) {
                 // Core 1's sweep drops the ring.
-                jobAborted = false;
+                jobAborted = abortLifted = false;
                 contextClose(CTX_JOB);
             } else {
                 jobAbort();
@@ -118,6 +119,7 @@ void machineReset(void) {
     events         = 0;
     latched        = false;
     jobAborted     = false;
+    abortLifted    = false;
     estopRequested = false;
     estopSwept     = false;
     machineContext = CTX_IDLE;
@@ -200,13 +202,23 @@ const char* machineAdmit(uint8_t kind) {
     return busy ? "busy" : "bad_state";
 }
 
+// An aborted job at rest lifts once, then closes when the lift has drained.
+static void abortSettle(void) {
+    uint32_t s = spin_lock_blocking(plannerLock);
+    const bool rest = jobAborted && !abortRequested && !plannerActive && plannerRing.count() == 0;
+    spin_unlock(plannerLock, s);
+    if (!rest) return;
+    if (!abortLifted && plannerQueueLift(JOB_ABORTING)) { abortLifted = true; return; }
+    s = spin_lock_blocking(plannerLock);
+    jobAborted = abortLifted = false;
+    if (machineContext == CTX_JOB) machineContext = CTX_IDLE;
+    spin_unlock(plannerLock, s);
+}
+
 void machinePublish(void) {
+    abortSettle();
     const uint16_t f = machineFaults();
     const uint32_t s = spin_lock_blocking(plannerLock);
-    if (jobAborted && !abortRequested) {
-        jobAborted = false;
-        if (machineContext == CTX_JOB) machineContext = CTX_IDLE;
-    }
     machineState = stateOf(f);
     spin_unlock(plannerLock, s);
 }

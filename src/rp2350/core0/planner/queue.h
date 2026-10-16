@@ -84,6 +84,15 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 // broken framing; PQ_SOFT_LIMIT for a height outside Z's soft range.
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end);
 
+// A job at rest with its ring empty (held by a pause, or aborted): queue a lift
+// to zClearance over work Z, run as JOB reason `why` (JOB_HOLDING or
+// JOB_ABORTING). False, nothing queued, when Z is already there or the lift
+// cannot run (no config, Z limits or room in Z's soft range).
+bool plannerQueueLift(uint8_t why);
+
+// A held job at rest, its ring empty: land JOB.PAUSED. False otherwise.
+bool plannerLandPaused();
+
 // Forget an open contour: seqreset, abort, soft reset.
 void plannerEndContour();
 

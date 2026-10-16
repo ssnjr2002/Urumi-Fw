@@ -28,6 +28,19 @@ static void replanAndCommit() {
     }
 }
 
+// Each slot's ceilings from the axis bound there; false without X and Y's.
+static bool fillLimits(planner::AxisLimits& limits) {
+    // Z and A stay 0 on a slot no head binds; a move there is refused.
+    for (uint8_t k = 0; k < MOTION_SLOTS; k++) {
+        const CfgAxis* a = framesAxis(k);
+        if (!a) continue;
+        limits.max_feed[k]  = a->maxFeed;
+        limits.max_accel[k] = a->maxAccel;
+    }
+    return limits.max_feed[0] > 0 && limits.max_accel[0] > 0 &&
+           limits.max_feed[1] > 0 && limits.max_accel[1] > 0;
+}
+
 // The state, config and limit checks every push shares; fills `limits`. A jog
 // joins JOGGING, a record a job that is buffering or running.
 static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
@@ -40,17 +53,7 @@ static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
     if ((st != STATE_IDLE && !joins) || pauseRequested || abortRequested)
         return PQ_BAD_STATE;
     if (!machineCfgValid()) return PQ_NO_CONFIG;
-
-    // Z and A stay 0 on a slot no head binds; a move there is refused.
-    for (uint8_t k = 0; k < MOTION_SLOTS; k++) {
-        const CfgAxis* a = framesAxis(k);
-        if (!a) continue;
-        limits.max_feed[k]  = a->maxFeed;
-        limits.max_accel[k] = a->maxAccel;
-    }
-    if (!(limits.max_feed[0] > 0 && limits.max_accel[0] > 0 &&
-          limits.max_feed[1] > 0 && limits.max_accel[1] > 0)) return PQ_NO_LIMITS;
-    return PQ_OK;
+    return fillLimits(limits) ? PQ_OK : PQ_NO_LIMITS;
 }
 
 // Signed steps per unit of slot k, 0 if no head binds it.
@@ -478,6 +481,39 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     inContour = !end;
     replanAndCommit();
     return PQ_OK;
+}
+
+bool plannerQueueLift(uint8_t why) {
+    planner::AxisLimits limits;
+    if (!machineCfgValid() || !fillLimits(limits) ||
+        !(limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0)) return false;
+    const float up = clearZ();
+    const float feed = machineCfg().liftFeed;
+
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const planner::Pos e = plannerRing.end();
+    const bool lift = machineContext == CTX_JOB && ringOwner == RING_JOB && !plannerActive &&
+                      plannerRing.count() == 0 && e.z < up && zMoveFits(e.xy(), e.z, up);
+    if (lift) {
+        pushZ(up, feed, limits);
+        jobReason = why;
+    }
+    spin_unlock(plannerLock, s);
+    if (lift) replanAndCommit();
+    return lift;
+}
+
+bool plannerLandPaused() {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const bool ok = machineContext == CTX_JOB && jobReason == JOB_HOLDING &&
+                    !plannerActive && plannerRing.count() == 0;
+    if (ok) {
+        pauseRequested = false;
+        __dmb();
+        jobReason = JOB_PAUSED;
+    }
+    spin_unlock(plannerLock, s);
+    return ok;
 }
 
 bool plannerJogFrom(float at[4], uint8_t reason) {

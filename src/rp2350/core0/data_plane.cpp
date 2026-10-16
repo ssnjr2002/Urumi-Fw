@@ -130,7 +130,7 @@ static void feedPacket(uint8_t b) {
     // Abort is a barrier — reject everything until the machine reaches IDLE,
     // with a reason distinct from BAD_STATE so the host waits and reopens rather
     // than surfacing an error.
-    if (abortRequested) {
+    if (abortRequested || (machineContext == CTX_JOB && jobReason == JOB_ABORTING)) {
         sendNack(MSEG_NACK_ABORTING);
         return;
     }

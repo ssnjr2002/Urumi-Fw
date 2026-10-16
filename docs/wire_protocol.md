@@ -201,12 +201,15 @@ Opens a job (JOB.BUFFERING) from IDLE; in a buffering or running job it starts
 the next layer. Layers may come in any order; the BEZIERs after a header are
 numbered on from its `record`.
 
-**Pause and resume.** `pause` brakes to a hold and lands JOB.PAUSED with the
-queue dropped, keeping where the job stopped: the record, and how far into its
+**Pause and resume.** `pause` brakes to a hold, drops the queue, lifts Z to
+clearance where it stopped (still JOB.HOLDING) and then lands JOB.PAUSED,
+keeping where the job stopped: the record, and how far into its
 curve (`get resume_layer resume_record`). The host resumes by sending a layer
 header naming that layer and record, then the records from there on; any other
 header is `NACK_JOB`. The Pico cuts that record from 2 mm before where it
-stopped, travelling there first. A record stopped in its travel runs whole. A job ends only by `cancel` or abort.
+stopped, travelling there first. A record stopped in its travel runs whole. A job ends only by `cancel` or
+abort; an abort brakes, lifts Z to clearance (JOB.ABORTING throughout) and
+then goes IDLE.
 
 **Heads and tool change.** The BEZIERs after a header run with its tool on its
 `head`. With the tool mounted there (`mount`) and the head selected, the header
@@ -381,7 +384,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_PAUSED` | `0x04` | Stream rejected — machine is PAUSED |
 | `MSEG_NACK_CONFIG_MISMATCH` | `0x05` | MCFG header CRC32 disagrees with Pico flash |
 | `MSEG_NACK_BAD_STATE` | `0x06` | Command rejected — wrong machine state |
-| `MSEG_NACK_ABORTING` | `0x07` | Record sent during an abort — retry once IDLE |
+| `MSEG_NACK_ABORTING` | `0x07` | Record sent during an abort, its lift included — retry once IDLE |
 | `MSEG_NACK_BAD_CURVE` | `0x08` | BEZIER record failed `checkBezier`, or broke contour framing or the chain |
 | `MSEG_NACK_SOFT_LIMIT` | `0x09` | BEZIER record point outside the soft range on a homed axis, after the work offset, or a record the bed mesh would take Z out of range on; a continuous jog with no room left in its direction |
 | `MSEG_NACK_MIXED_AXES` | `0x0A` | Continuous jog with directions in more than one axis set (XY, Z, A) |

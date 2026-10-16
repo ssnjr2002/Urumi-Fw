@@ -82,9 +82,10 @@ static bool __time_critical_func(bufferDone)() {
            plannerRing.queuedTime() >= bufferQueueS;
 }
 
-// Land JOB.PAUSED at rest: keep where the job stopped (jobResume) and drop the
-// ring; the host resends from there. Under the lock.
-static void __time_critical_func(landPaused)() {
+// A pause at rest: keep where the job stopped (jobResume), drop the ring and
+// stay in JOB.HOLDING; Core 0 lifts and lands PAUSED (FACT_HELD). The host
+// resends from there. Under the lock.
+static void __time_critical_func(landHeld)() {
     const planner::Block* b = plannerExec.current();
     float s = b ? b->s0 + plannerExec.along() : 0;
     if (!b && (b = plannerRing.oldest())) s = b->s0;
@@ -98,15 +99,15 @@ static void __time_critical_func(landPaused)() {
     plannerRing.reset(at);
     plannerExec.reset(at);
     plannerActive = false;
-    pauseRequested = false;
     toolChangePending = false;   // the pause wins; the host resends the header
-    jobAt(JOB_PAUSED);
+    jobAt(JOB_HOLDING);
+    core1FactPush(FACT_HELD);
 }
 
-// Enter planner motion: a jog's ring, or a job once it has buffered. Core 0
-// opens a job in BUFFERING, and resumes a paused one there; a pause at rest is
-// taken here. All under the lock: `cancel` ends a job at rest under it.
-// False if there is nothing to run.
+// Enter planner motion: a jog's ring, a job once it has buffered, or the lift
+// Core 0 queues in a held or aborted job. Core 0 opens a job in BUFFERING, and
+// resumes a paused one there; a pause at rest is taken here. All under the
+// lock: `cancel` ends a job at rest under it. False if there is nothing to run.
 static bool __time_critical_func(enter)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
     bool ok = false;
@@ -119,8 +120,12 @@ static bool __time_critical_func(enter)() {
         }
     } else if (machineContext == CTX_JOB && !abortRequested) {
         const uint8_t why = jobReason;
-        if (why == JOB_BUFFERING && pauseRequested) {
-            landPaused();
+        if ((why == JOB_HOLDING || why == JOB_ABORTING) && !plannerActive &&
+            plannerRing.count() > 0) {
+            plannerActive = true;
+            ok = true;
+        } else if (why == JOB_BUFFERING && pauseRequested) {
+            landHeld();
         } else if (why == JOB_BUFFERING && bufferDone()) {
             plannerActive = true;
             jobAt(JOB_RUNNING);
@@ -131,8 +136,8 @@ static bool __time_critical_func(enter)() {
     return ok;
 }
 
-// Leave planner motion with the ring drained (a jog's end, or an abort),
-// unless lines arrived meanwhile. A job's context closes on Core 0, once
+// Leave planner motion with the ring drained (a jog's end, an abort, or a
+// lift), unless lines arrived meanwhile. A job's context closes on Core 0, once
 // abortRequested is clear.
 static bool __time_critical_func(leaveDrained)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
@@ -160,9 +165,9 @@ static bool __time_critical_func(leaveDry)() {
     return empty;
 }
 
-static void __time_critical_func(leavePaused)() {
+static void __time_critical_func(leaveHeld)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
-    landPaused();
+    landHeld();
     spin_unlock(plannerLock, s);
 }
 
@@ -182,8 +187,11 @@ void __time_critical_func(processPlanner)() {
     int64_t accum[4], inc[4] = {0, 0, 0, 0};
     for (int i = 0; i < 4; i++) accum[i] = (int64_t)machinePos[i] * kOne + kHalf;
 
-    // A jog never pauses: a late adoption holds it, then it runs on.
+    // A jog never pauses: a late adoption holds it, then it runs on. Nor does a
+    // held or aborted job's lift, which ends with the ring drained.
     const bool jog = ringOwner != RING_JOB;
+    const uint8_t why0 = jobReason;
+    const bool runsOn = jog || why0 == JOB_HOLDING || why0 == JOB_ABORTING;
     const PlannerMesh mesh = plannerMesh;
     bool holding = false, aborting = false, lateHold = false;
     uint32_t late = plannerExec.lateAdoptions();
@@ -226,7 +234,7 @@ void __time_critical_func(processPlanner)() {
             if (!holding) {
                 plannerExec.hold();
                 holding = lateHold = true;
-                if (!jog) jobReason = JOB_HOLDING;
+                if (!runsOn) jobReason = JOB_HOLDING;
             }
         }
 
@@ -235,7 +243,7 @@ void __time_critical_func(processPlanner)() {
             aborting = holding = true;
             lateHold = false;
             if (!jog) jobReason = JOB_ABORTING;
-        } else if (pauseRequested && !jog && !aborting && (!holding || lateHold)) {
+        } else if (pauseRequested && !runsOn && !aborting && (!holding || lateHold)) {
             // A pause during a late block's hold lands PAUSED instead.
             if (!holding) plannerExec.hold();
             holding = true;
@@ -273,15 +281,15 @@ void __time_critical_func(processPlanner)() {
             if (st == Executor::State::Running && leaveDrained()) return;
         } else if (lateHold) {
             if (st == Executor::State::Held) {
-                if (!jog) { rebuffer(); return; }
+                if (!runsOn) { rebuffer(); return; }
                 const uint32_t s = spin_lock_blocking(plannerLock);
                 plannerExec.resume(plannerRing);
                 spin_unlock(plannerLock, s);
                 holding = lateHold = false;
             }
         } else if (holding) {
-            if (st == Executor::State::Held) { leavePaused(); return; }
-        } else if (plannerRing.count() == 0 && (jog ? leaveDrained() : leaveDry())) {
+            if (st == Executor::State::Held) { leaveHeld(); return; }
+        } else if (plannerRing.count() == 0 && (runsOn ? leaveDrained() : leaveDry())) {
             return;
         }
     }
