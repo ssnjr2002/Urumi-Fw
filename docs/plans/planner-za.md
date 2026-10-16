@@ -309,7 +309,7 @@ Done, merged 2026-10-08 (`e89ca85`..`f245f09`). Unblocks branch 3.
 
 ### Status
 
-Not started.
+Superseded by docs/plans/job-a.md (AA, tangential following).
 
 ## Branch 3b: `feature/planner-blade-offset`
 
@@ -329,7 +329,7 @@ Not started.
 
 ### Status
 
-Not started.
+Superseded by docs/plans/job-a.md (AD, blade offset).
 
 ## Branch 4: `feature/planner-mesh`
 
