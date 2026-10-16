@@ -224,7 +224,7 @@ A dependent chain, run as a Single Session.
 * Out: the blower, the alarm lift ("Every other alarm lifts"), the lost-host
   lift.
 * Depends on: ZA.
-* Status: Ready to merge.
+* Status: Done (merged e718c32). Unblocks ZC.
 * Outcome:
   * Deviations: `power.node` is `{ id, type }`, the command from the type
     (3 → `CMD_KNIFE_OSC`, 1 → `CMD_LASER` with the flag); no separate DWELL
