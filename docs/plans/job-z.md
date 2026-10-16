@@ -224,7 +224,31 @@ A dependent chain, run as a Single Session.
 * Out: the blower, the alarm lift ("Every other alarm lifts"), the lost-host
   lift.
 * Depends on: ZA.
-* Status: Planned.
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: `power.node` is `{ id, type }`, the command from the type
+    (3 → `CMD_KNIFE_OSC`, 1 → `CMD_LASER` with the flag); no separate DWELL
+    block: `TOOL_ON` applies the duty on Core 1 (a START is 5 blocks, an
+    END 2). The tool goes off after the lift on END, pause, abort and event
+    faults; estop's sweep makes it safe at once. `cancel` from a dry
+    buffering job switches a tool left on off (it still does not lift).
+  * Interfaces for ZC: `jobPower` (Core 0 writes at a layer open),
+    `dutyEpoch` (bumped on a job open, a tool change, `faultSet`), `toolOn`
+    (Core 1's); `TOOL_EV_ON`/`TOOL_EV_OFF` events; `F_TOOL` 0x0100,
+    `JOB_DWELL` 7; `busNodeCmd`, `busNodeSafe`.
+  * Bench (2026-10-16, laser on node 3 as the knife's power, flag on,
+    settleS 0.5, minOnS 3, dwellS 5): the laser came on before each plunge
+    and off at the end of each lift; settle 0.43–0.52 s; no DWELL after a
+    cut under minOnS; DWELL after a longer one until 4.95–5.0 s off; a pause
+    counted as off time; a pause in DWELL landed PAUSED with no Z motion;
+    estop made node 3 safe; a new job's first start had no DWELL. A Pico
+    without the flag refuses the laser node, and any Pico an absent node
+    (`cfgerr=power`). Not run: a failed switch (`F_TOOL`), since node 3 is
+    also Z.
+  * Out of scope: the web sim has no tool events; `pio run -t uploadfs`
+    encodes the config without the host validator, so only the Pico refuses
+    a bad one; `pio test -e native`'s `test_machine` already fails to link
+    on main.
 
 ### ZC: mid-path duty lifts
 
