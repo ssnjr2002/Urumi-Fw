@@ -306,42 +306,57 @@ A dependent chain, run as a Single Session.
 * **The break's cost** (docs/tool_duty_limits.md §5): braking and the lift
   are on-time of the window ending; settle, plunge and the ramp back up are
   the next window's, counted by ZB's counters from the switch on.
-* **Where it stops:**
-  * At a corner: Core 0 decides when it queues a START or BREAK record,
-    once the estimated on-time at that record's p0 (Core 1's live on-time +
-    the queued time to it) is past `minOnS`. If the next corner is certainly
-    too late, `onTime + nextBreakDist/cutFeed + dutyLiftS + marginS >
-    maxOnS`, it stops at this corner: the joint's entry limit is pinned to 0
-    (`Planner::pinStop`) and the ring replanned, so the stop is planned, not
-    braked. Otherwise the next corner decides again. `nextBreakDist` 0 never
-    stops at a corner.
-  * At the deadline (the fallback: a long smooth stretch, an estimate the
-    accel beat): Core 1 holds when `onTime + v/a + dutyLiftS + marginS ≥
-    maxOnS`, with the tool on and in a cut.
-  * `dutyLiftS`: the lift's time (`depth + zClearance` at `liftFeed`, Z's
-    accel), Core 0's at a layer open, in `jobPower` with `maxOnS`.
-    `marginS` (~50 ms, a firmware constant) covers Core 0 picking up the
-    fact; a Core 0 stall past it overruns `maxOnS` by the stall.
-* **The stop:** Core 1 at rest at a pinned joint or after its deadline hold
-  keeps the ring, stays `RUNNING` and posts `FACT_DUTY_HELD` (new). Core 0,
-  under `plannerLock`: `restartFrom(s)` on the held block, then
-  `Planner::insertFront` (new) with lift, `TOOL_OFF`, `TOOL_ON`, plunge at
-  the held XY, then `replanAndCommit()`. Core 1 runs on: ZB's `TOOL_ON`
-  dwells (`JOB_DWELL`) and resets the counters. The inserted blocks carry
-  the held block's tag and `s`, so a pause in them resumes at `s − margin`.
-  A hold that braked past the cut into the END lift inserts nothing.
-* Ring room: `plannerQueueRecord`'s full check (`queue.cpp:457`) keeps 4
-  slots free for a tool with `dutyLimits`.
-* Soft range: Core 0 checks the lift and plunge at the held XY
-  (`zMoveFits`); a failure is `F_TOOL` and the job aborts.
+* **Core 0's on-time estimate:** Core 0 keeps its own count as it queues
+  records: each record adds its cut time (length / cutFeed); a START whose
+  count is ≥ `minOnS` will dwell, so the count goes back to 0; a shorter
+  START carries it on. It errs only towards stopping early. Core 1's live
+  counters drive only the deadline.
+* **At a corner** (planned, all on Core 0): when Core 0 queues a BREAK record
+  with its count past `minOnS`, and the next corner is certainly too late,
+  `count + nextBreakDist/cutFeed + dutyLiftS + marginS > maxOnS`, it pushes
+  lift, `TOOL_OFF`, `TOOL_ON`, plunge at the ring's tail before the record's
+  curve, as a START does, and the count goes back to 0. A Z move after an XY
+  curve is a junction of 0 (`line.cpp:63`), so the stop is planned, not
+  braked. Otherwise the next corner decides again. `nextBreakDist` 0 never
+  stops at a corner. The blocks carry the record's tag, so a pause in them
+  resumes at the corner.
+* **At the deadline** (the fallback: a long smooth stretch, an estimate the
+  accel beat): Core 1 holds when `onTime + v/a + dutyLiftS + marginS ≥
+  maxOnS`, with the tool on and in a cut; `onTime` is `dutyOnMs + (now −
+  toolOnAtMs)`.
+  1. Core 1 brakes to rest (`hold()`).
+  2. Core 1, Held, under the lock: a new `Executor` method (`resume()`
+     without its replan and commit) calls `restartFrom(s)` and resets the
+     executor. Core 1 stays `RUNNING`, posts `FACT_DUTY_HELD` (new) and stops
+     ticking until Core 0 clears a flag.
+  3. Core 0: `Planner::insertFront` (new) with lift, `TOOL_OFF`, `TOOL_ON`,
+     plunge at the held XY, then `replanAndCommit()`, then clears the flag.
+  4. Core 1 runs on: ZB's `TOOL_ON` dwells (`JOB_DWELL`) and resets the
+     counters.
+  The inserted blocks carry the held block's tag and `Block::resume_s` (new,
+  set through the tag) = `s`; `landHeld` keeps `resume_s` for a LINE or
+  EVENT block, so a pause in them resumes at `s − margin`, not the record's
+  start.
+* `dutyLiftS`: the lift's time (`depth + zClearance` at `liftFeed`, Z's
+  accel), Core 0's at a layer open, in `jobPower` with `maxOnS` (already
+  decoded, `CfgPower.maxOnS`). `marginS` (~50 ms, a firmware constant)
+  covers Core 0 picking up the fact; a Core 0 stall past it overruns
+  `maxOnS` by the stall.
+* Ring room: a corner stop's 4 blocks go in with the record's
+  (`plannerQueueRecord`'s full check, `queue.cpp:457`); the full check also
+  keeps 4 slots free for a deadline insert, for a tool with `dutyLimits`.
+* Soft range: Core 0 checks the lift and plunge at the stop's XY
+  (`zMoveFits`): at a corner it refuses the record (`PQ_SOFT_LIMIT`); at the
+  deadline it is `F_TOOL` and the job aborts.
 * Files:
-  * `lib/planner/planner.{h,cpp}` (`insertFront`, `pinStop`),
-    `executor.{h,cpp}`; native tests
-  * `src/rp2350/core0/planner/queue.cpp` (the corner decision, the insert,
-    ring room, `dutyLiftS`), `core0/ops/observe.cpp` (`FACT_DUTY_HELD`)
-  * `src/rp2350/core1/emit/follower.cpp` (the deadline hold, the stop),
-    `ipc/core1_facts.h`, `ipc/shared_state.h` (`jobPower` gains `maxOnS`,
-    `dutyLiftS`)
+  * `lib/planner/planner.{h,cpp}` (`insertFront`, `Block::resume_s`),
+    `executor.{h,cpp}` (the release at Held); native tests
+  * `src/rp2350/core0/planner/queue.cpp` (the count, the corner stop, the
+    insert, ring room, `dutyLiftS`), `core0/ops/observe.cpp`
+    (`FACT_DUTY_HELD`)
+  * `src/rp2350/core1/emit/follower.cpp` (the deadline hold, the wait,
+    `landHeld`'s `resume_s`), `ipc/core1_facts.h`, `ipc/shared_state.h`
+    (`jobPower` gains `maxOnS`, `dutyLiftS`; the wait flag)
   * `docs/wire_protocol.md` if a reported state changes
 * Out: the web sim.
 * Depends on: ZC1.
