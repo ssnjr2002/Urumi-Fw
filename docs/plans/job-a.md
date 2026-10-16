@@ -180,8 +180,26 @@ A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → A
 * Files: `lib/planner/` (`path.h`, `line.cpp`, `bezier.cpp`, `planner.cpp`,
   `executor.cpp`) and native tests; `core0/planner/queue.cpp`.
 * Depends on: AA.
-* Open for its Work: the curvature-jump bound on A's instant speed change;
-  which readout folds A; the unwrap stored per block or kept by the executor.
+* A per block: fixed (non-tangential, AC's chamber hold), linear (travel
+  line), or tangent + k·P. `axesOf` allows XY+A only for these.
+* Unwrap: the planner sums each Bézier's unwrapped turn while sampling κ
+  (asserting κ·Δs ≪ 180° per sample) and stores `origin`/`target` A; the
+  executor tracks A tick to tick (wrapped heading delta added to the last
+  A), holding the previous heading where |B′(t)| is below a threshold. At
+  block end a tracked-vs-`target` difference over a fraction of a degree
+  is a fault, not a silent snap. A resumed block's `origin` A is the ring's
+  actual A (the equivalent picked from it), never the bare heading.
+* Per-block caps as in "A rides along XY": ω, dκ_max and the reduced a_t,
+  with A's deg/s, deg/s² converted to rad first.
+* Curvature jump at a join: v ≤ Δω_max / |Δκ| from `kappa_end`/`kappa_start`,
+  folded into `max_entry_sqr`, with Δω_max = √(2·α_max·e_max) and e_max the
+  blade misalignment the cut tolerates (planner constant, start 2°; bench
+  tunes it). Lines count as κ = 0.
+* Travel line: v ≤ ω_max·L/|ΔA| and a ≤ α_max·L/|ΔA|.
+* Units: config, wire, planner storage and readout in mm and degrees;
+  radians only inside the cap math, converted on entry, never stored; steps
+  only in the follower and `frames`. New angle variables carry `_deg`/`_rad`.
+* Fold readout: settled in AA (`WPos` folds, `MPos` does not).
 
 ### AC: revolver chamber
 
