@@ -266,10 +266,12 @@ static bool firstRecord = false;
 // mm of the first record a resume skips.
 static float resumeTrim = 0;
 // Core 0's estimate of the tool's on-time where the queued records end, s: it
-// counts from the switch on, cut time at the cut feed, and goes back to 0 where
-// a START will dwell or a duty lift was queued. Core 1's counters see off
-// time this does not, so it errs high: a stop comes early, never late.
+// counts from the switch on, each stretch's time from rest to rest at the cut
+// feed, and goes back to 0 where a START will dwell or a duty lift was queued.
+// Curvature slows a cut more than this counts; Core 1's deadline catches it.
 static float estOnS = 0;
+// The record's stretch was counted at its START or BREAK (nextBreakDist set).
+static bool stretchCounted = false;
 
 // How far before where a paused job stopped it resumes cutting, mm.
 static constexpr float kResumeMargin = 2.0f;
@@ -435,10 +437,21 @@ static void pushZ(float z, float feed, const planner::AxisLimits& limits) {
     plannerRing.pushMove(to, feed, limits, kDeviation);
 }
 
-// Seconds for a Z move of `d` mm from rest to rest at `feed`.
-static float zMoveS(float d, float feed, const planner::AxisLimits& limits) {
-    const float v = fminf(feed, limits.max_feed[SLOT_Z]), a = limits.max_accel[SLOT_Z];
+// Seconds for `d` mm from rest to rest at speed `v` and acceleration `a`.
+static float restToRestS(float d, float v, float a) {
     return d >= v * v / a ? d / v + v / a : 2 * sqrtf(d / a);
+}
+
+static float zMoveS(float d, float feed, const planner::AxisLimits& limits) {
+    return restToRestS(d, fminf(feed, limits.max_feed[SLOT_Z]), limits.max_accel[SLOT_Z]);
+}
+
+// A cut of `d` mm from rest to rest, at a BEZIER's speed and acceleration
+// (planner::pathOf) before curvature limits it.
+static float cutS(float d, const planner::AxisLimits& limits) {
+    const float v = fminf(layerMo.cutFeed, fminf(limits.max_feed[0], limits.max_feed[1]));
+    const float a = fminf(limits.max_accel[0], limits.max_accel[1]) * 0.70710678f;
+    return restToRestS(d, v, a);
 }
 
 // Slack under maxOnS for a duty lift: covers Core 0 picking up the deadline's fact.
@@ -478,7 +491,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
     // too late: lift, tool off, tool on (its dwell), plunge, then the curve.
     const bool dutyStop = powered && pw.hasDuty && !start && breakDist != 0 &&
                           estOnS >= pw.minOnS &&
-                          estOnS + breakDist / layerMo.cutFeed + liftS + kDutyMarginS > pw.maxOnS;
+                          estOnS + cutS(breakDist, limits) + liftS + kDutyMarginS > pw.maxOnS;
     // A tool with a duty keeps 4 slots for a deadline lift (plannerDutyLift).
     const int blocks = 1 + (start ? 3 + powered : 0) + (dutyStop ? 4 : 0) +
                        (end ? 1 + powered : 0) + (powered && pw.hasDuty ? 4 : 0);
@@ -534,7 +547,12 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
 
     if (start && estOnS >= pw.minOnS) estOnS = 0;   // ZB's rule: this START dwells
     if (start || dutyStop) estOnS = (dutyStop ? 0 : estOnS) + pw.settleS + plungeS;
-    estOnS += (b.length - from) / layerMo.cutFeed + (end ? liftS : 0);
+    // A stretch counts whole at its first record; without its length, by record.
+    if (breakDist != 0) stretchCounted = true;
+    else if (start) stretchCounted = false;
+    if (breakDist != 0) estOnS += cutS(breakDist, limits);
+    else if (!stretchCounted) estOnS += (b.length - from) / layerMo.cutFeed;
+    if (end) estOnS += liftS;
 
     nextRecord++;
     firstRecord = false;
