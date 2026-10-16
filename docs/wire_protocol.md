@@ -197,6 +197,15 @@ k·t under work Z (0 for a tool with `plunge: false`) at the tool's
 the tool mounted, a head with no work Z set (after a tool change, until a Z
 zero) refuses the header: `NACK_JOB`.
 
+**Powered tools.** A tool with a `power` block is switched by the Pico, at
+rest: after a START's travel it waits out the tool's duty if due (JOB.DWELL:
+the tool has been on `minOnS` or more and off less than `dwellS`), switches
+the tool on, waits `settleS` and plunges; after an END's lift it switches the
+tool off. A pause or abort lifts with the tool on, then switches it off. A
+switch that fails 3 times alarms with the TOOL fault; a failed off also sends
+the node `CMD_MAKE_SAFE`. Records are accepted in JOB.DWELL as in RUNNING, and
+`pause` there lands PAUSED with no lift.
+
 Opens a job (JOB.BUFFERING) from IDLE; in a buffering or running job it starts
 the next layer. Layers may come in any order; the BEZIERs after a header are
 numbered on from its `record`.
@@ -302,9 +311,9 @@ Carries `get`'s state keys **and** `pos` in one coherent sample; two text
 round trips could disagree by tens of ms. Per the transport's per-transaction cost model the extra bytes are free: one
 31-byte frame fits a single 64-byte USB packet.
 
-The fault mask (`get faults=` too): 0x0001=BUS 0x0002=CONFIG 0x0004=UNMAPPED 0x0008=LATCHED 0x0010=HOMING 0x0020=PROBE 0x0040=FACTS 0x0080=SEQUENCE 0x8000=ESTOP. Held faults (BUS, CONFIG,
+The fault mask (`get faults=` too): 0x0001=BUS 0x0002=CONFIG 0x0004=UNMAPPED 0x0008=LATCHED 0x0010=HOMING 0x0020=PROBE 0x0040=FACTS 0x0080=SEQUENCE 0x0100=TOOL 0x8000=ESTOP. Held faults (BUS, CONFIG,
 UNMAPPED, LATCHED) clear by themselves when their cause goes; event faults
-(HOMING, PROBE, FACTS, SEQUENCE) stay until `unalarm`. ESTOP is the estop latch, not a
+(HOMING, PROBE, FACTS, SEQUENCE, TOOL) stay until `unalarm`. ESTOP is the estop latch, not a
 fault, cleared by `unstop`. The state is ALARM at rest while any bit is set,
 IDLE otherwise; several bits may be set at once.
 
@@ -461,7 +470,7 @@ state=<s>     machineState    0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGIN
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 faults=<hex>  machineFaults   fault mask, as STATUS_RSP (e.g. 0x0004)
-job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING 5=TOOL_CHANGE 6=TOOL_WAIT  (only while state=JOB)
+job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING 5=TOOL_CHANGE 6=TOOL_WAIT 7=DWELL  (only while state=JOB)
 resume_layer=<l>   the layer a paused job resumes at  (only while job=3)
 resume_record=<r>  the record within it  (only while job=3)
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit

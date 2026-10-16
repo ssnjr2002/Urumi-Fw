@@ -12,6 +12,7 @@ enum Core1Fact : uint8_t {
     FACT_ESTOP_SWEPT,    // the estop sweep is done, estopSwept set
     FACT_RING_DRAINED,   // planner motion at rest, ring empty, plannerActive clear
     FACT_HELD,           // a paused job at rest in JOB.HOLDING, jobResume kept, ring empty
+    FACT_TOOL_FAILED,    // a tool event's switch failed its retries; Core 1 waits at the event
 };
 
 // Core 1. False when the ring is full: the fact is dropped and core1FactsLost

@@ -19,8 +19,8 @@ static void ringDrained(void) {
     sequenceRingDrained();
 }
 
-// A pause is at rest: lift, then PAUSED on the lift's drain; PAUSED now if
-// there is nothing to lift.
+// A pause is at rest: lift and switch the tool off, then PAUSED on the drain;
+// PAUSED now if there is nothing to do.
 static void held(void) {
     if (!plannerQueueLift(JOB_HOLDING)) plannerLandPaused();
 }
@@ -39,6 +39,7 @@ void observeTick(void) {
             case FACT_ESTOP_SWEPT:  slotFencedPosClear(); break;
             case FACT_RING_DRAINED: ringDrained(); break;
             case FACT_HELD:         held(); break;
+            case FACT_TOOL_FAILED:  faultSet(F_TOOL); break;
             default: break;
         }
     }

@@ -67,6 +67,7 @@ enum JobReason : uint8_t {
     JOB_ABORTING  = 4,   // braking for an abort; ends IDLE
     JOB_TOOL_CHANGE = 5, // the tool-change sequence: park the Zs, a line to the switch
     JOB_TOOL_WAIT   = 6, // at rest: the operator mounts and zeroes the layer's tool
+    JOB_DWELL       = 7, // at rest before a plunge, the tool off until its duty resets
 };
 
 // Why we are in STATE_PROBING (docs/tool_probe.md §5.2). Activity, plus the one
@@ -232,6 +233,32 @@ struct JobResume {
     float    s;
 };
 extern JobResume         jobResume;
+
+// Tool events (docs/plans/job-z.md, ZB): EVENT blocks Core 0 queues around a
+// powered tool's plunges and lifts, run by Core 1 at rest.
+enum ToolEvent : uint8_t {
+    TOOL_EV_ON  = 1,   // duty wait if due (JOB.DWELL), tool on, wait settleS
+    TOOL_EV_OFF = 2,
+};
+
+// The job's powered tool; node 0 for a passive one. Core 0 writes it as it
+// opens a layer, under the lock. Every block in the ring is that tool's: a
+// layer with another tool drains the ring first (a tool change).
+// dutyEpoch: Core 0 bumps it to reset the duty counters (a job's open, another
+// tool, an alarm); Core 1 resets them at its next event.
+// toolOn: Core 1's, as its last switch left the tool; Core 0 reads it with the
+// ring idle, to queue a TOOL_EV_OFF after a pause's or an abort's lift.
+struct JobPower {
+    uint8_t node;
+    uint8_t cmd;       // CMD_KNIFE_OSC or CMD_LASER
+    float   settleS;
+    bool    hasDuty;
+    float   minOnS;
+    float   dwellS;
+};
+extern JobPower          jobPower;
+extern volatile uint32_t dutyEpoch;
+extern volatile bool     toolOn;
 
 // Soft-Reset Handshake Flags
 extern volatile bool    soft_reset_requested;

@@ -24,7 +24,8 @@
 #include <Arduino.h>
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_facts.h"
-#include "../bus/packet.h"   // for the shared `rs485` instance
+#include "../bus/packet.h"   // the shared `rs485` instance, busNodeCmd
+#include "common.h"
 #include "../cycles.h"
 #include "emit.h"
 #include "hardware/sync.h"
@@ -171,6 +172,102 @@ static void __time_critical_func(leaveHeld)() {
     spin_unlock(plannerLock, s);
 }
 
+// ─── Tool events ──────────────────────────────────────────────────────────────
+// The duty counters (docs/plans/job-z.md, Duty), kept across rings so that a
+// pause counts as off time: on-time since the last reset, and when the tool
+// last went on or off. `offKnown` false is an off time long enough to reset.
+
+static uint32_t dutyOnMs    = 0;   // closed on-spans since the reset
+static uint32_t toolOnAtMs  = 0;
+static uint32_t toolOffAtMs = 0;
+static bool     offKnown    = false;
+static uint32_t dutySeen    = 0;
+
+static void dutyCatchUp(uint32_t now) {
+    if (dutyEpoch == dutySeen) return;
+    dutySeen = dutyEpoch;
+    dutyOnMs = 0;
+    toolOnAtMs = now;
+    offKnown = false;
+}
+
+// Switch the job's tool, three tries.
+static bool toolSwitch(bool on) {
+    for (int i = 0; i < 3; i++)
+        if (busNodeCmd(jobPower.node, jobPower.cmd, on ? 1 : 0)) return true;
+    return false;
+}
+
+static void toolWentOff(uint32_t now) {
+    if (toolOn) dutyOnMs += now - toolOnAtMs;
+    toolOn = false;
+    toolOffAtMs = now;
+    offKnown = true;
+}
+
+// Where a TOOL_EV_ON is; it runs over several ticks.
+enum EventPhase : uint8_t { EV_START, EV_DWELL, EV_SWITCH, EV_SETTLE, EV_FAILED };
+
+static bool reached(uint32_t now, uint32_t at) { return (int32_t)(now - at) >= 0; }
+
+// Run the event the executor waits at, at rest. True if it used the bus.
+static bool runEvent(const planner::Block& ev, EventPhase& phase, uint32_t& until) {
+    const uint32_t now = millis();
+    dutyCatchUp(now);
+    if (ev.event == TOOL_EV_OFF) {
+        // A tool that will not switch off is made safe instead.
+        if (!toolSwitch(false)) {
+            busNodeSafe(jobPower.node, CMD_MAKE_SAFE);
+            core1FactPush(FACT_TOOL_FAILED);
+        }
+        toolWentOff(now);
+        plannerExec.eventDone();
+        return true;
+    }
+    switch (phase) {
+        case EV_START: {
+            const uint32_t dwellMs = (uint32_t)(jobPower.dwellS * 1000.0f);
+            const bool offLong = toolOn ? false : !offKnown || now - toolOffAtMs >= dwellMs;
+            if (jobPower.hasDuty && !toolOn && !offLong &&
+                dutyOnMs >= (uint32_t)(jobPower.minOnS * 1000.0f)) {
+                phase = EV_DWELL;
+                until = toolOffAtMs + dwellMs;
+                jobAt(JOB_DWELL);
+                return false;
+            }
+            if (offLong) dutyOnMs = 0;
+            phase = EV_SWITCH;
+            return false;
+        }
+        case EV_DWELL:
+            if (!reached(now, until)) return false;
+            dutyOnMs = 0;
+            jobAt(JOB_RUNNING);
+            phase = EV_SWITCH;
+            return false;
+        case EV_SWITCH:
+            if (!toolSwitch(true)) {
+                // Waits here, unplunged, for the abort the fault brings.
+                phase = EV_FAILED;
+                core1FactPush(FACT_TOOL_FAILED);
+                return true;
+            }
+            if (!toolOn) toolOnAtMs = now;
+            toolOn = true;
+            phase = EV_SETTLE;
+            until = now + (uint32_t)(jobPower.settleS * 1000.0f);
+            return true;
+        case EV_SETTLE:
+            if (!reached(now, until)) return false;
+            plannerExec.eventDone();
+            phase = EV_START;
+            return false;
+        case EV_FAILED:
+            return false;
+    }
+    return false;
+}
+
 // A late block's hold has stopped: replan from rest and buffer again.
 static void __time_critical_func(rebuffer)() {
     const uint32_t s = spin_lock_blocking(plannerLock);
@@ -197,6 +294,8 @@ void __time_critical_func(processPlanner)() {
     uint32_t late = plannerExec.lateAdoptions();
     int slot = 0;
     float pending = 0;
+    EventPhase evPhase = EV_START;
+    uint32_t evUntil = 0;
     uint32_t t0 = cycleCount();
 
     for (;;) {
@@ -289,6 +388,9 @@ void __time_critical_func(processPlanner)() {
             }
         } else if (holding) {
             if (st == Executor::State::Held) { leaveHeld(); return; }
+        } else if (const planner::Block* ev = plannerExec.event()) {
+            // A bus transaction stretches the slot; the stream restarts from now.
+            if (runEvent(*ev, evPhase, evUntil)) t0 = cycleCount();
         } else if (plannerRing.count() == 0 && (runsOn ? leaveDrained() : leaveDry())) {
             return;
         }

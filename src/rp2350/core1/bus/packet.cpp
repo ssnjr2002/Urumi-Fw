@@ -63,21 +63,35 @@ bool sendBroadcast(uint8_t cmd) {
     return true;
 }
 
+bool busNodeCmd(uint8_t node, uint8_t cmd, uint8_t arg) {
+    uint8_t pkt[5] = {node, cmd, 1, arg, 0};
+    busQuiesce();
+    sendPacket(pkt, 5);
+    uint8_t buf[RPC_PAYLOAD_MAX];
+    uint8_t rxCmd;
+    const uint8_t rx = receivePacket(node, cmd, buf, RESPONSE_TIMEOUT_MS, &rxCmd);
+    return rx != 0xFF && rxCmd == cmd;
+}
+
+bool busNodeSafe(uint8_t node, uint8_t cmd) {
+    uint8_t pkt[4] = {node, cmd, 0, 0};
+    busQuiesce();
+    sendPacket(pkt, 4);
+    uint8_t buf[RPC_PAYLOAD_MAX];
+    uint8_t rxCmd;
+    const uint8_t rx = receivePacket(node, cmd, buf, RESPONSE_TIMEOUT_MS, &rxCmd);
+    // Clear only what a node confirmed. One that did not answer keeps its
+    // bit: it may still be holding torque.
+    if (rx == 0xFF || rxCmd != cmd) return false;
+    if (cmd == CMD_DISABLE) { nodeEnabled &= ~(1u << node); return true; }
+    NodeStatus st;
+    if (nodeStatusDecode(buf, rx, &st) && !(st.flags & NODE_FLAG_ENABLED))
+        nodeEnabled &= ~(1u << node);
+    return true;
+}
+
 void busStopAll(uint8_t cmd) {
-    for (uint8_t node = 1; node <= BUS_ADDR_MAX; node++) {
-        uint8_t pkt[4] = {node, cmd, 0, 0};
-        busQuiesce();
-        sendPacket(pkt, 4);
-        uint8_t buf[RPC_PAYLOAD_MAX];
-        uint8_t rxCmd;
-        const uint8_t rx = receivePacket(node, cmd, buf, RESPONSE_TIMEOUT_MS, &rxCmd);
-        // Clear only what a node confirmed. One that did not answer keeps its
-        // bit: it may still be holding torque. Core 0 fences its slot on the
-        // estop edge and `unstop` asks it again.
-        if (rx == 0xFF || rxCmd != cmd) continue;
-        if (cmd == CMD_DISABLE) { nodeEnabled &= ~(1u << node); continue; }
-        NodeStatus st;
-        if (nodeStatusDecode(buf, rx, &st) && !(st.flags & NODE_FLAG_ENABLED))
-            nodeEnabled &= ~(1u << node);
-    }
+    // A node that did not confirm keeps its bit; Core 0 fences its slot on the
+    // estop edge and `unstop` asks it again.
+    for (uint8_t node = 1; node <= BUS_ADDR_MAX; node++) busNodeSafe(node, cmd);
 }

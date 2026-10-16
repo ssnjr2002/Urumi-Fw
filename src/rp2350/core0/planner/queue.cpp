@@ -12,6 +12,7 @@
 #include "../ops/position.h"
 #include "../ops/machine.h"
 #include "../../ipc/shared_state.h"
+#include "common.h"
 #include "planner/bezier.h"
 #include "planner/mesh.h"
 
@@ -49,7 +50,8 @@ static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
     // A tool change's line and the operator's jogs run inside the job.
     const bool tool = st == STATE_JOB && (why == JOB_TOOL_CHANGE || why == JOB_TOOL_WAIT);
     const bool joins = jog ? st == STATE_JOGGING || tool
-                           : st == STATE_JOB && (why == JOB_BUFFERING || why == JOB_RUNNING);
+                           : st == STATE_JOB && (why == JOB_BUFFERING || why == JOB_RUNNING ||
+                                                 why == JOB_DWELL);
     if ((st != STATE_IDLE && !joins) || pauseRequested || abortRequested)
         return PQ_BAD_STATE;
     if (!machineCfgValid()) return PQ_NO_CONFIG;
@@ -323,6 +325,7 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     PlannerQueueResult out = PQ_OK;
+    const bool opening = machineContext != CTX_JOB;
     if (resume) {
         // Paused, the ring is empty and idle: the first record resets it, from
         // wherever the head is now.
@@ -346,6 +349,14 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
         }
     }
     if (out == PQ_OK) {
+        if (opening || mo.tool != layerMo.tool) dutyEpoch = dutyEpoch + 1;
+        const CfgPower& p = mo.power;
+        jobPower.node    = p.node;
+        jobPower.cmd     = p.nodeType == CFG_NODE_KNIFE_OSC ? CMD_KNIFE_OSC : CMD_LASER;
+        jobPower.settleS = p.settleS;
+        jobPower.hasDuty = p.hasDuty;
+        jobPower.minOnS  = p.minOnS;
+        jobPower.dwellS  = p.dwellS;
         layerMo = mo;
         curLayer = layerNo;
         nextRecord = record;
@@ -374,7 +385,8 @@ PlannerQueueResult plannerHoldForTool(bool* fromPaused) {
         }
     } else if (why == JOB_BUFFERING && idle) {
         jobReason = JOB_TOOL_CHANGE;
-    } else if (why == JOB_BUFFERING || why == JOB_RUNNING || why == JOB_HOLDING) {
+    } else if (why == JOB_BUFFERING || why == JOB_RUNNING || why == JOB_DWELL ||
+               why == JOB_HOLDING) {
         toolChangePending = true;
     } else {
         out = PQ_BAD_STATE;
@@ -434,8 +446,10 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     const bool reset = resetIfIdle(RING_JOB);
     const planner::Pos e = plannerRing.end();
     const float dx = p0.x - e.x, dy = p0.y - e.y;
-    // A START: Z to clearance, travel, plunge, then the curve; an END lifts after it.
-    const int blocks = (start ? 4 : 1) + (end ? 1 : 0);
+    // A START: Z to clearance, travel, [tool on,] plunge, then the curve; an
+    // END lifts after it [and switches the tool off].
+    const bool powered = layerMo.power.node != 0;
+    const int blocks = 1 + (start ? 3 + powered : 0) + (end ? 1 + powered : 0);
     const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
     if (ringOwner != RING_JOB) {
@@ -463,6 +477,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
         if (start) {
             pushZ(up, e.z < up ? liftFeed : layerMo.plungeFeed, limits);
             plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);
+            if (powered) plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(down, layerMo.plungeFeed, limits);
         }
         plannerRing.pushBezierFrom(b, from, layerMo.cutFeed, limits, kDeviation, curveCap);
@@ -470,6 +485,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
             // Paused in the lift, the job resumes at the next record.
             plannerRing.setTag(curLayer, nextRecord + 1);
             pushZ(up, liftFeed, limits);
+            if (powered) plannerRing.pushEvent(TOOL_EV_OFF);
         }
     }
     spin_unlock(plannerLock, s);
@@ -492,15 +508,17 @@ bool plannerQueueLift(uint8_t why) {
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     const planner::Pos e = plannerRing.end();
-    const bool lift = machineContext == CTX_JOB && ringOwner == RING_JOB && !plannerActive &&
-                      plannerRing.count() == 0 && e.z < up && zMoveFits(e.xy(), e.z, up);
-    if (lift) {
-        pushZ(up, feed, limits);
-        jobReason = why;
-    }
+    const bool rest = machineContext == CTX_JOB && ringOwner == RING_JOB && !plannerActive &&
+                      plannerRing.count() == 0;
+    const bool lift = rest && e.z < up && zMoveFits(e.xy(), e.z, up);
+    // The tool lifts on, then goes off; off alone where Z cannot lift.
+    const bool off = rest && toolOn;
+    if (lift) pushZ(up, feed, limits);
+    if (off) plannerRing.pushEvent(TOOL_EV_OFF);
+    if (lift || off) jobReason = why;
     spin_unlock(plannerLock, s);
-    if (lift) replanAndCommit();
-    return lift;
+    if (lift || off) replanAndCommit();
+    return lift || off;
 }
 
 bool plannerLandPaused() {

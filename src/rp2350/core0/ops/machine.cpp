@@ -31,6 +31,7 @@ void faultSet(uint16_t f) {
     f &= F_EVENTS;
     if (!f) return;
     events |= f;
+    dutyEpoch = dutyEpoch + 1;   // an alarm resets the tool's duty
     machineTeardown(false);
 }
 

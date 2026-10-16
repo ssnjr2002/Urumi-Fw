@@ -18,10 +18,11 @@ enum MachineFault : uint16_t {
     F_PROBE    = 0x0020,   // event: a probe leg failed
     F_FACTS    = 0x0040,   // event: a Core 1 fact was dropped
     F_SEQUENCE = 0x0080,   // event: a sequence was refused after its ok (sequenceFail)
+    F_TOOL     = 0x0100,   // event: a tool's power switch failed (a tool event)
     F_ESTOP    = 0x8000,   // the estop latch: not a fault, cleared by `unstop`
 };
 #define F_HELD   (F_BUS | F_CONFIG | F_UNMAPPED | F_LATCHED)
-#define F_EVENTS (F_HOMING | F_PROBE | F_FACTS | F_SEQUENCE)
+#define F_EVENTS (F_HOMING | F_PROBE | F_FACTS | F_SEQUENCE | F_TOOL)
 
 // The live step, read from its owners: node legs (the runner, a probe leg),
 // planner motion (the ring, or Core 1 running it) or the sequence's wait.

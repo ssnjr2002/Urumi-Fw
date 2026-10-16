@@ -187,8 +187,10 @@ A dependent chain, run as a Single Session.
     at rest, then alarms (`F_TOOL`, 0x0100, a new event fault; Core 1 reports
     it as a fact). A failed `TOOL_ON` leaves the head at clearance,
     unplunged; a failed `TOOL_OFF` sends `CMD_MAKE_SAFE` to the node first.
-  * A job ending in ALARM sends `CMD_MAKE_SAFE` to the tool's node at once:
-    there is no alarm lift yet. The alarm-lift branch moves it after the lift.
+  * An event fault in a job tears it down through the abort path
+    (`faultSet` → `jobAbort`), which lifts: the tool goes off after the lift
+    there too. Where no lift can run (Z's soft range, no Z limits), the
+    `TOOL_OFF` is queued alone. Estop's sweep turns it off at once.
 * Duty: Core 1 keeps the on-time and the last off instant (live counters,
   also for ZC). `TOOL_ON` applies the rule under Duty when it runs, with the
   live counters: wait if due (`DWELL`), reset, tool on, wait `settleS`. Core 0

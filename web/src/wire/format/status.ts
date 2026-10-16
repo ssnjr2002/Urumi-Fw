@@ -80,6 +80,8 @@ export const Fault = {
     FACTS: 0x0040,
     /** Event: a sequence was refused after its ok (`seqfail=` says why). */
     SEQUENCE: 0x0080,
+    /** Event: a tool's power switch failed its retries (a tool event). */
+    TOOL: 0x0100,
     /** The estop latch. */
     ESTOP: 0x8000,
 } as const;
@@ -100,6 +102,8 @@ export const JobReason = {
     TOOL_CHANGE: 5,
     /** At rest for the operator: mount the tool, jog, zero Z. */
     TOOL_WAIT: 6,
+    /** At rest before a plunge, the tool off until its duty resets. */
+    DWELL: 7,
 } as const;
 export type JobReason = (typeof JobReason)[keyof typeof JobReason];
 

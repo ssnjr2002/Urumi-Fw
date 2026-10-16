@@ -46,6 +46,9 @@ float             plannerSpm[4]   = {0, 0, 0, 0};
 int64_t           plannerTurnQ32  = 0;
 PlannerMesh       plannerMesh     = {nullptr, 0, 0, 0};
 JobResume         jobResume       = {false, 0, 0, 0};
+JobPower          jobPower        = {};
+volatile uint32_t dutyEpoch       = 0;
+volatile bool     toolOn          = false;
 
 // Soft-Reset Handshake Flags
 volatile bool    soft_reset_requested = true;  // Starts true so Core 1 parks on cold boot

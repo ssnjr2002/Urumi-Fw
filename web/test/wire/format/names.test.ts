@@ -45,7 +45,7 @@ describe("enum names", () => {
 
     it("keeps an unknown value visible instead of rendering undefined", () => {
         expect(stateName(99)).toBe("STATE(99)");
-        expect(faultNames(0x0100)).toBe("0x100");
+        expect(faultNames(0x0200)).toBe("0x200");
         expect(jobName(99)).toBe("JOB(99)");
     });
 });

@@ -35,6 +35,14 @@ uint8_t receivePacket(uint8_t expectedNode, uint8_t expectedCmd,
                       uint8_t* outPayload, uint32_t timeoutMs,
                       uint8_t* outCmd = nullptr);
 
+// One command to `node` with a one-byte payload, answered by the same opcode:
+// false on a timeout or a NAK. Quiesces first.
+bool busNodeCmd(uint8_t node, uint8_t cmd, uint8_t arg);
+
+// `cmd` (CMD_MAKE_SAFE or CMD_DISABLE) to one node; its nodeEnabled bit is
+// cleared only on its confirmation. False if it did not confirm.
+bool busNodeSafe(uint8_t node, uint8_t cmd);
+
 // Send one broadcast command. Refuses anything outside the allowlist, so the
 // deny-by-default rule is enforced at both ends rather than trusted at one: the
 // node would drop it anyway, but a silent no-op on the wire is a worse bug to

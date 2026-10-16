@@ -16,6 +16,8 @@
 #include "../config/machine_cfg.h"
 #include "../usb_protocol.h" // BUS_ADDR_MAX
 #include "../../ipc/shared_state.h"
+#include "../../ipc/core1_rpc.h"  // rpcNodeCmd (cancel switches a powered tool off)
+#include "common.h"
 
 // Core 1 flushes and sweeps the bus safe; ALARM shows once it has. The datum dies
 // here, before the reply; the fenced slots' positions are cleared once Core 1
@@ -75,11 +77,12 @@ bool cmdSeqReset(const char*) {            // data-plane support (see wire doc)
     return true;
 }
 
-// A buffering or running job holds and lands JOB.PAUSED (Core 1), dropping its
+// A buffering, running or dwelling job holds and lands JOB.PAUSED (Core 1), dropping its
 // ring; a LAYER_HDR naming where it stopped resumes it (data_plane.cpp).
 bool cmdPause(const char*) {
     const uint8_t why = jobReason;
-    if (machineContext != CTX_JOB || (why != JOB_BUFFERING && why != JOB_RUNNING)) {
+    if (machineContext != CTX_JOB ||
+        (why != JOB_BUFFERING && why != JOB_RUNNING && why != JOB_DWELL)) {
         Serial.println("err bad_state"); return true;
     }
     pauseRequested = true;
@@ -107,6 +110,12 @@ bool cmdCancel(const char*) {
     }
     spin_unlock(plannerLock, s);
     if (atRest) plannerEndContour();
+    // A job dry mid-contour still has its tool on; the bus is free at rest.
+    if (atRest && toolOn) {
+        if (rpcNodeCmd(jobPower.cmd, jobPower.node, 0) != RPC_OK)
+            rpcNodeCmd(CMD_MAKE_SAFE, jobPower.node, 0);
+        toolOn = false;
+    }
     Serial.println(atRest ? "ok" : "err bad_state");
     return true;
 }

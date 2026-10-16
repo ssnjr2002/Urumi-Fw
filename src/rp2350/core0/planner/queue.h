@@ -85,9 +85,10 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end);
 
 // A job at rest with its ring empty (held by a pause, or aborted): queue a lift
-// to zClearance over work Z, run as JOB reason `why` (JOB_HOLDING or
-// JOB_ABORTING). False, nothing queued, when Z is already there or the lift
-// cannot run (no config, Z limits or room in Z's soft range).
+// to zClearance over work Z and, with the tool on, a TOOL_EV_OFF after it, run
+// as JOB reason `why` (JOB_HOLDING or JOB_ABORTING). No lift when Z is already
+// there or it cannot run (no config, Z limits or room in Z's soft range). False
+// when nothing was queued.
 bool plannerQueueLift(uint8_t why);
 
 // A held job at rest, its ring empty: land JOB.PAUSED. False otherwise.

@@ -21,6 +21,8 @@ struct LayerHdr {
 struct LayerMotion {
     float cutFeed, plungeFeed;
     float depth;          // mm below work Z; 0 for a tool that does not plunge
+    uint8_t tool;
+    CfgPower power;       // node 0 on a passive tool
 };
 
 // `mounted[h]` is head h's tool id (tools.h). `machineFeed` is the cut feed

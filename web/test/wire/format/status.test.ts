@@ -56,6 +56,7 @@ describe("wire/format/status: enums", () => {
         expect(Fault.PROBE).toBe(0x0020);
         expect(Fault.FACTS).toBe(0x0040);
         expect(Fault.SEQUENCE).toBe(0x0080);
+        expect(Fault.TOOL).toBe(0x0100);
         expect(Fault.ESTOP).toBe(0x8000);
     });
 
