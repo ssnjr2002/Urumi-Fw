@@ -174,7 +174,9 @@ static void acceptBezier() {
     memcpy(&bz.kappa_max,  p, 4); p += 4;
     memcpy(&bz.dkappa_max, p, 4); p += 4;
     memcpy(&bz.ts[1],      p, 4); p += 4;
-    memcpy(&bz.ts[2],      p, 4);
+    memcpy(&bz.ts[2],      p, 4); p += 4;
+    uint16_t breakDist;
+    memcpy(&breakDist,     p, 2);
 
     // Work → machine: a translation, so the analysed fields stand as sent.
     for (int i = 0; i < 4; i++) {
@@ -184,7 +186,8 @@ static void acceptBezier() {
     }
 
     const uint8_t flags = pktBuf[1];
-    switch (plannerQueueRecord(bz, flags & BEZIER_FLAG_START, flags & BEZIER_FLAG_END)) {
+    switch (plannerQueueRecord(bz, flags & BEZIER_FLAG_START, flags & BEZIER_FLAG_END,
+                               breakDist)) {
         case PQ_OK:        break;
         case PQ_FULL:      sendNack(MSEG_NACK_FULL);      return;
         case PQ_BAD_CURVE: sendNack(MSEG_NACK_BAD_CURVE); return;

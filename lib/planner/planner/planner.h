@@ -59,6 +59,7 @@ struct Block {
     Trapezoid profile;
     uint16_t layer = 0;        // the record it runs, or travels to (setTag)
     uint32_t record = 0;
+    uint16_t break_dist = 0;   // the record's nextBreakDist, mm (setTag)
 };
 
 /** A block's profile from `t0` s after its claim, starting `s0` mm into it. */
@@ -108,8 +109,10 @@ public:
      */
     bool pushEvent(uint8_t code);
 
-    /** The record the blocks pushed from now on run. */
-    void setTag(uint16_t layer, uint32_t record) { tag_layer_ = layer; tag_record_ = record; }
+    /** The record the blocks pushed from now on run, and its nextBreakDist. */
+    void setTag(uint16_t layer, uint32_t record, uint16_t breakDist = 0) {
+        tag_layer_ = layer; tag_record_ = record; tag_break_dist_ = breakDist;
+    }
 
     /** Horizon `ahead` of the consumer's clock, and the commit guard, in s. */
     void setTiming(float ahead, float guard) { ahead_ = ahead; guard_ = guard; }
@@ -170,6 +173,7 @@ private:
     Pos end_;
     uint16_t tag_layer_ = 0;
     uint32_t tag_record_ = 0;
+    uint16_t tag_break_dist_ = 0;
 
     // Exit speed of the most recently claimed block: the entry of the next.
     float pinned_entry_sqr_ = 0;

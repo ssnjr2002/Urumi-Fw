@@ -426,7 +426,8 @@ static void pushZ(float z, float feed, const planner::AxisLimits& limits) {
     plannerRing.pushMove(to, feed, limits, kDeviation);
 }
 
-PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) {
+PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
+                                      uint16_t breakDist) {
     if (machineContext != CTX_JOB) return PQ_NO_JOB;
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, false);
@@ -441,6 +442,9 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     const planner::Vec2 p0 = from > 0 ? planner::bezierPoint(b, planner::bezierT(b, from)) : b.p[0];
     const float liftFeed = machineCfg().liftFeed;
     const float up = clearZ(), down = cutZ();
+    // Measured from p0; the trim is shorter than the stretch, which holds this record.
+    if (from > 0 && breakDist != 0 && breakDist != UINT16_MAX)
+        breakDist = (uint16_t)ceilf(breakDist - from);
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     const bool reset = resetIfIdle(RING_JOB);
@@ -473,7 +477,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end) 
     if (out == PQ_OK) out = meshBezier(b, curveZ, limits, curveCap);
     if (out == PQ_OK && end && !zMoveFits(b.p[3], curveZ, up)) out = PQ_SOFT_LIMIT;
     if (out == PQ_OK) {
-        plannerRing.setTag(curLayer, nextRecord);
+        plannerRing.setTag(curLayer, nextRecord, breakDist);
         if (start) {
             pushZ(up, e.z < up ? liftFeed : layerMo.plungeFeed, limits);
             plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);

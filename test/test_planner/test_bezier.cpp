@@ -222,7 +222,7 @@ TEST_CASE("bezier: a curve pushed from s runs its rest from there, tagged") {
     Executor e;
     p.reset({from.x, from.y});
     e.reset({from.x, from.y});
-    p.setTag(3, 7);
+    p.setTag(3, 7, 120);
     REQUIRE(p.pushBezierFrom(b, 20, 500, lim(), kDev));
     p.replan();
     REQUIRE(p.commit());
@@ -231,6 +231,7 @@ TEST_CASE("bezier: a curve pushed from s runs its rest from there, tagged") {
     CHECK(blk.path.length == doctest::Approx(b.length - 20));
     CHECK(blk.layer == 3);
     CHECK(blk.record == 7);
+    CHECK(blk.break_dist == 120);
 
     CHECK(dist(e.tick(p, kDt).xy(), from) < 1e-2f);
     int guard = 0;
@@ -323,7 +324,7 @@ TEST_CASE("bezier: every record the host packs from fish.svg passes checkBezier"
     std::string line;
     while (std::getline(f, line)) {
         if (line.rfind("r ", 0) != 0) continue;
-        uint8_t pkt[56];
+        uint8_t pkt[58];
         REQUIRE(line.size() == 2 + 2 * sizeof pkt);
         for (size_t i = 0; i < sizeof pkt; i++) pkt[i] = (uint8_t)std::stoul(line.substr(2 + 2 * i, 2), nullptr, 16);
         Bezier b = fromPacket(pkt);

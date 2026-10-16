@@ -82,7 +82,9 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 // `end` closes the contour and lifts back to zClearance. The first record after
 // a LAYER_HDR is a START whatever its flags. PQ_BAD_CURVE for a failed check or
 // broken framing; PQ_SOFT_LIMIT for a height outside Z's soft range.
-PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end);
+// `breakDist` is the record's nextBreakDist, tagged on its blocks.
+PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool end,
+                                      uint16_t breakDist);
 
 // A job at rest with its ring empty (held by a pause, or aborted): queue a lift
 // to zClearance over work Z and, with the tool on, a TOOL_EV_OFF after it, run

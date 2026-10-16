@@ -15,16 +15,19 @@
 // 0xAB (MicroSegment), 0xAC (tool packet) and 0xAE (jog burst) are retired;
 // the data plane drops them as unknown bytes.
 
-// BEZIER record (56 bytes, little-endian, floats in machine mm):
+// BEZIER record (58 bytes, little-endian, floats in machine mm):
 //   [0]      magic = 0xAD
 //   [1]      flags  BEZIER_FLAG_*
 //   [2]      seq
 //   [3..34]  p0-p3 (x, y each)
 //   [35..46] length, kappa_max, dkappa_max
 //   [47..54] c2, c3 (t(s) coefficients; c1 is derived)
-//   [55]     CRC8 over bytes [0..54]
+//   [55..56] nextBreakDist u16 mm: on a START or BREAK record, from p0 to the
+//            next BREAK or END of the contour; 65535 = at least that far;
+//            0 = unknown. 0 and ignored on other records.
+//   [57]     CRC8 over bytes [0..56]
 #define BEZIER_MAGIC       0xAD
-#define BEZIER_PACKET_SIZE 56
+#define BEZIER_PACKET_SIZE 58
 #define BEZIER_SEQ_OFFSET  2
 #define BEZIER_FLAG_START  0x01   // opens a contour; travel to p0 if elsewhere
 #define BEZIER_FLAG_BREAK  0x02   // corner or cusp before this piece

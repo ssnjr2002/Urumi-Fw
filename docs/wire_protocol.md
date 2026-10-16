@@ -44,7 +44,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `JOG_MAGIC`  | `0xAE` | Host → Pico | Retired jog burst: always NACKed |
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
-| `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (56 B) |
+| `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (58 B) |
 | `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head, feed and plunge (22 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
@@ -138,7 +138,7 @@ where Z would leave it, see "Bed mesh");
 `NACK_BAD_STATE` (0x06) = a bad direction or speed, a job paused, a homing or
 probe context, a latched fault, unhomed without `jogUnhomed`, or no config.
 
-### BEZIER Record — `BEZIER_MAGIC` (0xAD, 56 bytes)
+### BEZIER Record — `BEZIER_MAGIC` (0xAD, 58 bytes)
 ```
 [0]      magic = 0xAD
 [1]      flags      uint8      — BEZIER_FLAG_*: START 0x01, BREAK 0x02, END 0x04
@@ -148,7 +148,10 @@ probe context, a latched fault, unhomed without `jogUnhomed`, or no config.
 [39..42] kappa_max  float32 LE — max |κ|, 1/mm
 [43..46] dkappa_max float32 LE — max |dκ/ds|, 1/mm² (for A's acceleration limit; unread yet)
 [47..54] c2, c3     float32 LE — t(s) = c1·s + c2·s² + c3·s³; the Pico derives c1
-[55]     CRC8 over bytes [0..54]
+[55..56] nextBreakDist uint16 LE — on a START or BREAK record: mm from p0 to the
+                      next BREAK or END of the contour, rounded up; 65535 = at
+                      least that far; 0 = unknown. 0 and ignored on other records
+[57]     CRC8 over bytes [0..56]
 ```
 One piece of a host-annotated contour (`web/src/toolpath/annotate.ts`). The
 Pico does not analyse it: `checkBezier` (`lib/planner/bezier.cpp`) derives c1
