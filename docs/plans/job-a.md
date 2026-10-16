@@ -30,8 +30,9 @@ and its hold-and-insert machinery (ZC2).
 | `aMaxDeg` | cable: \|A\| ≤ `aMaxDeg` either way from home; absent = no cable | new |
 | `chamberOffsets` | slot angles of a revolver; not tangential | decoded |
 
-* Taken from the mounted tool at mount, like `toolOffset`; blob and schema
-  version bump. `periodCount` with `tangential: false`, or `chamberOffsets`
+* Resolved with the layer header into `LayerMotion` (`core0/ops/layer.h`),
+  which already checks the tool is mounted; mount only confirms the tool and
+  applies its offset. Blob and schema version bump. `periodCount` with `tangential: false`, or `chamberOffsets`
   with `tangential: true`, is a load error.
 * `unwind` and `minRadiusMm` are read by nothing; the web-only cleanup
   (task_8236c64d, not started) removes them. `unwind` is superseded by
@@ -71,10 +72,12 @@ and its hold-and-insert machinery (ZC2).
 
 | moment | A does | branch |
 |---|---|---|
-| contour START | turns to the start heading's equivalent during the travel line (Z, XY+A, Z) | AB |
-| BREAK past `cornerAngleDeg`, tangential tool | lift, A-only swivel to the next heading's equivalent, plunge | AB |
-| BREAK under `cornerAngleDeg` | runs through; XY rounds it by junction deviation, A follows | AA |
-| contour END | lift; A stays; the next START's travel turns it | AB |
+| contour START | A-only swivel to the start heading's equivalent, after the travel, before the plunge | AA |
+| contour START | the turn moves into the travel line (Z, XY+A, Z) | AB |
+| BREAK past `cornerAngleDeg`, tangential tool | lift, A-only swivel to the next heading's equivalent, plunge | AA |
+| BREAK under `cornerAngleDeg` with a heading jump | A-only swivel in the cut, XY at rest | AA |
+| along a curve | A follows the tangent | AB |
+| contour END | lift; A stays; the next START turns it | AA |
 | layer with a chamber | the travel turns A to `chamberOffsets[k]`'s nearest equivalent and holds it | AC |
 | stretch wider than the range | hold, lift, unwind by whole periods, plunge at the same heading | AF |
 
@@ -127,30 +130,35 @@ and its hold-and-insert machinery (ZC2).
 
 A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → AF.
 
-### AA: tangential following
+### AA: swivels
+
+* Name: `feature/job-a-swivels`
+* Purpose: a tangential tool turns A where its heading jumps, with A fixed
+  between: an A-only swivel to the curve's start heading at every START
+  (after the travel, before the plunge); at every BREAK a swivel to the next
+  heading, lifted past `cornerAngleDeg`, in the cut below it. Equivalents mod
+  P, nearest the current A. Polygons cut true; curves wait for AB.
+* No `lib/planner` change: an A-only `pushMove` exists.
+* The tool fields decoded and resolved into `LayerMotion`; a tangential tool
+  on a head without an A axis refuses the layer header (`NACK_JOB`).
+* Files: `core0/config/config_decode.{h,cpp}`, `core0/ops/layer.{h,cpp}`,
+  `core0/planner/queue.cpp` (`plannerQueueRecord`, ring room);
+  `web/src/machine/schema.ts`, `defaults.ts`, `json/load.ts`,
+  `json/validate.ts`, `json/blob.ts`; `config/controller.jsonc`; fixtures;
+  `docs/wire_protocol.md` if a NACK changes.
+* Depends on: job-z (merged).
+
+### AB: tangential following
 
 * Name: `feature/planner-tangential`
-* Purpose: a tangential tool steers along the path. An XY block carries A (linear on lines, unwrapped tangent on
-  Béziers); A's caps; equivalents mod P; the tool fields decoded and latched
-  at mount.
+* Purpose: A follows the unwrapped tangent along a Bézier (and is linear
+  along a travel line); A's caps; the START turn moves into the travel line.
+  A BREAK under `cornerAngleDeg` keeps AA's swivel.
 * Files: `lib/planner/` (`path.h`, `line.cpp`, `bezier.cpp`, `planner.cpp`,
-  `executor.cpp`) and native tests; `core0/config/config_decode.{h,cpp}`;
-  `core0/planner/queue.cpp`; `web/src/machine/schema.ts`, `defaults.ts`,
-  `json/load.ts`, `json/validate.ts`, `json/blob.ts`; `config/controller.jsonc`;
-  fixtures.
-* Depends on: job-z (merged).
-* Open for its Planning: the curvature-jump bound on A's instant speed
-  change; which readout folds A.
-
-### AB: corner lifts and the travel turn
-
-* Name: `feature/job-a-corners`
-* Purpose: a tangential tool's START travel turns A; a BREAK past
-  `cornerAngleDeg` lifts, swivels and plunges; a corner stop shares the
-  lift with ZC2's corner duty stop.
-* Files: `core0/planner/queue.cpp` (`plannerQueueRecord`), ring room;
-  `docs/wire_protocol.md` if a NACK changes.
+  `executor.cpp`) and native tests; `core0/planner/queue.cpp`.
 * Depends on: AA.
+* Open for its Work: the curvature-jump bound on A's instant speed change;
+  which readout folds A; the unwrap stored per block or kept by the executor.
 
 ### AC: revolver chamber
 
