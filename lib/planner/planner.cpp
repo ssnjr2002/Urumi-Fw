@@ -68,6 +68,16 @@ bool Planner::pushBezierFrom(const Bezier& bz, float from, float feed, const Axi
     return true;
 }
 
+bool Planner::pushEvent(uint8_t code) {
+    if (full()) return false;
+    Path path;
+    path.axes = AXES_NONE;
+    path.accel = 1;   // any positive value: a zero-length profile is all zeros
+    ring_[index(count_)].event = code;
+    pushBlock(Block::EVENT, path, end_, 0);
+    return true;
+}
+
 bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, float deviation) {
     Block& b = ring_[index(count_)];
     b.kind = kind;
@@ -77,9 +87,10 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, f
     b.s0 = 0;
     b.layer = tag_layer_;
     b.record = tag_record_;
-    b.max_entry_sqr = count_ > 0
-        ? junctionMaxSqr(ring_[index(count_ - 1)].path, path, deviation)
-        : 0;
+    // An event, and whatever follows one, starts from rest.
+    const bool rest = kind == Block::EVENT || count_ == 0 ||
+                      ring_[index(count_ - 1)].kind == Block::EVENT;
+    b.max_entry_sqr = rest ? 0 : junctionMaxSqr(ring_[index(count_ - 1)].path, path, deviation);
     // Committed at rest on both ends until the next commit: still consistent
     // with its predecessor, whose committed exit is also rest.
     b.entry_sqr = 0;
@@ -235,7 +246,9 @@ void Planner::restartFrom(float s) {
     if (claimed_) {
         claimed_ = false;
         Block& b = ring_[tail_];
-        if (s >= b.path.length) {
+        if (b.kind == Block::EVENT) {
+            // Held at an event: it has not run, and runs after the restart.
+        } else if (s >= b.path.length) {
             tail_ = (tail_ + 1) % kSize;
             count_--;
         } else if (s > 0) {

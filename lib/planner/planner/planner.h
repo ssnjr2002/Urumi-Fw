@@ -45,8 +45,9 @@
 namespace planner {
 
 struct Block {
-    enum Kind : uint8_t { LINE, BEZIER };
+    enum Kind : uint8_t { LINE, BEZIER, EVENT };
     Kind kind = LINE;
+    uint8_t event = 0;         // EVENT: the caller's code, opaque here
     Path path;                 // length is what remains after s0
     float s0 = 0;              // mm of the geometry already run (a resume trim)
     Pos origin;                // start point
@@ -100,6 +101,12 @@ public:
      */
     bool pushBezierFrom(const Bezier& b, float from, float feed, const AxisLimits& limits,
                         float deviation, const PathCap& cap = PathCap());
+
+    /**
+     * Queue an event: no motion, at rest on both sides. The executor stops at
+     * it until the consumer calls Executor::eventDone(). False if full.
+     */
+    bool pushEvent(uint8_t code);
 
     /** The record the blocks pushed from now on run. */
     void setTag(uint16_t layer, uint32_t record) { tag_layer_ = layer; tag_record_ = record; }

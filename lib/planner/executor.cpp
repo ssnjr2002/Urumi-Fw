@@ -10,6 +10,7 @@ void Executor::reset(Pos pos) {
     aborting_ = false;
     cur_ = nullptr;
     has_next_ = false;
+    event_done_ = false;
     t_ = 0;
     s_ = 0;
     v_ = 0;
@@ -64,8 +65,18 @@ PLANNER_RAM Pos Executor::tick(Planner& p, float dt) {
             piece_.s0 = 0;
             piece_.profile = cur_->profile;
             has_next_ = false;
+            event_done_ = false;
             t_ = 0;
             s_ = 0;
+        }
+
+        if (cur_->kind == Block::EVENT) {
+            // At rest: a run event is released, hold or not; one not yet run
+            // completes a hold, or waits for eventDone().
+            v_ = 0;
+            if (event_done_) { finishBlock(p); continue; }
+            if (state_ == State::Holding) state_ = State::Held;
+            break;
         }
 
         if (state_ == State::Running) {
@@ -133,6 +144,7 @@ PLANNER_RAM Pos Executor::tick(Planner& p, float dt) {
 PLANNER_RAM bool Executor::needsRing(float dt) const {
     if (aborting_) return true;
     if (!cur_) return state_ != State::Held;
+    if (cur_->kind == Block::EVENT) return event_done_;
     if (state_ == State::Running) return dt >= (has_next_ ? next_.end() : piece_.end()) - t_;
     if (state_ == State::Held) return false;
 

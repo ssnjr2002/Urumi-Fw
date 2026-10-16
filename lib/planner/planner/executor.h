@@ -54,6 +54,13 @@ public:
     /** Hold, then discard every queued block once stopped. */
     void abort();
 
+    /** The claimed event the executor is stopped at; null otherwise. */
+    const Block* event() const {
+        return cur_ && cur_->kind == Block::EVENT && !event_done_ ? cur_ : nullptr;
+    }
+    /** The consumer ran event(): the next tick releases it and runs on. */
+    void eventDone() { if (event()) event_done_ = true; }
+
     State state() const { return state_; }
     Pos position() const { return pos_; }
     float speed() const { return v_; }   // mm/s along the path
@@ -77,6 +84,7 @@ private:
     Piece piece_;          // what runs now
     Piece next_;           // takes over at next_.t0
     bool has_next_ = false;
+    bool event_done_ = false;
     float t_ = 0;   // s since cur_ was claimed, while running
     float s_ = 0;   // mm into cur_
     float v_ = 0;
