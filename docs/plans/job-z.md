@@ -118,7 +118,34 @@ A dependent chain, run as a Single Session.
   * `web/src/machine/schema.ts`, `defaults.ts`, `json/load.ts`, `json/validate.ts`, `json/blob.ts`
   * `config/controller.jsonc`, tests and fixtures, `docs/wire_protocol.md`
 * Depends on: JX (merged).
-* Status: Planned.
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: `c` is the machine-wide `machine.zClearance` (the host's
+    `clearanceMm` renamed and sent to the Pico), not a per-tool `clearance`;
+    a bad value is `cfgerr=z_clearance`. The work-Z check applies only with
+    the tool mounted: a header that starts a tool change is not refused (the
+    change unsets work Z, and the header comes again after the Z zero).
+  * A START's first Z move goes to clearance from wherever Z is, down as well
+    as up (at `plungeFeed` going down). The END lift is tagged with the next
+    record, so a pause in it resumes at that record's START.
+  * Pause: `pauseRequested` stays set until Core 0 lands PAUSED, so records
+    keep `NACK_PAUSED`. A pause at rest in BUFFERING (a ring dry mid-contour)
+    goes the same way and lifts. Abort: `machinePublish` queues the lift once
+    and closes the job when it has drained; records get `NACK_ABORTING`
+    through it. Core 1 runs a ring entered in HOLDING or ABORTING as a lift
+    (no pause, no rebuffer, drains with `FACT_RING_DRAINED`).
+  * Interfaces for ZB/ZC: `LayerMotion {cutFeed, plungeFeed, depth}` from
+    `layerResolve`; `plannerOpenLayer(const LayerMotion&, …)`;
+    `plannerQueueLift(why)`, `plannerLandPaused()`; `FACT_HELD`.
+  * Bench (2026-10-16, air zero at work Z −20, t 2 mm, k 1): two squares ran
+    clearance → travel → plunge to −22 → cut → lift to −18 each; a pause
+    mid-cut held, lifted at the stop point, then PAUSED (resume 0/6) and
+    resumed with a plunge; an abort mid-cut lifted, then IDLE. Not run: the
+    `NACK_JOB` for a head without work Z (needs a tool change).
+  * Out of scope: the web sim (`wire/link/backends/sim.ts`) lands PAUSED
+    without the HOLDING lift. The main folder's `config/controller.jsonc`
+    gains `liftFeed`/`zClearance` only with this merge; the Pico on the bench
+    already runs config v8.
 
 ### ZB: tool events and duty at START
 
