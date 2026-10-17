@@ -171,7 +171,7 @@ wire (X,Y curves) → Core 0 queue    → planner ring  → executor        → 
 
 ## Branches
 
-A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → AF.
+A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → AE → AF.
 
 ### AA: swivels
 
@@ -272,13 +272,45 @@ A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → A
     blade down (Z at cut depth); worth a lift on refusal (AF, or its own
     fix). `test_machine` still fails to link, as on main.
 
+### AA2: A's zero at the lock
+
+* Name: `feature/job-a-zero`
+* Purpose: machine A = 0 is the angle where the holder's lock button latches
+  (46.7° CCW of the hall index on head 0, found by jogging), so a tool can
+  only be mounted or unmounted at A = 0. A tool's edge direction there is a
+  tool fact, `aOffsetDeg`.
+* Head: `indexPos: -46.7` (the index's coordinate; the lock is then 0). No
+  code: `home.cpp` already numbers the index from it.
+* Tool: `aOffsetDeg`, the edge's heading at machine A = 0 (+X 0, +Y 90, −X
+  180, −Y −90; the crease 0 or 90). Optional, default 0; tangential tools
+  only. The mechanical team expects finished tools along ±X or ±Y; the
+  field takes any angle.
+* Applied:
+  * `queue.cpp`: heading h → machine A = h − `aOffsetDeg` before `pickA`.
+    The planner, executor and follower stay in machine A.
+  * `frames.cpp` `framesWPos`: WPos A = MPos A + the mounted tool's
+    `aOffsetDeg`, folded (the edge heading, as WPos XY is the tip).
+  * `SEQ_TOOL_CHANGE` (`controller/seq/toolchange.cpp`): A to 0 with Z
+    parked, before TOOL_WAIT.
+* `aMaxDeg` and AC's `chamberOffsets` count from machine 0, the lock.
+* Files: `config/controller.jsonc`; `core0/config/config_decode.{h,cpp}`,
+  `core0/ops/layer.{h,cpp}`, `core0/ops/frames.cpp`,
+  `core0/planner/queue.cpp`, `core0/controller/seq/toolchange.cpp`;
+  `web/src/machine/schema.ts`, `defaults.ts`, `json/load.ts`,
+  `json/validate.ts`, `json/blob.ts`; fixtures; `docs/wire_protocol.md`
+  (WPos A), docs/plans/coordinate-system.md (A's zero).
+* Depends on: AB.
+* Bench (Human scope): home, jog A to 0, the button latches; with the knife
+  mounted and `aOffsetDeg` set, A at WPos 0 points the edge along X+, at 90
+  along Y+ (also checks +A is CCW, `invertDir`).
+
 ### AC: revolver chamber
 
 * Name: `feature/job-a-chamber`
 * Purpose: a layer with a chamber turns A to `chamberOffsets[k]` (nearest
   equivalent, within `aMaxDeg`) during the START travel and holds it.
 * Files: `core0/ops/layer.{h,cpp}`, `core0/planner/queue.cpp`.
-* Depends on: AB.
+* Depends on: AA2.
 
 ### AD: blade offset
 
