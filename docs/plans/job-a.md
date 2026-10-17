@@ -309,7 +309,7 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 * Bench (Human scope): home, jog A to 0, the button latches; with the knife
   mounted and `aOffsetDeg` set, A at WPos 0 points the edge along X+, at 90
   along Y+ (also checks +A is CCW, `invertDir`).
-* Status: Ready to merge.
+* Status: Done (merged dad85e3). Unblocks AC.
 * Outcome:
   * Interface: `lineTo(x, y, feed, queued, aLock)`, `aLockReady()`
     (`seq/steps.h`); `plannerQueueLine(…, aZero)`; `jogtoStart(mx, my,
