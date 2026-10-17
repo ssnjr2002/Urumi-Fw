@@ -243,6 +243,34 @@ A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → A
   radians only inside the cap math, converted on entry, never stored; steps
   only in the follower and `frames`. New angle variables carry `_deg`/`_rad`.
 * Fold readout: settled in AA (`WPos` folds, `MPos` does not).
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: `pickA` picks the equivalent whose whole curve (the record's
+    `bezierTurn` lo/hi) fits ±`aMaxDeg`, not only its start; a record no
+    equivalent fits is `NACK_SOFT_LIMIT`. Per record only; the stretch is
+    AE's. The turn sum lives in `bezierTurn` (the Pico takes host analysis
+    through `checkBezier`, which samples nothing), sampled outside the
+    planner lock with n = ⌈κ_max·L/(π/4)⌉, 4..1024.
+  * Interface: `axesOf` gives XY for XY+A; `Path` carries `a_rate_start/end`
+    and `a_jump`; `aRides()`; `pushBezierFrom(…, const BezierTurn* turn)`
+    (a turn makes the block tangent, `Block::tangent`);
+    `pathOf(Bezier, …, tangential)`; `bezierHeading`, `bezierTurn`;
+    `Executor::aMisses()`, `get amiss`. Constants `kAMisalignRad` (2°),
+    `kAAccelShare` (0.5), `kAMissDeg` (0.5°).
+  * Settled in Work: the executor follows from its own `pos_` and the
+    heading at the block's `s0`, so an in-place restart and a job resume both
+    continue from the actual A; a travel line's A is linear over
+    `s0 + length`.
+  * Bench (knife on head 0, no material, `aMaxDeg` 540): a circle runs A
+    0 → 360 with the heading; a clockwise circle from 360 starts at 180 and
+    tracks the heading (176.8° at the expected point); an S turns −180 → 0
+    during its travel, then 0 → 176 → 0; two laps cut to 540 and the next
+    record is refused; a pause mid-circle lifts at 158°, resumes 2 mm back
+    turning A during the travel, and ends at 360. `amiss` and `late` stayed
+    0. Not run: the crease, a powered tool, a cut in material, e_max tuning.
+  * Out of scope: a record refused mid-contour drains the ring with the
+    blade down (Z at cut depth); worth a lift on refusal (AF, or its own
+    fix). `test_machine` still fails to link, as on main.
 
 ### AC: revolver chamber
 
