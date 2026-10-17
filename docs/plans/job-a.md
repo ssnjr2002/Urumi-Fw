@@ -309,6 +309,21 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 * Bench (Human scope): home, jog A to 0, the button latches; with the knife
   mounted and `aOffsetDeg` set, A at WPos 0 points the edge along X+, at 90
   along Y+ (also checks +A is CCW, `invertDir`).
+* Status: Ready to merge.
+* Outcome:
+  * Interface: `lineTo(x, y, feed, queued, aLock)`, `aLockReady()`
+    (`seq/steps.h`); `plannerQueueLine(…, aZero)`; `jogtoStart(mx, my,
+    aLock)`. `CFG_SCHEMA_VERSION` and `CONFIG_BLOB_VERSION` 11.
+  * `web/src/machine/defaults.ts` untouched: the field is optional.
+  * Bench: the button latches at A = 0 after homing; `probe_park 1` from
+    WPos 100, 100, A 100 turns A to 0 along the XY line, ending together
+    (`amiss` 0). Run with a temporary `probeSwitch` (200, 200), since
+    removed.
+  * Open for the user: head 0 has no `probeSwitch`, so `probe_park` and a
+    job's tool change answer `no_position`; the knife's `aOffsetDeg` is 0
+    until measured on mount.
+  * Out of scope: homing ending at the lock; the `tool mount` plan.
+    `test_machine` still fails to link, as on main.
 
 ### AC: revolver chamber
 
