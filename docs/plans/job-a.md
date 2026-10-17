@@ -290,12 +290,18 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
     The planner, executor and follower stay in machine A.
   * `frames.cpp` `framesWPos`: WPos A = MPos A + the mounted tool's
     `aOffsetDeg`, folded (the edge heading, as WPos XY is the tip).
-  * `SEQ_TOOL_CHANGE` (`controller/seq/toolchange.cpp`): A to 0 with Z
-    parked, before TOOL_WAIT.
+  * The park: `lineTo` (`controller/seq/steps.cpp`) takes A to machine 0
+    riding the line (XY+A; A-only if XY is already there) when asked.
+    `probe_park` (`seq/jogto`) and the job's tool change
+    (`seq/toolchange.cpp`) ask; plain `jogto` does not. A head without A
+    parks XY only; A present but unhomed fails `a_not_homed`.
 * `aMaxDeg` and AC's `chamberOffsets` count from machine 0, the lock.
+* Not here: homing ending at the lock; a `tool mount`/`unmount` command
+  family (its own plan).
 * Files: `config/controller.jsonc`; `core0/config/config_decode.{h,cpp}`,
   `core0/ops/layer.{h,cpp}`, `core0/ops/frames.cpp`,
-  `core0/planner/queue.cpp`, `core0/controller/seq/toolchange.cpp`;
+  `core0/planner/queue.{h,cpp}`, `core0/controller/seq/{steps,jogto,toolchange}.{h,cpp}`,
+  `core0/controller/cmd/jogto.cpp`;
   `web/src/machine/schema.ts`, `defaults.ts`, `json/load.ts`,
   `json/validate.ts`, `json/blob.ts`; fixtures; `docs/wire_protocol.md`
   (WPos A), docs/plans/coordinate-system.md (A's zero).
