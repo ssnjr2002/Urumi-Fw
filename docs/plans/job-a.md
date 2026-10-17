@@ -243,7 +243,7 @@ A dependent chain, run as a Single Session: AA → AB → AC → AD → AE → A
   radians only inside the cap math, converted on entry, never stored; steps
   only in the follower and `frames`. New angle variables carry `_deg`/`_rad`.
 * Fold readout: settled in AA (`WPos` folds, `MPos` does not).
-* Status: Ready to merge.
+* Status: Done (merged 67a93b3). Unblocks AC.
 * Outcome:
   * Deviations: `pickA` picks the equivalent whose whole curve (the record's
     `bezierTurn` lo/hi) fits ±`aMaxDeg`, not only its start; a record no
