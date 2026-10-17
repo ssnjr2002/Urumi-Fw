@@ -15,8 +15,8 @@ frame is in docs/plans/controller-homing.md.
 * Rotary A (a rotation about Z; ISO would name it C): + is counter-clockwise
   seen from above (the right-hand rule about Z+). A heading of 0° is the
   edge facing X+, so a cut's heading is `atan2(dy, dx)` with no sign flip.
-  Machine A's 0 is the holder's lock (the angle its lock button latches,
-  where tools mount); a tool's `aOffsetDeg` is its edge's heading there.
+  Machine A's 0 is the holder's lock; a tool's `aOffsetDeg` is its edge's
+  heading there (A, below).
 * **`invertDir`** per axis is the wiring fix that makes the motor obey it.
   Commissioning checks it by jogging each axis +.
 * Only the + direction can mirror a job. Where 0 sits only shifts the
@@ -84,10 +84,31 @@ frame is in docs/plans/controller-homing.md.
 
 ### A
 
+* **The lock.** The tool holder has a lock button that latches at one angle
+  only; a tool is mounted and unmounted there. Machine A's 0 is the lock.
+* **`indexPos`** (the head's A homing config) is the machine A given to the
+  hall index when homing finds it. The lock sits 46.7° counter-clockwise of
+  the index on head 0, so `indexPos` is −46.7: the index reads −46.7 and the
+  lock 0. It is per head (holder and sensor), not per tool.
+* **`aOffsetDeg`** (per tangential tool, absent = 0) is the heading the tool's
+  edge points at when the holder is at the lock, i.e. how the tool sits in the
+  holder. Measure it on mount: lock the holder, see where the edge points.
+
+  | Tool mounted with edge along | `aOffsetDeg` |
+  |---|---|
+  | +X | 0 |
+  | +Y | 90 |
+  | −X | 180 |
+  | −Y | −90 (or 270) |
+
+  The crease wheel is either 0 or 90, since its period is 180°.
+* A heading h is cut at machine A = h − `aOffsetDeg` (then the nearest
+  equivalent for the tool's period inside its cable range).
 * `MPos` A is the count in degrees, unbounded: it is never folded.
 * `WPos` A is the edge heading: `MPos` A plus the mounted tool's `aOffsetDeg`
-  (as `WPos` XY is the tip), folded to (−180°, 180°]. With no tool it is
-  `MPos` folded, 0 at the lock. Motion and range checks use `MPos`; the fold
+  (as `WPos` XY is the tip), folded to (−180°, 180°]. With a tool mounted, the
+  lock reads `aOffsetDeg` and `WPos` 0 (edge along X+) is at `MPos`
+  −`aOffsetDeg`. With no tool it is `MPos` folded, 0 at the lock. Motion and range checks use `MPos`; the fold
   loses the turn count.
 
 ### Stored positions
@@ -106,6 +127,10 @@ frame is in docs/plans/controller-homing.md.
   XY only. Z's park is just below its switch (the pull-off from it; `parkPos`
   only numbers it), so it is the safe height while Z homes toward a switch at
   the top, which the homing cycle order already assumes. No safe-Z setting.
+* `probe_park <tool>` and a job's tool change also turn the head's A to
+  machine 0, the lock, along the XY line, so a tool can be mounted or
+  unmounted there; `a_not_homed` unless A is homed. A head without A parks
+  XY only. `jogto` never moves A.
 
 ### Commands and frames
 
@@ -306,26 +331,13 @@ motion-sessions jog branches (`jogto` calls into `frames`).
 
 ## Open questions
 
-* Rotary A, for an A-axis pass:
-  * The knife has a cable out of it, so A needs a soft range (min/max degrees
-    from the homed 0).
-  * Each tool has a symmetry order n (period 360°/n): knife 1, crease wheel
-    2, revolver pen 7 (to confirm). One mechanism picks, for a target angle,
-    the nearest equivalent mod 360°/n inside the range (unwinding first if
-    none is reachable). Headings call it every segment; the revolver pen
-    calls it once per pen change; A jogs use it. Order lives in the tool's
-    config, absent meaning 1.
-  * A in the planner: the Pico takes headings from the path tangent. At lift
-    points (contour start, corners past `cornerAngleDeg`) any equivalent mod
-    360°/n may be chosen; mid-cut A follows the path. Per contour, its heading
-    sweep (known from the contour framing) picks the start equivalent that
-    keeps the whole sweep inside the range, so unwinding happens only at
-    lifts; a sweep wider than the range splits the contour at a lift. Replaces
-    the host's `unwind` flag (`choreograph.ts:378`).
-  * A limits XY speed on curves: about A's `maxFeed` (deg/s) over the
-    curvature (deg/mm), beside the centripetal limit.
+* Rotary A: the cable range (`aMaxDeg`, from the lock), the tool's symmetry
+  period, headings from the path tangent and A capping XY speed are settled
+  in docs/plans/job-a.md. Still open:
   * Tool tip offset: in the knife's frame, rotating with A; found by a test
     cut (opposite-direction slits coincide when it is right).
+  * Homing A to end at the lock rather than wherever the index search
+    stops.
   * Headings made continuous in `flatten.ts` (each one the previous plus the
     shortest difference). Whether `web/src/toolpath/flatten.ts:70` takes
     headings before or after the y reflection (before means its angles are
