@@ -523,6 +523,8 @@ export interface ToolProfile {
     readonly minRadiusMm: number;
     /** Cable: |A| at most this either way from home (degrees); absent = no cable. */
     readonly aMaxDeg?: number;
+    /** Tangential: the edge's heading at machine A = 0, the holder's lock (degrees); absent = 0. */
+    readonly aOffsetDeg?: number;
     /** Cut feed, mm/s; absent → machine.feed.cutFallback. */
     readonly cutFeed?: number;
     /** Plunge feed, mm/s; absent → machine.feed.plungeFallback. */

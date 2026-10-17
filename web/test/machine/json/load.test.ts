@@ -118,7 +118,7 @@ describe("load: valid config", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
         expect(Object.keys(r.config.toolProfiles)).toEqual(["knife", "revolver_pen"]);
-        expect(r.config.toolProfiles.knife).toEqual({ ...KNIFE, id: 1, aMaxDeg: 540, power: expect.anything() });
+        expect(r.config.toolProfiles.knife).toEqual({ ...KNIFE, id: 1, aMaxDeg: 540, aOffsetDeg: 90, power: expect.anything() });
         expect(r.config.toolProfiles.revolver_pen).toEqual({ ...REVOLVER_PEN, id: 2 });
         expect(r.config.toolProfiles.pen).toBeUndefined();
     });

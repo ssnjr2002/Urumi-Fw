@@ -207,6 +207,7 @@ interface JsonToolOverride {
     readonly cornerAngleDeg?: number;
     readonly minRadiusMm?: number;
     readonly aMaxDeg?: number;
+    readonly aOffsetDeg?: number;
     readonly cutFeed?: number;
     readonly plungeFeed?: number;
     /** Removed — see the tools build step. Typed so the check can see them. */
@@ -800,7 +801,7 @@ function patchToolProfile(
     delete merged.name; // supplied by toolProfile()
 
     for (const key of ["tangential", "offsetMm", "unwind", "periodCount", "cornerAngleDeg",
-                       "minRadiusMm", "aMaxDeg", "plunge", "toolOffset", "chamberOffsets", "id",
+                       "minRadiusMm", "aMaxDeg", "aOffsetDeg", "plunge", "toolOffset", "chamberOffsets", "id",
                        "cutFeed", "plungeFeed"] as const) {
         if (o[key] !== undefined) merged[key] = o[key];
     }
