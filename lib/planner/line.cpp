@@ -32,7 +32,7 @@ Axes axesOf(const Pos& from, const Pos& to) {
     const bool xy = to.x != from.x || to.y != from.y;
     const bool z = to.z != from.z;
     const bool a = to.aSince(from) != 0;
-    if (xy + z + a > 1) return AXES_MIXED;
+    if (z && (xy || a)) return AXES_MIXED;
     return xy ? AXES_XY : z ? AXES_Z : a ? AXES_A : AXES_NONE;
 }
 
@@ -48,6 +48,21 @@ Path axisPath(Axes axes, float d, float feed, const AxisLimits& limits) {
     return p;
 }
 
+float aJump(const AxisLimits& limits) {
+    return sqrtf(2.0f * limits.max_accel[3] * kRadPerDeg * kAMisalignRad);
+}
+
+bool aRides(Path& p, float d, const AxisLimits& limits) {
+    if (!(limits.max_feed[3] > 0 && limits.max_accel[3] > 0) || p.length <= 0) return false;
+    const float r = fabsf(d) / p.length;   // deg per mm
+    const float v = limits.max_feed[3] / r;
+    p.v_max_sqr = fminf(p.v_max_sqr, v * v);
+    p.accel = fminf(p.accel, limits.max_accel[3] / r);
+    p.a_rate_start = p.a_rate_end = d * kRadPerDeg / p.length;
+    p.a_jump = aJump(limits);
+    return true;
+}
+
 Path pathOf(const Line& ln) {
     Path p;
     p.length = ln.length;
@@ -61,7 +76,12 @@ Path pathOf(const Line& ln) {
 
 float junctionMaxSqr(const Path& prev, const Path& next, float deviation) {
     if (prev.axes != next.axes) return 0;
-    const float cap = fminf(prev.v_max_sqr, next.v_max_sqr);
+    float cap = fminf(prev.v_max_sqr, next.v_max_sqr);
+    const float dr = fabsf(prev.a_rate_end - next.a_rate_start);
+    if (dr > 0) {
+        const float v = fminf(prev.a_jump, next.a_jump) / dr;
+        cap = fminf(cap, v * v);
+    }
     // Cosine of the angle between the incoming reversed and the outgoing
     // direction: -1 is straight on, +1 is a full reversal.
     const float cos_theta = -(prev.dir_end.x * next.dir_start.x + prev.dir_end.y * next.dir_start.y);

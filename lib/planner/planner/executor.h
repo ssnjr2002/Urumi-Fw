@@ -3,7 +3,12 @@
  *
  * tick() advances by dt through the claimed block's profile, releasing and
  * claiming as blocks finish; leftover time carries into the next block. It
- * returns the position along the path; Z and A stay at the block's start.
+ * returns the position along the path; Z stays at the block's start, and A
+ * too unless it rides along: linear on a line, and on a tangent Bézier tracked
+ * tick to tick from where it is, the wrapped heading change added each tick.
+ * A tangent block ending more than kAMissDeg from its planned target counts
+ * an A miss (the planner's turn sum and the tracking disagree) before the
+ * snap to the target.
  *
  * hold() brakes along the path at each block's own acceleration. Since the
  * committed plan is at or above that braking curve everywhere and ends at rest,
@@ -77,12 +82,17 @@ public:
     float clock() const { return clock_; }
     /** Pieces found only after their t0 had passed; each started a hold. */
     uint32_t lateAdoptions() const { return late_; }
+    /** Tangent blocks whose tracked A missed their planned end A. */
+    uint32_t aMisses() const { return a_miss_; }
 #ifdef PLANNER_BENCH
     uint32_t adoptions = 0;
 #endif
 
 private:
     void finishBlock(Planner& p);
+    void follow(float s);
+
+    static constexpr float kAMissDeg = 0.5f;
 
     State state_ = State::Running;
     bool aborting_ = false;
@@ -97,6 +107,8 @@ private:
     Pos pos_;
     volatile float clock_ = 0;
     uint32_t late_ = 0;
+    float heading_ = 0;    // rad, a tangent block's at the last follow()
+    uint32_t a_miss_ = 0;
 };
 
 }  // namespace planner

@@ -25,11 +25,32 @@ PLANNER_RAM static Pos pointAt(const Block& b, float s) {
     if (b.kind == Block::BEZIER) p.setXy(bezierPoint(b.bez, bezierT(b.bez, g)));
     else if (b.path.axes == AXES_Z) p.z += b.path.dir_start.x * g;
     else if (b.path.axes == AXES_A) p.addA(b.path.dir_start.x * g);
-    else p.setXy({b.origin.x + b.path.dir_start.x * g, b.origin.y + b.path.dir_start.y * g});
+    else {
+        p.setXy({b.origin.x + b.path.dir_start.x * g, b.origin.y + b.path.dir_start.y * g});
+        // A riding along: linear over the whole line, a resume trim included.
+        const float da = b.target.aSince(b.origin);
+        if (da != 0) p.addA(da * g / (b.s0 + b.path.length));
+    }
     return p;
 }
 
+PLANNER_RAM static float wrapPi(float d) {
+    return d - 2 * kPiF * roundf(d / (2 * kPiF));
+}
+
+// A tangent block's A from the last heading to the one at `s` mm into it.
+PLANNER_RAM void Executor::follow(float s) {
+    float h;
+    if (!bezierHeading(cur_->bez, cur_->s0 + s, &h)) return;   // hold the last heading
+    pos_.addA(wrapPi(h - heading_) / kRadPerDeg);
+    heading_ = h;
+}
+
 PLANNER_RAM void Executor::finishBlock(Planner& p) {
+    if (cur_->tangent) {
+        follow(cur_->path.length);
+        if (fabsf(cur_->target.aSince(pos_)) > kAMissDeg) a_miss_++;
+    }
     pos_ = cur_->target;
     p.release();
     cur_ = nullptr;
@@ -64,6 +85,10 @@ PLANNER_RAM Pos Executor::tick(Planner& p, float dt) {
             piece_.t0 = 0;
             piece_.s0 = 0;
             piece_.profile = cur_->profile;
+            // A follows on from where it is, not from origin: after a restart
+            // pos_ is where the hold stopped.
+            if (cur_->tangent && !bezierHeading(cur_->bez, cur_->s0, &heading_))
+                heading_ = 0;
             has_next_ = false;
             event_done_ = false;
             t_ = 0;
@@ -132,7 +157,14 @@ PLANNER_RAM Pos Executor::tick(Planner& p, float dt) {
         dt = 0;
     }
 
-    if (cur_) pos_ = pointAt(*cur_, s_);
+    if (cur_ && cur_->tangent) {
+        const Pos q = pointAt(*cur_, s_);
+        pos_.setXy(q.xy());
+        pos_.z = q.z;
+        follow(s_);
+    } else if (cur_) {
+        pos_ = pointAt(*cur_, s_);
+    }
     if (state_ == State::Held && aborting_) {
         p.reset(pos_);
         reset(pos_);

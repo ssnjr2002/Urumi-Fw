@@ -57,7 +57,7 @@ PLANNER_RAM Vec2 bezierPoint(const Bezier& b, float t) {
             w0 * b.p[0].y + w1 * b.p[1].y + w2 * b.p[2].y + w3 * b.p[3].y};
 }
 
-Vec2 bezierDeriv(const Bezier& b, float t) {
+PLANNER_RAM Vec2 bezierDeriv(const Bezier& b, float t) {
     const float u = 1 - t;
     const float w0 = 3 * u * u, w1 = 6 * u * t, w2 = 3 * t * t;
     return {w0 * (b.p[1].x - b.p[0].x) + w1 * (b.p[2].x - b.p[1].x) + w2 * (b.p[3].x - b.p[2].x),
@@ -181,7 +181,40 @@ BezierError checkBezier(Bezier& b) {
     return BezierError::None;
 }
 
-Path pathOf(const Bezier& b, float feed, const AxisLimits& limits) {
+PLANNER_RAM bool bezierHeading(const Bezier& b, float s, float* rad) {
+    const Vec2 d = bezierDeriv(b, bezierT(b, s));
+    // |B'| averages `length` over t; the analysis refuses a stop below 1e-3 of it.
+    if (norm(d) < 1e-4f * b.length) return false;
+    *rad = atan2f(d.y, d.x);
+    return true;
+}
+
+BezierTurn bezierTurn(const Bezier& b, float from) {
+    BezierTurn r;
+    const float len = b.length - from;
+    if (len <= 0) return r;
+    // Each sample turns at most κ_max·Δs: π/4 keeps the unwrap unambiguous.
+    int n = (int)ceilf(b.kappa_max * len / (kPiF / 4));
+    n = n < 4 ? 4 : (n > 1024 ? 1024 : n);
+    float h_prev = 0, turn = 0;
+    bezierHeading(b, from, &h_prev);
+    for (int i = 1; i <= n; i++) {
+        float h;
+        if (!bezierHeading(b, from + len * i / n, &h)) continue;
+        float d = h - h_prev;
+        d -= 2 * kPiF * roundf(d / (2 * kPiF));
+        turn += d;
+        h_prev = h;
+        r.lo = fminf(r.lo, turn);
+        r.hi = fmaxf(r.hi, turn);
+    }
+    r.total = turn / kRadPerDeg;
+    r.lo /= kRadPerDeg;
+    r.hi /= kRadPerDeg;
+    return r;
+}
+
+Path pathOf(const Bezier& b, float feed, const AxisLimits& limits, bool tangential) {
     Path p;
     p.length = b.length;
     p.end = b.p[3];
@@ -195,6 +228,19 @@ Path pathOf(const Bezier& b, float feed, const AxisLimits& limits) {
     p.accel = a;
     p.v_max_sqr = v * v;
     if (b.kappa_max > 0) p.v_max_sqr = fminf(p.v_max_sqr, a / b.kappa_max);
+    if (!tangential) return p;
+
+    const float w = limits.max_feed[3] * kRadPerDeg;
+    const float alpha = limits.max_accel[3] * kRadPerDeg;
+    if (b.kappa_max > 0) {
+        const float v_w = w / b.kappa_max;
+        p.v_max_sqr = fminf(p.v_max_sqr, v_w * v_w);
+        p.accel = fminf(p.accel, (1 - kAAccelShare) * alpha / b.kappa_max);
+    }
+    if (b.dkappa_max > 0) p.v_max_sqr = fminf(p.v_max_sqr, kAAccelShare * alpha / b.dkappa_max);
+    p.a_rate_start = b.kappa_start;
+    p.a_rate_end = b.kappa_end;
+    p.a_jump = aJump(limits);
     return p;
 }
 

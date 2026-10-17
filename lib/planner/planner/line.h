@@ -25,6 +25,9 @@ Line makeLine(Vec2 p0, Vec2 p1, float feed, const AxisLimits& limits);
 
 Path pathOf(const Line& ln);
 
+/** A turning `d` deg linearly along XY path `p`, capped by A. False if A has no limits. */
+bool aRides(Path& p, float d, const AxisLimits& limits);
+
 /** A Z or A move of `d` (mm or deg, signed), capped by that axis. */
 Path axisPath(Axes axes, float d, float feed, const AxisLimits& limits);
 

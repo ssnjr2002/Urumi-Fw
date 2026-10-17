@@ -54,7 +54,23 @@ float bezierT(const Bezier& b, float s);        // clamped to [0, 1]
 Vec2 bezierPoint(const Bezier& b, float t);
 Vec2 bezierDeriv(const Bezier& b, float t);     // dB/dt
 
-Path pathOf(const Bezier& b, float feed, const AxisLimits& limits);
+/** Heading at `s` mm, rad; false where the tangent nearly vanishes. */
+bool bezierHeading(const Bezier& b, float s, float* rad);
+
+/** The unwrapped heading from `from` mm to the end, deg relative to its start. */
+struct BezierTurn {
+    float total = 0;
+    float lo = 0;   // extremes along the way
+    float hi = 0;
+};
+BezierTurn bezierTurn(const Bezier& b, float from = 0);
+
+/**
+ * `tangential`: A follows the heading, capped by A's limits: v ≤ ω/κ_max,
+ * v² ≤ share·α/dκ_max, and the tangential accel ≤ (1 − share)·α/κ_max, so
+ * A's accel a_t·κ + v²·dκ/ds stays under α.
+ */
+Path pathOf(const Bezier& b, float feed, const AxisLimits& limits, bool tangential = false);
 
 }  // namespace planner
 

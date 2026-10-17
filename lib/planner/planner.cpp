@@ -40,6 +40,8 @@ bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, 
         const Line ln = makeLine(end_.xy(), target.xy(), feed, limits);
         if (ln.length <= 0) return true;
         path = pathOf(ln);
+        const float da = target.aSince(end_);
+        if (da != 0 && !aRides(path, da, limits)) return false;
     } else {
         path = axisPath(axes, axes == AXES_Z ? target.z - end_.z : target.aSince(end_), feed, limits);
     }
@@ -47,9 +49,9 @@ bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, 
 }
 
 bool Planner::pushBezierFrom(const Bezier& bz, float from, float feed, const AxisLimits& limits,
-                             float deviation, const PathCap& cap) {
+                             float deviation, const PathCap& cap, const BezierTurn* turn) {
     if (full()) return false;
-    Path path = capped(pathOf(bz, feed, limits), cap);
+    Path path = capped(pathOf(bz, feed, limits, turn != nullptr), cap);
     if (from > 0) {
         if (from >= path.length) return true;
         path.length -= from;
@@ -63,8 +65,10 @@ bool Planner::pushBezierFrom(const Bezier& bz, float from, float feed, const Axi
     b.bez = bz;
     Pos to = end_;
     to.setXy(bz.p[3]);
+    if (turn) to.addA(turn->total);
     pushBlock(Block::BEZIER, path, to, deviation);
     b.s0 = from;
+    b.tangent = turn != nullptr;
     return true;
 }
 
@@ -85,6 +89,7 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, f
     b.target = target;
     b.path = path;
     b.s0 = 0;
+    b.tangent = false;
     b.layer = tag_layer_;
     b.record = tag_record_;
     b.break_dist = tag_break_dist_;

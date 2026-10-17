@@ -6,9 +6,14 @@
  * the two accelerations. A tangent-continuous join costs nothing; only the
  * neighbours' own caps limit it.
  *
- * A path moves one axis set: XY, Z alone or A alone. Joins between different
- * sets stop. A Z or A path's direction is {±1, 0}, so the same formula runs
- * straight on at full speed and stops on a reversal.
+ * A path moves one axis set: XY (A may ride along), Z alone or A alone. Joins
+ * between different sets stop. A Z or A path's direction is {±1, 0}, so the
+ * same formula runs straight on at full speed and stops on a reversal.
+ *
+ * A riding along XY turns `a_rate` rad per mm of path at each end: κ on a
+ * tangential Bézier, ΔA/length on a line, 0 where A stays. Where the rates
+ * differ at a join A's speed steps by v·Δrate; the join is capped so the step
+ * stays under `a_jump`, the step that lags the blade at most kAMisalignRad.
  */
 
 #ifndef PLANNER_PATH_H
@@ -48,7 +53,12 @@ struct Pos {
     }
 };
 
-/** The axis set a path moves. */
+constexpr float kPiF = 3.14159265f;
+constexpr float kRadPerDeg = kPiF / 180.0f;
+constexpr float kAMisalignRad = 2.0f * kRadPerDeg;   // e_max; the bench tunes it
+constexpr float kAAccelShare = 0.5f;                 // of A's accel left for v²·dκ/ds
+
+/** The axis set a path moves; XY with A riding along is XY. */
 enum Axes : uint8_t { AXES_XY, AXES_Z, AXES_A, AXES_NONE, AXES_MIXED };
 
 /** Which set the move from `from` to `to` uses: NONE if it stays put. */
@@ -67,6 +77,9 @@ struct Path {
     Vec2 dir_start;       // unit tangents; Z and A: {±1, 0}
     Vec2 dir_end;
     Vec2 end;             // XY: mm, machine frame
+    float a_rate_start = 0;   // XY: rad of A per mm of path, signed
+    float a_rate_end = 0;
+    float a_jump = INFINITY;  // XY: rad/s A's speed may step at a join
 };
 
 /** Caps a caller adds to a path beyond its axes: another axis riding along. */
@@ -77,6 +90,9 @@ struct PathCap {
 
 /** Highest squared speed through the corner from `prev` into `next`. */
 float junctionMaxSqr(const Path& prev, const Path& next, float deviation);
+
+/** √(2·α·e_max): A's speed step at a join, rad/s, from A's limits. */
+float aJump(const AxisLimits& limits);
 
 }  // namespace planner
 

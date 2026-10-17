@@ -53,6 +53,7 @@ struct Block {
     Pos origin;                // start point
     Pos target;                // end point
     Bezier bez;                // BEZIER: the curve
+    bool tangent = false;      // BEZIER: A follows the heading from origin's A
     float max_entry_sqr = 0;   // junction limit with the previous block
     float entry_sqr = 0;       // committed plan
     float exit_sqr = 0;
@@ -80,7 +81,9 @@ public:
 
     /**
      * Queue a line from the end of the last one to `target`, moving one axis
-     * set (axesOf). Returns false if the ring is full or the line mixes sets.
+     * set (axesOf); A riding along XY turns linearly, capped by A's limits.
+     * Returns false if the ring is full, the line mixes sets, or A rides
+     * without limits.
      * A zero-length move queues nothing and returns true.
      */
     bool pushMove(const Pos& target, float feed, const AxisLimits& limits, float deviation,
@@ -99,10 +102,12 @@ public:
     }
     /**
      * The same Bézier from `from` mm along it, whose point there must be end().
-     * Nothing is queued if nothing is left of it.
+     * Nothing is queued if nothing is left of it. With `turn` (bezierTurn from
+     * `from`), A follows the heading, ending `turn->total` from where it starts.
      */
     bool pushBezierFrom(const Bezier& b, float from, float feed, const AxisLimits& limits,
-                        float deviation, const PathCap& cap = PathCap());
+                        float deviation, const PathCap& cap = PathCap(),
+                        const BezierTurn* turn = nullptr);
 
     /**
      * Queue an event: no motion, at rest on both sides. The executor stops at

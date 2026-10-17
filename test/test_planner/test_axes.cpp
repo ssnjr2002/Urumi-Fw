@@ -70,7 +70,7 @@ TEST_CASE("a move's axis set") {
         {at(1, 2, 3, 40, 1), AXES_A},     // a whole turn is a move
         {at(5, 2, 9, 40), AXES_MIXED},
         {at(1, 2, 9, 50), AXES_MIXED},
-        {at(5, 2, 3, 50), AXES_MIXED},
+        {at(5, 2, 3, 50), AXES_XY},      // A rides along
     };
     for (const Row& r : rows) CHECK(axesOf(from, r.to) == r.axes);
 }
