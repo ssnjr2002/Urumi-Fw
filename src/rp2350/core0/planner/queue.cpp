@@ -170,7 +170,7 @@ static planner::Vec2 meshClip(planner::Vec2 to) {
     return at(ok);
 }
 
-PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason) {
+PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason, bool aZero) {
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, true);
     if (r != PQ_OK) return r;
@@ -187,7 +187,10 @@ PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason
         const planner::Pos e = plannerRing.end();
         fit = to.x == e.x && to.y == e.y ? PQ_SOFT_LIMIT : meshLine(to, e.z, limits, cap);
     }
-    const bool pushed = mine && fit == PQ_OK && plannerRing.pushLine(to, feed, limits, kDeviation, cap);
+    planner::Pos target = plannerRing.end();
+    target.setXy(to);
+    if (aZero) target.addA(planner::Pos().aSince(target));
+    const bool pushed = mine && fit == PQ_OK && plannerRing.pushMove(target, feed, limits, kDeviation, cap);
     spin_unlock(plannerLock, s);
     if (!mine) return PQ_BAD_STATE;
     if (fit != PQ_OK) return fit;
@@ -536,7 +539,8 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     const bool swivel = tangential && (start || brk);
     const planner::BezierTurn turn = tangential ? planner::bezierTurn(b, from) : planner::BezierTurn();
     double aTo = aAbs(e);
-    bool aFits = !swivel || pickA(aAbs(e), headingDeg(d0), layerMo.periodDeg,
+    // Machine A is the heading less the tool's edge offset at the lock.
+    bool aFits = !swivel || pickA(aAbs(e), headingDeg(d0) - layerMo.aOffsetDeg, layerMo.periodDeg,
                                   layerMo.aMaxDeg, turn, &aTo);
     if (tangential && layerMo.aMaxDeg > 0)
         aFits = aFits && aTo + turn.hi <= layerMo.aMaxDeg && aTo + turn.lo >= -layerMo.aMaxDeg;

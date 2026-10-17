@@ -24,5 +24,6 @@ LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
     out->periodDeg  = 360.0f / t->periodCount;
     out->cornerAngleDeg = t->cornerAngleDeg;
     out->aMaxDeg    = t->aMaxDeg;
+    out->aOffsetDeg = t->aOffsetDeg;
     return mounted[l.head] == l.tool ? LAYER_OK : LAYER_NOT_MOUNTED;
 }

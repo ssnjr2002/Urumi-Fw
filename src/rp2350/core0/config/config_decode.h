@@ -18,7 +18,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 10u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 11u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      4u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -107,6 +107,7 @@ struct CfgTool {
     uint8_t periodCount;    // tangential: looks the same every 360/n degrees
     float   cornerAngleDeg; // tangential: a corner turning more lifts to swivel
     float   aMaxDeg;        // |A| limit either way from home; 0 = no cable
+    float   aOffsetDeg;     // tangential: the edge's heading at machine A = 0 (the lock)
     bool    plunge;         // cuts into the material, not on it
     float   xOffset;        // toolOffset: tip − head centre, mm
     float   yOffset;

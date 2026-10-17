@@ -28,6 +28,7 @@ struct LayerMotion {
     float periodDeg;      // tangential: 360 / periodCount
     float cornerAngleDeg; // tangential: a corner turning more lifts to swivel
     float aMaxDeg;        // 0 = no cable
+    float aOffsetDeg;     // tangential: edge heading at machine A = 0
 };
 
 // `mounted[h]` is head h's tool id (tools.h). `machineFeed` is the cut feed

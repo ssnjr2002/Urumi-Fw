@@ -141,6 +141,7 @@ static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
             !j["periodCount"].is<unsigned>() ||
             !readFloat(j["cornerAngleDeg"], &t.cornerAngleDeg) ||
             !readOptFloat(j["aMaxDeg"], &t.aMaxDeg) ||
+            !readOptFloat(j["aOffsetDeg"], &t.aOffsetDeg) ||
             !readBool(j["plunge"], &t.plunge) ||
             !readFloat(off["xOffset"], &t.xOffset) ||
             !readFloat(off["yOffset"], &t.yOffset) ||
@@ -249,6 +250,7 @@ static CfgDecodeError checkTools(const MachineCfg& c) {
             !feed(t.cutFeed) || !feed(t.plungeFeed) || t.periodCount == 0 ||
             !(t.cornerAngleDeg >= 0 && t.cornerAngleDeg <= 180) ||
             !(isfinite(t.aMaxDeg) && t.aMaxDeg >= 0) ||
+            !isfinite(t.aOffsetDeg) || (!t.tangential && t.aOffsetDeg != 0) ||
             (t.tangential && t.chamberCount > 0) ||
             (!t.tangential && t.periodCount != 1)) return CFG_DEC_TOOLS;
         for (uint8_t k = 0; k < t.chamberCount; k++)
@@ -347,7 +349,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
     JsonObject ft = filter["toolProfiles"]["*"].to<JsonObject>();
     for (const char* k : {"id", "toolType", "tangential", "periodCount", "cornerAngleDeg",
-                          "aMaxDeg", "plunge", "toolOffset", "chamberOffsets", "cutFeed",
+                          "aMaxDeg", "aOffsetDeg", "plunge", "toolOffset", "chamberOffsets", "cutFeed",
                           "plungeFeed", "power"})
         ft[k] = true;
 

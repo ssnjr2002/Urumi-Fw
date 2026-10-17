@@ -38,7 +38,7 @@ static bool toolChangeNext(uint8_t) {
     if (!lining) {
         lining = true;
         bool queued;
-        if (const char* why = lineTo(targetX, targetY, feed, &queued)) {
+        if (const char* why = lineTo(targetX, targetY, feed, &queued, true)) {
             fail(why);
             return false;
         }
@@ -70,6 +70,7 @@ static void start(void) {
     feed = fminf(c.x.jogFeed, c.y.jogFeed);
     if (!(feed > 0)) { fail("no_feed"); return; }
     if (const char* why = zsReady()) { fail(why); return; }
+    if (const char* why = aLockReady()) { fail(why); return; }
 
     // The job's ring is idle and empty in TOOL_CHANGE.
     const uint32_t s = spin_lock_blocking(plannerLock);
@@ -82,7 +83,7 @@ static void start(void) {
     if (lining) {
         // No Z to park: the line is the first step.
         bool queued;
-        const char* why = lineTo(targetX, targetY, feed, &queued);
+        const char* why = lineTo(targetX, targetY, feed, &queued, true);
         if (!queued) sequenceEnd();
         if (why) fail(why);
         else if (!queued) enterWait();

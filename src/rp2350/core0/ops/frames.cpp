@@ -166,6 +166,12 @@ bool framesWPos(uint8_t k, float* out) {
     float m;
     if (!framesMPos(k, &m)) return false;
     if (k == SLOT_A) {
+        // The edge heading: the mounted tool's offset from the lock.
+        const uint8_t sel = framesSelected();
+        if (sel < machineCfg().headCount) {
+            const CfgTool* t = configTool(machineCfg(), toolsMounted(sel));
+            if (t) m += t->aOffsetDeg;
+        }
         const float f = fmodf(fmodf(m, 360.0f) + 360.0f, 360.0f);
         *out = f > 180.0f ? f - 360.0f : f;
         return true;

@@ -57,6 +57,7 @@ TEST_CASE("a tangential tool needs its head's A") {
     c.tools[0].periodCount = 2;
     c.tools[0].cornerAngleDeg = 30;
     c.tools[0].aMaxDeg = 540;
+    c.tools[0].aOffsetDeg = -90;
     const uint8_t mounted[2] = { 1, 1 };
     LayerMotion mo{};
     c.heads[1].a.node.present = true;
@@ -65,6 +66,7 @@ TEST_CASE("a tangential tool needs its head's A") {
     CHECK(mo.periodDeg == doctest::Approx(180));
     CHECK(mo.cornerAngleDeg == doctest::Approx(30));
     CHECK(mo.aMaxDeg == doctest::Approx(540));
+    CHECK(mo.aOffsetDeg == doctest::Approx(-90));
     CHECK(layerResolve(c, mounted, hdr(1, 0), 10, &mo) == LAYER_BAD);   // head 0 has no A
 }
 

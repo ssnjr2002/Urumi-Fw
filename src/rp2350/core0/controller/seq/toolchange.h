@@ -7,7 +7,8 @@
 // TOOL_CHANGE:
 //   * the tool mounted on its head: select the head, then back;
 //   * otherwise the sequence SEQ_TOOL_CHANGE: select the head, park every Z
-//     (LEGS), a line to the head's probe switch (RING). Then TOOL_WAIT, the
+//     (LEGS), a line to the head's probe switch with A to the holder's lock
+//     (RING). Then TOOL_WAIT, the
 //     head's work Z cleared: `mount`, `jog` and `wzero` are admitted, and the
 //     tool mounted on the head with its Z zeroed goes back.
 // Back is BUFFERING, or PAUSED if the change came from there; the host resends

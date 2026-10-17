@@ -13,9 +13,10 @@ frame is in docs/plans/controller-homing.md.
   operator's side: X+ is right, Y+ is up (away from the operator). Z+ is up,
   away from the work (ISO 841).
 * Rotary A (a rotation about Z; ISO would name it C): + is counter-clockwise
-  seen from above (the right-hand rule about Z+), 0° is the knife's edge
-  facing X+. A is then the path heading, `atan2(dy, dx)`, with no offset or
-  sign flip.
+  seen from above (the right-hand rule about Z+). A heading of 0° is the
+  edge facing X+, so a cut's heading is `atan2(dy, dx)` with no sign flip.
+  Machine A's 0 is the holder's lock (the angle its lock button latches,
+  where tools mount); a tool's `aOffsetDeg` is its edge's heading there.
 * **`invertDir`** per axis is the wiring fix that makes the motor obey it.
   Commissioning checks it by jogging each axis +.
 * Only the + direction can mirror a job. Where 0 sits only shifts the
@@ -76,15 +77,18 @@ frame is in docs/plans/controller-homing.md.
 * Z0 by probing builds on the probe's contact height (`pz`) later; "zero
   here" with a tip touched off by hand works from the start.
 * A has no work offset: the heading is absolute, and a constant offset would
-  cut sideways. Its 0 (knife edge facing X+) is machine calibration,
-  `indexPos` in the homing config. A skewed sheet is a job rotation in XY
+  cut sideways. Machine A's 0 (the lock) is machine calibration, `indexPos`
+  in the homing config; the edge's offset from it is the tool's
+  `aOffsetDeg`. A skewed sheet is a job rotation in XY
   (the G68 role), not an A offset.
 
 ### A
 
 * `MPos` A is the count in degrees, unbounded: it is never folded.
-* `WPos` A is the heading: `MPos` A folded to (−180°, 180°], no offset. Motion
-  and range checks use `MPos`; the fold loses the turn count.
+* `WPos` A is the edge heading: `MPos` A plus the mounted tool's `aOffsetDeg`
+  (as `WPos` XY is the tip), folded to (−180°, 180°]. With no tool it is
+  `MPos` folded, 0 at the lock. Motion and range checks use `MPos`; the fold
+  loses the turn count.
 
 ### Stored positions
 

@@ -132,7 +132,7 @@
           "sweepFeed": 54.37,
           "rampSteps": 400,
           "toleranceDeg": 2.0,
-          "indexPos": 0          // edge angle at the index; set from CAD or by jogging
+          "indexPos": -46.7      // the index's A: the holder's lock button latches at 0
         }
       }
     },
@@ -201,7 +201,8 @@
     "knife": {
       "id": 1,
       "tangential": true,
-      "aMaxDeg": 180,            // the cable: |A| from home
+      "aMaxDeg": 180,            // the cable: |A| from the lock
+      "aOffsetDeg": 0,           // the edge's heading at A = 0 (the lock); measure on mount
       "unwind": true,
       "offsetMm": 0,
       "cornerAngleDeg": 20,

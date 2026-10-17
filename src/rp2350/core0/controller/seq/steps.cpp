@@ -5,6 +5,7 @@
 #include "steps.h"
 #include "../../config/machine_cfg.h"
 #include "../../ops/bus.h"
+#include "../../ops/frames.h"
 #include "../../ops/homing.h"
 #include "../../ops/position.h"
 #include "../../ops/sequence.h"
@@ -95,12 +96,19 @@ static const char* queueText(PlannerQueueResult r) {
     }
 }
 
-const char* lineTo(float x, float y, float feed, bool* queued) {
+const char* aLockReady(void) {
+    return framesAxis(SLOT_A) && !(axes_homed & 0x8) ? "a_not_homed" : nullptr;
+}
+
+const char* lineTo(float x, float y, float feed, bool* queued, bool aLock) {
     *queued = false;
     float at[4];
     if (!plannerJogFrom(at, RING_SEQ)) return "bad_state";
-    if (fabsf(x - at[0]) < 1e-3f && fabsf(y - at[1]) < 1e-3f) return nullptr;
-    const PlannerQueueResult r = plannerQueueLine(x, y, feed, RING_SEQ);
+    if (aLock) if (const char* why = aLockReady()) return why;
+    const bool a = aLock && framesAxis(SLOT_A);
+    const bool aThere = !a || fabsf(at[3]) < 1e-3f;
+    if (fabsf(x - at[0]) < 1e-3f && fabsf(y - at[1]) < 1e-3f && aThere) return nullptr;
+    const PlannerQueueResult r = plannerQueueLine(x, y, feed, RING_SEQ, a);
     if (r != PQ_OK) return queueText(r);
     sequenceRing();
     *queued = true;

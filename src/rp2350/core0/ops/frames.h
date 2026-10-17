@@ -54,7 +54,8 @@ uint8_t framesZHead(void);
 bool framesMPos(uint8_t k, float* out);
 
 // Work position of slot k, units: tip − work offset on X/Y/Z, Z less the bed
-// mesh; on A, MPos folded to (−180, 180]. False as framesMPos, or X/Y with no
+// mesh; on A, the edge heading (MPos + the mounted tool's aOffsetDeg) folded
+// to (−180, 180]. False as framesMPos, or X/Y with no
 // selection.
 bool framesWPos(uint8_t k, float* out);
 

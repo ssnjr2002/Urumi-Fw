@@ -2,9 +2,9 @@
 //
 // The XY form takes work mm (framesToMachine), a name a stored position
 // (framesNamed), probe_park the selected head's switch under that tool's tip
-// (framesProbeFor); each hands the anchor's machine XY to the recipe
-// (controller/seq/jogto), which parks the Zs before the line. `ok` once it
-// starts.
+// (framesProbeFor), with A to the holder's lock for a mount; each hands the
+// anchor's machine XY to the recipe (controller/seq/jogto), which parks the Zs
+// before the line. `ok` once it starts.
 
 #include <Arduino.h>
 #include <ctype.h>
@@ -35,7 +35,7 @@ bool cmdJogTo(const char* args) {
             Serial.printf("err %s\n", why); return true;
         }
     }
-    const char* why = jogtoStart(m[0], m[1]);
+    const char* why = jogtoStart(m[0], m[1], false);
     if (why) Serial.printf("err %s\n", why);
     else     Serial.println("ok");
     return true;
@@ -48,7 +48,7 @@ bool cmdProbePark(const char* args) {
     if (end == args || *end || id == 0 || id > 0xFF) { Serial.println("err usage"); return true; }
     float m[2];
     const char* why = framesProbeFor((uint8_t)id, &m[0], &m[1]);
-    if (!why) why = jogtoStart(m[0], m[1]);
+    if (!why) why = jogtoStart(m[0], m[1], true);
     if (why) Serial.printf("err %s\n", why);
     else     Serial.println("ok");
     return true;

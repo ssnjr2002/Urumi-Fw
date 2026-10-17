@@ -96,7 +96,7 @@ bool plannerJogFrom(float out[4], uint8_t reason) {
     memcpy(out, at, sizeof at);
     return true;
 }
-PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason) {
+PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason, bool) {
     if (queueResult != PQ_OK) return queueResult;
     moves[moveCount++] = { false, 0, x, y, 0, feed, reason };
     depth = 1;

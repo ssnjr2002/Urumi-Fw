@@ -15,13 +15,14 @@
 
 static float   targetX, targetY, feed;
 static bool    lining;          // step 2
+static bool    lock;            // A rides the line to the lock
 static char    refusal[40];
 
 static bool jogtoNext(uint8_t) {
     if (lining) return false;
     lining = true;
     bool queued;
-    if (const char* why = lineTo(targetX, targetY, feed, &queued)) {
+    if (const char* why = lineTo(targetX, targetY, feed, &queued, lock)) {
         sequenceFail(why);
         return false;
     }
@@ -30,8 +31,9 @@ static bool jogtoNext(uint8_t) {
 
 static const Sequence jogtoSequence = { SEQ_JOGTO, jogtoNext, nullptr };
 
-const char* jogtoStart(float mx, float my) {
+const char* jogtoStart(float mx, float my, bool aLock) {
     if ((axes_homed & 0x3) != 0x3) return "not_homed";
+    if (aLock) if (const char* why = aLockReady()) return why;
     uint8_t zs[CFG_MAX_HEADS];
     const uint8_t nz = headZNodes(zs);
 
@@ -54,6 +56,7 @@ const char* jogtoStart(float mx, float my) {
     targetY = my;
     feed    = f;
     lining  = false;
+    lock    = aLock;
     // The reason byte reads GOTO from the park on; the ring is idle and empty.
     const uint32_t s = spin_lock_blocking(plannerLock);
     ringOwner = RING_SEQ;
@@ -68,7 +71,7 @@ const char* jogtoStart(float mx, float my) {
     if (nz == 0) {
         lining = true;
         bool queued;
-        const char* why = lineTo(targetX, targetY, feed, &queued);
+        const char* why = lineTo(targetX, targetY, feed, &queued, lock);
         if (!queued) sequenceEnd();
         return why;
     }

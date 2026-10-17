@@ -9,5 +9,6 @@
 // Start a run to anchor machine mm (mx, my). X, Y and every present head's Z
 // must be homed, and the Z nodes answer before anything moves. Returns nullptr
 // once started, or the refusal text after `err ` with nothing moved. Gating the
-// machine state is the caller's.
-const char* jogtoStart(float mx, float my);
+// machine state is the caller's. `aLock`: A rides the line to the holder's
+// lock (machine 0), as steps.h lineTo.
+const char* jogtoStart(float mx, float my, bool aLock);

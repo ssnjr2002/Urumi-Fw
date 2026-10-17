@@ -31,7 +31,12 @@ const char* zsReady(void);
 const char* parkZs(void);
 
 // RING: a straight XY line to machine mm (x, y) at `feed` mm/s, owned by the
-// live sequence (RING_SEQ); the step ends when the ring drains. Returns
-// nullptr, or the refusal text; `*queued` is false when it queued nothing
-// (refused, or the head is there already).
-const char* lineTo(float x, float y, float feed, bool* queued);
+// live sequence (RING_SEQ); the step ends when the ring drains. `aLock`: A
+// rides it to machine 0, the holder's lock (no A on the head: XY only; A
+// unhomed: a_not_homed). Returns nullptr, or the refusal text; `*queued` is
+// false when it queued nothing (refused, or the head is there already).
+// A park (lineTo's aLock) is possible: the selected head has no A, or A is
+// homed. nullptr, or the refusal text.
+const char* aLockReady(void);
+
+const char* lineTo(float x, float y, float feed, bool* queued, bool aLock = false);
