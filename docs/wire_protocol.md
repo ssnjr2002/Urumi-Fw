@@ -169,11 +169,11 @@ drained to idle, within one step, snapped). `END` closes the contour. A
 `NACK_BAD_CURVE`. The first record after a layer header is a `START` whatever
 its flags. `seqreset` and abort forget an open contour. `BREAK` marks a
 corner or cusp; joins run on the planner's junction limit whatever the flags
-say. A tangential tool's A turns only at flags: after a `START`'s travel and
-at a `BREAK` it swivels to the curve's start heading (the equivalent mod
-360/`periodCount` nearest the current A, inside ±`aMaxDeg`), lifting for a
-turn past `cornerAngleDeg`; A holds along the record. A swivel no equivalent
-inside `aMaxDeg` reaches is `NACK_SOFT_LIMIT`.
+say. A tangential tool's A follows the curve's heading. It reaches the
+start heading (the equivalent mod 360/`periodCount` nearest the current A
+whose curve stays inside ±`aMaxDeg`) during a `START`'s travel, and at a
+`BREAK` swivels to it, lifting for a turn past `cornerAngleDeg`. A record
+whose curve no equivalent keeps inside `aMaxDeg` is `NACK_SOFT_LIMIT`.
 
 **Frames.** Points are work coordinates: the Pico adds the work offset and
 subtracts the selected head's offset (docs/plans/coordinate-system.md), a
@@ -504,6 +504,7 @@ tools=<id>,…         the tool id each head has mounted (`mount`), head order, 
 mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)
 meshslope=<s>        its steepest slope between neighbouring points, mm/mm  (`-` without a loaded mesh)
 late=<n>             planner blocks Core 1 found late, since boot; a job lands PAUSED, a jog holds and runs on
+amiss=<n>            tangential curves whose tracked A ended over 0.5° from the planned A, since boot; A snapped to it
 texp= tmeas= twall=           DEBUG_TIMING builds only: last burst's expected, measured and wall time (us)
 ```
 Pre-flight checks every required axis is **present** (pingnode), **enabled**

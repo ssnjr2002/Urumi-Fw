@@ -443,23 +443,28 @@ static float headingDeg(planner::Vec2 d) { return atan2f(d.y, d.x) * (180.0f / (
 
 static double aAbs(const planner::Pos& p) { return (double)p.turns * 360.0 + p.a; }
 
-// The equivalent of heading `h` mod `period` nearest `cur`, inside ±`aMax`
-// (0 = no cable); false if none fits.
-static bool pickA(double cur, float h, float period, float aMax, double* out) {
+// The equivalent of heading `h` mod `period` nearest `cur` whose curve, turning
+// `turn` from it, stays inside ±`aMax` (0 = no cable); false if none fits.
+static bool pickA(double cur, float h, float period, float aMax,
+                  const planner::BezierTurn& turn, double* out) {
     double c = h + period * round((cur - h) / period);
     if (aMax > 0) {
-        if (c > aMax) c -= period * ceil((c - aMax) / period);
-        else if (c < -aMax) c += period * ceil((-aMax - c) / period);
-        if (fabs(c) > aMax) return false;
+        const double hi = aMax - turn.hi, lo = -aMax - turn.lo;
+        if (c > hi) c -= period * ceil((c - hi) / period);
+        else if (c < lo) c += period * ceil((lo - c) / period);
+        if (c > hi || c < lo) return false;
     }
     *out = c;
     return true;
 }
 
-static void pushA(double a, const planner::AxisLimits& limits) {
-    planner::Pos to = plannerRing.end();
+static planner::Pos withA(planner::Pos to, double a) {
     to.addA((float)(a - aAbs(to)));
-    plannerRing.pushMove(to, limits.max_feed[SLOT_A], limits, kDeviation);
+    return to;
+}
+
+static void pushA(double a, const planner::AxisLimits& limits) {
+    plannerRing.pushMove(withA(plannerRing.end(), a), limits.max_feed[SLOT_A], limits, kDeviation);
 }
 
 // Seconds for `d` mm from rest to rest at speed `v` and acceleration `a`.
@@ -523,17 +528,21 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     // A tool with a duty keeps 4 slots for a deadline lift (plannerDutyLift).
     int blocks = 1 + (start ? 3 + powered : 0) + (dutyStop ? 4 : 0) +
                        (end ? 1 + powered : 0) + (powered && pw.hasDuty ? 4 : 0);
-    // A tangential tool swivels to the curve's heading at a START (after the
-    // travel) and at a BREAK; a BREAK turning past cornerAngleDeg lifts for it.
+    // A tangential tool follows the curve's heading. It turns to the start
+    // heading during a START's travel and swivels at a BREAK, lifting for a
+    // swivel past cornerAngleDeg; the whole curve stays inside the cable.
     const planner::Vec2 d0 = from > 0 ? planner::bezierDeriv(b, planner::bezierT(b, from))
                                       : planner::Vec2{b.p[1].x - b.p[0].x, b.p[1].y - b.p[0].y};
     const bool swivel = tangential && (start || brk);
-    double aTo = 0;
-    const bool aFits = !swivel || pickA(aAbs(e), headingDeg(d0), layerMo.periodDeg,
-                                        layerMo.aMaxDeg, &aTo);
+    const planner::BezierTurn turn = tangential ? planner::bezierTurn(b, from) : planner::BezierTurn();
+    double aTo = aAbs(e);
+    bool aFits = !swivel || pickA(aAbs(e), headingDeg(d0), layerMo.periodDeg,
+                                  layerMo.aMaxDeg, turn, &aTo);
+    if (tangential && layerMo.aMaxDeg > 0)
+        aFits = aFits && aTo + turn.hi <= layerMo.aMaxDeg && aTo + turn.lo >= -layerMo.aMaxDeg;
     const bool cornerLift = swivel && !start && !dutyStop &&
                             fabs(aTo - aAbs(e)) > layerMo.cornerAngleDeg;
-    blocks += swivel + (cornerLift ? 2 : 0);
+    blocks += (swivel && !start) + (cornerLift ? 2 : 0);
     const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
     if (ringOwner != RING_JOB) {
@@ -565,8 +574,9 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
         plannerRing.setTag(curLayer, nextRecord, breakDist);
         if (start) {
             pushZ(up, e.z < up ? liftFeed : layerMo.plungeFeed, limits);
-            plannerRing.pushLine(p0, travelSpeed(), limits, kDeviation, travelCap);
-            if (swivel) pushA(aTo, limits);
+            planner::Pos to = withA(plannerRing.end(), aTo);
+            to.setXy(p0);
+            plannerRing.pushMove(to, travelSpeed(), limits, kDeviation, travelCap);
             if (powered) plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(down, layerMo.plungeFeed, limits);
         }
@@ -583,7 +593,8 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
         } else if (swivel && !start) {
             pushA(aTo, limits);
         }
-        plannerRing.pushBezierFrom(b, from, layerMo.cutFeed, limits, kDeviation, curveCap);
+        plannerRing.pushBezierFrom(b, from, layerMo.cutFeed, limits, kDeviation, curveCap,
+                                   tangential ? &turn : nullptr);
         if (end) {
             // Paused in the lift, the job resumes at the next record.
             plannerRing.setTag(curLayer, nextRecord + 1);

@@ -38,7 +38,7 @@ struct Snap {
     bool     mposOk[4], wposOk[4];
     uint8_t  head;
     uint8_t  tools[CFG_MAX_HEADS], headCount;
-    uint32_t late;
+    uint32_t late, aMiss;
     uint8_t  meshFile;
     bool     meshOn;
     uint16_t meshNx, meshNy;
@@ -78,6 +78,7 @@ void takeSnap(Snap& s) {
     }
     s.head = framesSelected();
     s.late = plannerExec.lateAdoptions();
+    s.aMiss = plannerExec.aMisses();
     s.meshFile = meshFile();
     s.meshOn   = meshEnabled();
     s.meshNx   = meshNx();
@@ -200,6 +201,8 @@ const Key kKeys[] = {
         return KEY_OK; } },
     // Planner blocks Core 1 found late, since boot; each held the motion briefly.
     { "late",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.late); } },
+    // Tangential curves whose tracked A missed the planned end A, since boot.
+    { "amiss",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.aMiss); } },
     // The bed mesh: <nx>x<ny> loaded and on, off, flat (no file) or bad.
     { "mesh",      [](const Snap& s, char* o, size_t n) { return fmtMesh(o, n, s); } },
     // Its steepest slope between neighbouring points, mm/mm.
