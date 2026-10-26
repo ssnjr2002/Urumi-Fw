@@ -458,7 +458,7 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
   `web/src/wire/format/`, the host's flatten (heading unwrap);
   `docs/wire_protocol.md`.
 * Depends on: AD. A protocol change: merges before AF.
-* Status: Ready to merge.
+* Status: Done (merged e382df7). Unblocks AF.
 * Outcome:
   * Deviation: a chamber layer, and a tangential tool without a cable, keep
     the nearest pick (`pickA`); only a cabled tangential swivel centres
