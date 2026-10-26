@@ -328,9 +328,26 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 ### AC: revolver chamber
 
 * Name: `feature/job-a-chamber`
-* Purpose: a layer with a chamber turns A to `chamberOffsets[k]` (nearest
+* Type: feature.
+* Purpose: a layer with a chamber turns A to `chamberOffsets[k−1]` (nearest
   equivalent, within `aMaxDeg`) during the START travel and holds it.
-* Files: `core0/ops/layer.{h,cpp}`, `core0/planner/queue.cpp`.
+* Offsets: absolute per chamber, from the tool's latch key, which sits at
+  machine 0 (the lock) when mounted; any finite value (375 = 15). No
+  `aOffsetDeg` on non-tangential tools: one way to state each angle, and
+  uneven spacing needs the list anyway.
+* Changes:
+  * `ops/layer.{h,cpp}`: `LayerMotion` carries the chamber angle;
+    `layerResolve` fills it, and refuses a chamber tool on a head without A
+    (`LAYER_BAD`, as tangential).
+  * `planner/queue.cpp` `plannerQueueBezier`: on a START of a chamber layer,
+    `aTo` from `pickA(cur, chamberDeg, 360, aMaxDeg, BezierTurn{})`; the
+    `withA` travel turns it. BREAKs leave A. No fit → `PQ_SOFT_LIMIT`; no A
+    limits → `PQ_NO_LIMITS`. Chamber changes and resumes ride the next START.
+  * `test/test_config/test_layer.cpp`: the angle picked, a head without A.
+  * `docs/wire_protocol.md`: the chamber turns A; the refusals.
+* Bench: chamber switches across layers, the nearest-equivalent wrap, resume.
+* Files: `core0/ops/layer.{h,cpp}`, `core0/planner/queue.cpp`,
+  `test/test_config/test_layer.cpp`, `docs/wire_protocol.md`.
 * Depends on: AA2.
 
 ### AD: blade offset
