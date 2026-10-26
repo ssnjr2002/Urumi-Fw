@@ -505,6 +505,25 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
   a BREAK with a duty lift and an unwind lifts once; a pause in an unwind
   resumes; a record turning over 360° is refused.
 * Depends on: AE.
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: none from the plan. A planned duty stop needs a
+    `nextBreakDist`, sent only on a START or BREAK, so it never meets a
+    smooth-join unwind; the `unwind && !dutyStop` guard stays, commented.
+  * Interface: none new; `plannerQueueRecord` unchanged. `pickRoomA` in
+    `queue.cpp`.
+  * Bench (COM8, knife on head 0, no material): a 450° stretch ran 90 → 180,
+    lifted at the join, unwound 180 → −180 and finished at 180; paused in
+    the unwind (A 21.8°, lifted) it resumed at record 1 and finished at 180;
+    a 10° BREAK after 180° became a lifted 350° swivel (180 → −170); with
+    the laser standing in as a duty tool (`maxOnS` 6, `minOnS` 3, for the
+    run only) the same BREAK lifted once, the swivel inside, and no deadline
+    lift followed in 12 s of on-time; with `aMaxDeg` 40 for the run a 90°
+    record was `NACK_SOFT_LIMIT`. Not run: an END record with a duty stop at
+    its BREAK, a deadline duty lift next to an unwind join.
+  * Findings: a smooth-join unwind could also reset the duty while lifted
+    (tool off, on with its dwell); a deadline duty lift just before an
+    unwind join lifts twice. Both left for later.
 
 ## Open
 
@@ -516,4 +535,9 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
   lift all show as `JOB_RUNNING` with Z moving. A per-block lift tag (a
   bitmask, since one lift can serve several reasons at a BREAK) published by
   Core 1 into the status. Its own plan: `lib/planner` tag, follower,
-  `shared_state.h`, the status wire, web.
+  `shared_state.h`, the status wire, web. With it, `get` keys for the tool's
+  on state and its duty on-time (`get` has neither; AF's duty bench was
+  inferred from the absent deadline lift).
+* A blade mounted with its tip outside the shrunk soft range (at the edge,
+  e.g. after homing) cannot turn A until XY is jogged in. Refuse the mount
+  there, or move in after it.
