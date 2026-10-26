@@ -458,6 +458,23 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
   `web/src/wire/format/`, the host's flatten (heading unwrap);
   `docs/wire_protocol.md`.
 * Depends on: AD. A protocol change: merges before AF.
+* Status: Ready to merge.
+* Outcome:
+  * Deviation: a chamber layer, and a tangential tool without a cable, keep
+    the nearest pick (`pickA`); only a cabled tangential swivel centres
+    (`pickCentredA`). The per-record ±`aMaxDeg` check stays as the backstop.
+  * For AF: every record carries the rest of its stretch's sweep from its own
+    p0 (`[57..60]`, record 62 bytes); `plannerQueueRecord` takes
+    `sweepMin`/`sweepMax`. The host turn is `web/src/toolpath/heading.ts`;
+    `test_bezier.cpp` checks the host's sweeps against the Pico's own turn.
+  * Bench (COM8, no material): a 270° stretch fitting from one start ran
+    −150 → 120; one fitting from none and a 450° one were refused at their
+    START; resumes inside record 0 and record 2 finished in the cable; with
+    `periodCount` 2 for the run, A at −160 went to +10, not −170. Not tested:
+    a resume from a moved A (`jog a` is refused while paused).
+  * Findings: with the knife's config (`periodCount` 1, `aMaxDeg` 180) at
+    most one equivalent fits, so centred and nearest agree. AD's Outcome
+    still lists the `test_machine` link failure, fixed in 62597de.
 
 ### AF: mid-cut unwind
 
