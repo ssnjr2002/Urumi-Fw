@@ -122,7 +122,7 @@ wire (X,Y curves) → Core 0 queue    → planner ring  → executor        → 
 | along a curve | A follows the tangent | AB |
 | contour END | lift; A stays; the next START turns it | AA |
 | layer with a chamber | the travel turns A to `chamberOffsets[k]`'s nearest equivalent and holds it | AC |
-| stretch wider than the range | hold, lift, unwind by whole periods, plunge at the same heading | AF |
+| stretch wider than the range | at a join, lift, unwind by whole periods, plunge at the same heading | AF |
 
 * A returning to 0 at the end of a job: no job-end record exists; left to
   the unwind work (AE/AF) to decide.
@@ -144,14 +144,19 @@ wire (X,Y curves) → Core 0 queue    → planner ring  → executor        → 
 
 ### Mid-cut unwind
 
-* Only a stretch whose own sweep exceeds `2·aMaxDeg` needs it. Core 0 knows
-  at the stretch's start (sweep) and Core 1 watches A against the range live
-  (the fallback), as ZC2 does for duty: hold, lift, A-only unwind by whole
-  periods to the equivalent nearest 0, plunge at the same XY and heading,
-  continue from `s`. Reuses `Executor::release`, `beginFront`/`endFront`,
-  `Block::resume_s`.
-* Settle in AF: where Core 0 places a planned unwind inside a long stretch,
-  and how it shares the stop with a duty lift.
+* Only a stretch whose own sweep exceeds `2·aMaxDeg` needs it. Core 0 plans
+  it alone, at the join between two records: where the next record does not
+  fit from the current A, it queues lift, A-only unwind by whole periods,
+  plunge at the same XY and heading, then the record. Nothing splits
+  mid-record; a record whose own turn exceeds `2·aMaxDeg` is still refused.
+* No live watch on Core 1: every queued record already fits ±`aMaxDeg` from
+  its start A, so Core 1 cannot drive A out of range.
+* The unwind's equivalent: centred on the rest's sweep if it fits (AE's
+  pick), else the one leaving the most room in the stretch's direction. The
+  same pick replaces AE's refusal of a wide stretch at its START or BREAK.
+* One lift serves every reason due at a spot: a BREAK's duty lift or corner
+  lift carries the unwind's A move. The tool stays on through an unwind; it
+  counts toward the on-time as a corner lift does.
 
 ### Blade offset
 
@@ -167,8 +172,8 @@ wire (X,Y curves) → Core 0 queue    → planner ring  → executor        → 
 ### Out of range
 
 * A has no machine range; `aMaxDeg` is the only A limit. A stretch that can
-  never fit and has no unwind available (before AF) is refused at its record
-  (`PQ_SOFT_LIMIT`, the record's NACK).
+  never fit, a single record turning more than `2·aMaxDeg`, is refused at
+  its record (`PQ_SOFT_LIMIT`, the record's NACK).
 
 ## Branches
 
@@ -479,13 +484,36 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 ### AF: mid-cut unwind
 
 * Name: `feature/job-a-unwind`
-* Purpose: a stretch wider than the range unwinds mid-cut: planned by Core 0
-  from the sweep, Core 1's live range watch as the fallback.
-* Files: `lib/planner/` if needed; `core0/planner/queue.cpp`;
-  `core1/emit/follower.cpp`; `ipc/core1_facts.h`, `ipc/shared_state.h`.
+* Type: feature.
+* Purpose: a stretch wider than the range unwinds at a join between records,
+  planned by Core 0 from the sweep (see Mid-cut unwind).
+* Changes, all in `plannerQueueRecord` (`queue.cpp:522`):
+  * A smooth join whose record does not fit from the current A
+    (`queue.cpp:586`, refused today at `:612`) becomes an unwind: lift,
+    `pushA`, plunge, as a corner lift (`:636`), with its blocks counted and
+    its Z moves checked.
+  * The pick when the rest's sweep does not fit: the equivalent fitting
+    this record's own turn that leaves the most room in the stretch's
+    direction (sign of `sweepMax + sweepMin`). Used at an unwind, a START and
+    a BREAK.
+  * A planned duty lift or corner lift at a BREAK carries the move; a pause
+    in an unwind resumes at its record through the START pick.
+* Files: `core0/planner/queue.{h,cpp}`; `docs/wire_protocol.md` (the
+  refusals and the pick). No `lib/planner`, Core 1 or IPC change.
+* Checks: `pio run -e pico`; `queue.cpp` has no native test.
+* Bench (COM8, no material): a 540° spiral unwinds at a join and finishes;
+  a BREAK with a duty lift and an unwind lifts once; a pause in an unwind
+  resumes; a record turning over 360° is refused.
 * Depends on: AE.
 
 ## Open
 
 * Bench: A backlash after an unwind; how clean a re-plunge into the slit is.
 * A back to 0 at the end of a job (no job-end record).
+* A record turning more than `2·aMaxDeg` is refused (AF); the host could
+  split it.
+* Why the blade is up: a contour END, corner, duty, deadline duty and unwind
+  lift all show as `JOB_RUNNING` with Z moving. A per-block lift tag (a
+  bitmask, since one lift can serve several reasons at a BREAK) published by
+  Core 1 into the status. Its own plan: `lib/planner` tag, follower,
+  `shared_state.h`, the status wire, web.
