@@ -514,6 +514,7 @@ export interface ToolProfile {
     readonly id?: number;
     readonly toolType: ToolType;
     readonly tangential: boolean;
+    /** Tangential: the blade tip's trail behind the A axis, mm; the Pico runs the axis ahead of it. */
     readonly offsetMm: number;
     readonly unwind: boolean;
     /** A tangential tool looks the same every 360/periodCount degrees (knife 1, crease 2). */

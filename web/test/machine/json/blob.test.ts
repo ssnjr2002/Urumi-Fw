@@ -94,6 +94,7 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "tool_chambers", host: true, mutate: (c) => (c.toolProfiles.knife.chamberOffsets = [0]) },
     { name: "tool_period", host: true, mutate: (c) => (c.toolProfiles.revolver_pen.periodCount = 2) },
     { name: "tool_a_offset", host: true, mutate: (c) => (c.toolProfiles.revolver_pen.aOffsetDeg = 90) },
+    { name: "tool_blade_offset", host: true, mutate: (c) => (c.toolProfiles.revolver_pen.offsetMm = 0.25) },
     { name: "no_period", host: false, mutate: (c) => delete c.toolProfiles.knife.periodCount },
     { name: "probe_reach", host: false, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 1e4, y: 0 }) },
 ];

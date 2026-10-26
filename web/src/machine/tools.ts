@@ -12,8 +12,6 @@
 
 import { ToolType, toolProfile, type ToolProfile } from "./schema.js";
 
-export const OFFSET_TOLERANCE_MM = 0.05;
-
 export const PEN: ToolProfile = toolProfile("pen", {
     toolType: ToolType.PEN,
     tangential: false,
@@ -78,13 +76,3 @@ export const TOOL_PROFILES_BY_TYPE: Readonly<Record<number, ToolProfile>> = {
     [ToolType.CREASE]: CREASE,
     [ToolType.REVOLVER_PEN]: REVOLVER_PEN,
 };
-
-/**
- * True if the tool's blade offset is large enough to require (unimplemented)
- * offset compensation. The discretize stage refuses to run with a tool that
- * needs offset comp — it would cut wrong silently. Raise OFFSET_TOLERANCE_MM
- * only once compensation exists.
- */
-export function needsOffsetComp(profile: ToolProfile): boolean {
-    return profile.offsetMm > OFFSET_TOLERANCE_MM;
-}

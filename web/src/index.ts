@@ -67,14 +67,12 @@ export {
     type ReferencePoint,
     type ToolOffset,
     type LaserPointer,
-    OFFSET_TOLERANCE_MM,
     // tools
     ToolType,
     type ToolProfile,
     toolProfile,
     type DutyLimits,
     type ToolPower,
-    needsOffsetComp,
     // tool presets + lookup tables (demo uses TOOL_PROFILES_BY_TYPE)
     PEN,
     KNIFE,

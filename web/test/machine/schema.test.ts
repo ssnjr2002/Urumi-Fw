@@ -6,7 +6,6 @@
 
 import { describe, it, expect } from "vitest";
 import {
-    OFFSET_TOLERANCE_MM,
     PEN,
     KNIFE,
     CREASE,
@@ -361,8 +360,3 @@ describe("config: pipelineConfig overrides", () => {
     });
 });
 
-describe("config: OFFSET_TOLERANCE_MM", () => {
-    it("is 0.05", () => {
-        expect(OFFSET_TOLERANCE_MM).toBe(0.05);
-    });
-});
