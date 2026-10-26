@@ -19,6 +19,7 @@ planner::Planner  plannerRing;
 spin_lock_t       lockStorage;
 spin_lock_t*      plannerLock = &lockStorage;
 uint8_t           homingLatched;
+volatile uint32_t dutyEpoch;
 
 namespace {
 bool degraded, blocking, complete = true;
@@ -57,6 +58,7 @@ void probeTeardown(bool restore) {
     contextClose(CTX_PROBE);
 }
 void plannerStopJog() { jogStops++; }
+bool plannerQueueLift(uint8_t) { return false; }   // nothing to lift: the abort lands at once
 bool    sequenceLive(void)    { return seqId != SEQ_NONE; }
 uint8_t sequenceId(void)      { return seqId; }
 bool    sequenceWaiting(void) { return seqId != SEQ_NONE && seqWaits; }
