@@ -50,6 +50,8 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
     const MachineCfg& cfg = machineCfg();
     float at[4];
     if (!plannerJogFrom(at, RING_JOG_CONT)) return MSEG_NACK_BAD_STATE;
+    // A swings a blade's axis about the tip: the tip inside its range keeps it in.
+    if (d[3] != 0 && framesCheckXY(at[0], at[1])) return MSEG_NACK_SOFT_LIMIT;
 
     // How far each moving axis may go: to its soft end when homed with
     // softLimits, else maxTravel; A one CJOG_A_RUN. A diagonal stops at the
@@ -62,7 +64,7 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
         const bool homed = axes_homed & (1u << k);
         if (!homed && !cfg.jogUnhomed) return MSEG_NACK_BAD_STATE;
         float lo, hi, room = k == SLOT_A ? CJOG_A_RUN : a->maxTravel;
-        if (k != SLOT_A && homed && a->softLimits && configAxisRange(*a, &lo, &hi))
+        if (k != SLOT_A && homed && a->softLimits && framesTipRange(k, &lo, &hi))
             room = d[k] > 0 ? hi - at[k] : at[k] - lo;
         run = fminf(run, room);
         float f = (homed ? a->jogFeed : a->jogFeedUnhomed) * speed / 64.0f;

@@ -18,7 +18,8 @@ enum PlannerQueueResult : uint8_t {
     PQ_FULL,        // the ring is full; try again as it drains
     PQ_BAD_CURVE,   // a degenerate handle, a cusp, or an unfittable curve
     PQ_NO_FEED,     // a record before any `feed`
-    PQ_SOFT_LIMIT,  // the bed mesh would take Z outside its soft range
+    PQ_SOFT_LIMIT,  // the bed mesh would take Z outside its soft range, or A
+                    // would swing a blade's axis from a tip outside XY's
     PQ_NO_JOB,      // a record with no job open (no LAYER_HDR yet)
     PQ_NO_RESUME,   // a LAYER_HDR in JOB.PAUSED not naming where the job stopped
 };

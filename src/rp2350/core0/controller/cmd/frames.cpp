@@ -105,13 +105,14 @@ bool cmdWzero(const char* args) {
     // Check every axis before setting any.
     float tip[3];
     float dx = 0, dy = 0;
-    if ((want[SLOT_X] || want[SLOT_Y]) && !framesTipOffset(&dx, &dy)) {
+    if ((want[SLOT_X] || want[SLOT_Y]) &&
+        (!framesTipOffset(&dx, &dy) || !framesTipMPos(&tip[SLOT_X], &tip[SLOT_Y]))) {
         Serial.println("err no_head"); return true;
     }
     for (uint8_t k = 0; k < 3; k++) {
         if (!want[k]) continue;
         if (!(axes_homed & (1u << k))) { Serial.printf("err not_homed %c\n", "xyz"[k]); return true; }
-        if (!framesMPos(k, &tip[k])) { Serial.println("err no_head"); return true; }
+        if (k == SLOT_Z && !framesMPos(k, &tip[k])) { Serial.println("err no_head"); return true; }
         tip[k] += k == SLOT_X ? dx : k == SLOT_Y ? dy : 0;
     }
     // XY first: the mesh's offset is relative to the new work origin. Z is

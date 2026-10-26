@@ -706,6 +706,9 @@ static void queueAxisJog(uint8_t k, float d, float feed) {
     if (const char* why = framesCheckMove(k, at[k], at[k] + d, &left)) {
         Serial.printf("err %s %.2f\n", why, left); return;
     }
+    // A swings a blade's axis about the tip: the tip inside its range keeps it in.
+    if (k == SLOT_A)
+        if (const char* why = framesCheckXY(at[0], at[1])) { Serial.printf("err %s\n", why); return; }
     replyQueued(plannerQueueAxis(k, d, feed, RING_JOG_STEP));
 }
 

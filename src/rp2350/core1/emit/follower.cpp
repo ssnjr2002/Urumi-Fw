@@ -19,7 +19,8 @@
 // X, Y, Z, A are slots 0 to 3, as machinePos; Z and A are the selected head's.
 //
 // The planner's Z is flat: the bed mesh latched for this ring (plannerMesh) is
-// added to Z's target at the tip, each tick.
+// added to Z's target at the tip, each tick. Its XY is the blade tip: X and Y's
+// targets add the knife axis's lead (plannerBlade) at the tick's A.
 
 #include <Arduino.h>
 #include "../../ipc/shared_state.h"
@@ -329,6 +330,7 @@ void __time_critical_func(processPlanner)() {
     const uint8_t why0 = jobReason;
     const bool runsOn = jog || why0 == JOB_HOLDING || why0 == JOB_ABORTING;
     const PlannerMesh mesh = plannerMesh;
+    const PlannerBlade blade = plannerBlade;
     bool holding = false, aborting = false, lateHold = false, dutyHold = false;
     uint32_t late = plannerExec.lateAdoptions();
     int slot = 0;
@@ -405,8 +407,9 @@ void __time_critical_func(processPlanner)() {
         slot = 0;
         pending = 0;
 
-        inc[0] = incrementFor(toQ32(pos.x * plannerSpm[0]) + kHalf - accum[0]);
-        inc[1] = incrementFor(toQ32(pos.y * plannerSpm[1]) + kHalf - accum[1]);
+        const planner::Vec2 lead = bladeLead(blade, pos.a);
+        inc[0] = incrementFor(toQ32((pos.x + lead.x) * plannerSpm[0]) + kHalf - accum[0]);
+        inc[1] = incrementFor(toQ32((pos.y + lead.y) * plannerSpm[1]) + kHalf - accum[1]);
         float z = pos.z;
         if (mesh.mesh) z += planner::meshAt(*mesh.mesh, pos.x + mesh.tipX, pos.y + mesh.tipY) - mesh.ref;
         inc[2] = incrementFor(toQ32(z * plannerSpm[2]) + kHalf - accum[2]);

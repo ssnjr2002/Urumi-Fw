@@ -65,8 +65,9 @@ static float spmOf(uint8_t k) {
     return a->invertDir ? -a->stepsPerUnit : a->stepsPerUnit;
 }
 
-// machinePos in planner units, Z flat (less the latched mesh). A splits into
-// heading and turns in double, so a far-turned A starts exact.
+// machinePos in planner units: XY the blade tip (less the latched blade's
+// lead), Z flat (less the latched mesh). A splits into heading and turns in
+// double, so a far-turned A starts exact.
 static planner::Pos posFromSteps() {
     planner::Pos p;
     float* const c[3] = {&p.x, &p.y, &p.z};
@@ -74,7 +75,6 @@ static planner::Pos posFromSteps() {
         const float spm = spmOf(k);
         *c[k] = spm != 0 ? machinePos[k] / spm : 0;
     }
-    p.z -= meshLatchedOffset(p.x, p.y);
     const float spmA = spmOf(SLOT_A);
     if (spmA != 0) {
         const double deg = (double)machinePos[3] / spmA;
@@ -83,6 +83,10 @@ static planner::Pos posFromSteps() {
         p.a = (float)(deg - turns * 360.0);
         if (p.a >= 360.0f) { p.a -= 360.0f; p.turns++; }
     }
+    const planner::Vec2 lead = bladeLead(plannerBlade, p.a);
+    p.x -= lead.x;
+    p.y -= lead.y;
+    p.z -= meshLatchedOffset(p.x, p.y);
     return p;
 }
 
@@ -95,6 +99,8 @@ static bool resetIfIdle(uint8_t reason) {
     for (uint8_t k = 0; k < MOTION_SLOTS; k++) plannerSpm[k] = spmOf(k);
     plannerTurnQ32 = (int64_t)llround((double)plannerSpm[3] * 360.0 * 4294967296.0);
     meshLatch();
+    framesBlade(&plannerBlade.d, &plannerBlade.aOffsetDeg);
+    plannerRing.setBlade(plannerBlade.d);
     const planner::Pos at = posFromSteps();
     plannerRing.reset(at);
     plannerExec.reset(at);
@@ -190,6 +196,10 @@ PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason
     planner::Pos target = plannerRing.end();
     target.setXy(to);
     if (aZero) target.addA(planner::Pos().aSince(target));
+    // A turning swings a blade's axis about the tip, from a start that must fit.
+    if (fit == PQ_OK && target.aSince(plannerRing.end()) != 0 &&
+        framesCheckXY(plannerRing.end().x, plannerRing.end().y))
+        fit = PQ_SOFT_LIMIT;
     const bool pushed = mine && fit == PQ_OK && plannerRing.pushMove(target, feed, limits, kDeviation, cap);
     spin_unlock(plannerLock, s);
     if (!mine) return PQ_BAD_STATE;
@@ -573,6 +583,8 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
         if (out == PQ_OK && !zMoveFits(p0, up, down)) out = PQ_SOFT_LIMIT;
     }
     if (out == PQ_OK && !aFits) out = PQ_SOFT_LIMIT;
+    // The travel's A turn swings a blade's axis about a tip that must fit.
+    if (out == PQ_OK && start && aTo != aAbs(e) && framesCheckXY(e.x, e.y)) out = PQ_SOFT_LIMIT;
     if (out == PQ_OK && (dutyStop || cornerLift) &&
         (!zMoveFits(p0, e.z, up) || !zMoveFits(p0, up, e.z)))
         out = PQ_SOFT_LIMIT;

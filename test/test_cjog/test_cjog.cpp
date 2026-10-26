@@ -84,6 +84,10 @@ bool configAxisRange(const CfgAxis& a, float* l, float* h) {
     *h = hi[k];
     return true;
 }
+bool framesTipRange(uint8_t k, float* l, float* h) {
+    return framesAxis(k) && configAxisRange(*framesAxis(k), l, h);
+}
+const char* framesCheckXY(float, float) { return nullptr; }
 // A running ring is a live step.
 const char* machineAdmit(uint8_t kind) {
     CHECK(kind == (K_STEP | K_IN_TOOL));

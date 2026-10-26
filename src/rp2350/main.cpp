@@ -45,6 +45,7 @@ volatile bool     plannerActive   = false;
 float             plannerSpm[4]   = {0, 0, 0, 0};
 int64_t           plannerTurnQ32  = 0;
 PlannerMesh       plannerMesh     = {nullptr, 0, 0, 0};
+PlannerBlade      plannerBlade    = {0, 0};
 JobResume         jobResume       = {false, 0, 0, 0};
 JobPower          jobPower        = {};
 DutyStop          dutyStop        = {};

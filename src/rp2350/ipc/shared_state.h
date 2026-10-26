@@ -210,6 +210,9 @@ extern volatile bool    toolChangePending;
 // plannerMesh — the bed mesh for this ring (core0/ops/mesh.h), latched by
 //   Core 0 with that reset: Core 1 adds meshAt(*mesh, pos + tip) − ref to Z.
 //   `mesh` is null while the mesh is inactive.
+// plannerBlade — the mounted tool's blade offset for this ring, latched by
+//   Core 0 with that reset. The planner's XY is the blade tip; the motors put
+//   the knife axis bladeLead(A) ahead of it.
 // jobResume — where a paused job stopped: the record and mm into its curve
 //   (0 for its travel). Core 1 sets it under the lock as it lands JOB.PAUSED
 //   and drops the ring; `known` is false if the ring was empty, when the job
@@ -226,6 +229,17 @@ struct PlannerMesh {
     float ref;          // mm, the height at the work origin
 };
 extern PlannerMesh       plannerMesh;
+struct PlannerBlade {
+    float d;            // mm, the tip's trail behind the axis; 0 = none
+    float aOffsetDeg;   // the edge's heading at machine A = 0
+};
+extern PlannerBlade      plannerBlade;
+// The axis − tip at machine A `aDeg`: d along the edge heading.
+static inline planner::Vec2 bladeLead(const PlannerBlade& b, float aDeg) {
+    if (b.d == 0) return {0, 0};
+    const float h = (aDeg + b.aOffsetDeg) * planner::kRadPerDeg;
+    return {b.d * cosf(h), b.d * sinf(h)};
+}
 struct JobResume {
     bool     known;
     uint16_t layer;

@@ -45,6 +45,18 @@ void framesOnMap(void);
 // mounted tool's. False with no selection.
 bool framesTipOffset(float* dx, float* dy);
 
+// The selected head's mounted blade: the tip's trail `*d` mm behind the knife
+// axis and the edge's heading at machine A = 0. d is 0 without one.
+void framesBlade(float* d, float* aOffsetDeg);
+
+// Machine XY of the blade tip: MPos less the knife axis's lead at the
+// current A. False as framesMPos.
+bool framesTipMPos(float* x, float* y);
+
+// Slot k's soft range for the blade tip, units: the axis's range, shrunk by
+// the blade's d on X and Y. False when configAxisRange is.
+bool framesTipRange(uint8_t k, float* lo, float* hi);
+
 // The head whose Z node is bound in slot Z, or FRAMES_NONE: Z, A and the
 // per-head work Z belong to it.
 uint8_t framesZHead(void);
@@ -53,7 +65,7 @@ uint8_t framesZHead(void);
 // (an unbound Z/A).
 bool framesMPos(uint8_t k, float* out);
 
-// Work position of slot k, units: tip − work offset on X/Y/Z, Z less the bed
+// Work position of slot k, units: tip − work offset on X/Y/Z (the blade tip), Z less the bed
 // mesh; on A, the edge heading (MPos + the mounted tool's aOffsetDeg) folded
 // to (−180, 180]. False as framesMPos, or X/Y with no
 // selection.
@@ -96,7 +108,8 @@ const char* framesProbeFor(uint8_t tool, float* mx, float* my);
 const char* framesCheckNode(uint8_t node, int32_t machineSteps);
 
 // A move of slot k (X, Y or Z) from `from` to `to`, machine mm, inside the soft
-// range when that axis is homed with softLimits. nullptr, or "soft_limit x|y|z"
+// range (framesTipRange) when that axis is homed with softLimits; from outside
+// it, one that holds or heads in also passes. nullptr, or "soft_limit x|y|z"
 // with `*left` the mm still free in the move's direction (never negative).
 // A has no soft range.
 const char* framesCheckMove(uint8_t k, float from, float to, float* left);

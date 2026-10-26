@@ -124,6 +124,40 @@ bool framesTipOffset(float* dx, float* dy) {
     return true;
 }
 
+void framesBlade(float* d, float* aOffsetDeg) {
+    *d = 0;
+    *aOffsetDeg = 0;
+    const uint8_t sel = framesSelected();
+    if (sel >= machineCfg().headCount) return;
+    if (const CfgTool* t = configTool(machineCfg(), toolsMounted(sel))) {
+        *d = t->offsetMm;
+        *aOffsetDeg = t->aOffsetDeg;
+    }
+}
+
+bool framesTipMPos(float* x, float* y) {
+    if (!framesMPos(SLOT_X, x) || !framesMPos(SLOT_Y, y)) return false;
+    PlannerBlade b;
+    float a;
+    framesBlade(&b.d, &b.aOffsetDeg);
+    if (b.d == 0 || !framesMPos(SLOT_A, &a)) return true;
+    const planner::Vec2 lead = bladeLead(b, a);
+    *x -= lead.x;
+    *y -= lead.y;
+    return true;
+}
+
+bool framesTipRange(uint8_t k, float* lo, float* hi) {
+    const CfgAxis* a = framesAxis(k);
+    if (!a || !configAxisRange(*a, lo, hi)) return false;
+    if (k > SLOT_Y) return true;
+    float d, off;
+    framesBlade(&d, &off);
+    *lo += d;
+    *hi -= d;
+    return true;
+}
+
 uint8_t framesZHead(void) { return headOwning(SLOT_Z, axisNode(SLOT_Z)); }
 
 const CfgAxis* framesAxis(uint8_t k) {
@@ -176,8 +210,9 @@ bool framesWPos(uint8_t k, float* out) {
         *out = f > 180.0f ? f - 360.0f : f;
         return true;
     }
-    float dx = 0, dy = 0;
+    float dx = 0, dy = 0, tx, ty;
     if (k != SLOT_Z && !framesTipOffset(&dx, &dy)) return false;
+    if (k != SLOT_Z && framesTipMPos(&tx, &ty)) m = k == SLOT_X ? tx : ty;
     if (k == SLOT_Z) m -= framesMeshOffset();
     *out = m + (k == SLOT_X ? dx : k == SLOT_Y ? dy : 0) - framesWork(k);
     return true;
@@ -185,7 +220,7 @@ bool framesWPos(uint8_t k, float* out) {
 
 float framesMeshOffset(void) {
     float x, y, dx, dy;
-    if (!framesTipOffset(&dx, &dy) || !framesMPos(SLOT_X, &x) || !framesMPos(SLOT_Y, &y)) return 0;
+    if (!framesTipOffset(&dx, &dy) || !framesTipMPos(&x, &y)) return 0;
     return meshOffsetAt(x + dx, y + dy);
 }
 
@@ -248,9 +283,11 @@ const char* framesCheckMove(uint8_t k, float from, float to, float* left) {
     if (k > SLOT_Z) return nullptr;
     const CfgAxis* a = framesAxis(k);
     float lo, hi;
-    if (!a || !a->softLimits || !(axes_homed & (1u << k)) || !configAxisRange(*a, &lo, &hi))
+    if (!a || !a->softLimits || !(axes_homed & (1u << k)) || !framesTipRange(k, &lo, &hi))
         return nullptr;
     if (to >= lo && to <= hi) return nullptr;
+    // Outside already (a blade mounted near the edge): it may hold or head in.
+    if ((to < lo && to >= from) || (to > hi && to <= from)) return nullptr;
     *left = fmaxf(0.0f, to > from ? hi - from : from - lo);
     return kWhy[k];
 }
@@ -264,7 +301,7 @@ const char* framesCheckXY(float mx, float my) {
     for (uint8_t k = 0; k < 2; k++) {
         float lo, hi;
         if (!axes[k]->softLimits || !(axes_homed & (1u << k))) continue;
-        if (configAxisRange(*axes[k], &lo, &hi) && (v[k] < lo || v[k] > hi)) return kWhy[k];
+        if (framesTipRange(k, &lo, &hi) && (v[k] < lo || v[k] > hi)) return kWhy[k];
     }
     return nullptr;
 }

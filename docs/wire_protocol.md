@@ -184,7 +184,10 @@ subtracts the selected head's offset (docs/plans/coordinate-system.md), a
 translation that leaves the analysed fields as sent. With no head selected the
 record is `NACK_BAD_STATE`; a point outside the soft range on a homed axis
 with `softLimits` is `NACK_SOFT_LIMIT`, as is a record (or its travel line)
-along which the bed mesh would take Z out of its soft range.
+along which the bed mesh would take Z out of its soft range. Points are the
+blade tip: with a tool whose `offsetMm` is d mounted, the Pico runs the knife
+axis d ahead of the tip along the edge heading (A + `aOffsetDeg`), in jobs
+and jogs alike, and shrinks X's and Y's soft ranges by d.
 
 ### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 22 bytes)
 ```
@@ -502,7 +505,7 @@ homecycle=<k> homingHeld      the cycle a `home` run is in  (only while one runs
 nodehomed=<hex> originMask    bitmask, bit n = bus node n holds an origin, mapped or not
 pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on homed
 mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
-wpos=<x>,<y>,<z>,<a> work position: selected tip − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; X/Y `-` with no head
+wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetMm`) − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; X/Y `-` with no head
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
 tools=<id>,…         the tool id each head has mounted (`mount`), head order, 0 for none  (`-` without a config)
 mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)
