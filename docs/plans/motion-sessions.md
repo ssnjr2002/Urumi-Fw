@@ -1066,34 +1066,34 @@ change). The host is told nodes and the selection, never slots.
     nothing; `pos[4]` is `machinePos` in steps, not the WPos the Reporting
     decision named.
   * The node truths exist: `nodeEnabled` (`ipc/shared_state.h`),
-    `originMask()` (`get nodehomed`), `nodeLatchGet` (`ops/position.h`).
+    `originMask()` (`get nodehomed`).
   * Text `status` (`cmd/query.cpp:48-85`, alias `?`) prints its own line;
     all of it is `get` keys except `buf`, `mute`, `excluded`, `touched`.
     The web polls with `get` over `STATE_KEYS`
     (`web/src/wire/link/commands.ts:60`), not `status`.
 * Scope:
-  1. STATUS_RSP v3, magic `0xA8`, 38 B:
+  1. STATUS_RSP v3, magic `0xA4`, 36 B (`0xA8` is SEQRESET):
 
      | byte | field | type |
      |---|---|---|
-     | `[0]` | magic `0xA8` | |
+     | `[0]` | magic `0xA4` | |
      | `[1]` | machineState | u8 |
      | `[2]` | reason | u8 |
      | `[3..4]` | faults | u16 LE |
      | `[5..6]` | nodeEnabled | u16 LE |
      | `[7..8]` | nodeHomed (`originMask()`) | u16 LE |
-     | `[9..10]` | nodeLatched | u16 LE |
-     | `[11]` | selection: head index, `0xFE` anchor, `0xFF` none (`frames`' values) | u8 |
-     | `[12]` | tool: the id mounted on the selected head, 0 none (as `mount`) | u8 |
-     | `[13..28]` | WPos X/Y/Z/A, selected frame, mm and degrees | f32 LE ×4 |
-     | `[29..30]` | bufCount | u16 LE |
-     | `[31..32]` | layer: the executing block's | u16 LE |
-     | `[33..36]` | record: the executing block's | u32 LE |
-     | `[37]` | CRC8 over `[0..36]` | |
+     | `[9]` | selection: head index, `0xFE` anchor, `0xFF` none (`frames`' values) | u8 |
+     | `[10]` | tool: the id mounted on the selected head, 0 none (as `mount`) | u8 |
+     | `[11..26]` | WPos X/Y/Z/A, selected frame, mm and degrees | f32 LE ×4 |
+     | `[27..28]` | bufCount | u16 LE |
+     | `[29..30]` | layer: the executing block's | u16 LE |
+     | `[31..34]` | record: the executing block's | u32 LE |
+     | `[35]` | CRC8 over `[0..34]` | |
 
-     Layer and record: Core 1 publishes the tag of the block it runs (an
+     Layer and record: Core 1 publishes the tag of the block it claims (an
      inserted travel, lift, plunge or swivel carries the record it leads
-     into); in `PAUSED` the resume point; no job, layer `0xFFFF`, record 0.
+     into); Core 0 reads the pair under `plannerLock`. In `PAUSED` the
+     resume point (`jobResume`); no job, layer `0xFFFF`, record 0.
      The host knows its job id; it cannot know how far the ring has run.
 
      A position with no value (unbound Z/A, X/Y with nothing selected) is
@@ -1106,16 +1106,23 @@ change). The host is told nodes and the selection, never slots.
      ordered key list, expanded in place before the snapshot; repeats are
      dropped (first position wins), so `get status homed` prints `homed`
      once. Group and key names share one namespace. `status` = `state homed
-     enabled nodehomed nodeenabled nodelatched head tools pos mpos wpos buf
+     enabled nodehomed nodeenabled head tools pos mpos wpos buf
      mute excluded touched mesh`.
   3. New keys: `buf`, `mute`, `excluded`, `touched`, `nodeenabled`,
-     `nodelatched`, `queued` (µs), `expectedseq`.
+     `queued` (µs), `expectedseq`. `buf` is the block count alone. No
+     node latch mask: it needs the bus.
   4. The `status` command goes; `?` becomes `get status`.
   5. Web: the v3 decoder (`web/src/wire/format/`), the demux's frame length,
-     the sim; `session.ts` loses `queuedUs` and `queuedSample` (no callers);
-     `STATE_KEYS` unchanged.
-  6. Docs: `docs/wire_protocol.md`.
-* Files: `core0/usb_protocol.h`, `core0/status.cpp`, `core0/cmd/get.cpp`,
+     the sim. `MachineStatus` carries every v3 field (`nodeEnabled`,
+     `selection`, `tool`, `wpos`, `layer`, `record`) whether or not a caller
+     reads it yet; `axesHomed`/`axesEnabled` become text-plane only; `pos`,
+     `expectedSeq`, `queuedUs` go; `session.ts` loses `queuedUs` and
+     `queuedSample`; `STATE_KEYS` unchanged.
+  6. Docs: `docs/wire_protocol.md`, and the 0xA7 frame where other docs
+     describe it (`comms_architecture.md` §4.6, `validation_checklist.md`,
+     `engage_and_axis_map.md`).
+* Files: `core0/usb_protocol.h`, `core0/status.cpp`,
+  `core1/emit/follower.cpp`, `ipc/shared_state.{h,cpp}`, `core0/cmd/get.cpp`,
   `core0/cmd/query.cpp`, `core0/control_plane.cpp`, `core0/cmd/table.h`;
   `web/src/wire/`; `docs/wire_protocol.md`.
 * Checks: `pio run -e pico`; `pnpm typecheck` and `pnpm test` in `web/`.
