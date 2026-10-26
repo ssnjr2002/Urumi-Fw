@@ -1047,14 +1047,34 @@ Open) comes next.
 ## Open
 
 * Preflight refuses and never prepares (proposed, not confirmed).
-* **Heads and pairs with `TOOL_HDR`:** JB4's layer header names the head.
-  Once `TOOL_HDR` exists its order could be the job's mount plan (head p mod
-  `headCount`), so preflight checks each bbox with its head's offsets and a
-  change loads the whole pair. That only pays off when the layers follow
-  the header order; if they don't, mounting whole pairs costs extra stops
-  and mounts. Options: tolerate it (A), `NACK_JOB` a layer out of order (B),
-  or stop following the pair table once it is broken (C). Also open: whether
-  the layer header keeps its head byte (then it must match the table).
+* **Leaving a tool change by the host's header (agreed, replaces the pair
+  table):** the Pico tracks no mount plan; each layer header is checked
+  against the state at that moment, and only the host's resent header leaves
+  TOOL_WAIT.
+  * A tool change parks at a new machine-level **mount position** (config: X,
+    Y in machine coordinates; both heads' A at the lock angle; Zs up),
+    separate from the probe position, then TOOL_WAIT.
+  * `mount` in TOOL_WAIT accepts any head. Changing a head's tool clears its
+    Z set; only a zero sets it.
+  * At a resent header, the immediate tool (the header's):
+
+    | Immediate tool | Result |
+    |---|---|
+    | Not mounted | `NACK 0x0F`, stay in TOOL_WAIT |
+    | Mounted, zeroed | ACK, BUFFERING |
+    | Mounted, unzeroed, auto-probe | `NACK 0x0F`, probe (TOOL_CHANGE), BUFFERING; the next resend ACKs |
+    | Mounted, unzeroed, manual | `NACK 0x0F`, park its tip at its probe position, TOOL_WAIT; ACKed after `wzero` |
+
+  * A later header whose tool is mounted but unzeroed skips the mount
+    position and takes the unzeroed rows directly.
+  * Explicit, in TOOL_WAIT, by tool (its head is the one it is mounted on):
+    `probe <tool>` (auto; needs `TOOL_PROBE`, after M4) and `probe_park
+    <tool>` then `wzero` (manual). The host may zero the next tool now or
+    leave it for its own header.
+  * Mount immediate is required, mount next optional; zeroing either
+    explicitly is optional; the immediate tool's implicit zero is required.
+  * Host: resends automatically only while the Pico reports TOOL_CHANGE; in
+    TOOL_WAIT it resends on the operator's continue. The 250 ms retry goes.
 * `cancel` from `PAUSED`: ends the session to IDLE at once, tool and vacuum
   off (proposed).
 * **Vacuum zones from the bbox (later):** the servo ids drawn as seen from
