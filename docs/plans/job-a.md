@@ -343,6 +343,7 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
     `aTo` from `pickA(cur, chamberDeg, 360, aMaxDeg, BezierTurn{})`; the
     `withA` travel turns it. BREAKs leave A. No fit → `PQ_SOFT_LIMIT`; no A
     limits → `PQ_NO_LIMITS`. Chamber changes and resumes ride the next START.
+    A record of a chamber or tangential layer with A unhomed → `PQ_BAD_STATE`.
   * `test/test_config/test_layer.cpp`: the angle picked, a head without A.
   * `docs/wire_protocol.md`: the chamber turns A; the refusals.
 * Bench: chamber switches across layers, the nearest-equivalent wrap, resume.
