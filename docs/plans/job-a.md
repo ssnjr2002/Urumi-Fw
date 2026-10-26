@@ -505,7 +505,7 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
   a BREAK with a duty lift and an unwind lifts once; a pause in an unwind
   resumes; a record turning over 360° is refused.
 * Depends on: AE.
-* Status: Ready to merge.
+* Status: Done (merged b94ed94). Ends the chain.
 * Outcome:
   * Deviations: none from the plan. A planned duty stop needs a
     `nextBreakDist`, sent only on a START or BREAK, so it never meets a
