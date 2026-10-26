@@ -350,7 +350,7 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 * Files: `core0/ops/layer.{h,cpp}`, `core0/planner/queue.cpp`,
   `test/test_config/test_layer.cpp`, `docs/wire_protocol.md`.
 * Depends on: AA2.
-* Status: Ready to merge.
+* Status: Done (merged d17dc4b). Unblocks AD.
 * Outcome:
   * Deviations: the unhomed-A refusal (`PQ_BAD_STATE`, `NACK_BAD_STATE`),
     added in Work, covers tangential layers too.
@@ -370,9 +370,35 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 ### AD: blade offset
 
 * Name: `feature/planner-blade-offset`
-* Purpose: the knife axis follows `P + d·T + e·N`; XY limits at the axis
-  point; preflight grows by r.
-* Files: `lib/planner/`, `core0/planner/queue.cpp`, preflight.
+* Type: feature.
+* Purpose: the tip of a trailing blade lands on the sent path: the knife
+  axis runs `d` (`offsetMm`) ahead of the tip along the blade's heading.
+  `e` stays out (0) until a tool needs it.
+* The offset is a pose conversion keyed to A, applied whenever a tool with
+  `offsetMm` ≠ 0 is mounted (jobs, jogs, readout alike):
+  axis = tip + d·(cos h, sin h), h = A + `aOffsetDeg`. The planner, ring and
+  executor stay in tip coordinates; the conversion sits where the
+  executor's position becomes steps, and its inverse where the ring resets
+  from the motors (`queue.cpp` `resetIfIdle`). Curves, travel turns and
+  swivels (about the tip) need no path of their own. WPos XY is the tip;
+  jogging A swings XY about it.
+* Z mesh under the tip: Core 1's live sample takes the tip (before the
+  conversion), as the push-time walk already does.
+* XY limits at the axis point: a curve caps v by 1 + d·κ_max; an A-only
+  swivel caps ω so d·ω stays within XY's feed and accel; a travel line that
+  turns A adds both.
+* Reach: the per-record check (`data_plane.cpp` `framesCheckXY` on the
+  control points) uses the soft range shrunk by d.
+* Config: `offsetMm` decoded into `CfgTool`; ≠ 0 on a non-tangential tool
+  is a load error (as `periodCount`). Blob and schema version 12.
+* Host: `needsOffsetComp` and its tolerance removed; the host sends the tip
+  path.
+* Files: `lib/planner/` (caps) and native tests; `core0/config/config_decode.{h,cpp}`,
+  `core0/ops/frames.cpp`, `core0/planner/queue.cpp`, `core0/data_plane.cpp`,
+  the Core 1 step/mesh path; `web/src/machine/schema.ts`, `json/validate.ts`,
+  `json/blob.ts`, `tools.ts`; fixtures; `docs/wire_protocol.md`.
+* Bench (Human scope): opposite-direction slits coincide; a square's corners
+  come out sharp; A jog holds the tip still.
 * Depends on: AC.
 
 ### AE: sweep on the wire
