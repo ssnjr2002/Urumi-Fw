@@ -487,6 +487,15 @@ static bool pickCentredA(double cur, float h, float period, float aMax, double l
     return true;
 }
 
+// For a sweep `lo`..`hi` too wide for ±`aMax`: the equivalent fitting this
+// record's own `turn` nearest the edge the sweep turns away from, leaving the
+// most room before the next unwind; false if none fits.
+static bool pickRoomA(float h, float period, float aMax, double lo, double hi,
+                      const planner::BezierTurn& turn, double* out) {
+    const double edge = lo + hi >= 0 ? -aMax - turn.lo : aMax - turn.hi;
+    return pickA(edge, h, period, aMax, turn, out);
+}
+
 // Host and Pico unwrap the heading in different float widths.
 static constexpr double kSweepMarginDeg = 0.1;
 
@@ -578,17 +587,27 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     const double sweepHi = fmax(sweepMax + kSweepMarginDeg - shift, turn.hi);
     // Machine A is the heading less the tool's edge offset at the lock.
     const float h0 = headingDeg(d0) - layerMo.aOffsetDeg;
-    bool aFits = !swivel ||
-                 (layerMo.aMaxDeg > 0
-                      ? pickCentredA(aAbs(e), h0, layerMo.periodDeg, layerMo.aMaxDeg, sweepLo, sweepHi, &aTo)
-                      : pickA(aAbs(e), h0, layerMo.periodDeg, 0, turn, &aTo));
+    const bool cable = tangential && layerMo.aMaxDeg > 0;
+    const auto pickFit = [&](float h) {
+        return pickCentredA(aAbs(e), h, layerMo.periodDeg, layerMo.aMaxDeg, sweepLo, sweepHi, &aTo) ||
+               pickRoomA(h, layerMo.periodDeg, layerMo.aMaxDeg, sweepLo, sweepHi, turn, &aTo);
+    };
+    bool aFits = !swivel || (cable ? pickFit(h0) : pickA(aAbs(e), h0, layerMo.periodDeg, 0, turn, &aTo));
+    // A smooth join this record no longer fits from unwinds: lift, A by whole
+    // periods from where it is, plunge at the same heading.
+    const bool unwind = cable && !swivel && (aTo + turn.hi > layerMo.aMaxDeg ||
+                                             aTo + turn.lo < -layerMo.aMaxDeg);
+    if (unwind) aFits = pickFit((float)aAbs(e));
     // A chamber layer turns to its chamber during a START's travel and holds it.
     if (chamber && start) aFits = pickA(aAbs(e), layerMo.chamberDeg, 360, layerMo.aMaxDeg, turn, &aTo);
     if (tangential && layerMo.aMaxDeg > 0)
         aFits = aFits && aTo + turn.hi <= layerMo.aMaxDeg && aTo + turn.lo >= -layerMo.aMaxDeg;
     const bool cornerLift = swivel && !start && !dutyStop &&
                             fabs(aTo - aAbs(e)) > layerMo.cornerAngleDeg;
-    blocks += (swivel && !start) + (cornerLift ? 2 : 0);
+    // A planned duty stop needs a breakDist, sent only on a START or BREAK, so
+    // it likely never meets a smooth-join unwind; kept as a guard.
+    const bool unwindLift = unwind && !dutyStop;
+    blocks += (swivel && !start) + (cornerLift ? 2 : 0) + unwind + (unwindLift ? 2 : 0);
     const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
     if (ringOwner != RING_JOB) {
@@ -612,7 +631,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     if (out == PQ_OK && !aFits) out = PQ_SOFT_LIMIT;
     // The travel's A turn swings a blade's axis about a tip that must fit.
     if (out == PQ_OK && start && aTo != aAbs(e) && framesCheckXY(e.x, e.y)) out = PQ_SOFT_LIMIT;
-    if (out == PQ_OK && (dutyStop || cornerLift) &&
+    if (out == PQ_OK && (dutyStop || cornerLift || unwindLift) &&
         (!zMoveFits(p0, e.z, up) || !zMoveFits(p0, up, e.z)))
         out = PQ_SOFT_LIMIT;
     if (out == PQ_OK) out = meshBezier(b, curveZ, limits, curveCap);
@@ -631,10 +650,10 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
         if (dutyStop) {
             pushZ(up, liftFeed, limits);
             plannerRing.pushEvent(TOOL_EV_OFF);
-            if (swivel) pushA(aTo, limits);
+            if (swivel || unwind) pushA(aTo, limits);
             plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(e.z, layerMo.plungeFeed, limits);
-        } else if (cornerLift) {
+        } else if (cornerLift || unwindLift) {
             pushZ(up, liftFeed, limits);
             pushA(aTo, limits);
             pushZ(e.z, layerMo.plungeFeed, limits);
@@ -660,7 +679,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     else if (start) stretchCounted = false;
     if (breakDist != 0) estOnS += cutS(breakDist, limits);
     else if (!stretchCounted) estOnS += (b.length - from) / layerMo.cutFeed;
-    if (cornerLift) estOnS += liftS + plungeS;   // the tool stays on through it
+    if (cornerLift || unwindLift) estOnS += liftS + plungeS;   // the tool stays on through it
     if (end) estOnS += liftS;
 
     nextRecord++;

@@ -177,8 +177,11 @@ start heading during a `START`'s travel, and at a `BREAK` swivels to it,
 lifting for a turn past `cornerAngleDeg`. With a cable the swivel goes to the
 equivalent mod 360/`periodCount` that centres the record's sweep (grown by
 0.1°) in ±`aMaxDeg`, ties to the one nearest the current A; without, to the
-nearest. A swivel whose sweep no equivalent fits, or a record whose curve
-leaves ±`aMaxDeg`, is `NACK_SOFT_LIMIT`.
+nearest. A sweep no equivalent fits takes the one fitting the record's own
+curve nearest the edge the sweep turns away from. At a smooth join whose
+record does not fit from the current A, the tool lifts, A unwinds by whole
+periods (the same pick), and it plunges at the same heading. A record whose
+own curve no equivalent fits in ±`aMaxDeg` is `NACK_SOFT_LIMIT`.
 A chamber layer turns A during each `START`'s travel to its chamber's
 `chamberOffsets` angle (the equivalent mod 360 nearest the current A inside
 ±`aMaxDeg`, else `NACK_SOFT_LIMIT`) and holds it. A record of a tangential or

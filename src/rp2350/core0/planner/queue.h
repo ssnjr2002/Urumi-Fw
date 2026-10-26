@@ -89,7 +89,9 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 // (BREAK), lifting for a turn past cornerAngleDeg; A holds between.
 // `breakDist` is the record's nextBreakDist, tagged on its blocks. A swivel
 // picks the equivalent that centres `sweepMin`..`sweepMax` (degrees from p0's
-// heading to the next BREAK or END) in the cable.
+// heading to the next BREAK or END) in the cable; for a sweep wider than the
+// cable, the one fitting the record that leaves the most room. A smooth join
+// whose record does not fit from the current A lifts and unwinds there.
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, bool end,
                                       uint16_t breakDist, int16_t sweepMin, int16_t sweepMax);
 
