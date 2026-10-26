@@ -400,6 +400,30 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 * Bench (Human scope): opposite-direction slits coincide; a square's corners
   come out sharp; A jog holds the tip still.
 * Depends on: AC.
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: A turn from a tip outside the shrunk range is refused (A
+    jog `err soft_limit x|y`, cjog and a job START's travel
+    `NACK_SOFT_LIMIT`, the lock park `soft_limit`); an XY move from outside
+    may hold or head in (`framesCheckMove`), else a knife mounted at the
+    edge could not move. Added in Work.
+  * Interface: `CfgTool::offsetMm`; `Planner::setBlade`, `bladeCaps`
+    (`path.h`); `PlannerBlade plannerBlade`, `bladeLead` (`shared_state.h`);
+    `framesBlade`, `framesTipMPos`, `framesTipRange`. `CFG_SCHEMA_VERSION`
+    and `CONFIG_BLOB_VERSION` 12.
+  * Settled in Work: the extra acceleration at the axis on curves and
+    travel turns is covered by the 1 + d·rate slowdown, not checked exactly.
+  * Bench (knife on head 0, `offsetMm` 10 for the run only, no material):
+    mounting moves WPos by the lead at A (−4.506, +8.927 at −63.2°); A
+    jogs 0 → 90 → 180 → 270 → 0 trace a 10 mm circle in MPos with WPos
+    held to 0.005 mm; at the homed edge A jogs are refused until X and Y
+    are jogged in, then accepted; `jog y-45` with 40 mm left is refused.
+    Not run: opposite slits, sharp corners, a cut in material, the job
+    START and park refusals.
+  * Settled in Work: mounting or unmounting a knife moves WPos by the lead
+    (the tip is a different point), as a `toolOffset` does; nothing moves.
+  * Out of scope: `test_machine` still fails to link, as on main (its stubs
+    lack `dutyEpoch` and `plannerQueueLift`).
 
 ### AE: sweep on the wire
 
