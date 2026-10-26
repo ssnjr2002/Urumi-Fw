@@ -350,6 +350,22 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 * Files: `core0/ops/layer.{h,cpp}`, `core0/planner/queue.cpp`,
   `test/test_config/test_layer.cpp`, `docs/wire_protocol.md`.
 * Depends on: AA2.
+* Status: Ready to merge.
+* Outcome:
+  * Deviations: the unhomed-A refusal (`PQ_BAD_STATE`, `NACK_BAD_STATE`),
+    added in Work, covers tangential layers too.
+  * Interface: `LayerMotion::chamber`, `chamberDeg`. A chamber layer also
+    needs A limits (`PQ_NO_LIMITS`), as tangential.
+  * Bench (pen with `chamberOffsets` [15, 135, 375], `aMaxDeg` 180, head 0,
+    no material; the config only for the run): unhomed A refused; layers on
+    chambers 1, 2, 3, 1 turn A during the travel to 15.005, 135.001, 15.005
+    (375 folded inside the cable), 15.005, held through each square; paused
+    mid-layer on chamber 2 and resumed with a chamber 1 header, the START
+    turns 135 → 15 at clearance before the plunge. `late` and `amiss` 0.
+    Not run: a chamber no equivalent fits (`NACK_SOFT_LIMIT`).
+  * Out of scope: A can't be jogged while a job is paused (`err bad_state`);
+    a resume header may name a chamber other than the paused one, matched
+    only by layer and record. `test_machine` still fails to link, as on main.
 
 ### AD: blade offset
 
