@@ -13,7 +13,8 @@ LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
     if (t->chamberCount == 0 ? l.chamber != 0
                              : l.chamber < 1 || l.chamber > t->chamberCount)
         return LAYER_BAD;
-    if (t->tangential && !c.heads[l.head].a.node.present) return LAYER_BAD;
+    if ((t->tangential || t->chamberCount > 0) && !c.heads[l.head].a.node.present)
+        return LAYER_BAD;
 
     out->cutFeed    = l.feed > 0 ? l.feed : t->cutFeed > 0 ? t->cutFeed : machineFeed;
     out->plungeFeed = t->plungeFeed > 0 ? t->plungeFeed : c.plungeFallback;
@@ -25,5 +26,7 @@ LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
     out->cornerAngleDeg = t->cornerAngleDeg;
     out->aMaxDeg    = t->aMaxDeg;
     out->aOffsetDeg = t->aOffsetDeg;
+    out->chamber    = t->chamberCount > 0;
+    out->chamberDeg = out->chamber ? t->chamberOffsets[l.chamber - 1] : 0;
     return mounted[l.head] == l.tool ? LAYER_OK : LAYER_NOT_MOUNTED;
 }

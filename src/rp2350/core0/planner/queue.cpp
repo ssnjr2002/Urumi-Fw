@@ -501,8 +501,11 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     if (planner::checkBezier(b) != planner::BezierError::None) return PQ_BAD_CURVE;
     if (!(limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0)) return PQ_NO_LIMITS;
     const bool tangential = layerMo.tangential;
-    if (tangential && !(limits.max_feed[SLOT_A] > 0 && limits.max_accel[SLOT_A] > 0))
+    const bool chamber = layerMo.chamber;
+    if ((tangential || chamber) && !(limits.max_feed[SLOT_A] > 0 && limits.max_accel[SLOT_A] > 0))
         return PQ_NO_LIMITS;
+    // An angle means nothing on an A that is not homed.
+    if ((tangential || chamber) && !(axes_homed & (1u << SLOT_A))) return PQ_BAD_STATE;
 
     // A resumed record starts at its trim, travelled to as a START's p0.
     const float from = firstRecord ? resumeTrim : 0;
@@ -542,6 +545,8 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     // Machine A is the heading less the tool's edge offset at the lock.
     bool aFits = !swivel || pickA(aAbs(e), headingDeg(d0) - layerMo.aOffsetDeg, layerMo.periodDeg,
                                   layerMo.aMaxDeg, turn, &aTo);
+    // A chamber layer turns to its chamber during a START's travel and holds it.
+    if (chamber && start) aFits = pickA(aAbs(e), layerMo.chamberDeg, 360, layerMo.aMaxDeg, turn, &aTo);
     if (tangential && layerMo.aMaxDeg > 0)
         aFits = aFits && aTo + turn.hi <= layerMo.aMaxDeg && aTo + turn.lo >= -layerMo.aMaxDeg;
     const bool cornerLift = swivel && !start && !dutyStop &&

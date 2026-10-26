@@ -18,6 +18,10 @@ static MachineCfg twoHeads() {
     c.tools[1].periodCount = 1;
     c.tools[1].chamberCount = 3;
     c.tools[1].cutFeed = 40;
+    c.tools[1].chamberOffsets[0] = 15;
+    c.tools[1].chamberOffsets[1] = 135;
+    c.tools[1].chamberOffsets[2] = 375;
+    c.heads[0].a.node.present = c.heads[1].a.node.present = true;
     return c;
 }
 
@@ -60,7 +64,7 @@ TEST_CASE("a tangential tool needs its head's A") {
     c.tools[0].aOffsetDeg = -90;
     const uint8_t mounted[2] = { 1, 1 };
     LayerMotion mo{};
-    c.heads[1].a.node.present = true;
+    c.heads[0].a.node.present = false;
     REQUIRE(layerResolve(c, mounted, hdr(1, 1), 10, &mo) == LAYER_OK);
     CHECK(mo.tangential);
     CHECK(mo.periodDeg == doctest::Approx(180));
@@ -68,6 +72,21 @@ TEST_CASE("a tangential tool needs its head's A") {
     CHECK(mo.aMaxDeg == doctest::Approx(540));
     CHECK(mo.aOffsetDeg == doctest::Approx(-90));
     CHECK(layerResolve(c, mounted, hdr(1, 0), 10, &mo) == LAYER_BAD);   // head 0 has no A
+}
+
+TEST_CASE("a chamber layer carries its chamber's angle and needs its head's A") {
+    MachineCfg c = twoHeads();
+    const uint8_t mounted[2] = { 4, 1 };
+    LayerMotion mo{};
+    REQUIRE(layerResolve(c, mounted, hdr(4, 0, 2), 10, &mo) == LAYER_OK);
+    CHECK(mo.chamber);
+    CHECK(mo.chamberDeg == doctest::Approx(135));
+    REQUIRE(layerResolve(c, mounted, hdr(4, 0, 3), 10, &mo) == LAYER_OK);
+    CHECK(mo.chamberDeg == doctest::Approx(375));
+    REQUIRE(layerResolve(c, mounted, hdr(1, 1), 10, &mo) == LAYER_OK);
+    CHECK_FALSE(mo.chamber);
+    c.heads[0].a.node.present = false;
+    CHECK(layerResolve(c, mounted, hdr(4, 0, 1), 10, &mo) == LAYER_BAD);
 }
 
 TEST_CASE("layer refusals") {

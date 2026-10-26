@@ -174,6 +174,10 @@ start heading (the equivalent mod 360/`periodCount` nearest the current A
 whose curve stays inside ±`aMaxDeg`) during a `START`'s travel, and at a
 `BREAK` swivels to it, lifting for a turn past `cornerAngleDeg`. A record
 whose curve no equivalent keeps inside `aMaxDeg` is `NACK_SOFT_LIMIT`.
+A chamber layer turns A during each `START`'s travel to its chamber's
+`chamberOffsets` angle (the equivalent mod 360 nearest the current A inside
+±`aMaxDeg`, else `NACK_SOFT_LIMIT`) and holds it. A record of a tangential or
+chamber layer with A not homed is `NACK_BAD_STATE`.
 
 **Frames.** Points are work coordinates: the Pico adds the work offset and
 subtracts the selected head's offset (docs/plans/coordinate-system.md), a
@@ -250,7 +254,7 @@ switch, a failed park) alarms with F_SEQUENCE or F_HOMING and ends the job.
 
 Refusals: `NACK_TOOL_UNKNOWN` = the id is not in the config; `NACK_JOB` = a
 head the config lacks, inside an open
-contour, a bad chamber, feed or k, a tangential tool on a head without A,
+contour, a bad chamber, feed or k, a tangential or chamber tool on a head without A,
 or a paused job's header not naming where it stopped; `NACK_BAD_STATE` = no config, the select failed, or the ring
 holds jogs (JOGGING, or jogs queued in IDLE); `NACK_PAUSED` while pausing.
 
