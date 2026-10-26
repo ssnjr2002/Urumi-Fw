@@ -130,16 +130,16 @@ wire (X,Y curves) → Core 0 queue    → planner ring  → executor        → 
 
 ### Sweep on the wire
 
-* Each START or BREAK record carries its stretch's unwrapped heading range
-  relative to the stretch's start heading, `sweepMin`/`sweepMax` (i16 whole
-  degrees, saturating), next to `nextBreakDist`; reverses planner-za's "no
+* Every record carries the unwrapped heading range of the rest of its
+  stretch relative to its own start heading, `sweepMin`/`sweepMax` (i16 whole
+  degrees, saturating, rounded outward), next to `nextBreakDist`; reverses planner-za's "no
   sweeps on the wire". The host computes the same tangent and unwrap as the
   Pico; the range check keeps a margin for rounding.
 * At every point where the blade is up the Pico picks the equivalent that
   fits the coming stretch, centred, so unwinding folds into turns the tool
   makes anyway. Ignored for non-tangential tools.
-* A resumed record keeps the record's sweep: the resume heading lies inside
-  it, so the check stays conservative.
+* A resumed record's sweep is shifted by the trimmed part's turn, which the
+  Pico computes, so the check stays exact.
 
 ### Mid-cut unwind
 
@@ -428,9 +428,30 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 ### AE: sweep on the wire
 
 * Name: `feature/job-a-sweep`
-* Purpose: `sweepMin`/`sweepMax` per START/BREAK record; the equivalent that
-  fits the range, chosen at every START and corner.
-* Interface: the BEZIER record grows 4 bytes.
+* Purpose: `sweepMin`/`sweepMax` per record; the equivalent that fits the
+  range, chosen at every START and corner.
+* Today `pickA` (`queue.cpp:459`) fits only the record's own turn, so a
+  stretch of several records can be refused mid-stretch from an equivalent
+  another choice would have fitted.
+* Decided in Planning:
+  * Every record carries the unwrapped heading range of the rest of its
+    stretch (its p0 to the next BREAK or END), relative to its own p0
+    heading. A trimmed resume takes off the trimmed part's turn, which the
+    Pico computes itself, so the bound stays exact.
+  * i16 whole degrees, saturating, rounded outward (floor min, ceil max).
+    The Pico grows the range by 0.1° each side for host/Pico float drift.
+  * The pick: among the equivalents whose whole sweep fits ±`aMaxDeg`, the
+    one putting the sweep's midpoint nearest A = 0; ties go to the nearest
+    current A.
+  * A sweep wider than 2·`aMaxDeg` is refused at its START or BREAK
+    (`PQ_SOFT_LIMIT`) until AF.
+  * The host's per-piece turn (lo/hi/total) matches the Pico's `bezierTurn`
+    (`bezier.h:61`); the sum runs in `annotate.ts`'s stretch walk next to
+    `nextBreakDist`.
+* Interface: the BEZIER record grows 4 bytes (58 → 62): `[57..58]`
+  `sweepMin`, `[59..60]` `sweepMax`, CRC at `[61]`. `plannerQueueRecord`
+  takes the sweep.
+* Type: feature.
 * Files: `core0/usb_protocol.h`, `data_plane.cpp`, `queue.cpp`;
   `web/src/wire/format/`, the host's flatten (heading unwrap);
   `docs/wire_protocol.md`.
