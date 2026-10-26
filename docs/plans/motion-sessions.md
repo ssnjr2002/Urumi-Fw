@@ -1044,6 +1044,173 @@ Open) comes next.
   targets; the web-only config fields (`invert`, the homing extras) are dead
   and proposed as their own refactor.
 
+## Status and lift reporting
+
+Three independent branches, run in parallel; S1 merges first (a protocol
+change). The host is told nodes and the selection, never slots.
+
+## Branch S1: `feature/status-v3`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** STATUS_RSP reports per node and in work coordinates; the text
+`status` becomes a `get` group.
+
+* What the code has today:
+  * STATUS_RSP 0xA7, 31 B (`core0/usb_protocol.h:85-97`, written by
+    `sendStatusRsp`, `core0/status.cpp:37`): `[2]` `axes_enabled` and `[3]`
+    `axes_homed` are slot views, so homing a head that isn't engaged shows
+    nothing; `pos[4]` is `machinePos` in steps, not the WPos the Reporting
+    decision named.
+  * The node truths exist: `nodeEnabled` (`ipc/shared_state.h`),
+    `originMask()` (`get nodehomed`), `nodeLatchGet` (`ops/position.h`).
+  * Text `status` (`cmd/query.cpp:48-85`, alias `?`) prints its own line;
+    all of it is `get` keys except `buf`, `mute`, `excluded`, `touched`.
+    The web polls with `get` over `STATE_KEYS`
+    (`web/src/wire/link/commands.ts:60`), not `status`.
+* Scope:
+  1. STATUS_RSP v3, magic `0xA8`, 32 B:
+
+     | byte | field | type |
+     |---|---|---|
+     | `[0]` | magic `0xA8` | |
+     | `[1]` | machineState | u8 |
+     | `[2]` | reason | u8 |
+     | `[3..4]` | faults | u16 LE |
+     | `[5..6]` | nodeEnabled | u16 LE |
+     | `[7..8]` | nodeHomed (`originMask()`) | u16 LE |
+     | `[9..10]` | nodeLatched | u16 LE |
+     | `[11]` | selection: head index, `0xFE` anchor, `0xFF` none (`frames`' values) | u8 |
+     | `[12]` | tool: the id mounted on the selected head, 0 none (as `mount`) | u8 |
+     | `[13..28]` | WPos X/Y/Z/A, selected frame, mm and degrees | f32 LE ×4 |
+     | `[29..30]` | bufCount | u16 LE |
+     | `[31]` | CRC8 over `[0..30]` | |
+
+     A position with no value (unbound Z/A, X/Y with nothing selected) is
+     NaN. The tool says what WPos is the tip of; other heads' tools stay on
+     `get tools`. MPos stays on `get`. `queuedUs` and `expectedSeq` leave
+     the frame (no host reads them: pacing went with MicroSegment, the ACK
+     carries the seq) for `get queued` and `get expectedseq`. The Reporting
+     decision's "`0xFF` none" for the tool becomes 0.
+  2. `get` groups (`core0/cmd/get.cpp`): a table maps a group name to an
+     ordered key list, expanded in place before the snapshot; repeats are
+     dropped (first position wins), so `get status homed` prints `homed`
+     once. Group and key names share one namespace. `status` = `state homed
+     enabled nodehomed nodeenabled nodelatched head tools pos mpos wpos buf
+     mute excluded touched mesh`.
+  3. New keys: `buf`, `mute`, `excluded`, `touched`, `nodeenabled`,
+     `nodelatched`, `queued` (µs), `expectedseq`.
+  4. The `status` command goes; `?` becomes `get status`.
+  5. Web: the v3 decoder (`web/src/wire/format/`), the demux's frame length,
+     the sim; `session.ts` loses `queuedUs` and `queuedSample` (no callers);
+     `STATE_KEYS` unchanged.
+  6. Docs: `docs/wire_protocol.md`.
+* Files: `core0/usb_protocol.h`, `core0/status.cpp`, `core0/cmd/get.cpp`,
+  `core0/cmd/query.cpp`, `core0/control_plane.cpp`, `core0/cmd/table.h`;
+  `web/src/wire/`; `docs/wire_protocol.md`.
+* Checks: `pio run -e pico`; `pnpm typecheck` and `pnpm test` in `web/`.
+  Human checks: homing a head that isn't engaged sets its bits in
+  `nodeHomed`; WPos matches `get wpos`; `?` and `get status late`.
+
+**Depends on:** nothing.
+
+**Overlap:** `usb_protocol.h`, `web/src/wire/`, `cmd/get.cpp` (S2, S3).
+
+### Status
+
+Planned.
+
+## Branch S2: `feature/head-positions`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** the machine position of every head's Z and A, not only the
+selected head's.
+
+* What the code has today: `get mpos` is slot order (`fmtUnits`,
+  `cmd/get.cpp:108-118`), `-` for an unbound Z/A, so other heads never show.
+  `nodepos <node>` (`cmd/query.cpp:127`) asks a node over the bus for its
+  raw steps, at rest only.
+* Scope:
+  1. At unbind the Pico keeps the node's machine position (the slot's
+     `machinePos`, steps) beside its origin (`ops/position.{h,cpp}`,
+     `originRecord`); dropped when the node loses its origin or is
+     disabled; replaced by the live value while bound.
+  2. `get headpos`: each head's `z,a` in head order, `;` between heads,
+     units, `-` where there is no value (`headpos=12.000,0.000;5.000,-`).
+  3. `nodepos` stays: the node's raw counter, the ground truth.
+     `nodepos` − origin = `headpos` at rest is the bench check.
+  4. Docs: `docs/wire_protocol.md`.
+* To check in Read: whether an unbound, enabled node can move without the
+  Pico tracking it (a park leg, `step`, homing); if so, those paths update
+  or drop the kept position.
+* Files: `core0/ops/position.{h,cpp}`, the unbind path (`slotUnbind`),
+  `core0/cmd/get.cpp`; `docs/wire_protocol.md`.
+* Checks: `pio run -e pico`. Human checks: deselect a head, jog the other,
+  `headpos` holds the first head's Z/A and matches `nodepos` − origin;
+  disabling the node gives `-`.
+
+**Depends on:** nothing.
+
+**Overlap:** `cmd/get.cpp` (S1, S3).
+
+### Status
+
+Planned.
+
+## Branch S3: `feature/lift-reason`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** say why the blade is up, and what the tool's duty is doing
+(docs/plans/job-a.md, Open). Today every lift reads as `JOB.RUNNING`, or the
+reason `plannerQueueLift` sets, with Z moving.
+
+* What the code has today:
+  * Ring blocks carry `layer`, `record`, `break_dist`, set by `setTag`
+    (`lib/planner/planner/planner.h:61-63`, `:119`); no lift reason.
+  * Lifts: `plannerQueueRecord` (`core0/planner/queue.cpp:643-668`, duty,
+    corner and unwind sharing one Z pair), the END lift (`:709`), the
+    deadline duty insert (above `:723`), `plannerQueueLift(why)` (`:723`,
+    pause and dry ring).
+  * Duty is Core 1's: `dutyOnMs`, `toolOnAtMs`
+    (`core1/emit/follower.cpp:181-284`); `toolOn`, `jobPower`
+    (`ipc/shared_state.h:261-277`). `get` has neither.
+* Scope:
+  1. A lift tag, a `u8` bitmask on each block of a lift (Z, the A or XY it
+     carries, the plunge): `END`, `CORNER`, `DUTY` (planned at a BREAK),
+     `DEADLINE`, `UNWIND`, `PAUSE`, `DRY`. One lift sets every reason due
+     at its spot. `lib/planner` stores it beside `layer`/`record`.
+  2. Core 1 publishes the executing block's mask (`liftReason`, 0 on a cut
+     or travel) as it claims a block, and the duty on-time.
+  3. `get` keys: `lift` (the bits by name, `-` when 0), `tool` (on/off),
+     `onms` (on-time since the duty's last reset, the open span included).
+     Not in STATUS_RSP.
+  4. Docs: `docs/wire_protocol.md`.
+* Not in scope: AF's duty findings (a reset during an unwind's lift; two
+  lifts when a deadline falls just before an unwind join).
+* Files: `lib/planner/planner/planner.h` and native tests;
+  `core0/planner/queue.cpp`; `core1/emit/follower.cpp`;
+  `ipc/shared_state.{h,cpp}`; `core0/cmd/get.cpp`; `docs/wire_protocol.md`.
+* Checks: `pio run -e pico`, `pio test -e native`. Human checks: each lift
+  shows its bit (END, corner, unwind, pause, dry; duty and deadline with
+  the laser standing in); a BREAK with duty and corner shows both; `onms`
+  climbs while cutting and resets with the duty.
+
+**Depends on:** job-a AF (done).
+
+**Overlap:** `lib/planner/`, `cmd/get.cpp` (S1, S2).
+
+### Status
+
+Planned.
+
 ## Open
 
 * Preflight refuses and never prepares (proposed, not confirmed).

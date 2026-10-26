@@ -532,12 +532,9 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 * A record turning more than `2·aMaxDeg` is refused (AF); the host could
   split it.
 * Why the blade is up: a contour END, corner, duty, deadline duty and unwind
-  lift all show as `JOB_RUNNING` with Z moving. A per-block lift tag (a
-  bitmask, since one lift can serve several reasons at a BREAK) published by
-  Core 1 into the status. Its own plan: `lib/planner` tag, follower,
-  `shared_state.h`, the status wire, web. With it, `get` keys for the tool's
-  on state and its duty on-time (`get` has neither; AF's duty bench was
-  inferred from the absent deadline lift).
+  lift all show as `JOB_RUNNING` with Z moving. Planned as
+  docs/plans/motion-sessions.md branch S3, with `get` keys for the tool's
+  on state and its duty on-time.
 * A blade mounted with its tip outside the shrunk soft range (at the edge,
   e.g. after homing) cannot turn A until XY is jogged in. Refuse the mount
   there, or move in after it.
