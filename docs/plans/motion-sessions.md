@@ -284,7 +284,8 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 ### Reporting
 
 * **`STATUS_RSP` grows** (new magic, as `0xA6` → `0xA7`): `bufCount` goes
-  with MicroSegment; job id (u32) and index (u32) are added; the reason byte
+  with MicroSegment; the executing layer and record are added (S1; the host
+  keeps the job id); the reason byte
   is the current state's reason (job, jogging, homing, probing), replacing
   `runningReason`. Position is WPos (f32 mm; Core 0's `frames`); MPos stays
   on `get`. Two bytes say what the WPos is of: the frame (head 0, 1, or
@@ -302,7 +303,7 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
   on both cores (tens of ms for a sector erase); hold, abort, USB and Core 0
   run from flash. `CFG_SET` parks Core 1 for the same reason.
 * **The host is the non-volatile record:** it keeps the job and its id, and
-  saves `{job id, executed index}` from each status poll.
+  saves the executing `{layer, record}` from each status poll (S1).
 * Recovery: power up, home, restart from the saved index minus a margin (the
   poll gap); the operator confirms, since the material may have moved.
 * Later, maybe: the Pico writes the resume point at rest, on entering
@@ -1071,7 +1072,7 @@ change). The host is told nodes and the selection, never slots.
     The web polls with `get` over `STATE_KEYS`
     (`web/src/wire/link/commands.ts:60`), not `status`.
 * Scope:
-  1. STATUS_RSP v3, magic `0xA8`, 32 B:
+  1. STATUS_RSP v3, magic `0xA8`, 38 B:
 
      | byte | field | type |
      |---|---|---|
@@ -1086,7 +1087,14 @@ change). The host is told nodes and the selection, never slots.
      | `[12]` | tool: the id mounted on the selected head, 0 none (as `mount`) | u8 |
      | `[13..28]` | WPos X/Y/Z/A, selected frame, mm and degrees | f32 LE ×4 |
      | `[29..30]` | bufCount | u16 LE |
-     | `[31]` | CRC8 over `[0..30]` | |
+     | `[31..32]` | layer: the executing block's | u16 LE |
+     | `[33..36]` | record: the executing block's | u32 LE |
+     | `[37]` | CRC8 over `[0..36]` | |
+
+     Layer and record: Core 1 publishes the tag of the block it runs (an
+     inserted travel, lift, plunge or swivel carries the record it leads
+     into); in `PAUSED` the resume point; no job, layer `0xFFFF`, record 0.
+     The host knows its job id; it cannot know how far the ring has run.
 
      A position with no value (unbound Z/A, X/Y with nothing selected) is
      NaN. The tool says what WPos is the tip of; other heads' tools stay on
