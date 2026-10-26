@@ -52,6 +52,21 @@ float aJump(const AxisLimits& limits) {
     return sqrtf(2.0f * limits.max_accel[3] * kRadPerDeg * kAMisalignRad);
 }
 
+void bladeCaps(Path& p, float d, float rate, const AxisLimits& limits) {
+    if (d <= 0) return;
+    const float f = fminf(limits.max_feed[0], limits.max_feed[1]);
+    const float a = fminf(limits.max_accel[0], limits.max_accel[1]);
+    if (p.axes == AXES_A) {
+        const float g = d * kRadPerDeg;   // axis mm per degree
+        p.v_max_sqr = fminf(p.v_max_sqr, fminf(f * f, a * d) / (g * g));
+        p.accel = fminf(p.accel, a / g);
+    } else if (p.axes == AXES_XY && rate > 0) {
+        const float k = 1 + d * rate;
+        p.v_max_sqr = fminf(p.v_max_sqr / (k * k), a / (d * rate * rate));
+        p.accel /= k;
+    }
+}
+
 bool aRides(Path& p, float d, const AxisLimits& limits) {
     if (!(limits.max_feed[3] > 0 && limits.max_accel[3] > 0) || p.length <= 0) return false;
     const float r = fabsf(d) / p.length;   // deg per mm

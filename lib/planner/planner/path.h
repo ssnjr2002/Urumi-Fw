@@ -94,6 +94,14 @@ float junctionMaxSqr(const Path& prev, const Path& next, float deviation);
 /** √(2·α·e_max): A's speed step at a join, rad/s, from A's limits. */
 float aJump(const AxisLimits& limits);
 
+/**
+ * XY's limits at the knife axis, `d` mm ahead of the tip along A's heading,
+ * on a path whose A turns: an A-only path moves the axis d·ω about the tip;
+ * an XY path turning `rate` rad/mm moves it up to 1 + d·rate faster than the
+ * tip, plus d·ω² across.
+ */
+void bladeCaps(Path& p, float d, float rate, const AxisLimits& limits);
+
 }  // namespace planner
 
 #endif

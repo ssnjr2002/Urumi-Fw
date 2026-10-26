@@ -42,8 +42,10 @@ bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, 
         path = pathOf(ln);
         const float da = target.aSince(end_);
         if (da != 0 && !aRides(path, da, limits)) return false;
+        bladeCaps(path, blade_, fabsf(path.a_rate_start), limits);
     } else {
         path = axisPath(axes, axes == AXES_Z ? target.z - end_.z : target.aSince(end_), feed, limits);
+        bladeCaps(path, blade_, 0, limits);
     }
     return pushBlock(Block::LINE, capped(path, cap), target, deviation);
 }
@@ -51,7 +53,9 @@ bool Planner::pushMove(const Pos& target, float feed, const AxisLimits& limits, 
 bool Planner::pushBezierFrom(const Bezier& bz, float from, float feed, const AxisLimits& limits,
                              float deviation, const PathCap& cap, const BezierTurn* turn) {
     if (full()) return false;
-    Path path = capped(pathOf(bz, feed, limits, turn != nullptr), cap);
+    Path path = pathOf(bz, feed, limits, turn != nullptr);
+    if (turn) bladeCaps(path, blade_, bz.kappa_max, limits);
+    path = capped(path, cap);
     if (from > 0) {
         if (from >= path.length) return true;
         path.length -= from;

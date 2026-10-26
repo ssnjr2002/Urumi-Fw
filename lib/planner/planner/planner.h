@@ -129,6 +129,9 @@ public:
     void beginFront(const Pos& at);
     void endFront();
 
+    /** The knife axis's lead on the tip, mm, for the pushes from now on (bladeCaps). */
+    void setBlade(float d) { blade_ = d; }
+
     /** Horizon `ahead` of the consumer's clock, and the commit guard, in s. */
     void setTiming(float ahead, float guard) { ahead_ = ahead; guard_ = guard; }
 
@@ -186,6 +189,7 @@ private:
     int count_ = 0;
     bool claimed_ = false;
     Pos end_;
+    float blade_ = 0;
     uint16_t tag_layer_ = 0;
     uint32_t tag_record_ = 0;
     uint16_t tag_break_dist_ = 0;
