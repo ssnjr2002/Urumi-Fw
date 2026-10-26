@@ -133,4 +133,32 @@ describe("annotate: flags", () => {
     ])("nextBreakDist, $name", ({ sp, dist }) => {
         expect(annotate(sp).map((p) => p.nextBreakDist)).toEqual(dist);
     });
+
+    // Quarter circles about the origin, counter-clockwise from `deg`.
+    const arc = (deg: number) => {
+        const r = (d: number) => (d * Math.PI) / 180;
+        const p = (d: number) => pt(R * Math.cos(r(d)), R * Math.sin(r(d)));
+        const t = (d: number) => pt(-Math.sin(r(d)) * R * KAPPA, Math.cos(r(d)) * R * KAPPA);
+        const add = (a: Pt, b: Pt, k: number) => pt(a.x + k * b.x, a.y + k * b.y);
+        return cubic(p(deg), add(p(deg), t(deg), 1), add(p(deg + 90), t(deg + 90), -1), p(deg + 90));
+    };
+    const ranges = (sp: CleanSubpath) => {
+        const out = annotate(sp);
+        // Each piece of a stretch counts from its own p0, so only the first is checked here.
+        return out.filter((p) => p.flags & (START | BREAK)).map((p) => [p.sweepMin, p.sweepMax]);
+    };
+    it.each([
+        { name: "a line turns nowhere", sp: sub([a]), r: [[0, 0]] },
+        { name: "a quarter turns left", sp: sub([arc(0)]), r: [[0, 90]] },
+        { name: "a reversed quarter turns right", sp: sub([cubic(arc(0).p3, arc(0).p2, arc(0).p1, arc(0).p0)]), r: [[-90, 0]] },
+        { name: "smooth joins sum", sp: sub([arc(0), arc(90), arc(180), arc(270)], ["smooth", "smooth", "smooth"]), r: [[0, 360]] },
+        { name: "a corner starts again", sp: sub([arc(0), a], ["corner"]), r: [[0, 90], [0, 0]] },
+    ])("sweep, $name", ({ sp, r }) => {
+        expect(ranges(sp)).toEqual(r);
+    });
+
+    it("sweep: a later piece counts from its own p0 to the stretch's end", () => {
+        const out = annotate(sub([arc(0), arc(90), arc(180)], ["smooth", "smooth"]));
+        expect(out.map((p) => [p.sweepMin, p.sweepMax])).toEqual([[0, 270], [0, 180], [0, 90]]);
+    });
 });

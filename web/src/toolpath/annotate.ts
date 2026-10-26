@@ -12,6 +12,7 @@
 
 import { bezierDeriv1, bezierDeriv2, bezierPoint, cubic, splitAt, type CubicBezier, type Pt } from "./geometry.js";
 import type { CleanSubpath } from "./clean.js";
+import { bezierTurn, headingAt, wrapRad } from "./heading.js";
 
 export interface AnnotateOptions {
     /** A piece is split while κ_max / max(κ_min, kappaFloor) exceeds this. */
@@ -57,6 +58,12 @@ export interface AnnotatedBezier extends BezierAnalysis {
      * the contour, rounded up, at most 65535 (at least that far). 0 elsewhere.
      */
     readonly nextBreakDist: number;
+    /**
+     * The unwrapped heading range from p0 to the next BREAK or the end of the
+     * contour, whole degrees from p0's heading, rounded outward, i16.
+     */
+    readonly sweepMin: number;
+    readonly sweepMax: number;
 }
 
 export type BezierError = "DegenerateHandle" | "Cusp" | "NonMonotonic";
@@ -291,7 +298,7 @@ export function annotate(sp: CleanSubpath, options: Partial<AnnotateOptions> = {
                 .flatMap((p) => byFit(p, o));
             pieces.forEach(({ curve: c, a }, k) => {
                 const brk = k === 0 && (j > 0 || corner);
-                out.push({ curve: c, flags: brk ? BezierFlag.BREAK : 0, nextBreakDist: 0, ...a });
+                out.push({ curve: c, flags: brk ? BezierFlag.BREAK : 0, nextBreakDist: 0, sweepMin: 0, sweepMax: 0, ...a });
             });
         });
     });
@@ -308,6 +315,21 @@ export function annotate(sp: CleanSubpath, options: Partial<AnnotateOptions> = {
                 out[i] = { ...b, nextBreakDist: Math.min(Math.ceil(run), 0xffff) };
                 run = 0;
             }
+        }
+        // Walk back again, folding each piece's turn and the step at its join
+        // into the rest of its stretch.
+        let lo = 0, hi = 0, nextStart: number | null = null;
+        for (let i = out.length - 1; i >= 0; i--) {
+            const b = out[i]!;
+            const t = bezierTurn(b);
+            const end = headingAt(b, b.length);
+            const off = t.total + (nextStart !== null && end !== null ? wrapRad(nextStart - end) * 180 / Math.PI : 0);
+            lo = Math.min(t.lo, off + lo);
+            hi = Math.max(t.hi, off + hi);
+            out[i] = { ...b, sweepMin: Math.max(-32768, Math.floor(lo)), sweepMax: Math.min(32767, Math.ceil(hi)) };
+            const brk = (b.flags & (BezierFlag.START | BezierFlag.BREAK)) !== 0;
+            nextStart = brk ? null : headingAt(b, 0);
+            if (brk) lo = hi = 0;
         }
     }
     return out;

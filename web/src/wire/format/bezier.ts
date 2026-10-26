@@ -1,5 +1,5 @@
 /**
- * bezier.ts — the 58-byte BEZIER record: one annotated cubic for the Pico's
+ * bezier.ts — the 62-byte BEZIER record: one annotated cubic for the Pico's
  * planner (src/rp2350/core0/usb_protocol.h).
  *
  * Layout (little-endian, float32, machine mm):
@@ -10,7 +10,9 @@
  *   [35..46] length, kappaMax, dkappaMax
  *   [47..54] c2, c3   t(s) coefficients; the Pico derives c1
  *   [55..56] nextBreakDist u16 mm (AnnotatedBezier.nextBreakDist)
- *   [57]     CRC8 over bytes [0..56]
+ *   [57..58] sweepMin i16 deg (AnnotatedBezier.sweepMin)
+ *   [59..60] sweepMax i16 deg
+ *   [61]     CRC8 over bytes [0..60]
  */
 
 import type { AnnotatedBezier } from "../../toolpath/annotate.js";
@@ -30,6 +32,8 @@ export function packBezier(b: AnnotatedBezier, seq = 0): Uint8Array {
     ];
     fields.forEach((v, i) => dv.setFloat32(3 + 4 * i, v, true));
     dv.setUint16(55, b.nextBreakDist, true);
+    dv.setInt16(57, b.sweepMin, true);
+    dv.setInt16(59, b.sweepMax, true);
     u8[BEZIER_SIZE - 1] = crc8(u8, 0, BEZIER_SIZE - 1);
     return u8;
 }
