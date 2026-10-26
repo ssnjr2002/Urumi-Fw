@@ -139,7 +139,8 @@ wire (X,Y curves) → Core 0 queue    → planner ring  → executor        → 
   fits the coming stretch, centred, so unwinding folds into turns the tool
   makes anyway. Ignored for non-tangential tools.
 * A resumed record's sweep is shifted by the trimmed part's turn, which the
-  Pico computes, so the check stays exact.
+  Pico computes; it still holds the trimmed part's swing, so the check stays
+  conservative.
 
 ### Mid-cut unwind
 
@@ -437,7 +438,8 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
   * Every record carries the unwrapped heading range of the rest of its
     stretch (its p0 to the next BREAK or END), relative to its own p0
     heading. A trimmed resume takes off the trimmed part's turn, which the
-    Pico computes itself, so the bound stays exact.
+    Pico computes itself; the bound still holds the trimmed part's own swing,
+    so it is safe, a little wide.
   * i16 whole degrees, saturating, rounded outward (floor min, ceil max).
     The Pico grows the range by 0.1° each side for host/Pico float drift.
   * The pick: among the equivalents whose whole sweep fits ±`aMaxDeg`, the
