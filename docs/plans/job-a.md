@@ -400,7 +400,7 @@ A dependent chain, run as a Single Session: AA → AB → AA2 → AC → AD → 
 * Bench (Human scope): opposite-direction slits coincide; a square's corners
   come out sharp; A jog holds the tip still.
 * Depends on: AC.
-* Status: Ready to merge.
+* Status: Done (merged a267c12). Unblocks AE.
 * Outcome:
   * Deviations: A turn from a tip outside the shrunk range is refused (A
     jog `err soft_limit x|y`, cjog and a job START's travel
