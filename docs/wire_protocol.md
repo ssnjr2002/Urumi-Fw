@@ -44,7 +44,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `JOG_MAGIC`  | `0xAE` | Host → Pico | Retired jog burst: always NACKed |
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
-| `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (58 B) |
+| `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (62 B) |
 | `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head, feed and plunge (22 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
@@ -138,7 +138,7 @@ where Z would leave it, see "Bed mesh");
 `NACK_BAD_STATE` (0x06) = a bad direction or speed, a job paused, a homing or
 probe context, a latched fault, unhomed without `jogUnhomed`, or no config.
 
-### BEZIER Record — `BEZIER_MAGIC` (0xAD, 58 bytes)
+### BEZIER Record — `BEZIER_MAGIC` (0xAD, 62 bytes)
 ```
 [0]      magic = 0xAD
 [1]      flags      uint8      — BEZIER_FLAG_*: START 0x01, BREAK 0x02, END 0x04
@@ -151,7 +151,10 @@ probe context, a latched fault, unhomed without `jogUnhomed`, or no config.
 [55..56] nextBreakDist uint16 LE — on a START or BREAK record: mm from p0 to the
                       next BREAK or END of the contour, rounded up; 65535 = at
                       least that far; 0 = unknown. 0 and ignored on other records
-[57]     CRC8 over bytes [0..56]
+[57..58] sweepMin   int16 LE   — the heading range from p0 to the next BREAK or
+[59..60] sweepMax   int16 LE     END, whole degrees from p0's heading, unwrapped,
+                      rounded outward, saturating
+[61]     CRC8 over bytes [0..60]
 ```
 One piece of a host-annotated contour (`web/src/toolpath/annotate.ts`). The
 Pico does not analyse it: `checkBezier` (`lib/planner/bezier.cpp`) derives c1
@@ -170,10 +173,12 @@ drained to idle, within one step, snapped). `END` closes the contour. A
 its flags. `seqreset` and abort forget an open contour. `BREAK` marks a
 corner or cusp; joins run on the planner's junction limit whatever the flags
 say. A tangential tool's A follows the curve's heading. It reaches the
-start heading (the equivalent mod 360/`periodCount` nearest the current A
-whose curve stays inside ±`aMaxDeg`) during a `START`'s travel, and at a
-`BREAK` swivels to it, lifting for a turn past `cornerAngleDeg`. A record
-whose curve no equivalent keeps inside `aMaxDeg` is `NACK_SOFT_LIMIT`.
+start heading during a `START`'s travel, and at a `BREAK` swivels to it,
+lifting for a turn past `cornerAngleDeg`. With a cable the swivel goes to the
+equivalent mod 360/`periodCount` that centres the record's sweep (grown by
+0.1°) in ±`aMaxDeg`, ties to the one nearest the current A; without, to the
+nearest. A swivel whose sweep no equivalent fits, or a record whose curve
+leaves ±`aMaxDeg`, is `NACK_SOFT_LIMIT`.
 A chamber layer turns A during each `START`'s travel to its chamber's
 `chamberOffsets` angle (the equivalent mod 360 nearest the current A inside
 ±`aMaxDeg`, else `NACK_SOFT_LIMIT`) and holds it. A record of a tangential or

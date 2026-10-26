@@ -87,9 +87,11 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 // swivel no heading equivalent inside the tool's aMaxDeg reaches. A tangential
 // tool swivels A to the curve's heading after a START's travel and at a `brk`
 // (BREAK), lifting for a turn past cornerAngleDeg; A holds between.
-// `breakDist` is the record's nextBreakDist, tagged on its blocks.
+// `breakDist` is the record's nextBreakDist, tagged on its blocks. A swivel
+// picks the equivalent that centres `sweepMin`..`sweepMax` (degrees from p0's
+// heading to the next BREAK or END) in the cable.
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, bool end,
-                                      uint16_t breakDist);
+                                      uint16_t breakDist, int16_t sweepMin, int16_t sweepMax);
 
 // A job at rest with its ring empty (held by a pause, or aborted): queue a lift
 // to zClearance over work Z and, with the tool on, a TOOL_EV_OFF after it, run

@@ -14,6 +14,7 @@
 #include <math.h>
 #include <string.h>
 #include <string>
+#include <vector>
 
 using namespace planner;
 
@@ -324,7 +325,7 @@ TEST_CASE("bezier: every record the host packs from fish.svg passes checkBezier"
     std::string line;
     while (std::getline(f, line)) {
         if (line.rfind("r ", 0) != 0) continue;
-        uint8_t pkt[58];
+        uint8_t pkt[62];
         REQUIRE(line.size() == 2 + 2 * sizeof pkt);
         for (size_t i = 0; i < sizeof pkt; i++) pkt[i] = (uint8_t)std::stoul(line.substr(2 + 2 * i, 2), nullptr, 16);
         Bezier b = fromPacket(pkt);
@@ -333,4 +334,44 @@ TEST_CASE("bezier: every record the host packs from fish.svg passes checkBezier"
         n++;
     }
     CHECK(n > 0);
+}
+
+TEST_CASE("bezier: every host sweep holds the Pico's own turn to the stretch's end") {
+    std::ifstream f = testbits::openRef("bezier_records.txt");
+    REQUIRE_MESSAGE(f.is_open(), "test/data/bezier_records.txt missing: ", testbits::REGEN_ALL);
+    struct Rec { Bezier b; uint8_t flags; int16_t lo, hi; };
+    std::vector<Rec> recs;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.rfind("r ", 0) != 0) continue;
+        uint8_t pkt[62];
+        for (size_t i = 0; i < sizeof pkt; i++) pkt[i] = (uint8_t)std::stoul(line.substr(2 + 2 * i, 2), nullptr, 16);
+        Rec r{fromPacket(pkt), pkt[1], 0, 0};
+        REQUIRE(checkBezier(r.b) == BezierError::None);
+        memcpy(&r.lo, pkt + 57, 2);
+        memcpy(&r.hi, pkt + 59, 2);
+        recs.push_back(r);
+    }
+    REQUIRE(!recs.empty());
+    // Walk back as annotate.ts does, in the Pico's floats.
+    float lo = 0, hi = 0, next = 0;
+    bool hasNext = false;
+    for (size_t i = recs.size(); i-- > 0;) {
+        const Rec& r = recs[i];
+        const BezierTurn t = bezierTurn(r.b);
+        float end, off = t.total;
+        if (hasNext && bezierHeading(r.b, r.b.length, &end)) {
+            float d = next - end;
+            d -= 2 * kPiF * roundf(d / (2 * kPiF));
+            off += d * 180 / kPiF;
+        }
+        lo = fminf(t.lo, off + lo);
+        hi = fmaxf(t.hi, off + hi);
+        CAPTURE(i);
+        CHECK(lo >= r.lo - 0.1f);
+        CHECK(hi <= r.hi + 0.1f);
+        const bool brk = r.flags & 0x03;
+        hasNext = !brk && bezierHeading(r.b, 0, &next);
+        if (brk) lo = hi = 0;
+    }
 }

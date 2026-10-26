@@ -471,6 +471,25 @@ static bool pickA(double cur, float h, float period, float aMax,
     return true;
 }
 
+// The equivalent of heading `h` mod `period` whose sweep `lo`..`hi` (degrees
+// from it) stays inside ±`aMax` (> 0), the sweep's middle nearest A = 0, ties
+// to the nearest `cur`; false if none fits.
+static bool pickCentredA(double cur, float h, float period, float aMax, double lo, double hi,
+                         double* out) {
+    // The fitting starts form an interval centred on −mid.
+    const double mid = (lo + hi) / 2;
+    const double c0 = h + period * floor((-mid - h) / period), c1 = c0 + period;
+    const double d0 = fabs(c0 + mid), d1 = fabs(c1 + mid);
+    const double c = fabs(d0 - d1) < 1e-6 ? (fabs(c0 - cur) <= fabs(c1 - cur) ? c0 : c1)
+                                          : (d0 < d1 ? c0 : c1);
+    if (c + hi > aMax || c + lo < -aMax) return false;
+    *out = c;
+    return true;
+}
+
+// Host and Pico unwrap the heading in different float widths.
+static constexpr double kSweepMarginDeg = 0.1;
+
 static planner::Pos withA(planner::Pos to, double a) {
     to.addA((float)(a - aAbs(to)));
     return to;
@@ -501,7 +520,7 @@ static float cutS(float d, const planner::AxisLimits& limits) {
 static constexpr float kDutyMarginS = 0.05f;
 
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, bool end,
-                                      uint16_t breakDist) {
+                                      uint16_t breakDist, int16_t sweepMin, int16_t sweepMax) {
     if (machineContext != CTX_JOB) return PQ_NO_JOB;
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, false);
@@ -552,9 +571,17 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     const bool swivel = tangential && (start || brk);
     const planner::BezierTurn turn = tangential ? planner::bezierTurn(b, from) : planner::BezierTurn();
     double aTo = aAbs(e);
+    // The rest of the stretch from p0, or from a resume's trim: the sweep less
+    // the trimmed part's turn, still holding this record's own.
+    const double shift = from > 0 ? planner::bezierTurn(b).total - turn.total : 0;
+    const double sweepLo = fmin(sweepMin - kSweepMarginDeg - shift, turn.lo);
+    const double sweepHi = fmax(sweepMax + kSweepMarginDeg - shift, turn.hi);
     // Machine A is the heading less the tool's edge offset at the lock.
-    bool aFits = !swivel || pickA(aAbs(e), headingDeg(d0) - layerMo.aOffsetDeg, layerMo.periodDeg,
-                                  layerMo.aMaxDeg, turn, &aTo);
+    const float h0 = headingDeg(d0) - layerMo.aOffsetDeg;
+    bool aFits = !swivel ||
+                 (layerMo.aMaxDeg > 0
+                      ? pickCentredA(aAbs(e), h0, layerMo.periodDeg, layerMo.aMaxDeg, sweepLo, sweepHi, &aTo)
+                      : pickA(aAbs(e), h0, layerMo.periodDeg, 0, turn, &aTo));
     // A chamber layer turns to its chamber during a START's travel and holds it.
     if (chamber && start) aFits = pickA(aAbs(e), layerMo.chamberDeg, 360, layerMo.aMaxDeg, turn, &aTo);
     if (tangential && layerMo.aMaxDeg > 0)
