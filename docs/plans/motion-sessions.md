@@ -1364,6 +1364,9 @@ itself in TOOL_CHANGE, on the operator's word in TOOL_WAIT).
   `stop` in the stop, a refusal mid-stop.
 * Checks: `pio run -e pico` clean; `pio test -e native` 176/176; `pnpm
   typecheck` clean; `pnpm test` 569 passed, 1 skipped.
+  `pnpm test` ran before `positions.mount` went into
+  `config/controller.jsonc`, so `controller.msgpack` was stale on merge;
+  regenerated in `fix/controller-fixture`.
 * Out of scope: no native or decoder test for the header logic or
   `positions.mount`; the web Session still resends every 250 ms.
 
