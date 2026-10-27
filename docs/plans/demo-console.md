@@ -79,6 +79,20 @@ A dependent chain, Single Session: every branch after C1 edits
   select, carried over from the archived `barebones.js`.
 * Files: `web/demo/index.{html,js}`.
 * Depends on: C1.
+* Status: ready to merge, worktree `../urumi-demo-jog`.
+* Outcome:
+  * Bench-checked against the machine: Jog to.
+  * Added in the branch: a Jog to row (`jogto <x> <y>`, `park`, `load`).
+    `jogto` is XY only; Z and A have only the relative `jog`.
+  * Select shows the current selection (`Selected:`, from `ok` and every
+    status sample) above 0 | 1 | anchor buttons. The poll starts on connect.
+  * Cjog ACK/NACKs share the ack sink with a stream `Session`; the page reads
+    it while jogging. C5 must keep jogging off while a job streams, even where
+    the firmware would NACK the jog.
+  * For C4: the select buttons are fixed. They should follow the config's
+    heads. The firmware accepts `select 1` because head 1 is configured,
+    though its Z and A are `present: false`; whether `select` should refuse
+    a head that cannot move is a firmware question.
 
 ### C4: config
 
