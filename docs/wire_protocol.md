@@ -506,6 +506,10 @@ faults=<hex>  machineFaults   fault mask, as STATUS_RSP (e.g. 0x0004)
 job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING 5=TOOL_CHANGE 6=TOOL_WAIT 7=DWELL  (only while state=JOB)
 resume_layer=<l>   the layer a paused job resumes at  (only while job=3)
 resume_record=<r>  the record within it  (only while job=3)
+liftreason=<r>,…   the latest lift's reasons: end corner duty deadline unwind pause abort (dry reserved); `-` before the first  (only while state=JOB)
+liftcount=<n>      lifts begun since the job opened  (only while state=JOB)
+toolon=<0|1>       the powered tool's switch  (only while state=JOB, with a powered tool)
+onms=<ms>          its duty on-time since the duty's last reset, the open span included  (as toolon)
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with the HOMING fault)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
@@ -538,6 +542,13 @@ late=<n>             planner blocks Core 1 found late, since boot; a job lands P
 amiss=<n>            tangential curves whose tracked A ended over 0.5° from the planned A, since boot; A snapped to it
 texp= tmeas= twall=           DEBUG_TIMING builds only: last burst's expected, measured and wall time (us)
 ```
+A lift is Z rising out of a cut or a plunge for one of `liftreason`'s reasons,
+with the A, tool events or XY it carries and the plunge back; one lift carries
+every reason due at its spot (a BREAK's duty stop and corner swivel are one
+lift, `duty,corner`). A START's travel is not a lift. `liftreason` stays on the
+latest lift until the next one; the four keys reset as a job opens, not as it
+resumes.
+
 Pre-flight checks every required axis is **present** (pingnode), **enabled**
 (this mask), and **homed** — a present-but-disabled axis would drop steps.
 
