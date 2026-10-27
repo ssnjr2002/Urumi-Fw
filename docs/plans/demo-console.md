@@ -117,14 +117,52 @@ A dependent chain, Single Session: every branch after C1 edits
     (`heads: required`). msgpack itself round-trips exactly.
   * Follow-ups found here: see Open, config refactors.
 
+### F1: cjog replies on their own magics
+
+* Type: `fix/cjog-reply-routing`
+* Purpose: a cjog's ACK and NACK are the stream's frames (`cjogReply`,
+  `core0/data_plane.cpp:347`: `[0xAA, expectedSeq, 0]` and `sendNack`), so
+  the demux (`link/demux.ts:249`) puts them in `sinks.ack` and a `Session`
+  reads them as its own. A jog in TOOL_WAIT or PAUSED, which the firmware
+  admits, then rewinds or ends the stream. Cjog replies get their own magic
+  pair (picked from the free magics in the branch; the NACK's byte 2 stays
+  reserved for preflight detail), routed to a new `sinks.jog` that
+  `Link.cjog` reads. `sinks.ack` is the stream's only.
+* Files: `core0/data_plane.cpp`, `core0/usb_protocol.h`;
+  `web/src/wire/format/constants.ts`, `link/demux.ts`, `link/link.ts`,
+  `link/backends/sim.ts`, tests; `docs/wire_protocol.md`;
+  `web/demo/index.js` (`drainAcks` reads `sinks.jog`).
+* Test that fails before: a cjog NACK from the demux must not reach
+  `sinks.ack`.
+* Depends on: C3.
+
 ### C5: job
 
 * Type: `feature/demo-job`
-* Purpose: SVG → layer → feeds/offset → Prepare/Run/Abort, streamed through a
-  `Session`; live `Session.stats()` while running, and the `StreamResult`
-  and `fatalReasonName` at the end.
+* Purpose: run one SVG layer as a job: a `LAYER_HDR` and its BEZIERs through
+  a `Session`, with live `Session.stats()` and the `StreamResult` and
+  `fatalReasonName` at the end. Inputs are split by packet type, so a later
+  `JOB_HDR` or `TOOL_HDR` adds its own row.
+  * SVG file; its layers listed in SVG order, each with the tool and chamber
+    it names: the layer name is the tool's name in the pulled config (its
+    `id` goes in the header), a nested `<tool>/<n>` is chamber n, none is 0.
+  * A path preview of the selected layer, from the curves `loadSvgPaths`
+    returned.
+  * feed (0 = the tool's), k, material thickness t.
+  * head: the operator picks it, one per pulled config head. The firmware
+    ACKs if the tool is mounted there and the head selected, else starts a
+    tool change (`NACK_TOOL_CHANGE`).
+  * Execute layer: `prepareBezierJob` runs here, not on selection.
+  * Pause (`pause`), Cancel (`cancel`), Abort (`link.abort()` and
+    `session.truncate()`). Resume (a header at the status's resume point)
+    is decided in Read.
+  * Stop (`stop`) sits beside Connect, outside the job panel.
+  * `wzero`, `wzero xy`, `wzero z` buttons in the Jog panel.
+  * Nothing is gated on the host: jog, select and the console stay live in a
+    job; the firmware refuses what it doesn't admit.
 * Files: `web/demo/index.{html,js}`.
-* Depends on: C1; C4 for the loaded config.
+* Depends on: C4 for the pulled config; F1, so jogs in TOOL_WAIT reach the
+  jog sink.
 
 ## Open
 
@@ -158,3 +196,12 @@ Found while doing this plan, out of its scope. Each needs its own plan.
 
 The other two warnings (head 1 accepts nothing, so nothing takes `pen`) are
 deliberate until the pen head can move.
+
+### Session parking
+
+A `Session` that sends nothing while the operator has the machine: after
+`NACK_TOOL_CHANGE` it waits for an operator continue instead of retrying
+every 250 ms, and after `pause` it waits for its in-flight replies, then
+parks. It is the host half of motion-sessions.md's Open item "Leaving a tool
+change by the host's header", and goes with that redesign. Not needed for
+correctness once F1 separates the jog replies.
