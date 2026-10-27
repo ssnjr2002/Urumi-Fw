@@ -257,6 +257,30 @@ struct JobExec {
 };
 extern JobExec           jobExec;
 
+// Why a lift's blocks lift, a mask on each (Block::lift): Z, the A, events or
+// XY it carries, and the plunge back. One lift sets every reason due at its
+// spot. A START's travel is not a lift.
+enum LiftReason : uint8_t {
+    LIFT_END      = 1 << 0,   // after a contour's last record
+    LIFT_CORNER   = 1 << 1,   // a swivel past cornerAngleDeg at a BREAK
+    LIFT_DUTY     = 1 << 2,   // a duty stop planned at a BREAK
+    LIFT_DEADLINE = 1 << 3,   // a duty stop where the deadline fell (plannerDutyLift)
+    LIFT_UNWIND   = 1 << 4,   // A unwound by whole periods at a smooth join
+    LIFT_PAUSE    = 1 << 5,
+    LIFT_ABORT    = 1 << 6,
+    LIFT_DRY      = 1 << 7,   // reserved: a ring run dry does not lift
+};
+
+// jobLift — Core 1's, set under the lock as it claims a job block: `last` the
+// mask of the latest lift, kept past it; `count` the lifts begun; `cur` the
+// claimed block's mask. Core 0 zeroes it as it opens a job.
+struct JobLift {
+    uint8_t  last;
+    uint8_t  cur;
+    uint16_t count;
+};
+extern JobLift           jobLift;
+
 // Tool events (docs/plans/job-z.md, ZB): EVENT blocks Core 0 queues around a
 // powered tool's plunges and lifts, run by Core 1 at rest.
 enum ToolEvent : uint8_t {
@@ -284,6 +308,12 @@ struct JobPower {
 extern JobPower          jobPower;
 extern volatile uint32_t dutyEpoch;
 extern volatile bool     toolOn;
+// dutyOnMs, toolOnAtMs: Core 1's duty counters, published for `get onms`: the
+// closed on-spans since the reset, and when the tool last went on (millis).
+// dutySeen: the dutyEpoch they count from; behind it, a reset is pending.
+extern volatile uint32_t dutyOnMs;
+extern volatile uint32_t toolOnAtMs;
+extern volatile uint32_t dutySeen;
 
 // A deadline duty lift (docs/plans/job-z.md, ZC2): Core 1, held at rest with
 // its executor released, sets dutyStop and dutyWait and posts FACT_DUTY_HELD;

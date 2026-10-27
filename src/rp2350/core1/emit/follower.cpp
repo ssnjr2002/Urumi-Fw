@@ -177,19 +177,19 @@ static void __time_critical_func(leaveHeld)() {
 // The duty counters (docs/plans/job-z.md, Duty), kept across rings so that a
 // pause counts as off time: on-time since the last reset, and when the tool
 // last went on or off. `offKnown` false is an off time long enough to reset.
+// dutyOnMs, toolOnAtMs and dutySeen are shared (get onms).
 
-static uint32_t dutyOnMs    = 0;   // closed on-spans since the reset
-static uint32_t toolOnAtMs  = 0;
 static uint32_t toolOffAtMs = 0;
 static bool     offKnown    = false;
-static uint32_t dutySeen    = 0;
 
 static void dutyCatchUp(uint32_t now) {
-    if (dutyEpoch == dutySeen) return;
-    dutySeen = dutyEpoch;
+    const uint32_t epoch = dutyEpoch;
+    if (epoch == dutySeen) return;
     dutyOnMs = 0;
     toolOnAtMs = now;
     offKnown = false;
+    __dmb();
+    dutySeen = epoch;
 }
 
 // Switch the job's tool, three tries.
@@ -401,7 +401,15 @@ void __time_critical_func(processPlanner)() {
         } else if (spin_try_lock_unsafe(plannerLock)) {
             pos = plannerExec.tick(plannerRing, pending);
             const planner::Block* b = plannerExec.current();
-            if (!jog && b) jobExec = {true, b->layer, b->record};
+            if (!jog && b) {
+                jobExec = {true, b->layer, b->record};
+                // A lift begins where the mask changes to one; it stays past it.
+                if (b->lift && b->lift != jobLift.cur) {
+                    jobLift.count++;
+                    jobLift.last = b->lift;
+                }
+                jobLift.cur = b->lift;
+            }
             spin_unlock_unsafe(plannerLock);
         } else {
             continue;   // retry next slot

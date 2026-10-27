@@ -378,6 +378,7 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
         // From IDLE: no jog runs, so the ring is empty and becomes the job's.
         if (resetIfIdle(RING_JOB)) {
             jobExec.known = false;
+            jobLift = {0, 0, 0};
             jobReason = JOB_BUFFERING;
             __dmb();
             machineContext = CTX_JOB;
@@ -624,6 +625,12 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     // A planned duty stop needs a breakDist, sent only on a START or BREAK, so
     // it likely never meets a smooth-join unwind; kept as a guard.
     const bool unwindLift = unwind && !dutyStop;
+    // A duty stop does a corner's or an unwind's turn in its own lift; it
+    // carries their reasons too.
+    const uint8_t breakLift =
+        (dutyStop ? LIFT_DUTY : 0) |
+        (swivel && !start && fabs(aTo - aAbs(e)) > layerMo.cornerAngleDeg ? LIFT_CORNER : 0) |
+        (unwind ? LIFT_UNWIND : 0);
     blocks += (swivel && !start) + (cornerLift ? 2 : 0) + unwind + (unwindLift ? 2 : 0);
     const float curveZ = start ? down : e.z;
     PlannerQueueResult out = PQ_OK;
@@ -664,6 +671,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
             if (powered) plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(down, layerMo.plungeFeed, limits);
         }
+        if (dutyStop || cornerLift || unwindLift) plannerRing.setLift(breakLift);
         if (dutyStop) {
             pushZ(up, liftFeed, limits);
             plannerRing.pushEvent(TOOL_EV_OFF);
@@ -677,11 +685,13 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
         } else if (swivel && !start) {
             pushA(aTo, limits);
         }
+        plannerRing.setLift(0);
         plannerRing.pushBezierFrom(b, from, layerMo.cutFeed, limits, kDeviation, curveCap,
                                    tangential ? &turn : nullptr);
         if (end) {
             // Paused in the lift, the job resumes at the next record.
             plannerRing.setTag(curLayer, nextRecord + 1);
+            plannerRing.setLift(LIFT_END);
             pushZ(up, liftFeed, limits);
             if (powered) plannerRing.pushEvent(TOOL_EV_OFF);
         }
@@ -722,12 +732,14 @@ void plannerDutyLift() {
         if (!failed) {
             // A pause in these resumes at the stop, in the held record.
             plannerRing.setTag(d.layer, d.record, 0, d.s);
+            plannerRing.setLift(LIFT_DEADLINE);
             plannerRing.beginFront(d.at);
             pushZ(up, machineCfg().liftFeed, limits);
             plannerRing.pushEvent(TOOL_EV_OFF);
             plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(d.at.z, layerMo.plungeFeed, limits);
             plannerRing.endFront();
+            plannerRing.setLift(0);
         }
     }
     spin_unlock(plannerLock, s);
@@ -751,8 +763,11 @@ bool plannerQueueLift(uint8_t why) {
     const bool lift = rest && e.z < up && zMoveFits(e.xy(), e.z, up);
     // The tool lifts on, then goes off; off alone where Z cannot lift.
     const bool off = rest && toolOn;
+    // A tool switched off where Z cannot lift is not a lift.
+    if (lift) plannerRing.setLift(why == JOB_ABORTING ? LIFT_ABORT : LIFT_PAUSE);
     if (lift) pushZ(up, feed, limits);
     if (off) plannerRing.pushEvent(TOOL_EV_OFF);
+    plannerRing.setLift(0);
     if (lift || off) jobReason = why;
     spin_unlock(plannerLock, s);
     if (lift || off) replanAndCommit();

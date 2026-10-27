@@ -54,7 +54,25 @@ struct Snap {
     bool     resumeOk;
     uint16_t resumeLayer;
     uint32_t resumeRecord;
+    uint8_t  liftReason;
+    uint16_t liftCount;
+    bool     powered, toolOn;
+    uint32_t onMs;
 };
+
+// The duty's on-time since its reset, the open span included; 0 while a reset
+// is pending on Core 1. Read again if Core 1 switched the tool meanwhile.
+uint32_t dutyOnTime() {
+    if (dutySeen != dutyEpoch) return 0;
+    uint32_t closed, at;
+    bool on;
+    do {
+        closed = dutyOnMs;
+        on     = toolOn;
+        at     = toolOnAtMs;
+    } while (closed != dutyOnMs || on != toolOn);
+    return closed + (on ? millis() - at : 0);
+}
 
 void takeSnap(Snap& s) {
     s.state         = machineState;
@@ -87,6 +105,9 @@ void takeSnap(Snap& s) {
         // Under the lock: Core 1 claims and pops.
         const uint32_t k = spin_lock_blocking(plannerLock);
         const float q = plannerRing.queuedTime();
+        s.liftReason = jobLift.last;
+        s.liftCount  = jobLift.count;
+        s.powered    = jobPower.node != 0;
         spin_unlock(plannerLock, k);
         s.queuedUs = (uint32_t)(q * 1e6f);
     }
@@ -106,6 +127,8 @@ void takeSnap(Snap& s) {
     s.seq        = sequenceId();
     s.seqAborted = sequenceAbortedId();
     snprintf(s.seqFail, sizeof s.seqFail, "%s", sequenceFailWhy());
+    s.toolOn = toolOn;
+    s.onMs   = dutyOnTime();
 }
 
 enum KeyResult : uint8_t { KEY_OK, KEY_NA, KEY_FAILED };
@@ -136,6 +159,18 @@ KeyResult fmtUnits(char* out, size_t n, const float* v, const bool* ok) {
     return KEY_OK;
 }
 
+// LiftReason bits by name, comma-separated; `-` for none.
+KeyResult fmtLift(char* out, size_t n, uint8_t mask) {
+    static const char* const kNames[8] = {
+        "end", "corner", "duty", "deadline", "unwind", "pause", "abort", "dry",
+    };
+    if (!mask) return KEY_NA;
+    size_t at = 0;
+    for (uint8_t i = 0; i < 8 && at < n; i++)
+        if (mask & (1u << i)) at += snprintf(out + at, n - at, at ? ",%s" : "%s", kNames[i]);
+    return KEY_OK;
+}
+
 KeyResult fmtMesh(char* out, size_t n, const Snap& s) {
     if (s.meshFile == MESH_FILE_ABSENT) snprintf(out, n, "flat");
     else if (s.meshFile == MESH_FILE_BAD) snprintf(out, n, "bad");
@@ -158,6 +193,16 @@ const Key kKeys[] = {
         return s.resumeOk ? fmtU(o, n, s.resumeLayer) : KEY_NA; } },
     { "resume_record", [](const Snap& s, char* o, size_t n) {
         return s.resumeOk ? fmtU(o, n, (unsigned)s.resumeRecord) : KEY_NA; } },
+    // In a job: the latest lift's reasons (LiftReason) and the lifts since it
+    // opened; the powered tool's switch and its duty on-time, ms.
+    { "liftreason", [](const Snap& s, char* o, size_t n) {
+        return s.state == STATE_JOB ? fmtLift(o, n, s.liftReason) : KEY_NA; } },
+    { "liftcount", [](const Snap& s, char* o, size_t n) {
+        return s.state == STATE_JOB ? fmtU(o, n, s.liftCount) : KEY_NA; } },
+    { "toolon",    [](const Snap& s, char* o, size_t n) {
+        return s.state == STATE_JOB && s.powered ? fmtU(o, n, s.toolOn ? 1 : 0) : KEY_NA; } },
+    { "onms",      [](const Snap& s, char* o, size_t n) {
+        return s.state == STATE_JOB && s.powered ? fmtU(o, n, (unsigned)s.onMs) : KEY_NA; } },
     { "latched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.latched, 2); } },
     // See homing.h for what the codes point at; homenode is 0 for a dummy leg.
     { "homefail",  [](const Snap& s, char* o, size_t n) {
