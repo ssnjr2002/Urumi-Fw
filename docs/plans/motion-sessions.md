@@ -1247,7 +1247,7 @@ reason `plannerQueueLift` sets, with Z moving.
 
 ### Status
 
-Ready to merge.
+Done (merged). Unblocks nothing.
 
 ### Outcome
 
@@ -1268,37 +1268,85 @@ Ready to merge.
 * Human checks still open: each bit on the machine, `duty,corner` at a
   BREAK, `onms` climbing and resetting.
 
+## Branch JT: `feature/tool-wait-exit`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** leave a tool change only by the host's resent header, checked
+against the state at that moment; the Pico tracks no mount plan (replaces
+the pair table). The operator may mount and zero the next head in the same
+stop.
+
+* What the code has today:
+  * TOOL_WAIT exits by itself once the wanted tool is mounted and its Z set
+    (`toolChangeTick`, `controller/seq/toolchange.cpp:133-136`).
+  * `mount` in TOOL_WAIT takes only the wanted head and tool
+    (`toolChangeMountCheck`, `toolchange.cpp:115-118`).
+  * Z set is cleared on entering TOOL_WAIT (`enterWait`, `toolchange.cpp:32-35`),
+    not on `mount`.
+  * A header for a mounted tool with no Z set is `NACK_JOB`, fatal
+    (`data_plane.cpp:244`). A header in TOOL_WAIT reaches
+    `plannerHoldForTool` (`planner/queue.cpp:411-438`), which has no
+    TOOL_WAIT case: `NACK_BAD_STATE`, fatal.
+  * The change parks the Zs (`parkZs`, `seq/steps.cpp:68-87`), then one line
+    to `framesProbeFor(wantTool)` with the selected A riding to its lock
+    (`lineTo`, `steps.cpp:103-116`; `toolchange.cpp:61-96`).
+  * `probe_park <tool>` (`controller/cmd/jogto.cpp:44-55`) is `K_SEQUENCE`
+    and uses the selected head.
+* Scope:
+  1. Config: `machine.mountPosition {x, y}`, machine coordinates; load checks
+     it against the XY soft range. Web schema, loader, defaults, validator
+     and blob follow; blob version bumped, fixtures regenerated.
+  2. The stop: park every Z (legs), lock every head's A to 0 (legs, a new
+     `lockAs()`; each A node homed and not excluded, as `zsReady`), a plain
+     XY line to the mount position, TOOL_WAIT. A at 0 is the lock and zero
+     unwind; the leg's target is absolute, so it unwinds the whole angle.
+  3. Z set follows `mount`: `toolsMount` clears a head's Z set when its tool
+     changes; `enterWait` no longer does. Only `wzero z` sets it.
+  4. `mount` in TOOL_WAIT accepts any head.
+  5. No automatic exit. At a header, the immediate tool (the header's):
+
+     | Immediate tool | Result |
+     |---|---|
+     | Not mounted | `NACK 0x0F`; outside TOOL_WAIT the stop, in it stay |
+     | Mounted, not zeroed | `NACK 0x0F`; outside TOOL_WAIT the stop, in it stay; ACKed after `wzero z` |
+     | Mounted, zeroed | back to BUFFERING or PAUSED, then the normal path, ACKed |
+
+     This replaces the fatal `NACK_JOB` (no Z set) and `NACK_BAD_STATE` (a
+     header in TOOL_WAIT). A head switch alone stays as JB4 has it.
+  6. `probe_park <tool>`: also admitted in TOOL_WAIT; the head is the one the
+     tool is mounted on, else the selected one; selects it if needed.
+  7. Docs: `docs/wire_protocol.md` (the table, `mount`, `probe_park`,
+     `mountPosition`), the config doc, `toolchange.h`.
+* Not in scope:
+  * Auto-probe (`probe <tool>`, an implicit probe of an unzeroed tool):
+    with M4 (machine-model.md).
+  * The web Session's wait: with the Session branch (demo-console.md),
+    resending by itself only while the Pico reports TOOL_CHANGE and on the
+    operator's continue in TOOL_WAIT. Until then its 250 ms resend ACKs once
+    the immediate tool is mounted and zeroed, as today.
+  * The zero's surface (Open).
+
+**Depends on:** JB4 (done), JX (done).
+
+**Overlap:** `toolchange.*`, `data_plane.cpp`, `planner/queue.cpp`,
+`ops/tools.cpp`, `cmd/jogto.cpp`, `control_plane.cpp`, `config_decode.*`,
+`web/src/machine/schema.ts`, the config encoder.
+
+### Status
+
+Planned.
+
 ## Open
 
 * Preflight refuses and never prepares (proposed, not confirmed).
-* **Leaving a tool change by the host's header (agreed, replaces the pair
-  table):** the Pico tracks no mount plan; each layer header is checked
-  against the state at that moment, and only the host's resent header leaves
-  TOOL_WAIT.
-  * A tool change parks at a new machine-level **mount position** (config: X,
-    Y in machine coordinates; both heads' A at the lock angle; Zs up),
-    separate from the probe position, then TOOL_WAIT.
-  * `mount` in TOOL_WAIT accepts any head. Changing a head's tool clears its
-    Z set; only a zero sets it.
-  * At a resent header, the immediate tool (the header's):
-
-    | Immediate tool | Result |
-    |---|---|
-    | Not mounted | `NACK 0x0F`, stay in TOOL_WAIT |
-    | Mounted, zeroed | ACK, BUFFERING |
-    | Mounted, unzeroed, auto-probe | `NACK 0x0F`, probe (TOOL_CHANGE), BUFFERING; the next resend ACKs |
-    | Mounted, unzeroed, manual | `NACK 0x0F`, park its tip at its probe position, TOOL_WAIT; ACKed after `wzero` |
-
-  * A later header whose tool is mounted but unzeroed skips the mount
-    position and takes the unzeroed rows directly.
-  * Explicit, in TOOL_WAIT, by tool (its head is the one it is mounted on):
-    `probe <tool>` (auto; needs `TOOL_PROBE`, after M4) and `probe_park
-    <tool>` then `wzero` (manual). The host may zero the next tool now or
-    leave it for its own header.
-  * Mount immediate is required, mount next optional; zeroing either
-    explicitly is optional; the immediate tool's implicit zero is required.
-  * Host: resends automatically only while the Pico reports TOOL_CHANGE; in
-    TOOL_WAIT it resends on the operator's continue. The 250 ms retry goes.
+* **The zero's surface:** `wzero z_bed`, `wzero z_switch` (needs a
+  per-switch `probeSwitch.z` above the bed; the auto probe uses it) and
+  `wzero z_material` (subtracts the layer's `t`). Which surface work Z 0
+  means changes job-z.md's heights (bed favoured: a full cut ends at the bed
+  whatever `t`'s error, and a zero made ahead needs no `t`).
 * `cancel` from `PAUSED`: ends the session to IDLE at once, tool and vacuum
   off (proposed).
 * **Vacuum zones from the bbox (later):** the servo ids drawn as seen from
