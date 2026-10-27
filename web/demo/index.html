@@ -32,6 +32,24 @@
   <button id="bin-clear">Clear</button>
   <button id="bin-copy">Copy</button>
 
+  <h2>Jog</h2>
+  <label><input type="checkbox" id="jog-keys" disabled> Key jog (hold: W/S = +Y/−Y, A/D = −X/+X, R/F = +Z/−Z, Q/E = −A/+A)</label>
+  <label>Speed (× jogFeed): <input type="number" id="jog-speed" min="0.02" max="3.98" step="0.25" value="1" style="width: 5em"></label>
+  <span id="jog-dir"></span>
+  <div>Jog to:
+    <label>x: <input type="number" id="jogto-x" step="any" style="width: 6em"></label>
+    <label>y: <input type="number" id="jogto-y" step="any" style="width: 6em"></label>
+    <button class="jogto" value="xy" disabled>go</button>
+    <button class="jogto" value="park" disabled>park</button>
+    <button class="jogto" value="load" disabled>load</button>
+  </div>
+  <div>Selected: <span id="selected">none</span></div>
+  <div>
+    <button class="select" value="0" disabled>0</button>
+    <button class="select" value="1" disabled>1</button>
+    <button class="select" value="anchor" disabled>anchor</button>
+  </div>
+
   <script type="module" src="./index.js"></script>
 </body>
 </html>

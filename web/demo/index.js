@@ -1,5 +1,6 @@
+import * as host from 'urumi-host';
 import {
-    Link, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
+    Link, Ack, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
 } from 'urumi-host';
 import { WebSerialTransport } from 'urumi-host/wire/link/backends/webserial';
 
@@ -17,6 +18,14 @@ const statusMsIn    = document.getElementById('status-ms');
 const statusAtOut   = document.getElementById('status-at');
 const statusErrOut  = document.getElementById('status-err');
 const statusTable   = document.getElementById('status-table');
+const jogKeysBox    = document.getElementById('jog-keys');
+const jogSpeedIn    = document.getElementById('jog-speed');
+const jogDirOut     = document.getElementById('jog-dir');
+const selectBtns    = document.querySelectorAll('button.select');
+const selectedOut   = document.getElementById('selected');
+const jogtoBtns     = document.querySelectorAll('button.jogto');
+const jogtoXIn      = document.getElementById('jogto-x');
+const jogtoYIn      = document.getElementById('jogto-y');
 
 /** The Link, once connected — null otherwise. */
 let link = null;
@@ -30,11 +39,13 @@ function now() {
     return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
 
+/** Append a line; returns its text node, so a caller can rewrite it in place. */
 function log(pre, line) {
-    const t = now();
+    const node = document.createTextNode(`${now()} ${line}\n`);
     const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 2;
-    pre.append(`${t} ${line}\n`);
+    pre.append(node);
     if (atBottom) pre.scrollTop = pre.scrollHeight;
+    return node;
 }
 
 const textOut = (line) => log(textLog, line);
@@ -53,8 +64,10 @@ function setConnected(on) {
     cmdIn.disabled = !on;
     statusGetBtn.disabled = !on;
     statusPollBox.disabled = !on;
+    jogKeysBox.disabled = !on;
+    for (const b of [...selectBtns, ...jogtoBtns]) b.disabled = !on;
     if (on) cmdIn.focus();
-    else statusPollBox.checked = false;
+    else statusPollBox.checked = jogKeysBox.checked = false;
 }
 
 // requestPort() must run inside a click handler.
@@ -64,6 +77,8 @@ connectBtn.addEventListener('click', async () => {
         link = new Link(await WebSerialTransport.requestAndOpen(BAUD_RATE));
         textOut(`connected @ ${BAUD_RATE}`);
         setConnected(true);
+        statusPollBox.checked = true;
+        poll();
     } catch (e) {
         textOut(`connect failed: ${e.message}`);
         connectBtn.disabled = false;
@@ -71,6 +86,7 @@ connectBtn.addEventListener('click', async () => {
 });
 
 disconnectBtn.addEventListener('click', async () => {
+    jogStop();
     const l = link;
     link = null;
     setConnected(false);
@@ -88,20 +104,22 @@ const history = [];
 let histPos = 0;
 let draft = '';
 
+/** Send one line; returns the reply, "" on a timeout or no reply. */
 async function submit(line) {
     if (!link || link.closed) {
         textOut('link closed');
-        return;
+        return '';
     }
     textOut(`→ ${line}`);
     if (line === 'stop') {
         await link.send(line);
         textOut('← (no reply)');
-        return;
+        return '';
     }
     const reply = await link.command(line);
     textOut(reply ? `← ${reply}` : '← (timeout)');
     desyncsOut.textContent = link.textDesyncs;
+    return reply;
 }
 
 cmdIn.addEventListener('keydown', (e) => {
@@ -127,8 +145,8 @@ const hex = (n, w) => `0x${n.toString(16).padStart(w, '0')}`;
 
 function selectionName(s) {
     if (s === Selection.ANCHOR) return 'anchor';
-    if (s === Selection.NONE) return '-';
-    return `head ${s}`;
+    if (s === Selection.NONE) return 'none';
+    return String(s);
 }
 
 function statusRows(st) {
@@ -148,6 +166,7 @@ function statusRows(st) {
 
 function showStatus(st) {
     statusAtOut.textContent = now();
+    selectedOut.textContent = selectionName(st.selection);
     statusTable.replaceChildren(...statusRows(st).map(([k, v]) => {
         const tr = document.createElement('tr');
         for (const text of [k, v]) {
@@ -189,3 +208,143 @@ async function poll() {
 }
 
 statusPollBox.addEventListener('change', () => { if (statusPollBox.checked) poll(); });
+
+// ── jog ───────────────────────────────────────────────────────────────────────
+// While the box is ticked, held keys send a continuous-jog packet every
+// JOG_PERIOD_MS (inside the Pico's deadman). Releasing every key, unticking,
+// losing focus or disconnecting sends the stop byte. A packet moves one axis
+// set (XY, Z or A), so the set of the last key pressed wins.
+//
+// The Pico ACKs a start or a change of direction, NACKs every refused packet,
+// and says nothing to a repeat. Its replies land in the ack sink a stream
+// session reads, so they are drained here while jogging.
+
+const JOG_PERIOD_MS = 50;
+/** How long the ack sink is read after a stop, for replies still in flight. */
+const JOG_DRAIN_MS = 200;
+// [x, y, z, a] direction per key.
+const JOG_KEYS = {
+    w: [0, 1, 0, 0], s: [0, -1, 0, 0], a: [-1, 0, 0, 0], d: [1, 0, 0, 0],
+    r: [0, 0, 1, 0], f: [0, 0, -1, 0], q: [0, 0, 0, -1], e: [0, 0, 0, 1],
+};
+const NACK_NAMES = Object.fromEntries(
+    Object.entries(host).filter(([k]) => k.startsWith('NACK_')).map(([k, v]) => [v, k.slice(5)]),
+);
+const nackName = (r) => NACK_NAMES[r] ?? hex(r, 2);
+
+const setOf = (k) => JOG_KEYS[k][2] ? 'z' : JOG_KEYS[k][3] ? 'a' : 'xy';
+const held = new Set();
+let jogSet = 'xy';
+let jogTimer = null;
+/** The last direction logged, so a repeat packet is not. */
+let jogLogged = '';
+/** Until when the ack sink is read; 0 while no reader runs. */
+let drainUntil = 0;
+
+function jogDir() {
+    const d = [0, 0, 0, 0];
+    for (const k of held) {
+        if (setOf(k) !== jogSet) continue;
+        for (let i = 0; i < 4; i++) d[i] += JOG_KEYS[k][i];
+    }
+    return d.map(Math.sign);
+}
+
+/** Log ack-sink replies; identical NACKs in a row fold into one line. */
+async function drainAcks() {
+    let last = null, count = 0, node = null;
+    while (link && Date.now() < drainUntil) {
+        const r = await link.sinks.ack.get(JOG_PERIOD_MS);
+        if (!r) continue;
+        const line = r instanceof Ack ? `← ACK seq=${r.expectedSeq}` : `← NACK ${nackName(r.reason)}`;
+        if (line === last && node) {
+            node.data = node.data.replace(/( ×\d+)?\n$/, ` ×${++count}\n`);
+        } else {
+            node = binOut(line);
+            last = line;
+            count = 1;
+        }
+    }
+    drainUntil = 0;
+}
+
+function keepDraining(ms) {
+    const running = drainUntil !== 0;
+    drainUntil = Math.max(drainUntil, Date.now() + ms);
+    if (!running) drainAcks();
+}
+
+function jogSend() {
+    const [x, y, z, a] = jogDir();
+    const speed = Number(jogSpeedIn.value) || 1;
+    const moving = x || y || z || a;
+    jogDirOut.textContent = moving ? `jogging x ${x} y ${y} z ${z} a ${a}` : '';
+    if (!link || !moving) return;
+    const dir = `${x} ${y} ${z} ${a} ×${speed}`;
+    if (dir !== jogLogged) {
+        binOut(`→ CJOG ${dir}`);
+        jogLogged = dir;
+    }
+    try {
+        link.cjog(x, y, speed, z, a);
+    } catch (e) {
+        binOut(`cjog: ${e.message}`);
+    }
+    keepDraining(JOG_PERIOD_MS + JOG_DRAIN_MS);
+}
+
+function jogStop() {
+    held.clear();
+    if (jogTimer) { clearInterval(jogTimer); jogTimer = null; }
+    jogDirOut.textContent = '';
+    if (!link || !jogLogged) return;
+    link.cjogStop();
+    binOut('→ CJOG_STOP');
+    jogLogged = '';
+}
+
+const typing = (t) => t instanceof HTMLInputElement && t.type !== 'checkbox' && t.type !== 'radio';
+
+document.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (!jogKeysBox.checked || !(k in JOG_KEYS) || typing(e.target)) return;
+    e.preventDefault();
+    if (e.repeat || held.has(k)) return;
+    held.add(k);
+    jogSet = setOf(k);
+    jogSend();                                   // a new direction goes out at once
+    jogTimer ??= setInterval(jogSend, JOG_PERIOD_MS);
+});
+
+document.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (!held.delete(k)) return;
+    if (held.size === 0) return jogStop();
+    // Releasing the last key of the set falls back to a set still held.
+    if (![...held].some((h) => setOf(h) === jogSet)) jogSet = setOf([...held].at(-1));
+    jogSend();
+});
+
+jogKeysBox.addEventListener('change', () => { if (!jogKeysBox.checked) jogStop(); });
+window.addEventListener('blur', jogStop);
+
+// ── select ────────────────────────────────────────────────────────────────────
+// `select` is a text command, so it goes through the console and its log. The
+// shown selection follows an `ok` and every status sample.
+
+for (const b of selectBtns) {
+    b.addEventListener('click', async () => {
+        if (await submit(`select ${b.value}`) === 'ok') selectedOut.textContent = b.value;
+    });
+}
+
+// ── jog to ────────────────────────────────────────────────────────────────────
+// `jogto <x> <y>` (work mm, the selected tip), `jogto park|load`; text commands.
+
+for (const b of jogtoBtns) {
+    b.addEventListener('click', () => {
+        if (b.value !== 'xy') return submit(`jogto ${b.value}`);
+        if (jogtoXIn.value === '' || jogtoYIn.value === '') return textOut('jogto: x and y needed');
+        submit(`jogto ${jogtoXIn.value} ${jogtoYIn.value}`);
+    });
+}
