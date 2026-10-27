@@ -1135,7 +1135,7 @@ change). The host is told nodes and the selection, never slots.
 
 ### Status
 
-Ready to merge.
+Done (merged). S2 and S3 can start; they build on `get.cpp`'s groups.
 
 ### Outcome
 
