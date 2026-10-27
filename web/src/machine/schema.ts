@@ -644,10 +644,14 @@ export interface WorkOffset {
     readonly z: readonly number[];
 }
 
-/** Anchor positions in machine coordinates. Absent `park`: where homing parks. */
+/**
+ * Anchor positions in machine coordinates. Absent `park`: where homing parks.
+ * `mount`: where a job's tool change stops for the operator.
+ */
 export interface StoredPositions {
     readonly park?: BedPoint;
     readonly load?: BedPoint;
+    readonly mount?: BedPoint;
 }
 
 export interface MachineConfig {

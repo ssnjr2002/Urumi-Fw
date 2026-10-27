@@ -185,7 +185,11 @@ interface JsonMachine {
     readonly laser?: JsonLaser;
     /** Work offset default; `z` per head. Absent fields: 0. */
     readonly work?: { readonly x?: number; readonly y?: number; readonly z?: readonly number[] };
-    readonly positions?: { readonly park?: JsonPoint; readonly load?: JsonPoint };
+    readonly positions?: {
+        readonly park?: JsonPoint;
+        readonly load?: JsonPoint;
+        readonly mount?: JsonPoint;
+    };
     readonly jogUnhomed?: boolean;
     readonly meshOn: boolean;
     readonly buffer?: { readonly queueTime?: number; readonly idleTime?: number };
@@ -503,7 +507,12 @@ function buildLaser(j: JsonLaser | null | undefined, errors: string[]): LaserPoi
 function buildPositions(j: JsonMachine["positions"], errors: string[]): StoredPositions {
     const park = buildPoint(j?.park, errors, "machine.positions.park");
     const load = buildPoint(j?.load, errors, "machine.positions.load");
-    return { ...(park ? { park } : {}), ...(load ? { load } : {}) };
+    const mount = buildPoint(j?.mount, errors, "machine.positions.mount");
+    return {
+        ...(park ? { park } : {}),
+        ...(load ? { load } : {}),
+        ...(mount ? { mount } : {}),
+    };
 }
 
 /**
