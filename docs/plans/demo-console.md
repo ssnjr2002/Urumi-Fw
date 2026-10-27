@@ -135,6 +135,18 @@ A dependent chain, Single Session: every branch after C1 edits
 * Test that fails before: a cjog NACK from the demux must not reach
   `sinks.ack`.
 * Depends on: C3.
+* Status: ready to merge.
+* Outcome:
+  * Frames: `JOG_ACK` `[0xB6]`, `JOG_NACK` `[0xB7, reason]` with the stream's
+    NACK codes; no seq. A cjog with a bad CRC is a `JOG_NACK` too.
+  * Interfaces C5 uses: `sinks.jog` (`JogAck | Nack`), `JogAck`,
+    `MAGIC_JOG_ACK`/`MAGIC_JOG_NACK`. The demo's `drainJog` reads it.
+  * Bench (COM8, homed): a start gives one `b6`, a held jog of 8 packets one
+    `b6`; refusals `b7 01`, `b7 06`, `b7 09`, `b7 0a`; `SEQRESET` still
+    `aa 00 00`. Not tried: a jog during a live job (C5).
+  * Out of scope: once, a repeat 100 ms after a start also got a `b6`; not
+    reproduced. F1 changes the reply's bytes only, not when it is sent.
+  * Found here: the Session ends on most NACKs (Open, Session NACK tolerance).
 
 ### C5: job
 
@@ -196,6 +208,14 @@ Found while doing this plan, out of its scope. Each needs its own plan.
 
 The other two warnings (head 1 accepts nothing, so nothing takes `pen`) are
 deliberate until the pen head can move.
+
+### Session NACK tolerance
+
+The `Session` ends the stream on most NACKs (`session.ts:310-330`):
+`BAD_STATE` and `PAUSED` as "wrong machine state", likewise `SOFT_LIMIT`,
+`JOB`, `TOOL_UNKNOWN` and `BAD_CURVE`. A NACK it did not cause, or a state
+that passes (a pause), ends the job instead of holding it. Which NACKs should
+hold, retry or end is its own question; F1 only stops cjog NACKs reaching it.
 
 ### Session parking
 
