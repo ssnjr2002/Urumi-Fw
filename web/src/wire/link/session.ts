@@ -117,29 +117,6 @@ export class StreamContext {
     }
 
     /**
-     * (queued_us, stamp, arrival_time) — or (undefined, 0, 0). For a source that
-     * EXTRAPOLATES between polls: `stamp` says whether this sample was already
-     * accounted for, `arrivalTime` says how old it is. Reading `queuedUs`
-     * repeatedly cannot tell a fresh sample from a stale one.
-     */
-    get queuedSample(): readonly [number | undefined, number, number] {
-        const sink = this._statusSink;
-        if (!sink) return [undefined, 0, 0];
-        const [raw, stamp, at] = sink.sample;
-        if (!raw) return [undefined, stamp, at];
-        try {
-            return [parseStatusRsp(raw).queuedUs, stamp, at];
-        } catch {
-            return [undefined, stamp, at];
-        }
-    }
-
-    /** Queued MOTION TIME on the Pico in microseconds, or null. The right pacing measure. */
-    get queuedUs(): number | undefined {
-        return this.status?.queuedUs;
-    }
-
-    /**
      * Bounded wait for an open source with nothing to emit. Resolves either
      * after `timeoutMs` or when the session is truncated (so an abort / jog
      * reversal wakes a waiting source immediately).

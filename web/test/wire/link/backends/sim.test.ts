@@ -6,15 +6,15 @@
  * Pins the behaviours the Sim exists to make testable without hardware:
  *   - control plane: ping/get/enable/disable/setorigin/pause/
  *     cancel/stop/unalarm per the allowed-state matrix
- *   - binary status poll (STATUS_RSP v2 fields incl pos + queuedUs)
+ *   - binary status poll (STATUS_RSP v3: wpos, no job)
  *   - coalesced ACKs (K=8: one ACK frame per 8 accepted packets, not 1:1)
  *   - backpressure (NACK_FULL when ring full, resent on drain)
  *   - stale-seq duplicate guard (a retransmit is ACKed but NOT executed)
  *   - the job, opened by a layer header: BUFFERING until enough is queued, then RUNNING, each record
  *     landing the head on its end point; a dry ring buffers again
  *   - abort: ring discarded, position kept, state → IDLE
- *   - status-during-stream: a poll mid-stream returns a running job + non-zero
- *     queuedUs (the case impossible under port seizure)
+ *   - status-during-stream: a poll mid-stream returns a running job with blocks
+ *     queued (the case impossible under port seizure)
  */
 
 import { describe, it, expect } from "vitest";
@@ -24,6 +24,7 @@ import {
     MachineState,
     Fault,
     JobReason,
+    NO_LAYER,
 } from "../../../../src/wire/format/status.js";
 import { stampSeq } from "../../../../src/wire/format/packet.js";
 import { packBezier } from "../../../../src/wire/format/bezier.js";
@@ -277,14 +278,14 @@ describe("wire/link/backends/sim: control plane", () => {
     });
 });
 
-describe("wire/link/backends/sim: binary status poll (STATUS_RSP v2)", () => {
-    it("getStatus returns parsed MachineStatus with pos + queuedUs", async () => {
+describe("wire/link/backends/sim: binary status poll (STATUS_RSP v3)", () => {
+    it("getStatus returns parsed MachineStatus with wpos and no job", async () => {
         await withLink(async (link) => {
             const st = await link.getStatus();
             expect(st.state).toBe(MachineState.IDLE);
             expect(st.bufCount).toBe(0);
-            expect(st.pos).toEqual([0, 0, 0, 0]);
-            expect(st.queuedUs).toBe(0);
+            expect(st.wpos).toEqual([0, 0, 0, 0]);
+            expect(st.layer).toBe(NO_LAYER);
         });
     });
 });
@@ -293,8 +294,8 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
     it("streams N records, all ACKed; the job runs them and buffers again", async () => {
         await withLink(async (link) => {
             expect(await link.stream(upTo(16), 8)).toMatchObject({ ok: true });
-            const st = await until(link, (s) => s.bufCount === 0 && s.pos![0] === 16);
-            expect(st.pos![0]).toBe(16);
+            const st = await until(link, (s) => s.bufCount === 0 && s.wpos![0] === 16);
+            expect(st.wpos![0]).toBe(16);
             // A dry ring does not end the job: only cancel does.
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
             expect(await link.command("cancel")).toBe("ok");
@@ -326,7 +327,6 @@ describe("wire/link/backends/sim: buffering", () => {
                 await link.stream([layer(), rec(1)], 4);
                 let st = await link.getStatus();
                 expect([st.state, st.reason, st.bufCount]).toEqual([MachineState.JOB, JobReason.BUFFERING, 1]);
-                expect(st.queuedUs).toBe(100_000);
                 await link.stream([rec(2)], 4); // 200 ms queued: enough
                 st = await until(link, running);
                 expect(running(st)).toBe(true);
@@ -344,14 +344,14 @@ describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
             const p0 = stampSeq(rec(5), 0);
             // (use the link's writer through a one-packet session)
             await link.stream([layer(), p0], 4);
-            await until(link, (s) => s.pos![0] === 5);
+            await until(link, (s) => s.wpos![0] === 5);
             expect(sim.pos[0]).toBe(5);
 
             // Now reset and send seq 0 again — the sim's expectedSeq is back to
             // 0, so this is a fresh accept and runs.
             await link.resetSeq();
             await link.stream([layer(), stampSeq(rec(10), 0)], 4);
-            await until(link, (s) => s.pos![0] === 10);
+            await until(link, (s) => s.wpos![0] === 10);
             expect(sim.pos[0]).toBe(10);
         });
     });
@@ -364,8 +364,8 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
                 // ringSize=2, a record per tick — the ring fills, the
                 // session sees NACK_FULL, retries, and eventually completes.
                 expect(await link.stream(upTo(10), 8)).toMatchObject({ ok: true });
-                const st = await until(link, (s) => s.pos![0] === 10);
-                expect(st.pos![0]).toBe(10);
+                const st = await until(link, (s) => s.wpos![0] === 10);
+                expect(st.wpos![0]).toBe(10);
             },
             { ringSize: 2, frameMs: 20, recordMs: 20 },
         );
@@ -386,7 +386,7 @@ describe("wire/link/backends/sim: abort", () => {
             // remember position at abort time — the sim models the OUTCOME
             // (ring discarded, position KEPT), not the ramp distance the real
             // machine would still travel. So post-abort pos === pre-abort pos.
-            const posAtAbort = st.pos![0];
+            const posAtAbort = st.wpos![0];
 
             link.abort();
             await runP;
@@ -395,18 +395,17 @@ describe("wire/link/backends/sim: abort", () => {
             const after = await link.getStatus();
             expect(after.state).toBe(MachineState.IDLE);
             expect(after.bufCount).toBe(0);
-            expect(after.queuedUs).toBe(0);
             // position is whatever had integrated before the abort — NOT the
             // full 50 (the remaining ring was discarded). >= posAtAbort, and
             // strictly less than 50 unless the executor finished before abort.
-            expect(after.pos![0]).toBeGreaterThanOrEqual(posAtAbort);
-            expect(after.pos![0]).toBeLessThanOrEqual(50);
+            expect(after.wpos![0]).toBeGreaterThanOrEqual(posAtAbort);
+            expect(after.wpos![0]).toBeLessThanOrEqual(50);
         });
     });
 });
 
 describe("wire/link/backends/sim: status during a stream", () => {
-    it("a poll mid-stream returns a running job + non-zero queuedUs (impossible under seizure)", async () => {
+    it("a poll mid-stream returns a running job with blocks queued (impossible under seizure)", async () => {
         await withLink(
             async (link) => {
                 await link.resetSeq();
@@ -415,7 +414,6 @@ describe("wire/link/backends/sim: status during a stream", () => {
                 const st = await until(link, running);
                 expect(running(st)).toBe(true);
                 expect(st.bufCount).toBeGreaterThan(0);
-                expect(st.queuedUs).toBeGreaterThan(0);
                 await runP;
             },
             { frameMs: 40, recordMs: 200, bufferMs: 200 },

@@ -1,11 +1,9 @@
 /**
- * Tests for wire/format/status — STATUS_RSP (0xA7, 31B), the operational
+ * Tests for wire/format/status — STATUS_RSP (0xA4, 36B), the operational
  * enums, MachineStatus, the get reply / parseStatusRsp / packStatusRsp.
  *
- * The reference byte sequences below are the actual output of
- * host.protocol.packets.pack_status_rsp — captured from the Python, so a
- * passing round-trip here means the TS packer produces byte-identical
- * frames and the parser reads them back exactly as Python does.
+ * The reference byte sequences below come from outside the TS packer: one
+ * captured from the Pico, one packed in Python.
  */
 
 import { describe, it, expect } from "vitest";
@@ -21,21 +19,24 @@ import {
     statusFromGet,
     parseStatusRsp,
     packStatusRsp,
+    Selection,
+    NO_LAYER,
 } from "../../../src/wire/format/status.js";
 import { MAGIC_STATUS_RSP, STATUS_RSP_SIZE } from "../../../src/wire/format/constants.js";
 
 // ── reference vectors ──────────────────────────────────────────────────────────
-// state=JOB, axes_enabled=0x0f, axes_homed=0x0f, faults=0, reason=RUNNING,
-//   buf_count=5, pos=[100,-200,0,0], expected_seq=42, queued_us=1234567
+// Packed independently (Python struct, Maxim CRC8): state=JOB, reason=RUNNING,
+//   faults=0, nodeEnabled=0x01e, nodeHomed=0x006, selection=1, tool=3,
+//   wpos=[100.5,-200,12.25,NaN], bufCount=5, layer=2, record=1234567
 const REF_JOB = new Uint8Array([
-    167, 9, 15, 15, 0, 0, 1, 5, 0, 100, 0, 0, 0, 56, 255, 255,
-    255, 0, 0, 0, 0, 0, 0, 0, 0, 42, 135, 214, 18, 0, 245,
+    164, 9, 1, 0, 0, 30, 0, 6, 0, 1, 3, 0, 0, 201, 66, 0, 0, 72,
+    195, 0, 0, 68, 65, 0, 0, 192, 127, 5, 0, 2, 0, 135, 214, 18, 0, 166,
 ]);
-// state=0, axes_enabled=0, axes_homed=0, faults=0, reason=0, buf_count=0,
-//   pos=[0,0,0,0], expected_seq=0, queued_us=0
+// Emitted by the Pico at rest with no job: IDLE, head 0 selected, no tool,
+//   wpos=[-70,-30,0,0], layer=0xFFFF, record=0
 const REF_IDLE = new Uint8Array([
-    167, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115,
+    164, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 194, 0, 0, 240,
+    193, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 20,
 ]);
 
 describe("wire/format/status: enums", () => {
@@ -85,56 +86,47 @@ describe("wire/format/status: axisMask", () => {
 });
 
 describe("wire/format/status: packStatusRsp", () => {
-    it("produces a 31-byte frame", () => {
-        const pkt = packStatusRsp({
-            state: 0,
-            axesEnabled: 0,
-            axesHomed: 0,
-            faults: 0,
-            reason: 0,
-        });
+    it("produces a 36-byte frame", () => {
+        const pkt = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         expect(pkt.length).toBe(STATUS_RSP_SIZE);
+        expect(STATUS_RSP_SIZE).toBe(36);
     });
 
     it("packs the JOB vector byte for byte", () => {
         const pkt = packStatusRsp({
             state: MachineState.JOB,
-            axesEnabled: 0x0f,
-            axesHomed: 0x0f,
             faults: 0,
             reason: JobReason.RUNNING,
+            nodeEnabled: 0x01e,
+            nodeHomed: 0x006,
+            selection: 1,
+            tool: 3,
+            wpos: [100.5, -200, 12.25, NaN],
             bufCount: 5,
-            pos: [100, -200, 0, 0],
-            expectedSeq: 42,
-            queuedUs: 1234567,
+            layer: 2,
+            record: 1234567,
         });
         expect([...pkt]).toEqual([...REF_JOB]);
     });
 
-    it("is byte-identical to Python pack_status_rsp for the all-zero IDLE vector", () => {
+    it("packs the Pico's IDLE frame byte for byte", () => {
         const pkt = packStatusRsp({
             state: MachineState.IDLE,
-            axesEnabled: 0,
-            axesHomed: 0,
             faults: 0,
             reason: 0,
+            selection: 0,
+            wpos: [-70, -30, 0, 0],
         });
         expect([...pkt]).toEqual([...REF_IDLE]);
     });
 
-    it("packs negative pos values as two's-complement int32 LE", () => {
-        const pkt = packStatusRsp({
-            state: 0,
-            axesEnabled: 0,
-            axesHomed: 0,
-            faults: 0,
-            reason: 0,
-            pos: [-1, 0, 0, 0],
-        });
-        expect(pkt[9]).toBe(0xff);
-        expect(pkt[10]).toBe(0xff);
-        expect(pkt[11]).toBe(0xff);
-        expect(pkt[12]).toBe(0xff);
+    it("defaults to no selection, no position and no job", () => {
+        const st = parseStatusRsp(packStatusRsp({ state: 0, faults: 0, reason: 0 }));
+        expect(st.selection).toBe(Selection.NONE);
+        expect(st.tool).toBe(0);
+        expect(st.wpos!.every(Number.isNaN)).toBe(true);
+        expect(st.layer).toBe(NO_LAYER);
+        expect(st.record).toBe(0);
     });
 });
 
@@ -142,23 +134,34 @@ describe("wire/format/status: parseStatusRsp", () => {
     it("round-trips the JOB vector exactly", () => {
         const st = parseStatusRsp(REF_JOB);
         expect(st.state).toBe(MachineState.JOB);
-        expect(st.axesEnabled).toBe(0x0f);
-        expect(st.axesHomed).toBe(0x0f);
         expect(st.faults).toBe(0);
         expect(st.reason).toBe(JobReason.RUNNING);
+        expect(st.nodeEnabled).toBe(0x01e);
+        expect(st.nodeHomed).toBe(0x006);
+        expect(st.selection).toBe(1);
+        expect(st.tool).toBe(3);
+        expect(st.wpos!.slice(0, 3)).toEqual([100.5, -200, 12.25]);
+        expect(st.wpos![3]).toBeNaN();
         expect(st.bufCount).toBe(5);
-        expect(st.pos).toEqual([100, -200, 0, 0]);
-        expect(st.expectedSeq).toBe(42);
-        expect(st.queuedUs).toBe(1234567);
+        expect(st.layer).toBe(2);
+        expect(st.record).toBe(1234567);
+    });
+
+    it("leaves the text-plane slot masks undefined", () => {
+        const st = parseStatusRsp(REF_JOB);
+        expect(st.axesHomed).toBeUndefined();
+        expect(st.axesEnabled).toBeUndefined();
+        expect(st.homed("x")).toBe(false);
     });
 
     it("round-trips the IDLE vector exactly", () => {
         const st = parseStatusRsp(REF_IDLE);
         expect(st.state).toBe(MachineState.IDLE);
         expect(st.bufCount).toBe(0);
-        expect(st.pos).toEqual([0, 0, 0, 0]);
-        expect(st.expectedSeq).toBe(0);
-        expect(st.queuedUs).toBe(0);
+        expect(st.selection).toBe(0);
+        expect(st.wpos).toEqual([-70, -30, 0, 0]);
+        expect(st.layer).toBe(NO_LAYER);
+        expect(st.record).toBe(0);
     });
 
     it("rejects a v1 (0xA6) frame with the firmware-reflash message", () => {
@@ -168,8 +171,14 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(() => parseStatusRsp(v1)).toThrow(/Reflash/);
     });
 
+    it("rejects a v2 (0xA7) frame with the firmware-reflash message", () => {
+        const v2 = new Uint8Array(STATUS_RSP_SIZE);
+        v2[0] = 0xa7;
+        expect(() => parseStatusRsp(v2)).toThrow(/retired 31-byte STATUS_RSP/);
+    });
+
     it("rejects an unknown magic", () => {
-        const bad = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, faults: 0, reason: 0 });
+        const bad = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         bad[0] = 0xcf;
         expect(() => parseStatusRsp(bad)).toThrow(/Bad magic: 0xcf/);
     });
@@ -177,22 +186,20 @@ describe("wire/format/status: parseStatusRsp", () => {
     it("rejects a wrong-size buffer", () => {
         const short = new Uint8Array(9);
         short[0] = MAGIC_STATUS_RSP;
-        expect(() => parseStatusRsp(short)).toThrow(/Expected 31 bytes, got 9/);
+        expect(() => parseStatusRsp(short)).toThrow(/Expected 36 bytes, got 9/);
     });
 
     it("rejects a CRC mismatch", () => {
-        const pkt = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, faults: 0, reason: 0 });
+        const pkt = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         pkt[10] = pkt[10]! ^ 0xff; // flip a payload byte
         expect(() => parseStatusRsp(pkt)).toThrow(/CRC mismatch/);
     });
 
     it("falls back to IDLE on an out-of-range state byte (forward-compat)", () => {
-        const pkt = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, faults: 0, reason: 0 });
+        const pkt = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         // 99 is not a known MachineState — keep CRC valid by recomputing via pack
         const forged = packStatusRsp({
             state: 99,
-            axesEnabled: 0,
-            axesHomed: 0,
             faults: 0,
             reason: 99, // passed through raw
         });
@@ -219,9 +226,19 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
     it("leaves binary-only fields undefined (distinguishing text from real zero)", () => {
         const st = parse("state=0 enabled=0x0f homed=0x0f faults=0x0000 job=-");
         expect(st.bufCount).toBeUndefined();
-        expect(st.pos).toBeUndefined();
-        expect(st.expectedSeq).toBeUndefined();
-        expect(st.queuedUs).toBeUndefined();
+        expect(st.layer).toBeUndefined();
+        expect(st.record).toBeUndefined();
+    });
+
+    it("reads the node, selection and work position keys", () => {
+        const st = parse("state=0 homed=0x00 nodeenabled=0x01e head=1 tools=2,5 wpos=1.500,-2.000,-,-");
+        expect(st.nodeEnabled).toBe(0x01e);
+        expect(st.selection).toBe(1);
+        expect(st.tool).toBe(5);
+        expect(st.wpos!.slice(0, 2)).toEqual([1.5, -2]);
+        expect(st.wpos![2]).toBeNaN();
+        expect(parse("state=0 homed=0x00 head=anchor tools=2,5").selection).toBe(Selection.ANCHOR);
+        expect(parse("state=0 homed=0x00 head=- tools=2,5").tool).toBe(0);
     });
 
     it("defaults enabled to 0 when absent", () => {

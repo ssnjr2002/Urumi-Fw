@@ -64,19 +64,18 @@ describe("wire/link/demux: ACK / NACK routing", () => {
 });
 
 describe("wire/link/demux: status routing", () => {
-    it("hands a 30-byte STATUS_RSP to the status sink intact", () => {
+    it("hands a 36-byte STATUS_RSP to the status sink intact", () => {
         const sinks = makeSinks();
         const d = new Demux(sinks);
         const ref = packStatusRsp({
             state: 1,
-            axesEnabled: 0x0f,
-            axesHomed: 0x06,
             faults: 0,
             reason: 0,
+            nodeHomed: 0x006,
             bufCount: 3,
-            pos: [10, -5, 0, 0],
-            expectedSeq: 9,
-            queuedUs: 1000,
+            wpos: [10, -5, 0, 0],
+            layer: 1,
+            record: 9,
         });
         d.feed(ref);
         // status is latest-wins: a field read, not a round trip (D9)
@@ -88,7 +87,7 @@ describe("wire/link/demux: status routing", () => {
     it("consumes the frame even when split across chunks (byte-by-byte)", () => {
         const sinks = makeSinks();
         const d = new Demux(sinks);
-        const ref = packStatusRsp({ state: 0, axesEnabled: 0, axesHomed: 0, faults: 0, reason: 0 });
+        const ref = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         for (let i = 0; i < ref.length; i++) {
             d.feed(ref.subarray(i, i + 1));
         }
@@ -195,8 +194,9 @@ describe("wire/link/demux: phantom-ACK hazard (D2)", () => {
         const d = new Demux(sinks);
         // A payload that would emit phantom ACKs/NACKs/STATUSes from inside a
         // scanner: 0xAA (ACK), 0xBB (NACK), 0xA6 (retired status), 0xA9 (ABORT),
-        // 0xA8 (SEQRESET), 0xAB (MSEG), 0xAE (JOG), 0xA5 (STATUS_REQ), 0xA7.
-        const payload = new Uint8Array([0xaa, 0xbb, 0xa6, 0xa9, 0xa8, 0xab, 0xae, 0xa5, 0xa7]);
+        // 0xA8 (SEQRESET), 0xAB (MSEG), 0xAE (JOG), 0xA5 (STATUS_REQ), 0xA7
+        // (retired status), 0xA4 (STATUS_RSP).
+        const payload = new Uint8Array([0xaa, 0xbb, 0xa6, 0xa9, 0xa8, 0xab, 0xae, 0xa5, 0xa7, 0xa4]);
         const frame = concat(packCfgDataHeader(payload.length, 0x1234), payload);
         d.feed(frame);
 

@@ -167,11 +167,10 @@ export class Link {
     }
 
     /**
-     * Binary mirror of the `get` state keys AND `get pos` — one byte
-     * out, one frame back. Cheap enough to poll during a stream, since it
-     * slots into a boundary between MSEG packets instead of needing a whole
-     * ASCII line. Coherent: state, position, expectedSeq and queuedUs describe
-     * ONE instant on the Pico.
+     * Binary status — one byte out, one frame back. Cheap enough to poll
+     * during a stream, since it slots into a boundary between packets instead
+     * of needing a whole ASCII line. Coherent: every field describes ONE
+     * instant on the Pico.
      */
     async getStatus(timeoutMs = 1000): Promise<MachineStatus> {
         const before = this.sinks.status.sample[1];

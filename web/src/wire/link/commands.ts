@@ -87,7 +87,7 @@ export async function getState(link: Link): Promise<MachineStatus> {
     return statusFromGet(await get(link, STATE_KEYS));
 }
 
-/** Binary status snapshot (STATUS_REQ / STATUS_RSP v2) — the cheaper poll. */
+/** Binary status snapshot (STATUS_REQ / STATUS_RSP) — the cheaper poll. */
 export function getStatus(link: Link): Promise<MachineStatus> {
     return link.getStatus();
 }

@@ -162,23 +162,21 @@ describe("wire/link/link: getStatus (binary status plane)", () => {
         t.feedReply(
             packStatusRsp({
                 state: MachineState.JOB,
-                axesEnabled: 0x0f,
-                axesHomed: 0x0f,
                 faults: 0,
                 reason: JobReason.RUNNING,
                 bufCount: 3,
-                pos: [10, 20, 0, 0],
-                expectedSeq: 5,
-                queuedUs: 2000,
+                wpos: [10, 20, 0, 0],
+                layer: 0,
+                record: 5,
             }),
         );
         const st = await p;
         expect(st.state).toBe(MachineState.JOB);
         expect(st.reason).toBe(JobReason.RUNNING);
         expect(st.bufCount).toBe(3);
-        expect(st.pos).toEqual([10, 20, 0, 0]);
-        expect(st.expectedSeq).toBe(5);
-        expect(st.queuedUs).toBe(2000);
+        expect(st.wpos).toEqual([10, 20, 0, 0]);
+        expect(st.layer).toBe(0);
+        expect(st.record).toBe(5);
     });
 
     it("throws on timeout (no STATUS_RSP within timeout)", async () => {
@@ -201,17 +199,16 @@ describe("wire/link/link: status getter", () => {
         t.feedReply(
             packStatusRsp({
                 state: MachineState.IDLE,
-                axesEnabled: 0,
-                axesHomed: 0x0f,
                 faults: 0,
                 reason: 0,
+                nodeHomed: 0x00f,
             }),
         );
         // let read loop pump + demux route to the status sink
         await tick(15);
         const st = link.status;
         expect(st?.state).toBe(MachineState.IDLE);
-        expect(st?.axesHomed).toBe(0x0f);
+        expect(st?.nodeHomed).toBe(0x00f);
     });
 });
 

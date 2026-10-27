@@ -1,24 +1,22 @@
 /**
- * format/status.ts — binary STATUS_RSP (0xA7, 31B) + the operational enums.
+ * format/status.ts — binary STATUS_RSP (0xA4, 36B) + the operational enums.
  * MachineState / Fault / JobReason, MachineStatus, parseStatusRsp,
  * packStatusRsp, axisMask.
  *
- * STATUS_RSP folds state + position + expectedSeq + queued motion time into
- * one coherent sample (docs/comms_architecture.md §4.2/§4.6). It supersedes
- * the text `get` query for any caller that can do a binary
- * poll — including mid-stream, where the ASCII line would be a heavier
- * insertion between records. The text `get` query carries the fields
- * STATUS_RSP has no room for; statusFromGet builds the same MachineStatus.
+ * STATUS_RSP is one coherent sample in the node frame: state, the node
+ * masks, the selection and its tool, WPos, the ring and the job's executing
+ * record. The text `get` query carries the rest; statusFromGet builds the
+ * same MachineStatus.
  *
- * The fields text cannot carry (`pos`, `expectedSeq`, `queuedUs`, `bufCount`)
- * stay `undefined` on a text-parsed MachineStatus, distinguishing "this
- * came from the text plane" from a real zero.
+ * A field a plane cannot carry stays `undefined` on a MachineStatus from that
+ * plane, distinguishing "no information" from a real zero.
  */
 
 import { crc8 } from "./crc.js";
 import {
     MAGIC_STATUS_RSP,
     MAGIC_STATUS_RSP_V1,
+    MAGIC_STATUS_RSP_V2,
     STATUS_RSP_SIZE,
 } from "./constants.js";
 
@@ -217,18 +215,28 @@ function enumFromStr<E extends number>(values: readonly number[], raw: string | 
 
 // ── parsed snapshot ────────────────────────────────────────────────────────────
 
+/** STATUS_RSP `selection`: a head index, or one of these (core0/ops/frames.h). */
+export const Selection = {
+    /** The laser tip, or the head at (0, 0) without a laser. */
+    ANCHOR: 0xfe,
+    NONE: 0xff,
+} as const;
+
+/** STATUS_RSP `layer` with no job. */
+export const NO_LAYER = 0xffff;
+
 /**
- * Parsed snapshot from a `get` reply or a binary STATUS_RSP. The binary
- * form is a strict superset: it also carries `bufCount`, `pos`, `expectedSeq`
- * and `queuedUs`, which text cannot express. Those stay `undefined` on a
- * get-parsed status so a caller can tell "no information" apart from a
- * genuine zero.
+ * Parsed snapshot from a `get` reply or a binary STATUS_RSP. Each plane
+ * leaves `undefined` what it cannot carry, so a caller can tell "no
+ * information" apart from a genuine zero.
  */
 export class MachineStatus {
     constructor(
         readonly state: MachineState,
-        readonly axesHomed: number,
-        readonly axesEnabled: number,
+        /** Bound axes homed, slot bits. Text plane only. */
+        readonly axesHomed: number | undefined,
+        /** Bound axes energised, slot bits. Text plane only. */
+        readonly axesEnabled: number | undefined,
         /** The fault mask (Fault bits). */
         readonly faults: number,
         /**
@@ -238,9 +246,15 @@ export class MachineStatus {
          */
         readonly reason: number,
         readonly bufCount: number | undefined = undefined,
-        readonly pos: readonly [number, number, number, number] | undefined = undefined,
-        readonly expectedSeq: number | undefined = undefined,
-        readonly queuedUs: number | undefined = undefined,
+        /** Work position x, y, z, a in mm and degrees; NaN where there is no value. */
+        readonly wpos: readonly [number, number, number, number] | undefined = undefined,
+        /**
+         * The job's executing layer and record (an inserted block carries the
+         * record it leads into), the resume point while paused. Binary plane
+         * only; layer NO_LAYER and record 0 with no job.
+         */
+        readonly layer: number | undefined = undefined,
+        readonly record: number | undefined = undefined,
         /**
          * Axes standing on a latched limit switch. Text plane only — STATUS_RSP
          * has no spare byte, and adding one would change a fixed-length frame
@@ -285,6 +299,12 @@ export class MachineStatus {
          * that failed (Fault.SEQUENCE, HOMING or PROBE). undefined when neither.
          */
         readonly seq: number | undefined = undefined,
+        /** Bus nodes enabled, bit n = node n, mapped or not. */
+        readonly nodeEnabled: number | undefined = undefined,
+        /** The controlled point: a head index or a Selection value. */
+        readonly selection: number | undefined = undefined,
+        /** The tool id mounted on the selected head, 0 for none. */
+        readonly tool: number | undefined = undefined,
     ) {}
 
     /** True if any of `mask`'s Fault bits is set. */
@@ -293,7 +313,7 @@ export class MachineStatus {
     }
 
     homed(axis: AxisLetter): boolean {
-        return !!(this.axesHomed & AXIS_BITS[axis]);
+        return !!((this.axesHomed ?? 0) & AXIS_BITS[axis]);
     }
 
     /**
@@ -306,17 +326,17 @@ export class MachineStatus {
     }
 
     enabled(axis: AxisLetter): boolean {
-        return !!(this.axesEnabled & AXIS_BITS[axis]);
+        return !!((this.axesEnabled ?? 0) & AXIS_BITS[axis]);
     }
 
     /** True if every axis in `requiredMask` is homed (the pre-flight/resume gate). */
     allHomed(requiredMask: number): boolean {
-        return (this.axesHomed & requiredMask) === requiredMask;
+        return ((this.axesHomed ?? 0) & requiredMask) === requiredMask;
     }
 
     /** True if every axis in `requiredMask` is energised (a pre-flight gate). */
     allEnabled(requiredMask: number): boolean {
-        return (this.axesEnabled & requiredMask) === requiredMask;
+        return ((this.axesEnabled ?? 0) & requiredMask) === requiredMask;
     }
 }
 
@@ -379,9 +399,9 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         toInt(fields.enabled ?? "0"),
         toInt(fields.faults ?? "0"),
         fields.job !== undefined && fields.job !== "-" ? toInt(fields.job) : 0,
-        undefined, // bufCount, pos, expectedSeq, queuedUs — text cannot carry these
-        undefined,
-        undefined,
+        undefined, // bufCount: text carries `buf`, the poll reads it binary
+        fields.wpos !== undefined ? parseUnits(fields.wpos) : undefined,
+        undefined, // layer, record: binary plane only
         undefined,
         // Absent on firmware predating docs/homing.md §2.6. 0 is the right
         // default for that case and not a guess: such firmware has no concept of
@@ -406,30 +426,57 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         fields.nodehomed !== undefined ? toInt(fields.nodehomed) : undefined,
         fields.seqfail,
         fields.seq !== undefined ? parseInt(fields.seq, 10) : undefined,
+        fields.nodeenabled !== undefined ? toInt(fields.nodeenabled) : undefined,
+        selectionFromGet(reply.get("head")),
+        toolFromGet(reply.get("head"), fields.tools),
     );
 }
 
-// ── binary STATUS_RSP (0xA7, 31 bytes) ─────────────────────────────────────────
+/** `x,y,z,a` with `-` for no value → NaN there. */
+function parseUnits(v: string): [number, number, number, number] {
+    const p = v.split(",").map((s) => (s === "-" ? NaN : Number(s)));
+    return [p[0] ?? NaN, p[1] ?? NaN, p[2] ?? NaN, p[3] ?? NaN];
+}
+
+/** `head=<n>|anchor|-` → a selection; undefined when the key is absent. */
+function selectionFromGet(head: string | undefined): number | undefined {
+    if (head === undefined || head === GetMarker.UNKNOWN || head === GetMarker.FAILED) return undefined;
+    if (head === GetMarker.NA) return Selection.NONE;
+    if (head === "anchor") return Selection.ANCHOR;
+    return parseInt(head, 10);
+}
+
+/** The selected head's entry of `tools=`, 0 for no head or the anchor. */
+function toolFromGet(head: string | undefined, tools: string | undefined): number | undefined {
+    const sel = selectionFromGet(head);
+    if (sel === undefined || tools === undefined) return undefined;
+    if (sel === Selection.NONE || sel === Selection.ANCHOR) return 0;
+    const t = tools.split(",")[sel];
+    return t === undefined ? 0 : parseInt(t, 10);
+}
+
+// ── binary STATUS_RSP (0xA4, 36 bytes) ─────────────────────────────────────────
 //
-// [0]      magic        0xA7
+// [0]      magic        0xA4
 // [1]      state        u8   MachineState
-// [2]      axes_enabled u8   bitmask
-// [3]      axes_homed   u8   bitmask
-// [4..5]   faults       u16 LE — Fault bits
-// [6]      reason       u8   the current state's reason
-// [7..8]   bufCount     u16 LE — planner blocks queued
-// [9..24]  pos[4]       i32 LE — x, y, z, a (steps)
-// [25]     expectedSeq  u8   — informational, not flow control
-// [26..29] queuedUs     u32 LE — queued motion time, microseconds
-// [30]     CRC8 over [0..29]
+// [2]      reason       u8   the current state's reason
+// [3..4]   faults       u16 LE — Fault bits
+// [5..6]   nodeEnabled  u16 LE — bit n = bus node n
+// [7..8]   nodeHomed    u16 LE — nodes holding an origin
+// [9]      selection    u8   — head index, Selection.ANCHOR, Selection.NONE
+// [10]     tool         u8   — mounted on the selected head, 0 none
+// [11..26] wpos[4]      f32 LE — x, y, z, a; NaN with no value
+// [27..28] bufCount     u16 LE — planner blocks queued
+// [29..30] layer        u16 LE — the job's executing record, NO_LAYER
+// [31..34] record       u32 LE   and 0 with no job
+// [35]     CRC8 over [0..34]
 
 /**
- * Parse a 31-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
+ * Parse a 36-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
  *
- * The retired 0xA6 (9-byte v1) frame is detected explicitly and rejected with
- * a message naming the firmware that emitted it — a host consuming fixed-length
- * frames blind must surface the version skew rather than mis-parse 30 bytes as
- * 9 and desync the stream.
+ * A retired frame's magic is rejected with a message naming the firmware that
+ * emitted it: a host consuming fixed-length frames blind must surface the
+ * version skew rather than mis-parse it and desync the stream.
  */
 export function parseStatusRsp(data: Uint8Array): MachineStatus {
     if (data.length !== STATUS_RSP_SIZE) {
@@ -441,6 +488,12 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
             "predates docs/comms_architecture.md §4.2. Reflash it.",
         );
     }
+    if (data[0] === MAGIC_STATUS_RSP_V2) {
+        throw new Error(
+            "Pico is sending the retired 31-byte STATUS_RSP (0xA7) — firmware " +
+            "predates the node-frame status. Reflash it.",
+        );
+    }
     if (data[0] !== MAGIC_STATUS_RSP) {
         throw new Error(`Bad magic: 0x${data[0]!.toString(16).padStart(2, "0")}`);
     }
@@ -450,31 +503,46 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
     const dv = new DataView(data.buffer, data.byteOffset, STATUS_RSP_SIZE);
     return new MachineStatus(
         enumFromInt(MACHINE_STATE_VALUES, dv.getUint8(1), MachineState.IDLE),
-        dv.getUint8(3),
+        undefined,
+        undefined,
+        dv.getUint16(3, true),
         dv.getUint8(2),
-        dv.getUint16(4, true),
-        dv.getUint8(6),
+        dv.getUint16(27, true),
+        [dv.getFloat32(11, true), dv.getFloat32(15, true), dv.getFloat32(19, true), dv.getFloat32(23, true)],
+        dv.getUint16(29, true),
+        dv.getUint32(31, true),
+        undefined, // axesLatched … seq: text plane only
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         dv.getUint16(7, true),
-        [dv.getInt32(9, true), dv.getInt32(13, true), dv.getInt32(17, true), dv.getInt32(21, true)],
-        dv.getUint8(25),
-        dv.getUint32(26, true),
+        undefined,
+        undefined,
+        dv.getUint16(5, true),
+        dv.getUint8(9),
+        dv.getUint8(10),
     );
 }
 
 export interface PackStatusRspOptions {
     state: number;
-    axesEnabled: number;
-    axesHomed: number;
     faults: number;
     reason: number;
+    nodeEnabled?: number;
+    nodeHomed?: number;
+    selection?: number; // default Selection.NONE
+    tool?: number;
+    wpos?: readonly [number, number, number, number]; // default all NaN
     bufCount?: number;
-    pos?: readonly [number, number, number, number];
-    expectedSeq?: number;
-    queuedUs?: number;
+    layer?: number; // default NO_LAYER
+    record?: number;
 }
 
 /**
- * Pack a status snapshot into the 31-byte STATUS_RSP wire format. Mainly used
+ * Pack a status snapshot into the 36-byte STATUS_RSP wire format. Mainly used
  * by the in-process SimTransport (mirrors host.protocol.link.SimBackend) and
  * by tests; the real Pico emits this frame.
  */
@@ -485,19 +553,18 @@ export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
 
     dv.setUint8(0, MAGIC_STATUS_RSP);
     dv.setUint8(1, opts.state & 0xff);
-    dv.setUint8(2, opts.axesEnabled & 0xff);
-    dv.setUint8(3, opts.axesHomed & 0xff);
-    dv.setUint16(4, opts.faults & 0xffff, true);
-    dv.setUint8(6, opts.reason & 0xff);
-    dv.setUint16(7, (opts.bufCount ?? 0) & 0xffff, true);
-    const p = opts.pos ?? [0, 0, 0, 0];
-    dv.setInt32(9, p[0] | 0, true);
-    dv.setInt32(13, p[1] | 0, true);
-    dv.setInt32(17, p[2] | 0, true);
-    dv.setInt32(21, p[3] | 0, true);
-    dv.setUint8(25, (opts.expectedSeq ?? 0) & 0xff);
-    dv.setUint32(26, (opts.queuedUs ?? 0) >>> 0, true);
-    dv.setUint8(30, crc8(u8, 0, STATUS_RSP_SIZE - 1));
+    dv.setUint8(2, opts.reason & 0xff);
+    dv.setUint16(3, opts.faults & 0xffff, true);
+    dv.setUint16(5, (opts.nodeEnabled ?? 0) & 0xffff, true);
+    dv.setUint16(7, (opts.nodeHomed ?? 0) & 0xffff, true);
+    dv.setUint8(9, (opts.selection ?? Selection.NONE) & 0xff);
+    dv.setUint8(10, (opts.tool ?? 0) & 0xff);
+    const w = opts.wpos ?? [NaN, NaN, NaN, NaN];
+    for (let i = 0; i < 4; i++) dv.setFloat32(11 + 4 * i, w[i]!, true);
+    dv.setUint16(27, (opts.bufCount ?? 0) & 0xffff, true);
+    dv.setUint16(29, (opts.layer ?? NO_LAYER) & 0xffff, true);
+    dv.setUint32(31, (opts.record ?? 0) >>> 0, true);
+    dv.setUint8(35, crc8(u8, 0, STATUS_RSP_SIZE - 1));
 
     return u8;
 }

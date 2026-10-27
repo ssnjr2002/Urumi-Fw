@@ -94,7 +94,7 @@ describe("wire/link/commands: liveness + state", () => {
             const st = await getStatus(link);
             expect(st.state).toBe(MachineState.IDLE);
             expect(st.bufCount).toBe(0);
-            expect(st.pos).not.toBeUndefined();
+            expect(st.wpos).not.toBeUndefined();
         });
     });
 
@@ -345,7 +345,8 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
             // of the 4-slot mask.
             await axisMap(link, 1, 2, 5, 6);
             expect(await enable(link, 5)).toBe(true);
-            expect((await getStatus(link)).axesEnabled).toBe(0b0100); // slot 2
+            expect((await getState(link)).axesEnabled).toBe(0b0100); // slot 2
+            expect((await getStatus(link)).nodeEnabled).toBe(1 << 5);
         });
     });
 
@@ -353,7 +354,8 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
         await withUnconfigured(async (link) => {
             await axisMap(link, 1, 2, 3, 4);
             expect(await enable(link, 6)).toBe(true); // e.g. a vacuum node
-            expect((await getStatus(link)).axesEnabled).toBe(0);
+            expect((await getState(link)).axesEnabled).toBe(0);
+            expect((await getStatus(link)).nodeEnabled).toBe(1 << 6);
         });
     });
 });

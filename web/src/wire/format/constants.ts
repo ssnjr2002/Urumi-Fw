@@ -27,14 +27,14 @@ export const CJOG_DEADMAN_MS = 150; // silence after which the Pico stops the jo
 export const MAGIC_CJOG_STOP = 0xb3; // host → Pico: one byte, no reply
 
 // ── Status plane — binary mirror of `get` (state, pos, queued time) ───────────
-// docs/wire_protocol.md "STATUS_RSP". The magic bumped from 0xA6 to 0xA7 when
-// the frame grew 9 → 30 bytes (pos[4], expectedSeq, queuedUs). The retired
-// magic is reserved, never emitted, and parsed as unknown rather than
-// mis-parsed as 9 bytes — see format/status.ts parseStatusRsp for the message.
+// docs/wire_protocol.md "STATUS_RSP". Each layout has its own magic; the
+// retired ones are reserved, never emitted, and rejected by name rather than
+// mis-parsed — see format/status.ts parseStatusRsp for the message.
 export const MAGIC_STATUS_REQ = 0xa5; // host → Pico: one-byte request, no payload/CRC
-export const MAGIC_STATUS_RSP = 0xa7; // Pico → host: 31-byte status snapshot
+export const MAGIC_STATUS_RSP = 0xa4; // Pico → host: 36-byte status snapshot
 export const MAGIC_STATUS_RSP_V1 = 0xa6; // retired 9-byte frame; reserved, never emitted
-export const STATUS_RSP_SIZE = 31;
+export const MAGIC_STATUS_RSP_V2 = 0xa7; // retired 31-byte frame; reserved, never emitted
+export const STATUS_RSP_SIZE = 36;
 
 // ── Stream control replies (Pico → host) — fixed 3-byte frames ────────────────
 // docs/wire_protocol.md "ACK" / "NACK". Cumulative ACK: byte[1] = the next wire

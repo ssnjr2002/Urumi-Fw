@@ -142,6 +142,9 @@ export class SimTransport implements Transport {
     axesHomed = 0;
     axesEnabled = 0;
 
+    /** Bus ids enabled, mapped or not — what STATUS_RSP's nodeEnabled reports. */
+    nodeEnabled = new Set<number>();
+
     /** Bus ids holding a valid datum — the truth `axesHomed` is derived from. */
     nodeHomed = new Set<number>();
 
@@ -314,14 +317,19 @@ export class SimTransport implements Transport {
             this.reply(
                 packStatusRsp({
                     state: this.state,
-                    axesEnabled: this.axesEnabled,
-                    axesHomed: this.axesHomed,
                     faults: this.faults,
                     reason: this._reason(),
+                    nodeEnabled: this._nodeEnabled(),
+                    nodeHomed: this._nodeHomedMask(),
+                    // No frames: the work origin is the machine's, head 0 selected.
+                    selection: 0,
+                    tool: 0,
+                    wpos: [0, 1, 2, 3].map((k) => this.pos[k]! / this.jogSpm[k]!) as
+                        [number, number, number, number],
                     bufCount: this.motion.length,
-                    pos: this.pos,
-                    expectedSeq: this.expectedSeq,
-                    queuedUs: this._queuedUs(),
+                    // The executing record is not modelled; the resume point is.
+                    layer: this._resumeAt()?.layer,
+                    record: this._resumeAt()?.record,
                 }),
             );
             return Promise.resolve();
@@ -586,11 +594,6 @@ export class SimTransport implements Transport {
         this._markAck();
     }
 
-    /** Queued motion time, microseconds (plannerQueuedUs). */
-    private _queuedUs(): number {
-        return Math.trunc(this.motion.length * this.recordMs * 1000);
-    }
-
     /** STATUS_RSP byte 5: the current state's reason. */
     private _reason(): number {
         if (this.state === MachineState.JOB) return this.job;
@@ -826,6 +829,7 @@ export class SimTransport implements Transport {
                 S._rederiveHomed();
                 S.homing = null;          // an estop abandons a home in flight
                 S.axesEnabled = 0;
+                S.nodeEnabled.clear();
                 S.motion = [];
                 S.jogQueue = [];
                 return "ok";
@@ -842,9 +846,12 @@ export class SimTransport implements Transport {
                     const on = args[0] === "1" || args[0]!.toLowerCase() === "on";
                     for (let i = 0; i < MOTION_SLOTS; i++) {
                         if (S.slotNode[i] === null) continue;
-                        if (on) S.axesEnabled |= 1 << i;
-                        else {
+                        if (on) {
+                            S.axesEnabled |= 1 << i;
+                            S.nodeEnabled.add(S.slotNode[i]!);
+                        } else {
                             S.axesEnabled &= ~(1 << i);
+                            S.nodeEnabled.delete(S.slotNode[i]!);
                             // De-energise -> datum lost, and lost for the NODE:
                             // the motor may have been back-driven while off, so
                             // re-binding it elsewhere must not resurrect it.
@@ -861,6 +868,7 @@ export class SimTransport implements Transport {
                     if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
                     const slot = S._nodeSlot(node);
                     if (slot !== null) S.axesEnabled |= 1 << slot;
+                    S.nodeEnabled.add(node);
                     return "ok";
                 }
                 return "err bad_state";
@@ -870,6 +878,7 @@ export class SimTransport implements Transport {
                     if (!(node >= 1 && node <= BUS_ADDR_MAX)) return "err bad_node";
                     const slot = S._nodeSlot(node);
                     if (slot !== null) S.axesEnabled &= ~(1 << slot);
+                    S.nodeEnabled.delete(node);
                     // Per NODE, and unconditionally: de-energising a motor
                     // costs its datum whether or not it currently holds a slot.
                     S.nodeHomed.delete(node);
@@ -1057,17 +1066,27 @@ export class SimTransport implements Transport {
             case "latched":   return hex(this.axesLatched, 2);
             case "probed":    return this._probeZ() === undefined ? "0" : "1";
             case "pz":        return String(this._probeZ() ?? "-");
-            case "nodehomed": {
-                let m = 0;
-                for (const n of this.nodeHomed) m |= 1 << n;
-                return hex(m, 3);
-            }
+            case "nodehomed":   return hex(this._nodeHomedMask(), 3);
+            case "nodeenabled": return hex(this._nodeEnabled(), 3);
+            case "buf":         return String(this.motion.length);
             case "pos":       return this.pos.join(",");
             case "jogging":
                 return this.state !== MachineState.JOGGING ? "-"
                     : String(this.jogQueue.length > 0 ? JOGGING_STEP : JOGGING_CONT);
             default:          return undefined;
         }
+    }
+
+    private _nodeHomedMask(): number {
+        let m = 0;
+        for (const n of this.nodeHomed) m |= 1 << n;
+        return m;
+    }
+
+    private _nodeEnabled(): number {
+        let m = 0;
+        for (const n of this.nodeEnabled) m |= 1 << n;
+        return m;
     }
 
     /** The probe height held for the Z in slot 2, if any. */
