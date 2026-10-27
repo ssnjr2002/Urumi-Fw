@@ -79,7 +79,7 @@ A dependent chain, Single Session: every branch after C1 edits
   select, carried over from the archived `barebones.js`.
 * Files: `web/demo/index.{html,js}`.
 * Depends on: C1.
-* Status: ready to merge, worktree `../urumi-demo-jog`.
+* Status: done, merged at `45f50d6`.
 * Outcome:
   * Bench-checked against the machine: Jog to.
   * Added in the branch: a Jog to row (`jogto <x> <y>`, `park`, `load`).
