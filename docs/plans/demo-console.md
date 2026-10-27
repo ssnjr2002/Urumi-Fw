@@ -97,11 +97,25 @@ A dependent chain, Single Session: every branch after C1 edits
 ### C4: config
 
 * Type: `feature/demo-config`
-* Purpose: push a config file and pull to a download (`pushConfig`/`pullConfig`,
+* Purpose: push a config file and pull the stored one (`pushConfig`/`pullConfig`,
   `link.ts:227,247`); a failure shows the CFG_NACK name
-  (`format/cfg.ts`).
-* Files: `web/demo/index.{html,js}`.
+  (`format/cfg.ts`). The select buttons follow the pulled config's heads.
+* Files: `web/demo/index.{html,js}`, `web/src/index.ts` (one export).
 * Depends on: C1.
+* Status: ready to merge, worktree `../urumi-demo-config`.
+* Outcome:
+  * Bench-checked: loading `config/controller.jsonc` and its warnings.
+  * Pushes `.json` or `.jsonc`: `stripJsonComments` is now exported from
+    `urumi-host`, and the page runs `loadConfig` (parse and validate) before
+    `encodeConfigBlob`.
+  * Pull runs on connect and after each push; the select buttons are one per
+    `machine.heads` entry plus anchor, anchor alone with no stored config.
+  * No download: a pulled blob decodes to the resolved model, not the file
+    format. `loadConfig` (`load.ts:402`) nests `heads`, `defaultHead` and
+    `peripherals` under `machine`, fills every default and derives
+    `toolProfiles` from `tools`, so a downloaded model fails `loadConfig`
+    (`heads: required`). msgpack itself round-trips exactly.
+  * Follow-ups found here: see Open, config refactors.
 
 ### C5: job
 
@@ -111,3 +125,36 @@ A dependent chain, Single Session: every branch after C1 edits
   and `fatalReasonName` at the end.
 * Files: `web/demo/index.{html,js}`.
 * Depends on: C1; C4 for the loaded config.
+
+## Open
+
+Found while doing this plan, out of its scope. Each needs its own plan.
+
+### Config refactors
+
+1. **Remove the web-only config fields.** `invert`, and in `homing`
+   `hardTravel`, `atOrigin`, `pullInFeed`, `backoffMm`, `parkMm` and
+   `datumDeg` (marked `// web only` in `config/controller.jsonc`) have no
+   consumer: the web homing path is gone and the Pico's decoder
+   (`core0/config/config_decode.cpp`) never reads them. They are still
+   parsed and defaulted (`machine/json/load.ts`), checked
+   (`machine/json/validate.ts`), typed (`machine/schema.ts`) and carried in
+   every config blob. Removing them also clears two of
+   `controller.jsonc`'s four load warnings: the stale `hardTravel` on Y
+   (500) and head 0's Z (40) against the measured `maxTravel` (735, 48),
+   with the header note on Z's `maxTravel` that cites it. The Pico reads
+   none of them, so whether `CONFIG_BLOB_VERSION` must bump is for that plan.
+2. **Make the file format match the model.** `loadConfig` builds a different
+   shape than it reads (`load.ts:402`): `heads`, `defaultHead` and
+   `peripherals` are top-level in the file and under `machine` in the model;
+   `tools` becomes `toolProfiles` with derived fields (`name`, `toolType`,
+   `periodCount`, `plunge`, `requiredPeripheralTypes`); every default is
+   filled. A pulled config therefore decodes to a model `loadConfig` rejects
+   (`heads: required`), which is why C4 has no download. Moving the three
+   keys under `machine` in the file is host-only (`load.ts`,
+   `controller.jsonc`, fixtures; name the old keys in the errors) and leaves
+   `tools` → `toolProfiles` as the one reshape, so a `modelToFile()` (and the
+   download) becomes nearly trivial.
+
+The other two warnings (head 1 accepts nothing, so nothing takes `pen`) are
+deliberate until the pen head can move.
