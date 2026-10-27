@@ -151,27 +151,40 @@ A dependent chain, Single Session: every branch after C1 edits
 ### H1: Session hold
 
 * Type: `feature/session-hold`
-* Purpose: a `Session` that holds while the operator has the machine,
-  instead of ending the job or resending through it. Today it ends on
-  `NACK_PAUSED` and resends a header every 250 ms on `NACK_TOOL_CHANGE`
-  (`web/src/wire/link/session.ts:310-330`).
-  * Pause: on `NACK_PAUSED` it waits for its in-flight replies, then sends
-    nothing. `resume()` resets the seq, sends the header at the status's
-    resume point (`layer`, `record`), then the source from that record on.
-    The first record after a header is a START whatever its flags
-    (`planner/queue.h:89`), so a resume mid-contour is fine.
-  * Tool change: on `NACK 0x0F` it resends the header by itself only while
-    the status is TOOL_CHANGE; in TOOL_WAIT it waits for `continue()`, and
-    the resend is ACKed once the header's tool is mounted on its head and
-    zeroed, else it waits again (motion-sessions.md, JT).
-  * Still fatal: `SOFT_LIMIT`, `BAD_CURVE`, `TOOL_UNKNOWN`, `BAD_MAGIC` (the
-    job is wrong) and `BAD_STATE`. `run()` ends at the last ACK, as now; the
-    operator ends the job with `cancel`.
-  * The source must replay from a record, so a resume can take `ListSource`
-    from an index; an open source refuses `resume()`.
-* Files: `web/src/wire/link/session.ts`, `link/link.ts` (the Session
-  gets the seq reset), `link/backends/sim.ts` (a
-  tool-change hold; it has none), tests in `web/test/wire/link/`.
+* Purpose: a job `Session` that lives until the host ends the job and holds,
+  sending nothing, while the machine is not taking records. Today it ends on
+  `NACK_PAUSED`, ends at the last ACK, and resends a header every 250 ms on
+  `NACK_TOOL_CHANGE` (`web/src/wire/link/session.ts:310-330`).
+  * Life: `run()` returns only on `cancel()` (sends `cancel`; returns once
+    the status leaves JOB), `truncate()` (with `link.abort()`), a job fault
+    or a lost job. The last ACK does not end it: a pause can come after.
+  * Status: the Session polls STATUS_REQ through the whole job; the status
+    sink is a latest-value sink, so every reader sees its samples.
+  * Holds, each sending nothing and polling status:
+
+    | Hold | Entered by | Left by |
+    |---|---|---|
+    | `paused` | `NACK_PAUSED`, or status PAUSED | `resume()` |
+    | `tool` | `NACK_TOOL_CHANGE` | itself while TOOL_CHANGE; `continue()` in TOOL_WAIT |
+    | `refused` | `NACK_JOB` on a resume header | `resume()` again, or `cancel()` |
+    | `silent` | no reply past the stall timeout | the next status, if the job is still there |
+
+    Leaving resends: a resume or `continue()` sends SEQRESET (its ACK read on
+    the ack sink) and the header at the status's `layer`/`record`, then the
+    records from there; `silent` goes back to base. The stall clock restarts
+    on leaving any hold.
+  * Lost job: in any hold, a status that is not JOB on the Session's layer
+    ends `run()` with `FATAL_JOB_LOST`, and nothing is resent. A rebooted
+    Pico would ACK the resends as stale duplicates without running them.
+  * Still fatal: `SOFT_LIMIT`, `BAD_CURVE`, `TOOL_UNKNOWN`, `BAD_MAGIC`,
+    `BAD_STATE`, `FATAL_CRC_LIMIT`.
+  * Source: `ReplayableSource.from(layer, record)` gives the packets from a
+    point, header first; the Session never indexes records itself, so a
+    streamed job file can be one later. `JobSource` (`LayerHdr` fields and
+    the layer's BEZIER packets, record n = packet n) is the in-memory one.
+* Files: `web/src/wire/link/session.ts`, `link/link.ts` (builds a job
+  Session), `link/backends/sim.ts` (a tool-change hold; it has none), tests
+  in `web/test/wire/link/`; `web/src/index.ts` exports.
 * Depends on: F1; JT (motion-sessions.md, done).
 
 ### C5: job
@@ -206,6 +219,14 @@ A dependent chain, Single Session: every branch after C1 edits
 ## Open
 
 Found while doing this plan, out of its scope. Each needs its own plan.
+
+### Boot counter and uptime in status
+
+STATUS_RSP has nothing that tells one boot from the next. H1 takes "JOB on
+the Session's layer" as the job still being there, which a reboot followed by
+a new job on the same layer passes. A boot counter (or a session id the Pico
+picks at boot) and an uptime in the status would make that certain, and show
+resets on the bench. A firmware and frame change.
 
 ### Config refactors
 
