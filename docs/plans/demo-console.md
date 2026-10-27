@@ -241,6 +241,21 @@ A dependent chain, Single Session: every branch after C1 edits
 * Files: `web/src/svg/load.ts`, `web/src/toolpath/job.ts`,
   `web/test/svg/load.test.ts`, fixtures in `web/test/fixtures/`.
 * Depends on: none.
+* Status: ready to merge.
+* Outcome:
+  * Interface for C5: `toolLayer(name, tools)` gives `{ tool, chamber }` or
+    null, and `toolLayerKey()` the `layers` key (`pen`, `pen.2`); both
+    exported, with `ToolLayer`. C5 calls `toolLayer(key, tools)` on each
+    key for its tool and chamber columns. `LoadedSvg.warnings` holds the
+    merge messages; `BezierJobOptions.tools` passes the names on.
+  * Deviation: no real exports. One handwritten fixture,
+    `web/test/fixtures/svg_tool_layers.svg`, holds every app's case, from
+    forum reports; a real Illustrator or Affinity export that misreads goes
+    in beside it.
+  * `toolLayer` refuses `.0`; the chamber's range against `chamberOffsets`
+    is C5's.
+  * Known failing check: `blob.test.ts` (controller.msgpack stale against
+    `config/controller.jsonc`), failing on main too; follow-up as in H1.
 
 ### C5: job
 
