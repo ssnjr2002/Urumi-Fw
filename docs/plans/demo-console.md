@@ -135,7 +135,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Test that fails before: a cjog NACK from the demux must not reach
   `sinks.ack`.
 * Depends on: C3.
-* Status: ready to merge.
+* Status: done, merged at `e994a50`. Unblocks C5.
 * Outcome:
   * Frames: `JOG_ACK` `[0xB6]`, `JOG_NACK` `[0xB7, reason]` with the stream's
     NACK codes; no seq. A cjog with a bad CRC is a `JOG_NACK` too.
