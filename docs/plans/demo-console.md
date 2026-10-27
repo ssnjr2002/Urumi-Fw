@@ -24,7 +24,7 @@ archived at tag `archive/demos-2026-10` and deleted here. Read one with
   line, plus Clear and Copy. The text log is the console's output (C1). The
   binary log sits under the status panel (C2); every binary call writes to it
   (magic name, ACK/NACK name), so C3–C5 add no log UI. A status poll only
-  updates the table and logs state changes.
+  updates the table; it never writes to the log.
 * **Library resolution:** the page imports `urumi-host` as a third party
   would. `pnpm demo` aliases it to `src/` through `web/demo/vite.config.js`,
   so wire edits show on reload; `pnpm demo:dist` uses the built package
@@ -66,6 +66,11 @@ A dependent chain, Single Session: every branch after C1 edits
   it.
 * Files: `web/demo/index.{html,js}`.
 * Depends on: C1.
+* Status: ready to merge, worktree `../urumi-demo-status`.
+* Outcome:
+  * Bench-checked against the Pico: Get status, poll, table.
+  * The panel also shows the time of the last good reply; log times are
+    local.
 
 ### C3: jog and frames
 
