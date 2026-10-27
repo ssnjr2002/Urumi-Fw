@@ -186,7 +186,7 @@ A dependent chain, Single Session: every branch after C1 edits
   Session), `link/backends/sim.ts` (a tool-change hold; it has none), tests
   in `web/test/wire/link/`; `web/src/index.ts` exports.
 * Depends on: F1; JT (motion-sessions.md, done).
-* Status: ready to merge.
+* Status: done, merged at `a2b8077`. Unblocks C5.
 * Outcome:
   * Interfaces C5 uses: `link.session(new JobSource(hdr, packets))` makes a
     job session (a plain `PacketSource` keeps the old behaviour, so jog
