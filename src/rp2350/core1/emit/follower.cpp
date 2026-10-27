@@ -400,6 +400,8 @@ void __time_critical_func(processPlanner)() {
             pos = plannerExec.tick(plannerRing, pending);
         } else if (spin_try_lock_unsafe(plannerLock)) {
             pos = plannerExec.tick(plannerRing, pending);
+            const planner::Block* b = plannerExec.current();
+            if (!jog && b) jobExec = {true, b->layer, b->record};
             spin_unlock_unsafe(plannerLock);
         } else {
             continue;   // retry next slot

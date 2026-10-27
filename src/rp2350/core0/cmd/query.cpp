@@ -14,7 +14,6 @@
 #include "../ops/mesh.h"
 #include "../ops/homing.h"
 #include "../ops/bus.h"
-#include "../status.h"                  // getBufCount (status alias)
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
 #include "../config/config_store.h"  // g_cfg (cfg)
@@ -40,46 +39,6 @@ bool cmdCfg(const char*) {
     if (machineCfgError() != CFG_DEC_OK)
         Serial.printf(" rejected=%s", configDecodeErrorName(machineCfgError()));
     if (machineCfgIgnored()) Serial.print(" ignored=1");
-    Serial.println();
-    return true;
-}
-
-// `status` / `?` — human-readable, not host-facing.
-bool cmdStatus(const char*) {
-    // mute / excluded / touched: bit n = bus id n (ops/bus.h).
-    // buf= counts planner blocks, of planner::Planner::kSize.
-    Serial.printf("state=%s pos=%ld,%ld,%ld,%ld homed=0x%02x enabled=0x%02x buf=%u/%u"
-                  " mute=0x%03x excluded=0x%03x touched=0x%03x",
-                  stateName(machineState),
-                  (long)machinePos[0], (long)machinePos[1],
-                  (long)machinePos[2], (long)machinePos[3],
-                  axes_homed, axes_enabled, getBufCount(),
-                  planner::Planner::kSize,
-                  busMute(), busExcluded(), busTouched());
-    // Frames, units; `-` where a slot has no value.
-    const uint8_t sel = framesSelected();
-    if (sel == FRAMES_NONE)        Serial.print(" head=-");
-    else if (sel == FRAMES_ANCHOR) Serial.print(" head=anchor");
-    else                           Serial.printf(" head=%u", sel);
-    if (machineCfgValid()) {
-        Serial.print(" tools=");
-        for (uint8_t h = 0; h < machineCfg().headCount; h++)
-            Serial.printf(h ? ",%u" : "%u", toolsMounted(h));
-    }
-    for (int w = 0; w < 2; w++) {
-        Serial.print(w ? " wpos=" : " mpos=");
-        for (uint8_t k = 0; k < 4; k++) {
-            float v;
-            const bool ok = w ? framesWPos(k, &v) : framesMPos(k, &v);
-            if (k) Serial.print(',');
-            if (ok) Serial.printf("%.3f", v);
-            else    Serial.print('-');
-        }
-    }
-    if (meshFile() == MESH_FILE_ABSENT)   Serial.print(" mesh=flat");
-    else if (meshFile() == MESH_FILE_BAD) Serial.print(" mesh=bad");
-    else if (!meshEnabled())              Serial.print(" mesh=off");
-    else                                  Serial.printf(" mesh=%ux%u", meshNx(), meshNy());
     Serial.println();
     return true;
 }

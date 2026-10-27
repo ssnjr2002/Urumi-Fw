@@ -47,6 +47,7 @@ int64_t           plannerTurnQ32  = 0;
 PlannerMesh       plannerMesh     = {nullptr, 0, 0, 0};
 PlannerBlade      plannerBlade    = {0, 0};
 JobResume         jobResume       = {false, 0, 0, 0};
+JobExec           jobExec         = {false, 0, 0};
 JobPower          jobPower        = {};
 DutyStop          dutyStop        = {};
 volatile bool     dutyWait        = false;

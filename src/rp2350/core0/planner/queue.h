@@ -78,6 +78,11 @@ bool plannerJobSwap(uint8_t from, uint8_t to);
 // False unless JOB.PAUSED.
 bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 
+// Where a job is: the record its running block belongs to (an inserted block
+// carries the record it leads into), the resume point while paused, the
+// oldest queued or next expected record before a block runs. False with no job.
+bool plannerExecPoint(uint16_t* layer, uint32_t* record);
+
 // Queue a host-analysed record (checkBezier fills the rest of `b`). Contour
 // framing: `start` opens a contour: Z to zClearance over work Z, travel to p0,
 // plunge to the layer's depth; any other record must continue the ring's end;

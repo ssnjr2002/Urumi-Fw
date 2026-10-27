@@ -3,8 +3,7 @@
 
 // Core 0 status reporting.
 
-// Planner blocks queued — telemetry shared by the binary STATUS_RSP and the
-// human-readable text `status` alias.
+// Planner blocks queued — shared by the binary STATUS_RSP and `get buf`.
 uint16_t getBufCount();
 
 // Binary mirror of the `get` state keys (docs/wire_protocol.md STATUS_REQ/STATUS_RSP).

@@ -4,7 +4,7 @@
 // Markers in place of a value: `?` the read failed, `-` the key does not
 // apply now, `!` the key is not recognised (so a newer host still reads the
 // other fields from older firmware). Memory reads only: bus transactions stay
-// their own commands.
+// their own commands. A group name (`status`) asks for its keys.
 
 #include <Arduino.h>
 #include "table.h"
@@ -16,6 +16,9 @@
 #include "../ops/machine.h"
 #include "../ops/sequence.h"
 #include "../ops/tools.h"
+#include "../ops/bus.h"
+#include "../status.h"
+#include "../data_plane.h"
 #include "../planner/queue.h"
 #include "../../ipc/shared_state.h"
 #include "../config/machine_cfg.h"
@@ -32,7 +35,10 @@ struct Snap {
     int32_t  probeSteps;
     bool     probed;
     int32_t  pz;
-    uint16_t nodeHomed;
+    uint16_t nodeHomed, nodeEnabled;
+    uint16_t buf, mute, excluded, touched;
+    uint32_t queuedUs;
+    uint8_t  expectedSeq;
     int32_t  pos[4];
     float    mpos[4], wpos[4];
     bool     mposOk[4], wposOk[4];
@@ -71,6 +77,19 @@ void takeSnap(Snap& s) {
     s.probeSteps    = probeLastSteps();
     s.probed        = probeValid(axisNode(SLOT_Z), &s.pz);
     s.nodeHomed     = originMask();
+    s.nodeEnabled   = nodeEnabled;
+    s.buf           = getBufCount();
+    s.mute          = busMute();
+    s.excluded      = busExcluded();
+    s.touched       = busTouched();
+    s.expectedSeq   = dataPlaneExpectedSeq();
+    {
+        // Under the lock: Core 1 claims and pops.
+        const uint32_t k = spin_lock_blocking(plannerLock);
+        const float q = plannerRing.queuedTime();
+        spin_unlock(plannerLock, k);
+        s.queuedUs = (uint32_t)(q * 1e6f);
+    }
     for (uint8_t i = 0; i < 4; i++) s.pos[i] = machinePos[i];
     for (uint8_t i = 0; i < 4; i++) {
         s.mposOk[i] = framesMPos(i, &s.mpos[i]);
@@ -179,6 +198,17 @@ const Key kKeys[] = {
         return s.homeCycle ? fmtU(o, n, s.homeCycle) : KEY_NA; } },
     // Nodes holding an origin, mapped or not; `homed` covers bound axes only.
     { "nodehomed", [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.nodeHomed, 3); } },
+    // Enabled nodes, mapped or not; `enabled` covers bound axes only.
+    { "nodeenabled", [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.nodeEnabled, 3); } },
+    // Bus ids, bit n = node n (ops/bus.h).
+    { "mute",      [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.mute, 3); } },
+    { "excluded",  [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.excluded, 3); } },
+    { "touched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.touched, 3); } },
+    // Planner blocks queued, and the motion time of those not yet started, µs.
+    { "buf",       [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.buf); } },
+    { "queued",    [](const Snap& s, char* o, size_t n) { return fmtU(o, n, (unsigned)s.queuedUs); } },
+    // The next wire seq the data plane will execute; not flow control.
+    { "expectedseq", [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.expectedSeq); } },
     // machinePos in steps, slot order. Never a sentinel: gate on `homed`.
     { "pos",       [](const Snap& s, char* o, size_t n) {
         snprintf(o, n, "%ld,%ld,%ld,%ld", (long)s.pos[0], (long)s.pos[1],
@@ -212,6 +242,44 @@ const Key kKeys[] = {
 };
 constexpr uint8_t kKeyCount = sizeof(kKeys) / sizeof(kKeys[0]);
 constexpr uint8_t KEY_UNKNOWN = 0xFF;
+
+uint8_t findKey(const char* name, size_t len);
+
+// A group stands for its keys, in order. Group and key names share one namespace.
+const char* const kStatusKeys[] = {
+    "state", "homed", "enabled", "nodehomed", "nodeenabled", "head", "tools",
+    "pos", "mpos", "wpos", "buf", "mute", "excluded", "touched", "mesh",
+};
+struct Group { const char* name; const char* const* keys; uint8_t count; };
+const Group kGroups[] = {
+    { "status", kStatusKeys, sizeof(kStatusKeys) / sizeof(kStatusKeys[0]) },
+};
+
+const Group* findGroup(const char* name, size_t len) {
+    for (const Group& g : kGroups)
+        if (strlen(g.name) == len && strncmp(g.name, name, len) == 0) return &g;
+    return nullptr;
+}
+
+// The keys of one request; a key asked for twice is printed once, where first asked.
+struct Request {
+    const char* names[GET_MAX_KEYS];
+    uint8_t idx[GET_MAX_KEYS], lens[GET_MAX_KEYS];
+    uint8_t count = 0;
+
+    // False when the request is full.
+    bool add(const char* name, size_t len) {
+        if (len > 255) len = 255;
+        for (uint8_t i = 0; i < count; i++)
+            if (lens[i] == len && strncmp(names[i], name, len) == 0) return true;
+        if (count == GET_MAX_KEYS) return false;
+        names[count] = name;
+        lens[count]  = len;
+        idx[count]   = findKey(name, len);
+        count++;
+        return true;
+    }
+};
 
 uint8_t findKey(const char* name, size_t len) {
     for (uint8_t i = 0; i < kKeyCount; i++)
@@ -251,24 +319,28 @@ bool cmdGet(const char* args) {
         return true;
     }
 
-    const char* names[GET_MAX_KEYS];
-    uint8_t idx[GET_MAX_KEYS], lens[GET_MAX_KEYS];
-    uint8_t count = 0;
+    Request r;
     for (const char* p = args; *p; ) {
         while (*p == ' ') p++;
         if (!*p) break;
         const char* start = p;
         while (*p && *p != ' ') p++;
-        if (count == GET_MAX_KEYS) { Serial.println("err too_many_keys"); return true; }
-        size_t len = p - start;
-        names[count] = start;
-        lens[count]  = len > 255 ? 255 : len;
-        idx[count]   = findKey(start, len);
-        count++;
+        const size_t len = p - start;
+        bool ok = true;
+        if (const Group* g = findGroup(start, len)) {
+            for (uint8_t i = 0; i < g->count && ok; i++)
+                ok = r.add(g->keys[i], strlen(g->keys[i]));
+        } else {
+            ok = r.add(start, len);
+        }
+        if (!ok) { Serial.println("err too_many_keys"); return true; }
     }
 
     Snap s;
     takeSnap(s);
-    printKeys(s, idx, names, lens, count);
+    printKeys(s, r.idx, r.names, r.lens, r.count);
     return true;
 }
+
+// `?` — the status group.
+bool cmdQuery(const char*) { return cmdGet("status"); }

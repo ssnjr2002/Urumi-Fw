@@ -82,37 +82,33 @@
 // docs/comms_architecture.md §4.2 + §4.6.
 //
 //   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
-//   STATUS_RSP:  [0xA7]                                    (31 bytes)
-//     [0]      magic 0xA7
+//   STATUS_RSP:  [0xA4]                                    (36 bytes)
+//     [0]      magic 0xA4
 //     [1]      machineState
-//     [2]      axes_enabled
-//     [3]      axes_homed
-//     [4..5]   faults     u16 LE   — machineFaults() (core0/ops/machine.h)
-//     [6]      reason              — the current state's: job, jogging,
+//     [2]      reason              — the current state's: job, jogging,
 //                                   homing or probing; 0 otherwise
-//     [7..8]   bufCount   u16 LE   — planner blocks queued
-//     [9..24]  pos[4]     i32 LE   — machinePos, x/y/z/a
-//     [25]     expectedSeq         — next wire seq the data plane will execute
-//     [26..29] queuedUs   u32 LE   — planned motion time queued, microseconds
-//     [30]     CRC8 over [0..29]
+//     [3..4]   faults     u16 LE   — machineFaults() (core0/ops/machine.h)
+//     [5..6]   nodeEnabled u16 LE  — bit n = bus node n
+//     [7..8]   nodeHomed  u16 LE   — nodes holding an origin (originMask)
+//     [9]      selection           — head index, FRAMES_ANCHOR, FRAMES_NONE
+//     [10]     tool                — the id mounted on the selected head, 0 none
+//     [11..26] wpos[4]    f32 LE   — x/y/z/a, mm and degrees; NaN with no value
+//     [27..28] bufCount   u16 LE   — planner blocks queued
+//     [29..30] layer      u16 LE   — the job's executing record
+//     [31..34] record     u32 LE     (plannerExecPoint); 0xFFFF, 0 with no job
+//     [35]     CRC8 over [0..34]
 //
-// One frame, one coherent sample. Position used to need a separate text query on
-// the text plane, so state and position could disagree by tens of ms; per §1
-// the extra bytes are free because cost is per-transaction, not per-byte.
+// One frame, one coherent sample, in the node frame: the host is told nodes
+// and the selection, never slots.
 //
-// queuedUs counts the blocks not yet started, as last planned.
-//
-// expectedSeq is INFORMATIONAL — for resynchronising after a timeout, abort or
-// reconnect. It is not flow control; ACKs remain the only advance mechanism (D9).
-//
-// The magic changed 0xA6 → 0xA7 deliberately. The reader consumes fixed-length
-// frames blind (D2), so a host expecting the 9-byte v1 frame must fail on an
-// unknown byte (D5) rather than silently mis-parse 30 bytes as 9 and desync.
+// Each layout has its own magic. The reader consumes fixed-length frames blind
+// (D2), so a host expecting another layout must fail on an unknown byte (D5)
+// rather than mis-parse it and desync.
 #define STATUS_REQ       0xA5
-#define STATUS_RSP_V1    0xA6   // retired 9-byte frame — never emit; reserved so
-                                // the value is not reused for something else
-#define STATUS_RSP       0xA7
-#define STATUS_RSP_SIZE  31
+#define STATUS_RSP_V1    0xA6   // retired frames — never emit; reserved so the
+#define STATUS_RSP_V2    0xA7   // values are not reused for something else
+#define STATUS_RSP       0xA4
+#define STATUS_RSP_SIZE  36
 
 // Binary `seqreset` (§4.3): one byte, zeroes expectedSeq, replies ACK(0).
 // The text command sits on the critical path of every stream start — the one

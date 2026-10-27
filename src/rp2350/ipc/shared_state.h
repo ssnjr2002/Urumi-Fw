@@ -217,6 +217,9 @@ extern volatile bool    toolChangePending;
 //   (0 for its travel). Core 1 sets it under the lock as it lands JOB.PAUSED
 //   and drops the ring; `known` is false if the ring was empty, when the job
 //   resumes at the next record Core 0 expects.
+// jobExec — the tag of the job block Core 1 last claimed, set under the lock
+//   by Core 1 as it claims one; Core 0 clears `known` as it opens or resumes
+//   a job.
 extern planner::Planner  plannerRing;
 extern planner::Executor plannerExec;
 extern spin_lock_t*      plannerLock;
@@ -247,6 +250,12 @@ struct JobResume {
     float    s;
 };
 extern JobResume         jobResume;
+struct JobExec {
+    bool     known;
+    uint16_t layer;
+    uint32_t record;
+};
+extern JobExec           jobExec;
 
 // Tool events (docs/plans/job-z.md, ZB): EVENT blocks Core 0 queues around a
 // powered tool's plunges and lifts, run by Core 1 at rest.

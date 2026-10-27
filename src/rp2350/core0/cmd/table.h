@@ -28,7 +28,6 @@ struct Cmd {
 
 // ─── query.cpp — reads; nothing here changes machine state ────────────────────
 bool cmdPing(const char*);
-bool cmdStatus(const char*);        // also serves the `?` alias
 bool cmdCfg(const char*);
 bool cmdPingNode(const char*);
 bool cmdNodePos(const char*);
@@ -39,6 +38,7 @@ bool cmdVacSwitch(const char*);
 // ─── get.cpp — key=value reads from one snapshot ───────────────────────────────
 constexpr uint8_t GET_MAX_KEYS = 32;   // more in one request: err too_many_keys
 bool cmdGet(const char*);
+bool cmdQuery(const char*);         // `?`: get status
 
 // ─── lifecycle.cpp — state transitions; unstop also makes the bus safe ─────────
 bool cmdStop(const char*);

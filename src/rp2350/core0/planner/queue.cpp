@@ -320,6 +320,21 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record) {
     return ok;
 }
 
+bool plannerExecPoint(uint16_t* layer, uint32_t* record) {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    const bool ok = machineContext == CTX_JOB;
+    if (ok) {
+        const planner::Block* b = plannerRing.oldest();
+        if (paused() && jobResume.known) { *layer = jobResume.layer; *record = jobResume.record; }
+        else if (paused())  { *layer = curLayer;      *record = nextRecord; }
+        else if (jobExec.known) { *layer = jobExec.layer; *record = jobExec.record; }
+        else if (b)        { *layer = b->layer;      *record = b->record; }
+        else               { *layer = curLayer;      *record = nextRecord; }
+    }
+    spin_unlock(plannerLock, s);
+    return ok;
+}
+
 static bool resumesAt(uint16_t layer, uint32_t record) {
     uint16_t l;
     uint32_t r;
@@ -354,6 +369,7 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
         } else {
             resumeTrim = jobResume.known ? fmaxf(0.0f, jobResume.s - kResumeMargin) : 0;
             jobResume.known = false;
+            jobExec.known = false;
             inContour = false;
             __dmb();
             jobReason = JOB_BUFFERING;
@@ -361,6 +377,7 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
     } else if (machineContext != CTX_JOB) {
         // From IDLE: no jog runs, so the ring is empty and becomes the job's.
         if (resetIfIdle(RING_JOB)) {
+            jobExec.known = false;
             jobReason = JOB_BUFFERING;
             __dmb();
             machineContext = CTX_JOB;
