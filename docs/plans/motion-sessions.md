@@ -1135,7 +1135,30 @@ change). The host is told nodes and the selection, never slots.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Plan changes agreed in Read: magic `0xA4` (`0xA8` is SEQRESET), no node
+  latch mask (it needs the bus), so 36 B; Core 1 publishes the claimed
+  block's tag (`jobExec`, `ipc/shared_state.h`).
+* `plannerExecPoint` (`planner/queue.h`) is the one read of the executing
+  record, under one hold of the lock: the resume point while paused, the
+  claimed block, else the oldest queued or the next expected record.
+* `?` prints `state` as a number, as `get` does; the old `status` printed
+  the name. Bare `get` lists keys only: the web's `keys` parser would read a
+  group as a key.
+* Web: `MachineStatus` keeps its positional constructor; `wpos`, `layer`,
+  `record` take the slots of `pos`, `expectedSeq`, `queuedUs`, and
+  `nodeEnabled`, `selection`, `tool` are appended. The sim does not model
+  the executing record, and its WPos is its step position over steps/mm.
+* For S2 and S3: `get.cpp` now has a `Request` (dedupe) and a group table;
+  a new key added to `status` goes in `kStatusKeys`.
+* Bench (idle, no nodes enabled): `?`, a group with a repeated key, the
+  new keys, `status` → `err unknown`, and a 36 B frame whose fields match
+  `get` and whose CRC checks. Human checks still open: layer and record
+  through a running and a paused job; `nodeHomed` for a head that isn't
+  selected; NaN for an unbound Z/A.
 
 ## Branch S2: `feature/head-positions`
 
