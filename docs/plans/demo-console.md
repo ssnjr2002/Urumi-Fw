@@ -11,7 +11,7 @@ archived at tag `archive/demos-2026-10` and deleted here. Read one with
 
 ## Decisions
 
-* **One page:** `web/demo/console.html` + `console.js`, plain HTML. Each panel
+* **One page**, plain HTML. Each panel
   calls `Link` (`web/src/wire/link/link.ts`) or `commands.ts` directly.
 * **Backend:** WebSerial only. The sim backend (`link/backends/sim.ts`) is out of
   scope for now; a backend picker can add it later.
@@ -20,36 +20,51 @@ archived at tag `archive/demos-2026-10` and deleted here. Read one with
   (`link.ts:145`). The `textDesyncs` count is shown, so a firmware reply with
   extra lines is visible. `stop` goes through `Link.send` (`link.ts:165`), so it
   never waits behind a pending command. No helper buttons yet.
-* **Log:** one on-page `<pre>` with a timestamp and direction per line
-  (`→`/`←`, text or binary magic name, ACK/NACK name), plus Clear and Copy.
-  Every panel writes to it.
-* **Library resolution** (open, settled in C1): the demos import
-  `urumi-host`, which resolves through `package.json` exports to `dist/`, so
-  they need `pnpm build` after every wire change. Proposal: `pnpm demo` aliases
-  `urumi-host` to `src/` through `web/demo/vite.config.js`, and
-  `pnpm demo:dist` uses the built package, the way a third party would.
+* **Logs, one per plane:** on-page `<pre>`s with a timestamp and direction per
+  line, plus Clear and Copy. The text log is the console's output (C1). The
+  binary log sits under the status panel (C2); every binary call writes to it
+  (magic name, ACK/NACK name), so C3–C5 add no log UI. A status poll only
+  updates the table and logs state changes.
+* **Library resolution:** the page imports `urumi-host` as a third party
+  would. `pnpm demo` aliases it to `src/` through `web/demo/vite.config.js`,
+  so wire edits show on reload; `pnpm demo:dist` uses the built package
+  (`pnpm build` first).
+* **Page:** `web/demo/index.html` + `index.js`.
 
 ## Branches
 
 A dependent chain, Single Session: every branch after C1 edits
-`console.html`/`console.js`.
+`index.html`/`index.js`.
 
 ### C1: console and log
 
 * Type: `feature/demo-console`
-* Purpose: delete the old demos; add the page with Connect/Disconnect, the
-  text console and the log pane; settle library resolution.
-* Files: `web/demo/*` (delete), `web/demo/console.{html,js}`,
+* Purpose: delete the old demos; add the page with Connect/Disconnect and
+  the text console with its log; both demo modes.
+* Files: `web/demo/*` (delete), `web/demo/index.{html,js}`,
   `web/demo/vite.config.js`, `web/package.json` (scripts).
 * Depends on: none.
-* Status: worktree `../urumi-demo-console` created from `760e824`.
+* Status: ready to merge, worktree `../urumi-demo-console`.
+* Outcome:
+  * Bench-checked against the Pico: connect, commands, `stop`, history.
+  * Out of scope: `reset` replies `ok`, then the soft reset prints the boot
+    banner and `ready` (`core0.cpp:156,162`). No command awaits them, so the
+    next `Link.command` drops them into `textDesyncs` and the console never
+    shows them. Any host sending `reset` hits this; a fix is a wire API
+    (e.g. `Link.reset()` reading to `ready` under the text lock).
+  * Out of scope: `Link.send` (`link.ts:165`) assumes `stop` has no reply,
+    but `cmdStop` prints `ok` (`lifecycle.cpp:29`), so each `stop` leaves
+    one orphan line for the next command to drop. The console's desync count
+    therefore rises by 2 per `reset` and 1 per `stop`. Either the firmware
+    stops replying to `stop`, or the wire library expects the orphan.
 
 ### C2: status
 
 * Type: `feature/demo-status`
 * Purpose: `getStatus` (`link.ts:175`) on demand and as a poll at a set
-  rate, decoded `MachineStatus` as a key/value table.
-* Files: `web/demo/console.{html,js}`.
+  rate, decoded `MachineStatus` as a key/value table; the binary log below
+  it.
+* Files: `web/demo/index.{html,js}`.
 * Depends on: C1.
 
 ### C3: jog and frames
@@ -57,7 +72,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Type: `feature/demo-jog`
 * Purpose: key jog (`cjog`/`cjogStop`, `link.ts:207`) and the head/anchor
   select, carried over from the archived `barebones.js`.
-* Files: `web/demo/console.{html,js}`.
+* Files: `web/demo/index.{html,js}`.
 * Depends on: C1.
 
 ### C4: config
@@ -66,7 +81,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Purpose: push a config file and pull to a download (`pushConfig`/`pullConfig`,
   `link.ts:227,247`); a failure shows the CFG_NACK name
   (`format/cfg.ts`).
-* Files: `web/demo/console.{html,js}`.
+* Files: `web/demo/index.{html,js}`.
 * Depends on: C1.
 
 ### C5: job
@@ -75,5 +90,5 @@ A dependent chain, Single Session: every branch after C1 edits
 * Purpose: SVG → layer → feeds/offset → Prepare/Run/Abort, streamed through a
   `Session`; live `Session.stats()` while running, and the `StreamResult`
   and `fatalReasonName` at the end.
-* Files: `web/demo/console.{html,js}`.
+* Files: `web/demo/index.{html,js}`.
 * Depends on: C1; C4 for the loaded config.
