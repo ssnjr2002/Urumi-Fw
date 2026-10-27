@@ -1337,7 +1337,34 @@ stop.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Interfaces: `toolChangeWaiting()`, `toolChangeLeave(head, tool)` (replace
+  `toolChangeMountCheck`); `headANodes`, `asReady`, `lockAs` in
+  `seq/steps.*`; `framesNamed("mount")`, so `jogto mount` too. `toolsMount`
+  unsets the head's work Z on a change of tool.
+* Deviations: the mount position is `machine.positions.mount` beside `park`
+  and `load` (an anchor position), not `mountPosition`; optional, so no blob
+  version bump (absent: the change fails `seqfail=no_position`).
+  `config/controller.jsonc` sets (200, 150). The lock leg runs at A's
+  `homing.startFeed` up to its `jogFeed`.
+* `probe_park` takes the selected head if it has the tool, else the first
+  that has it, and checks that head's switch before selecting it (the bench
+  found a tool on two heads switching away and failing).
+* Bench (COM8, head 0): an unmounted header `NACK 0f`, Zs park, A −63.2° to
+  0, the line to (200, 150), TOOL_WAIT; resent unmounted `NACK 0f`; `mount 0
+  1` and `mount 1 2` there; resent before `wzero z` `NACK 0f`, after it ACK
+  and BUFFERING. `mount 0 2` in IDLE then its header: the stop, `NACK 0f`
+  until `wzero z`, then ACK. Mounted and zeroed: ACK, no stop. `probe_park 2`
+  in TOOL_WAIT `no_position` (no switch), selection kept. Not tried: a change
+  from a running or paused job, a real probe switch, a second moving head,
+  `stop` in the stop, a refusal mid-stop.
+* Checks: `pio run -e pico` clean; `pio test -e native` 176/176; `pnpm
+  typecheck` clean; `pnpm test` 569 passed, 1 skipped.
+* Out of scope: no native or decoder test for the header logic or
+  `positions.mount`; the web Session still resends every 250 ms.
 
 ## Open
 
