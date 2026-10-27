@@ -1,6 +1,7 @@
 import * as host from 'urumi-host';
 import {
     Link, Ack, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
+    loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, crc32,
 } from 'urumi-host';
 import { WebSerialTransport } from 'urumi-host/wire/link/backends/webserial';
 
@@ -21,8 +22,12 @@ const statusTable   = document.getElementById('status-table');
 const jogKeysBox    = document.getElementById('jog-keys');
 const jogSpeedIn    = document.getElementById('jog-speed');
 const jogDirOut     = document.getElementById('jog-dir');
-const selectBtns    = document.querySelectorAll('button.select');
+const selectBtnsDiv = document.getElementById('select-btns');
 const selectedOut   = document.getElementById('selected');
+const cfgFileIn     = document.getElementById('cfg-file');
+const cfgPushBtn    = document.getElementById('cfg-push');
+const cfgPullBtn    = document.getElementById('cfg-pull');
+const cfgInfoOut    = document.getElementById('cfg-info');
 const jogtoBtns     = document.querySelectorAll('button.jogto');
 const jogtoXIn      = document.getElementById('jogto-x');
 const jogtoYIn      = document.getElementById('jogto-y');
@@ -65,7 +70,9 @@ function setConnected(on) {
     statusGetBtn.disabled = !on;
     statusPollBox.disabled = !on;
     jogKeysBox.disabled = !on;
-    for (const b of [...selectBtns, ...jogtoBtns]) b.disabled = !on;
+    for (const b of [...selectBtnsDiv.children, ...jogtoBtns]) b.disabled = !on;
+    cfgPullBtn.disabled = !on;
+    cfgPushBtn.disabled = !on || !pushBlob;
     if (on) cmdIn.focus();
     else statusPollBox.checked = jogKeysBox.checked = false;
 }
@@ -79,6 +86,7 @@ connectBtn.addEventListener('click', async () => {
         setConnected(true);
         statusPollBox.checked = true;
         poll();
+        await pullConfig();
     } catch (e) {
         textOut(`connect failed: ${e.message}`);
         connectBtn.disabled = false;
@@ -332,11 +340,88 @@ window.addEventListener('blur', jogStop);
 // `select` is a text command, so it goes through the console and its log. The
 // shown selection follows an `ok` and every status sample.
 
-for (const b of selectBtns) {
-    b.addEventListener('click', async () => {
-        if (await submit(`select ${b.value}`) === 'ok') selectedOut.textContent = b.value;
-    });
+/** One button per configured head, then anchor; anchor alone with no config. */
+function buildSelectButtons(headCount) {
+    const values = [...Array(headCount).keys()].map(String).concat('anchor');
+    selectBtnsDiv.replaceChildren(...values.map((v) => {
+        const b = document.createElement('button');
+        b.className = 'select';
+        b.value = b.textContent = v;
+        b.disabled = !link;
+        b.addEventListener('click', async () => {
+            if (await submit(`select ${v}`) === 'ok') selectedOut.textContent = v;
+        });
+        return b;
+    }));
 }
+
+buildSelectButtons(0);
+
+// ── config ────────────────────────────────────────────────────────────────────
+// A picked .json/.jsonc is loaded (parsed and validated) and encoded on pick;
+// push sends that blob. A pull on connect and after each push sets the select
+// buttons from the stored config's heads.
+
+const CFG_NACK_NAMES = Object.fromEntries(
+    Object.entries(host).filter(([k]) => k.startsWith('CFG_NACK_')).map(([k, v]) => [v, k.slice(9).toLowerCase()]),
+);
+
+/** The picked file's encoded blob — null until a file loads cleanly. */
+let pushBlob = null;
+/** The last pulled config, decoded — null when none is stored or pulled. */
+let pulledConfig = null;
+
+const kB = (n) => `${(n / 1024).toFixed(1)} kB`;
+
+function cfgError(e) {
+    const reason = e?.reason;
+    return reason != null ? `CFG_NACK ${CFG_NACK_NAMES[reason] ?? hex(reason, 2)}` : e.message;
+}
+
+cfgFileIn.addEventListener('change', async () => {
+    pushBlob = null;
+    cfgPushBtn.disabled = true;
+    const file = cfgFileIn.files[0];
+    if (!file) return;
+    const loaded = loadConfig(stripJsonComments(await file.text()));
+    if (!loaded.ok) {
+        cfgInfoOut.textContent = `${file.name}: rejected`;
+        for (const err of loaded.errors) binOut(`config error: ${err}`);
+        return;
+    }
+    for (const w of loaded.warnings) binOut(`config warning: ${w}`);
+    pushBlob = encodeConfigBlob(loaded.config);
+    cfgInfoOut.textContent = `${file.name}: ${kB(pushBlob.length)}, ${loaded.config.machine.heads.length} head(s)`;
+    cfgPushBtn.disabled = !link;
+});
+
+cfgPushBtn.addEventListener('click', async () => {
+    binOut(`→ CFG_SET ${kB(pushBlob.length)} crc=${hex(crc32(pushBlob) >>> 0, 8)}`);
+    try {
+        await link.pushConfig(pushBlob);
+        binOut('← CFG_ACK');
+    } catch (e) {
+        binOut(`← ${cfgError(e)}`);
+        return;
+    }
+    await pullConfig();
+});
+
+/** Pull the stored config and set the select buttons from it. */
+async function pullConfig() {
+    binOut('→ CFG_GET');
+    try {
+        const blob = await link.pullConfig();
+        pulledConfig = blob && decodeConfigBlob(blob);
+        binOut(blob ? `← CFG_DATA ${kB(blob.length)}, ${pulledConfig.machine.heads.length} head(s)` : '← CFG_DATA (none stored)');
+    } catch (e) {
+        pulledConfig = null;
+        binOut(`← ${cfgError(e)}`);
+    }
+    buildSelectButtons(pulledConfig?.machine.heads.length ?? 0);
+}
+
+cfgPullBtn.addEventListener('click', pullConfig);
 
 // ── jog to ────────────────────────────────────────────────────────────────────
 // `jogto <x> <y>` (work mm, the selected tip), `jogto park|load`; text commands.

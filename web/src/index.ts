@@ -41,6 +41,9 @@ export {
     decodeConfigBlob,
 } from "./machine/json/blob.js";
 
+// Config files are JSONC (config/controller.jsonc); strip before loadConfig.
+export { stripJsonComments } from "./machine/json/image.js";
+
 export {
     // top-level config
     type PipelineConfig,
