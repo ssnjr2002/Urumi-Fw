@@ -102,7 +102,7 @@ A dependent chain, Single Session: every branch after C1 edits
   (`format/cfg.ts`). The select buttons follow the pulled config's heads.
 * Files: `web/demo/index.{html,js}`, `web/src/index.ts` (one export).
 * Depends on: C1.
-* Status: ready to merge, worktree `../urumi-demo-config`.
+* Status: done, merged at `78848e7`. Unblocks C5.
 * Outcome:
   * Bench-checked: loading `config/controller.jsonc` and its warnings.
   * Pushes `.json` or `.jsonc`: `stripJsonComments` is now exported from
