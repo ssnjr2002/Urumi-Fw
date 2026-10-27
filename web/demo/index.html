@@ -21,6 +21,17 @@
   <button id="text-clear">Clear</button>
   <button id="text-copy">Copy</button>
 
+  <h2>Binary</h2>
+  <button id="status-get" disabled>Get status</button>
+  <label><input type="checkbox" id="status-poll" disabled> Poll every</label>
+  <input type="number" id="status-ms" min="20" step="10" value="200" style="width: 5em"> ms
+  <span>last: <span id="status-at">-</span></span>
+  <span id="status-err"></span>
+  <table id="status-table"></table>
+  <pre id="bin-log"></pre>
+  <button id="bin-clear">Clear</button>
+  <button id="bin-copy">Copy</button>
+
   <script type="module" src="./index.js"></script>
 </body>
 </html>
