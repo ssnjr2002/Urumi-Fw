@@ -148,6 +148,32 @@ A dependent chain, Single Session: every branch after C1 edits
     reproduced. F1 changes the reply's bytes only, not when it is sent.
   * Found here: the Session ends on most NACKs (Open, Session NACK tolerance).
 
+### H1: Session hold
+
+* Type: `feature/session-hold`
+* Purpose: a `Session` that holds while the operator has the machine,
+  instead of ending the job or resending through it. Today it ends on
+  `NACK_PAUSED` and resends a header every 250 ms on `NACK_TOOL_CHANGE`
+  (`web/src/wire/link/session.ts:310-330`).
+  * Pause: on `NACK_PAUSED` it waits for its in-flight replies, then sends
+    nothing. `resume()` resets the seq, sends the header at the status's
+    resume point (`layer`, `record`), then the source from that record on.
+    The first record after a header is a START whatever its flags
+    (`planner/queue.h:89`), so a resume mid-contour is fine.
+  * Tool change: on `NACK 0x0F` it resends the header by itself only while
+    the status is TOOL_CHANGE; in TOOL_WAIT it waits for `continue()`, and
+    the resend is ACKed once the header's tool is mounted on its head and
+    zeroed, else it waits again (motion-sessions.md, JT).
+  * Still fatal: `SOFT_LIMIT`, `BAD_CURVE`, `TOOL_UNKNOWN`, `BAD_MAGIC` (the
+    job is wrong) and `BAD_STATE`. `run()` ends at the last ACK, as now; the
+    operator ends the job with `cancel`.
+  * The source must replay from a record, so a resume can take `ListSource`
+    from an index; an open source refuses `resume()`.
+* Files: `web/src/wire/link/session.ts`, `link/link.ts` (the Session
+  gets the seq reset), `link/backends/sim.ts` (a
+  tool-change hold; it has none), tests in `web/test/wire/link/`.
+* Depends on: F1; JT (motion-sessions.md, done).
+
 ### C5: job
 
 * Type: `feature/demo-job`
@@ -165,16 +191,17 @@ A dependent chain, Single Session: every branch after C1 edits
     ACKs if the tool is mounted there and the head selected, else starts a
     tool change (`NACK_TOOL_CHANGE`).
   * Execute layer: `prepareBezierJob` runs here, not on selection.
-  * Pause (`pause`), Cancel (`cancel`), Abort (`link.abort()` and
-    `session.truncate()`). Resume (a header at the status's resume point)
-    is decided in Read.
+  * Pause (`pause`), Resume (`session.resume()`), Continue in TOOL_WAIT
+    (`session.continue()`), Cancel (`cancel`), Abort (`link.abort()` and
+    `session.truncate()`).
   * Stop (`stop`) sits beside Connect, outside the job panel.
   * `wzero`, `wzero xy`, `wzero z` buttons in the Jog panel.
   * Nothing is gated on the host: jog, select and the console stay live in a
     job; the firmware refuses what it doesn't admit.
 * Files: `web/demo/index.{html,js}`.
 * Depends on: C4 for the pulled config; F1, so jogs in TOOL_WAIT reach the
-  jog sink.
+  jog sink; H1, for
+  the hold, resume and continue.
 
 ## Open
 
@@ -209,19 +236,3 @@ Found while doing this plan, out of its scope. Each needs its own plan.
 The other two warnings (head 1 accepts nothing, so nothing takes `pen`) are
 deliberate until the pen head can move.
 
-### Session NACK tolerance
-
-The `Session` ends the stream on most NACKs (`session.ts:310-330`):
-`BAD_STATE` and `PAUSED` as "wrong machine state", likewise `SOFT_LIMIT`,
-`JOB`, `TOOL_UNKNOWN` and `BAD_CURVE`. A NACK it did not cause, or a state
-that passes (a pause), ends the job instead of holding it. Which NACKs should
-hold, retry or end is its own question; F1 only stops cjog NACKs reaching it.
-
-### Session parking
-
-A `Session` that sends nothing while the operator has the machine: after
-`NACK_TOOL_CHANGE` it waits for an operator continue instead of retrying
-every 250 ms, and after `pause` it waits for its in-flight replies, then
-parks. It is the host half of motion-sessions.md's Open item "Leaving a tool
-change by the host's header", and goes with that redesign. Not needed for
-correctness once F1 separates the jog replies.
