@@ -37,6 +37,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "demo": "vite demo --open",
+    "demo:dist": "vite demo --mode dist --open",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
