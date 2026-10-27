@@ -3,8 +3,8 @@
  * Ported from host/protocol/link.py SimBackend.
  *
  * Answers text commands per the wire_protocol.md allowed-state matrix AND
- * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (tool,
- * head and mount not checked): JOB.BUFFERING until enough is
+ * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (its tool
+ * checked against the mounts only with `tools`): JOB.BUFFERING until enough is
  * queued, then RUNNING, each record taking `recordMs` and landing the head on
  * its end point; a dry ring goes back to BUFFERING. `jog` and held jogs move
  * too, as JOGGING. pause drops the ring, keeping the record it stopped at; a
@@ -41,6 +41,7 @@ import {
     NACK_JOB,
     NACK_BAD_STATE,
     NACK_PAUSED,
+    NACK_TOOL_CHANGE,
     NACK_SOFT_LIMIT,
     NACK_MIXED_AXES,
     NACK_BUSY,
@@ -96,6 +97,16 @@ interface SimOptions {
     bufferMs?: number;
     /** Quiet time after the last record that ends BUFFERING, ms (follower.cpp: 500). */
     bufferIdleMs?: number;
+    /**
+     * Check a layer header's tool against what is mounted, as JT has it: a
+     * tool not mounted on the header's head, or that head without a Z zero,
+     * stops for a change (TOOL_CHANGE for `toolChangeMs`, then TOOL_WAIT) and
+     * NACKs TOOL_CHANGE until a resent header finds it mounted and zeroed.
+     * `mount <head> <tool>` and `wzero z` work it. Off: headers are not checked.
+     */
+    tools?: { mounted?: Readonly<Record<number, number>>; zeroed?: readonly number[] };
+    /** How long a tool change moves before TOOL_WAIT, ms. Default 2 frames. */
+    toolChangeMs?: number;
 }
 
 /** `get jogging=` values (shared_state.h RingOwner); the sim has no `jogto`, so no 3 (GOTO). */
@@ -220,6 +231,14 @@ export class SimTransport implements Transport {
     readonly bufferMs: number;
     readonly bufferIdleMs: number;
 
+    // Tool change (opts.tools): head → mounted tool, heads with a Z zero.
+    readonly checkTools: boolean;
+    readonly toolChangeMs: number;
+    readonly mounted = new Map<number, number>();
+    readonly zeroed = new Set<number>();
+    private toolHead = 0; // the stopped header's head, which `wzero z` zeroes
+    private toolChangeAt = 0;
+
     private timer: ReturnType<typeof setInterval> | null = null;
 
     // Continuous jog (data_plane.cpp acceptCjog). The sim models no braking:
@@ -251,6 +270,10 @@ export class SimTransport implements Transport {
         this.recordMs = opts.recordMs ?? this.frameMs;
         this.bufferMs = opts.bufferMs ?? 1000;
         this.bufferIdleMs = opts.bufferIdleMs ?? 500;
+        this.checkTools = opts.tools !== undefined;
+        this.toolChangeMs = opts.toolChangeMs ?? 2 * this.frameMs;
+        for (const [h, t] of Object.entries(opts.tools?.mounted ?? {})) this.mounted.set(Number(h), t);
+        for (const h of opts.tools?.zeroed ?? []) this.zeroed.add(h);
         if (opts.axisMap) {
             for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axisMap[i] ?? null;
             this.state = MachineState.IDLE;
@@ -550,8 +573,31 @@ export class SimTransport implements Transport {
         }
         // A paused job gets its own NACK so the host holds rather than fails.
         // ALARM lands in BAD_STATE, which is how every alarm refuses motion.
-        const st = this.state;
+        let st = this.state;
         const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const header = data[0] === MAGIC_LAYER_HDR;
+        if (this.checkTools) {
+            const stopped = st === MachineState.JOB &&
+                (this.job === JobReason.TOOL_CHANGE || this.job === JobReason.TOOL_WAIT);
+            const ready = header && this.mounted.get(data[4]!) === data[3] && this.zeroed.has(data[4]!);
+            if (stopped) {
+                // Only a resent header leaves, in TOOL_WAIT, with its tool ready.
+                if (!ready || this.job === JobReason.TOOL_CHANGE) {
+                    this._flushAck();
+                    return this._nack(NACK_TOOL_CHANGE);
+                }
+                this.job = JobReason.BUFFERING;
+            } else if (header && !ready && (st === MachineState.IDLE || st === MachineState.JOB)) {
+                this.state = MachineState.JOB;
+                this.job = JobReason.TOOL_CHANGE;
+                this.toolHead = data[4]!;
+                this.toolChangeAt = Date.now();
+                this.motion = [];
+                this._flushAck();
+                return this._nack(NACK_TOOL_CHANGE);
+            }
+            st = this.state;
+        }
         if (st === MachineState.JOB && this.job === JobReason.PAUSED) {
             const at = this.resumeAt;
             if (data[0] !== MAGIC_LAYER_HDR) {
@@ -620,6 +666,9 @@ export class SimTransport implements Transport {
         this._tickCjog(frameS);
         this._tickJog(frameS);
         if (this.state !== MachineState.JOB) return;
+        if (this.job === JobReason.TOOL_CHANGE && Date.now() - this.toolChangeAt >= this.toolChangeMs) {
+            this.job = JobReason.TOOL_WAIT;
+        }
         if (this.job === JobReason.BUFFERING) {
             const n = this.motion.length;
             if (n === 0) return;
@@ -930,9 +979,28 @@ export class SimTransport implements Transport {
                     return "ok";
                 }
                 return "err bad_state";
+            case "mount": {
+                const toolWait = S.state === MachineState.JOB && S.job === JobReason.TOOL_WAIT;
+                if (!S.checkTools || !(S.state === MachineState.IDLE || toolWait)) return "err bad_state";
+                const head = parseInt(args[0] ?? "", 10), tool = parseInt(args[1] ?? "", 10);
+                if (!(head >= 0) || !(tool >= 0)) return "err bad_arg";
+                // A new tool needs a new zero.
+                if (S.mounted.get(head) !== tool) S.zeroed.delete(head);
+                if (tool === 0) S.mounted.delete(head);
+                else S.mounted.set(head, tool);
+                return "ok";
+            }
+            case "wzero": {
+                if (!S.checkTools) return "err bad_state";
+                const toolWait = S.state === MachineState.JOB && S.job === JobReason.TOOL_WAIT;
+                if (!(S.state === MachineState.IDLE || toolWait)) return "err bad_state";
+                if ((args[0] ?? "xyz").includes("z")) S.zeroed.add(toolWait ? S.toolHead : 0);
+                return "ok";
+            }
             case "cancel":
                 if (S.state === MachineState.JOB &&
-                    (S.job === JobReason.PAUSED || S.job === JobReason.BUFFERING)) {
+                    (S.job === JobReason.PAUSED || S.job === JobReason.BUFFERING ||
+                     S.job === JobReason.TOOL_WAIT)) {
                     S.state = MachineState.IDLE;
                     S.motion = [];
                     return "ok";

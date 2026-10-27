@@ -42,18 +42,25 @@ import {
     NACK_TOOL_UNKNOWN,
     NACK_TOOL_CHANGE,
     NACK_BUSY,
+    MAGIC_LAYER_HDR,
+    MAGIC_SEQRESET,
+    MAGIC_STATUS_REQ,
 } from "../format/constants.js";
 import { stampSeq } from "../format/packet.js";
+import { packLayerHdr, type LayerHdr } from "../format/layer.js";
 import { Ack, Nack } from "./demux.js";
-import { parseStatusRsp, type MachineStatus } from "../format/status.js";
+import { JobReason, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../format/status.js";
 
 export const DEFAULT_WINDOW = 16;
 const ACK_TIMEOUT_MS = 200; // per-response wait before assuming loss
-const STALL_TIMEOUT_MS = 3000; // total silence before a fatal abort
+const STALL_TIMEOUT_MS = 3000; // total silence before a fatal abort (a hold, in a job)
 const BACKPRESSURE_MS = 50; // wait for the ring to drain on NACK_FULL
 const TOOL_CHANGE_MS = 250; // retry while the job holds for a tool change
 const MAX_CRC_ERRORS = 20;
 const IDLE_WAIT_MS = 20; // bound on an open source's idle wait
+const STATUS_POLL_MS = 100; // a job session's STATUS_REQ period
+const STATUS_WAIT_MS = 200; // a held job session's wait for its STATUS_RSP
+const SEQRESET_WAIT_MS = 1000;
 
 // ── fatal reason codes (D17) ────────────────────────────────────────────────────
 // run() returns false on any fatal NACK OR on a self-inflicted failure (total
@@ -66,6 +73,10 @@ const IDLE_WAIT_MS = 20; // bound on an open source's idle wait
 // use the 0xE0.. range so they never collide with a future wire NACK.
 export const FATAL_STALL = 0xe0; // no ACK/NACK past STALL_TIMEOUT_MS
 export const FATAL_CRC_LIMIT = 0xe1; // NACK_CRC count exceeded MAX_CRC_ERRORS
+export const FATAL_JOB_LOST = 0xe2; // a job session's job left JOB without its cancel
+
+/** Why a job session sends nothing (see Session.held). */
+export type Hold = "paused" | "tool" | "refused" | "silent";
 
 function delay(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
@@ -159,9 +170,47 @@ export class ListSource implements PacketSource {
     }
 }
 
+/**
+ * A job's packets from any point, header first: what a job session restarts
+ * from on a resume. The session never indexes records itself, so a source
+ * that reads a job file can seek instead of holding the packets.
+ */
+export interface ReplayableSource {
+    /** The job from its start. */
+    start(): PacketSource;
+    /** From `record` of `layer` on, behind a header naming that point. */
+    from(layer: number, record: number): PacketSource;
+}
+
+/** One layer in memory: its header's fields and its BEZIER packets, record n = packets[n - hdr.record]. */
+export class JobSource implements ReplayableSource {
+    private readonly _hdr: LayerHdr;
+    private readonly _packets: readonly Uint8Array[];
+
+    constructor(hdr: LayerHdr, packets: readonly Uint8Array[]) {
+        this._hdr = hdr;
+        this._packets = packets;
+    }
+
+    start(): PacketSource {
+        return this.from(this._hdr.layer ?? 0, this._hdr.record ?? 0);
+    }
+
+    from(layer: number, record: number): PacketSource {
+        const first = this._hdr.record ?? 0;
+        if (layer !== (this._hdr.layer ?? 0) || record < first) return new ListSource([]);
+        return new ListSource([packLayerHdr({ ...this._hdr, layer, record }), ...this._packets.slice(record - first)]);
+    }
+}
+
+function isReplayable(s: PacketSource | ReplayableSource): s is ReplayableSource {
+    return "from" in s && "start" in s;
+}
+
 // ── the session ───────────────────────────────────────────────────────────────
 
 export interface SessionStats {
+    readonly held: Hold | null;
     readonly emitted: number;
     readonly sent: number;
     readonly acked: number;
@@ -173,8 +222,11 @@ export interface SessionStats {
 export class Session {
     private readonly _writer: Writer;
     private readonly _ackSink: Sink<Ack | Nack>;
-    private readonly _source: PacketSource;
+    private _source: PacketSource;
     private readonly _statusSink: LatestSink<Uint8Array> | undefined;
+    /** Set for a job session: run() then lives until the job leaves JOB. */
+    private readonly _job: ReplayableSource | undefined;
+    private readonly _command: ((line: string) => Promise<string>) | undefined;
     readonly window: number;
     /** When set, run() emits per-event console.debug lines (D17): ACK seq+delta,
      *  NACK + reason name, go-back to base, stall, fatal. Idle by default so a
@@ -194,6 +246,18 @@ export class Session {
     private _seq = 0; // rolling 8-bit wire seq, stamped at emit time
     private _done = false; // source returned null
 
+    // Job session only.
+    private _layer: number | undefined; // the last header's layer
+    private _jobSeen = false; // a status has shown JOB
+    private _cancelling = false;
+    private _go = false; // resume() or continue() asked
+    private _pauseAsked = false; // pause() got `ok`
+    private _lastPoll = -Infinity;
+    private _staleStamp = 0; // status samples up to this stamp predate the last ACK or hold
+    private _wakeResolve: (() => void) | null = null;
+
+    /** A job session's hold, null while it is sending or done. */
+    held: Hold | null = null;
     sent = 0;
     acked = 0;
     retries = 0;
@@ -207,13 +271,22 @@ export class Session {
     constructor(
         writer: Writer,
         ackSink: Sink<Ack | Nack>,
-        source: PacketSource,
+        source: PacketSource | ReplayableSource,
         statusSink?: LatestSink<Uint8Array>,
         window: number = DEFAULT_WINDOW,
+        /** A job session's text command path, for cancel(). */
+        command?: (line: string) => Promise<string>,
     ) {
         this._writer = writer;
         this._ackSink = ackSink;
-        this._source = source;
+        if (isReplayable(source)) {
+            if (!statusSink) throw new Error("a job session needs the status sink");
+            this._job = source;
+            this._source = source.start();
+        } else {
+            this._source = source;
+        }
+        this._command = command;
         this._statusSink = statusSink;
         this.window = window;
         this._ctx = new StreamContext(this, statusSink);
@@ -249,11 +322,53 @@ export class Session {
         this._abortResolve();
     }
 
+    /** Job session: send `cancel`; run() returns true once the job leaves JOB. Resolves to the reply. */
+    async cancel(): Promise<string> {
+        if (!this._job || !this._command) throw new Error("cancel() needs a job session with a command path");
+        this._cancelling = true;
+        this._wake();
+        return this._command("cancel");
+    }
+
+    /**
+     * Job session: send `pause`; on `ok` the session holds `paused` once its
+     * in-flight replies are in. Resolves to the reply. A pause sent elsewhere
+     * is still found, by its NACK or the status.
+     */
+    async pause(): Promise<string> {
+        if (!this._job || !this._command) throw new Error("pause() needs a job session with a command path");
+        const reply = await this._command("pause");
+        if (reply.startsWith("ok")) {
+            this._pauseAsked = true;
+            this._wake();
+        }
+        return reply;
+    }
+
+    /** Leave a `paused` or `refused` hold at the status's resume point. False if not so held. */
+    resume(): boolean {
+        if (this.held !== "paused" && this.held !== "refused") return false;
+        this._go = true;
+        this._wake();
+        return true;
+    }
+
+    /** Resend the header from a `tool` hold, once the operator has mounted and zeroed. False if not so held. */
+    continue(): boolean {
+        if (this.held !== "tool") return false;
+        this._go = true;
+        this._wake();
+        return true;
+    }
+
     /**
      * Drive the stream to completion. Returns true on success or truncation,
      * false on fatal — in which case `fatalReason` (D17) names the cause.
+     * A job session returns only on cancel(), truncate(), a fatal NACK or a
+     * lost job; it holds (`held`) while the machine takes no records.
      */
     async run(): Promise<boolean> {
+        if (this._job) return this._runJob();
         let lastProgress = monotonicNow();
         let crcErrors = 0;
         const v = this.verbose ? (m: string) => console.debug(`[session] ${m}`) : null;
@@ -357,8 +472,236 @@ export class Session {
         return true;
     }
 
+    private async _runJob(): Promise<boolean> {
+        let lastProgress = monotonicNow();
+        let crcErrors = 0;
+        const v = this.verbose ? (m: string) => console.debug(`[session] ${m}`) : null;
+        v?.(`job run start — window=${this.window}`);
+
+        // Each hold returns null once it is left, else what run() returns.
+        const hold = async (h: Hold): Promise<boolean | null> => {
+            const r = await this._hold(h, v);
+            lastProgress = monotonicNow();
+            return r;
+        };
+
+        for (;;) {
+            if (this.truncated) return true;
+
+            if (!this._cancelling) await this._fillWindow();
+            // After the packets, so the Pico answers it having taken them.
+            if (monotonicNow() - this._lastPoll >= STATUS_POLL_MS) {
+                this._lastPoll = monotonicNow();
+                await this._writer.writeFrame(new Uint8Array([MAGIC_STATUS_REQ]));
+            }
+            const st = this._ctx.status;
+            const end = this._ended(st);
+            if (end !== undefined) return end;
+            if (this._cancelling) {
+                await this._sleep(STATUS_POLL_MS);
+                continue;
+            }
+            // A pause after the last ACK has no NACK to bring it: pause() says
+            // so, and a pause sent elsewhere shows in the status. Only a sample
+            // newer than the last ACK counts: an older one predates the header.
+            const fresh = this._statusSink!.sample[1] > this._staleStamp;
+            if (this._pauseAsked || (this._next <= this._base && fresh &&
+                st?.state === MachineState.JOB && st.reason === JobReason.PAUSED)) {
+                const r = await hold("paused");
+                if (r !== null) return r;
+                continue;
+            }
+
+            if (this._next <= this._base) {
+                // All taken: the job runs on until the host ends it.
+                await this._sleep(STATUS_POLL_MS);
+                continue;
+            }
+
+            const resp = await this._ackSink.get(ACK_TIMEOUT_MS);
+            if (resp === null) {
+                if (monotonicNow() - lastProgress > STALL_TIMEOUT_MS) {
+                    const r = await hold("silent");
+                    if (r !== null) return r;
+                    continue;
+                }
+                await this._goBack(0x00, 0);
+                continue;
+            }
+            if (resp instanceof Ack) {
+                if (this._applyAck(resp.expectedSeq)) {
+                    lastProgress = monotonicNow();
+                    this._staleStamp = this._statusSink!.sample[1];
+                }
+                continue;
+            }
+
+            this.nacks++;
+            const r = resp.reason;
+            v?.(`NACK reason=0x${r.toString(16)} (${fatalReasonName(r)}) base=${this._base}`);
+            if (this._cancelling) continue;
+            if (r === NACK_BAD_MAGIC || r === NACK_BAD_CURVE || r === NACK_SOFT_LIMIT ||
+                r === NACK_TOOL_UNKNOWN || r === NACK_BAD_STATE) {
+                this.fatalReason = r;
+                v?.(`FATAL: ${fatalReasonName(r)}`);
+                return false; // the job, or the machine's state, is wrong
+            }
+            let held: Hold | null = null;
+            if (r === NACK_PAUSED) held = "paused";
+            else if (r === NACK_JOB) held = "refused"; // a resume header off the resume point
+            else if (r === NACK_TOOL_CHANGE) held = "tool";
+            if (held) {
+                const out = await hold(held);
+                if (out !== null) return out;
+                continue;
+            }
+            if (r === NACK_CRC) {
+                if (++crcErrors > MAX_CRC_ERRORS) {
+                    this.fatalReason = FATAL_CRC_LIMIT;
+                    return false;
+                }
+                await this._goBack(r, 0);
+            } else {
+                await this._goBack(r, BACKPRESSURE_MS);
+            }
+            lastProgress = monotonicNow();
+        }
+    }
+
+    /** What run() returns once a job session's job has left JOB, else undefined. */
+    private _ended(st: MachineStatus | null): boolean | undefined {
+        if (!st) return undefined;
+        if (st.state === MachineState.JOB) {
+            this._jobSeen = true;
+            return undefined;
+        }
+        if (this._cancelling) return true;
+        if (!this._jobSeen) return undefined; // not yet opened
+        this.fatalReason = FATAL_JOB_LOST;
+        return false;
+    }
+
+    /**
+     * Send nothing but STATUS_REQ until the hold is left: null then, else
+     * what run() returns. A paused, refused or silent job must still be JOB on
+     * the session's layer; anything else is a lost job, and resending to it
+     * would be ACKed as stale duplicates without running (a rebooted Pico).
+     */
+    private async _hold(h: Hold, v: ((m: string) => void) | null): Promise<boolean | null> {
+        this.held = h;
+        this._go = false;
+        this._pauseAsked = false;
+        v?.(`hold ${h}`);
+        // The rest of the window answers too; let those replies land first.
+        if (h !== "silent") await this._settle();
+        try {
+            for (;;) {
+                if (this.truncated) return true;
+                const st = await this._pollStatus();
+                if (st) {
+                    const end = this._ended(st);
+                    if (end !== undefined) return end;
+                    if (!this._cancelling) {
+                        if (h !== "tool" && this._layer !== undefined && st.layer !== undefined &&
+                            st.layer !== NO_LAYER && st.layer !== this._layer) {
+                            this.fatalReason = FATAL_JOB_LOST;
+                            return false;
+                        }
+                        const left = await this._leave(h, st);
+                        if (left) {
+                            v?.(`leave ${h}`);
+                            return null;
+                        }
+                    }
+                }
+                await this._sleep(STATUS_POLL_MS);
+            }
+        } finally {
+            this.held = null;
+            this._pauseAsked = false; // a pause() answered during this hold is spent
+            this._staleStamp = this._statusSink!.sample[1];
+        }
+    }
+
+    /** Leave `h` if the status and the operator allow it, resending from where the job is. */
+    private async _leave(h: Hold, st: MachineStatus): Promise<boolean> {
+        switch (h) {
+            case "silent":
+                await this._goBack(0x00, 0);
+                return true;
+            case "tool": {
+                const moving = st.reason === JobReason.TOOL_CHANGE;
+                const waiting = st.reason === JobReason.TOOL_WAIT;
+                // Resent by itself once the change is past; in TOOL_WAIT on the operator's word.
+                if (moving || (waiting && !this._go)) return false;
+                this._go = false;
+                await this._goBack(NACK_TOOL_CHANGE, 0);
+                return true;
+            }
+            case "paused":
+            case "refused":
+                if (!this._go) return false;
+                this._go = false;
+                if (st.reason !== JobReason.PAUSED || st.layer === undefined || st.record === undefined) return false;
+                return this._restart(st.layer, st.record);
+        }
+    }
+
+    /** Drop the window and send the job again from (layer, record) behind a fresh seq. */
+    private async _restart(layer: number, record: number): Promise<boolean> {
+        this._ackSink.clear();
+        await this._writer.writeFrame(new Uint8Array([MAGIC_SEQRESET]));
+        const r = await this._ackSink.get(SEQRESET_WAIT_MS);
+        if (!(r instanceof Ack) || r.expectedSeq !== 0) return false;
+        this._window = [];
+        this._emitted = this._base;
+        this._next = this._base;
+        this._seq = 0;
+        this._done = false;
+        this._source = this._job!.from(layer, record);
+        return true;
+    }
+
+    /** Read replies until ACK_TIMEOUT_MS of quiet, applying ACKs. */
+    private async _settle(): Promise<void> {
+        for (;;) {
+            const r = await this._ackSink.get(ACK_TIMEOUT_MS);
+            if (r === null) return;
+            if (r instanceof Ack) this._applyAck(r.expectedSeq);
+        }
+    }
+
+    /** One STATUS_REQ and its reply, or null. */
+    private async _pollStatus(): Promise<MachineStatus | null> {
+        const sink = this._statusSink!;
+        const before = sink.sample[1];
+        this._lastPoll = monotonicNow();
+        await this._writer.writeFrame(new Uint8Array([MAGIC_STATUS_REQ]));
+        const [data] = await sink.waitUpdate(STATUS_WAIT_MS, before);
+        if (!data || sink.sample[1] === before) return null;
+        try {
+            return parseStatusRsp(data);
+        } catch {
+            return null;
+        }
+    }
+
+    /** Wait `ms`, or less on truncate(), cancel(), resume() or continue(). */
+    private _sleep(ms: number): Promise<void> {
+        const woken = new Promise<void>((r) => {
+            this._wakeResolve = r;
+        });
+        return Promise.race([delay(ms), this._abortPromise, woken]);
+    }
+
+    private _wake(): void {
+        this._wakeResolve?.();
+        this._wakeResolve = null;
+    }
+
     stats(): SessionStats {
         return {
+            held: this.held,
             emitted: this._emitted,
             sent: this.sent,
             acked: this.acked,
@@ -403,6 +746,7 @@ export class Session {
                 return;
             }
             for (const pkt of batch) {
+                if (pkt[0] === MAGIC_LAYER_HDR) this._layer = pkt[5]! | (pkt[6]! << 8);
                 this._window.push(stampSeq(pkt, this._seq));
                 this._seq = (this._seq + 1) & 0xff;
                 this._emitted++;
@@ -464,6 +808,7 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [NACK_BUSY]: "NACK_BUSY",
     [FATAL_STALL]: "FATAL_STALL",
     [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",
+    [FATAL_JOB_LOST]: "FATAL_JOB_LOST",
 };
 
 /** Human-readable name for a `Session.fatalReason` value (D17). */

@@ -19,7 +19,7 @@ import { Demux, makeSinks, type DemuxSinks } from "./demux.js";
 import type { Sink, LatestSink } from "./sink.js";
 import { Ack, Nack } from "./demux.js";
 import { ListSource, DEFAULT_WINDOW, Session, fatalReasonName, type StreamResult } from "./session.js";
-import type { PacketSource, StreamContext } from "./session.js";
+import type { PacketSource, ReplayableSource, StreamContext } from "./session.js";
 
 /**
  * Optional backend hook: a Transport may expose `attach(demux)` so the Sim
@@ -320,10 +320,12 @@ export class Link {
      * session (manual jogging), where packets are produced in response to
      * operator input and the session ends by truncation rather than exhaustion.
      * Caller must resetSeq() first; stream() does it for you. The session
-     * inherits `verbose` from this Link (D17).
+     * inherits `verbose` from this Link (D17). A ReplayableSource makes a job
+     * session: it holds through pauses and tool changes and ends on cancel().
      */
-    session(source: PacketSource, window: number = DEFAULT_WINDOW): Session {
-        const sess = new Session(this.writer, this.sinks.ack, source, this.sinks.status, window);
+    session(source: PacketSource | ReplayableSource, window: number = DEFAULT_WINDOW): Session {
+        const sess = new Session(this.writer, this.sinks.ack, source, this.sinks.status, window,
+            (line) => this.command(line));
         sess.verbose = this.verbose;
         return sess;
     }
