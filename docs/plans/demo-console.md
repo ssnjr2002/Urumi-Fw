@@ -212,6 +212,36 @@ A dependent chain, Single Session: every branch after C1 edits
   * Not tried on the machine: pause, resume and the tool-change wait on COM8
     (with C5).
 
+### S1: SVG layers named by tool
+
+* Type: `feature/svg-tool-layers`
+* Purpose: an SVG's layers are its tool-named groups, whatever app drew it.
+  Today every `<g>` with a label or id adds a path segment
+  (`web/src/svg/load.ts:436-439`), so an app's own groups (`g123`,
+  `Group_3`) split a layer and C5 can't find its tool.
+  * `loadSvgPaths(svg, { tools })` takes the pulled config's tool names. A
+    `<g>` whose name is a tool, or `<tool>.<n>` (chamber n, 1-based, A at
+    `chamberOffsets[n-1]`), starts that layer; plain `<tool>` is chamber 0.
+    The whole name is matched to a tool before a `.<n>` is split off.
+  * Everything inside it belongs to it: the outermost tool-named group wins.
+    A tool-named group inside one is merged, with a warning.
+  * Same-named groups join, in document order. Paths outside any tool group
+    land under `""`, not cut.
+  * A group's name: `inkscape:label`, else `serif:id` (Affinity keeps the
+    original there), else `id`. Illustrator's `_xHH_` escapes are decoded
+    (`pen_x2E_2` is `pen.2`), and a dedup suffix (`_1_` Illustrator, `_2`
+    Figma) is stripped.
+  * `LoadedSvg` gains `warnings: string[]`.
+  * Without `tools`, today's rule, so other callers and the `load: layers`
+    test (`web/test/svg/load.test.ts:193-202`) are unchanged.
+  * `prepareBezierJob` (`web/src/toolpath/job.ts:58`) takes `tools` and
+    passes it on.
+  * Read: export one file each from Illustrator and Affinity as fixtures;
+    the escapes and suffixes above are from forum reports.
+* Files: `web/src/svg/load.ts`, `web/src/toolpath/job.ts`,
+  `web/test/svg/load.test.ts`, fixtures in `web/test/fixtures/`.
+* Depends on: none.
+
 ### C5: job
 
 * Type: `feature/demo-job`
@@ -219,9 +249,10 @@ A dependent chain, Single Session: every branch after C1 edits
   a `Session`, with live `Session.stats()` and the `StreamResult` and
   `fatalReasonName` at the end. Inputs are split by packet type, so a later
   `JOB_HDR` or `TOOL_HDR` adds its own row.
-  * SVG file; its layers listed in SVG order, each with the tool and chamber
-    it names: the layer name is the tool's name in the pulled config (its
-    `id` goes in the header), a nested `<tool>/<n>` is chamber n, none is 0.
+  * SVG file, loaded once a config is pulled and again after each pull;
+    its layers (S1) listed in SVG order, with their tool and chamber, the
+    tool's `id` going in the header. A chamber the tool doesn't have is
+    listed but not runnable; loader warnings are shown.
   * A path preview of the selected layer, from the curves `loadSvgPaths`
     returned.
   * feed (0 = the tool's), k, material thickness t.
@@ -239,7 +270,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Files: `web/demo/index.{html,js}`.
 * Depends on: C4 for the pulled config; F1, so jogs in TOOL_WAIT reach the
   jog sink; H1, for
-  the hold, resume and continue.
+  the hold, resume and continue; S1, so a layer's name is its tool.
 
 ## Open
 
@@ -252,6 +283,14 @@ the Session's layer" as the job still being there, which a reboot followed by
 a new job on the same layer passes. A boot counter (or a session id the Pico
 picks at boot) and an uptime in the status would make that certain, and show
 resets on the bench. A firmware and frame change.
+
+### Tool name rule
+
+S1 matches SVG group names to tool names. A rule in `loadConfig`
+(`web/src/machine/json/load.ts`) would keep them unambiguous: lowercase
+`[a-z][a-z0-9]*`, so no `.` (the chamber separator) and no trailing
+`_<digits>` (a dedup suffix), and never an app's own names (`layer\d*`,
+`group\d*`, `g\d+`, `path\d+`).
 
 ### Config refactors
 
