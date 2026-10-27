@@ -298,7 +298,7 @@ reply correlation and estop correlates nothing. Confirmation arrives on the
 status sink as the state transitions to ESTOP→ALARM, so estop can never queue
 behind a pending text command.
 
-Text stays untagged and human-readable — it is low-rate, and `status` / `?` /
+Text stays untagged and human-readable — it is low-rate, and `get` / `?` /
 the bring-up CLI are meant to be typed at a terminal. Text commands needing
 concurrency get *ported to binary* instead: `STATUS_REQ` is already the binary
 mirror of the `get` state keys, and folding position into the status frame
@@ -668,6 +668,10 @@ This is the only proposal here that is not nearly free: Core 1 must ramp
 intervals rather than merely consume them.
 
 ### 4.6 Queued motion time in STATUS_RSP
+
+> STATUS_RSP v3 (`0xA4`, docs/wire_protocol.md) dropped `queued_us`, `pos` and
+> `expectedSeq`; pacing went with MicroSegment. They are `get queued`,
+> `get pos` and `get expectedseq` now.
 
 `buf_count` counts segments, but segments have wildly different durations. What a
 jog source actually needs is *how many milliseconds of motion are queued*.

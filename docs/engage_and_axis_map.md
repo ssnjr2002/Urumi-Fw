@@ -460,9 +460,9 @@ switch happens only at the PAUSED boundary the protocol already defines
 A split worth stating explicitly, because it decides where the map lives:
 
 - **Periodic** (`STATUS_RSP`, polled hot) carries **state the Pico evolves on its
-  own that the host cannot derive** — `machineState`, `axes_enabled/homed`
-  (an estop clears them autonomously), `alarmReason`, buffer level, position,
-  seq, queued-µs.
+  own that the host cannot derive** — `machineState`, the enabled and homed
+  node masks (an estop clears them autonomously), `alarmReason`, buffer level,
+  work position, the job's executing record.
 - **Handshake** (one-time, at connect — **not yet implemented**) is where
   host-authored, Pico-static configuration is (re-)asserted.
 

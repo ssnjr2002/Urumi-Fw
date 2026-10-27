@@ -50,10 +50,11 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
 | `MSEG_NACK`  | `0xBB` | Pico → Host | NACK response |
-| `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request (mirrors the `get` state keys) |
+| `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request |
 | `SEQRESET`   | `0xA8` | Host → Pico | Zero `expectedSeq`; replies `ACK(0)` |
-| `STATUS_RSP` | `0xA7` | Pico → Host | Binary status response (30 B) |
+| `STATUS_RSP` | `0xA4` | Pico → Host | Binary status response (36 B) |
 | ~~`STATUS_RSP_V1`~~ | `0xA6` | — | Retired 9-byte frame; reserved, never emitted |
+| ~~`STATUS_RSP_V2`~~ | `0xA7` | — | Retired 31-byte frame; reserved, never emitted |
 
 All single-byte magics have bit 7 set, keeping them disjoint from the lowercase
 ASCII that begins every control-plane line.
@@ -315,23 +316,32 @@ RUNNING — the Pico handles it on Core 0 between MSEG packet boundaries so it
 never interrupts step timing. The host may send one between any two MSEG/jog
 packets by inserting the byte at a packet boundary.
 
-### STATUS_RSP — `0xA7` (31 bytes)
+### STATUS_RSP — `0xA4` (36 bytes)
 ```
-[0]      magic         = 0xA7
+[0]      magic         = 0xA4
 [1]      machineState  uint8   — 0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
-[2]      axes_enabled  uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
-[3]      axes_homed    uint8   — bitmask bit0=X bit1=Y bit2=Z bit3=A
-[4..5]   faults        uint16 LE — fault mask (below)
-[6]      reason        uint8   — the current state's reason: `job=`, `jogging=`, `homing=` or `probing=`; 0 otherwise
-[7..8]   bufCount      uint16 LE — planner blocks queued
-[9..24]  pos[4]        int32 LE  — machinePos: x, y, z, a (steps)
-[25]     expectedSeq   uint8   — next wire seq the data plane will execute
-[26..29] queuedUs      uint32 LE — queued motion time, microseconds
-[30]     CRC8 over bytes [0..29]
+[2]      reason        uint8   — the current state's reason: `job=`, `jogging=`, `homing=` or `probing=`; 0 otherwise
+[3..4]   faults        uint16 LE — fault mask (below)
+[5..6]   nodeEnabled   uint16 LE — bit n = bus node n enabled, mapped or not (`get nodeenabled`)
+[7..8]   nodeHomed     uint16 LE — bit n = bus node n holds an origin (`get nodehomed`)
+[9]      selection     uint8   — the controlled point: head index, 0xFE anchor, 0xFF none (`get head`)
+[10]     tool          uint8   — the tool id mounted on the selected head, 0 none (`mount`)
+[11..26] wpos[4]       float32 LE — work position x, y, z, a, mm and degrees; NaN with no value (`get wpos`)
+[27..28] bufCount      uint16 LE — planner blocks queued (`get buf`)
+[29..30] layer         uint16 LE — the job's executing record: its layer
+[31..34] record        uint32 LE   and record (below); 0xFFFF and 0 with no job
+[35]     CRC8 over bytes [0..34]
 ```
-Carries `get`'s state keys **and** `pos` in one coherent sample; two text
-round trips could disagree by tens of ms. Per the transport's per-transaction cost model the extra bytes are free: one
-31-byte frame fits a single 64-byte USB packet.
+One coherent sample, in the node frame: the host is told nodes and the
+selection, never slots. The slot masks, MPos and the other heads' tools stay
+on `get`. Per the transport's per-transaction cost model the bytes are free:
+one frame fits a single 64-byte USB packet.
+
+`layer`/`record` say how far the ring has run, which the host cannot know from
+what it sent: the tag of the block Core 1 runs (an inserted travel, lift,
+plunge or swivel carries the record it leads into); while PAUSED, the resume
+point (`resume_layer`/`resume_record`); in a job before any block runs, the
+oldest queued record, or the next one expected.
 
 The fault mask (`get faults=` too): 0x0001=BUS 0x0002=CONFIG 0x0004=UNMAPPED 0x0008=LATCHED 0x0010=HOMING 0x0020=PROBE 0x0040=FACTS 0x0080=SEQUENCE 0x0100=TOOL 0x8000=ESTOP. Held faults (BUS, CONFIG,
 UNMAPPED, LATCHED) clear by themselves when their cause goes; event faults
@@ -339,19 +349,11 @@ UNMAPPED, LATCHED) clear by themselves when their cause goes; event faults
 fault, cleared by `unstop`. The state is ALARM at rest while any bit is set,
 IDLE otherwise; several bits may be set at once.
 
-`bufCount` counts planner blocks in the ring. `queuedUs` is the ring's motion
-not yet claimed by Core 1, read live under the planner lock; it is what a
-stream paces against, since block *count* says nothing about time.
-
-`expectedSeq` is **informational**, for resynchronising after a timeout, abort or
-reconnect. It is not flow control — ACKs remain the only window-advance
-mechanism.
-
-**The magic changed from `0xA6`.** A reader consumes fixed-length frames blind,
-so a host expecting the old 9-byte v1 frame must fail on an unknown magic rather
-than mis-parse 30 bytes as 9 (the frame later grew to 31 under the same magic) and desync the stream. `0xA6` is retired and
-reserved; it is never emitted. Host and firmware for this frame must be flashed
-together.
+**Each layout has its own magic.** A reader consumes fixed-length frames blind,
+so a host expecting another layout must fail on an unknown magic rather than
+mis-parse it and desync the stream. `0xA6` (9 B) and `0xA7` (31 B, slot masks,
+`pos` in steps, `expectedSeq`, `queuedUs`) are retired and reserved; they are
+never emitted. Host and firmware for this frame must be flashed together.
 
 The text `get` remains for the keys this frame has no room for, and for human/debug use.
 
@@ -447,7 +449,8 @@ prefixed `0x`.
 | `pingnode` | `[all\|<id>]` | `node <id> ok` / `node <id> timeout` | Relay an RS485 CMD_PING to a bus node; report presence |
 | `busstat` | `<id>` | `node <id> ferr <n> ovf <n> crc <n>` / `node <id> timeout` | A node's receive-error counters (CMD_BUS_STATS): framing errors, buffer overflows, CRC failures. Wrapping 16-bit counts since the node powered on; diff successive reads |
 | `makesafe` | `<id>` | `node <id> en <0\|1> datum <0\|1> slot <n\|->` / `node <id> timeout` | Relay CMD_MAKE_SAFE: the node de-energises, clears its datum, drops its stream slot (stepper, probe vacuum) and closes its servos (vacuum). The line is the node's own report after the release; `slot -` = the node has none. The Pico's slot binding is not changed |
-| `get` | `[<key> …]` | `<key>=<value> …` / `keys <key> …` / `err too_many_keys` | Read keys from one snapshot, in the order asked (see below). Bare: the keys this build knows. At most 32 keys |
+| `get` | `[<key>\|<group> …]` | `<key>=<value> …` / `keys <key> …` / `err too_many_keys` | Read keys from one snapshot, in the order asked (see below). A group asks for its keys. Bare: the keys this build knows (groups not listed). At most 32 keys after expansion |
+| `?` | — | as `get status` | Human shorthand for the `status` group |
 | `enable` | `[all\|<id>]` | `ok` / `err <reason>` | Energise motors (per allowed-state matrix). Bare / `all` energises every present node; `enable <id>` relays CMD_ENABLE to that node only (mirrors `pingnode <id>`) |
 | `disable` | `[all\|<id>]` | `ok` / `err <reason>` | De-energise. Bare / `all` de-energises every node and clears `axes_homed`/`axisBounds` for all axes; `disable <id>` relays CMD_DISABLE to that node only and clears homing/bounds for that axis alone |
 | `setorigin` | `<node>:<steps> [<node>:<steps> …]` | `ok` / `err usage` / `err node <id> not_in_config\|not_stepper\|no_datum\|<rpc>` / `err estop` / `err busy` | Set each node's datum: it stands at machine position `<steps>` (wire frame). Every pair is tried; `err node` names the first that failed, the others keep their datum. Clears no alarm. Between homing legs an `ok` also ends the session → IDLE, or ALARM with LATCHED if a switch is held; `err busy` while any leg runs |
@@ -487,6 +490,14 @@ asked, all read in one snapshot. In place of a value: `?` the read failed, `-`
 the key does not apply now, `!` the key is not recognised (older firmware). A
 request line is at most 255 characters.
 
+A group name stands for its keys, expanded in place; group and key names share
+one namespace. A key asked for twice is printed once, where first asked, so
+`get status homed` prints `homed` once.
+
+```
+status = state homed enabled nodehomed nodeenabled head tools pos mpos wpos buf mute excluded touched mesh
+```
+
 ```
 state=<s>     machineState    0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
@@ -511,6 +522,11 @@ probed=<0|1>  a probe height is held for the Z in slot 2
 pz=<z>        that height in steps  (only with probed=1)
 homecycle=<k> homingHeld      the cycle a `home` run is in  (only while one runs)
 nodehomed=<hex> originMask    bitmask, bit n = bus node n holds an origin, mapped or not
+nodeenabled=<hex> nodeEnabled bitmask, bit n = bus node n enabled, mapped or not
+mute=<hex> excluded=<hex> touched=<hex>  bus id masks, bit n = node n (core0/ops/bus.h)
+buf=<n>              planner blocks queued
+queued=<us>          the motion time of the queued blocks not yet started, µs
+expectedseq=<n>      the next wire seq the data plane will execute; informational, not flow control (ACKs advance the window)
 pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on homed
 mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
 wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetMm`) − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; X/Y `-` with no head

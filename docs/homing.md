@@ -777,7 +777,7 @@ latched=0x00
 Firmware that predates it answers `latched=!`, so a new host reading old
 firmware gets a missing key rather than a parse failure.
 
-**It is deliberately NOT in `STATUS_RSP`.** That frame is a fixed 30 bytes whose
+**It is deliberately NOT in `STATUS_RSP`.** That frame is fixed-length, a
 length the demux checks, so adding a byte is a version-skew problem across two
 binaries, not a field addition. The consequence is that `axesLatched` is
 `undefined` on a binary poll — **not `0`**. Zero would be a claim ("every switch

@@ -71,7 +71,7 @@ No hardware. Run first so a red suite is never blamed on wiring.
 **No Python.** Any serial terminal at 115200. This is the half of the system the
 host cannot reach past, so proving it standalone is what makes A✓B✓C✗ meaningful.
 
-- [ ] **B1 — Pico alive.** `ping` → `pong`. `status` → human-readable dump.
+- [ ] **B1 — Pico alive.** `ping` → `pong`. `?` → the `get status` keys.
       **Failure eliminates:** everything downstream. Fix the board/flash first.
 
 - [ ] **B2 — every node answers.** `pingnode all`
@@ -131,8 +131,9 @@ Everything here is bus-independent. This is what all runs to date have exercised
       `pingnode all` had.
 
 - [ ] **A3 — status frame is complete.** `link.get_status()`
-      **Expect:** 30-byte `STATUS_RSP` (0xA7) with plausible `state`, `buf_count`,
-      `queued_us`, `pos[4]`, `expected_seq`.
+      **Expect:** 36-byte `STATUS_RSP` (0xA4) with plausible `state`, `bufCount`,
+      `nodeEnabled`, `nodeHomed`, `selection`, `wpos[4]` (matching `get wpos`),
+      `layer`/`record`.
       **Failure:** version skew — firmware and host disagree on the frame. Check
       `STATUS_RSP_SIZE` on both sides. (`web/demo/transport.js` is *known stale*
       here — still expects the retired 9-byte 0xA6.)
