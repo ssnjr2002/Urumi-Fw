@@ -44,7 +44,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Files: `web/demo/*` (delete), `web/demo/index.{html,js}`,
   `web/demo/vite.config.js`, `web/package.json` (scripts).
 * Depends on: none.
-* Status: ready to merge, worktree `../urumi-demo-console`.
+* Status: done, merged at `63c5266`. Unblocks C2–C5.
 * Outcome:
   * Bench-checked against the Pico: connect, commands, `stop`, history.
   * Out of scope: `reset` replies `ok`, then the soft reset prints the boot
