@@ -25,6 +25,9 @@ export const CJOG_SIZE = 7;
 export const CJOG_SPEED_ONE = 64; // speed byte for 1× jogFeed
 export const CJOG_DEADMAN_MS = 150; // silence after which the Pico stops the jog
 export const MAGIC_CJOG_STOP = 0xb3; // host → Pico: one byte, no reply
+// A jog's replies have their own magics, so a stream never reads them as its own.
+export const MAGIC_JOG_ACK = 0xb6; // Pico → host: one byte, a jog started
+export const MAGIC_JOG_NACK = 0xb7; // Pico → host: [magic, reason], reason a NACK_* code
 
 // ── Status plane — binary mirror of `get` (state, pos, queued time) ───────────
 // docs/wire_protocol.md "STATUS_RSP". Each layout has its own magic; the

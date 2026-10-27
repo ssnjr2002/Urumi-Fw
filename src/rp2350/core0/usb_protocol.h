@@ -126,9 +126,14 @@
 // Continuous jog (7 bytes): magic, direction per axis X, Y, Z, A (int8 −1/0/+1;
 // one axis set: XY, Z or A, else NACK MIXED_AXES), speed (uint8, jogFeed ×
 // speed/64, capped at maxFeed), CRC8 over [0..5]. Repeat it to keep the jog going: CJOG_DEADMAN_MS without one
-// stops it. All-zero directions stop it. ACK when a jog starts, NACK when
-// refused, nothing for a repeat.
+// stops it. All-zero directions stop it. JOG_ACK when a jog starts, JOG_NACK
+// when refused, nothing for a repeat. Its own magics, so a job's stream never
+// reads a jog's reply as its own:
+//   JOG_ACK:  [0xB6]
+//   JOG_NACK: [0xB7] [reason]   reason: the MSEG_NACK_* codes
 #define CJOG_MAGIC        0xAF
+#define JOG_ACK           0xB6
+#define JOG_NACK          0xB7
 #define CJOG_PACKET_SIZE  7
 #define CJOG_DEADMAN_MS   150u
 // Stop a continuous jog: one byte, no reply. Ignored without one.

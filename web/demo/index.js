@@ -1,6 +1,6 @@
 import * as host from 'urumi-host';
 import {
-    Link, Ack, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
+    Link, JogAck, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
     loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, crc32,
 } from 'urumi-host';
 import { WebSerialTransport } from 'urumi-host/wire/link/backends/webserial';
@@ -224,11 +224,11 @@ statusPollBox.addEventListener('change', () => { if (statusPollBox.checked) poll
 // set (XY, Z or A), so the set of the last key pressed wins.
 //
 // The Pico ACKs a start or a change of direction, NACKs every refused packet,
-// and says nothing to a repeat. Its replies land in the ack sink a stream
-// session reads, so they are drained here while jogging.
+// and says nothing to a repeat. Its replies land in the jog sink, drained here
+// while jogging.
 
 const JOG_PERIOD_MS = 50;
-/** How long the ack sink is read after a stop, for replies still in flight. */
+/** How long the jog sink is read after a stop, for replies still in flight. */
 const JOG_DRAIN_MS = 200;
 // [x, y, z, a] direction per key.
 const JOG_KEYS = {
@@ -246,7 +246,7 @@ let jogSet = 'xy';
 let jogTimer = null;
 /** The last direction logged, so a repeat packet is not. */
 let jogLogged = '';
-/** Until when the ack sink is read; 0 while no reader runs. */
+/** Until when the jog sink is read; 0 while no reader runs. */
 let drainUntil = 0;
 
 function jogDir() {
@@ -258,13 +258,13 @@ function jogDir() {
     return d.map(Math.sign);
 }
 
-/** Log ack-sink replies; identical NACKs in a row fold into one line. */
-async function drainAcks() {
+/** Log jog-sink replies; identical NACKs in a row fold into one line. */
+async function drainJog() {
     let last = null, count = 0, node = null;
     while (link && Date.now() < drainUntil) {
-        const r = await link.sinks.ack.get(JOG_PERIOD_MS);
+        const r = await link.sinks.jog.get(JOG_PERIOD_MS);
         if (!r) continue;
-        const line = r instanceof Ack ? `← ACK seq=${r.expectedSeq}` : `← NACK ${nackName(r.reason)}`;
+        const line = r instanceof JogAck ? '← JOG_ACK' : `← JOG_NACK ${nackName(r.reason)}`;
         if (line === last && node) {
             node.data = node.data.replace(/( ×\d+)?\n$/, ` ×${++count}\n`);
         } else {
@@ -279,7 +279,7 @@ async function drainAcks() {
 function keepDraining(ms) {
     const running = drainUntil !== 0;
     drainUntil = Math.max(drainUntil, Date.now() + ms);
-    if (!running) drainAcks();
+    if (!running) drainJog();
 }
 
 function jogSend() {

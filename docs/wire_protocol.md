@@ -50,6 +50,8 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
 | `MSEG_NACK`  | `0xBB` | Pico → Host | NACK response |
+| `JOG_ACK`    | `0xB6` | Pico → Host | Continuous jog started (1 B) |
+| `JOG_NACK`   | `0xB7` | Pico → Host | Continuous jog refused (2 B) |
 | `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request |
 | `SEQRESET`   | `0xA8` | Host → Pico | Zero `expectedSeq`; replies `ACK(0)` |
 | `STATUS_RSP` | `0xA4` | Pico → Host | Binary status response (36 B) |
@@ -122,8 +124,9 @@ Z alone or A alone (Z and A are the selected head's); directions in more than
 one set are NACKed `NACK_MIXED_AXES`. The first one queues a line to the end
 of travel (the soft-range end when homed with `softLimits`, else `maxTravel`;
 a diagonal stops at the nearer end, at the slower moving axis's feed; A runs
-at most one turn per hold) and runs as JOGGING with `jogging=2`. Replies: `ACK` when a jog starts, `NACK` when refused,
-nothing for a repeat. 150 ms without a packet, all-zero directions, or
+at most one turn per hold) and runs as JOGGING with `jogging=2`. Replies: `JOG_ACK` when a jog starts, `JOG_NACK` when
+refused (a bad CRC included), nothing for a repeat. They are never `ACK` or
+`NACK`, so a job's stream cannot take a jog's reply for its own. 150 ms without a packet, all-zero directions, or
 `CJOG_STOP_MAGIC` (0xB3) brake and stop. A new direction stops the jog and
 starts the new one once at rest (its ACK comes then). A packet while step jogs
 run stops them first, the same way; a step jog during a continuous jog is
@@ -131,7 +134,8 @@ refused. Anything else must admit a step (`K_STEP`), both for the packet and
 for a start held for rest. Speed changes while holding are ignored. No seq; the abort barrier
 does not apply.
 
-NACKs: `NACK_SOFT_LIMIT` (0x09) = no room left in that direction, or the bed
+`JOG_NACK` reasons: `NACK_CRC` (0x01) = corrupt packet;
+`NACK_SOFT_LIMIT` (0x09) = no room left in that direction, or the bed
 mesh would take Z out of its soft range at once (an X/Y jog otherwise ends
 where Z would leave it, see "Bed mesh");
 `NACK_MIXED_AXES` (0x0A) = directions in more than one axis set;
@@ -289,6 +293,14 @@ window (≤16 « 128, so no wrap ambiguity). See "Duplicate guard" below.
 [1]      reason   uint8   — see NACK reason tables below
 [2]      0x00
 ```
+
+### JOG_ACK — `0xB6` (1 byte), JOG_NACK — `0xB7` (2 bytes)
+```
+JOG_ACK:  [0] 0xB6
+JOG_NACK: [0] 0xB7  [1] reason uint8 — a NACK reason code
+```
+Continuous-jog replies only. No seq: a jog is held by repeating its packet,
+not by its replies.
 
 ### SEQRESET — `0xA8` (1 byte)
 ```

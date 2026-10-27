@@ -27,6 +27,8 @@ import type { Transport } from "../transport.js";
 import {
     MAGIC_ACK,
     MAGIC_NACK,
+    MAGIC_JOG_ACK,
+    MAGIC_JOG_NACK,
     MAGIC_ABORT,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
@@ -410,9 +412,9 @@ export class SimTransport implements Transport {
         const d = [dv.getInt8(1), dv.getInt8(2), dv.getInt8(3), dv.getInt8(4)];
         const speed = data[5]!;
         const bad = d.some(v => v < -1 || v > 1);
-        if (bad || speed === 0) return this._nack(NACK_BAD_STATE);
+        if (bad || speed === 0) return this._jogNack(NACK_BAD_STATE);
         const sets = Number(d[0] !== 0 || d[1] !== 0) + Number(d[2] !== 0) + Number(d[3] !== 0);
-        if (sets > 1) return this._nack(NACK_MIXED_AXES);
+        if (sets > 1) return this._jogNack(NACK_MIXED_AXES);
 
         this.cjogLastMs = Date.now();
         if (sets === 0) return this._cjogStop();
@@ -422,16 +424,16 @@ export class SimTransport implements Transport {
         if (this.state !== MachineState.IDLE && !jogging) {
             const busy = this.state === MachineState.JOB || this.state === MachineState.HOMING ||
                 this.state === MachineState.TRAVERSE;
-            return this._nack(busy ? NACK_BUSY : NACK_BAD_STATE);
+            return this._jogNack(busy ? NACK_BUSY : NACK_BAD_STATE);
         }
         for (let k = 0; k < MOTION_SLOTS; k++) {
             if (d[k] !== 0 && !(this.axesHomed & (1 << k)) && !this.jogUnhomed) {
-                return this._nack(NACK_BAD_STATE);
+                return this._jogNack(NACK_BAD_STATE);
             }
         }
         if (!this._cjogRoom(d)) {
             this._cjogStop();
-            return this._nack(NACK_SOFT_LIMIT);
+            return this._jogNack(NACK_SOFT_LIMIT);
         }
         this.jogQueue = [];
         this.cjogDir = d;
@@ -439,11 +441,15 @@ export class SimTransport implements Transport {
         this.cjogHeld = this.cjogMoving = true;
         this.cjogFrac = [0, 0, 0, 0];
         this.state = MachineState.JOGGING;
-        this.reply(new Uint8Array([MAGIC_ACK, this.expectedSeq, 0]));
+        this.reply(new Uint8Array([MAGIC_JOG_ACK]));
     }
 
     private _nack(reason: number): void {
         this.reply(new Uint8Array([MAGIC_NACK, reason, 0]));
+    }
+
+    private _jogNack(reason: number): void {
+        this.reply(new Uint8Array([MAGIC_JOG_NACK, reason]));
     }
 
     /** Some travel left on every moving axis; Z and A have no travel model. */

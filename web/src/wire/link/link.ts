@@ -202,7 +202,7 @@ export class Link {
      * One continuous-jog packet (format/cjog.ts). Repeat it faster than
      * CJOG_DEADMAN_MS while the direction is held; all-zero directions stop.
      * One axis set per packet: XY, Z or A. Fire-and-forget like `abort`: the
-     * Pico ACKs a start and NACKs a refusal, which arrive on the stream sinks.
+     * Pico ACKs a start and NACKs a refusal, which arrive on `sinks.jog`.
      */
     cjog(x: JogDir, y: JogDir, speed = 1, z: JogDir = 0, a: JogDir = 0): void {
         void this.writer.writeFrame(packCjog(x, y, speed, z, a));

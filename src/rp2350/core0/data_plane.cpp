@@ -98,7 +98,9 @@ static void sendNack(uint8_t reason) {          // shared 3-byte NACK frame
     Serial.write(frame, sizeof(frame));
 }
 
-static void sendCfgRdy()           { Serial.write(CFG_RDY); }   // header ok — send payload
+static void cjogReply(uint8_t r);               // Continuous jog, below
+
+static void sendCfgRdy()         { Serial.write(CFG_RDY); }   // header ok — send payload
 static void sendCfgAck()           { Serial.write(CFG_ACK); }   // committed
 static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
@@ -120,7 +122,8 @@ static void feedPacket(uint8_t b) {
 
     uint8_t expected = crc8(pktBuf, pktSize - 1);
     if (pktBuf[pktSize - 1] != expected) {
-        sendNack(MSEG_NACK_CRC);
+        if (pktBuf[0] == CJOG_MAGIC) cjogReply(MSEG_NACK_CRC);
+        else                         sendNack(MSEG_NACK_CRC);
         return;
     }
 
@@ -346,9 +349,9 @@ static void handleCfgGet() {
 
 static void cjogReply(uint8_t r) {
     if (r == CJOG_NO_REPLY) return;
-    if (r != CJOG_ACK) { sendNack(r); return; }
-    const uint8_t f[3] = { MSEG_ACK, expectedSeq, 0 };
-    Serial.write(f, 3);
+    if (r == CJOG_ACK) { Serial.write(JOG_ACK); return; }
+    const uint8_t f[2] = { JOG_NACK, r };
+    Serial.write(f, 2);
 }
 
 static void acceptCjog() {

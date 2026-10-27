@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Demux, makeSinks, Ack, Nack, CfgReply } from "../../../src/wire/link/demux.js";
+import { Demux, makeSinks, Ack, Nack, JogAck, CfgReply } from "../../../src/wire/link/demux.js";
 import { packStatusRsp } from "../../../src/wire/format/status.js";
 import { packCfgDataHeader } from "../../../src/wire/format/cfg.js";
 import {
@@ -21,6 +21,9 @@ import {
     MAGIC_CFG_ACK,
     MAGIC_CFG_NACK,
     MAGIC_CFG_DATA,
+    MAGIC_JOG_ACK,
+    MAGIC_JOG_NACK,
+    NACK_SOFT_LIMIT,
 } from "../../../src/wire/format/constants.js";
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -52,6 +55,19 @@ describe("wire/link/demux: ACK / NACK routing", () => {
         const r = await sinks.ack.get(50);
         expect(r).toBeInstanceOf(Nack);
         expect((r as Nack).reason).toBe(0x02);
+    });
+
+    it("routes a jog's ACK and NACK to the jog sink, never the ack sink", async () => {
+        const sinks = makeSinks();
+        const d = new Demux(sinks);
+        d.feed(new Uint8Array([MAGIC_JOG_ACK, MAGIC_JOG_NACK, NACK_SOFT_LIMIT, MAGIC_ACK, 3, 0]));
+        expect(await sinks.jog.get(50)).toBeInstanceOf(JogAck);
+        const n = await sinks.jog.get(50);
+        expect(n).toBeInstanceOf(Nack);
+        expect((n as Nack).reason).toBe(NACK_SOFT_LIMIT);
+        expect(((await sinks.ack.get(50)) as Ack).expectedSeq).toBe(3);
+        expect(await sinks.ack.get(20)).toBeNull();
+        expect(d.idle).toBe(true);
     });
 
     it("delivers frames in order from one feed", async () => {

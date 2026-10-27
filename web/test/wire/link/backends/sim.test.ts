@@ -491,7 +491,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
         const s = sim as unknown as { reply: (d: Uint8Array) => void };
         const orig = s.reply.bind(sim);
         s.reply = (d) => {
-            if (d[0] === 0xaa || d[0] === 0xbb) out.push(Buffer.from(d).toString("hex"));
+            if (d[0] === 0xb6 || d[0] === 0xb7) out.push(Buffer.from(d).toString("hex"));
             orig(d);
         };
         return out;
@@ -517,7 +517,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
             expect(await link.command("get state jogging")).toBe("state=7 jogging=2");
             await tick(CJOG_DEADMAN_MS + 60);
             expect(sim.state).toBe(MachineState.IDLE);
-            expect(r).toEqual(["aa0000"]);
+            expect(r).toEqual(["b6"]);
             expect(sim.pos[0]).toBeGreaterThan(150);
             expect(sim.pos[1]).toBe(100);
         }, opts);
@@ -531,10 +531,10 @@ describe("wire/link/backends/sim: continuous jog", () => {
             await hold(sim, 1, 0, 150);
             expect(sim.pos[0]).toBe(400);
             expect(sim.state).toBe(MachineState.IDLE);
-            expect(r).toEqual(["aa0000"]);
+            expect(r).toEqual(["b6"]);
             await tick(CJOG_DEADMAN_MS + 30);
             await sim.write(packCjog(1, 0));          // a fresh press at the end
-            expect(r).toEqual(["aa0000", "bb0900"]);
+            expect(r).toEqual(["b6", "b709"]);
         }, opts);
     });
 
@@ -551,15 +551,15 @@ describe("wire/link/backends/sim: continuous jog", () => {
             bad[1] = 2;                                 // not −1, 0 or +1
             bad[6] = crc8(bad, 0, 6);
             await sim.write(bad);
-            expect(r).toEqual(["aa0000", "bb0600"]);
+            expect(r).toEqual(["b6", "b706"]);
         }, opts);
     });
 
     const sets: Array<{ name: string; dir: [JogDir, JogDir, JogDir, JogDir]; reply: string; moved: number }> = [
-        { name: "Z alone runs", dir: [0, 0, 1, 0], reply: "aa0000", moved: 2 },
-        { name: "A alone runs", dir: [0, 0, 0, -1], reply: "aa0000", moved: 3 },
-        { name: "XY with Z is NACKed MIXED_AXES", dir: [1, 0, 1, 0], reply: "bb0a00", moved: -1 },
-        { name: "Z with A is NACKed MIXED_AXES", dir: [0, 0, 1, 1], reply: "bb0a00", moved: -1 },
+        { name: "Z alone runs", dir: [0, 0, 1, 0], reply: "b6", moved: 2 },
+        { name: "A alone runs", dir: [0, 0, 0, -1], reply: "b6", moved: 3 },
+        { name: "XY with Z is NACKed MIXED_AXES", dir: [1, 0, 1, 0], reply: "b70a", moved: -1 },
+        { name: "Z with A is NACKed MIXED_AXES", dir: [0, 0, 1, 1], reply: "b70a", moved: -1 },
     ];
     for (const c of sets) {
         it(c.name, async () => {
@@ -579,7 +579,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
         await withLink(async (_link, sim) => {
             const r = replies(sim);
             await sim.write(packCjog(1, 0));
-            expect(r).toEqual(["bb0600"]);
+            expect(r).toEqual(["b706"]);
             expect(sim.state).toBe(MachineState.IDLE);
         }, opts);
     });

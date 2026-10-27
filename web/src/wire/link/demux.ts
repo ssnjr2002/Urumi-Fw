@@ -17,7 +17,7 @@
  *
  * Pure: no I/O. `feed(bytes) -> dispatch to sinks`. The backend's read loop
  * pumps chunks in; frame boundaries need not align with chunk boundaries. All
- * four sinks are required — a missing sink is a routing hole, not a default.
+ * five sinks are required — a missing sink is a routing hole, not a default.
  */
 
 import { Sink, LatestSink } from "./sink.js";
@@ -30,6 +30,8 @@ import {
     MAGIC_CFG_ACK,
     MAGIC_CFG_NACK,
     MAGIC_CFG_DATA,
+    MAGIC_JOG_ACK,
+    MAGIC_JOG_NACK,
 } from "../format/constants.js";
 import { CFG_DATA_HDR_SIZE, MAX_CFG_PAYLOAD, unpackCfgDataHeader } from "../format/cfg.js";
 
@@ -47,6 +49,9 @@ export class Nack {
     constructor(readonly reason: number) {}
 }
 
+/** Continuous jog started. A refused jog arrives as a Nack on the jog sink. */
+export class JogAck {}
+
 /** Config reply. `reason` is set for CFG_NACK; `payload` and `crc32` for CFG_DATA. */
 export class CfgReply {
     constructor(
@@ -62,6 +67,8 @@ export class CfgReply {
 export interface DemuxSinks {
     /** ack/nack — ordered, never drops. A Session subscribes for its span. */
     ack: Sink<Ack | Nack>;
+    /** jog — continuous-jog replies, ordered. Never the stream's. */
+    jog: Sink<JogAck | Nack>;
     /** status — latest-wins. StatusMonitor + open jog sessions read this. */
     status: LatestSink<Uint8Array>;
     /** text — ordered, never drops. The one-outstanding control plane. */
@@ -73,6 +80,7 @@ export interface DemuxSinks {
 export function makeSinks(): DemuxSinks {
     return {
         ack: new Sink<Ack | Nack>("ack"),
+        jog: new Sink<JogAck | Nack>("jog"),
         status: new LatestSink<Uint8Array>("status"),
         text: new Sink<string>("text"),
         cfg: new Sink<CfgReply>("cfg"),
@@ -95,6 +103,8 @@ const FIXED_SIZES: Readonly<Record<number, number>> = {
     [MAGIC_CFG_RDY]: 1, // complete on its own
     [MAGIC_CFG_ACK]: 1, // complete on its own
     [MAGIC_CFG_NACK]: 2,
+    [MAGIC_JOG_ACK]: 1, // complete on its own
+    [MAGIC_JOG_NACK]: 2,
 };
 
 const MAX_TEXT_LINE = 512; // guard: a runaway line must not grow without bound
@@ -110,6 +120,7 @@ export interface DemuxStats {
 
 export class Demux {
     readonly ack: Sink<Ack | Nack>;
+    readonly jog: Sink<JogAck | Nack>;
     readonly status: LatestSink<Uint8Array>;
     readonly text: Sink<string>;
     readonly cfg: Sink<CfgReply>;
@@ -130,6 +141,7 @@ export class Demux {
 
     constructor(sinks: DemuxSinks) {
         this.ack = sinks.ack;
+        this.jog = sinks.jog;
         this.status = sinks.status;
         this.text = sinks.text;
         this.cfg = sinks.cfg;
@@ -202,9 +214,10 @@ export class Demux {
         if (size !== undefined) {
             this._magic = b;
             if (size === 1) {
-                // complete on its own — CFG_RDY or CFG_ACK
+                // complete on its own — CFG_RDY, CFG_ACK or JOG_ACK
                 this.frames++;
-                this.cfg.put(new CfgReply(b));
+                if (b === MAGIC_JOG_ACK) this.jog.put(new JogAck());
+                else this.cfg.put(new CfgReply(b));
                 return;
             }
             this._buf = [b];
@@ -249,6 +262,8 @@ export class Demux {
             this.ack.put(new Ack(buf[1]!));
         } else if (magic === MAGIC_NACK) {
             this.ack.put(new Nack(buf[1]!));
+        } else if (magic === MAGIC_JOG_NACK) {
+            this.jog.put(new Nack(buf[1]!));
         } else if (magic === MAGIC_STATUS_RSP) {
             this.status.put(Uint8Array.from(buf));
         } else if (magic === MAGIC_CFG_NACK) {
