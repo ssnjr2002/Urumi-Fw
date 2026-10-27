@@ -8,7 +8,8 @@
 uint8_t toolsMounted(uint8_t head);
 
 // Mount `id` on `head`. Returns nullptr, or the refusal text after `err `:
-// `no_head` (head out of range), `no_tool` (id not in the config).
+// `no_head` (head out of range), `no_tool` (id not in the config). A change of
+// tool unsets the head's work Z (framesUnsetWorkZ) until it is zeroed again.
 const char* toolsMount(uint8_t head, uint8_t id);
 
 void toolsReset(void);

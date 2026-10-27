@@ -220,9 +220,9 @@ and jogs alike, and shrinks X's and Y's soft ranges by d.
 moves Z to `machine.zClearance` over work Z, travels to its p0 and plunges to
 k·t under work Z (0 for a tool with `plunge: false`) at the tool's
 `plungeFeed`, else `feed.plungeFallback`; its END lifts back to clearance at
-`feed.liftFeed`. A height outside Z's soft range is `NACK_SOFT_LIMIT`. With
-the tool mounted, a head with no work Z set (after a tool change, until a Z
-zero) refuses the header: `NACK_JOB`.
+`feed.liftFeed`. A height outside Z's soft range is `NACK_SOFT_LIMIT`. A head
+with no work Z set (its tool changed by `mount`, until a Z zero) stops for a
+tool change (below).
 
 **Powered tools.** A tool with a `power` block is switched by the Pico, at
 rest: after a START's travel it waits out the tool's duty if due (JOB.DWELL:
@@ -248,25 +248,34 @@ abort; an abort brakes, lifts Z to clearance (JOB.ABORTING throughout) and
 then goes IDLE.
 
 **Heads and tool change.** The BEZIERs after a header run with its tool on its
-`head`. With the tool mounted there (`mount`) and the head selected, the header
-is ACKed. With the tool mounted and another head selected, IDLE and a resume
-select it (as `select`). Otherwise the header is `NACK_TOOL_CHANGE`, not
-consumed, and the job holds for a change; until it is back every header and
-record is `NACK_TOOL_CHANGE`. The host stops, waits for JOB.BUFFERING (or
-JOB.PAUSED, a change made from a pause), and resends from the header. A running
-job finishes its ring first. Then:
+`head`. With the tool mounted there (`mount`), its Z zeroed and the head
+selected, the header is ACKed. With the tool mounted and zeroed and another
+head selected, IDLE and a resume select it (as `select`). Otherwise the header
+is `NACK_TOOL_CHANGE`, not consumed, and the job holds for a change; until it
+is back every record, and every header outside JOB.TOOL_WAIT, is
+`NACK_TOOL_CHANGE`. A running job finishes its ring first. Then:
 
-* the tool mounted, another head selected: the head is selected, and back;
-* otherwise JOB.TOOL_CHANGE: the head is selected, every head's Z parks, and
-  the head moves so the wanted tool's tip is on its probe switch, A turning
-  to the holder's lock (machine 0) on the way (as `probe_park`; `get seq=6`). Then JOB.TOOL_WAIT, with
-  that head's work Z cleared: the operator mounts the tool (`mount`, only the
-  header's tool on its head), jogs (`jog`, continuous jogs) and zeroes Z
-  (`wzero`); with the tool mounted and Z zeroed it goes back.
+* the tool mounted and zeroed, another head selected: the head is selected,
+  and back (JOB.BUFFERING, or JOB.PAUSED for a change made from a pause);
+* otherwise JOB.TOOL_CHANGE, the stop (`get seq=6`): the head is selected,
+  every head's Z parks, every head's A turns to the holder's lock (machine 0,
+  unwinding what it turned), then a line to the stored `mount` position. Then
+  JOB.TOOL_WAIT: the operator mounts tools on any head (`mount`; a changed
+  tool clears that head's work Z), jogs (`jog`, continuous jogs), moves a
+  tool's tip over its switch (`probe_park`) and zeroes Z (`wzero`).
+
+Only a header leaves JOB.TOOL_WAIT. With its tool mounted on its head and
+zeroed, and nothing moving, the job goes back and the header is taken as any
+other; otherwise it is `NACK_TOOL_CHANGE` again and the job stays. So the
+operator may mount and zero the next layer's tool in the same stop, or leave
+it: a later header whose tool is mounted but not zeroed stops again. The host
+resends by itself while the job is in JOB.TOOL_CHANGE, and on the operator's
+word in JOB.TOOL_WAIT.
 
 `pause` is refused in both; `cancel` ends the job from TOOL_WAIT, `stop` in
-either. A refusal after the NACK (a Z not homed or not answering, no probe
-switch, a failed park) alarms with F_SEQUENCE or F_HOMING and ends the job.
+either. A refusal after the NACK (a Z or A not homed or not answering, no
+`mount` position, a failed park) alarms with F_SEQUENCE or F_HOMING and ends
+the job.
 
 Refusals: `NACK_TOOL_UNKNOWN` = the id is not in the config; `NACK_JOB` = a
 head the config lacks, inside an open
@@ -436,7 +445,7 @@ The reason byte meaning depends on which command the NACK is responding to.
 | `MSEG_NACK_BUSY` | `0x0B` | Continuous jog while a step or sequence holds the machine (a job, homing, a leg, a traverse) |
 | `MSEG_NACK_JOB` | `0x0C` | BEZIER with no job open; layer header inside a contour, with a bad chamber, feed or k, or not naming where a paused job stopped |
 | `MSEG_NACK_TOOL_UNKNOWN` | `0x0D` | Layer header whose tool id is not in the config |
-| `MSEG_NACK_TOOL_CHANGE` | `0x0F` | Layer header whose tool is not mounted on its head or whose head is not selected, not consumed; any header or record while the job holds for a tool change. Wait for BUFFERING or PAUSED and resend from the header |
+| `MSEG_NACK_TOOL_CHANGE` | `0x0F` | Layer header whose tool is not mounted on its head or not zeroed, or whose head is not selected, not consumed; any record, and any header outside TOOL_WAIT, while the job holds for a tool change. Resend from the header: by itself in TOOL_CHANGE, on the operator's word in TOOL_WAIT |
 
 ### Config command NACK reasons (responses to CMD_SET_CONFIG) *(Phase 2)*
 
@@ -484,14 +493,14 @@ prefixed `0x`.
 | `line` | `<x> <y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a planner line to work mm (x, y) at `feed` mm/s, planned and run on the Pico as a jog (state JOGGING). `<depth>` = blocks queued. IDLE, or JOGGING; `bad_state` while the ring holds a streamed job. Refused if X or Y has `maxFeed` or `maxAccel` 0, with no head selected (`no_head`), or outside the soft range on a homed axis with `softLimits`; `soft_limit z` = the bed mesh would take Z out of its soft range along the move. No homing check |
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, work mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line`, on every handle |
 | `jog` | `<x\|y\|z\|a> <dist> [scale]` | `ok <depth>` / `err usage\|unconfigured\|no_head\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit <axis> <mm>` (and `line`'s queue errors) | Step jog: move one axis by `dist` machine mm (A: degrees) from where the queued jogs end; Z and A are the selected head's (`no_head` with none bound), as a jog (state JOGGING). Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel` (one turn on A). A has no soft range. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction. Also in JOB.TOOL_WAIT |
-| `jogto` | `<x> <y>` \| `park\|load` | `ok` / `err usage\|unconfigured\|not_homed\|no_head\|no_position\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>\|node <n> excluded\|mute\|<rpc>` | Controller command, a sequence: park every present head's Z (legs, in parallel), then a straight line at the slower of X's and Y's `jogFeed`, published as JOGGING with `jogging=3` throughout. `<x> <y>` is work mm for the selected tip; `park` (where homing parks X and Y without a stored one), and `load` are stored anchor positions, `no_position` when the config has none. X, Y and every present head's Z must be homed. IDLE only, and refused with any fault but a latch; `busy` while anything runs. `ok` once it starts; a failed park is `F_HOMING` (`homefail=8`), a line refused after the park `F_SEQUENCE` (`seqfail=soft_limit\|full\|no_limits\|unconfigured\|bad_state`); with no Z to park the line's refusal is the reply. Refuses at the soft range as `jog` |
-| `probe_park` | `<tool id>` | as `jogto`, and `err no_tool` | Controller command: `jogto` to the position that puts tool `<tool id>`'s tip on the selected head's probe switch, whether or not it is mounted: the switch (machine XY, one per head) less the head's offset and the tool's `toolOffset`. A head with an A turns it to machine 0, the holder's lock, along the line (`a_not_homed` unless A is homed). `no_head` with none selected, `no_position` when the head has no switch. The tool change goes there for the wanted tool |
+| `jogto` | `<x> <y>` \| `park\|load\|mount` | `ok` / `err usage\|unconfigured\|not_homed\|no_head\|no_position\|no_feed\|busy\|bad_state\|soft_limit x <mm>\|soft_limit y <mm>\|node <n> excluded\|mute\|<rpc>` | Controller command, a sequence: park every present head's Z (legs, in parallel), then a straight line at the slower of X's and Y's `jogFeed`, published as JOGGING with `jogging=3` throughout. `<x> <y>` is work mm for the selected tip; `park` (where homing parks X and Y without a stored one), `load` and `mount` are stored anchor positions, `no_position` when the config has none. X, Y and every present head's Z must be homed. IDLE only, and refused with any fault but a latch; `busy` while anything runs. `ok` once it starts; a failed park is `F_HOMING` (`homefail=8`), a line refused after the park `F_SEQUENCE` (`seqfail=soft_limit\|full\|no_limits\|unconfigured\|bad_state`); with no Z to park the line's refusal is the reply. Refuses at the soft range as `jog` |
+| `probe_park` | `<tool id>` | as `jogto`, and `err no_tool` | Controller command: `jogto` to the position that puts tool `<tool id>`'s tip on its head's probe switch, whether or not it is mounted: the head it is mounted on (selected first), else the selected head; the switch (machine XY, one per head) less the head's offset and the tool's `toolOffset`. A head with an A turns it to machine 0, the holder's lock, along the line (`a_not_homed` unless A is homed). `no_head` with none selected, `no_position` when the head has no switch. Also in JOB.TOOL_WAIT |
 | `select` | `<head>\|anchor` | `ok` / `err usage\|bad_state\|degraded\|no_head` / as `axes_map` | Controller command: the controlled point. A head commits its Z and A as the axes map (`axes_map`'s replies) and turns the laser off; `anchor` is the laser tip (laser on; maps X and Y if either is unmapped, Z and A unchanged) or, without a laser, the head at (0, 0). Never moves. IDLE/PAUSED/ALARM, not while probing. The selection is derived from the axes map: a head needs X, Y and its Z and A mapped, the laser X and Y, else none. A raw `axes_map` that binds a different head selects it (laser off) |
 | `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM, and JOB.TOOL_WAIT |
 | `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
 | `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset back to the config's `work` block |
 | `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again. IDLE/PAUSED/ALARM. See "Bed mesh" |
-| `mount` | `<head> <tool id>` | `ok` / `err usage\|bad_state\|no_head\|no_tool` | Controller command: what `head` has mounted, a config tool id (`tools.<name>.id`) or 0 for none. RAM only: kept across jobs, cleared at boot and by a config push. Separate from `select`; never moves. IDLE/PAUSED/ALARM; in JOB.TOOL_WAIT only the change's tool on its head (`err wrong_tool`). `get tools` reports it. The mounted tool's `toolOffset` adds to its head's offset in the tip, so work positions and the readout follow it |
+| `mount` | `<head> <tool id>` | `ok` / `err usage\|bad_state\|no_head\|no_tool` | Controller command: what `head` has mounted, a config tool id (`tools.<name>.id`) or 0 for none. RAM only: kept across jobs, cleared at boot and by a config push. Separate from `select`; never moves. IDLE/PAUSED/ALARM and JOB.TOOL_WAIT. A different tool clears the head's work Z until `wzero z`; a header for it then stops for a tool change. `get tools` reports it. The mounted tool's `toolOffset` adds to its head's offset in the tip, so work positions and the readout follow it |
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Override of the config's `feed.cutFallback` and `feed.travelDefault` (mm/s, each at least 1), held until reboot: cut for the curves, travel for the line to a `START` record's p0. A layer header's feed, then its tool's `cutFeed`, overrides the cut |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 

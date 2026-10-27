@@ -138,14 +138,17 @@ static void feedPacket(uint8_t b) {
         return;
     }
 
-    // A job holding for a tool change takes nothing until it is back; the host
-    // resends from the header then.
-    if (toolChangeHolding()) { sendNack(MSEG_NACK_TOOL_CHANGE); return; }
+    // A job holding for a tool change takes nothing until it is back, except a
+    // header in TOOL_WAIT, which may bring it back.
+    const bool layer = pktBuf[0] == LAYER_HDR_MAGIC;
+    if (toolChangeHolding() && !(layer && toolChangeWaiting())) {
+        sendNack(MSEG_NACK_TOOL_CHANGE);
+        return;
+    }
 
     // A layer header opens a job from IDLE or resumes a paused one, and records
     // join it; the planner's admit narrows JOB to the reasons that take them.
     const uint8_t st = machineView();
-    const bool layer = pktBuf[0] == LAYER_HDR_MAGIC;
     if (st == STATE_JOB && jobReason == JOB_PAUSED && !layer) { sendNack(MSEG_NACK_PAUSED); return; }
     if (st != STATE_IDLE && st != STATE_JOB)        { sendNack(MSEG_NACK_BAD_STATE); return; }
 
@@ -239,14 +242,20 @@ static void acceptLayer() {
         case LAYER_TOOL_UNKNOWN: sendNack(MSEG_NACK_TOOL_UNKNOWN); return;
         default:                 sendNack(MSEG_NACK_JOB);          return;
     }
-    // Lifts and plunges are heights over the head's work Z; a tool change
-    // zeroes it before the header comes again.
-    if (res == LAYER_OK && !framesWorkZSet(l.head)) { sendNack(MSEG_NACK_JOB); return; }
+    // In TOOL_WAIT only this header leaves: its tool mounted and zeroed, the
+    // job goes back and the header is taken as any other.
+    if (toolChangeWaiting() && !toolChangeLeave(l.head, l.tool)) {
+        sendNack(MSEG_NACK_TOOL_CHANGE);
+        return;
+    }
+    // Lifts and plunges are heights over the head's work Z: a head not zeroed
+    // since its tool was mounted stops for it as for a mount.
+    const bool ready = res == LAYER_OK && framesWorkZSet(l.head);
 
     // Checked before the select or the change, so a refused layer changes nothing.
     PlannerQueueResult r = plannerLayerCheck(mo.cutFeed, layerNo, record);
-    if (r == PQ_OK && (res != LAYER_OK || l.head != framesSelected())) {
-        if (res != LAYER_OK || !machineBusFree()) {
+    if (r == PQ_OK && (!ready || l.head != framesSelected())) {
+        if (!ready || !machineBusFree()) {
             sendNack(toolChangeBegin(l.head, l.tool) ? MSEG_NACK_TOOL_CHANGE : MSEG_NACK_BAD_STATE);
             return;
         }

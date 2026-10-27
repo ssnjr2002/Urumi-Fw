@@ -1,13 +1,12 @@
 // mount.cpp — `mount <head> <tool id>`: what a head has mounted (0 = none).
 // Never moves; separate from `select`, so a head can be given a tool without
-// being the controlled point. In a job's TOOL_WAIT only the tool the change
-// wants, on its head.
+// being the controlled point. In a job's TOOL_WAIT any head, so the next
+// layer's tool can go on with this one's.
 
 #include <Arduino.h>
 #include <stdlib.h>
 #include "table.h"
 #include "../../ops/tools.h"
-#include "../seq/toolchange.h"
 
 bool cmdMount(const char* args) {
     long v[2];
@@ -20,8 +19,7 @@ bool cmdMount(const char* args) {
     }
     while (*p == ' ') p++;
     if (*p) { Serial.println("err usage"); return true; }
-    const char* why = toolChangeMountCheck((uint8_t)v[0], (uint8_t)v[1]);
-    if (!why) why = toolsMount((uint8_t)v[0], (uint8_t)v[1]);
+    const char* why = toolsMount((uint8_t)v[0], (uint8_t)v[1]);
     if (why)
         Serial.printf("err %s\n", why);
     else

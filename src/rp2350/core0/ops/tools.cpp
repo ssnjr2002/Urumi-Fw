@@ -1,6 +1,7 @@
 // tools — see tools.h.
 
 #include "tools.h"
+#include "frames.h"
 #include "../config/machine_cfg.h"
 
 static uint8_t mounted[CFG_MAX_HEADS];
@@ -13,6 +14,7 @@ const char* toolsMount(uint8_t head, uint8_t id) {
     const MachineCfg& c = machineCfg();
     if (head >= c.headCount) return "no_head";
     if (id != 0 && !configTool(c, id)) return "no_tool";
+    if (mounted[head] != id) framesUnsetWorkZ(head);
     mounted[head] = id;
     return nullptr;
 }

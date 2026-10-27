@@ -133,11 +133,14 @@ struct MachineCfg {
     float    workX;
     float    workY;
     float    workZ[CFG_MAX_HEADS];
-    // Anchor positions. Absent park: where homing parks.
+    // Anchor positions. Absent park: where homing parks. Mount: where a tool
+    // change stops for the operator.
     bool     hasPark;
     CfgPoint park;
     bool     hasLoad;
     CfgPoint load;
+    bool     hasMount;
+    CfgPoint mount;
     bool     jogUnhomed;     // relative jogs before homing, no soft limits (testing)
     bool     meshOn;         // bed mesh on at boot (the `mesh` command changes it)
     // A job leaves BUFFERING once this much motion is queued, or once no record

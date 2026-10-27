@@ -41,14 +41,21 @@ uint8_t headZNodes(uint8_t* out) {
     return n;
 }
 
-const char* zsReady(void) {
+uint8_t headANodes(uint8_t* out) {
+    if (!machineCfgValid()) return 0;
+    const MachineCfg& c = machineCfg();
+    uint8_t n = 0;
+    for (uint8_t h = 0; h < c.headCount; h++)
+        if (c.heads[h].a.node.present) out[n++] = c.heads[h].a.node.id;
+    return n;
+}
+
+static const char* nodesReady(const uint8_t* ids, uint8_t n, const char* notHomed) {
     static char refusal[40];
-    uint8_t zs[CFG_MAX_HEADS];
-    const uint8_t nz = headZNodes(zs);
-    for (uint8_t i = 0; i < nz; i++)
-        if (!originValid(zs[i])) return "not_homed";
-    for (uint8_t i = 0; i < nz; i++) {
-        const uint8_t  id  = zs[i];
+    for (uint8_t i = 0; i < n; i++)
+        if (!originValid(ids[i])) return notHomed;
+    for (uint8_t i = 0; i < n; i++) {
+        const uint8_t  id  = ids[i];
         const uint16_t bit = 1u << id;
         if (busExcluded() & bit) {
             snprintf(refusal, sizeof refusal, "node %d excluded", id); return refusal;
@@ -61,6 +68,36 @@ const char* zsReady(void) {
             snprintf(refusal, sizeof refusal, "node %d %s", id, rpcResultText(res));
             return refusal;
         }
+    }
+    return nullptr;
+}
+
+const char* zsReady(void) {
+    uint8_t zs[CFG_MAX_HEADS];
+    return nodesReady(zs, headZNodes(zs), "not_homed");
+}
+
+const char* asReady(void) {
+    uint8_t as[CFG_MAX_HEADS];
+    return nodesReady(as, headANodes(as), "a_not_homed");
+}
+
+const char* lockAs(void) {
+    const MachineCfg& c = machineCfg();
+    bool armed = false;
+    for (uint8_t h = 0; h < c.headCount; h++) {
+        const CfgAxis& a = c.heads[h].a;
+        if (!a.node.present) continue;
+        const uint8_t id = a.node.id;
+        const char* why = homingArmPark(id, true, originTarget(id, coordSteps(a, 0)),
+                                        intervalUs(a.homing.startFeed, a.stepsPerUnit),
+                                        intervalUs(a.jogFeed, a.stepsPerUnit),
+                                        a.homing.rampSteps);
+        if (why) {
+            if (armed) homingAbandon(id, LEGFAIL_REFUSED);
+            return why;
+        }
+        armed = true;
     }
     return nullptr;
 }

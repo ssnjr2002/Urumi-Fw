@@ -239,6 +239,7 @@ static CfgDecodeError checkFrames(const MachineCfg& c) {
     if (!anchor || !isfinite(c.workX) || !isfinite(c.workY)) return CFG_DEC_FRAMES;
     if (c.hasPark && (!inRange(c.x, c.park.x) || !inRange(c.y, c.park.y))) return CFG_DEC_FRAMES;
     if (c.hasLoad && (!inRange(c.x, c.load.x) || !inRange(c.y, c.load.y))) return CFG_DEC_FRAMES;
+    if (c.hasMount && (!inRange(c.x, c.mount.x) || !inRange(c.y, c.mount.y))) return CFG_DEC_FRAMES;
     return CFG_DEC_OK;
 }
 
@@ -403,7 +404,8 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
 
     JsonObjectConst pos = m["positions"];
     if (pos.isNull() || !readOptPoint(pos["park"], &out->hasPark, &out->park) ||
-        !readOptPoint(pos["load"], &out->hasLoad, &out->load)) return CFG_DEC_MISSING;
+        !readOptPoint(pos["load"], &out->hasLoad, &out->load) ||
+        !readOptPoint(pos["mount"], &out->hasMount, &out->mount)) return CFG_DEC_MISSING;
 
     if (!readBool(m["jogUnhomed"], &out->jogUnhomed) ||
         !readBool(m["meshOn"], &out->meshOn)) return CFG_DEC_MISSING;

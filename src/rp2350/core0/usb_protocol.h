@@ -186,8 +186,9 @@
 #define MSEG_NACK_JOB          0x0C
 // A LAYER_HDR whose tool id is not in the config.
 #define MSEG_NACK_TOOL_UNKNOWN 0x0D
-// A LAYER_HDR whose tool is not mounted on its head, or whose head is not
-// selected: not consumed. The job changes the tool or the head (JOB.TOOL_CHANGE,
-// TOOL_WAIT); records are refused the same way meanwhile. The host waits for
-// BUFFERING or PAUSED and resends from the header.
+// A LAYER_HDR whose tool is not mounted on its head or not zeroed, or whose
+// head is not selected: not consumed. The job changes the tool or the head
+// (JOB.TOOL_CHANGE, TOOL_WAIT); records are refused the same way meanwhile. The
+// host resends from the header; in TOOL_WAIT only a header with its tool
+// mounted and zeroed is taken.
 #define MSEG_NACK_TOOL_CHANGE  0x0F

@@ -245,6 +245,12 @@ const char* framesNamed(const char* name, float* mx, float* my) {
         *my = c.load.y;
         return nullptr;
     }
+    if (strcmp(name, "mount") == 0) {
+        if (!c.hasMount) return "no_position";
+        *mx = c.mount.x;
+        *my = c.mount.y;
+        return nullptr;
+    }
     return "usage";
 }
 

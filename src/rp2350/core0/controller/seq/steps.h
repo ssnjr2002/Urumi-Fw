@@ -30,6 +30,17 @@ const char* zsReady(void);
 // sequence (homingAbandon).
 const char* parkZs(void);
 
+// Every present head's A node; returns how many.
+uint8_t headANodes(uint8_t* out);
+
+// zsReady for every present head's A (`a_not_homed`).
+const char* asReady(void);
+
+// LEGS: every present head's A to machine 0, the holder's lock, in parallel.
+// The target is absolute, so a cabled A unwinds whatever it turned. As
+// parkZs otherwise.
+const char* lockAs(void);
+
 // RING: a straight XY line to machine mm (x, y) at `feed` mm/s, owned by the
 // live sequence (RING_SEQ); the step ends when the ring drains. `aLock`: A
 // rides it to machine 0, the holder's lock (no A on the head: XY only; A

@@ -94,7 +94,7 @@ bool framesWorkZSet(uint8_t h);
 const char* framesToMachine(float wx, float wy, float* mx, float* my);
 
 // A named position to the anchor's machine XY: `park` (where homing parks X
-// and Y without one) or `load`. Returns nullptr, "usage" for another name, or
+// and Y without one), `load` or `mount` (a tool change's stop). Returns nullptr, "usage" for another name, or
 // "no_position" for one the config lacks.
 const char* framesNamed(const char* name, float* mx, float* my);
 

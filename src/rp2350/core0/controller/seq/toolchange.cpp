@@ -19,7 +19,7 @@ static bool    started;       // the job reached TOOL_CHANGE and the change bega
 static uint8_t wantHead, wantTool;
 static uint8_t backTo;        // BUFFERING or PAUSED
 static float   targetX, targetY, feed;
-static bool    lining;        // the line is the step
+static uint8_t step;          // the next of: park the Zs, lock the As, the line
 
 // sequenceFail wants one token: `node 3 excluded` reads node_3_excluded.
 static void fail(const char* why) {
@@ -29,70 +29,72 @@ static void fail(const char* why) {
     sequenceFail(t);
 }
 
-static void enterWait(void) {
-    framesUnsetWorkZ(wantHead);
-    if (!plannerJobSwap(JOB_TOOL_CHANGE, JOB_TOOL_WAIT)) fail("bad_state");
+static bool ready(uint8_t head, uint8_t tool) {
+    return toolsMounted(head) == tool && framesWorkZSet(head);
 }
 
-static bool toolChangeNext(uint8_t) {
-    if (!lining) {
-        lining = true;
-        bool queued;
-        if (const char* why = lineTo(targetX, targetY, feed, &queued, true)) {
-            fail(why);
-            return false;
+// Runs the stop's steps from `step` until one has motion out. False once the
+// stop is in TOOL_WAIT, or failed.
+static bool advance(void) {
+    uint8_t nodes[CFG_MAX_HEADS];
+    while (step < 3) {
+        const char* why = nullptr;
+        switch (step++) {
+            case 0:
+                if (headZNodes(nodes) == 0) continue;
+                why = parkZs();
+                break;
+            case 1:
+                if (headANodes(nodes) == 0) continue;
+                why = lockAs();
+                break;
+            default: {
+                bool queued;
+                why = lineTo(targetX, targetY, feed, &queued);
+                if (!why && !queued) continue;
+                break;
+            }
         }
-        if (queued) return true;
+        if (why) { fail(why); return false; }
+        return true;
     }
-    enterWait();
+    if (!plannerJobSwap(JOB_TOOL_CHANGE, JOB_TOOL_WAIT)) fail("bad_state");
     return false;
 }
 
+static bool toolChangeNext(uint8_t) { return advance(); }
+
 static const Sequence toolChangeSequence = { SEQ_TOOL_CHANGE, toolChangeNext, nullptr };
 
-static bool selectHead(void) {
-    if (framesSelected() == wantHead) return true;
+static bool selectHead(uint8_t head) {
+    if (framesSelected() == head) return true;
     const char* why = nullptr;
-    axesSelectHead(wantHead, &why);
-    if (why || framesSelected() != wantHead) { fail(why ? why : "no_head"); return false; }
-    return true;
+    axesSelectHead(head, &why);
+    return !why && framesSelected() == head;
 }
 
 static void start(void) {
-    if (!selectHead()) return;
-    if (toolsMounted(wantHead) == wantTool) {
+    if (!selectHead(wantHead)) { fail("no_head"); return; }
+    if (ready(wantHead, wantTool)) {
         if (!plannerJobSwap(JOB_TOOL_CHANGE, backTo)) fail("bad_state");
         return;
     }
     if ((axes_homed & 0x3) != 0x3) { fail("not_homed"); return; }
-    if (const char* why = framesProbeFor(wantTool, &targetX, &targetY)) { fail(why); return; }
+    if (const char* why = framesNamed("mount", &targetX, &targetY)) { fail(why); return; }
     const MachineCfg& c = machineCfg();
     feed = fminf(c.x.jogFeed, c.y.jogFeed);
     if (!(feed > 0)) { fail("no_feed"); return; }
     if (const char* why = zsReady()) { fail(why); return; }
-    if (const char* why = aLockReady()) { fail(why); return; }
+    if (const char* why = asReady()) { fail(why); return; }
 
     // The job's ring is idle and empty in TOOL_CHANGE.
     const uint32_t s = spin_lock_blocking(plannerLock);
     ringOwner = RING_SEQ;
     spin_unlock(plannerLock, s);
 
-    uint8_t zs[CFG_MAX_HEADS];
-    lining = headZNodes(zs) == 0;
+    step = 0;
     sequenceStart(&toolChangeSequence);
-    if (lining) {
-        // No Z to park: the line is the first step.
-        bool queued;
-        const char* why = lineTo(targetX, targetY, feed, &queued, true);
-        if (!queued) sequenceEnd();
-        if (why) fail(why);
-        else if (!queued) enterWait();
-        return;
-    }
-    if (const char* why = parkZs()) {
-        if (sequenceLive()) sequenceEnd();
-        fail(why);
-    }
+    if (!advance() && sequenceLive()) sequenceEnd();
 }
 
 bool toolChangeBegin(uint8_t head, uint8_t tool) {
@@ -112,9 +114,14 @@ bool toolChangeHolding(void) {
     return toolChangePending || why == JOB_TOOL_CHANGE || why == JOB_TOOL_WAIT;
 }
 
-const char* toolChangeMountCheck(uint8_t head, uint8_t id) {
-    if (machineContext != CTX_JOB || jobReason != JOB_TOOL_WAIT) return nullptr;
-    return head == wantHead && id == wantTool ? nullptr : "wrong_tool";
+bool toolChangeWaiting(void) {
+    return machineContext == CTX_JOB && jobReason == JOB_TOOL_WAIT;
+}
+
+bool toolChangeLeave(uint8_t head, uint8_t tool) {
+    if (!toolChangeWaiting() || sequenceLive() || !ready(head, tool)) return false;
+    if (!selectHead(head)) return false;
+    return plannerJobSwap(JOB_TOOL_WAIT, backTo);   // false while a jog runs
 }
 
 void toolChangeTick(void) {
@@ -130,11 +137,7 @@ void toolChangeTick(void) {
         started = true;
         toolChangePending = false;
         start();
-    } else if (why == JOB_TOOL_WAIT) {
-        if (toolsMounted(wantHead) == wantTool && framesWorkZSet(wantHead) &&
-            !sequenceLive())
-            plannerJobSwap(JOB_TOOL_WAIT, backTo);   // false while a jog runs
-    } else if (!toolChangePending) {
+    } else if (why != JOB_TOOL_WAIT && !toolChangePending) {
         // Back, or a pause took the pending change.
         active = started = false;
     }
