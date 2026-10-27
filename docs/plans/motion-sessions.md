@@ -1337,7 +1337,8 @@ stop.
 
 ### Status
 
-Ready to merge.
+Done (merged). Unblocks the web Session's tool-change wait (resend by
+itself in TOOL_CHANGE, on the operator's word in TOOL_WAIT).
 
 ### Outcome
 
