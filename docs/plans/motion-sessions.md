@@ -1247,7 +1247,26 @@ reason `plannerQueueLift` sets, with Z moving.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Bits: `END`, `CORNER`, `DUTY`, `DEADLINE`, `UNWIND`, `PAUSE`, `ABORT`;
+  `DRY` reserved (a ring run dry does not lift; a pause at a dry ring is a
+  `PAUSE`). `ABORT` added: `plannerQueueLift(JOB_ABORTING)` lifts too.
+* Keys, all `-` outside a job: `liftreason` (names, `-` before the first
+  lift), `liftcount`, `toolon`, `onms` (the last two `-` for a passive tool).
+  They reset as a job opens, not on resume. A START's travel is not a lift.
+* Planner: `setLift()` beside `setTag()`, which clears it.
+* A BREAK's duty stop carries the `CORNER`/`UNWIND` reasons it absorbs.
+* Core 1 counts a lift where the claimed block's mask changes to a nonzero
+  one, so an END lift then a pause lift count two (`JobLift`).
+* A pause or abort that only switches the tool off (Z cannot lift) is not
+  tagged.
+* The duty counters are shared now (`dutyOnMs`, `toolOnAtMs`, `dutySeen`);
+  `onms` reads 0 while a reset is pending on Core 1.
+* Human checks still open: each bit on the machine, `duty,corner` at a
+  BREAK, `onms` climbing and resetting.
 
 ## Open
 
