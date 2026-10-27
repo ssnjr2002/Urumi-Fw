@@ -98,6 +98,7 @@ bool Planner::pushBlock(Block::Kind kind, const Path& path, const Pos& target, f
     b.record = tag_record_;
     b.break_dist = tag_break_dist_;
     b.resume_s = tag_resume_s_;
+    b.lift = tag_lift_;
     // An event, and whatever follows one, starts from rest.
     const bool rest = kind == Block::EVENT || count_ == 0 ||
                       ring_[index(count_ - 1)].kind == Block::EVENT;

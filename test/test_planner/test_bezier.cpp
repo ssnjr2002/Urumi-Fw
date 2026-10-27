@@ -223,7 +223,8 @@ TEST_CASE("bezier: a curve pushed from s runs its rest from there, tagged") {
     Executor e;
     p.reset({from.x, from.y});
     e.reset({from.x, from.y});
-    p.setTag(3, 7, 120);
+    p.setLift(0x01);
+    p.setTag(3, 7, 120);   // clears the lift
     REQUIRE(p.pushBezierFrom(b, 20, 500, lim(), kDev));
     p.replan();
     REQUIRE(p.commit());
@@ -233,6 +234,7 @@ TEST_CASE("bezier: a curve pushed from s runs its rest from there, tagged") {
     CHECK(blk.layer == 3);
     CHECK(blk.record == 7);
     CHECK(blk.break_dist == 120);
+    CHECK(blk.lift == 0);
 
     CHECK(dist(e.tick(p, kDt).xy(), from) < 1e-2f);
     int guard = 0;

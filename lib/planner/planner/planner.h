@@ -62,6 +62,7 @@ struct Block {
     uint32_t record = 0;
     uint16_t break_dist = 0;   // the record's nextBreakDist, mm (setTag)
     float resume_s = 0;        // a LINE or EVENT's: mm into the record a pause resumes at
+    uint8_t lift = 0;          // the caller's lift reasons, opaque here; 0 off a lift (setLift)
 };
 
 /** A block's profile from `t0` s after its claim, starting `s0` mm into it. */
@@ -115,11 +116,14 @@ public:
      */
     bool pushEvent(uint8_t code);
 
-    /** The record the blocks pushed from now on run, its nextBreakDist, and resume_s. */
+    /** The record the blocks pushed from now on run, its nextBreakDist, and resume_s; clears the lift. */
     void setTag(uint16_t layer, uint32_t record, uint16_t breakDist = 0, float resumeS = 0) {
         tag_layer_ = layer; tag_record_ = record; tag_break_dist_ = breakDist;
         tag_resume_s_ = resumeS;
+        tag_lift_ = 0;
     }
+    /** The lift reasons of the blocks pushed from now on; 0 for none. */
+    void setLift(uint8_t lift) { tag_lift_ = lift; }
 
     /**
      * Queue blocks ahead of the oldest: pushes from beginFront(`at`) to
@@ -194,6 +198,7 @@ private:
     uint32_t tag_record_ = 0;
     uint16_t tag_break_dist_ = 0;
     float tag_resume_s_ = 0;
+    uint8_t tag_lift_ = 0;
 
     // beginFront(): the ring's count and end before the front pushes.
     int front_mark_ = 0;

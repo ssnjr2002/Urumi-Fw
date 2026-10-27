@@ -187,6 +187,7 @@ TEST_CASE("release leaves a hold for the producer, which queues blocks ahead of 
         CHECK(r.e.state() == Executor::State::Running);
         CHECK(!r.p.claimed());
         r.p.setTag(1, 9, 0, s);
+        r.p.setLift(0x08);
         r.p.beginFront(held);
         Pos up = held;
         up.z = 5;
@@ -201,6 +202,7 @@ TEST_CASE("release leaves a hold for the producer, which queues blocks ahead of 
         CHECK(lift.path.axes == AXES_Z);
         CHECK(lift.record == 9);
         CHECK(lift.resume_s == doctest::Approx(s));
+        CHECK(lift.lift == 0x08);
         r.plan();
 
         // Up, at the event, down at the held XY, then on to the end.
