@@ -186,6 +186,31 @@ A dependent chain, Single Session: every branch after C1 edits
   Session), `link/backends/sim.ts` (a tool-change hold; it has none), tests
   in `web/test/wire/link/`; `web/src/index.ts` exports.
 * Depends on: F1; JT (motion-sessions.md, done).
+* Status: ready to merge.
+* Outcome:
+  * Interfaces C5 uses: `link.session(new JobSource(hdr, packets))` makes a
+    job session (a plain `PacketSource` keeps the old behaviour, so jog
+    sessions and `link.stream()` are unchanged); `pause()`, `cancel()` (both
+    send the text command and resolve to the reply), `resume()`,
+    `continue()`, `held`, `stats().held`, `FATAL_JOB_LOST`. Exported from
+    `web/src/index.ts` with `Hold` and `ReplayableSource`.
+  * Added in Write: `pause()`, so the demo's pause goes through the session;
+    a pause sent elsewhere is still found by its NACK or the status.
+  * Deviations: leaving a `tool` hold resends from the window's base (the
+    unaccepted header), with no SEQRESET. A status PAUSED holds only with
+    nothing in flight and from a sample newer than the last ACK or hold, so
+    a reply written before a resume header cannot hold it again.
+  * Sim: `tools` (mounts and zeros) turns on the JT header check, TOOL_CHANGE
+    for `toolChangeMs` then TOOL_WAIT, `mount`, `wzero z`; `cancel` is also
+    admitted in TOOL_WAIT. Off by default.
+  * Tests: `web/test/wire/link/job-session.test.ts`, 10. Not covered:
+    `refused` and `silent` (the sim has no wrong resume point or silence).
+  * Checks: `pnpm typecheck` clean; `pnpm test` 578 passed, 1 skipped, 1
+    failed: `blob.test.ts` (controller.msgpack vs `config/controller.jsonc`),
+    failing on `main` too since JT added `positions.mount` without
+    regenerating the fixture. Follow-up: regenerate it.
+  * Not tried on the machine: pause, resume and the tool-change wait on COM8
+    (with C5).
 
 ### C5: job
 
