@@ -66,7 +66,7 @@ A dependent chain, Single Session: every branch after C1 edits
   it.
 * Files: `web/demo/index.{html,js}`.
 * Depends on: C1.
-* Status: ready to merge, worktree `../urumi-demo-status`.
+* Status: done, merged at `409d74e`.
 * Outcome:
   * Bench-checked against the Pico: Get status, poll, table.
   * The panel also shows the time of the last good reply; log times are
