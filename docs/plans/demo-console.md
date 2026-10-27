@@ -241,7 +241,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Files: `web/src/svg/load.ts`, `web/src/toolpath/job.ts`,
   `web/test/svg/load.test.ts`, fixtures in `web/test/fixtures/`.
 * Depends on: none.
-* Status: ready to merge.
+* Status: done, merged at `ed0c9ef`. Unblocks C5.
 * Outcome:
   * Interface for C5: `toolLayer(name, tools)` gives `{ tool, chamber }` or
     null, and `toolLayerKey()` the `layers` key (`pen`, `pen.2`); both
