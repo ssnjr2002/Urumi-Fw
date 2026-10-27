@@ -15,6 +15,8 @@ export interface BezierJobOptions {
     /** Added to every point (machine mm); the drawing's origin lands here. */
     readonly offset?: Pt;
     readonly quality?: Pick<QualityConfig, "angleTol" | "gapTol">;
+    /** The config's tool names, so `layer` is a tool layer's key (loadSvgPaths). */
+    readonly tools?: readonly string[];
 }
 
 export interface BBox {
@@ -55,7 +57,7 @@ export function prepareBezierJob(
     layer: string,
     options: BezierJobOptions = {},
 ): BezierJob | { error: string } {
-    const subpaths = loadSvgPaths(svgText).layers.get(layer);
+    const subpaths = loadSvgPaths(svgText, { tools: options.tools }).layers.get(layer);
     if (!subpaths) return { error: `no layer "${layer}"` };
     const offset = options.offset ?? { x: 0, y: 0 };
 

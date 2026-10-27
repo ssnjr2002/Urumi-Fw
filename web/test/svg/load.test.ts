@@ -5,7 +5,8 @@
 
 import { describe, it, expect } from "vitest";
 import { bezierPoint, type CubicBezier, type Pt } from "../../src/toolpath/geometry.js";
-import { loadSvgPaths, type LoadOptions, type Subpath } from "../../src/svg/load.js";
+import { readFileSync } from "node:fs";
+import { loadSvgPaths, toolLayer, type LoadOptions, type Subpath } from "../../src/svg/load.js";
 
 function doc(body: string, attrs = 'viewBox="0 0 100 100"'): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" ${attrs}>${body}</svg>`;
@@ -199,6 +200,40 @@ describe("load: layers", () => {
         ));
         expect([...layers.keys()]).toEqual(["", "knife", "knife/slot1", "crease"]);
         expect(layers.get("")!.map((s) => s.curves[0]!.p0.x)).toEqual([0, 4]);
+    });
+});
+
+describe("load: tool layers", () => {
+    const TOOLS = ["knife", "pen"];
+
+    it("takes the outermost tool-named group as the layer, however each app names it", () => {
+        const svg = readFileSync(new URL("../fixtures/svg_tool_layers.svg", import.meta.url), "utf8");
+        const { layers, warnings } = loadSvgPaths(svg, { tools: TOOLS });
+        const xs = (k: string) => layers.get(k)!.map((s) => s.curves[0]!.p0.x);
+        expect([...layers.keys()]).toEqual(["", "knife", "pen.2", "pen"]);
+        expect(xs("")).toEqual([0, 7, 8]);
+        expect(xs("knife")).toEqual([1, 2]);
+        expect(xs("pen.2")).toEqual([3, 4, 5]);
+        expect(xs("pen")).toEqual([6]);
+        expect(warnings).toEqual(['"knife" inside "pen": merged into "pen"']);
+    });
+
+    it.each([
+        ["knife", { tool: "knife", chamber: 0 }],
+        ["pen.3", { tool: "pen", chamber: 3 }],
+        ["pen_x2E_3", { tool: "pen", chamber: 3 }],
+        ["pen_1_", { tool: "pen", chamber: 0 }],
+        ["pen.3_2", { tool: "pen", chamber: 3 }],
+        ["pen.0", null],
+        ["pen.x", null],
+        ["g123", null],
+        ["Layer_1", null],
+    ])("toolLayer(%s)", (name, want) => {
+        expect(toolLayer(name, TOOLS)).toEqual(want);
+    });
+
+    it("matches a whole name before splitting off a chamber", () => {
+        expect(toolLayer("pen.2", ["pen", "pen.2"])).toEqual({ tool: "pen.2", chamber: 0 });
     });
 });
 

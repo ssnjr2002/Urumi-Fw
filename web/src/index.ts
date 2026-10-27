@@ -105,7 +105,9 @@ export {
 } from "./toolpath/geometry.js";
 
 // ── Bézier path: SVG layer → annotated Béziers → BEZIER packets ─────────────
-export { loadSvgPaths, type Subpath, type LoadedSvg, type LoadOptions } from "./svg/load.js";
+export {
+    loadSvgPaths, toolLayer, toolLayerKey, type Subpath, type LoadedSvg, type LoadOptions, type ToolLayer,
+} from "./svg/load.js";
 export { cleanSubpath, DEFAULT_CLEAN_OPTIONS, type CleanSubpath, type CleanOptions, type JoinKind } from "./toolpath/clean.js";
 export {
     annotate,

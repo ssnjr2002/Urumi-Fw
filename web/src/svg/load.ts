@@ -5,8 +5,10 @@
  * viewBox-to-mm) and the layer name. Each element is parsed to cubics in its
  * own coordinates, then mapped by the matrix, which is exact for cubics.
  *
- * Layers are named by a <g>'s inkscape:label (else id), nested
- * groups joined by '/', geometry outside any named group under ''.
+ * With `tools`, a layer is the outermost <g> naming a tool (toolLayer), with
+ * everything inside it; same-named groups join. Without, every <g>'s
+ * inkscape:label (else id) names a layer, nested groups joined by '/'.
+ * Geometry outside any layer is under ''.
  */
 
 import {
@@ -43,11 +45,47 @@ export interface Viewport {
 export interface LoadedSvg {
     readonly layers: Map<string, Subpath[]>;
     readonly viewport: Viewport;
+    /** A tool group inside another, merged into the outer one. */
+    readonly warnings: string[];
 }
 
 export interface LoadOptions {
     /** A Z closing line shorter than this (mm) is dropped. */
     readonly zTol?: number;
+    /** The config's tool names: only groups naming one start a layer. */
+    readonly tools?: readonly string[];
+}
+
+/** A tool layer's tool and chamber; chamber 0 = none named. */
+export interface ToolLayer {
+    readonly tool: string;
+    readonly chamber: number;
+}
+
+/** Illustrator writes a non-alphanumeric character in an id as `_xHH_`. */
+const ESCAPE_RE = /_x([0-9a-f]{2,4})_/gi;
+/** A duplicate name's suffix: `_1_` (Illustrator), `_2` (Figma). */
+const DEDUP_RE = /_\d+_?$/;
+const CHAMBER_RE = /^(.+)\.(\d+)$/;
+
+/**
+ * The tool and chamber a group name names, or null: `<tool>` or
+ * `<tool>.<n>`, after undoing exporters' escapes and dedup suffixes. A whole
+ * name that is a tool wins over a `.<n>` split.
+ */
+export function toolLayer(name: string, tools: readonly string[]): ToolLayer | null {
+    const decoded = name.replace(ESCAPE_RE, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
+    for (const n of [decoded, decoded.replace(DEDUP_RE, "")]) {
+        if (tools.includes(n)) return { tool: n, chamber: 0 };
+        const m = CHAMBER_RE.exec(n);
+        if (m && tools.includes(m[1]!) && Number(m[2]) > 0) return { tool: m[1]!, chamber: Number(m[2]) };
+    }
+    return null;
+}
+
+/** The `layers` key of a tool layer: `<tool>`, or `<tool>.<n>`. */
+export function toolLayerKey(tl: ToolLayer): string {
+    return tl.chamber ? `${tl.tool}.${tl.chamber}` : tl.tool;
 }
 
 const DEFAULT_Z_TOL = 1e-6;
@@ -422,6 +460,25 @@ export function loadSvgPaths(svgText: string, options: LoadOptions = {}): Loaded
         else layers.set(layer, [sp]);
     };
 
+    const tools = options.tools;
+    const warnings: string[] = [];
+
+    /** With `tools`, the layer a <g> starts: its tool layer's key outside one, else unchanged. */
+    const groupLayer = (el: Element, layer: string): string => {
+        if (!tools) {
+            const label = el.getAttributeNS(INKSCAPE_NS, "label") || el.getAttribute("id");
+            return label ? (layer ? `${layer}/${label}` : label) : layer;
+        }
+        const name = el.getAttributeNS(INKSCAPE_NS, "label") || el.getAttribute("serif:id") || el.getAttribute("id");
+        const tl = name ? toolLayer(name, tools) : null;
+        if (!tl) return layer;
+        if (layer) {
+            warnings.push(`"${name}" inside "${layer}": merged into "${layer}"`);
+            return layer;
+        }
+        return toolLayerKey(tl);
+    };
+
     const walk = (el: Element, parent: Affine, layer: string): void => {
         const tag = el.localName;
         let m = parent;
@@ -429,11 +486,7 @@ export function loadSvgPaths(svgText: string, options: LoadOptions = {}): Loaded
         m = compose(m, parseTransform(el.getAttribute("transform")));
 
         if (tag === "svg" || tag === "g" || tag === "a" || tag === "switch") {
-            let childLayer = layer;
-            if (tag === "g") {
-                const label = el.getAttributeNS(INKSCAPE_NS, "label") || el.getAttribute("id");
-                if (label) childLayer = layer ? `${layer}/${label}` : label;
-            }
+            const childLayer = tag === "g" ? groupLayer(el, layer) : layer;
             for (const child of rendered(el)) walk(child, m, childLayer);
             return;
         }
@@ -444,5 +497,5 @@ export function loadSvgPaths(svgText: string, options: LoadOptions = {}): Loaded
     };
 
     walk(root, viewportMatrix(viewport), "");
-    return { layers, viewport };
+    return { layers, viewport, warnings };
 }

@@ -1,0 +1,24 @@
+<!-- Tool layers as each app names them, handwritten from forum reports, not real exports.
+     Tools: knife, pen. Each path starts at x = its number. -->
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     xmlns:serif="http://www.serif.com/"
+     viewBox="0 0 100 100">
+  <path d="M0 0 L0 10"/>
+  <!-- Inkscape: a layer with a plain group (Ctrl+G) inside -->
+  <g inkscape:groupmode="layer" id="layer1" inkscape:label="knife">
+    <g id="g123"><path d="M1 0 L1 10"/></g>
+    <path d="M2 0 L2 10"/>
+  </g>
+  <!-- Affinity: a cleaned id, the name in serif:id -->
+  <g id="pen-2" serif:id="pen.2"><path d="M3 0 L3 10"/></g>
+  <!-- Illustrator: "." escaped, a duplicate's _1_ suffix -->
+  <g id="pen_x2E_2_1_"><path d="M4 0 L4 10"/></g>
+  <!-- Figma: a duplicate's _2 suffix -->
+  <g id="pen.2_2"><path d="M5 0 L5 10"/></g>
+  <!-- a tool group inside a tool group: merged, warned -->
+  <g id="pen"><g id="knife"><path d="M6 0 L6 10"/></g></g>
+  <!-- an app's own group, and a name that is no tool -->
+  <g id="Group_3"><path d="M7 0 L7 10"/></g>
+  <g id="crease.1"><path d="M8 0 L8 10"/></g>
+</svg>
