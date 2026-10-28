@@ -32,3 +32,4 @@ export * from "./resolve.js";
 export { DEFAULTS } from "./defaults.js";
 export { parseConfig, loadConfig, type ConfigResult, type LoadResult } from "./json/load.js";
 export { validateConfig, type ValidationResult } from "./json/validate.js";
+export { modelToFile } from "./json/save.js";

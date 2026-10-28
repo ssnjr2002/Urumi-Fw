@@ -1,7 +1,7 @@
 import * as host from 'urumi-host';
 import {
     Link, JogAck, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
-    loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, crc32,
+    loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, modelToFile, crc32,
     JobReason, JobSource, fatalReasonName, loadSvgPaths, toolLayer, prepareBezierJob,
 } from 'urumi-host';
 import { WebSerialTransport } from 'urumi-host/wire/link/backends/webserial';
@@ -28,6 +28,7 @@ const selectedOut   = document.getElementById('selected');
 const cfgFileIn     = document.getElementById('cfg-file');
 const cfgPushBtn    = document.getElementById('cfg-push');
 const cfgPullBtn    = document.getElementById('cfg-pull');
+const cfgSaveBtn    = document.getElementById('cfg-save');
 const cfgInfoOut    = document.getElementById('cfg-info');
 const jogtoBtns     = document.querySelectorAll('button.jogto');
 const jogtoXIn      = document.getElementById('jogto-x');
@@ -439,11 +440,19 @@ async function pullConfig() {
         pulledConfig = null;
         binOut(`← ${cfgError(e)}`);
     }
+    cfgSaveBtn.disabled = !pulledConfig;
     buildSelectButtons(pulledConfig?.machine.heads.length ?? 0);
     loadLayers();
 }
 
 cfgPullBtn.addEventListener('click', pullConfig);
+
+cfgSaveBtn.addEventListener('click', () => {
+    const url = URL.createObjectURL(new Blob([modelToFile(pulledConfig)], { type: 'application/json' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'config.json' });
+    a.click();
+    URL.revokeObjectURL(url);
+});
 
 // ── jog to ────────────────────────────────────────────────────────────────────
 // `jogto <x> <y>` (work mm, the selected tip), `jogto park|load`; text commands.

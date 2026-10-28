@@ -41,6 +41,9 @@ export {
     decodeConfigBlob,
 } from "./machine/json/blob.js";
 
+// The reverse of loadConfig: a pulled model as a file to save.
+export { modelToFile } from "./machine/json/save.js";
+
 // Config files are JSONC (config/controller.jsonc); strip before loadConfig.
 export { stripJsonComments } from "./machine/json/image.js";
 

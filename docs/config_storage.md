@@ -250,6 +250,10 @@ an error (so there is no NACK-on-empty; absence is data, not failure).
 A read failure after the header has been sent cannot be reported in-band, so the
 payload is zero-padded to `length` and the host's CRC check rejects it.
 
+The payload decodes (`decodeConfigBlob`) to the resolved model, not the file
+format; `modelToFile` (`web/src/machine/json/save.ts`) turns it back into a
+config file that loads to the same model, without the original's comments.
+
 ### CFG NACK reasons
 
 | Constant | Value | Meaning |
