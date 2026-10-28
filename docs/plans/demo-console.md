@@ -291,10 +291,46 @@ A dependent chain, Single Session: every branch after C1 edits
 * Depends on: C4 for the pulled config; F1, so jogs in TOOL_WAIT reach the
   jog sink; H1, for
   the hold, resume and continue; S1, so a layer's name is its tool.
+* Status: ready to merge.
+* Outcome:
+  * Benched. A finished layer ends by hand (Cancel), shown by the job line:
+    records executed / total and left, then done once the ring is dry with
+    every packet acked.
+  * Execute is disabled while a session runs; Continue, not Execute, leaves
+    TOOL_WAIT.
+  * The buttons mirror the Session API and read as duplicates on the bench
+    (Resume / Continue, Cancel / Abort). Left as they are until the library
+    change under Open, "Session abort and one resume", then fixed in a UI
+    branch of their own.
+  * Abort is `link.abort()` then `session.truncate()`, so the job line stops
+    at once; the landing in IDLE shows in the status table when the poll
+    resumes.
 
 ## Open
 
 Found while doing this plan, out of its scope. Each needs its own plan.
+
+### Session abort and one resume
+
+The demo's job buttons follow the Session API, which splits what the
+operator sees as one action. Two library changes in
+`web/src/wire/link/session.ts`, then a demo branch to match:
+
+1. **`Session.abort()`.** ABORT is binary only (`ABORT_MAGIC`, no text
+   command), and Session has no method for it, so a host sends
+   `link.abort()` and truncates, ending the session before the job leaves
+   JOB. Like `cancel()`, `abort()` would send it, mark the end as asked
+   for, and let `run()` return once the job leaves JOB, not as
+   `FATAL_JOB_LOST`. ABORT closes any job state, braking first if moving,
+   and lifts Z once (`abortSettle`, `core0/ops/machine.cpp`); `cancel` only
+   at rest, without the lift. The demo's Cancel and Abort then fold into
+   one End job.
+2. **One `resume()`.** The firmware has no resume command: both holds are
+   left by a LAYER_HDR. From `paused`/`refused`, `resume()` restarts from
+   the status's resume point (SEQRESET, a fresh header, the rest of the
+   records); from `tool`, `continue()` resends the refused window. `held`
+   already says which, so one `resume()` can pick, and the demo has one
+   Resume button.
 
 ### Boot counter and uptime in status
 
