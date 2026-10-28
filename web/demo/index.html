@@ -72,15 +72,18 @@
     <label>t (mm): <input type="number" id="job-t" min="0" step="0.1" value="0" style="width: 5em"></label>
     <label>head: <select id="job-head"></select></label>
   </div>
+  <div>Machine job:
+    <button class="machine-ctl" value="pause" disabled>Pause</button>
+    <button class="machine-ctl" value="cancel" disabled>Cancel</button>
+  </div>
+  <hr>
+  <div>Session: <span id="job-session">none</span></div>
+  <div id="job-info"></div>
   <div>
     <button id="job-run" disabled>Execute layer</button>
-    <button class="job-ctl" value="pause" disabled>Pause</button>
-    <button class="job-ctl" value="resume" disabled>Resume</button>
-    <button class="job-ctl" value="continue" disabled>Continue</button>
-    <button class="job-ctl" value="cancel" disabled>Cancel</button>
-    <button class="job-ctl" value="abort" disabled>Abort</button>
+    <button class="session-ctl" value="resume" disabled>Resume</button>
+    <button class="session-ctl" value="end" disabled>End job</button>
   </div>
-  <div id="job-info"></div>
 
   <script type="module" src="./index.js"></script>
 </body>

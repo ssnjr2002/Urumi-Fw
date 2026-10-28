@@ -44,7 +44,9 @@ const jobKIn        = document.getElementById('job-k');
 const jobTIn        = document.getElementById('job-t');
 const jobHeadSel    = document.getElementById('job-head');
 const jobRunBtn     = document.getElementById('job-run');
-const jobCtlBtns    = document.querySelectorAll('button.job-ctl');
+const machineCtlBtns = document.querySelectorAll('button.machine-ctl');
+const sessionCtlBtns = document.querySelectorAll('button.session-ctl');
+const jobSessionOut = document.getElementById('job-session');
 const jobInfoOut    = document.getElementById('job-info');
 
 /** The Link, once connected — null otherwise. */
@@ -186,7 +188,7 @@ function statusRows(st) {
         ['nodeEnabled', hex(st.nodeEnabled, 3)],
         ['nodeHomed', hex(st.nodeHomed, 3)],
         ['selection', selectionName(st.selection)],
-        ['tool', st.tool],
+        ['tools', st.tools?.join(', ') ?? '-'],
         ['wpos', st.wpos.map((v) => (Number.isNaN(v) ? '-' : v.toFixed(3))).join(', ')],
         ['bufCount', st.bufCount],
         ['layer/record', st.layer === NO_LAYER ? '-' : `${st.layer}/${st.record}`],
@@ -471,7 +473,11 @@ for (const b of wzeroBtns) b.addEventListener('click', () => submit(b.value ? `w
 // The picked SVG is split into tool layers against the pulled config's tools,
 // again after each pull. Execute runs one layer as a job session: a LAYER_HDR
 // and its BEZIERs. The session lives until the job leaves JOB, so a finished
-// layer stays in JOB, dry, until Cancel ends it.
+// layer stays in JOB, dry, until Cancel or End job closes it.
+//
+// Pause and Cancel act on whatever job the machine has: through the session
+// while one runs, so it expects the hold or the end, else as text commands.
+// Resume and End job need the session.
 
 /** The picked SVG's text — null until one is picked. */
 let svgText = null;
@@ -558,7 +564,8 @@ function setJobButtons() {
     const on = !!link && !link.closed;
     const layer = layerSel.selectedOptions[0];
     jobRunBtn.disabled = !on || !!session || !layer || layer.disabled;
-    for (const b of jobCtlBtns) b.disabled = !on || (!session && b.value !== 'abort');
+    for (const b of machineCtlBtns) b.disabled = !on;
+    for (const b of sessionCtlBtns) b.disabled = !on || !session;
 }
 
 /** Records executed of the total; done once the ring is dry with every packet taken. */
@@ -571,18 +578,30 @@ function showJob() {
         && s.emitted > jobTotal && s.acked === s.emitted;
     const executed = done ? jobTotal : inJob ? Math.min(st.record, jobTotal) : 0;
     jobInfoOut.textContent = `records ${executed}/${jobTotal}, ${jobTotal - executed} left`
-        + (done ? ' — done, Cancel ends the job' : '')
+        + (done ? ' — done, Cancel or End job closes it' : '')
         + ` | held ${s.held ?? '-'} sent ${s.sent} acked ${s.acked} nacks ${s.nacks} retries ${s.retries}`;
 }
 
-/** Redraw the status and the job line on each of the session's samples. */
+const HOLD_HINTS = {
+    tool: 'mount and zero, then Resume',
+    paused: 'Resume to go on',
+    refused: 'header refused, Resume to retry',
+    silent: 'no replies, resending',
+};
+
+/** Redraw the status and the job line on each of the session's samples; log each change of hold. */
 async function watchJob() {
     let stamp = link.sinks.status.sample[1];
+    let held = null;
     while (session) {
         const [raw, at] = await link.sinks.status.waitUpdate(500, stamp);
         stamp = at;
         if (raw && link?.status) showStatus(link.status);
         showJob();
+        if (session && session.held !== held) {
+            held = session.held;
+            binOut(held ? `held: ${held} — ${HOLD_HINTS[held]}` : 'running');
+        }
     }
 }
 
@@ -606,6 +625,7 @@ jobRunBtn.addEventListener('click', async () => {
         return binOut(`job: ${e.message}`);
     }
     jobTotal = job.packets.length;
+    jobSessionOut.textContent = `${key} · tool ${hdr.tool} · head ${hdr.head} · chamber ${hdr.chamber}`;
     binOut(`→ LAYER_HDR ${key} tool=${hdr.tool} head=${hdr.head} chamber=${hdr.chamber}, ${jobTotal} BEZIER`);
     setJobButtons();
     watchJob();
@@ -615,23 +635,48 @@ jobRunBtn.addEventListener('click', async () => {
     binOut(`job ${ok ? (r.truncated ? 'truncated' : 'ended') : `failed: ${fatalReasonName(r.fatalReason)}`}`
         + ` — sent ${r.sent} acked ${r.acked} nacks ${r.nacks} retries ${r.retries}`);
     session = null;
+    jobSessionOut.textContent = 'none';
     setJobButtons();
     if (statusPollBox.checked) poll();
 });
 
-for (const b of jobCtlBtns) {
+for (const b of machineCtlBtns) {
     b.addEventListener('click', async () => {
-        const v = b.value;
-        if (v === 'abort') {
-            link.abort();
-            session?.truncate();
-            return binOut('→ ABORT');
-        }
+        if (!session) return submit(b.value);
+        textOut(`→ ${b.value}`);
+        textOut(`← ${await session[b.value]()}`);
+    });
+}
+
+const RESUME_WAIT_MS = 2000;
+
+/** Rewrite a resume's log line with what came of it: the first ACK or NACK after it. */
+async function resumeOutcome(node, line, held, before) {
+    const until = Date.now() + RESUME_WAIT_MS;
+    let outcome = 'no reply yet';
+    while (session && Date.now() < until) {
+        const s = session.stats();
+        if (s.acked > before.acked) { outcome = 'accepted'; break; }
+        if (s.nacks > before.nacks) { outcome = held === 'tool' ? 'refused, still tool change' : 'refused'; break; }
+        await new Promise((r) => setTimeout(r, 50));
+    }
+    node.data = node.data.replace(/\n$/, ` — ${outcome}\n`);
+}
+
+for (const b of sessionCtlBtns) {
+    b.addEventListener('click', () => {
         if (!session) return;
-        if (v === 'resume' || v === 'continue') {
-            return binOut(`${v}: ${session[v]() ? 'ok' : `not held${session.held ? ` (${session.held})` : ''}`}`);
+        if (b.value === 'end') {
+            session.end();
+            return binOut('→ ABORT (end job)');
         }
-        textOut(`→ ${v}`);
-        textOut(`← ${await session[v]()}`);
+        // True only means the session resends; the firmware checks again, and
+        // a refusal brings the hold back (logged by watchJob). A tool hold is
+        // left only from TOOL_WAIT, not while the change moves.
+        const held = session.held;
+        const before = session.stats();
+        if (!session.resume()) return binOut(`resume: ${held ? `not yet (${held})` : 'not held'}`);
+        const line = held === 'tool' ? 'resume: header resent' : 'resume: restarting from the resume point';
+        resumeOutcome(binOut(line), line, held, before);
     });
 }
