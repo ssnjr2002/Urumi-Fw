@@ -363,6 +363,9 @@ S1 matches SVG group names to tool names. A rule in `loadConfig`
    (500) and head 0's Z (40) against the measured `maxTravel` (735, 48),
    with the header note on Z's `maxTravel` that cites it. The Pico reads
    none of them, so whether `CONFIG_BLOB_VERSION` must bump is for that plan.
+   Done, merged at `f55f6d0`; no version bump (the decoder's filter drops
+   unknown keys). Open: the probe block's `pullInFeed`, `backoffMm` and
+   `parkMm`, and the homing checks on the Pico's field names.
 2. **Make the file format match the model.** `loadConfig` builds a different
    shape than it reads (`load.ts:402`): `heads`, `defaultHead` and
    `peripherals` are top-level in the file and under `machine` in the model;
@@ -374,6 +377,8 @@ S1 matches SVG group names to tool names. A rule in `loadConfig`
    `controller.jsonc`, fixtures; name the old keys in the errors) and leaves
    `tools` → `toolProfiles` as the one reshape, so a `modelToFile()` (and the
    download) becomes nearly trivial.
+   Done, merged at `ea44e76`; the blob is unchanged. A top-level key is
+   rejected by name. Open: `modelToFile()` and the download (`feature/`).
 
 The other two warnings (head 1 accepts nothing, so nothing takes `pen`) are
 deliberate until the pen head can move.
