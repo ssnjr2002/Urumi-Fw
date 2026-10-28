@@ -197,14 +197,14 @@ describe("rule: uniqueNodeIds", () => {
 
     it("names every claimant so the operator knows what to edit", () => {
         const c = cfg({ peripherals: [busNode(4, { type: 0x02 })] });
-        expect(errors(c)[0]).toContain("heads[0].a, peripherals[0]");
+        expect(errors(c)[0]).toContain("machine.heads[0].a, machine.peripherals[0]");
     });
 });
 
 describe("rule: defaultHeadInRange", () => {
     it("errors when defaultHead exceeds the head count", () => {
         expect(errors(cfg({ defaultHead: 2 }))).toContain(
-            "defaultHead: 2 is out of range (machine has 1 head(s))",
+            "machine.defaultHead: 2 is out of range (machine has 1 head(s))",
         );
     });
 
@@ -247,14 +247,14 @@ describe("loadConfig (parse ⨟ validate)", () => {
             meshOn: false,
             x: { node: { id: 1 }, stepsPerUnit: 160, maxFeed: 80, maxAccel: 1000 },
             y: { node: { id: 2 }, stepsPerUnit: 160, maxFeed: 80, maxAccel: 1000 },
+            heads: [
+                {
+                    accepts: ["knife"],
+                    z: { node: { id: 3 }, stepsPerUnit: 300, maxFeed: 10 },
+                    a: { node: { id: 4 }, stepsPerUnit: 45, maxFeed: 100, maxAccel: 500 },
+                },
+            ],
         },
-        heads: [
-            {
-                accepts: ["knife"],
-                z: { node: { id: 3 }, stepsPerUnit: 300, maxFeed: 10 },
-                a: { node: { id: 4 }, stepsPerUnit: 45, maxFeed: 100, maxAccel: 500 },
-            },
-        ],
         tools: { knife: { id: 1, cutFeed: 40, plungeFeed: 10 } },
     };
     const json = (patch: object = {}) => JSON.stringify({ ...base, ...patch });

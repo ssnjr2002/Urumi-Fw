@@ -197,7 +197,7 @@ describe("load: optional defaults", () => {
 
     it("defaultHead defaults to 0 when absent", () => {
         const json = JSON.parse(TEST_MACHINE);
-        delete json.defaultHead;
+        delete json.machine.defaultHead;
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
         expect(r.config.machine.defaultHead).toBe(0);
@@ -205,8 +205,8 @@ describe("load: optional defaults", () => {
 
     it("head xOffset/yOffset default to 0 when absent", () => {
         const json = JSON.parse(TEST_MACHINE);
-        delete json.heads[0].xOffset;
-        delete json.heads[0].yOffset;
+        delete json.machine.heads[0].xOffset;
+        delete json.machine.heads[0].yOffset;
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
         expect(r.config.machine.heads[0]!.xOffset).toBe(0);
@@ -232,7 +232,7 @@ describe("load: optional defaults", () => {
 
     it("peripherals default to empty array when absent", () => {
         const json = JSON.parse(TEST_MACHINE);
-        delete json.peripherals;
+        delete json.machine.peripherals;
         delete json.tools.knife.power;
         const r = parseConfig(JSON.stringify(json));
         if (!r.ok) throw new Error("expected ok");
@@ -302,9 +302,8 @@ describe("load: dual-head + laser", () => {
             "meshOn": false,
             "x": { "node": { "id": 1 }, "stepsPerUnit": 160 },
             "y": { "node": { "id": 2 }, "stepsPerUnit": 160 },
-            "laser": { "node": 1 }
-        },
-        "heads": [
+            "laser": { "node": 1 },
+            "heads": [
             {
                 "accepts": ["knife"],
                 "xOffset": -50,
@@ -320,7 +319,8 @@ describe("load: dual-head + laser", () => {
                 "a": { "node": { "id": 6 }, "stepsPerUnit": 51.667, "rotary": true }
             }
         ],
-        "defaultHead": 0
+            "defaultHead": 0
+        }
     }`;
 
     it("parses two heads with different tools and offsets", () => {
@@ -346,7 +346,7 @@ describe("load: dual-head + laser", () => {
 describe("load: peripherals", () => {
     it("parses peripherals with type and present defaults", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.peripherals = [
+        json.machine.peripherals = [
             { "id": 5, "type": 0x03 },
             { "id": 6, "type": 0x02, "present": false }
         ];
@@ -365,7 +365,7 @@ describe("load: peripherals", () => {
     // silently-wrong type makes an unrunnable tool look runnable.
     it("rejects a peripheral with no type", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.peripherals = [{ id: 5 }];
+        json.machine.peripherals = [{ id: 5 }];
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) {
@@ -375,7 +375,7 @@ describe("load: peripherals", () => {
 
     it("rejects a peripheral with no id", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.peripherals = [{ type: 0x02 }];
+        json.machine.peripherals = [{ type: 0x02 }];
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.some((e) => e.includes("peripherals[0].id"))).toBe(true);
@@ -383,7 +383,7 @@ describe("load: peripherals", () => {
 
     it("reports the offending index across several peripherals", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.peripherals = [{ id: 5, type: 0x02 }, { id: 6 }];
+        json.machine.peripherals = [{ id: 5, type: 0x02 }, { id: 6 }];
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.some((e) => e.includes("peripherals[1].type"))).toBe(true);
@@ -392,18 +392,26 @@ describe("load: peripherals", () => {
 
 // ── error cases ───────────────────────────────────────────────────────────────
 
+describe("load: keys moved under machine", () => {
+    it.each(["heads", "defaultHead", "peripherals"])("rejects a top-level %s by name", (key) => {
+        const r = parseConfig(JSON.stringify({ machine: {}, [key]: [] }));
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.errors).toContain(`${key}: moved — use machine.${key}`);
+    });
+});
+
 describe("load: heads[].accepts", () => {
     const head = (h: object) => JSON.stringify({
         machine: {
             meshOn: false,
             x: { node: { id: 1 }, stepsPerUnit: 160 },
             y: { node: { id: 2 }, stepsPerUnit: 160 },
+            heads: [{
+                z: { node: { id: 3 }, stepsPerUnit: 300 },
+                a: { node: { id: 4 }, stepsPerUnit: 45 },
+                ...h,
+            }],
         },
-        heads: [{
-            z: { node: { id: 3 }, stepsPerUnit: 300 },
-            a: { node: { id: 4 }, stepsPerUnit: 45 },
-            ...h,
-        }],
     });
 
     // Not silently ignored under the lenient-unknown-keys rule: a config still
@@ -471,7 +479,7 @@ describe("load: error cases", () => {
 
     it("rejects empty heads array", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.heads = [];
+        json.machine.heads = [];
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.some((e) => e.includes("non-empty"))).toBe(true);
@@ -558,7 +566,7 @@ describe("load: error cases", () => {
 
     it("rejects unknown tool name in head", () => {
         const json = JSON.parse(TEST_MACHINE);
-        json.heads[0].tool = "bogus";
+        json.machine.heads[0].tool = "bogus";
         const r = parseConfig(JSON.stringify(json));
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.errors.some((e) => e.includes("bogus"))).toBe(true);

@@ -68,14 +68,14 @@ const MINIMAL = JSON.stringify({
         meshOn: false,
         x: { node: { id: 1 }, stepsPerUnit: 160 },
         y: { node: { id: 2 }, stepsPerUnit: 160 },
+        heads: [
+            {
+                accepts: ["knife"],
+                z: { node: { id: 3 }, stepsPerUnit: 300 },
+                a: { node: { id: 4 }, stepsPerUnit: 45 },
+            },
+        ],
     },
-    heads: [
-        {
-            accepts: ["knife"],
-            z: { node: { id: 3 }, stepsPerUnit: 300 },
-            a: { node: { id: 4 }, stepsPerUnit: 45 },
-        },
-    ],
 });
 
 describe("fill-at-load", () => {
@@ -104,18 +104,18 @@ describe("fill-at-load", () => {
                     stepsPerUnit: 160,
                     ...DEFAULTS.axis,
                 },
+                heads: [
+                    {
+                        accepts: ["knife"],
+                        xOffset: 0,
+                        yOffset: 0,
+                        z: { node: { id: 3 }, stepsPerUnit: 300, ...DEFAULTS.axis },
+                        a: { node: { id: 4 }, stepsPerUnit: 45, ...DEFAULTS.axis },
+                    },
+                ],
+                defaultHead: DEFAULTS.machine.defaultHead,
+                peripherals: [],
             },
-            heads: [
-                {
-                    accepts: ["knife"],
-                    xOffset: 0,
-                    yOffset: 0,
-                    z: { node: { id: 3 }, stepsPerUnit: 300, ...DEFAULTS.axis },
-                    a: { node: { id: 4 }, stepsPerUnit: 45, ...DEFAULTS.axis },
-                },
-            ],
-            defaultHead: DEFAULTS.machine.defaultHead,
-            peripherals: [],
             quality: DEFAULTS.quality,
         });
 

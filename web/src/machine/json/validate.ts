@@ -51,8 +51,8 @@ function namedAxes(machine: MachineConfig): readonly [string, AxisConfig][] {
         ["machine.x", machine.x],
         ["machine.y", machine.y],
         ...machine.heads.flatMap((h, i): [string, AxisConfig][] => [
-            [`heads[${i}].z`, h.z],
-            [`heads[${i}].a`, h.a],
+            [`machine.heads[${i}].z`, h.z],
+            [`machine.heads[${i}].a`, h.a],
         ]),
     ];
 }
@@ -129,7 +129,7 @@ const uniqueNodeIds: Rule = ({ machine }) => {
         owners.set(id, [...(owners.get(id) ?? []), path]);
 
     for (const [path, ax] of namedAxes(machine)) claim(ax.node.id, path);
-    machine.peripherals.forEach((p, i) => claim(p.id, `peripherals[${i}]`));
+    machine.peripherals.forEach((p, i) => claim(p.id, `machine.peripherals[${i}]`));
 
     return [...owners.entries()]
         .filter(([, paths]) => paths.length > 1)
@@ -192,7 +192,7 @@ const defaultHeadInRange: Rule = ({ machine }) => {
     const i = machine.defaultHead;
     return Number.isInteger(i) && i >= 0 && i < n
         ? []
-        : [error(`defaultHead: ${i} is out of range (machine has ${n} head(s))`)];
+        : [error(`machine.defaultHead: ${i} is out of range (machine has ${n} head(s))`)];
 };
 
 /**
@@ -211,11 +211,11 @@ const headsHaveAxesForAccepted: Rule = ({ machine }) =>
             const req = requiredAxes(p);
             return [
                 ...(req.a && !h.a.node.present
-                    ? [error(`heads[${i}]: accepts '${p.name}', which steers A, ` +
+                    ? [error(`machine.heads[${i}]: accepts '${p.name}', which steers A, ` +
                              "but that head's A node is not present")]
                     : []),
                 ...(req.z && !h.z.node.present
-                    ? [error(`heads[${i}]: accepts '${p.name}', which needs Z, ` +
+                    ? [error(`machine.heads[${i}]: accepts '${p.name}', which needs Z, ` +
                              "but that head's Z node is not present")]
                     : []),
             ];
@@ -240,7 +240,7 @@ const everyToolHasAHead: Rule = ({ machine, toolProfiles }) => {
 const headsAcceptSomething: Rule = ({ machine }) =>
     machine.heads.flatMap((h, i) =>
         h.accepts.length === 0
-            ? [warn(`heads[${i}]: accepts nothing — no job can use this head`)]
+            ? [warn(`machine.heads[${i}]: accepts nothing — no job can use this head`)]
             : [],
     );
 

@@ -63,107 +63,107 @@
         "pullOffDist": 5
       }
     },
-    "laser": { "node": 3 }       // the anchor, (0, 0); wired to node 3 (-DNODE_HAS_LASER)
+    "laser": { "node": 3 },      // the anchor, (0, 0); wired to node 3 (-DNODE_HAS_LASER)
+    "heads": [
+      {
+        "accepts": ["knife", "crease"],
+        "xOffset": -70,              // rough eyeball: tip − laser dot
+        "yOffset": -30,
+        "z": {
+          "node": { "id": 3, "present": true },
+          "stepsPerUnit": 1200,
+          "maxFeed": 20,
+          "maxAccel": 500,
+          "maxTravel": 48,         // abs(-66530 / 1200) - 4 = 51.44, less 2 for the taped switch
+          "softLimits": true,
+          "invertDir": true,       // derived, unconfirmed
+          "rotary": false,
+          "homing": {
+            "kind": "linear",
+            "seekPositive": true,  // switch at the top
+            "seekScaler": 1.2,
+            "startFeed": 0.3333,   // 2500 us/step at 1200 steps/mm
+            "seekFeed": 1.6667,    // 500 us/step
+            "latchFeed": 1,
+            "rampSteps": 400,
+            "backoffDist": 4,
+            "pullOffDist": 4,
+            "parkPos": 0           // ISO: 0 at the top, range [-48, 0]
+          }
+        },
+        "a": {
+          "node": { "id": 4, "present": true },
+          "stepsPerUnit": 45.9847,
+          "maxFeed": 100,
+          "maxAccel": 500,
+          "maxTravel": 0,
+          "softLimits": false,
+          "invertDir": false,      // unchecked
+          "rotary": true,
+          "homing": {
+            "kind": "rotary",
+            "budgetRevs": 4,
+            "startFeed": 18.12,
+            "sweepFeed": 54.37,
+            "rampSteps": 400,
+            "toleranceDeg": 2.0,
+            "indexPos": -46.7      // the index's A: the holder's lock button latches at 0
+          }
+        }
+      },
+      {
+        "accepts": [],               // the pen head, ["pen"] once it can move
+        "xOffset": 60,
+        "yOffset": 0,
+        "z": {
+          "node": { "id": 6, "present": false },  // head 1 cannot move
+          "stepsPerUnit": 600,
+          "maxFeed": 20,
+          "maxAccel": 500,
+          "maxTravel": 36,         // estimate
+          "softLimits": false,
+          "invertDir": true,       // derived, unconfirmed
+          "rotary": false,
+          "homing": {
+            "kind": "linear",
+            "seekPositive": true,  // switch at the top
+            "seekScaler": 1.2,
+            "startFeed": 2.5,
+            "seekFeed": 6,
+            "latchFeed": 0.78,
+            "rampSteps": 400,
+            "backoffDist": 4,
+            "pullOffDist": 4,
+            "parkPos": 0
+          }
+        },
+        "a": {
+          "node": { "id": 5, "present": false },
+          "stepsPerUnit": 2.8611,
+          "maxFeed": 360,
+          "maxAccel": 500,
+          "maxTravel": 0,
+          "softLimits": false,
+          "invertDir": false,      // unchecked
+          "rotary": true,
+          "homing": {
+            "kind": "rotary",
+            "budgetRevs": 4,
+            "startFeed": 174.76,
+            "sweepFeed": 291.27,
+            "rampSteps": 400,
+            "toleranceDeg": 2.0,
+            "indexPos": 0
+          }
+        }
+      }
+    ],
+    "defaultHead": 0,
+    "peripherals": [
+      { "id": 7, "type": 2, "present": true },
+      { "id": 8, "type": 3, "present": false }   // off the bus
+    ]
   },
-  "heads": [
-    {
-      "accepts": ["knife", "crease"],
-      "xOffset": -70,              // rough eyeball: tip − laser dot
-      "yOffset": -30,
-      "z": {
-        "node": { "id": 3, "present": true },
-        "stepsPerUnit": 1200,
-        "maxFeed": 20,
-        "maxAccel": 500,
-        "maxTravel": 48,         // abs(-66530 / 1200) - 4 = 51.44, less 2 for the taped switch
-        "softLimits": true,
-        "invertDir": true,       // derived, unconfirmed
-        "rotary": false,
-        "homing": {
-          "kind": "linear",
-          "seekPositive": true,  // switch at the top
-          "seekScaler": 1.2,
-          "startFeed": 0.3333,   // 2500 us/step at 1200 steps/mm
-          "seekFeed": 1.6667,    // 500 us/step
-          "latchFeed": 1,
-          "rampSteps": 400,
-          "backoffDist": 4,
-          "pullOffDist": 4,
-          "parkPos": 0           // ISO: 0 at the top, range [-48, 0]
-        }
-      },
-      "a": {
-        "node": { "id": 4, "present": true },
-        "stepsPerUnit": 45.9847,
-        "maxFeed": 100,
-        "maxAccel": 500,
-        "maxTravel": 0,
-        "softLimits": false,
-        "invertDir": false,      // unchecked
-        "rotary": true,
-        "homing": {
-          "kind": "rotary",
-          "budgetRevs": 4,
-          "startFeed": 18.12,
-          "sweepFeed": 54.37,
-          "rampSteps": 400,
-          "toleranceDeg": 2.0,
-          "indexPos": -46.7      // the index's A: the holder's lock button latches at 0
-        }
-      }
-    },
-    {
-      "accepts": [],               // the pen head, ["pen"] once it can move
-      "xOffset": 60,
-      "yOffset": 0,
-      "z": {
-        "node": { "id": 6, "present": false },  // head 1 cannot move
-        "stepsPerUnit": 600,
-        "maxFeed": 20,
-        "maxAccel": 500,
-        "maxTravel": 36,         // estimate
-        "softLimits": false,
-        "invertDir": true,       // derived, unconfirmed
-        "rotary": false,
-        "homing": {
-          "kind": "linear",
-          "seekPositive": true,  // switch at the top
-          "seekScaler": 1.2,
-          "startFeed": 2.5,
-          "seekFeed": 6,
-          "latchFeed": 0.78,
-          "rampSteps": 400,
-          "backoffDist": 4,
-          "pullOffDist": 4,
-          "parkPos": 0
-        }
-      },
-      "a": {
-        "node": { "id": 5, "present": false },
-        "stepsPerUnit": 2.8611,
-        "maxFeed": 360,
-        "maxAccel": 500,
-        "maxTravel": 0,
-        "softLimits": false,
-        "invertDir": false,      // unchecked
-        "rotary": true,
-        "homing": {
-          "kind": "rotary",
-          "budgetRevs": 4,
-          "startFeed": 174.76,
-          "sweepFeed": 291.27,
-          "rampSteps": 400,
-          "toleranceDeg": 2.0,
-          "indexPos": 0
-        }
-      }
-    }
-  ],
-  "defaultHead": 0,
-  "peripherals": [
-    { "id": 7, "type": 2, "present": true },
-    { "id": 8, "type": 3, "present": false }   // off the bus
-  ],
   "tools": {
     "knife": {
       "id": 1,

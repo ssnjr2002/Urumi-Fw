@@ -32,45 +32,45 @@
         "cycle": 2, "seekPositive": false, "seekScaler": 1.2, "startFeed": 2.5,
         "backoffDist": 2, "pullOffDist": 5, "parkPos": 0
       }
-    }
-  },
-  "heads": [
-    {
-      "accepts": ["knife", "crease"],
-      "xOffset": 0,
-      "yOffset": 0,
-      "z": {
-        "node": { "id": 3 },
-        "stepsPerUnit": 1200,
-        "maxFeed": 10,
-        "maxTravel": 40,
-        "invertDir": true,
-        "softLimits": true,
-        "homing": {
-          "seekFeed": 5, "latchFeed": 0.5, "rampSteps": 200,
-          "seekPositive": true, "seekScaler": 1.2, "startFeed": 1,
-          "backoffDist": 1, "pullOffDist": 2, "parkPos": 0
-        }
-      },
-      "a": {
-        "node": { "id": 4 },
-        "stepsPerUnit": 51.667,
-        "maxFeed": 100,
-        "maxAccel": 2000,
-        "invertDir": true,
-        "softLimits": false,
-        "rotary": true,
-        "homing": {
-          "kind": "rotary",
-          "budgetRevs": 4, "sweepFeed": 60, "rampSteps": 400,
-          "toleranceDeg": 2,
-          "cycle": 3, "startFeed": 10, "indexPos": 90
+    },
+    "heads": [
+      {
+        "accepts": ["knife", "crease"],
+        "xOffset": 0,
+        "yOffset": 0,
+        "z": {
+          "node": { "id": 3 },
+          "stepsPerUnit": 1200,
+          "maxFeed": 10,
+          "maxTravel": 40,
+          "invertDir": true,
+          "softLimits": true,
+          "homing": {
+            "seekFeed": 5, "latchFeed": 0.5, "rampSteps": 200,
+            "seekPositive": true, "seekScaler": 1.2, "startFeed": 1,
+            "backoffDist": 1, "pullOffDist": 2, "parkPos": 0
+          }
+        },
+        "a": {
+          "node": { "id": 4 },
+          "stepsPerUnit": 51.667,
+          "maxFeed": 100,
+          "maxAccel": 2000,
+          "invertDir": true,
+          "softLimits": false,
+          "rotary": true,
+          "homing": {
+            "kind": "rotary",
+            "budgetRevs": 4, "sweepFeed": 60, "rampSteps": 400,
+            "toleranceDeg": 2,
+            "cycle": 3, "startFeed": 10, "indexPos": 90
+          }
         }
       }
-    }
-  ],
-  "defaultHead": 0,
-  "peripherals": [{ "id": 8, "type": 3, "present": true }],
+    ],
+    "defaultHead": 0,
+    "peripherals": [{ "id": 8, "type": 3, "present": true }]
+  },
   "tools": {
     "knife": {
       "id": 1,

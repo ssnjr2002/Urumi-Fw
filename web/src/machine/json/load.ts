@@ -8,7 +8,7 @@
  * tuning — which the JSON can override but does not redefine from scratch.
  *
  * Required vs optional:
- *   Required: machine.x, machine.y, machine.meshOn, heads[], each axis's node.id +
+ *   Required: machine.x, machine.y, machine.meshOn, machine.heads[], each axis's node.id +
  *   stepsPerUnit, each head's accepts. Missing → error. Note the rule: a field is
  *   required IFF it has no entry in DEFAULTS. Requiring a field that also has a
  *   default is a contradiction — the default could never be reached.
@@ -18,7 +18,7 @@
  *   beats making every config.json restate it), machine targets
  *   (path/rapid/z/slew), axis ceilings
  *   (maxFeed/maxAccel), maxTravel, jogFeed/jogFeedUnhomed (default
- *   maxFeed), jogUnhomed (false), buffer (1 s / 0.5 s), laser, peripherals (the ARRAY is
+ *   maxFeed), jogUnhomed (false), buffer (1 s / 0.5 s), laser, machine.peripherals (the ARRAY is
  *   optional, but each entry needs id + type), tools.*,
  *   quality. Absent → documented code default. See feed_accel_value_model.md.
  *
@@ -186,6 +186,9 @@ interface JsonMachine {
     readonly jogUnhomed?: boolean;
     readonly meshOn: boolean;
     readonly buffer?: { readonly queueTime?: number; readonly idleTime?: number };
+    readonly heads: readonly JsonHead[];
+    readonly defaultHead?: number;
+    readonly peripherals?: readonly JsonPeripheral[];
 }
 
 interface JsonPeripheral {
@@ -241,9 +244,10 @@ interface JsonQuality {
 
 interface ConfigJson {
     readonly machine: JsonMachine;
-    readonly heads: readonly JsonHead[];
-    readonly defaultHead?: number;
-    readonly peripherals?: readonly JsonPeripheral[];
+    /** Moved under `machine`. Typed so the check can see them. */
+    readonly heads?: unknown;
+    readonly defaultHead?: unknown;
+    readonly peripherals?: unknown;
     readonly tools?: Readonly<Record<string, JsonToolOverride>>;
     readonly quality?: JsonQuality;
 }
@@ -296,14 +300,23 @@ export function parseConfig(jsonText: string): ConfigResult {
         }
     }
 
+    // Rejected by name: under the lenient-unknown-keys rule a top-level `heads`
+    // would read as a missing one, and a top-level `peripherals` as none.
+    for (const key of ["heads", "defaultHead", "peripherals"] as const) {
+        if (json[key] !== undefined) {
+            errors.push(`${key}: moved — use machine.${key}`);
+        }
+    }
+
     // ── heads ─────────────────────────────────────────────────────────────
-    if (!Array.isArray(json.heads) || json.heads.length === 0) {
-        errors.push("heads: required (non-empty array)");
+    const jsonHeads = (json.machine as JsonMachine | null | undefined)?.heads;
+    if (!Array.isArray(jsonHeads) || jsonHeads.length === 0) {
+        errors.push("machine.heads: required (non-empty array)");
     } else {
-        for (let i = 0; i < json.heads.length; i++) {
-            const h = json.heads[i]!;
+        for (let i = 0; i < jsonHeads.length; i++) {
+            const h = jsonHeads[i]!;
             if (typeof h !== "object" || h === null) {
-                errors.push(`heads[${i}]: must be an object`);
+                errors.push(`machine.heads[${i}]: must be an object`);
                 continue;
             }
             // `tool` named the ONE seed tool a socket booted with, which could
@@ -313,29 +326,29 @@ export function parseConfig(jsonText: string): ConfigResult {
             // would then accept nothing and quietly never be scheduled.
             if (h.tool !== undefined) {
                 errors.push(
-                    `heads[${i}].tool: removed — replace with 'accepts', the list of tool ` +
+                    `machine.heads[${i}].tool: removed — replace with 'accepts', the list of tool ` +
                         `presets this head's fixture takes (e.g. "accepts": ["${h.tool}"])`,
                 );
             }
             if (!Array.isArray(h.accepts)) {
-                errors.push(`heads[${i}].accepts: required (array of tool preset names)`);
+                errors.push(`machine.heads[${i}].accepts: required (array of tool preset names)`);
             } else {
                 for (let k = 0; k < h.accepts.length; k++) {
                     const name = h.accepts[k];
                     if (typeof name !== "string") {
-                        errors.push(`heads[${i}].accepts[${k}]: must be a string`);
+                        errors.push(`machine.heads[${i}].accepts[${k}]: must be a string`);
                     } else if (!(name in TOOL_PROFILES)) {
                         errors.push(
-                            `heads[${i}].accepts[${k}]: '${name}' is not a known tool preset`,
+                            `machine.heads[${i}].accepts[${k}]: '${name}' is not a known tool preset`,
                         );
                     }
                 }
             }
             if (typeof h.z !== "object" || h.z === null) {
-                errors.push(`heads[${i}].z: required (axis object)`);
+                errors.push(`machine.heads[${i}].z: required (axis object)`);
             }
             if (typeof h.a !== "object" || h.a === null) {
-                errors.push(`heads[${i}].a: required (axis object)`);
+                errors.push(`machine.heads[${i}].a: required (axis object)`);
             }
         }
     }
@@ -351,13 +364,13 @@ export function parseConfig(jsonText: string): ConfigResult {
     const y = buildAxis(machine.y, errors, "machine.y");
 
     const heads: ToolHead[] = [];
-    for (let i = 0; i < json.heads.length; i++) {
-        const jh = json.heads[i]!;
-        const z = buildAxis(jh.z, errors, `heads[${i}].z`);
-        const a = buildAxis(jh.a, errors, `heads[${i}].a`);
-        const probeSwitch = buildPoint(jh.probeSwitch, errors, `heads[${i}].probeSwitch`);
+    for (let i = 0; i < machine.heads.length; i++) {
+        const jh = machine.heads[i]!;
+        const z = buildAxis(jh.z, errors, `machine.heads[${i}].z`);
+        const a = buildAxis(jh.a, errors, `machine.heads[${i}].a`);
+        const probeSwitch = buildPoint(jh.probeSwitch, errors, `machine.heads[${i}].probeSwitch`);
         heads.push(toolHead(z, a, {
-            accepts: resolveAccepts(jh.accepts, errors, `heads[${i}].accepts`),
+            accepts: resolveAccepts(jh.accepts, errors, `machine.heads[${i}].accepts`),
             xOffset: jh.xOffset ?? 0,
             yOffset: jh.yOffset ?? 0,
             ...(probeSwitch ? { probeSwitch } : {}),
@@ -376,12 +389,12 @@ export function parseConfig(jsonText: string): ConfigResult {
     // tool's requiredPeripheralTypes against it, so a wrong type silently makes
     // an unrunnable tool look runnable. `present` still defaults to true: a
     // declared peripheral is fitted unless stated otherwise.
-    const peripherals = (json.peripherals ?? []).map((p, i) => {
+    const peripherals = (machine.peripherals ?? []).map((p, i) => {
         if (typeof p.id !== "number") {
-            errors.push(`peripherals[${i}].id: required (number)`);
+            errors.push(`machine.peripherals[${i}].id: required (number)`);
         }
         if (typeof p.type !== "number") {
-            errors.push(`peripherals[${i}].type: required (number, a NODE_TYPE_* value)`);
+            errors.push(`machine.peripherals[${i}].type: required (number, a NODE_TYPE_* value)`);
         }
         if (typeof p.id !== "number" || typeof p.type !== "number") {
             return busNode(0, { present: false });
@@ -405,7 +418,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         slew: opTarget(machine.slew, DEFAULTS.machine.slew),
         zClearance: buildZClearance(machine, errors),
         peripherals,
-        defaultHead: json.defaultHead ?? 0,
+        defaultHead: machine.defaultHead ?? 0,
         laser: buildLaser(machine.laser, errors),
         work: buildWork(machine.work, heads.length, errors),
         positions: buildPositions(machine.positions, errors),
