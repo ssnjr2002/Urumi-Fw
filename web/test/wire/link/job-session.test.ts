@@ -11,6 +11,8 @@ import { JobSource, FATAL_JOB_LOST, type Session } from "../../../src/wire/link/
 import { MachineState, JobReason } from "../../../src/wire/format/status.js";
 import { packBezier } from "../../../src/wire/format/bezier.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
+import { packCjog } from "../../../src/wire/format/cjog.js";
+import { CJOG_DEADMAN_MS } from "../../../src/wire/format/constants.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -233,6 +235,33 @@ describe("wire/link/session: tool change", () => {
             expect(await done).toBe(true);
             expect(sess.fatalReason).toBeUndefined();
         }, { tools: {}, toolChangeMs: 2000 });
+    });
+
+    it("a jog in TOOL_WAIT keeps the hold, and resume() after it resumes", async () => {
+        await withLink(async (link, sim) => {
+            await link.command("setorigin");
+            const { sess, done } = await start(link, 3);
+            await until(async () => (await link.getStatus()).reason === JobReason.TOOL_WAIT);
+            const sent = sess.stats().sent;
+            await sim.write(packCjog(1, 0));
+            await until(async () => (await link.getStatus()).state === MachineState.JOGGING);
+            expect(sess.resume()).toBe(false);
+            for (let t = 0; t < 400; t += 30) { // held past several of the session's polls
+                await sim.write(packCjog(1, 0));
+                await tick(30);
+            }
+            await until(async () => (await link.getStatus()).state === MachineState.JOB, CJOG_DEADMAN_MS + 500);
+            expect(sess.held).toBe("tool");
+            expect(sess.stats().sent).toBe(sent); // nothing resent during the jog
+
+            expect(await link.command("mount 0 1")).toBe("ok");
+            expect(await link.command("wzero z")).toBe("ok");
+            expect(sess.resume()).toBe(true);
+            await until(() => sess.held === null);
+            await sess.cancel();
+            expect(await done).toBe(true);
+            expect(sess.fatalReason).toBeUndefined();
+        }, { tools: {}, toolChangeMs: 20, frameMs: 5, cjogStepsPerS: 1000, cjogTravel: [[0, 400], [0, 400]] });
     });
 
     it("a mounted, zeroed tool is ACKed with no hold", async () => {

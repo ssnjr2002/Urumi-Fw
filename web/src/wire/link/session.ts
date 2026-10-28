@@ -50,7 +50,7 @@ import {
 import { stampSeq } from "../format/packet.js";
 import { packLayerHdr, type LayerHdr } from "../format/layer.js";
 import { Ack, Nack } from "./demux.js";
-import { JobReason, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../format/status.js";
+import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../format/status.js";
 
 export const DEFAULT_WINDOW = 16;
 const ACK_TIMEOUT_MS = 200; // per-response wait before assuming loss
@@ -360,11 +360,14 @@ export class Session {
     /**
      * Leave a hold: `paused` or `refused` at the status's resume point, `tool`
      * by resending the refused window once the operator has mounted and zeroed.
-     * False if not held, or if a tool hold is not yet in TOOL_WAIT.
+     * False if not held, if the machine is not in JOB (a jog or probe inside
+     * the job), or if a tool hold is not yet in TOOL_WAIT.
      */
     resume(): boolean {
+        const st = this._ctx.status;
+        if (st?.state !== MachineState.JOB) return false;
         if (this.held === "tool") {
-            if (this._ctx.status?.reason !== JobReason.TOOL_WAIT) return false;
+            if (st.reason !== JobReason.TOOL_WAIT) return false;
         } else if (this.held !== "paused" && this.held !== "refused") {
             return false;
         }
@@ -580,10 +583,10 @@ export class Session {
         }
     }
 
-    /** What run() returns once a job session's job has left JOB, else undefined. */
+    /** What run() returns once a job session's job context has closed, else undefined. */
     private _ended(st: MachineStatus | null): boolean | undefined {
-        if (!st) return undefined;
-        if (st.state === MachineState.JOB) {
+        if (!st || st.context === undefined) return undefined;
+        if (st.context === MachineContext.JOB) {
             this._jobSeen = true;
             return undefined;
         }
@@ -618,6 +621,11 @@ export class Session {
                             st.layer !== NO_LAYER && st.layer !== this._layer) {
                             this.fatalReason = FATAL_JOB_LOST;
                             return false;
+                        }
+                        // A jog or probe inside the job: its reason is not the job's.
+                        if (st.state !== MachineState.JOB) {
+                            await this._sleep(STATUS_POLL_MS);
+                            continue;
                         }
                         const left = await this._leave(h, st);
                         if (left) {
