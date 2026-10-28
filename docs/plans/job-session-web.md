@@ -166,7 +166,7 @@ X1–X2: a dependent chain, Single Session: X2 needs X1's field and sim.
 * Depends on: none.
 * Checks: `pio run -e pico`; `pnpm typecheck`, `pnpm test`. Human scope:
   the 0xA0 frame and `get ctx` on COM8, in and out of a job.
-* Status: ready to merge.
+* Status: done, merged at `186e60e`. Unblocks X2.
 * Outcome:
   * Agreed in Read/Write: 0xA0, not 0xA4; 0xA3 retired as `STATUS_RSP_V4`.
     A cjog in a job: TOOL_WAIT only, from the bench (below).
