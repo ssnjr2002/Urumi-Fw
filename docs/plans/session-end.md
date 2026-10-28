@@ -54,6 +54,34 @@ A dependent chain, Single Session: E2 needs E1's API.
 * Purpose: the demo's job buttons become Pause, Resume, Cancel, End job.
   Continue folds into Resume; Abort (`link.abort()` then `truncate()`,
   `web/demo/index.js:626`) becomes End job, `session.end()`.
+  * Two rows. "Machine job: [Pause] [Cancel]" acts on whatever job the
+    machine has: through the session while one runs (`session.pause()`,
+    `session.cancel()`), else the text `pause` / `cancel`, so a job this
+    page didn't start can still be paused and cancelled.
+  * "Session:" names the running layer (layer, tool, head, chamber) or
+    "none", then the job line, then [Execute layer] [Resume] [End job],
+    which need the session (Execute: none running).
+  * Agreed in Read: the status table's `tool` row reads
+    `MachineStatus.tools` (STATUS_RSP 0xA3), one id per head.
 * Files: `web/demo/index.js`, `web/demo/index.html`.
 * Depends on: E1.
-* Status: planned.
+* Status: ready to merge.
+* Outcome:
+  * As planned, plus from the bench: `resume()` returning true only means
+    the session resends, so the Resume line ends with what came of it
+    (accepted, refused, no reply yet: the first ACK or NACK within 2 s), and
+    each change of hold is logged with a hint (`held: tool — mount and
+    zero, then Resume`).
+  * The done line reads "Cancel or End job closes it".
+  * Checks: `pnpm typecheck` clean; `pnpm test` 614 passed, 1 skipped (the
+    demo has no tests). Benched: Resume refused in TOOL_WAIT; not yet
+    tried: End job, the Resume line's new wording, `pause`/`cancel` on a
+    job the page didn't start.
+  * Found on the bench, out of scope (a library `fix/`, not planned yet): a
+    jog in a job's hold (TOOL_WAIT, PAUSED) ends the session with
+    `FATAL_JOB_LOST`. The firmware reports a jog inside a job as JOGGING
+    (`stateOf`, `core0/ops/machine.cpp:131`: a step outranks the job
+    context), and `Session._ended` (`session.ts:584`) takes any state but
+    JOB as the job gone. The status's layer is set exactly while the context
+    is JOB (`plannerExecPoint`), so `_ended` can treat a layer other than
+    `NO_LAYER` as the job still open.
