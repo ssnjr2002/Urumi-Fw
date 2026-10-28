@@ -203,9 +203,30 @@ X1–X2: a dependent chain, Single Session: X2 needs X1's field and sim.
     and a header for another layer are still `FATAL_JOB_LOST`.
 * Files: `web/src/wire/link/session.ts`; `web/test/wire/link/job-session.test.ts`.
 * Depends on: X1.
-* Checks: `pnpm typecheck`, `pnpm test`. Human scope: a jog in PAUSED and in
-  TOOL_WAIT, then Resume, on COM8 (from the demo).
-* Status: planned.
+* Checks: `pnpm typecheck`, `pnpm test`. Human scope, on COM8 from the demo:
+  a jog in TOOL_WAIT, then Resume; a jog in PAUSED is refused `b706` and the
+  session stays paused.
+* Status: ready to merge (`3cfdb45`).
+* Outcome:
+  * As planned; no new hold kind. A jog or probe inside a hold keeps the
+    hold it is in; the tool reads `state` if it wants to name the motion.
+  * Found in Read: `_leave` from a `tool` hold resent the window on a jog's
+    sample (its reason is neither TOOL_CHANGE nor TOOL_WAIT); the hold now
+    skips non-JOB samples. `resume()` refuses any hold outside a JOB sample;
+    the demo already logs the refusal (`resume: not yet (…)`).
+  * The layer check stays off for `tool` holds: the refused header's layer
+    is not yet the machine's, so the two differ legitimately.
+  * `context === undefined` (a `get` without `ctx`) reads as not known: not
+    lost, not alive.
+  * Not tested: a header for another layer during a hold (the sim has no
+    easy way to send one into a held job); the cancel-from-elsewhere test
+    still passes as `FATAL_JOB_LOST`.
+  * Out of scope: the demo reads the job from `state` too.
+    `showJob()` (`web/demo/index.js:576`) shows "records 0/N" during a jog
+    in a job; the status table's `reason` row (`:186`) shows the jog's raw
+    reason.
+  * Checks: `pnpm typecheck` clean; `pnpm test` 620 passed, 1 skipped. Not
+    benched.
 
 Not in this plan: the demo's status table showing the context (the demo UI
 session's, after X1).
