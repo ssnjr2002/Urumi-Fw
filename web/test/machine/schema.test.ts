@@ -26,6 +26,7 @@ import {
     defaultConfig,
     pipelineConfig,
 } from "../machines.js";
+import { toolLayer } from "../../src/svg/load.js";
 
 describe("config: BusNode", () => {
     it("defaults type=STEPPER, present=true", () => {
@@ -145,6 +146,28 @@ describe("config: TOOL_PROFILES registries", () => {
         expect(TOOL_PROFILES_BY_TYPE[ToolType.KNIFE]).toBe(KNIFE);
         expect(TOOL_PROFILES_BY_TYPE[ToolType.CREASE]).toBe(CREASE);
         expect(TOOL_PROFILES_BY_TYPE[ToolType.REVOLVER_PEN]).toBe(REVOLVER_PEN);
+    });
+});
+
+// SVG layers are matched to these names (svg/load.ts toolLayer), so each must
+// survive an exporter's dedup suffix and a chamber split, and never be a name
+// a drawing app gives its own groups.
+describe("config: tool preset names", () => {
+    const names = Object.keys(TOOL_PROFILES);
+
+    it.each(names)("%s is lowercase, with no '.' or trailing _<digits>", (name) => {
+        expect(name).toMatch(/^[a-z][a-z0-9_]*$/);
+        expect(name).not.toMatch(/_\d+$/);
+    });
+
+    it.each(names)("%s is not an app's own group name", (name) => {
+        expect(name).not.toMatch(/^(layer\d*|group\d*|g\d+|path\d+)$/);
+    });
+
+    it.each(names)("%s is found as a layer, deduped or chambered", (name) => {
+        expect(toolLayer(name, names)).toEqual({ tool: name, chamber: 0 });
+        expect(toolLayer(`${name}_2`, names)).toEqual({ tool: name, chamber: 0 });
+        expect(toolLayer(`${name}.1`, names)).toEqual({ tool: name, chamber: 1 });
     });
 });
 
