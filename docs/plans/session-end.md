@@ -65,7 +65,8 @@ A dependent chain, Single Session: E2 needs E1's API.
     `MachineStatus.tools` (STATUS_RSP 0xA3), one id per head.
 * Files: `web/demo/index.js`, `web/demo/index.html`.
 * Depends on: E1.
-* Status: ready to merge.
+* Status: done, merged at `4ebecec`. Last branch of the plan; unblocks
+  none.
 * Outcome:
   * As planned, plus from the bench: `resume()` returning true only means
     the session resends, so the Resume line ends with what came of it
