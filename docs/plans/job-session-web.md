@@ -206,7 +206,8 @@ X1–X2: a dependent chain, Single Session: X2 needs X1's field and sim.
 * Checks: `pnpm typecheck`, `pnpm test`. Human scope, on COM8 from the demo:
   a jog in TOOL_WAIT, then Resume; a jog in PAUSED is refused `b706` and the
   session stays paused.
-* Status: ready to merge (`3cfdb45`).
+* Status: done, merged at `3bcd836`. Last branch of the plan; unblocks
+  none.
 * Outcome:
   * As planned; no new hold kind. A jog or probe inside a hold keeps the
     hold it is in; the tool reads `state` if it wants to name the motion.
