@@ -28,7 +28,7 @@ namespace {
 // Everything a key can report, read up front so the reply describes one
 // instant rather than the span of the print.
 struct Snap {
-    uint8_t  state, enabled, homed, job, latched;
+    uint8_t  state, ctx, enabled, homed, job, latched;
     uint16_t faults;
     uint8_t  homingReason, homeFailWhy, homeFailNode, homeCycle;
     uint8_t  probingReason, probeCause, probeRetries, ringOwner;
@@ -76,6 +76,7 @@ uint32_t dutyOnTime() {
 
 void takeSnap(Snap& s) {
     s.state         = machineState;
+    s.ctx           = machineContext;
     s.enabled       = axes_enabled;
     s.homed         = axes_homed;
     s.faults        = machineFaults();
@@ -183,11 +184,12 @@ struct Key { const char* name; KeyFn fn; };
 
 const Key kKeys[] = {
     { "state",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.state); } },
+    { "ctx",       [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.ctx); } },
     { "enabled",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.enabled, 2); } },
     { "homed",     [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.homed, 2); } },
     { "faults",    [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.faults, 4); } },
     { "job",       [](const Snap& s, char* o, size_t n) {
-        return s.state == STATE_JOB ? fmtU(o, n, s.job) : KEY_NA; } },
+        return s.ctx == CTX_JOB ? fmtU(o, n, s.job) : KEY_NA; } },
     // Where a paused job resumes: the LAYER_HDR's layer and record.
     { "resume_layer",  [](const Snap& s, char* o, size_t n) {
         return s.resumeOk ? fmtU(o, n, s.resumeLayer) : KEY_NA; } },
@@ -295,7 +297,7 @@ uint8_t findKey(const char* name, size_t len);
 
 // A group stands for its keys, in order. Group and key names share one namespace.
 const char* const kStatusKeys[] = {
-    "state", "homed", "enabled", "nodehomed", "nodeenabled", "head", "tools",
+    "state", "ctx", "homed", "enabled", "nodehomed", "nodeenabled", "head", "tools",
     "pos", "mpos", "wpos", "buf", "mute", "excluded", "touched", "mesh",
 };
 struct Group { const char* name; const char* const* keys; uint8_t count; };

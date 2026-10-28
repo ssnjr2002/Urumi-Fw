@@ -82,8 +82,8 @@
 // docs/comms_architecture.md §4.2 + §4.6.
 //
 //   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
-//   STATUS_RSP:  [0xA3]                                    (37 bytes)
-//     [0]      magic 0xA3
+//   STATUS_RSP:  [0xA0]                                    (38 bytes)
+//     [0]      magic 0xA0
 //     [1]      machineState
 //     [2]      reason              — the current state's: job, jogging,
 //                                   homing or probing; 0 otherwise
@@ -97,7 +97,9 @@
 //     [28..29] bufCount   u16 LE   — planner blocks queued
 //     [30..31] layer      u16 LE   — the job's executing record
 //     [32..35] record     u32 LE     (plannerExecPoint); 0xFFFF, 0 with no job
-//     [36]     CRC8 over [0..35]
+//     [36]     context             — machineContext; the layer is set exactly
+//                                   while it is CTX_JOB
+//     [37]     CRC8 over [0..36]
 //
 // One frame, one coherent sample, in the node frame: the host is told nodes
 // and the selection, never slots.
@@ -109,8 +111,9 @@
 #define STATUS_RSP_V1    0xA6   // retired frames — never emit; reserved so the
 #define STATUS_RSP_V2    0xA7   // values are not reused for something else
 #define STATUS_RSP_V3    0xA4
-#define STATUS_RSP       0xA3
-#define STATUS_RSP_SIZE  37
+#define STATUS_RSP_V4    0xA3
+#define STATUS_RSP       0xA0
+#define STATUS_RSP_SIZE  38
 
 // Binary `seqreset` (§4.3): one byte, zeroes expectedSeq, replies ACK(0).
 // The text command sits on the critical path of every stream start — the one

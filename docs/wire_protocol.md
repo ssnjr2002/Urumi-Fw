@@ -54,7 +54,8 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `JOG_NACK`   | `0xB7` | Pico → Host | Continuous jog refused (2 B) |
 | `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request |
 | `SEQRESET`   | `0xA8` | Host → Pico | Zero `expectedSeq`; replies `ACK(0)` |
-| `STATUS_RSP` | `0xA3` | Pico → Host | Binary status response (37 B) |
+| `STATUS_RSP` | `0xA0` | Pico → Host | Binary status response (38 B) |
+| ~~`STATUS_RSP_V4`~~ | `0xA3` | — | Retired 37-byte frame; reserved, never emitted |
 | ~~`STATUS_RSP_V3`~~ | `0xA4` | — | Retired 36-byte frame; reserved, never emitted |
 | ~~`STATUS_RSP_V1`~~ | `0xA6` | — | Retired 9-byte frame; reserved, never emitted |
 | ~~`STATUS_RSP_V2`~~ | `0xA7` | — | Retired 31-byte frame; reserved, never emitted |
@@ -338,9 +339,9 @@ RUNNING — the Pico handles it on Core 0 between MSEG packet boundaries so it
 never interrupts step timing. The host may send one between any two MSEG/jog
 packets by inserting the byte at a packet boundary.
 
-### STATUS_RSP — `0xA3` (37 bytes)
+### STATUS_RSP — `0xA0` (38 bytes)
 ```
-[0]      magic         = 0xA3
+[0]      magic         = 0xA0
 [1]      machineState  uint8   — 0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
 [2]      reason        uint8   — the current state's reason: `job=`, `jogging=`, `homing=` or `probing=`; 0 otherwise
 [3..4]   faults        uint16 LE — fault mask (below)
@@ -352,7 +353,8 @@ packets by inserting the byte at a packet boundary.
 [28..29] bufCount      uint16 LE — planner blocks queued (`get buf`)
 [30..31] layer         uint16 LE — the job's executing record: its layer
 [32..35] record        uint32 LE   and record (below); 0xFFFF and 0 with no job
-[36]     CRC8 over bytes [0..35]
+[36]     context       uint8   — machineContext: 0=IDLE 1=JOB 2=PROBE 3=HOMING (`get ctx`)
+[37]     CRC8 over bytes [0..36]
 ```
 One coherent sample, in the node frame: the host is told nodes and the
 selection, never slots. The slot masks and MPos stay on `get`. A controller
@@ -365,6 +367,11 @@ plunge or swivel carries the record it leads into); while PAUSED, the resume
 point (`resume_layer`/`resume_record`); in a job before any block runs, the
 oldest queued record, or the next one expected.
 
+`context` is what is held between commands; `machineState` is what runs now.
+A jog inside a paused or tool-waiting job reports JOGGING with the context
+still JOB. The context and the layer are read under one lock: the layer is
+set exactly while the context is JOB.
+
 The fault mask (`get faults=` too): 0x0001=BUS 0x0002=CONFIG 0x0004=UNMAPPED 0x0008=LATCHED 0x0010=HOMING 0x0020=PROBE 0x0040=FACTS 0x0080=SEQUENCE 0x0100=TOOL 0x8000=ESTOP. Held faults (BUS, CONFIG,
 UNMAPPED, LATCHED) clear by themselves when their cause goes; event faults
 (HOMING, PROBE, FACTS, SEQUENCE, TOOL) stay until `unalarm`. ESTOP is the estop latch, not a
@@ -374,8 +381,8 @@ IDLE otherwise; several bits may be set at once.
 **Each layout has its own magic.** A reader consumes fixed-length frames blind,
 so a host expecting another layout must fail on an unknown magic rather than
 mis-parse it and desync the stream. `0xA6` (9 B), `0xA7` (31 B, slot masks,
-`pos` in steps, `expectedSeq`, `queuedUs`) and `0xA4` (36 B, the selected
-head's tool only) are retired and reserved; they are never emitted. Host and firmware for this frame must be flashed together.
+`pos` in steps, `expectedSeq`, `queuedUs`), `0xA4` (36 B, the selected
+head's tool only) and `0xA3` (37 B, no context) are retired and reserved; they are never emitted. Host and firmware for this frame must be flashed together.
 
 The text `get` remains for the keys this frame has no room for, and for human/debug use.
 
@@ -517,15 +524,16 @@ one namespace. A key asked for twice is printed once, where first asked, so
 `get status homed` prints `homed` once.
 
 ```
-status = state homed enabled nodehomed nodeenabled head tools pos mpos wpos buf mute excluded touched mesh
+status = state ctx homed enabled nodehomed nodeenabled head tools pos mpos wpos buf mute excluded touched mesh
 ```
 
 ```
 state=<s>     machineState    0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
+ctx=<c>       machineContext  0=IDLE 1=JOB 2=PROBE 3=HOMING
 enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
 homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
 faults=<hex>  machineFaults   fault mask, as STATUS_RSP (e.g. 0x0004)
-job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING 5=TOOL_CHANGE 6=TOOL_WAIT 7=DWELL  (only while state=JOB)
+job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING 5=TOOL_CHANGE 6=TOOL_WAIT 7=DWELL  (only while ctx=1)
 resume_layer=<l>   the layer a paused job resumes at  (only while job=3)
 resume_record=<r>  the record within it  (only while job=3)
 liftreason=<r>,…   the latest lift's reasons: end corner duty deadline unwind pause abort (dry reserved); `-` before the first  (only while state=JOB)

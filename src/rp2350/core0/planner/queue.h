@@ -81,7 +81,8 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record);
 // Where a job is: the record its running block belongs to (an inserted block
 // carries the record it leads into), the resume point while paused, the
 // oldest queued or next expected record before a block runs. False with no job.
-bool plannerExecPoint(uint16_t* layer, uint32_t* record);
+// `ctx` gets machineContext, read under the same lock.
+bool plannerExecPoint(uint16_t* layer, uint32_t* record, uint8_t* ctx);
 
 // Queue a host-analysed record (checkBezier fills the rest of `b`). Contour
 // framing: `start` opens a contour: Z to zClearance over work Z, travel to p0,

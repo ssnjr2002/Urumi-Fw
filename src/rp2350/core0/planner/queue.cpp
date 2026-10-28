@@ -320,9 +320,10 @@ bool plannerResumePoint(uint16_t* layer, uint32_t* record) {
     return ok;
 }
 
-bool plannerExecPoint(uint16_t* layer, uint32_t* record) {
+bool plannerExecPoint(uint16_t* layer, uint32_t* record, uint8_t* ctx) {
     const uint32_t s = spin_lock_blocking(plannerLock);
-    const bool ok = machineContext == CTX_JOB;
+    *ctx = machineContext;
+    const bool ok = *ctx == CTX_JOB;
     if (ok) {
         const planner::Block* b = plannerRing.oldest();
         if (paused() && jobResume.known) { *layer = jobResume.layer; *record = jobResume.record; }

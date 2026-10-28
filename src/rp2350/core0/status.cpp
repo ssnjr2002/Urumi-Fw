@@ -50,7 +50,8 @@ void sendStatusRsp() {
         if (!framesWPos(i, &wpos[i])) wpos[i] = NAN;
     uint16_t layer  = 0xFFFF;
     uint32_t record = 0;
-    if (!plannerExecPoint(&layer, &record)) { layer = 0xFFFF; record = 0; }
+    uint8_t  ctx    = CTX_IDLE;
+    if (!plannerExecPoint(&layer, &record, &ctx)) { layer = 0xFFFF; record = 0; }
 
     uint8_t buf[STATUS_RSP_SIZE];
     buf[0] = STATUS_RSP;
@@ -65,7 +66,8 @@ void sendStatusRsp() {
     putU16(&buf[28], bufCount);
     putU16(&buf[30], layer);
     memcpy(&buf[32], &record, 4);
-    buf[36] = crc8(buf, STATUS_RSP_SIZE - 1);
+    buf[36] = ctx;
+    buf[37] = crc8(buf, STATUS_RSP_SIZE - 1);
 
     Serial.write(buf, STATUS_RSP_SIZE);     // one write — cost is per-transaction
 }
