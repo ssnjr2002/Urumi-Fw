@@ -145,20 +145,19 @@ JOB_HDR 0xA0, 17 B
 [3..6] job id u32  [7..10] record count u32  [11..14] t f32 mm  [15] tool count 1..4
 [16] CRC8
 
-TOOL_HDR 0xA1, 20 B
-[0] magic  [1] tool id  [2] seq
-[3..18] xmin, xmax, ymin, ymax f32, work coordinates at the tip
-[19] CRC8
+TOOL_HDR 0xA1, 21 B
+[0] magic  [1] tool id  [2] seq  [3] head
+[4..19] xmin, xmax, ymin, ymax f32, work coordinates at the tip
+[20] CRC8
 
-TOOL_REC (LAYER_HDR) 0xA2, 21 B
+TOOL_REC (LAYER_HDR) 0xA2, 22 B
 [0] magic  [1] chamber (0 = none)  [2] seq
-[3] tool id  [4..5] layer u16  [6..9] record u32  [10..13] feed f32
-[14..17] k f32  [18..19] t u16 µm  [20] CRC8
+[3] tool id  [4] head  [5..6] layer u16  [7..10] record u32
+[11..14] feed f32  [15..18] k f32  [19..20] t u16 µm  [21] CRC8
 ```
 
 `LAYER_HDR` is the one sent today; `JOB_HDR` and `TOOL_HDR` are not built.
-It names no head: the tool runs on the head it is mounted on (Tool change).
-Until H1 merges the firmware's is 22 B with the head at `[4]`.
+Both name the head (Tool change).
 
 The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 
@@ -170,7 +169,7 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
   | frame | checks | NACK |
   |---|---|---|
   | `JOB_HDR` | state, homed, version, tool count 1–4 | `BAD_STATE`, `NOT_HOMED` |
-  | `TOOL_HDR` | id in the config, no duplicate; peripheral present and bound; bbox with offsets, mesh and heights in range | `TOOL_UNKNOWN`, `TOOL_UNAVAILABLE`, `OUT_OF_RANGE` (detail: axis and side) |
+  | `TOOL_HDR` | id in the config, no duplicate; head and peripheral present and bound; bbox with offsets, mesh and heights in range | `TOOL_UNKNOWN`, `TOOL_UNAVAILABLE`, `OUT_OF_RANGE` (detail: axis and side) |
   | `TOOL_REC` | its tool has a header; index valid (the resume point in `PAUSED`); chamber valid | `JOB` |
 
 * **Any preflight NACK ends the session to IDLE;** the host fixes the job and
@@ -266,22 +265,24 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 
 ### Tool change
 
-* **One table: the mount state** (which tool is on each head), kept by the
-  Pico across jobs, in RAM, set by `mount <head> <tool>` (0 none). Whoever
-  mounts picks the head: the operator, or the host sending `mount`. There
-  is no job mount plan.
-* **A header's head** is the selected head if it has the tool, else the
-  lowest head that has it. A tangential or chamber tool needs its head's A,
-  so `mount` refuses it on a head without A.
-* **A header whose tool is mounted nowhere, or not zeroed,** is
+* **The mount state** (which tool is on each head) is kept by the Pico
+  across jobs, in RAM, set by `mount <head> <tool>` (0 none). There is no
+  job mount plan: the Pico keeps nothing about which head a tool should be
+  on (JT).
+* **The host picks the head** and names it in each header: `TOOL_HDR`, so
+  preflight checks the bbox with that head's offset and forgets it, and
+  every `TOOL_REC`, checked against the mount state as it arrives. Keeping
+  the two the same is the host's; the per-record soft-limit check still
+  holds if they differ.
+* **A header whose tool is not mounted on its head, or not zeroed,** is
   `NACK_TOOL_CHANGE` and holds the job; once the ring is dry the stop: park
   every Z, lock every A to 0, an XY line to `machine.positions.mount`, then
-  `TOOL_WAIT`. The stop selects no head. There `mount` (any head), `jog`,
-  `wzero` and `probe_park` are admitted.
-* **Only a resent header leaves `TOOL_WAIT`:** with its tool mounted on a
-  head and that head zeroed, the head is selected and the job goes back;
-  otherwise `NACK_TOOL_CHANGE` again.
-* A tool mounted and zeroed on another head than the selected one is a head
+  `TOOL_WAIT`. There `mount` (any head), `jog`, `wzero` and `probe_park` are
+  admitted.
+* **Only a resent header leaves `TOOL_WAIT`:** with its tool mounted on its
+  head and that head zeroed, the job goes back; otherwise
+  `NACK_TOOL_CHANGE` again.
+* A tool mounted and zeroed on its head with another head selected is a head
   switch alone: selected at rest, no stop.
 * **Park legs run outside homing:** as steps of the tool-change sequence,
   ticked by the runner and dropped when the session loses the machine
@@ -1380,103 +1381,19 @@ itself in TOOL_CHANGE, on the operator's word in TOOL_WAIT).
 * Out of scope: no native or decoder test for the header logic or
   `positions.mount`; the web Session still resends every 250 ms.
 
-## Mount decides the head
+## The head stays in the header
 
-A layer header names its tool only; the head is the one the tool is mounted
-on (Tool change, above). JB4 put the head in the header because its stop
-drove the named head to its probe switch, so the Pico needed the head before
-the mount. JT replaced that stop with one mount position, admitted `mount` on
-any head in TOOL_WAIT and dropped the pair table; the head byte then only
-made the operator match the host's choice.
+Decided after H1 was written and dropped (branch
+`feature/pico-mount-head`, never merged, kept for the record). H1
+had the mount state pick a layer's head and dropped the head byte from
+`LAYER_HDR`.
 
-Two branches, H1 then H2. Between the merges `main`'s web sends 22 B headers
-the Pico refuses; the demo cannot run a job until H2 merges.
-
-## Branch H1: `feature/pico-mount-head`
-
-### Plan
-
-**Type:** feature.
-
-**Purpose:** the Pico finds a layer's head from the mount state.
-
-* What the code has today:
-  * `acceptLayer` (`core0/data_plane.cpp:215-271`) reads `l.head` from
-    `[4]`, resolves against it, and selects it or starts a change for it.
-  * `layerResolve` (`core0/ops/layer.cpp:6-34`) checks `head < headCount`
-    and the head's A for a tangential or chamber tool, and returns
-    `LAYER_NOT_MOUNTED` unless `mounted[l.head] == l.tool`. `LayerHdr` has
-    `head` (`ops/layer.h:17`).
-  * `toolChangeBegin(head, tool)`, `toolChangeLeave(head, tool)` and
-    `start()` (`controller/seq/toolchange.cpp:98-140`) hold a `wantHead`;
-    `start()` selects it before the stop.
-  * `toolsMount` (`ops/tools.cpp:13-20`) checks the head and the tool id
-    only.
-  * `cmdProbePark` (`controller/cmd/jogto.cpp:55-60`) has the head rule
-    inline.
-* Scope:
-  1. `usb_protocol.h:39-56`: the 21 B layout; `LAYER_HDR_PACKET_SIZE` 21.
-  2. `ops/tools.*`: `toolsHeadOf(tool)`, the selected head if it has the
-     tool, else the lowest (0xFF none); `cmdProbePark` uses it.
-     `toolsMount` refuses a tangential or chamber tool on a head without A
-     (`err no_a`).
-  3. `layerResolve` takes the found head, or resolves the tool alone when it
-     is mounted nowhere; its A check goes (now at `mount`).
-  4. `acceptLayer` reads the shifted fields and uses `toolsHeadOf`.
-  5. `toolchange.*`: `wantHead` goes; `start()` selects nothing;
-     `toolChangeLeave(tool)` finds the head, needs its Z set, selects it.
-  6. Native tests: `test/test_config/test_layer.cpp` follows; tests for
-     `toolsHeadOf` (selected first, lowest otherwise, none) and `no_a`.
-  7. Docs: `docs/wire_protocol.md` (layout, the head rule, `mount`), the
-     comments in `toolchange.h` and `layer.h`.
-* Not in scope: the web (H2).
-
-**Depends on:** JT (done).
-
-**Overlap:** `usb_protocol.h`, `data_plane.cpp`, `controller/seq/toolchange.*`,
-`ops/tools.*`, `ops/layer.*`.
-
-**Checks:** `pio run -e pico`, `pio test -e native`. Human, on COM8: a header
-for a mounted and zeroed tool ACKs with no stop; an unmounted tool stops,
-`mount 1 <tool>` and `wzero z` in TOOL_WAIT, the resent header selects head 1
-and ACKs; `mount` of a tangential tool on a head without A is refused.
-
-### Status
-
-Planned. Unblocks H2.
-
-### Outcome
-
-## Branch H2: `feature/web-mount-head`
-
-### Plan
-
-**Type:** feature.
-
-**Purpose:** the web sends the 21 B header; the demo loses its head selector.
-
-* Scope:
-  1. `web/src/wire/format/layer.ts`: the layout, `LayerHdr` without `head`;
-     `constants.ts:19` `LAYER_HDR_SIZE` 21.
-  2. The sim (`wire/link/backends/sim.ts:102`): a header's tool on the head
-     found by the same rule.
-  3. Tests: `web/test/wire/format/layer.test.ts`, `sim.test.ts`,
-     `commands.test.ts`, `job-session.test.ts` follow.
-  4. Demo: `#job-head` and `jobHeadSel` go (`web/demo/index.js:45, 382,
-     618, 631-632`); the session line and log show the tool and chamber.
-
-**Depends on:** H1 merged.
-
-**Overlap:** `web/src/wire/`.
-
-**Checks:** `pnpm typecheck`, `pnpm test`. Human: a demo job on COM8 against
-H1's firmware, with a tool change.
-
-### Status
-
-Planned; waits on H1.
-
-### Outcome
+* Against it: a tool's bbox (`TOOL_HDR`) can only be checked against a head
+  at preflight if the header names that head. Without it the check needs the
+  bbox kept until the mount, or a tool-to-head map kept from the headers;
+  both are job state on the Pico, which JT removed.
+* So the host picks the head, in `TOOL_HDR` and in every `LAYER_HDR`
+  (Tool change, above). The operator mounts on the head the header names.
 
 ## Open
 
