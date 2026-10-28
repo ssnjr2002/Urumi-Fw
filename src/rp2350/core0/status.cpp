@@ -26,6 +26,8 @@ static uint8_t stateReason(uint8_t st) {
     }
 }
 
+static_assert(CFG_MAX_HEADS == 2, "STATUS_RSP carries tools[2]; a new layout needs a new magic");
+
 static void putU16(uint8_t* p, uint16_t v) { memcpy(p, &v, 2); }   // LE: native order
 
 // One coherent sample, one transaction (layout in usb_protocol.h).
@@ -40,10 +42,9 @@ void sendStatusRsp() {
     const uint16_t homed    = originMask();
     const uint8_t  sel      = framesSelected();
     const uint16_t bufCount = getBufCount();
-    uint8_t tool = 0;
-    if (sel != FRAMES_NONE && sel != FRAMES_ANCHOR && machineCfgValid() &&
-        sel < machineCfg().headCount)
-        tool = toolsMounted(sel);
+    const uint8_t heads = machineCfgValid() ? machineCfg().headCount : 0;
+    uint8_t tools[CFG_MAX_HEADS];
+    for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) tools[h] = h < heads ? toolsMounted(h) : 0;
     float wpos[4];
     for (uint8_t i = 0; i < 4; i++)
         if (!framesWPos(i, &wpos[i])) wpos[i] = NAN;
@@ -59,12 +60,12 @@ void sendStatusRsp() {
     putU16(&buf[5], enabled);
     putU16(&buf[7], homed);
     buf[9]  = sel;
-    buf[10] = tool;
-    memcpy(&buf[11], wpos, 16);
-    putU16(&buf[27], bufCount);
-    putU16(&buf[29], layer);
-    memcpy(&buf[31], &record, 4);
-    buf[35] = crc8(buf, STATUS_RSP_SIZE - 1);
+    memcpy(&buf[10], tools, CFG_MAX_HEADS);
+    memcpy(&buf[12], wpos, 16);
+    putU16(&buf[28], bufCount);
+    putU16(&buf[30], layer);
+    memcpy(&buf[32], &record, 4);
+    buf[36] = crc8(buf, STATUS_RSP_SIZE - 1);
 
     Serial.write(buf, STATUS_RSP_SIZE);     // one write — cost is per-transaction
 }

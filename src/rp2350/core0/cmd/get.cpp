@@ -267,12 +267,15 @@ const Key kKeys[] = {
         if (s.head == FRAMES_NONE) return KEY_NA;
         if (s.head == FRAMES_ANCHOR) { snprintf(o, n, "anchor"); return KEY_OK; }
         return fmtU(o, n, s.head); } },
-    // The tool id each head has mounted, head order, 0 for none.
+    // The tool id each head has mounted, head order, `-` for none.
     { "tools",     [](const Snap& s, char* o, size_t n) {
         if (s.headCount == 0) return KEY_NA;
         size_t k = 0;
-        for (uint8_t h = 0; h < s.headCount && k < n; h++)
-            k += snprintf(o + k, n - k, h ? ",%u" : "%u", s.tools[h]);
+        for (uint8_t h = 0; h < s.headCount && k < n; h++) {
+            const char* sep = h ? "," : "";
+            k += s.tools[h] ? snprintf(o + k, n - k, "%s%u", sep, s.tools[h])
+                            : snprintf(o + k, n - k, "%s-", sep);
+        }
         return KEY_OK; } },
     // Planner blocks Core 1 found late, since boot; each held the motion briefly.
     { "late",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.late); } },

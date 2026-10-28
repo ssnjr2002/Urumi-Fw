@@ -82,8 +82,8 @@
 // docs/comms_architecture.md §4.2 + §4.6.
 //
 //   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
-//   STATUS_RSP:  [0xA4]                                    (36 bytes)
-//     [0]      magic 0xA4
+//   STATUS_RSP:  [0xA3]                                    (37 bytes)
+//     [0]      magic 0xA3
 //     [1]      machineState
 //     [2]      reason              — the current state's: job, jogging,
 //                                   homing or probing; 0 otherwise
@@ -91,12 +91,13 @@
 //     [5..6]   nodeEnabled u16 LE  — bit n = bus node n
 //     [7..8]   nodeHomed  u16 LE   — nodes holding an origin (originMask)
 //     [9]      selection           — head index, FRAMES_ANCHOR, FRAMES_NONE
-//     [10]     tool                — the id mounted on the selected head, 0 none
-//     [11..26] wpos[4]    f32 LE   — x/y/z/a, mm and degrees; NaN with no value
-//     [27..28] bufCount   u16 LE   — planner blocks queued
-//     [29..30] layer      u16 LE   — the job's executing record
-//     [31..34] record     u32 LE     (plannerExecPoint); 0xFFFF, 0 with no job
-//     [35]     CRC8 over [0..34]
+//     [10..11] tools[2]            — the id each head has mounted, head order;
+//                                   0 none or no such head
+//     [12..27] wpos[4]    f32 LE   — x/y/z/a, mm and degrees; NaN with no value
+//     [28..29] bufCount   u16 LE   — planner blocks queued
+//     [30..31] layer      u16 LE   — the job's executing record
+//     [32..35] record     u32 LE     (plannerExecPoint); 0xFFFF, 0 with no job
+//     [36]     CRC8 over [0..35]
 //
 // One frame, one coherent sample, in the node frame: the host is told nodes
 // and the selection, never slots.
@@ -107,8 +108,9 @@
 #define STATUS_REQ       0xA5
 #define STATUS_RSP_V1    0xA6   // retired frames — never emit; reserved so the
 #define STATUS_RSP_V2    0xA7   // values are not reused for something else
-#define STATUS_RSP       0xA4
-#define STATUS_RSP_SIZE  36
+#define STATUS_RSP_V3    0xA4
+#define STATUS_RSP       0xA3
+#define STATUS_RSP_SIZE  37
 
 // Binary `seqreset` (§4.3): one byte, zeroes expectedSeq, replies ACK(0).
 // The text command sits on the critical path of every stream start — the one

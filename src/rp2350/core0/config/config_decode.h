@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #define CFG_SCHEMA_VERSION 12u  // payload version the decoder understands (blob `v`)
-#define CFG_MAX_HEADS      4u
+#define CFG_MAX_HEADS      2u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
 #define CFG_MAX_CHAMBERS   8u
