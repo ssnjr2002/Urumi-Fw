@@ -145,25 +145,27 @@ X1–X2: a dependent chain, Single Session: X2 needs X1's field and sim.
 
 * Type: `feature/status-context`
 * Purpose: the machine's context on both planes, and a sim that has one.
-  * Pico: STATUS_RSP 0xA4, 38 bytes: a `context` byte (`MachineContext`),
-    read under `plannerLock` with the layer and record so one sample cannot
-    disagree with itself. `get ctx` on the text plane. `get job` reports the
+  * Pico: STATUS_RSP 0xA0, 38 bytes (0xA4 is a retired layout): a `context`
+    byte (`MachineContext`), read under `plannerLock` with the layer and
+    record (`plannerExecPoint` returns it) so one sample cannot disagree with
+    itself. `get ctx` on the text plane. `get job` reports the
     job's reason whenever the context is JOB, not only in STATE_JOB.
   * Web: `MachineContext` enum, `MachineStatus.context` from
     `parseStatusRsp` and `statusFromGet` (`ctx` added to `STATE_KEYS`);
-    `MAGIC_STATUS_RSP`, `STATUS_RSP_SIZE`; 0xA3 kept as a legacy decode, as
-    0xA1/0xA2 were.
+    `MAGIC_STATUS_RSP`, `STATUS_RSP_SIZE`; 0xA3 retired like the older
+    layouts, with a reflash error.
   * Sim: a `context` beside `state`, opened by the first header and closed
-    by `cancel`, ABORT and faults, as on the Pico. A cjog or `jogto` in a
-    PAUSED or TOOL_WAIT job is admitted: state JOGGING, context JOB, layer
-    kept; the jog's end returns to JOB with the job's reason.
+    by `cancel`, ABORT and faults, as on the Pico. A cjog in a TOOL_WAIT
+    job is admitted (`K_STEP | K_IN_TOOL`, `ops/cjog.cpp:35`): state
+    JOGGING, context JOB, layer kept; the jog's end returns to JOB with the
+    job's reason. In a PAUSED job it is refused BAD_STATE, as the Pico does.
 * Files: `src/rp2350/core0/usb_protocol.h:85-113`, `core0/status.cpp`,
   `core0/cmd/get.cpp`; `web/src/wire/format/{constants,status}.ts`,
   `wire/link/commands.ts`, `wire/link/backends/sim.ts`, `web/src/index.ts`;
   tests in `web/test/wire/`; `docs/wire_protocol.md` (STATUS_RSP, `get`).
 * Depends on: none.
 * Checks: `pio run -e pico`; `pnpm typecheck`, `pnpm test`. Human scope:
-  the 0xA4 frame and `get ctx` on COM8, in and out of a job.
+  the 0xA0 frame and `get ctx` on COM8, in and out of a job.
 * Status: planned.
 
 ### X2: the job session reads the context
@@ -172,8 +174,9 @@ X1–X2: a dependent chain, Single Session: X2 needs X1's field and sim.
 * Purpose: the session's rules from Decisions (X): alive by context and own
   layer, held while not JOB or in a job hold reason, `reason` and leaving
   only from JOB samples, `resume()` refused otherwise.
-  * A test that fails before the fix: a jog in a PAUSED and in a TOOL_WAIT
-    hold leaves the session held and alive, and `resume()` after it resumes.
+  * A test that fails before the fix: a jog in a TOOL_WAIT hold leaves the
+    session held and alive, and `resume()` after it resumes. (The Pico
+    refuses a jog in PAUSED.)
   * Also: `resume()` during the jog returns false; `cancel` from elsewhere
     and a header for another layer are still `FATAL_JOB_LOST`.
 * Files: `web/src/wire/link/session.ts`; `web/test/wire/link/job-session.test.ts`.
