@@ -37,7 +37,6 @@ describe("factories derive from DEFAULTS", () => {
         const a = axisConfig(busNode(1), 160);
         expect(a.maxFeed).toBe(DEFAULTS.axis.maxFeed);
         expect(a.maxAccel).toBe(DEFAULTS.axis.maxAccel);
-        expect(a.invert).toBe(DEFAULTS.axis.invert);
         expect(a.rotary).toBe(DEFAULTS.axis.rotary);
     });
 

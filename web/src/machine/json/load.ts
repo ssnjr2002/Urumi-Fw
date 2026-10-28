@@ -2,7 +2,7 @@
  * load.ts — JSON → PipelineConfig. STRUCTURE ONLY.
  *
  * The production config source: a config.json file carries all
- * machine-specific calibration (stepsPerUnit, fCpu, invert, node bindings,
+ * machine-specific calibration (stepsPerUnit, fCpu, node bindings,
  * head layout, laser pointer). The code provides universal defaults —
  * tool presets (PEN/KNIFE/CREASE/REVOLVER_PEN) and quality algorithm
  * tuning — which the JSON can override but does not redefine from scratch.
@@ -17,7 +17,7 @@
  *   calibration — constant at 150 MHz across RP2350 boards, so defaulting it
  *   beats making every config.json restate it), machine targets
  *   (path/rapid/z/slew), axis ceilings
- *   (maxFeed/maxAccel), invert, maxTravel, jogFeed/jogFeedUnhomed (default
+ *   (maxFeed/maxAccel), maxTravel, jogFeed/jogFeedUnhomed (default
  *   maxFeed), jogUnhomed (false), buffer (1 s / 0.5 s), laser, peripherals (the ARRAY is
  *   optional, but each entry needs id + type), tools.*,
  *   quality. Absent → documented code default. See feed_accel_value_model.md.
@@ -89,7 +89,6 @@ interface JsonAxis {
     readonly maxFeed?: number;
     readonly maxAccel?: number;
     readonly maxTravel?: number;
-    readonly invert?: boolean;
     readonly invertDir?: boolean;
     readonly softLimits?: boolean;
     readonly jogFeed?: number;
@@ -118,19 +117,13 @@ interface JsonProbe {
 interface JsonHoming {
     readonly kind?: string;
     // linear
-    readonly hardTravel?: number;
-    readonly atOrigin?: boolean;
     readonly seekFeed?: number;
     readonly latchFeed?: number;
-    readonly backoffMm?: number;
-    readonly parkMm?: number;
     // rotary
     readonly budgetRevs?: number;
     readonly sweepFeed?: number;
     readonly toleranceDeg?: number;
-    readonly datumDeg?: number;
     // both
-    readonly pullInFeed?: number;
     readonly rampSteps?: number;
     // the Pico's fields, carried through unchecked
     readonly cycle?: number;
@@ -590,7 +583,6 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         maxFeed: ja.maxFeed ?? 0,
         maxAccel: ja.maxAccel ?? 0,
         maxTravel: ja.maxTravel ?? 0,
-        invert: ja.invert ?? false,
         ...present(ja, ["invertDir", "softLimits"]),
         jogFeed: ja.jogFeed ?? ja.maxFeed ?? 0,
         jogFeedUnhomed: ja.jogFeedUnhomed ?? ja.jogFeed ?? ja.maxFeed ?? 0,
@@ -692,12 +684,10 @@ function buildHoming(
         return v;
     };
     if (kind === "rotary") {
-        // Rejected by NAME rather than ignored. A linear field in a rotary block
-        // is not a harmless extra: `atOrigin` or `parkMm` sitting there means
-        // whoever wrote it believed this axis parks somewhere, and silently
+        // Rejected by NAME rather than ignored: a linear field in a rotary block
+        // means whoever wrote it believed this axis has ends, and silently
         // dropping the field would leave that belief untested.
-        for (const k of ["hardTravel", "atOrigin", "seekFeed", "latchFeed",
-                         "backoffMm", "parkMm"] as const) {
+        for (const k of ["seekFeed", "latchFeed"] as const) {
             if (jh[k] !== undefined) {
                 errors.push(`${p}.${k}: not a rotary field — a rotary axis has no ends`);
             }
@@ -705,34 +695,22 @@ function buildHoming(
         return {
             kind: "rotary",
             budgetRevs: num("budgetRevs"),
-            pullInFeed: num("pullInFeed"),
             sweepFeed: num("sweepFeed"),
             rampSteps: num("rampSteps"),
             toleranceDeg: num("toleranceDeg"),
-            datumDeg: num("datumDeg"),
             ...present(jh, ["cycle", "startFeed", "indexPos"]),
         };
     }
-    for (const k of ["budgetRevs", "sweepFeed", "toleranceDeg", "datumDeg"] as const) {
+    for (const k of ["budgetRevs", "sweepFeed", "toleranceDeg"] as const) {
         if (jh[k] !== undefined) {
             errors.push(`${p}.${k}: not a linear field — did you mean kind "rotary"?`);
         }
     }
-    if (typeof jh.atOrigin !== "boolean") {
-        // No default. Guessing this one puts the origin a whole hardTravel from
-        // where it belongs, and nothing downstream can detect that.
-        errors.push(`${p}.atOrigin: required (boolean) — which end the switch is at`);
-    }
     return {
         kind: "linear",
-        hardTravel: num("hardTravel"),
-        atOrigin: jh.atOrigin === true,
-        pullInFeed: num("pullInFeed"),
         seekFeed: num("seekFeed"),
         latchFeed: num("latchFeed"),
         rampSteps: num("rampSteps"),
-        backoffMm: num("backoffMm"),
-        parkMm: num("parkMm"),
         ...present(jh, ["cycle", "seekPositive", "seekScaler", "startFeed",
                         "backoffDist", "pullOffDist", "parkPos"]),
     };

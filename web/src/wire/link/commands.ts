@@ -379,8 +379,7 @@ export function setOrigin(link: Link, pairs: readonly OriginPair[]): Promise<boo
  *
  * @param node      RS485 bus id.
  * @param dir       1 or 0 — the node own direction sense, not a signed axis
- *                  direction. Derive it with approachDir(); `invert` is already
- *                  folded in there.
+ *                  direction.
  * @param startUs   step interval the leg starts at
  * @param floorUs   interval it ramps down to (== startUs for an un-ramped leg)
  * @param rampSteps steps taken to get from startUs to floorUs

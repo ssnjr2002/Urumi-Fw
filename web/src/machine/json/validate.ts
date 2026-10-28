@@ -287,9 +287,8 @@ const powerCoherent: Rule = (config) =>
  * Homing recipes that would misbehave on the machine rather than in the parser.
  *
  * These are semantic checks, so they live here and not in load.ts: every one of
- * them parses fine and only goes wrong when a motor turns. The errors are the
- * ones with a physical consequence — a hard-stop crash, a datum in the wrong
- * place, or a leg that reports failure on healthy hardware.
+ * them parses fine and only goes wrong when a motor turns. Only the fields the
+ * host types are checked; the Pico's decoder checks the rest.
  */
 const homingCoherent: Rule = ({ machine }) =>
     namedAxes(machine).flatMap(([path, ax]) => {
@@ -301,14 +300,10 @@ const homingCoherent: Rule = ({ machine }) =>
         if (h.kind === "rotary") {
             // Same shape of check, different physics. Feeds are divisors either
             // way, so a zero is still an infinite step interval.
-            for (const k of ["pullInFeed", "sweepFeed", "budgetRevs",
-                             "toleranceDeg"] as const) {
+            for (const k of ["sweepFeed", "budgetRevs", "toleranceDeg"] as const) {
                 if (h[k] <= 0) issues.push(error(`${p}.${k}: must be > 0`));
             }
             if (h.rampSteps < 0) issues.push(error(`${p}.rampSteps: must be >= 0`));
-            if (h.pullInFeed > h.sweepFeed) {
-                issues.push(error(`${p}.pullInFeed: must be <= sweepFeed (${h.sweepFeed})`));
-            }
             if (ax.maxFeed > 0 && h.sweepFeed > ax.maxFeed) {
                 issues.push(error(`${p}.sweepFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
             }
@@ -322,15 +317,6 @@ const homingCoherent: Rule = ({ machine }) =>
                     `starts just past the index needs three full laps plus post-roll`,
                 ));
             }
-            // Not an error: a magnet glued 90° from the tool's zero is a real
-            // machine. But a datum outside one revolution is almost always a
-            // units mistake, and it lands silently in every coordinate after.
-            if (Math.abs(h.datumDeg) >= 360) {
-                issues.push(warn(
-                    `${p}.datumDeg (${h.datumDeg}): outside one revolution — ` +
-                    `this is an offset from the index, not an absolute angle`,
-                ));
-            }
             // A rotary axis has no ends, so a soft-limit envelope on one is
             // either unbounded (0) or a deliberate restriction. Homing spins
             // freely regardless, which is worth saying once here.
@@ -342,11 +328,8 @@ const homingCoherent: Rule = ({ machine }) =>
             return issues;
         }
 
-        // Every one of these is a divisor or a distance; a zero produces an
-        // infinite step interval or a zero-step leg, neither of which the
-        // firmware can act on sensibly.
-        for (const k of ["hardTravel", "pullInFeed", "seekFeed", "latchFeed",
-                         "backoffMm", "parkMm"] as const) {
+        // Feeds are divisors; a zero produces an infinite step interval.
+        for (const k of ["seekFeed", "latchFeed"] as const) {
             if (h[k] <= 0) issues.push(error(`${p}.${k}: must be > 0`));
         }
         if (h.rampSteps < 0) issues.push(error(`${p}.rampSteps: must be >= 0`));
@@ -357,39 +340,10 @@ const homingCoherent: Rule = ({ machine }) =>
         if (h.latchFeed >= h.seekFeed) {
             issues.push(error(`${p}.latchFeed: must be < seekFeed (${h.seekFeed})`));
         }
-        // A pull-in above the cruise makes the "ramp" a decel, so the axis hits
-        // the switch at the FASTEST point of the leg.
-        if (h.pullInFeed > h.seekFeed) {
-            issues.push(error(`${p}.pullInFeed: must be <= seekFeed (${h.seekFeed})`));
-        }
         // The seek runs at seekFeed for nearly its whole length, so the axis
         // ceiling applies to it exactly as it does to a job move.
         if (ax.maxFeed > 0 && h.seekFeed > ax.maxFeed) {
             issues.push(error(`${p}.seekFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
-        }
-        // Leg 4 retracts parkMm from the switch, so a park at or beyond the far
-        // end is not a position on this axis at all.
-        if (h.parkMm >= h.hardTravel) {
-            issues.push(error(`${p}.parkMm: must be < hardTravel (${h.hardTravel})`));
-        }
-        // Leg 3 re-approaches from the back-off point, so a back-off longer than
-        // the park means the axis is left INSIDE the region leg 3 crossed —
-        // legal, but it means leg 4 travelled less than leg 2 and the axis is
-        // closer to the switch than it started. Usually a transposed pair.
-        if (h.backoffMm > h.parkMm) {
-            issues.push(warn(
-                `${p}.backoffMm (${h.backoffMm}) > parkMm (${h.parkMm}) — ` +
-                `the axis parks closer to the switch than it backed off`,
-            ));
-        }
-        // Not an error: homing legitimately moves outside the soft envelope,
-        // since no datum exists yet to measure that envelope from. But a
-        // hardTravel under maxTravel means one of the two is simply wrong.
-        if (ax.maxTravel > 0 && h.hardTravel < ax.maxTravel) {
-            issues.push(warn(
-                `${p}.hardTravel (${h.hardTravel}) < ${path}.maxTravel ` +
-                `(${ax.maxTravel}) — the soft limit exceeds the physical frame`,
-            ));
         }
         return issues;
     });

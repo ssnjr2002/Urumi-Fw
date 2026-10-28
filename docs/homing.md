@@ -900,6 +900,12 @@ excluded, the enables) happens before anything moves. `ok` means started.
 
 ## 3. Host
 
+> **Removed.** The host homing path is gone, and with it the host's own homing
+> fields (`hardTravel`, `atOrigin`, `pullInFeed`, `backoffMm`, `parkMm`,
+> `datumDeg`), the axis `invert`, and their checks. A homing block now holds
+> `seekFeed`/`latchFeed` or `sweepFeed`/`budgetRevs`/`toleranceDeg`,
+> `rampSteps`, and the Pico's fields of §3.2a. §3 below is kept as history.
+
 ### 3.1 Schema
 
 **Implemented** in `web/src/machine/schema.ts`, loaded by `json/load.ts`. The

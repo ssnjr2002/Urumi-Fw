@@ -44,19 +44,17 @@ describe("config: BusNode", () => {
 });
 
 describe("config: AxisConfig", () => {
-    it("defaults maxFeed=0, maxAccel=0, invert=false, rotary=false", () => {
+    it("defaults maxFeed=0, maxAccel=0, rotary=false", () => {
         const a = axisConfig(busNode(1), 160.0);
         expect(a.stepsPerUnit).toBe(160.0);
         expect(a.maxFeed).toBe(0);
         expect(a.maxAccel).toBe(0);
-        expect(a.invert).toBe(false);
         expect(a.rotary).toBe(false);
     });
 
     it("accepts overrides", () => {
-        const a = axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxFeed: 100, maxAccel: 2000 });
+        const a = axisConfig(busNode(4), 51.667, { rotary: true, maxFeed: 100, maxAccel: 2000 });
         expect(a.rotary).toBe(true);
-        expect(a.invert).toBe(true);
         expect(a.maxFeed).toBe(100);
         expect(a.maxAccel).toBe(2000);
     });
@@ -259,37 +257,33 @@ describe("config: uniformMachine", () => {
 describe("config: defaultConfig", () => {
     const cfg = defaultConfig();
 
-    it("X: 160 steps/mm, node 1, invert, maxFeed 80, maxAccel 1000", () => {
+    it("X: 160 steps/mm, node 1, maxFeed 80, maxAccel 1000", () => {
         expect(cfg.machine.x.stepsPerUnit).toBe(160);
         expect(cfg.machine.x.node.id).toBe(1);
-        expect(cfg.machine.x.invert).toBe(true);
         expect(cfg.machine.x.maxFeed).toBe(80);
         expect(cfg.machine.x.maxAccel).toBe(1000);
     });
 
-    it("Y: 160 steps/mm, node 2, no invert, maxFeed 80, maxAccel 1000", () => {
+    it("Y: 160 steps/mm, node 2, maxFeed 80, maxAccel 1000", () => {
         expect(cfg.machine.y.stepsPerUnit).toBe(160);
         expect(cfg.machine.y.node.id).toBe(2);
-        expect(cfg.machine.y.invert).toBe(false);
         expect(cfg.machine.y.maxFeed).toBe(80);
         expect(cfg.machine.y.maxAccel).toBe(1000);
     });
 
-    it("Z: 1200 steps/mm, node 3, invert, maxFeed 10", () => {
+    it("Z: 1200 steps/mm, node 3, maxFeed 10", () => {
         const z = cfg.machine.heads[0]!.z;
         expect(z.stepsPerUnit).toBe(1200);
         expect(z.node.id).toBe(3);
-        expect(z.invert).toBe(true);
         expect(z.maxFeed).toBe(10);
         expect(z.rotary).toBe(false);
     });
 
-    it("A: 51.667 steps/deg, node 4, rotary, invert, maxFeed 100, maxAccel 2000", () => {
+    it("A: 51.667 steps/deg, node 4, rotary, maxFeed 100, maxAccel 2000", () => {
         const a = cfg.machine.heads[0]!.a;
         expect(a.stepsPerUnit).toBeCloseTo(51.667, 3);
         expect(a.node.id).toBe(4);
         expect(a.rotary).toBe(true);
-        expect(a.invert).toBe(true);
         expect(a.maxFeed).toBe(100);
         expect(a.maxAccel).toBe(2000);
     });

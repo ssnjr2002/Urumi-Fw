@@ -1,15 +1,11 @@
 // The machine's config for the Pico, flashed by `pio run -e pico -t uploadfs`
 // (scripts/pio/config_image.py writes data/config.bin from this file).
 //
-// Fields marked "web only" are read by the web host alone and go when its
-// homing path is removed; the Pico reads the ones beside them
-// (docs/homing.md §3.2a, docs/plans/controller-homing.md).
-//
 // maxTravel on x and y: measured as (seek span steps / stepsPerUnit) -
 // pullOffDist, seeking from the end opposite the switch, rounded down.
 //
 // Unmeasured, check when homing works:
-//   maxTravel on z: estimate (old hardTravel − pullOffDist).
+//   maxTravel on z: estimate.
 //   invertDir on y and z: derived from the old frames; jog + to confirm
 //     (X right, Y away, Z up).
 //   invertDir on a: unchecked; jog A+, expect counter-clockwise from above.
@@ -32,16 +28,10 @@
       "maxAccel": 100,
       "maxTravel": 1175,         // (189000 / 160) - 5 = 1176.25, rounded down
       "softLimits": true,
-      "invert": false,           // web only
       "invertDir": false,
       "rotary": false,
       "homing": {
         "kind": "linear",
-        "hardTravel": 1200,      // web only
-        "atOrigin": false,       // web only
-        "pullInFeed": 2.5,       // web only
-        "backoffMm": 2,          // web only
-        "parkMm": 5,             // web only
         "seekPositive": true,    // switch on the right
         "seekScaler": 1.2,
         "startFeed": 2.5,
@@ -59,16 +49,10 @@
       "maxAccel": 100,
       "maxTravel": 735,          // (118929 / 160) - 5 = 738.31, rounded down
       "softLimits": true,
-      "invert": true,            // web only
       "invertDir": true,         // confirmed by jogging Y+
       "rotary": false,
       "homing": {
         "kind": "linear",
-        "hardTravel": 500,       // web only
-        "atOrigin": false,       // web only
-        "pullInFeed": 2.5,       // web only
-        "backoffMm": 2,          // web only
-        "parkMm": 5,             // web only
         "seekPositive": false,   // switch at the front (- end)
         "seekScaler": 1.2,
         "startFeed": 2.5,
@@ -93,16 +77,10 @@
         "maxAccel": 500,
         "maxTravel": 48,         // abs(-66530 / 1200) - 4 = 51.44, less 2 for the taped switch
         "softLimits": true,
-        "invert": false,         // web only
         "invertDir": true,       // derived, unconfirmed
         "rotary": false,
         "homing": {
           "kind": "linear",
-          "hardTravel": 40,      // web only
-          "atOrigin": true,      // web only
-          "pullInFeed": 0.3333,  // web only
-          "backoffMm": 4,        // web only
-          "parkMm": 4,           // web only
           "seekPositive": true,  // switch at the top
           "seekScaler": 1.2,
           "startFeed": 0.3333,   // 2500 us/step at 1200 steps/mm
@@ -121,13 +99,10 @@
         "maxAccel": 500,
         "maxTravel": 0,
         "softLimits": false,
-        "invert": false,         // web only
         "invertDir": false,      // unchecked
         "rotary": true,
         "homing": {
           "kind": "rotary",
-          "pullInFeed": 18.12,   // web only
-          "datumDeg": 0,         // web only
           "budgetRevs": 4,
           "startFeed": 18.12,
           "sweepFeed": 54.37,
@@ -148,16 +123,10 @@
         "maxAccel": 500,
         "maxTravel": 36,         // estimate
         "softLimits": false,
-        "invert": false,         // web only
         "invertDir": true,       // derived, unconfirmed
         "rotary": false,
         "homing": {
           "kind": "linear",
-          "hardTravel": 40,      // web only
-          "atOrigin": true,      // web only
-          "pullInFeed": 2.5,     // web only
-          "backoffMm": 4,        // web only
-          "parkMm": 4,           // web only
           "seekPositive": true,  // switch at the top
           "seekScaler": 1.2,
           "startFeed": 2.5,
@@ -176,13 +145,10 @@
         "maxAccel": 500,
         "maxTravel": 0,
         "softLimits": false,
-        "invert": false,         // web only
         "invertDir": false,      // unchecked
         "rotary": true,
         "homing": {
           "kind": "rotary",
-          "pullInFeed": 174.76,  // web only
-          "datumDeg": 0,         // web only
           "budgetRevs": 4,
           "startFeed": 174.76,
           "sweepFeed": 291.27,

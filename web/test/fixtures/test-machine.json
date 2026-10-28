@@ -9,15 +9,12 @@
       "maxFeed": 80,
       "maxAccel": 1000,
       "maxTravel": 480,
-      "invert": true,
       "invertDir": true,
       "softLimits": true,
       "jogFeed": 40,
       "jogFeedUnhomed": 10,
       "homing": {
-        "hardTravel": 500, "atOrigin": false,
-        "pullInFeed": 2.5, "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,
-        "backoffMm": 2, "parkMm": 5,
+        "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,
         "seekPositive": true, "seekScaler": 1.2, "startFeed": 2.5,
         "backoffDist": 2, "pullOffDist": 5
       }
@@ -31,9 +28,7 @@
       "invertDir": false,
       "softLimits": true,
       "homing": {
-        "hardTravel": 500, "atOrigin": true,
-        "pullInFeed": 2.5, "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,
-        "backoffMm": 2, "parkMm": 5,
+        "seekFeed": 12.5, "latchFeed": 0.78, "rampSteps": 400,
         "cycle": 2, "seekPositive": false, "seekScaler": 1.2, "startFeed": 2.5,
         "backoffDist": 2, "pullOffDist": 5, "parkPos": 0
       }
@@ -49,13 +44,10 @@
         "stepsPerUnit": 1200,
         "maxFeed": 10,
         "maxTravel": 40,
-        "invert": true,
         "invertDir": true,
         "softLimits": true,
         "homing": {
-          "hardTravel": 45, "atOrigin": true,
-          "pullInFeed": 1, "seekFeed": 5, "latchFeed": 0.5, "rampSteps": 200,
-          "backoffMm": 1, "parkMm": 2,
+          "seekFeed": 5, "latchFeed": 0.5, "rampSteps": 200,
           "seekPositive": true, "seekScaler": 1.2, "startFeed": 1,
           "backoffDist": 1, "pullOffDist": 2, "parkPos": 0
         }
@@ -65,14 +57,13 @@
         "stepsPerUnit": 51.667,
         "maxFeed": 100,
         "maxAccel": 2000,
-        "invert": true,
         "invertDir": true,
         "softLimits": false,
         "rotary": true,
         "homing": {
           "kind": "rotary",
-          "budgetRevs": 4, "pullInFeed": 10, "sweepFeed": 60, "rampSteps": 400,
-          "toleranceDeg": 2, "datumDeg": 90,
+          "budgetRevs": 4, "sweepFeed": 60, "rampSteps": 400,
+          "toleranceDeg": 2,
           "cycle": 3, "startFeed": 10, "indexPos": 90
         }
       }

@@ -15,7 +15,7 @@
  *             address; type names the node's firmware identity; present=false
  *             marks a node declared but not fitted.
  *   machine — AxisConfig: a BusNode WITH step-math (steps/mm or steps/deg,
- *             maxFeed/maxAccel ceilings, invert, rotary). MachineConfig: the
+ *             maxFeed/maxAccel ceilings, rotary). MachineConfig: the
  *             per-machine definition — X/Y shared gantry, one or more ToolHeads,
  *             bus peripherals, operation targets (path/rapid/z/slew), and fCpu.
  *   head    — ToolHead: a co-mounted Z + A pair, the tools its fixture accepts,
@@ -97,66 +97,21 @@ export interface OpTarget {
 
 /**
  * Homing recipe for an axis with a limit switch at one end of a bounded travel.
- *
- * Every number the four-leg sequence needs and nothing it can derive. Feeds are
- * in the axis's own units per second (mm/s here) rather than step intervals,
- * because that is what an operator can reason about and check against maxFeed;
- * `interval_us = 1e6 / (feed × stepsPerUnit)` converts at the wire, in
- * homing/derive.ts.
+ * Feeds are in the axis's own units per second (mm/s here).
  */
 export interface LinearHoming {
     readonly kind: "linear";
 
-    /**
-     * Usable travel between hard stops, mm. The runaway budget for a seek comes
-     * from this — an axis that has travelled more than its whole length without
-     * finding the switch is not going to.
-     *
-     * NOT the same as `maxTravel`, which is a soft-limit envelope the operator
-     * may set well inside the frame. Homing has to be able to leave that
-     * envelope, since before a datum exists there is nothing to measure it from.
-     */
-    readonly hardTravel: number;
-
-    /**
-     * Which end the switch is at: true = the 0 end, false = the far end.
-     *
-     * This is the ONLY thing that decides where the datum lands, and getting it
-     * backwards puts the origin a full `hardTravel` away — every subsequent move
-     * then drives at a hard stop. It is separate from `invert` (which is wiring)
-     * because the two are independent: either end can be reached by either
-     * direction sense.
-     */
-    readonly atOrigin: boolean;
-
-    /** mm/s the seek STARTS at, before the ramp. */
-    readonly pullInFeed: number;
     /** mm/s the seek ramps up to and cruises at. */
     readonly seekFeed: number;
     /** mm/s for the slow re-approach and the two retracts. Sets repeatability. */
     readonly latchFeed: number;
-    /** Steps taken ramping pullInFeed → seekFeed. */
+    /** Steps taken ramping startFeed → seekFeed. */
     readonly rampSteps: number;
 
     /**
-     * Leg 2's retract, mm. Must EXCEED the switch's release hysteresis — a
-     * back-off shorter than that never leaves the switch, and since a retract
-     * is judged by whether the limit cleared, it reports a homing failure on a
-     * perfectly healthy machine.
-     */
-    readonly backoffMm: number;
-
-    /**
-     * Leg 4's retract, mm — where the axis is left standing when the home ends.
-     * Non-zero on purpose: parking ON the switch would leave the machine in
-     * ALARM/LIMIT_LATCHED with the node refusing stream steps, so the first
-     * move of the next job would silently drop this axis.
-     */
-    readonly parkMm: number;
-
-    /**
-     * The Pico's homing fields (docs/plans/controller-homing.md), carried
-     * through to the config blob. Nothing on the host reads them.
+     * The Pico's other homing fields (docs/plans/controller-homing.md), carried
+     * through to the config blob unchecked; the Pico's decoder checks them.
      */
     readonly cycle?: number;
     readonly seekPositive?: boolean;
@@ -177,13 +132,10 @@ export interface LinearHoming {
  * reports an `index` that is not where the axis stopped, and the sequence is two
  * legs whose answers are averaged.
  *
- * No `hardTravel`, no `atOrigin`, no `backoffMm`, no `parkMm`. A rotary axis has
- * no ends, so there is no travel to bound, no switch end to name, no hysteresis
- * to clear, and nowhere unsafe to park. Reusing the linear block would have
- * meant six fields that mean nothing carrying values nobody can check.
+ * A rotary axis has no ends, so there is no travel to bound, no switch end to
+ * name, no hysteresis to clear, and nowhere unsafe to park.
  *
- * Feeds are deg/s, converted at the wire by `interval_us = 1e6 / (feed x
- * stepsPerUnit)` exactly as for a linear axis.
+ * Feeds are deg/s.
  */
 export interface RotaryHoming {
     readonly kind: "rotary";
@@ -203,11 +155,9 @@ export interface RotaryHoming {
      */
     readonly budgetRevs: number;
 
-    /** deg/s the sweep STARTS at, before the ramp. */
-    readonly pullInFeed: number;
     /** deg/s the sweep ramps up to and cruises at. */
     readonly sweepFeed: number;
-    /** Steps taken ramping pullInFeed → sweepFeed. */
+    /** Steps taken ramping startFeed → sweepFeed. */
     readonly rampSteps: number;
 
     /**
@@ -228,18 +178,7 @@ export interface RotaryHoming {
      */
     readonly toleranceDeg: number;
 
-    /**
-     * The machine coordinate to assign to the index point itself, degrees.
-     *
-     * Almost always 0: unlike a linear axis, where the datum is offset from the
-     * switch by parkMm, a rotary axis is measured AT the feature. It exists
-     * because the magnet is glued where it fits, not where the tool's zero is,
-     * so a head whose knife points 90° off the index says so here rather than
-     * everywhere downstream.
-     */
-    readonly datumDeg: number;
-
-    /** The Pico's rotary fields, carried through to the blob; see LinearHoming. */
+    /** The Pico's other rotary fields, carried through to the blob; see LinearHoming. */
     readonly cycle?: number;
     readonly startFeed?: number;
     readonly indexPos?: number;
@@ -249,13 +188,8 @@ export interface RotaryHoming {
 /**
  * Tool-height probe recipe for a Z axis. See docs/tool_probe.md.
  *
- * Deliberately shaped like LinearHoming, and named like it: `pullInFeed`,
- * `seekFeed`, `latchFeed`, `rampSteps`, `backoffMm`, `parkMm` mean exactly what
- * they mean there, on the same four-leg sequence. Where the names differ, the
- * meaning differs -- that is the point of keeping the rest identical.
- *
- * Two fields carry the whole difference from homing, and both trace to one
- * fact: the terminator is on ANOTHER NODE.
+ * The same four-leg sequence as linear homing. Two fields carry the difference
+ * from homing, and both trace to one fact: the terminator is on ANOTHER NODE.
  *
  *   - `node` -- homing needs no such field, because a limit switch is on the
  *     axis's own node and CMD_HOME_LEG is node-framed. This switch is on the
@@ -263,11 +197,8 @@ export interface RotaryHoming {
  *   - `switchXMm/YMm` -- homing's switch is wherever the axis already is, so it
  *     has no coordinate. This one is a fixture somewhere else on the bed.
  *
- * And one field is CONSPICUOUSLY ABSENT: there is no `atOrigin`. Homing's switch
- * DEFINES the datum, so which end it is at decides where the origin lands. A
- * probe measures against an origin that already exists, so there is no datum
- * arithmetic here and no end to name -- the clearest single statement of why a
- * probe is not a home (docs/tool_probe.md §1).
+ * A probe measures against an origin that already exists, so there is no datum
+ * arithmetic here and no end to name (docs/tool_probe.md §1).
  *
  * The one Z field is `tripMm`: the contact height is taken as the mat, less the
  * switch's trip offset (docs/tool_probe_planner_integration.md §1).
@@ -310,9 +241,9 @@ export interface ProbeConfig {
      * How far below the starting height to search before giving up, mm.
      * Exceeding it is PROBE_BUDGET -- "never found the surface".
      *
-     * Unlike homing's `hardTravel`, this is not a physical constant of the
-     * frame. It is a search window below wherever Z happens to be, and it exists
-     * BECAUSE there is no start offset to compute: tool length varies by tool,
+     * Not a physical constant of the frame: a search window below wherever Z
+     * happens to be. It exists BECAUSE there is no start offset to compute:
+     * tool length varies by tool,
      * and a tool that slipped in its holder violates any standoff assumed in
      * advance (§5.7.1). Size it to cover the longest tool plus the deepest
      * plausible slip.
@@ -330,8 +261,8 @@ export interface ProbeConfig {
 
     /**
      * Retract between seek and latch, mm. Must EXCEED the switch's release
-     * hysteresis, for the same reason homing's `backoffMm` must: a retract that
-     * never leaves the switch reports a failure on a healthy machine.
+     * hysteresis: a retract that never leaves the switch reports a failure on
+     * a healthy machine.
      */
     readonly backoffMm: number;
 
@@ -382,7 +313,6 @@ export interface AxisConfig {
     /** Physical acceleration ceiling (mm/s² or deg/s²). 0 = uncapped. */
     readonly maxAccel: number;
     readonly maxTravel: number;
-    readonly invert: boolean;
     /** The Pico's direction and soft-limit fields, carried through to the blob. */
     readonly invertDir?: boolean;
     readonly softLimits?: boolean;

@@ -1,7 +1,7 @@
 /**
  * test/machines.ts — hardcoded machines for tests. NOT the production path.
  *
- * Everything here bakes in calibration (stepsPerUnit, node ids, invert) that a
+ * Everything here bakes in calibration (stepsPerUnit, node ids) that a
  * real machine must state in its config.json. Loading a real machine goes
  * through machine/json/load.ts; if production code imports this file, a
  * miscalibrated machine will run silently and cut wrong.
@@ -88,17 +88,16 @@ export function defaultMachine(): MachineConfig {
         // a rounding error on top of the static hold the motor already carries.
         // Replace it with a measured number: drive N up/down cycles and read
         // CMD_GET_POS for drift, bisecting on accel.
-        axisConfig(busNode(3), 1200.0, { maxFeed: 10.0, maxAccel: 300.0, invert: true }),
+        axisConfig(busNode(3), 1200.0, { maxFeed: 10.0, maxAccel: 300.0 }),
         axisConfig(busNode(4), 51.667, {
             maxFeed: 100.0,
             maxAccel: 2000.0,
-            invert: true,
             rotary: true,
         }),
         { accepts: ALL_TOOLS },
     );
     return machineConfig(
-        axisConfig(busNode(1), 160.0, { maxFeed: 80.0, maxAccel: 1000.0, invert: true }),
+        axisConfig(busNode(1), 160.0, { maxFeed: 80.0, maxAccel: 1000.0 }),
         axisConfig(busNode(2), 160.0, { maxFeed: 80.0, maxAccel: 1000.0 }),
         [head],
     );
@@ -126,12 +125,12 @@ export function twoHeadMachine(offsets: { xOffset: number; yOffset: number }[] =
     { xOffset: 50, yOffset: 0 },
 ]): MachineConfig {
     return machineConfig(
-        axisConfig(busNode(1), 160, { invert: true, maxFeed: 80, maxAccel: 1000 }),
+        axisConfig(busNode(1), 160, { maxFeed: 80, maxAccel: 1000 }),
         axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
         [
             toolHead(
-                axisConfig(busNode(3), 1200, { invert: true, maxFeed: 10, maxAccel: 300 }),
-                axisConfig(busNode(4), 51.667, { rotary: true, invert: true, maxFeed: 100, maxAccel: 2000 }),
+                axisConfig(busNode(3), 1200, { maxFeed: 10, maxAccel: 300 }),
+                axisConfig(busNode(4), 51.667, { rotary: true, maxFeed: 100, maxAccel: 2000 }),
                 { accepts: [ToolType.KNIFE, ToolType.CREASE], ...offsets[0] },
             ),
             toolHead(

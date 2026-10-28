@@ -7,7 +7,7 @@
  * grepping. Now: change it here, once.
  *
  * What belongs here: operation targets, axis field defaults, quality tuning,
- * fCpu. What does NOT: stepsPerUnit, invert, node ids — those are per-machine
+ * fCpu. What does NOT: stepsPerUnit, node ids — those are per-machine
  * calibration and must come from config.json (see load.ts's header on why
  * there is no silent fallback for them).
  *
@@ -45,7 +45,6 @@ export const DEFAULTS = {
         maxFeed: 0,
         maxAccel: 0,
         maxTravel: 0,
-        invert: false,
         rotary: false,
     },
 

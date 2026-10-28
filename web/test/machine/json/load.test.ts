@@ -41,44 +41,40 @@ describe("load: valid config", () => {
         expect(r.config.machine.fCpu).toBe(150_000_000);
     });
 
-    it("X: 160 steps/mm, node 1, invert, maxRate 80, accel 1000", () => {
+    it("X: 160 steps/mm, node 1, maxRate 80, accel 1000", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
         const x = r.config.machine.x;
         expect(x.stepsPerUnit).toBe(160);
         expect(x.node.id).toBe(1);
-        expect(x.invert).toBe(true);
         expect(x.maxFeed).toBe(80);
         expect(x.maxAccel).toBe(1000);
     });
 
-    it("Y: 160 steps/mm, node 2, no invert", () => {
+    it("Y: 160 steps/mm, node 2", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
         const y = r.config.machine.y;
         expect(y.stepsPerUnit).toBe(160);
         expect(y.node.id).toBe(2);
-        expect(y.invert).toBe(false);
     });
 
-    it("Z: 1200 steps/mm, node 3, invert, maxRate 10", () => {
+    it("Z: 1200 steps/mm, node 3, maxRate 10", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
         const z = r.config.machine.heads[0]!.z;
         expect(z.stepsPerUnit).toBe(1200);
         expect(z.node.id).toBe(3);
-        expect(z.invert).toBe(true);
         expect(z.maxFeed).toBe(10);
     });
 
-    it("A: 51.667 steps/deg, node 4, rotary, invert, maxRate 100, accel 2000", () => {
+    it("A: 51.667 steps/deg, node 4, rotary, maxRate 100, accel 2000", () => {
         const r = parseConfig(TEST_MACHINE);
         if (!r.ok) throw new Error("expected ok");
         const a = r.config.machine.heads[0]!.a;
         expect(a.stepsPerUnit).toBeCloseTo(51.667, 3);
         expect(a.node.id).toBe(4);
         expect(a.rotary).toBe(true);
-        expect(a.invert).toBe(true);
         expect(a.maxFeed).toBe(100);
         expect(a.maxAccel).toBe(2000);
     });
@@ -96,7 +92,6 @@ describe("load: valid config", () => {
         const pm = r.config.machine;
         expect(pm.fCpu).toBe(dm.fCpu);
         expect(pm.x.stepsPerUnit).toBe(dm.x.stepsPerUnit);
-        expect(pm.x.invert).toBe(dm.x.invert);
         expect(pm.x.maxFeed).toBe(dm.x.maxFeed);
         expect(pm.x.maxAccel).toBe(dm.x.maxAccel);
         expect(pm.y.stepsPerUnit).toBe(dm.y.stepsPerUnit);
@@ -228,13 +223,6 @@ describe("load: optional defaults", () => {
         expect(r.config.machine.x.maxAccel).toBe(0);
     });
 
-    it("invert defaults to false when absent", () => {
-        const json = JSON.parse(TEST_MACHINE);
-        delete json.machine.x.invert;
-        const r = parseConfig(JSON.stringify(json));
-        if (!r.ok) throw new Error("expected ok");
-        expect(r.config.machine.x.invert).toBe(false);
-    });
 
     it("laser is undefined when absent", () => {
         const r = parseConfig(TEST_MACHINE);

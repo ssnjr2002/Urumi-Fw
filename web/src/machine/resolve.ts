@@ -39,7 +39,7 @@ export interface ResolvedAxes {
 /**
  * The 4 axes with Z/A taken from `head`. The shared primitive: anything that
  * converts mm to steps on a Z or an A must go through here, naming the head it
- * means, because stepsPerUnit/invert/maxFeed/maxAccel are all per-head and a
+ * means, because stepsPerUnit/maxFeed/maxAccel are all per-head and a
  * trajectory is shaped by all four.
  *
  * Throws on a head the machine does not have rather than clamping — a caller
