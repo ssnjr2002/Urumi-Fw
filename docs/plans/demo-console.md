@@ -291,7 +291,8 @@ A dependent chain, Single Session: every branch after C1 edits
 * Depends on: C4 for the pulled config; F1, so jogs in TOOL_WAIT reach the
   jog sink; H1, for
   the hold, resume and continue; S1, so a layer's name is its tool.
-* Status: ready to merge.
+* Status: done, merged at `b93fa03`. Last branch of the plan; unblocks
+  none.
 * Outcome:
   * Benched. A finished layer ends by hand (Cancel), shown by the job line:
     records executed / total and left, then done once the ring is dry with
