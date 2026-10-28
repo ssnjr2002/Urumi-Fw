@@ -1,6 +1,6 @@
 import * as host from 'urumi-host';
 import {
-    Link, JogAck, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
+    Link, JogAck, MachineState, MachineContext, Selection, NO_LAYER, stateName, faultNames, jobName,
     loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, modelToFile, crc32,
     JobReason, JobSource, fatalReasonName, loadSvgPaths, toolLayer, prepareBezierJob,
 } from 'urumi-host';
@@ -573,8 +573,8 @@ function showJob() {
     if (!session) return;
     const s = session.stats();
     const st = link?.status;
-    const inJob = st?.state === MachineState.JOB;
-    const done = inJob && st.reason === JobReason.BUFFERING && st.bufCount === 0
+    const inJob = st?.context === MachineContext.JOB;
+    const done = inJob && st.state === MachineState.JOB && st.reason === JobReason.BUFFERING && st.bufCount === 0
         && s.emitted > jobTotal && s.acked === s.emitted;
     const executed = done ? jobTotal : inJob ? Math.min(st.record, jobTotal) : 0;
     jobInfoOut.textContent = `records ${executed}/${jobTotal}, ${jobTotal - executed} left`
@@ -675,7 +675,11 @@ for (const b of sessionCtlBtns) {
         // left only from TOOL_WAIT, not while the change moves.
         const held = session.held;
         const before = session.stats();
-        if (!session.resume()) return binOut(`resume: ${held ? `not yet (${held})` : 'not held'}`);
+        if (!session.resume()) {
+            const st = link?.status;
+            const moving = held && st && st.state !== MachineState.JOB ? `, ${stateName(st.state)}` : '';
+            return binOut(`resume: ${held ? `not yet (${held}${moving})` : 'not held'}`);
+        }
         const line = held === 'tool' ? 'resume: header resent' : 'resume: restarting from the resume point';
         resumeOutcome(binOut(line), line, held, before);
     });
