@@ -33,7 +33,20 @@ A dependent chain, Single Session: E2 needs E1's API.
   `:324`; the binary path `end()` uses), tests in `web/test/wire/link/`
   (`job-session.test.ts:108,189,195` move to `resume()`; new `end()` tests).
 * Depends on: H1 (demo-console.md, done).
-* Status: planned.
+* Status: ready to merge.
+* Outcome:
+  * Interfaces E2 uses: `session.end()` (void; ABORT has no reply),
+    `session.resume()` for every hold the operator leaves. `continue()` is
+    gone, so the demo's Continue button (`session[v]()`,
+    `web/demo/index.js:632`) throws until E2.
+  * Deviations: `link.ts` got a doc line only; `end()` writes ABORT through
+    the session's own writer. Agreed in Read: `resume()` from a `tool` hold
+    returns false until the status shows TOOL_WAIT.
+  * `_cancelling` is `_ending`, set by `cancel()` and `end()`.
+  * Tests: `job-session.test.ts`, 3 new (`end()` running, from a pause, from
+    TOOL_CHANGE). Checks: `pnpm typecheck` clean; `pnpm test` 611 passed,
+    1 skipped.
+  * Not tried on the machine: `end()` mid-move (brake and Z lift) on COM8.
 
 ### E2: demo job buttons
 
