@@ -166,7 +166,29 @@ X1–X2: a dependent chain, Single Session: X2 needs X1's field and sim.
 * Depends on: none.
 * Checks: `pio run -e pico`; `pnpm typecheck`, `pnpm test`. Human scope:
   the 0xA0 frame and `get ctx` on COM8, in and out of a job.
-* Status: planned.
+* Status: ready to merge.
+* Outcome:
+  * Agreed in Read/Write: 0xA0, not 0xA4; 0xA3 retired as `STATUS_RSP_V4`.
+    A cjog in a job: TOOL_WAIT only, from the bench (below).
+  * Interfaces X2 uses: `MachineStatus.context` (`MachineContext`, both
+    planes; `undefined` from a `get` without `ctx`); `get job` answers
+    whenever `ctx=1`. `plannerExecPoint` takes a `ctx` out-parameter.
+  * Sim: the status layer is set whenever the context is JOB (the resume
+    point while paused, else the next record), as `plannerExecPoint`. A cjog
+    in a paused job is BAD_STATE, not BUSY. No `jogto` in the sim.
+  * Benched on COM8: the frame at rest (ctx 0, layer 0xFFFF) and in a job
+    (header → ctx 1 layer 3 record 40; pause → reason 3, same layer; cancel
+    → ctx 0, 0xFFFF), `get ctx job` alike; a cjog in PAUSED `b706`. Not
+    benched: a jog in TOOL_WAIT on the machine.
+  * Findings, out of scope:
+    * `home` runs with ctx 0 throughout; only a manual `leg` opens
+      CTX_HOMING (`ops/homing.cpp:93`).
+    * On the text plane, `reason` is the job's while a jog runs inside it
+      (state JOGGING); X2 reads `reason` only from JOB samples.
+    * `wire_protocol.md`: `liftreason`, `liftcount`, `toolon` still say
+      "only while state=JOB"; not checked against `get.cpp`.
+  * Checks: `pio run -e pico` clean; `pnpm typecheck` clean; `pnpm test`
+    619 passed, 1 skipped.
 
 ### X2: the job session reads the context
 
