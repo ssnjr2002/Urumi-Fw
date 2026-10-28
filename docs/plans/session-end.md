@@ -33,7 +33,7 @@ A dependent chain, Single Session: E2 needs E1's API.
   `:324`; the binary path `end()` uses), tests in `web/test/wire/link/`
   (`job-session.test.ts:108,189,195` move to `resume()`; new `end()` tests).
 * Depends on: H1 (demo-console.md, done).
-* Status: ready to merge.
+* Status: done, merged at `d79f488`. Unblocks E2.
 * Outcome:
   * Interfaces E2 uses: `session.end()` (void; ABORT has no reply),
     `session.resume()` for every hold the operator leaves. `continue()` is
