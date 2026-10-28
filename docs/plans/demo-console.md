@@ -380,7 +380,7 @@ app's own names (`layer\d*`, `group\d*`, `g\d+`, `path\d+`). Done on
    `tools` → `toolProfiles` as the one reshape, so a `modelToFile()` (and the
    download) becomes nearly trivial.
    Done, merged at `ea44e76`; the blob is unchanged. A top-level key is
-   rejected by name. Open: `modelToFile()` and the download (`feature/`).
+   rejected by name. `modelToFile()` and the C4 download: done, merged at `4861f1d`.
 
 The other two warnings (head 1 accepts nothing, so nothing takes `pen`) are
 deliberate until the pen head can move.
