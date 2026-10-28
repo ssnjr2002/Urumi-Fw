@@ -348,7 +348,7 @@ presets, so the rule is a test over `TOOL_PROFILES` keys
 (`web/test/machine/schema.test.ts`): `[a-z][a-z0-9_]*`, so no `.` (the
 chamber separator), no trailing `_<digits>` (a dedup suffix), and never an
 app's own names (`layer\d*`, `group\d*`, `g\d+`, `path\d+`). Done on
-`refactor/tool-names`. Open: matching is case-sensitive, so a layer named
+`3d49760`. Open: matching is case-sensitive, so a layer named
 `Knife` is not the knife.
 
 ### Config refactors
