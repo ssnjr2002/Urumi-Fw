@@ -278,6 +278,11 @@ A dependent chain, Single Session: every branch after C1 edits
   * Pause (`pause`), Resume (`session.resume()`), Continue in TOOL_WAIT
     (`session.continue()`), Cancel (`cancel`), Abort (`link.abort()` and
     `session.truncate()`).
+  * A finished layer stays in JOB, dry, until the operator presses Cancel.
+    The job line shows records executed / total and records left, and says
+    done once the ring is dry with every packet acked.
+  * The status poll runs only outside a job; in one, the panel redraws on
+    the session's own samples (`waitUpdate`).
   * Stop (`stop`) sits beside Connect, outside the job panel.
   * `wzero`, `wzero xy`, `wzero z` buttons in the Jog panel.
   * Nothing is gated on the host: jog, select and the console stay live in a
