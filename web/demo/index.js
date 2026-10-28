@@ -180,9 +180,12 @@ function selectionName(s) {
     return String(s);
 }
 
+const contextName = (c) => Object.keys(MachineContext).find((k) => MachineContext[k] === c) ?? '-';
+
 function statusRows(st) {
     return [
         ['state', stateName(st.state)],
+        ['context', contextName(st.context)],
         ['reason', st.state === MachineState.JOB ? jobName(st.reason) : st.reason],
         ['faults', `${hex(st.faults, 4)} ${faultNames(st.faults)}`],
         ['nodeEnabled', hex(st.nodeEnabled, 3)],
