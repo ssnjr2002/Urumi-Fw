@@ -211,8 +211,8 @@ describe("wire/link/demux: phantom-ACK hazard (D2)", () => {
         // A payload that would emit phantom ACKs/NACKs/STATUSes from inside a
         // scanner: 0xAA (ACK), 0xBB (NACK), 0xA6 (retired status), 0xA9 (ABORT),
         // 0xA8 (SEQRESET), 0xAB (MSEG), 0xAE (JOG), 0xA5 (STATUS_REQ), 0xA7
-        // and 0xA4 (retired status), 0xA3 (STATUS_RSP).
-        const payload = new Uint8Array([0xaa, 0xbb, 0xa6, 0xa9, 0xa8, 0xab, 0xae, 0xa5, 0xa7, 0xa4, 0xa3]);
+        // 0xA4 and 0xA3 (retired status), 0xA0 (STATUS_RSP).
+        const payload = new Uint8Array([0xaa, 0xbb, 0xa6, 0xa9, 0xa8, 0xab, 0xae, 0xa5, 0xa7, 0xa4, 0xa3, 0xa0]);
         const frame = concat(packCfgDataHeader(payload.length, 0x1234), payload);
         d.feed(frame);
 

@@ -133,6 +133,7 @@ export { packCjog, CJOG_SPEED_MAX, type JogDir } from "./wire/format/cjog.js";
 // ── wire format: STATUS_RSP + machine enums ──────────────────────────────────
 export {
     MachineState,
+    MachineContext,
     Fault,
     HomeFail,
     Probing,
@@ -173,6 +174,7 @@ export {
     MAGIC_STATUS_RSP_V1,
     MAGIC_STATUS_RSP_V2,
     MAGIC_STATUS_RSP_V3,
+    MAGIC_STATUS_RSP_V4,
     MAGIC_CFG_SET,
     MAGIC_CFG_GET,
     MAGIC_CFG_RDY,

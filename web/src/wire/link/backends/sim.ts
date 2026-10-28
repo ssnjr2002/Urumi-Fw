@@ -53,6 +53,7 @@ import {
 } from "../../format/constants.js";
 import {
     MachineState,
+    MachineContext,
     Fault,
     JobReason,
     axisMask,
@@ -121,7 +122,7 @@ const BUS_ADDR_MAX = 8;
 const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
-    "state", "enabled", "homed", "faults", "job", "latched",
+    "state", "ctx", "enabled", "homed", "faults", "job", "latched",
     "probed", "pz", "nodehomed", "pos", "jogging",
 ] as const;
 
@@ -138,7 +139,12 @@ export class SimTransport implements Transport {
     state: MachineState = MachineState.IDLE;
     /** The fault mask (Fault bits). */
     faults = 0;
-    /** What the job is doing; meaningful only while JOB. */
+    /**
+     * Only JOB is modelled: opened by the first header, closed by `cancel`,
+     * ABORT and `stop`. A jog inside TOOL_WAIT runs with state JOGGING.
+     */
+    context: MachineContext = MachineContext.IDLE;
+    /** What the job is doing; meaningful only while the context is JOB. */
     job: JobReason = JobReason.BUFFERING;
     /**
      * DERIVED, per slot. Never assign it directly — call `_rederiveHomed()`.
@@ -322,6 +328,7 @@ export class SimTransport implements Transport {
             if (this.state === MachineState.JOB || this.state === MachineState.JOGGING) {
                 this.state = MachineState.IDLE;
             }
+            this.context = MachineContext.IDLE;
             this.aborting = false;
             return Promise.resolve();
         }
@@ -352,9 +359,9 @@ export class SimTransport implements Transport {
                     wpos: [0, 1, 2, 3].map((k) => this.pos[k]! / this.jogSpm[k]!) as
                         [number, number, number, number],
                     bufCount: this.motion.length,
-                    // The executing record is not modelled; the resume point is.
-                    layer: this._resumeAt()?.layer,
-                    record: this._resumeAt()?.record,
+                    layer: this._execPoint()?.layer,
+                    record: this._execPoint()?.record,
+                    context: this.context,
                 }),
             );
             return Promise.resolve();
@@ -444,8 +451,10 @@ export class SimTransport implements Transport {
         if (this.cjogHeld && d.every((v, k) => v === this.cjogDir[k])) return; // a repeat
 
         const jogging = this.state === MachineState.JOGGING;
-        if (this.state !== MachineState.IDLE && !jogging) {
-            const busy = this.state === MachineState.JOB || this.state === MachineState.HOMING ||
+        if (this.state !== MachineState.IDLE && !jogging && !this._toolWait()) {
+            // A job at rest (PAUSED) refuses as bad_state, as on the Pico.
+            const moving = this.state === MachineState.JOB && this.job !== JobReason.PAUSED;
+            const busy = moving || this.state === MachineState.HOMING ||
                 this.state === MachineState.TRAVERSE;
             return this._jogNack(busy ? NACK_BUSY : NACK_BAD_STATE);
         }
@@ -487,7 +496,17 @@ export class SimTransport implements Transport {
 
     private _cjogStop(): void {
         this.cjogHeld = this.cjogMoving = false;
-        if (this.state === MachineState.JOGGING) this.state = MachineState.IDLE;
+        if (this.state === MachineState.JOGGING) this.state = this._restState();
+    }
+
+    /** The one job a jog may run inside: TOOL_WAIT (K_STEP | K_IN_TOOL). */
+    private _toolWait(): boolean {
+        return this.state === MachineState.JOB && this.job === JobReason.TOOL_WAIT;
+    }
+
+    /** Where a jog ends: back in the job it ran inside, or IDLE. */
+    private _restState(): MachineState {
+        return this.context === MachineContext.JOB ? MachineState.JOB : MachineState.IDLE;
     }
 
     private _tickCjog(frameS: number): void {
@@ -514,7 +533,7 @@ export class SimTransport implements Transport {
         // At the end of travel the jog stops but stays held: repeats stay silent.
         if (ended) {
             this.cjogMoving = false;
-            this.state = MachineState.IDLE;
+            this.state = this._restState();
         }
     }
 
@@ -552,7 +571,7 @@ export class SimTransport implements Transport {
         this.jogQueue.shift();
         if (this.jogQueue.length === 0) {
             this.jogFrac = 0;
-            if (this.state === MachineState.JOGGING) this.state = MachineState.IDLE;
+            if (this.state === MachineState.JOGGING) this.state = this._restState();
         }
     }
 
@@ -589,6 +608,7 @@ export class SimTransport implements Transport {
                 this.job = JobReason.BUFFERING;
             } else if (header && !ready && (st === MachineState.IDLE || st === MachineState.JOB)) {
                 this.state = MachineState.JOB;
+                this.context = MachineContext.JOB;
                 this.job = JobReason.TOOL_CHANGE;
                 this.toolHead = data[4]!;
                 this.toolChangeAt = Date.now();
@@ -622,6 +642,7 @@ export class SimTransport implements Transport {
             this.nextRecord = dv.getUint32(7, true);
             if (st === MachineState.IDLE) {
                 this.state = MachineState.JOB;
+                this.context = MachineContext.JOB;
                 this.job = JobReason.BUFFERING;
                 this.timeCredit = 0;
             }
@@ -877,6 +898,7 @@ export class SimTransport implements Transport {
                 return S._jog(args);
             case "stop": // always available; de-energises
                 S.state = MachineState.ALARM;
+                S.context = MachineContext.IDLE;
                 S.faults |= Fault.ESTOP;
                 // An estop de-energises everything, so every node loses its
                 // datum — not just the four currently bound.
@@ -1002,6 +1024,7 @@ export class SimTransport implements Transport {
                     (S.job === JobReason.PAUSED || S.job === JobReason.BUFFERING ||
                      S.job === JobReason.TOOL_WAIT)) {
                     S.state = MachineState.IDLE;
+                    S.context = MachineContext.IDLE;
                     S.motion = [];
                     return "ok";
                 }
@@ -1134,7 +1157,8 @@ export class SimTransport implements Transport {
             case "enabled":   return hex(this.axesEnabled, 2);
             case "homed":     return hex(this.axesHomed, 2);
             case "faults":    return hex(this.faults, 4);
-            case "job":       return this.state === MachineState.JOB ? String(this.job) : "-";
+            case "ctx":       return String(this.context);
+            case "job":       return this.context === MachineContext.JOB ? String(this.job) : "-";
             case "resume_layer":  return this._resumeAt()?.layer.toString() ?? "-";
             case "resume_record": return this._resumeAt()?.record.toString() ?? "-";
             case "latched":   return hex(this.axesLatched, 2);
@@ -1186,13 +1210,24 @@ export class SimTransport implements Transport {
         return true;
     }
 
+    /**
+     * plannerExecPoint: set exactly while the context is JOB. The executing
+     * record is not modelled; the resume point while paused, else the next
+     * record expected.
+     */
+    private _execPoint(): { layer: number; record: number } | null {
+        if (this.context !== MachineContext.JOB) return null;
+        return this._resumeAt() ?? { layer: this.curLayer, record: this.nextRecord };
+    }
+
     private _resumeAt(): { layer: number; record: number } | null {
-        return this.state === MachineState.JOB && this.job === JobReason.PAUSED ? this.resumeAt : null;
+        return this.context === MachineContext.JOB && this.job === JobReason.PAUSED ? this.resumeAt : null;
     }
 
     /** Test hook: drive the sim into a running job so pause/resume can be exercised. */
     _forceRunning(): void {
         this.state = MachineState.JOB;
+        this.context = MachineContext.JOB;
         this.job = JobReason.RUNNING;
     }
 }

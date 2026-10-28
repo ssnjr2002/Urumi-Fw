@@ -6,7 +6,7 @@
  * Pins the behaviours the Sim exists to make testable without hardware:
  *   - control plane: ping/get/enable/disable/setorigin/pause/
  *     cancel/stop/unalarm per the allowed-state matrix
- *   - binary status poll (STATUS_RSP v3: wpos, no job)
+ *   - binary status poll (STATUS_RSP: wpos, no job, the context)
  *   - coalesced ACKs (K=8: one ACK frame per 8 accepted packets, not 1:1)
  *   - backpressure (NACK_FULL when ring full, resent on drain)
  *   - stale-seq duplicate guard (a retransmit is ACKed but NOT executed)
@@ -22,6 +22,7 @@ import { Link } from "../../../../src/wire/link/link.js";
 import { SimTransport } from "../../../../src/wire/link/backends/sim.js";
 import {
     MachineState,
+    MachineContext,
     Fault,
     JobReason,
     NO_LAYER,
@@ -278,7 +279,7 @@ describe("wire/link/backends/sim: control plane", () => {
     });
 });
 
-describe("wire/link/backends/sim: binary status poll (STATUS_RSP v3)", () => {
+describe("wire/link/backends/sim: binary status poll (STATUS_RSP)", () => {
     it("getStatus returns parsed MachineStatus with wpos and no job", async () => {
         await withLink(async (link) => {
             const st = await link.getStatus();
@@ -286,6 +287,7 @@ describe("wire/link/backends/sim: binary status poll (STATUS_RSP v3)", () => {
             expect(st.bufCount).toBe(0);
             expect(st.wpos).toEqual([0, 0, 0, 0]);
             expect(st.layer).toBe(NO_LAYER);
+            expect(st.context).toBe(MachineContext.IDLE);
         });
     });
 });
@@ -574,6 +576,49 @@ describe("wire/link/backends/sim: continuous jog", () => {
             }, opts);
         });
     }
+
+    it("jogs inside TOOL_WAIT, keeping the context and layer", async () => {
+        await withLink(async (link, sim) => {
+            await link.command("setorigin");
+            await link.resetSeq();
+            const hdr = packLayerHdr({ tool: 1, head: 0, layer: 2, record: 10 });
+            await sim.write(stampSeq(hdr, 0)); // NACK_TOOL_CHANGE
+            await until(link, (st) => st.reason === JobReason.TOOL_WAIT);
+            const layer = (await link.getStatus()).layer;
+            expect(layer).not.toBe(NO_LAYER);
+            const r = replies(sim);
+            await hold(sim, 1, 0, 90);
+            let st = await link.getStatus();
+            expect([st.state, st.context, st.layer]).toEqual([MachineState.JOGGING, MachineContext.JOB, layer]);
+            expect(await link.command("get ctx job")).toBe("ctx=1 job=6");
+            await tick(CJOG_DEADMAN_MS + 60);
+            st = await link.getStatus();
+            expect([st.state, st.context, st.reason]).toEqual([MachineState.JOB, MachineContext.JOB, JobReason.TOOL_WAIT]);
+            expect(r).toEqual(["b6"]);
+        }, { ...opts, tools: {}, toolChangeMs: 20 });
+    });
+
+    it("refuses a jog in a paused job", async () => {
+        await withLink(async (link, sim) => {
+            await link.command("setorigin");
+            sim._forceRunning();
+            expect(await link.command("pause")).toBe("ok");
+            const r = replies(sim);
+            await sim.write(packCjog(1, 0));
+            expect(r).toEqual(["b706"]);
+            expect(sim.state).toBe(MachineState.JOB);
+        }, opts);
+    });
+
+    it("refuses a jog in a running job as busy", async () => {
+        await withLink(async (link, sim) => {
+            await link.command("setorigin");
+            sim._forceRunning();
+            const r = replies(sim);
+            await sim.write(packCjog(1, 0));
+            expect(r).toEqual(["b70b"]);
+        }, opts);
+    });
 
     it("refuses an unhomed axis without jogUnhomed", async () => {
         await withLink(async (_link, sim) => {

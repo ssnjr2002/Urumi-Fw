@@ -1,5 +1,5 @@
 /**
- * Tests for wire/format/status — STATUS_RSP (0xA3, 37B), the operational
+ * Tests for wire/format/status — STATUS_RSP (0xA0, 38B), the operational
  * enums, MachineStatus, the get reply / parseStatusRsp / packStatusRsp.
  *
  * The reference byte sequences below come from outside the TS packer: one
@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
     MachineState,
+    MachineContext,
     Fault,
     JobReason,
     AXIS_BITS,
@@ -29,14 +30,14 @@ import { MAGIC_STATUS_RSP, STATUS_RSP_SIZE } from "../../../src/wire/format/cons
 //   faults=0, nodeEnabled=0x01e, nodeHomed=0x006, selection=1, tools=[2,3],
 //   wpos=[100.5,-200,12.25,NaN], bufCount=5, layer=2, record=1234567
 const REF_JOB = new Uint8Array([
-    163, 9, 1, 0, 0, 30, 0, 6, 0, 1, 2, 3, 0, 0, 201, 66, 0, 0, 72,
-    195, 0, 0, 68, 65, 0, 0, 192, 127, 5, 0, 2, 0, 135, 214, 18, 0, 34,
+    160, 9, 1, 0, 0, 30, 0, 6, 0, 1, 2, 3, 0, 0, 201, 66, 0, 0, 72,
+    195, 0, 0, 68, 65, 0, 0, 192, 127, 5, 0, 2, 0, 135, 214, 18, 0, 1, 94,
 ]);
 // Emitted by the Pico at rest with no job: IDLE, head 0 selected, no tools,
 //   wpos=[-70,-30,0,0], layer=0xFFFF, record=0
 const REF_IDLE = new Uint8Array([
-    163, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 194, 0, 0, 240,
-    193, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 64,
+    160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 194, 0, 0, 240,
+    193, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 217,
 ]);
 
 describe("wire/format/status: enums", () => {
@@ -86,10 +87,10 @@ describe("wire/format/status: axisMask", () => {
 });
 
 describe("wire/format/status: packStatusRsp", () => {
-    it("produces a 36-byte frame", () => {
+    it("produces a 38-byte frame", () => {
         const pkt = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         expect(pkt.length).toBe(STATUS_RSP_SIZE);
-        expect(STATUS_RSP_SIZE).toBe(37);
+        expect(STATUS_RSP_SIZE).toBe(38);
     });
 
     it("packs the JOB vector byte for byte", () => {
@@ -105,6 +106,7 @@ describe("wire/format/status: packStatusRsp", () => {
             bufCount: 5,
             layer: 2,
             record: 1234567,
+            context: MachineContext.JOB,
         });
         expect([...pkt]).toEqual([...REF_JOB]);
     });
@@ -145,6 +147,7 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(st.bufCount).toBe(5);
         expect(st.layer).toBe(2);
         expect(st.record).toBe(1234567);
+        expect(st.context).toBe(MachineContext.JOB);
     });
 
     it("leaves the text-plane slot masks undefined", () => {
@@ -162,6 +165,7 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(st.wpos).toEqual([-70, -30, 0, 0]);
         expect(st.layer).toBe(NO_LAYER);
         expect(st.record).toBe(0);
+        expect(st.context).toBe(MachineContext.IDLE);
     });
 
     it("rejects a v1 (0xA6) frame with the firmware-reflash message", () => {
@@ -183,6 +187,12 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(() => parseStatusRsp(v3)).toThrow(/retired 36-byte STATUS_RSP/);
     });
 
+    it("rejects a v4 (0xA3) frame with the firmware-reflash message", () => {
+        const v4 = new Uint8Array(STATUS_RSP_SIZE);
+        v4[0] = 0xa3;
+        expect(() => parseStatusRsp(v4)).toThrow(/retired 37-byte STATUS_RSP/);
+    });
+
     it("rejects an unknown magic", () => {
         const bad = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         bad[0] = 0xcf;
@@ -192,7 +202,7 @@ describe("wire/format/status: parseStatusRsp", () => {
     it("rejects a wrong-size buffer", () => {
         const short = new Uint8Array(9);
         short[0] = MAGIC_STATUS_RSP;
-        expect(() => parseStatusRsp(short)).toThrow(/Expected 37 bytes, got 9/);
+        expect(() => parseStatusRsp(short)).toThrow(/Expected 38 bytes, got 9/);
     });
 
     it("rejects a CRC mismatch", () => {
@@ -234,6 +244,14 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
         expect(st.bufCount).toBeUndefined();
         expect(st.layer).toBeUndefined();
         expect(st.record).toBeUndefined();
+        expect(st.context).toBeUndefined();
+    });
+
+    it("reads ctx, and job in a jog inside a job", () => {
+        const st = parse("state=7 ctx=1 homed=0x00 job=6");
+        expect(st.state).toBe(MachineState.JOGGING);
+        expect(st.context).toBe(MachineContext.JOB);
+        expect(st.reason).toBe(JobReason.TOOL_WAIT);
     });
 
     it("reads the node, selection and work position keys", () => {

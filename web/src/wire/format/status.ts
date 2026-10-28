@@ -18,6 +18,7 @@ import {
     MAGIC_STATUS_RSP_V1,
     MAGIC_STATUS_RSP_V2,
     MAGIC_STATUS_RSP_V3,
+    MAGIC_STATUS_RSP_V4,
     STATUS_HEADS,
     STATUS_RSP_SIZE,
 } from "./constants.js";
@@ -86,6 +87,23 @@ export const Fault = {
     ESTOP: 0x8000,
 } as const;
 export type Fault = (typeof Fault)[keyof typeof Fault];
+
+/**
+ * What is held between commands (MachineContext in ipc/shared_state.h). The
+ * state says what moves now; a jog inside a job reports JOGGING with the
+ * context still JOB.
+ */
+export const MachineContext = {
+    IDLE: 0,
+    /** First header → `cancel`, an abort, estop or fault. JobReason applies. */
+    JOB: 1,
+    /** `probe_map` → `probe_end`. */
+    PROBE: 2,
+    /** A seek, retract or sweep leg → `setorigin` / `home_end`. */
+    HOMING: 3,
+} as const;
+export type MachineContext = (typeof MachineContext)[keyof typeof MachineContext];
+const MACHINE_CONTEXT_VALUES = Object.values(MachineContext) as readonly number[];
 
 /** What a job is doing, while JOB (JobReason in ipc/shared_state.h). */
 export const JobReason = {
@@ -307,6 +325,8 @@ export class MachineStatus {
         readonly selection: number | undefined = undefined,
         /** The tool id each head has mounted, head order, 0 for none. */
         readonly tools: readonly number[] | undefined = undefined,
+        /** What is held between commands; layer is set exactly while JOB. */
+        readonly context: MachineContext | undefined = undefined,
     ) {}
 
     /** True if any of `mask`'s Fault bits is set. */
@@ -431,6 +451,9 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         fields.nodeenabled !== undefined ? toInt(fields.nodeenabled) : undefined,
         selectionFromGet(reply.get("head")),
         toolsFromGet(fields.tools),
+        fields.ctx !== undefined
+            ? enumFromStr(MACHINE_CONTEXT_VALUES, fields.ctx, MachineContext.IDLE)
+            : undefined,
     );
 }
 
@@ -475,7 +498,7 @@ function toolsFromGet(tools: string | undefined): number[] | undefined {
 // [36]     CRC8 over [0..35]
 
 /**
- * Parse a 37-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
+ * Parse a 38-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
  *
  * A retired frame's magic is rejected with a message naming the firmware that
  * emitted it: a host consuming fixed-length frames blind must surface the
@@ -501,6 +524,12 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         throw new Error(
             "Pico is sending the retired 36-byte STATUS_RSP (0xA4) — firmware " +
             "predates per-head tools. Reflash it.",
+        );
+    }
+    if (data[0] === MAGIC_STATUS_RSP_V4) {
+        throw new Error(
+            "Pico is sending the retired 37-byte STATUS_RSP (0xA3) — firmware " +
+            "predates the context byte. Reflash it.",
         );
     }
     if (data[0] !== MAGIC_STATUS_RSP) {
@@ -533,6 +562,7 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         dv.getUint16(5, true),
         dv.getUint8(9),
         Array.from(data.subarray(10, 10 + STATUS_HEADS)),
+        enumFromInt(MACHINE_CONTEXT_VALUES, dv.getUint8(36), MachineContext.IDLE),
     );
 }
 
@@ -548,6 +578,7 @@ export interface PackStatusRspOptions {
     bufCount?: number;
     layer?: number; // default NO_LAYER
     record?: number;
+    context?: number; // default MachineContext.IDLE
 }
 
 /**
@@ -573,7 +604,8 @@ export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
     dv.setUint16(28, (opts.bufCount ?? 0) & 0xffff, true);
     dv.setUint16(30, (opts.layer ?? NO_LAYER) & 0xffff, true);
     dv.setUint32(32, (opts.record ?? 0) >>> 0, true);
-    dv.setUint8(36, crc8(u8, 0, STATUS_RSP_SIZE - 1));
+    dv.setUint8(36, (opts.context ?? MachineContext.IDLE) & 0xff);
+    dv.setUint8(37, crc8(u8, 0, STATUS_RSP_SIZE - 1));
 
     return u8;
 }

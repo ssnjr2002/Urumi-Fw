@@ -58,7 +58,7 @@ export const GET_MAX_KEYS = 32;
 
 /** The keys {@link getState} reads: everything MachineStatus carries. */
 export const STATE_KEYS = [
-    "state", "enabled", "homed", "faults", "job", "latched",
+    "state", "ctx", "enabled", "homed", "faults", "job", "latched",
     "homefail", "homenode", "cfgerr", "homing",
     "probing", "probe", "retries", "psteps", "probed", "pz",
     "homecycle", "nodehomed", "seqfail", "seq",
