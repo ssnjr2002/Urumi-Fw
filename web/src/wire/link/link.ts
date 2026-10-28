@@ -321,7 +321,7 @@ export class Link {
      * operator input and the session ends by truncation rather than exhaustion.
      * Caller must resetSeq() first; stream() does it for you. The session
      * inherits `verbose` from this Link (D17). A ReplayableSource makes a job
-     * session: it holds through pauses and tool changes and ends on cancel().
+     * session: it holds through pauses and tool changes and ends on cancel() or end().
      */
     session(source: PacketSource | ReplayableSource, window: number = DEFAULT_WINDOW): Session {
         const sess = new Session(this.writer, this.sinks.ack, source, this.sinks.status, window,

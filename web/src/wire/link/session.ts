@@ -42,6 +42,7 @@ import {
     NACK_TOOL_UNKNOWN,
     NACK_TOOL_CHANGE,
     NACK_BUSY,
+    MAGIC_ABORT,
     MAGIC_LAYER_HDR,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
@@ -73,7 +74,7 @@ const SEQRESET_WAIT_MS = 1000;
 // use the 0xE0.. range so they never collide with a future wire NACK.
 export const FATAL_STALL = 0xe0; // no ACK/NACK past STALL_TIMEOUT_MS
 export const FATAL_CRC_LIMIT = 0xe1; // NACK_CRC count exceeded MAX_CRC_ERRORS
-export const FATAL_JOB_LOST = 0xe2; // a job session's job left JOB without its cancel
+export const FATAL_JOB_LOST = 0xe2; // a job session's job left JOB without its cancel or end
 
 /** Why a job session sends nothing (see Session.held). */
 export type Hold = "paused" | "tool" | "refused" | "silent";
@@ -249,8 +250,8 @@ export class Session {
     // Job session only.
     private _layer: number | undefined; // the last header's layer
     private _jobSeen = false; // a status has shown JOB
-    private _cancelling = false;
-    private _go = false; // resume() or continue() asked
+    private _ending = false; // cancel() or end() asked
+    private _go = false; // resume() asked
     private _pauseAsked = false; // pause() got `ok`
     private _lastPoll = -Infinity;
     private _staleStamp = 0; // status samples up to this stamp predate the last ACK or hold
@@ -325,7 +326,7 @@ export class Session {
     /** Job session: send `cancel`; run() returns true once the job leaves JOB. Resolves to the reply. */
     async cancel(): Promise<string> {
         if (!this._job || !this._command) throw new Error("cancel() needs a job session with a command path");
-        this._cancelling = true;
+        this._ending = true;
         this._wake();
         return this._command("cancel");
     }
@@ -345,17 +346,28 @@ export class Session {
         return reply;
     }
 
-    /** Leave a `paused` or `refused` hold at the status's resume point. False if not so held. */
-    resume(): boolean {
-        if (this.held !== "paused" && this.held !== "refused") return false;
-        this._go = true;
+    /**
+     * Job session: send ABORT, which brakes if moving and lifts Z once; run()
+     * returns true once the job leaves JOB. ABORT has no reply.
+     */
+    end(): void {
+        if (!this._job) throw new Error("end() needs a job session");
+        this._ending = true;
         this._wake();
-        return true;
+        void this._writer.writeFrame(new Uint8Array([MAGIC_ABORT]));
     }
 
-    /** Resend the header from a `tool` hold, once the operator has mounted and zeroed. False if not so held. */
-    continue(): boolean {
-        if (this.held !== "tool") return false;
+    /**
+     * Leave a hold: `paused` or `refused` at the status's resume point, `tool`
+     * by resending the refused window once the operator has mounted and zeroed.
+     * False if not held, or if a tool hold is not yet in TOOL_WAIT.
+     */
+    resume(): boolean {
+        if (this.held === "tool") {
+            if (this._ctx.status?.reason !== JobReason.TOOL_WAIT) return false;
+        } else if (this.held !== "paused" && this.held !== "refused") {
+            return false;
+        }
         this._go = true;
         this._wake();
         return true;
@@ -364,7 +376,7 @@ export class Session {
     /**
      * Drive the stream to completion. Returns true on success or truncation,
      * false on fatal — in which case `fatalReason` (D17) names the cause.
-     * A job session returns only on cancel(), truncate(), a fatal NACK or a
+     * A job session returns only on cancel(), end(), truncate(), a fatal NACK or a
      * lost job; it holds (`held`) while the machine takes no records.
      */
     async run(): Promise<boolean> {
@@ -488,7 +500,7 @@ export class Session {
         for (;;) {
             if (this.truncated) return true;
 
-            if (!this._cancelling) await this._fillWindow();
+            if (!this._ending) await this._fillWindow();
             // After the packets, so the Pico answers it having taken them.
             if (monotonicNow() - this._lastPoll >= STATUS_POLL_MS) {
                 this._lastPoll = monotonicNow();
@@ -497,7 +509,7 @@ export class Session {
             const st = this._ctx.status;
             const end = this._ended(st);
             if (end !== undefined) return end;
-            if (this._cancelling) {
+            if (this._ending) {
                 await this._sleep(STATUS_POLL_MS);
                 continue;
             }
@@ -539,7 +551,7 @@ export class Session {
             this.nacks++;
             const r = resp.reason;
             v?.(`NACK reason=0x${r.toString(16)} (${fatalReasonName(r)}) base=${this._base}`);
-            if (this._cancelling) continue;
+            if (this._ending) continue;
             if (r === NACK_BAD_MAGIC || r === NACK_BAD_CURVE || r === NACK_SOFT_LIMIT ||
                 r === NACK_TOOL_UNKNOWN || r === NACK_BAD_STATE) {
                 this.fatalReason = r;
@@ -575,7 +587,7 @@ export class Session {
             this._jobSeen = true;
             return undefined;
         }
-        if (this._cancelling) return true;
+        if (this._ending) return true;
         if (!this._jobSeen) return undefined; // not yet opened
         this.fatalReason = FATAL_JOB_LOST;
         return false;
@@ -601,7 +613,7 @@ export class Session {
                 if (st) {
                     const end = this._ended(st);
                     if (end !== undefined) return end;
-                    if (!this._cancelling) {
+                    if (!this._ending) {
                         if (h !== "tool" && this._layer !== undefined && st.layer !== undefined &&
                             st.layer !== NO_LAYER && st.layer !== this._layer) {
                             this.fatalReason = FATAL_JOB_LOST;
@@ -686,7 +698,7 @@ export class Session {
         }
     }
 
-    /** Wait `ms`, or less on truncate(), cancel(), resume() or continue(). */
+    /** Wait `ms`, or less on truncate(), cancel(), end() or resume(). */
     private _sleep(ms: number): Promise<void> {
         const woken = new Promise<void>((r) => {
             this._wakeResolve = r;

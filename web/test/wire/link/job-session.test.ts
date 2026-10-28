@@ -1,6 +1,6 @@
 /**
  * Tests for a job session (a Session over a ReplayableSource), over the sim
- * through a real Link: it lives until cancel(), holds on a pause and a tool
+ * through a real Link: it lives until cancel() or end(), holds on a pause and a tool
  * change, resumes at the status's resume point, and ends on a lost job.
  */
 
@@ -73,6 +73,29 @@ describe("wire/link/session: job life", () => {
         });
     });
 
+    it("end() ends a running job", async () => {
+        await withLink(async (link) => {
+            const { sess, done } = await start(link, 40);
+            await until(async () => (await link.getStatus()).reason === JobReason.RUNNING);
+            sess.end();
+            expect(await done).toBe(true);
+            expect(sess.fatalReason).toBeUndefined();
+            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+        }, { recordMs: 20, ringSize: 8 });
+    });
+
+    it("end() ends a held session", async () => {
+        await withLink(async (link) => {
+            const { sess, done } = await start(link, 1);
+            await until(() => sess.stats().acked === 2);
+            await link.command("pause");
+            await until(() => sess.held === "paused");
+            sess.end();
+            expect(await done).toBe(true);
+            expect(sess.fatalReason).toBeUndefined();
+        });
+    });
+
     it("truncate() ends a held session", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 1);
@@ -105,7 +128,6 @@ describe("wire/link/session: pause", () => {
             expect(await link.command("pause")).toBe("ok");
             await until(() => sess.held === "paused");
             expect(sess.stats().nacks).toBeGreaterThan(0); // held by NACK_PAUSED, not the status
-            expect(sess.continue()).toBe(false);
             expect(sess.resume()).toBe(true);
             await until(() => atX(link, 40));
             expect(sess.held).toBeNull();
@@ -176,7 +198,7 @@ describe("wire/link/session: pause()", () => {
 });
 
 describe("wire/link/session: tool change", () => {
-    it("waits in TOOL_WAIT for continue(), and again until the tool is mounted and zeroed", async () => {
+    it("waits in TOOL_WAIT for resume(), and again until the tool is mounted and zeroed", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 3);
             await until(() => sess.held === "tool");
@@ -186,18 +208,31 @@ describe("wire/link/session: tool change", () => {
             await tick(150);
             expect(sess.stats().sent).toBe(sent);
 
-            expect(sess.continue()).toBe(true); // not mounted yet: refused again
+            expect(sess.resume()).toBe(true); // not mounted yet: refused again
             await until(() => sess.stats().sent > sent);
             await until(() => sess.held === "tool");
 
             expect(await link.command("mount 0 1")).toBe("ok");
             expect(await link.command("wzero z")).toBe("ok");
-            sess.continue();
+            sess.resume();
             await until(() => atX(link, 3));
             expect(sess.held).toBeNull();
             await sess.cancel();
             expect(await done).toBe(true);
         }, { tools: {} });
+    });
+
+    it("refuses resume() during TOOL_CHANGE, and end() leaves the hold", async () => {
+        await withLink(async (link) => {
+            const { sess, done } = await start(link, 3);
+            await until(() => sess.held === "tool");
+            await until(async () => (await link.getStatus()).reason === JobReason.TOOL_CHANGE);
+            await until(() => sess.stats().held === "tool");
+            expect(sess.resume()).toBe(false);
+            sess.end();
+            expect(await done).toBe(true);
+            expect(sess.fatalReason).toBeUndefined();
+        }, { tools: {}, toolChangeMs: 2000 });
     });
 
     it("a mounted, zeroed tool is ACKed with no hold", async () => {
