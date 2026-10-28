@@ -348,7 +348,7 @@ export class SimTransport implements Transport {
                     nodeHomed: this._nodeHomedMask(),
                     // No frames: the work origin is the machine's, head 0 selected.
                     selection: 0,
-                    tool: 0,
+                    tools: [this.mounted.get(0) ?? 0, this.mounted.get(1) ?? 0],
                     wpos: [0, 1, 2, 3].map((k) => this.pos[k]! / this.jogSpm[k]!) as
                         [number, number, number, number],
                     bufCount: this.motion.length,

@@ -1,10 +1,10 @@
 /**
- * format/status.ts — binary STATUS_RSP (0xA4, 36B) + the operational enums.
+ * format/status.ts — binary STATUS_RSP (0xA3, 37B) + the operational enums.
  * MachineState / Fault / JobReason, MachineStatus, parseStatusRsp,
  * packStatusRsp, axisMask.
  *
  * STATUS_RSP is one coherent sample in the node frame: state, the node
- * masks, the selection and its tool, WPos, the ring and the job's executing
+ * masks, the selection, each head's tool, WPos, the ring and the job's executing
  * record. The text `get` query carries the rest; statusFromGet builds the
  * same MachineStatus.
  *
@@ -17,6 +17,8 @@ import {
     MAGIC_STATUS_RSP,
     MAGIC_STATUS_RSP_V1,
     MAGIC_STATUS_RSP_V2,
+    MAGIC_STATUS_RSP_V3,
+    STATUS_HEADS,
     STATUS_RSP_SIZE,
 } from "./constants.js";
 
@@ -303,8 +305,8 @@ export class MachineStatus {
         readonly nodeEnabled: number | undefined = undefined,
         /** The controlled point: a head index or a Selection value. */
         readonly selection: number | undefined = undefined,
-        /** The tool id mounted on the selected head, 0 for none. */
-        readonly tool: number | undefined = undefined,
+        /** The tool id each head has mounted, head order, 0 for none. */
+        readonly tools: readonly number[] | undefined = undefined,
     ) {}
 
     /** True if any of `mask`'s Fault bits is set. */
@@ -428,7 +430,7 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         fields.seq !== undefined ? parseInt(fields.seq, 10) : undefined,
         fields.nodeenabled !== undefined ? toInt(fields.nodeenabled) : undefined,
         selectionFromGet(reply.get("head")),
-        toolFromGet(reply.get("head"), fields.tools),
+        toolsFromGet(fields.tools),
     );
 }
 
@@ -446,33 +448,34 @@ function selectionFromGet(head: string | undefined): number | undefined {
     return parseInt(head, 10);
 }
 
-/** The selected head's entry of `tools=`, 0 for no head or the anchor. */
-function toolFromGet(head: string | undefined, tools: string | undefined): number | undefined {
-    const sel = selectionFromGet(head);
-    if (sel === undefined || tools === undefined) return undefined;
-    if (sel === Selection.NONE || sel === Selection.ANCHOR) return 0;
-    const t = tools.split(",")[sel];
-    return t === undefined ? 0 : parseInt(t, 10);
+/** `tools=<id|->,…` → one id per head, 0 for none or no such head; undefined when absent. */
+function toolsFromGet(tools: string | undefined): number[] | undefined {
+    if (tools === undefined || tools === GetMarker.UNKNOWN || tools === GetMarker.FAILED) return undefined;
+    const p = tools.split(",");
+    return Array.from({ length: STATUS_HEADS }, (_, h) => {
+        const t = p[h];
+        return t === undefined || t === GetMarker.NA ? 0 : parseInt(t, 10);
+    });
 }
 
-// ── binary STATUS_RSP (0xA4, 36 bytes) ─────────────────────────────────────────
+// ── binary STATUS_RSP (0xA3, 37 bytes) ─────────────────────────────────────────
 //
-// [0]      magic        0xA4
+// [0]      magic        0xA3
 // [1]      state        u8   MachineState
 // [2]      reason       u8   the current state's reason
 // [3..4]   faults       u16 LE — Fault bits
 // [5..6]   nodeEnabled  u16 LE — bit n = bus node n
 // [7..8]   nodeHomed    u16 LE — nodes holding an origin
 // [9]      selection    u8   — head index, Selection.ANCHOR, Selection.NONE
-// [10]     tool         u8   — mounted on the selected head, 0 none
-// [11..26] wpos[4]      f32 LE — x, y, z, a; NaN with no value
-// [27..28] bufCount     u16 LE — planner blocks queued
-// [29..30] layer        u16 LE — the job's executing record, NO_LAYER
-// [31..34] record       u32 LE   and 0 with no job
-// [35]     CRC8 over [0..34]
+// [10..11] tools[2]     u8   — each head's mounted id, head order; 0 none
+// [12..27] wpos[4]      f32 LE — x, y, z, a; NaN with no value
+// [28..29] bufCount     u16 LE — planner blocks queued
+// [30..31] layer        u16 LE — the job's executing record, NO_LAYER
+// [32..35] record       u32 LE   and 0 with no job
+// [36]     CRC8 over [0..35]
 
 /**
- * Parse a 36-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
+ * Parse a 37-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
  *
  * A retired frame's magic is rejected with a message naming the firmware that
  * emitted it: a host consuming fixed-length frames blind must surface the
@@ -494,6 +497,12 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
             "predates the node-frame status. Reflash it.",
         );
     }
+    if (data[0] === MAGIC_STATUS_RSP_V3) {
+        throw new Error(
+            "Pico is sending the retired 36-byte STATUS_RSP (0xA4) — firmware " +
+            "predates per-head tools. Reflash it.",
+        );
+    }
     if (data[0] !== MAGIC_STATUS_RSP) {
         throw new Error(`Bad magic: 0x${data[0]!.toString(16).padStart(2, "0")}`);
     }
@@ -507,10 +516,10 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         undefined,
         dv.getUint16(3, true),
         dv.getUint8(2),
-        dv.getUint16(27, true),
-        [dv.getFloat32(11, true), dv.getFloat32(15, true), dv.getFloat32(19, true), dv.getFloat32(23, true)],
-        dv.getUint16(29, true),
-        dv.getUint32(31, true),
+        dv.getUint16(28, true),
+        [dv.getFloat32(12, true), dv.getFloat32(16, true), dv.getFloat32(20, true), dv.getFloat32(24, true)],
+        dv.getUint16(30, true),
+        dv.getUint32(32, true),
         undefined, // axesLatched … seq: text plane only
         undefined,
         undefined,
@@ -523,7 +532,7 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         undefined,
         dv.getUint16(5, true),
         dv.getUint8(9),
-        dv.getUint8(10),
+        Array.from(data.subarray(10, 10 + STATUS_HEADS)),
     );
 }
 
@@ -534,7 +543,7 @@ export interface PackStatusRspOptions {
     nodeEnabled?: number;
     nodeHomed?: number;
     selection?: number; // default Selection.NONE
-    tool?: number;
+    tools?: readonly number[]; // head order; missing heads 0
     wpos?: readonly [number, number, number, number]; // default all NaN
     bufCount?: number;
     layer?: number; // default NO_LAYER
@@ -542,7 +551,7 @@ export interface PackStatusRspOptions {
 }
 
 /**
- * Pack a status snapshot into the 36-byte STATUS_RSP wire format. Mainly used
+ * Pack a status snapshot into the 37-byte STATUS_RSP wire format. Mainly used
  * by the in-process SimTransport (mirrors host.protocol.link.SimBackend) and
  * by tests; the real Pico emits this frame.
  */
@@ -558,13 +567,13 @@ export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
     dv.setUint16(5, (opts.nodeEnabled ?? 0) & 0xffff, true);
     dv.setUint16(7, (opts.nodeHomed ?? 0) & 0xffff, true);
     dv.setUint8(9, (opts.selection ?? Selection.NONE) & 0xff);
-    dv.setUint8(10, (opts.tool ?? 0) & 0xff);
+    for (let h = 0; h < STATUS_HEADS; h++) dv.setUint8(10 + h, (opts.tools?.[h] ?? 0) & 0xff);
     const w = opts.wpos ?? [NaN, NaN, NaN, NaN];
-    for (let i = 0; i < 4; i++) dv.setFloat32(11 + 4 * i, w[i]!, true);
-    dv.setUint16(27, (opts.bufCount ?? 0) & 0xffff, true);
-    dv.setUint16(29, (opts.layer ?? NO_LAYER) & 0xffff, true);
-    dv.setUint32(31, (opts.record ?? 0) >>> 0, true);
-    dv.setUint8(35, crc8(u8, 0, STATUS_RSP_SIZE - 1));
+    for (let i = 0; i < 4; i++) dv.setFloat32(12 + 4 * i, w[i]!, true);
+    dv.setUint16(28, (opts.bufCount ?? 0) & 0xffff, true);
+    dv.setUint16(30, (opts.layer ?? NO_LAYER) & 0xffff, true);
+    dv.setUint32(32, (opts.record ?? 0) >>> 0, true);
+    dv.setUint8(36, crc8(u8, 0, STATUS_RSP_SIZE - 1));
 
     return u8;
 }

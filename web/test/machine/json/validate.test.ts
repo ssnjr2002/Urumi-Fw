@@ -201,6 +201,19 @@ describe("rule: uniqueNodeIds", () => {
     });
 });
 
+describe("rule: headCountSupported", () => {
+    it("errors past the controller's head count", () => {
+        const c = cfg();
+        const h = c.machine.heads[0]!;
+        const three = { ...c, machine: { ...c.machine, heads: [h, h, h] } };
+        expect(errors(three)).toContain("machine.heads: 3 head(s); the controller supports 1 to 2");
+    });
+
+    it("accepts one head", () => {
+        expect(errors(cfg()).some((m) => m.startsWith("machine.heads:"))).toBe(false);
+    });
+});
+
 describe("rule: defaultHeadInRange", () => {
     it("errors when defaultHead exceeds the head count", () => {
         expect(errors(cfg({ defaultHead: 2 }))).toContain(

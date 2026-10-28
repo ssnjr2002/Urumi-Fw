@@ -187,6 +187,16 @@ const toolAFields: Rule = ({ toolProfiles }) =>
             ? [error(`tools.${name}.chamberOffsets: a tangential tool has no chambers`)] : []),
     ]);
 
+/** The firmware's CFG_MAX_HEADS; STATUS_RSP carries a tool for each. */
+export const MAX_HEADS = 2;
+
+const headCountSupported: Rule = ({ machine }) => {
+    const n = machine.heads.length;
+    return n >= 1 && n <= MAX_HEADS
+        ? []
+        : [error(`machine.heads: ${n} head(s); the controller supports 1 to ${MAX_HEADS}`)];
+};
+
 const defaultHeadInRange: Rule = ({ machine }) => {
     const n = machine.heads.length;
     const i = machine.defaultHead;
@@ -445,6 +455,7 @@ const RULES: readonly Rule[] = [
     xyMustBeCapped,
     targetsUnderCeilings,
     uniqueNodeIds,
+    headCountSupported,
     defaultHeadInRange,
     clearanceNonNegative,
     bufferPositive,
