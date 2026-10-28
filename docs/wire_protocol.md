@@ -54,7 +54,8 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `JOG_NACK`   | `0xB7` | Pico → Host | Continuous jog refused (2 B) |
 | `STATUS_REQ` | `0xA5` | Host → Pico | Binary status request |
 | `SEQRESET`   | `0xA8` | Host → Pico | Zero `expectedSeq`; replies `ACK(0)` |
-| `STATUS_RSP` | `0xA4` | Pico → Host | Binary status response (36 B) |
+| `STATUS_RSP` | `0xA3` | Pico → Host | Binary status response (37 B) |
+| ~~`STATUS_RSP_V3`~~ | `0xA4` | — | Retired 36-byte frame; reserved, never emitted |
 | ~~`STATUS_RSP_V1`~~ | `0xA6` | — | Retired 9-byte frame; reserved, never emitted |
 | ~~`STATUS_RSP_V2`~~ | `0xA7` | — | Retired 31-byte frame; reserved, never emitted |
 
@@ -337,25 +338,25 @@ RUNNING — the Pico handles it on Core 0 between MSEG packet boundaries so it
 never interrupts step timing. The host may send one between any two MSEG/jog
 packets by inserting the byte at a packet boundary.
 
-### STATUS_RSP — `0xA4` (36 bytes)
+### STATUS_RSP — `0xA3` (37 bytes)
 ```
-[0]      magic         = 0xA4
+[0]      magic         = 0xA3
 [1]      machineState  uint8   — 0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
 [2]      reason        uint8   — the current state's reason: `job=`, `jogging=`, `homing=` or `probing=`; 0 otherwise
 [3..4]   faults        uint16 LE — fault mask (below)
 [5..6]   nodeEnabled   uint16 LE — bit n = bus node n enabled, mapped or not (`get nodeenabled`)
 [7..8]   nodeHomed     uint16 LE — bit n = bus node n holds an origin (`get nodehomed`)
 [9]      selection     uint8   — the controlled point: head index, 0xFE anchor, 0xFF none (`get head`)
-[10]     tool          uint8   — the tool id mounted on the selected head, 0 none (`mount`)
-[11..26] wpos[4]       float32 LE — work position x, y, z, a, mm and degrees; NaN with no value (`get wpos`)
-[27..28] bufCount      uint16 LE — planner blocks queued (`get buf`)
-[29..30] layer         uint16 LE — the job's executing record: its layer
-[31..34] record        uint32 LE   and record (below); 0xFFFF and 0 with no job
-[35]     CRC8 over bytes [0..34]
+[10..11] tools[2]      uint8   — the tool id each head has mounted, head order; 0 none or no such head (`get tools`)
+[12..27] wpos[4]       float32 LE — work position x, y, z, a, mm and degrees; NaN with no value (`get wpos`)
+[28..29] bufCount      uint16 LE — planner blocks queued (`get buf`)
+[30..31] layer         uint16 LE — the job's executing record: its layer
+[32..35] record        uint32 LE   and record (below); 0xFFFF and 0 with no job
+[36]     CRC8 over bytes [0..35]
 ```
 One coherent sample, in the node frame: the host is told nodes and the
-selection, never slots. The slot masks, MPos and the other heads' tools stay
-on `get`. Per the transport's per-transaction cost model the bytes are free:
+selection, never slots. The slot masks and MPos stay on `get`. A controller
+has at most two heads (`CFG_MAX_HEADS`); a config with more is refused. Per the transport's per-transaction cost model the bytes are free:
 one frame fits a single 64-byte USB packet.
 
 `layer`/`record` say how far the ring has run, which the host cannot know from
@@ -372,9 +373,9 @@ IDLE otherwise; several bits may be set at once.
 
 **Each layout has its own magic.** A reader consumes fixed-length frames blind,
 so a host expecting another layout must fail on an unknown magic rather than
-mis-parse it and desync the stream. `0xA6` (9 B) and `0xA7` (31 B, slot masks,
-`pos` in steps, `expectedSeq`, `queuedUs`) are retired and reserved; they are
-never emitted. Host and firmware for this frame must be flashed together.
+mis-parse it and desync the stream. `0xA6` (9 B), `0xA7` (31 B, slot masks,
+`pos` in steps, `expectedSeq`, `queuedUs`) and `0xA4` (36 B, the selected
+head's tool only) are retired and reserved; they are never emitted. Host and firmware for this frame must be flashed together.
 
 The text `get` remains for the keys this frame has no room for, and for human/debug use.
 
@@ -556,7 +557,7 @@ pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on ho
 mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
 wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetMm`) − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; X/Y `-` with no head
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
-tools=<id>,…         the tool id each head has mounted (`mount`), head order, 0 for none  (`-` without a config)
+tools=<id>,…         the tool id each head has mounted (`mount`), head order, `-` for none  (`-` without a config)
 mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)
 meshslope=<s>        its steepest slope between neighbouring points, mm/mm  (`-` without a loaded mesh)
 late=<n>             planner blocks Core 1 found late, since boot; a job lands PAUSED, a jog holds and runs on
