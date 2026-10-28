@@ -2,6 +2,7 @@ import * as host from 'urumi-host';
 import {
     Link, JogAck, MachineState, Selection, NO_LAYER, stateName, faultNames, jobName,
     loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, crc32,
+    JobReason, JobSource, fatalReasonName, loadSvgPaths, toolLayer, prepareBezierJob,
 } from 'urumi-host';
 import { WebSerialTransport } from 'urumi-host/wire/link/backends/webserial';
 
@@ -31,6 +32,19 @@ const cfgInfoOut    = document.getElementById('cfg-info');
 const jogtoBtns     = document.querySelectorAll('button.jogto');
 const jogtoXIn      = document.getElementById('jogto-x');
 const jogtoYIn      = document.getElementById('jogto-y');
+const stopBtn       = document.getElementById('stop');
+const wzeroBtns     = document.querySelectorAll('button.wzero');
+const svgFileIn     = document.getElementById('svg-file');
+const layerSel      = document.getElementById('layer');
+const svgWarnOut    = document.getElementById('svg-warnings');
+const previewCv     = document.getElementById('preview');
+const jobFeedIn     = document.getElementById('job-feed');
+const jobKIn        = document.getElementById('job-k');
+const jobTIn        = document.getElementById('job-t');
+const jobHeadSel    = document.getElementById('job-head');
+const jobRunBtn     = document.getElementById('job-run');
+const jobCtlBtns    = document.querySelectorAll('button.job-ctl');
+const jobInfoOut    = document.getElementById('job-info');
 
 /** The Link, once connected — null otherwise. */
 let link = null;
@@ -70,9 +84,10 @@ function setConnected(on) {
     statusGetBtn.disabled = !on;
     statusPollBox.disabled = !on;
     jogKeysBox.disabled = !on;
-    for (const b of [...selectBtnsDiv.children, ...jogtoBtns]) b.disabled = !on;
+    for (const b of [...selectBtnsDiv.children, ...jogtoBtns, ...wzeroBtns, stopBtn]) b.disabled = !on;
     cfgPullBtn.disabled = !on;
     cfgPushBtn.disabled = !on || !pushBlob;
+    setJobButtons();
     if (on) cmdIn.focus();
     else statusPollBox.checked = jogKeysBox.checked = false;
 }
@@ -95,6 +110,7 @@ connectBtn.addEventListener('click', async () => {
 
 disconnectBtn.addEventListener('click', async () => {
     jogStop();
+    session?.truncate();
     const l = link;
     link = null;
     setConnected(false);
@@ -146,8 +162,12 @@ cmdIn.addEventListener('keydown', (e) => {
     }
 });
 
+stopBtn.addEventListener('click', () => submit('stop'));
+
 // ── status ────────────────────────────────────────────────────────────────────
-// Get status logs to the binary log; the poll only updates the table.
+// Get status logs to the binary log; the poll only updates the table. A job
+// session polls for itself, so the poll waits out a job and the table follows
+// the session's samples instead.
 
 const hex = (n, w) => `0x${n.toString(16).padStart(w, '0')}`;
 
@@ -203,7 +223,7 @@ let polling = false;
 async function poll() {
     if (polling) return;
     polling = true;
-    while (statusPollBox.checked && link && !link.closed) {
+    while (statusPollBox.checked && link && !link.closed && !session) {
         try {
             showStatus(await link.getStatus());
             statusErrOut.textContent = '';
@@ -353,6 +373,7 @@ function buildSelectButtons(headCount) {
         });
         return b;
     }));
+    jobHeadSel.replaceChildren(...[...Array(headCount).keys()].map((h) => new Option(String(h), String(h))));
 }
 
 buildSelectButtons(0);
@@ -419,6 +440,7 @@ async function pullConfig() {
         binOut(`← ${cfgError(e)}`);
     }
     buildSelectButtons(pulledConfig?.machine.heads.length ?? 0);
+    loadLayers();
 }
 
 cfgPullBtn.addEventListener('click', pullConfig);
@@ -431,5 +453,176 @@ for (const b of jogtoBtns) {
         if (b.value !== 'xy') return submit(`jogto ${b.value}`);
         if (jogtoXIn.value === '' || jogtoYIn.value === '') return textOut('jogto: x and y needed');
         submit(`jogto ${jogtoXIn.value} ${jogtoYIn.value}`);
+    });
+}
+
+for (const b of wzeroBtns) b.addEventListener('click', () => submit(b.value ? `wzero ${b.value}` : 'wzero'));
+
+// ── job ───────────────────────────────────────────────────────────────────────
+// The picked SVG is split into tool layers against the pulled config's tools,
+// again after each pull. Execute runs one layer as a job session: a LAYER_HDR
+// and its BEZIERs. The session lives until the job leaves JOB, so a finished
+// layer stays in JOB, dry, until Cancel ends it.
+
+/** The picked SVG's text — null until one is picked. */
+let svgText = null;
+/** The picked SVG's layers, by key; empty without an SVG or a config. */
+let svgLayers = new Map();
+/** The running job session — null outside a job. */
+let session = null;
+/** The running layer's BEZIER count. */
+let jobTotal = 0;
+
+const toolNames = () => Object.keys(pulledConfig?.toolProfiles ?? {});
+
+/** Why a layer can't run, or '' if it can. */
+function layerProblem(key) {
+    if (key === '') return 'no tool';
+    const tl = toolLayer(key, toolNames());
+    const profile = pulledConfig.toolProfiles[tl.tool];
+    if (profile.id == null) return 'tool has no id';
+    const chambers = profile.chamberOffsets?.length ?? 0;
+    const ok = chambers ? tl.chamber >= 1 && tl.chamber <= chambers : tl.chamber === 0;
+    return ok ? '' : chambers ? `chamber ${tl.chamber} not in 1..${chambers}` : 'tool has no chambers';
+}
+
+function loadLayers() {
+    svgLayers = new Map();
+    svgWarnOut.textContent = '';
+    layerSel.replaceChildren();
+    if (svgText && pulledConfig) {
+        try {
+            const loaded = loadSvgPaths(svgText, { tools: toolNames() });
+            svgLayers = loaded.layers;
+            svgWarnOut.textContent = loaded.warnings.join('\n');
+        } catch (e) {
+            svgWarnOut.textContent = `svg: ${e.message}`;
+        }
+    } else if (svgText) {
+        svgWarnOut.textContent = 'pull a config to list the layers';
+    }
+    for (const key of svgLayers.keys()) {
+        const problem = layerProblem(key);
+        const o = new Option(`${key || '(no tool)'}${problem ? ` — ${problem}` : ''}`, key);
+        o.disabled = problem !== '';
+        layerSel.append(o);
+    }
+    const first = [...layerSel.options].find((o) => !o.disabled);
+    if (first) layerSel.value = first.value;
+    drawPreview();
+    setJobButtons();
+}
+
+svgFileIn.addEventListener('change', async () => {
+    const file = svgFileIn.files[0];
+    svgText = file ? await file.text() : null;
+    loadLayers();
+});
+
+layerSel.addEventListener('change', drawPreview);
+
+/** Every layer in grey, the selected one in black, fitted to the canvas, Y up. */
+function drawPreview() {
+    const ctx = previewCv.getContext('2d');
+    ctx.clearRect(0, 0, previewCv.width, previewCv.height);
+    const all = [...svgLayers.values()].flat();
+    const pts = all.flatMap((sp) => sp.curves.flatMap((c) => [c.p0, c.p1, c.p2, c.p3]));
+    if (pts.length === 0) return;
+    const minX = Math.min(...pts.map((p) => p.x)), maxX = Math.max(...pts.map((p) => p.x));
+    const minY = Math.min(...pts.map((p) => p.y)), maxY = Math.max(...pts.map((p) => p.y));
+    const pad = 8;
+    const s = Math.min((previewCv.width - 2 * pad) / (maxX - minX || 1), (previewCv.height - 2 * pad) / (maxY - minY || 1));
+    const tx = (p) => [pad + (p.x - minX) * s, previewCv.height - pad - (p.y - minY) * s];
+    for (const [key, subpaths] of svgLayers) {
+        ctx.strokeStyle = key === layerSel.value ? '#000' : '#ccc';
+        ctx.beginPath();
+        for (const sp of subpaths) {
+            ctx.moveTo(...tx(sp.curves[0].p0));
+            for (const c of sp.curves) ctx.bezierCurveTo(...tx(c.p1), ...tx(c.p2), ...tx(c.p3));
+            if (sp.closed) ctx.closePath();
+        }
+        ctx.stroke();
+    }
+}
+
+function setJobButtons() {
+    const on = !!link && !link.closed;
+    const layer = layerSel.selectedOptions[0];
+    jobRunBtn.disabled = !on || !!session || !layer || layer.disabled;
+    for (const b of jobCtlBtns) b.disabled = !on || (!session && b.value !== 'abort');
+}
+
+/** Records executed of the total; done once the ring is dry with every packet taken. */
+function showJob() {
+    if (!session) return;
+    const s = session.stats();
+    const st = link?.status;
+    const inJob = st?.state === MachineState.JOB;
+    const done = inJob && st.reason === JobReason.BUFFERING && st.bufCount === 0
+        && s.emitted > jobTotal && s.acked === s.emitted;
+    const executed = done ? jobTotal : inJob ? Math.min(st.record, jobTotal) : 0;
+    jobInfoOut.textContent = `records ${executed}/${jobTotal}, ${jobTotal - executed} left`
+        + (done ? ' — done, Cancel ends the job' : '')
+        + ` | held ${s.held ?? '-'} sent ${s.sent} acked ${s.acked} nacks ${s.nacks} retries ${s.retries}`;
+}
+
+/** Redraw the status and the job line on each of the session's samples. */
+async function watchJob() {
+    let stamp = link.sinks.status.sample[1];
+    while (session) {
+        const [raw, at] = await link.sinks.status.waitUpdate(500, stamp);
+        stamp = at;
+        if (raw && link?.status) showStatus(link.status);
+        showJob();
+    }
+}
+
+jobRunBtn.addEventListener('click', async () => {
+    const key = layerSel.value;
+    const tl = toolLayer(key, toolNames());
+    const job = prepareBezierJob(svgText, key, { tools: toolNames(), quality: pulledConfig.quality });
+    if ('error' in job) return binOut(`job: ${job.error}`);
+    const hdr = {
+        tool: pulledConfig.toolProfiles[tl.tool].id,
+        head: Number(jobHeadSel.value),
+        chamber: tl.chamber,
+        feed: Number(jobFeedIn.value) || 0,
+        k: Number(jobKIn.value),
+        thickness: Number(jobTIn.value) || 0,
+    };
+    try {
+        await link.resetSeq();
+        session = link.session(new JobSource(hdr, job.packets));
+    } catch (e) {
+        return binOut(`job: ${e.message}`);
+    }
+    jobTotal = job.packets.length;
+    binOut(`→ LAYER_HDR ${key} tool=${hdr.tool} head=${hdr.head} chamber=${hdr.chamber}, ${jobTotal} BEZIER`);
+    setJobButtons();
+    watchJob();
+    const ok = await session.run();
+    const r = session.result();
+    showJob();
+    binOut(`job ${ok ? (r.truncated ? 'truncated' : 'ended') : `failed: ${fatalReasonName(r.fatalReason)}`}`
+        + ` — sent ${r.sent} acked ${r.acked} nacks ${r.nacks} retries ${r.retries}`);
+    session = null;
+    setJobButtons();
+    if (statusPollBox.checked) poll();
+});
+
+for (const b of jobCtlBtns) {
+    b.addEventListener('click', async () => {
+        const v = b.value;
+        if (v === 'abort') {
+            link.abort();
+            session?.truncate();
+            return binOut('→ ABORT');
+        }
+        if (!session) return;
+        if (v === 'resume' || v === 'continue') {
+            return binOut(`${v}: ${session[v]() ? 'ok' : `not held${session.held ? ` (${session.held})` : ''}`}`);
+        }
+        textOut(`→ ${v}`);
+        textOut(`← ${await session[v]()}`);
     });
 }

@@ -12,6 +12,7 @@
   <h1>urumi console</h1>
   <button id="connect">Connect</button>
   <button id="disconnect" disabled>Disconnect</button>
+  <button id="stop" disabled>Stop</button>
 
   <h2>Text</h2>
   <pre id="text-log"></pre>
@@ -24,7 +25,7 @@
   <h2>Binary</h2>
   <button id="status-get" disabled>Get status</button>
   <label><input type="checkbox" id="status-poll" disabled> Poll every</label>
-  <input type="number" id="status-ms" min="20" step="10" value="200" style="width: 5em"> ms
+  <input type="number" id="status-ms" min="20" step="10" value="200" style="width: 5em"> ms outside a job
   <span>last: <span id="status-at">-</span></span>
   <span id="status-err"></span>
   <table id="status-table"></table>
@@ -43,6 +44,11 @@
     <button class="jogto" value="park" disabled>park</button>
     <button class="jogto" value="load" disabled>load</button>
   </div>
+  <div>Work zero:
+    <button class="wzero" value="" disabled>wzero</button>
+    <button class="wzero" value="xy" disabled>wzero xy</button>
+    <button class="wzero" value="z" disabled>wzero z</button>
+  </div>
   <div>Selected: <span id="selected">none</span></div>
   <div id="select-btns">
     <button class="select" value="anchor" disabled>anchor</button>
@@ -53,6 +59,27 @@
   <button id="cfg-push" disabled>push</button>
   <button id="cfg-pull" disabled>pull</button>
   <span id="cfg-info"></span>
+
+  <h2>Job</h2>
+  <input type="file" id="svg-file" accept=".svg">
+  <label>Layer: <select id="layer"></select></label>
+  <pre id="svg-warnings" style="height: auto; max-height: 6em"></pre>
+  <canvas id="preview" width="480" height="320" style="border: 1px solid"></canvas>
+  <div>
+    <label>feed (mm/s, 0 = tool's): <input type="number" id="job-feed" min="0" step="any" value="0" style="width: 5em"></label>
+    <label>k: <input type="number" id="job-k" min="0" max="2" step="0.1" value="1" style="width: 4em"></label>
+    <label>t (mm): <input type="number" id="job-t" min="0" step="0.1" value="0" style="width: 5em"></label>
+    <label>head: <select id="job-head"></select></label>
+  </div>
+  <div>
+    <button id="job-run" disabled>Execute layer</button>
+    <button class="job-ctl" value="pause" disabled>Pause</button>
+    <button class="job-ctl" value="resume" disabled>Resume</button>
+    <button class="job-ctl" value="continue" disabled>Continue</button>
+    <button class="job-ctl" value="cancel" disabled>Cancel</button>
+    <button class="job-ctl" value="abort" disabled>Abort</button>
+  </div>
+  <div id="job-info"></div>
 
   <script type="module" src="./index.js"></script>
 </body>
