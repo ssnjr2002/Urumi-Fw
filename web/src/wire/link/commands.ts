@@ -518,6 +518,11 @@ export async function homeHead(link: Link, head: number): Promise<string> {
     return link.command(`home_head ${head}`);
 }
 
+/** `home` of X and Y; the Zs, an earlier cycle, park or home first. */
+export async function homeXY(link: Link): Promise<string> {
+    return link.command("home_xy");
+}
+
 // ── tool probe (docs/tool_probe.md §5) ───────────────────────────────────────
 
 /** A probe verb's outcome: `ok`, or the raw `err <reason>` line. */

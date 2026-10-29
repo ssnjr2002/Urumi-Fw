@@ -37,6 +37,7 @@ import {
     homeUnhomed,
     homeCycle,
     homeHead,
+    homeXY,
     getFrames,
     select,
     wzero,
@@ -371,9 +372,10 @@ describe("wire/link/commands: home and its selectors", () => {
         await homeUnhomed(link);
         await homeCycle(link, 2);
         await homeHead(link, 1);
+        await homeXY(link);
         expect(sent).toEqual([
             "home", "home 3 4", "home only 3", "home only",
-            "home_unhomed", "home_cycle 2", "home_head 1",
+            "home_unhomed", "home_cycle 2", "home_head 1", "home_xy",
         ]);
     });
 });
