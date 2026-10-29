@@ -159,6 +159,15 @@ Planned.
 
 ### Outcome
 
+* Also fixed here: the web validator refused a tool's `aMaxDeg: 0` (the Pico
+  reads 0 as no cable), so `config/controller.jsonc`'s `crease` tool failed
+  the web config tests; the shared `controller.msgpack` fixture is re-encoded
+  and the Pico decode test expects the third tool.
+* Out of scope: a tool's `unwind` field is read by the web loader but used
+  nowhere, and the Pico never decodes it; `aMaxDeg > 0` alone makes a cable.
+  Follow-up: remove it from the schema, loader, defaults, `tools.ts` and
+  `config/controller.jsonc`.
+
 ## Branch G3: `feature/park-speed`
 
 ### Plan
