@@ -38,6 +38,8 @@ import {
     homeCycle,
     homeHead,
     homeXY,
+    goto,
+    jogXY,
     getFrames,
     select,
     wzero,
@@ -377,6 +379,36 @@ describe("wire/link/commands: home and its selectors", () => {
             "home", "home 3 4", "home only 3", "home only",
             "home_unhomed", "home_cycle 2", "home_head 1", "home_xy",
         ]);
+    });
+});
+
+// The sim has no `goto`; these only check the command lines sent.
+describe("wire/link/commands: goto and jog xy", () => {
+    it("sends each command line", async () => {
+        const sent: string[] = [];
+        const link = {
+            command: async (s: string) => { sent.push(s); return s.startsWith("jog") ? "ok 1" : "ok"; },
+        } as unknown as Link;
+        await goto(link, { frame: "m", axis: "xy", x: 10, y: 20 });
+        await goto(link, { frame: "w", axis: "xy", x: 1.5, y: -2, scale: 0.5 });
+        await goto(link, { frame: "w", axis: "z", pos: 3 });
+        await goto(link, { frame: "m", axis: "a", pos: 90, scale: 2 });
+        await goto(link, { name: "mount" });
+        await goto(link, { name: "park", scale: 0.5 });
+        await goto(link, { name: "up" });
+        await goto(link, { name: "unlock" });
+        expect(await jogXY(link, 1, -1)).toBe(1);
+        await jogXY(link, 1, 2, 0.25);
+        expect(sent).toEqual([
+            "goto m xy 10 20", "goto w xy 1.5 -2 0.5", "goto w z 3", "goto m a 90 2",
+            "goto mount", "goto park 0.5", "goto up", "goto unlock",
+            "jog xy 1 -1", "jog xy 1 2 0.25",
+        ]);
+    });
+
+    it("throws on err", async () => {
+        const link = { command: async () => "err no_work" } as unknown as Link;
+        await expect(goto(link, { frame: "w", axis: "z", pos: 0 })).rejects.toThrow(/no_work/);
     });
 });
 

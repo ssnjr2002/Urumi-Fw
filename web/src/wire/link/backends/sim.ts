@@ -110,7 +110,7 @@ interface SimOptions {
     toolChangeMs?: number;
 }
 
-/** `get jogging=` values (shared_state.h RingOwner); the sim has no `jogto`, so no 3 (GOTO). */
+/** `get jogging=` values (shared_state.h RingOwner); the sim has no `goto`, so no 3 (GOTO). */
 const JOGGING_STEP = 1;
 const JOGGING_CONT = 2;
 /** cmd/axis.cpp JOG_MAX_QUEUED. */

@@ -42,8 +42,8 @@ export const MachineState = {
      */
     PROBING: 6,
     /**
-     * Planner jog motion (`line`, `bez`, `jog`), and `jogto`, which parks the
-     * Zs before its line (reason 3, GOTO, throughout). Never pauses.
+     * Planner jog motion (`line`, `bez`, `jog`), and `goto`, legs included
+     * (reason 3, GOTO, throughout). Never pauses.
      */
     JOGGING: 7,
     /**

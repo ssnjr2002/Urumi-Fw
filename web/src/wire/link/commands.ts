@@ -166,6 +166,40 @@ export async function jog(link: Link, axis: JogAxis, dist: number, scale = 1): P
     return Number(m[1]);
 }
 
+/** `jog xy <dx> <dy> [scale]`: one XY line by (dx, dy), as `jog`. */
+export async function jogXY(link: Link, dx: number, dy: number, scale = 1): Promise<number> {
+    const cmd = scale === 1 ? `jog xy ${dx} ${dy}` : `jog xy ${dx} ${dy} ${scale}`;
+    const r = (await link.command(cmd)).trim();
+    const m = /^ok (\d+)$/.exec(r);
+    if (!m) throw new Error(`${cmd}: ${r}`);
+    return Number(m[1]);
+}
+
+/** A `goto` frame: machine (`m`, X and Y the anchor's) or work (`w`). */
+export type GotoFrame = "m" | "w";
+
+/** `goto` forms; `scale` multiplies jogFeed. `up` and `unlock` take none. */
+export type GotoTarget =
+    | { frame: GotoFrame; axis: "xy"; x: number; y: number; scale?: number }
+    | { frame: GotoFrame; axis: "z" | "a"; pos: number; scale?: number }
+    | { name: "park" | "load" | "mount"; scale?: number }
+    | { name: "up" | "unlock" };
+
+/**
+ * `goto …`: an absolute move as a sequence (JOGGING, reason GOTO). XY forms
+ * park every Z first. Resolves on `ok` (started); throws on `err <reason>`.
+ */
+export async function goto(link: Link, t: GotoTarget): Promise<void> {
+    const scale = "scale" in t && t.scale !== undefined && t.scale !== 1 ? ` ${t.scale}` : "";
+    const body =
+        "name" in t
+            ? t.name
+            : t.axis === "xy"
+              ? `${t.frame} xy ${t.x} ${t.y}`
+              : `${t.frame} ${t.axis} ${t.pos}`;
+    await okOrThrow(link, `goto ${body}${scale}`);
+}
+
 async function okOrThrow(link: Link, cmd: string): Promise<void> {
     const r = (await link.command(cmd)).trim();
     if (r !== "ok") throw new Error(`${cmd}: ${r}`);
