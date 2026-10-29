@@ -112,7 +112,8 @@ The tool holder on a head's A releases only near machine A 0.
 
 ## Branches
 
-Order: G1 and G2 are independent; G3 lands before G4; G5 after G1 and G4.
+Order: G1 and G2 are independent; G4 after G1; G5 after G1 and G4. G3 is
+shelved (see its Outcome).
 
 ## Branch G1: `fix/jogto-mount-alock`
 
@@ -184,15 +185,34 @@ Done, merged 2026-10-29 (`4a377c5`..`e284104`). Nothing waits on G2.
   * Web: `web/src/machine/schema.ts`, `machine/json/load.ts`, the validator,
     the config blob encoder.
   * Docs: `docs/homing.md` (leg numbers, §2.8), the config schema doc.
-* Depends on: nothing, but lands before G4, whose `up` and `unlock` use the
-  helper.
+* Depends on: a constant-acceleration node ramp (Outcome). G4's `up` and `unlock` pick up the helper when it lands.
 * Test: native config tests for the field; motion on the bench.
 
 ### Status
 
-Planned.
+Shelved 2026-10-29: WIP `72ff086` on `feature/park-speed` (worktree kept).
+Waits on a constant-acceleration node ramp.
 
 ### Outcome
+
+* The node's ramp shaves a fixed interval per step (`leg.cpp:133`), so it is
+  steepest at the top. Sized for that peak from the homing `startFeed`, Z0
+  (0.33 → 20 mm/s) needed ~6 s per ramp end; a 15 mm park hit its leg
+  deadline (`homefail=3`).
+* Starting at no less than `jogFeed`/8 parked 40 mm in 2.4 s, but the node's
+  0.5 µs tick floors the ramp's slope: ~11× `maxAccel` at the top on Z0, with
+  slight step loss. `parkAccelScale` has no effect there.
+* Out of scope:
+  * `disable` and `disable all` answer `err bad_node`, against
+    `wire_protocol.md`.
+  * After node power was cut, the Pico stayed IDLE and homed, took `jog a`
+    and reported A at 0 with no motion, until `reset`.
+  * The leg timeout model (`ops/leg.cpp:95`) ran short of a long ramp's real
+    time.
+* Follow-up, before G3 resumes: a constant-acceleration node ramp in
+  integers (`c -= 2c / (4n + 1)`), benched first for the step ISR's time at
+  the fastest Z and A rates; then every stepper env, the Pico's leg timeout
+  model and `docs/homing.md` §1.3. G3 then re-derives its ramp.
 
 ## Branch G4: `feature/goto`
 
@@ -213,7 +233,8 @@ Planned.
     `wire/format/status.ts` comment (:45), `wire/link/backends/sim.ts` (:113).
   * Docs: `docs/wire_protocol.md` (`jog`, `jogto` → `goto`, admission
     table), `docs/plans/motion-sessions.md` (point Jog command shape here).
-* Depends on: G1, G3.
+* Depends on: G1. `up` and `unlock` use today's `parkZs` and `lockAs`
+  (Z at `seekFeed`, A to `jogFeed` over `rampSteps`); G3 retunes them later.
 
 ### Status
 
