@@ -237,9 +237,20 @@ Waits on a constant-acceleration node ramp.
 
 ### Status
 
-Planned.
+Done, ready to merge.
 
 ### Outcome
+
+* Deviation: JOB.TOOL_WAIT admits no `goto` (Admission and replies); G5's
+  stop and `unmount` cover what the named forms were for.
+* Syntax: an explicit axis word, `goto <m|w> xy|z|a`; `m xy` is the anchor,
+  as `mpos`. `up` and `unlock` take no scale (`err usage`) until G3 lands.
+* Work A on a tool without a cable takes the turn nearest the current A.
+* `framesWorkToMachine` (`ops/frames.cpp`) resolves work Z and A; G5 can use
+  it. `queueText` in `seq/steps.h` is now shared.
+* Bench (COM8, no tool): every form, `jog xy`, the refusals, and `mount`
+  bringing A back to 0 along the line. Not seen: `no_work` (the config sets a
+  work Z) and `too_far` (needs a cabled tool).
 
 ## Branch G5: `feature/unmount`
 
