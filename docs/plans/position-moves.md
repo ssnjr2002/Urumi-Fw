@@ -155,7 +155,7 @@ Done, merged 2026-10-29 (`ec7ce88`). Unblocks G5 (with G4).
 
 ### Status
 
-Planned.
+Done, merged 2026-10-29 (`4a377c5`..`e284104`). Nothing waits on G2.
 
 ### Outcome
 
