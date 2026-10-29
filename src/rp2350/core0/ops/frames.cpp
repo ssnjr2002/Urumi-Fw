@@ -232,6 +232,34 @@ const char* framesToMachine(float wx, float wy, float* mx, float* my) {
     return nullptr;
 }
 
+const char* framesWorkToMachine(uint8_t k, float w, float from, float* m) {
+    if (k == SLOT_Z) {
+        const uint8_t h = framesZHead();
+        if (h == FRAMES_NONE)    return "no_head";
+        if (!framesWorkZSet(h))  return "no_work";
+        *m = w + framesWork(SLOT_Z) + framesMeshOffset();
+        return nullptr;
+    }
+    // A: machine = heading − the tool's aOffsetDeg, one turn of which. A
+    // cabled tool takes the turn within aMaxDeg of the lock, else the nearest.
+    const uint8_t sel = framesSelected();
+    if (sel >= machineCfg().headCount) return "no_head";
+    const CfgTool* t = configTool(machineCfg(), toolsMounted(sel));
+    const float base = w - (t ? t->aOffsetDeg : 0.0f);
+    float best = base + 360.0f * roundf((from - base) / 360.0f);
+    if (t && t->aMaxDeg > 0) {
+        bool found = false;
+        for (float c = base + 360.0f * ceilf((-t->aMaxDeg - base) / 360.0f);
+             c <= t->aMaxDeg; c += 360.0f) {
+            if (!found || fabsf(c - from) < fabsf(best - from)) best = c;
+            found = true;
+        }
+        if (!found) return "too_far";
+    }
+    *m = best + 0.0f;   // no -0
+    return nullptr;
+}
+
 const char* framesNamed(const char* name, float* mx, float* my) {
     const MachineCfg& c = machineCfg();
     if (strcmp(name, "park") == 0) {

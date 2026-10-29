@@ -276,7 +276,7 @@ TEST_CASE("a sequence publishes by name, over the job context") {
     machinePublish();         CHECK(machineState == STATE_HOMING);
 
     reset();
-    seqId = SEQ_JOGTO;                      // JOGGING over its park legs too
+    seqId = SEQ_GOTO;                       // JOGGING over its park legs too
     legsLive = true;
     machinePublish();         CHECK(machineState == STATE_JOGGING);
     CHECK(strcmp(machineAdmit(K_STEP), "busy") == 0);

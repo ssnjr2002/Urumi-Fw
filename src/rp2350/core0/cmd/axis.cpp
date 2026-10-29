@@ -672,7 +672,7 @@ bool cmdBez(const char* args) {
     return true;
 }
 
-// ── jog <x|y|z|a> <dist> [scale] — step jog ──────────────────────────────────
+// ── jog <x|y|z|a> <dist> [scale], jog xy <dx> <dy> [scale] — step jog ────────
 // Moves one axis by `dist` machine mm (A: degrees) from where the queued jogs
 // end, at the axis's jogFeed (jogFeedUnhomed before homing, with jogUnhomed)
 // times `scale`, capped at maxFeed. Z and A are the selected head's. Clicks
@@ -712,9 +712,43 @@ static void queueAxisJog(uint8_t k, float d, float feed) {
     replyQueued(plannerQueueAxis(k, d, feed, RING_JOG_STEP));
 }
 
+// `jog xy <dx> <dy> [scale]`: one line at the slower of X's and Y's feeds.
+static void jogXY(const char* p) {
+    float d[2];
+    char* end;
+    for (int i = 0; i < 2; i++) {
+        d[i] = strtof(p, &end);
+        if (end == p || !isfinite(d[i])) { Serial.println("err usage"); return; }
+        p = end;
+    }
+    float scale = strtof(p, &end);
+    if (end == p) scale = 1;
+    if (!(scale > 0) || !isfinite(scale) || (d[0] == 0 && d[1] == 0)) {
+        Serial.println("err usage"); return;
+    }
+    if (!machineCfgValid()) { Serial.println("err unconfigured"); return; }
+
+    const MachineCfg& cfg = machineCfg();
+    float feed = INFINITY;
+    for (uint8_t k = 0; k < 2; k++) {
+        const CfgAxis& a = k ? cfg.y : cfg.x;
+        const bool homed = axes_homed & (1u << k);
+        if (!homed && !cfg.jogUnhomed) { Serial.println("err not_homed"); return; }
+        if (!homed && fabsf(d[k]) > a.maxTravel) { Serial.println("err too_far"); return; }
+        float f = (homed ? a.jogFeed : a.jogFeedUnhomed) * scale;
+        if (a.maxFeed > 0 && f > a.maxFeed) f = a.maxFeed;
+        feed = fminf(feed, f);
+    }
+    if (!(feed > 0)) { Serial.println("err no_feed"); return; }
+    queueJog(d, true, feed);
+}
+
 bool cmdJog(const char* args) {
     const char* p = args;
     while (*p == ' ') p++;
+    if ((p[0] | 0x20) == 'x' && (p[1] | 0x20) == 'y' && (p[2] == ' ' || !p[2])) {
+        jogXY(p + 2); return true;
+    }
     static const char kNames[] = "xyza";
     const char* at = strchr(kNames, *p | 0x20);
     const uint8_t k = *p && at ? (uint8_t)(at - kNames) : 0xFF;

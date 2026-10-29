@@ -14,8 +14,8 @@ bool cmdHomeCycle(const char*);
 bool cmdHomeHead(const char*);
 bool cmdHomeXY(const char*);
 
-// ─── jogto.cpp ────────────────────────────────────────────────────────────────
-bool cmdJogTo(const char*);
+// ─── goto.cpp ─────────────────────────────────────────────────────────────────
+bool cmdGoto(const char*);
 bool cmdProbePark(const char*);
 
 // ─── frames.cpp ───────────────────────────────────────────────────────────────

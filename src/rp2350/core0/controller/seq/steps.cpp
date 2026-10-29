@@ -123,7 +123,7 @@ const char* parkZs(void) {
     return nullptr;
 }
 
-static const char* queueText(PlannerQueueResult r) {
+const char* queueText(PlannerQueueResult r) {
     switch (r) {
         case PQ_NO_CONFIG:  return "unconfigured";
         case PQ_NO_LIMITS:  return "no_limits";

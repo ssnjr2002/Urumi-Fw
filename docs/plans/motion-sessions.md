@@ -335,6 +335,9 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 
 ### Jog command shape
 
+> Superseded for the text commands by docs/plans/position-moves.md (Command
+> shape): `jogto` is now `goto`, and `jog` gained `xy`. Kept as history.
+
 Split by rate: text for operator commands and low-rate use, the data plane for
 what is sent continuously.
 

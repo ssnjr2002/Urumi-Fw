@@ -26,7 +26,7 @@ enum SequenceId : uint8_t {
     SEQ_TRAVERSE = 2,   // one leg that keeps the origin, outside a context
     SEQ_HOME     = 3,
     SEQ_RECOVERY = 4,
-    SEQ_JOGTO    = 5,
+    SEQ_GOTO     = 5,
     SEQ_TOOL_CHANGE = 6,   // a job's tool change: park the Zs, a line to the switch
 };
 

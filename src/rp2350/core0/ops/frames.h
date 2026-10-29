@@ -93,6 +93,13 @@ bool framesWorkZSet(uint8_t h);
 // nullptr, or "no_head".
 const char* framesToMachine(float wx, float wy, float* mx, float* my);
 
+// A work target on slot Z or A to machine units. Z: the Z head's, plus the
+// work Z and the bed mesh at the tip now; "no_work" until that head's Z is
+// zeroed. A: the edge heading less the mounted tool's aOffsetDeg, on the turn
+// nearest `from` (machine), within aMaxDeg of 0 for a cabled tool ("too_far"
+// with none). nullptr, "no_head", "no_work" or "too_far".
+const char* framesWorkToMachine(uint8_t k, float w, float from, float* m);
+
 // A named position to the anchor's machine XY: `park` (where homing parks X
 // and Y without one), `load` or `mount` (a tool change's stop). Returns nullptr, "usage" for another name, or
 // "no_position" for one the config lacks.

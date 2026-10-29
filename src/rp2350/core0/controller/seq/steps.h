@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "../../config/config_decode.h"   // CfgAxis
+#include "../../planner/queue.h"          // PlannerQueueResult
 
 // steps.h — the leg numbers the sequences share (web/src/homing/derive.ts) and
 // the step builders (docs/plans/machine-model.md, Levels).
@@ -40,6 +41,9 @@ const char* asReady(void);
 // The target is absolute, so a cabled A unwinds whatever it turned. As
 // parkZs otherwise.
 const char* lockAs(void);
+
+// A planner refusal as its reply word (`full`, `soft_limit`, …).
+const char* queueText(PlannerQueueResult r);
 
 // RING: a straight XY line to machine mm (x, y) at `feed` mm/s, owned by the
 // live sequence (RING_SEQ); the step ends when the ring drains. `aLock`: A

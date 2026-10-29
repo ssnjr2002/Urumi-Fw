@@ -133,7 +133,7 @@ static uint8_t stateOf(uint16_t faults) {
     // A sequence by name, whatever the context.
     const uint8_t seq = sequenceId();
     if (seq == SEQ_HOME || seq == SEQ_RECOVERY) return STATE_HOMING;
-    if (seq == SEQ_JOGTO) return STATE_JOGGING;
+    if (seq == SEQ_GOTO) return STATE_JOGGING;
     if (seq == SEQ_TOOL_CHANGE) return STATE_JOB;
     // A manual context keeps its name over its raw legs.
     if (machineContext == CTX_PROBE)  return STATE_PROBING;
