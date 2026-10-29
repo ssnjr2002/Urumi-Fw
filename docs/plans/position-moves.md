@@ -73,10 +73,9 @@ goto  park | load | mount | up | unlock [scale]
 * **`goto` is a sequence** (`K_SEQUENCE`, IDLE only) and replies `ok` once it
   starts, as `jogto` today; it never joins queued clicks, so there is no
   depth. `jog` keeps `K_STEP` and `ok <depth>`.
-* **JOB.TOOL_WAIT** admits the named forms only (`goto up|unlock|mount`, `unmount`, and
-  `probe_park` as today) beside relative `jog`. The coordinate forms are not
-  needed there: a tool change clears the work Z, so `goto w z` would refuse
-  anyway.
+* **JOB.TOOL_WAIT** admits no `goto`: the stop already stands at the mount
+  position with the cutting head unmounted (G5), and `unmount`, `mount`,
+  `probe_park` and relative `jog` cover the rest.
 
 ### Holder lock
 
