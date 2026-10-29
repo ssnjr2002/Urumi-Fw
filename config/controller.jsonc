@@ -191,6 +191,19 @@
       "cutFeed": 80,
       "plungeFeed": 10,
       "toolOffset": { "xOffset": 0, "yOffset": 0 }
+    },
+    "crease": {
+      "id": 3,
+      "tangential": true,
+      "aMaxDeg": 0,
+      "aOffsetDeg": 90,           // the edge's heading at A = 0 (the lock); measure on mount
+      "unwind": false,
+      "offsetMm": 0,
+      "cornerAngleDeg": 20,
+      "minRadiusMm": 0,
+      "cutFeed": 40,
+      "plungeFeed": 10,
+      "toolOffset": { "xOffset": 0, "yOffset": 0 }
     }
   },
   "quality": {
