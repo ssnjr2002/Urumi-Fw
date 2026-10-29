@@ -22,7 +22,7 @@ supersedes in part).
 jog   <x|y|z|a> <d> [scale]               relative, one axis
 jog   xy <dx> <dy> [scale]                relative, XY line
 goto  <m|w> <x y | z | a> <pos> [scale]   absolute, machine or work
-goto  park | load | mount | up | lock [scale]
+goto  park | load | mount | up | unlock [scale]
 ```
 
 * `goto` replaces `jogto`. `jogto` is removed, not aliased; the web host has no
@@ -40,16 +40,16 @@ goto  park | load | mount | up | lock [scale]
 | `goto <m\|w> x y` | anchor | every Z parks | legs, then planner line |
 | `goto <m\|w> z\|a` | selected head's Z or A | no | planner |
 | `goto up` | every present Z, to machine park | — | park legs |
-| `goto lock` | every present A, to machine 0 | no | park legs |
+| `goto unlock` | every present A, to machine 0 | no | park legs |
 | `goto park\|load` | anchor, stored position | every Z parks | legs, then planner line |
-| `goto mount` | anchor, stored position; the selected A to the lock along the line | every Z parks | legs, then planner line |
+| `goto mount` | anchor, stored position; the selected A to unlock along the line | every Z parks | legs, then planner line |
 | `probe_park <tool>` | as `mount`, the target the tool's switch | every Z parks | legs, then planner line |
 
 * **Absolute XY is the travel move** and always parks Z. Relative XY is the
   nudge near the work and never does.
-* **Machine A is not folded**, so `lock` and a machine-A `goto` unwind the
+* **Machine A is not folded**, so `unlock` and a machine-A `goto` unwind the
   way A turned. A work-A target (the edge heading) picks the turn that stays
-  within `aMaxDeg` of the lock, not the shortest.
+  within `aMaxDeg` of machine 0, not the shortest.
 * **Gates:** every `goto` needs its axes homed, `jogUnhomed` or not. A work
   target needs that axis's work offset (`err no_work`, e.g. after a tool
   change before `wzero z`). Relative `jog` keeps today's `jogUnhomed` rule.
@@ -60,7 +60,7 @@ goto  park | load | mount | up | lock [scale]
 * **One rule for every axis:** `jogFeed` × scale, capped at `maxFeed`, planner
   or leg alike. Homing's seek, back-off and latch keep the homing block's
   speeds and `rampSteps`.
-* **Every park leg** (`up`, `lock`, the Z park in `goto`, the park ending a
+* **Every park leg** (`up`, `unlock`, the Z park in `goto`, the park ending a
   homing cycle) runs at `jogFeed` × scale (homing passes 1), ramping from the
   homing `startFeed`, with its ramp worked out from acceleration:
   steps = (v² − v₀²) / (2 · maxAccel · parkAccelScale) × stepsPerUnit.
@@ -73,10 +73,31 @@ goto  park | load | mount | up | lock [scale]
 * **`goto` is a sequence** (`K_SEQUENCE`, IDLE only) and replies `ok` once it
   starts, as `jogto` today; it never joins queued clicks, so there is no
   depth. `jog` keeps `K_STEP` and `ok <depth>`.
-* **JOB.TOOL_WAIT** admits the named forms only (`goto up|lock|mount`, and
+* **JOB.TOOL_WAIT** admits the named forms only (`goto up|unlock|mount`, `unmount`, and
   `probe_park` as today) beside relative `jog`. The coordinate forms are not
   needed there: a tool change clears the work Z, so `goto w z` would refuse
   anyway.
+
+### Holder lock
+
+The tool holder on a head's A releases only near machine A 0.
+
+* **Unlocked:** |machine A| ≤ `unlockRange`; the tool can come out.
+  **Locked:** outside it. Going to machine 0 unlocks.
+* **`unlockRange`:** optional head-block config field, degrees. Absent: the
+  head has no interlock, no lock status, and `mount` does not turn A.
+* **`unlocked=`** status mask, bit h = head h. Derived on each read from the
+  head's A node position and origin (as `head=` is derived from the map), so
+  it needs no mapping: set when that A is homed and inside the range; clear
+  when unhomed (its homed bit says the state is unknown).
+* **`unmount <head>`:** each step skipped if already true: tool → 0 (clears
+  the head's work Z, as `mount`), that head's Z parks, that head's A unlocks.
+  A sequence of legs.
+* **`mount <head> <tool>`** turns that head's A out of the unlock range,
+  locking it, when the head has `unlockRange`.
+* **Tool change:** the stop unmounts the head about to cut only. Other heads
+  stay as they are, so a holder not in use stays locked and can't be emptied
+  by mistake; the operator `unmount`s a head to load it.
 
 ### Checked
 
@@ -86,24 +107,25 @@ goto  park | load | mount | up | lock [scale]
 * Park legs on a rotary node: the node's `CMD_PARK_LEG` needs only the datum
   (the switch check is `HAS_LIMIT_SWITCH` only, `stepper.cpp:402`), and the
   Pico's leg end accepts a rotary park without the LIMIT test
-  (`ops/leg.cpp:356`). Supported on both sides but never run; `lock` is a
-  bench item.
+  (`ops/leg.cpp:356`). The tool-change stop already runs them (`lockAs`,
+  `controller/seq/steps.cpp:85`, every head's A to machine 0 at `jogFeed`).
 
 ## Branches
 
-Order: G1 and G2 are independent; G3 lands before G4.
+Order: G1 and G2 are independent; G3 lands before G4; G5 after G1 and G4.
 
 ## Branch G1: `fix/jogto-mount-alock`
 
 ### Plan
 
 * Type: fix.
-* Purpose: `jogto mount` turns the selected head's A to the lock along the
-  line, as `probe_park` does; `err a_not_homed` when that A is mapped and
+* Purpose: `jogto mount` turns the selected head's A to unlock (machine 0)
+  along the line, as `probe_park` does; `err a_not_homed` when that A is mapped and
   unhomed.
 * Files: `src/rp2350/core0/controller/cmd/jogto.cpp` (`cmdJogTo` passes
-  `aLock` for `mount`, :42; header comment), `docs/wire_protocol.md` (`jogto`
-  row, :504).
+  `aLock` for `mount`, :42; header comment), `controller/seq/jogto.h` (comment),
+  `docs/wire_protocol.md` (`jogto` row :504, `a_not_homed` in its replies).
+  New wording ("to unlock") in what G1 touches; the other rows wait for G5.
 * Depends on: nothing.
 * Test: bench (no native test covers command handling).
 
@@ -140,16 +162,17 @@ Planned.
 
 * Type: feature.
 * Purpose: park legs at jog speed with an acceleration-derived ramp, as in
-  Speeds; the `parkAccelScale` config field.
+  Speeds; the `parkAccelScale` config field. `lockAs` already parks at
+  `jogFeed`; it gains only the derived ramp.
 * Files:
-  * Pico: `controller/seq/steps.cpp` (`parkZs`, :105; a shared park-leg
-    helper), `controller/seq/home.cpp` (cycle-end park :94, :379),
+  * Pico: `controller/seq/steps.cpp` (`parkZs` :105, `lockAs` :85; a shared
+    park-leg helper), `controller/seq/home.cpp` (cycle-end park :94, :379),
     `config/config_decode.{h,cpp}` (field, range check), config version bump
     if the blob changes.
   * Web: `web/src/machine/schema.ts`, `machine/json/load.ts`, the validator,
     the config blob encoder.
   * Docs: `docs/homing.md` (leg numbers, §2.8), the config schema doc.
-* Depends on: nothing, but lands before G4, whose `up` and `lock` use the
+* Depends on: nothing, but lands before G4, whose `up` and `unlock` use the
   helper.
 * Test: native config tests for the field; motion on the bench.
 
@@ -164,12 +187,12 @@ Planned.
 ### Plan
 
 * Type: feature (protocol change).
-* Purpose: `goto` replacing `jogto`, `jog xy`, `up` and `lock`, scale on every
+* Purpose: `goto` replacing `jogto`, `jog xy`, `up` and `unlock`, scale on every
   form, as in Command shape and What each move does.
 * Files:
   * Pico: `controller/cmd/jogto.cpp` → `goto.cpp` (parse, frames,
     named), `controller/seq/jogto.{h,cpp}` (Z park optional, scale, the
-    `up`/`lock` sequences), `cmd/axis.cpp` (`jog xy`, `queueJog` :685,
+    `up`/`unlock` sequences), `cmd/axis.cpp` (`jog xy`, `queueJog` :685,
     `queueAxisJog`), `ops/frames.cpp` (machine A target for a work heading;
     work target needs a valid offset), `control_plane.cpp` and
     `controller/cmd/table.h` (rows), `controller/seq/toolchange.cpp` if it
@@ -179,6 +202,39 @@ Planned.
   * Docs: `docs/wire_protocol.md` (`jog`, `jogto` → `goto`, admission
     table), `docs/plans/motion-sessions.md` (point Jog command shape here).
 * Depends on: G1, G3.
+
+### Status
+
+Planned.
+
+### Outcome
+
+## Branch G5: `feature/unmount`
+
+### Plan
+
+* Type: feature (protocol change).
+* Purpose: the holder lock, as in Holder lock: `unlockRange`, the derived
+  `unlocked=` status, `unmount`, `mount` locking A, the tool-change stop
+  unmounting only the head about to cut. Renames the remaining "lock" wording
+  to "unlock" (`lockAs` → `unlockAs`, `aLockReady`, `jogtoStart`'s `aLock`,
+  the `probe_park` and tool-change rows).
+* Files:
+  * Pico: `controller/cmd/mount.cpp` (`unmount`, `mount` locks A),
+    `controller/seq/toolchange.cpp` (:49, one head), `controller/seq/steps.cpp`
+    (`unlockAs`, a one-head form), a sequence for `unmount`,
+    `control_plane.cpp` and `controller/cmd/table.h` (row),
+    `cmd/get.cpp` (`unlocked` key, :189), the status reply,
+    `config/config_decode.{h,cpp}` (head `unlockRange`).
+  * Web: `web/src/machine/schema.ts`, `machine/json/load.ts`, the validator,
+    the config blob encoder; `wire/format/status.ts` (`unlocked`),
+    `wire/link/commands.ts` (`unmount`), `wire/link/backends/sim.ts`.
+  * Docs: `docs/wire_protocol.md` (`unmount`, `mount`, `probe_park`, the
+    tool-change stop :263, status keys), the config schema doc.
+* Depends on: G1, G4 (`goto unlock`, the shared recipe).
+* Open: which way, and how far, `mount` turns A out of the range (away from
+  the cable's wound side keeps the full `aMaxDeg`); a config value or a fixed
+  margin past `unlockRange`.
 
 ### Status
 
