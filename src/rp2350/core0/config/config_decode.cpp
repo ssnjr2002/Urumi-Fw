@@ -340,6 +340,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fh["xOffset"]     = true;
     fh["yOffset"]     = true;
     fh["probeSwitch"] = true;
+    fh["unlockRange"] = true;
     fm["defaultHead"] = true;
     fm["laser"]       = true;
     fm["work"]        = true;
@@ -380,8 +381,11 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
         if ((e = readAxis(heads[h]["a"], 2, &hd.a)) != CFG_DEC_OK) return e;
         if (!readFloat(heads[h]["xOffset"], &hd.xOffset) ||
             !readFloat(heads[h]["yOffset"], &hd.yOffset) ||
-            !readOptPoint(heads[h]["probeSwitch"], &hd.hasProbeSwitch, &hd.probeSwitch))
+            !readOptPoint(heads[h]["probeSwitch"], &hd.hasProbeSwitch, &hd.probeSwitch) ||
+            !readOptFloat(heads[h]["unlockRange"], &hd.unlockRange))
             return CFG_DEC_MISSING;
+        if (!(isfinite(hd.unlockRange) && hd.unlockRange >= 0) ||
+            (hd.unlockRange > 0 && !hd.a.node.present)) return CFG_DEC_HEADS;
     }
 
     // A laser is (0, 0) by definition; it carries only the node that switches it.

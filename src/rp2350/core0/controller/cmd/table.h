@@ -27,3 +27,4 @@ bool cmdMesh(const char*);
 
 // ─── mount.cpp ────────────────────────────────────────────────────────────────
 bool cmdMount(const char*);
+bool cmdUnmount(const char*);

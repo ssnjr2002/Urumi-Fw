@@ -15,14 +15,22 @@
 
 static float   targetX, targetY, feed;
 static bool    lining;          // the line is queued, or there is none to come
-static bool    lock;            // A rides the line to unlock
+static bool    unlock;           // A rides the line to unlock
 static char    refusal[40];
+static uint8_t turnHead = 0xFF; // gotoHead: the head whose A turns next, or none
+static float   turnTo;
 
 static bool gotoNext(uint8_t) {
+    if (turnHead != 0xFF) {
+        const uint8_t h = turnHead;
+        turnHead = 0xFF;
+        if (const char* why = turnA(h, turnTo)) { sequenceFail(why); return false; }
+        return true;
+    }
     if (lining) return false;
     lining = true;
     bool queued;
-    if (const char* why = lineTo(targetX, targetY, feed, &queued, lock)) {
+    if (const char* why = lineTo(targetX, targetY, feed, &queued, unlock)) {
         sequenceFail(why);
         return false;
     }
@@ -34,7 +42,8 @@ static const Sequence gotoSequence = { SEQ_GOTO, gotoNext, nullptr };
 // Open the sequence with the ring owned by it, so the reason byte reads GOTO
 // from the first step on; the ring is idle and empty.
 static void open(bool line) {
-    lining = !line;
+    lining   = !line;
+    turnHead = 0xFF;
     const uint32_t s = spin_lock_blocking(plannerLock);
     ringOwner = RING_SEQ;
     spin_unlock(plannerLock, s);
@@ -50,9 +59,9 @@ static const char* legs(const char* (*arm)(void)) {
     return nullptr;
 }
 
-const char* gotoLine(float mx, float my, float f, bool aLock) {
+const char* gotoLine(float mx, float my, float f, bool aUnlock) {
     if ((axes_homed & 0x3) != 0x3) return "not_homed";
-    if (aLock) if (const char* why = aLockReady()) return why;
+    if (aUnlock) if (const char* why = aUnlockReady()) return why;
     uint8_t zs[CFG_MAX_HEADS];
     const uint8_t nz = headZNodes(zs);
 
@@ -70,13 +79,13 @@ const char* gotoLine(float mx, float my, float f, bool aLock) {
     targetX = mx;
     targetY = my;
     feed    = f;
-    lock    = aLock;
+    unlock  = aUnlock;
     open(true);
     if (nz) return legs(parkZs);
     // No Z to park: the line is the first step, refused as the command.
     lining = true;
     bool queued;
-    const char* why = lineTo(targetX, targetY, feed, &queued, lock);
+    const char* why = lineTo(targetX, targetY, feed, &queued, unlock);
     if (!queued) sequenceEnd();
     return why;
 }
@@ -116,5 +125,21 @@ const char* gotoUnlock(void) {
     uint8_t as[CFG_MAX_HEADS];
     if (!headANodes(as)) return nullptr;
     open(false);
-    return legs(lockAs);
+    return legs(unlockAs);
+}
+
+const char* gotoHead(uint8_t h, bool z, bool a, float deg) {
+    if (z) if (const char* why = zReady(h)) return why;
+    if (a) if (const char* why = aReady(h)) return why;
+    const CfgHead& hd = machineCfg().heads[h];
+    z = z && hd.z.node.present && !zParked(h);
+    a = a && hd.a.node.present && !aAt(h, deg);
+    if (!z && !a) return nullptr;
+    open(false);
+    if (z && a) { turnHead = h; turnTo = deg; }
+    if (const char* why = z ? parkZ(h) : turnA(h, deg)) {
+        if (sequenceLive()) sequenceEnd();
+        return why;
+    }
+    return nullptr;
 }

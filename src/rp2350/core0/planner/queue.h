@@ -32,7 +32,7 @@ struct LayerMotion;
 // `reason` is the RingOwner it runs as; it joins only a ring of that kind.
 // A continuous jog ends where the bed mesh would take Z outside its soft range;
 // any other XY move is refused there (PQ_SOFT_LIMIT), as are Béziers and
-// records. `aZero`: A rides the line to machine 0 (the lock), capped by A.
+// records. `aZero`: A rides the line to machine 0 (unlock), capped by A.
 PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason,
                                     bool aZero = false);
 

@@ -200,7 +200,7 @@ bool framesWPos(uint8_t k, float* out) {
     float m;
     if (!framesMPos(k, &m)) return false;
     if (k == SLOT_A) {
-        // The edge heading: the mounted tool's offset from the lock.
+        // The edge heading: the mounted tool's offset from unlock (machine 0).
         const uint8_t sel = framesSelected();
         if (sel < machineCfg().headCount) {
             const CfgTool* t = configTool(machineCfg(), toolsMounted(sel));
@@ -241,7 +241,7 @@ const char* framesWorkToMachine(uint8_t k, float w, float from, float* m) {
         return nullptr;
     }
     // A: machine = heading − the tool's aOffsetDeg, one turn of which. A
-    // cabled tool takes the turn within aMaxDeg of the lock, else the nearest.
+    // cabled tool takes the turn within aMaxDeg of machine 0, else the nearest.
     const uint8_t sel = framesSelected();
     if (sel >= machineCfg().headCount) return "no_head";
     const CfgTool* t = configTool(machineCfg(), toolsMounted(sel));

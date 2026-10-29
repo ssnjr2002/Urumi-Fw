@@ -37,21 +37,38 @@ uint8_t headANodes(uint8_t* out);
 // zsReady for every present head's A (`a_not_homed`).
 const char* asReady(void);
 
-// LEGS: every present head's A to machine 0, the holder's lock, in parallel.
-// The target is absolute, so a cabled A unwinds whatever it turned. As
-// parkZs otherwise.
-const char* lockAs(void);
+// zsReady for head h's Z (`not_homed`) or A (`a_not_homed`); nullptr when
+// the head has none.
+const char* zReady(uint8_t h);
+const char* aReady(uint8_t h);
+
+// LEGS: every present head's A to machine 0, unlocking its holder, in
+// parallel. The target is absolute, so a cabled A unwinds whatever it turned.
+// As parkZs otherwise.
+const char* unlockAs(void);
+
+// LEGS: head h's Z to its park position, or its A to machine `deg`, as parkZs
+// and unlockAs for one head. The axis must be present and ready.
+const char* parkZ(uint8_t h);
+const char* turnA(uint8_t h, float deg);
+
+// Head h's Z at its park position, or its A at machine `deg` (within a step).
+bool zParked(uint8_t h);
+bool aAt(uint8_t h, float deg);
+
+// Head h's A, machine degrees; false if it has none or it is unhomed.
+bool aDeg(uint8_t h, float* deg);
 
 // A planner refusal as its reply word (`full`, `soft_limit`, …).
 const char* queueText(PlannerQueueResult r);
 
+// A line that unlocks (lineTo's aUnlock) is possible: the selected head has no
+// A, or A is homed. nullptr, or the refusal text.
+const char* aUnlockReady(void);
+
 // RING: a straight XY line to machine mm (x, y) at `feed` mm/s, owned by the
-// live sequence (RING_SEQ); the step ends when the ring drains. `aLock`: A
-// rides it to machine 0, the holder's lock (no A on the head: XY only; A
+// live sequence (RING_SEQ); the step ends when the ring drains. `aUnlock`: A
+// rides it to machine 0, unlocking the holder (no A on the head: XY only; A
 // unhomed: a_not_homed). Returns nullptr, or the refusal text; `*queued` is
 // false when it queued nothing (refused, or the head is there already).
-// A park (lineTo's aLock) is possible: the selected head has no A, or A is
-// homed. nullptr, or the refusal text.
-const char* aLockReady(void);
-
-const char* lineTo(float x, float y, float feed, bool* queued, bool aLock = false);
+const char* lineTo(float x, float y, float feed, bool* queued, bool aUnlock = false);

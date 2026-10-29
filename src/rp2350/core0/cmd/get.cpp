@@ -43,7 +43,8 @@ struct Snap {
     float    mpos[4], wpos[4];
     bool     mposOk[4], wposOk[4];
     uint8_t  head;
-    uint8_t  tools[CFG_MAX_HEADS], headCount;
+    uint8_t  tools[CFG_MAX_HEADS], headCount, unlocked;
+    bool     interlock;
     uint32_t late, aMiss;
     uint8_t  meshFile;
     bool     meshOn;
@@ -90,7 +91,12 @@ void takeSnap(Snap& s) {
     s.probingReason = probingReason;
     s.ringOwner = ringOwner;
     s.headCount = machineCfgValid() ? machineCfg().headCount : 0;
-    for (uint8_t h = 0; h < s.headCount; h++) s.tools[h] = toolsMounted(h);
+    s.interlock = false;
+    for (uint8_t h = 0; h < s.headCount; h++) {
+        s.tools[h] = toolsMounted(h);
+        if (machineCfg().heads[h].unlockRange > 0) s.interlock = true;
+    }
+    s.unlocked = toolsUnlocked();
     s.probeCause    = probeLastCause();
     s.probeRetries  = probeLastRetries();
     s.probeSteps    = probeLastSteps();
@@ -279,6 +285,9 @@ const Key kKeys[] = {
                             : snprintf(o + k, n - k, "%s-", sep);
         }
         return KEY_OK; } },
+    // The holders that can release now, bit h = head h; n/a with no interlock.
+    { "unlocked",  [](const Snap& s, char* o, size_t n) {
+        return s.interlock ? fmtHex(o, n, s.unlocked, 2) : KEY_NA; } },
     // Planner blocks Core 1 found late, since boot; each held the motion briefly.
     { "late",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.late); } },
     // Tangential curves whose tracked A missed the planned end A, since boot.
@@ -298,7 +307,7 @@ uint8_t findKey(const char* name, size_t len);
 // A group stands for its keys, in order. Group and key names share one namespace.
 const char* const kStatusKeys[] = {
     "state", "ctx", "homed", "enabled", "nodehomed", "nodeenabled", "head", "tools",
-    "pos", "mpos", "wpos", "buf", "mute", "excluded", "touched", "mesh",
+    "unlocked", "pos", "mpos", "wpos", "buf", "mute", "excluded", "touched", "mesh",
 };
 struct Group { const char* name; const char* const* keys; uint8_t count; };
 const Group kGroups[] = {

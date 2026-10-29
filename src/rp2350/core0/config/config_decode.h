@@ -82,6 +82,7 @@ struct CfgHead {
     float    yOffset;
     bool     hasProbeSwitch;
     CfgPoint probeSwitch;    // a tip position; valid if hasProbeSwitch
+    float    unlockRange;    // |machine A| that releases the holder, degrees; 0: no interlock
 };
 
 // A powered tool's `power` block; node 0 on a passive tool. The node's type
@@ -107,7 +108,7 @@ struct CfgTool {
     uint8_t periodCount;    // tangential: looks the same every 360/n degrees
     float   cornerAngleDeg; // tangential: a corner turning more lifts to swivel
     float   aMaxDeg;        // |A| limit either way from home; 0 = no cable
-    float   aOffsetDeg;     // tangential: the edge's heading at machine A = 0 (the lock)
+    float   aOffsetDeg;     // tangential: the edge's heading at machine A = 0 (unlock)
     float   offsetMm;       // tangential: the blade tip's trail behind the A axis, mm
     bool    plunge;         // cuts into the material, not on it
     float   xOffset;        // toolOffset: tip − head centre, mm

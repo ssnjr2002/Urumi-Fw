@@ -82,19 +82,40 @@ const char* asReady(void) {
     return nodesReady(as, headANodes(as), "a_not_homed");
 }
 
-const char* lockAs(void) {
+const char* zReady(uint8_t h) {
+    const CfgAxis& a = machineCfg().heads[h].z;
+    return a.node.present ? nodesReady(&a.node.id, 1, "not_homed") : nullptr;
+}
+
+const char* aReady(uint8_t h) {
+    const CfgAxis& a = machineCfg().heads[h].a;
+    return a.node.present ? nodesReady(&a.node.id, 1, "a_not_homed") : nullptr;
+}
+
+static const char* armZ(const CfgAxis& a) {
+    const CfgHoming& hm = a.homing;
+    return homingArmPark(a.node.id, true, originTarget(a.node.id, parkSteps(a)),
+                         intervalUs(hm.startFeed, a.stepsPerUnit),
+                         intervalUs(hm.seekFeed, a.stepsPerUnit),
+                         hm.rampSteps);
+}
+
+static const char* armA(const CfgAxis& a, float deg) {
+    return homingArmPark(a.node.id, true, originTarget(a.node.id, coordSteps(a, deg)),
+                         intervalUs(a.homing.startFeed, a.stepsPerUnit),
+                         intervalUs(a.jogFeed, a.stepsPerUnit),
+                         a.homing.rampSteps);
+}
+
+// Arm one leg per present head's axis; a refusal after the first abandons it.
+static const char* armAll(bool z) {
     const MachineCfg& c = machineCfg();
     bool armed = false;
     for (uint8_t h = 0; h < c.headCount; h++) {
-        const CfgAxis& a = c.heads[h].a;
+        const CfgAxis& a = z ? c.heads[h].z : c.heads[h].a;
         if (!a.node.present) continue;
-        const uint8_t id = a.node.id;
-        const char* why = homingArmPark(id, true, originTarget(id, coordSteps(a, 0)),
-                                        intervalUs(a.homing.startFeed, a.stepsPerUnit),
-                                        intervalUs(a.jogFeed, a.stepsPerUnit),
-                                        a.homing.rampSteps);
-        if (why) {
-            if (armed) homingAbandon(id, LEGFAIL_REFUSED);
+        if (const char* why = z ? armZ(a) : armA(a, 0)) {
+            if (armed) homingAbandon(a.node.id, LEGFAIL_REFUSED);
             return why;
         }
         armed = true;
@@ -102,25 +123,30 @@ const char* lockAs(void) {
     return nullptr;
 }
 
-const char* parkZs(void) {
-    const MachineCfg& c = machineCfg();
-    bool armed = false;
-    for (uint8_t h = 0; h < c.headCount; h++) {
-        const CfgAxis& a = c.heads[h].z;
-        if (!a.node.present) continue;
-        const uint8_t    id = a.node.id;
-        const CfgHoming& hm = a.homing;
-        const char* why = homingArmPark(id, true, originTarget(id, parkSteps(a)),
-                                        intervalUs(hm.startFeed, a.stepsPerUnit),
-                                        intervalUs(hm.seekFeed, a.stepsPerUnit),
-                                        hm.rampSteps);
-        if (why) {
-            if (armed) homingAbandon(id, LEGFAIL_REFUSED);
-            return why;
-        }
-        armed = true;
-    }
-    return nullptr;
+const char* unlockAs(void) { return armAll(false); }
+const char* parkZs(void)   { return armAll(true); }
+
+const char* parkZ(uint8_t h)          { return armZ(machineCfg().heads[h].z); }
+const char* turnA(uint8_t h, float d) { return armA(machineCfg().heads[h].a, d); }
+
+bool zParked(uint8_t h) {
+    const CfgAxis& a = machineCfg().heads[h].z;
+    int32_t at;
+    return nodeMachineSteps(a.node.id, &at) && at == parkSteps(a);
+}
+
+bool aAt(uint8_t h, float deg) {
+    const CfgAxis& a = machineCfg().heads[h].a;
+    int32_t at;
+    return nodeMachineSteps(a.node.id, &at) && at == coordSteps(a, deg);
+}
+
+bool aDeg(uint8_t h, float* deg) {
+    const CfgAxis& a = machineCfg().heads[h].a;
+    int32_t at;
+    if (!a.node.present || !nodeMachineSteps(a.node.id, &at)) return false;
+    *deg = (float)((a.invertDir ? -at : at) / (double)a.stepsPerUnit);
+    return true;
 }
 
 const char* queueText(PlannerQueueResult r) {
@@ -133,16 +159,16 @@ const char* queueText(PlannerQueueResult r) {
     }
 }
 
-const char* aLockReady(void) {
+const char* aUnlockReady(void) {
     return framesAxis(SLOT_A) && !(axes_homed & 0x8) ? "a_not_homed" : nullptr;
 }
 
-const char* lineTo(float x, float y, float feed, bool* queued, bool aLock) {
+const char* lineTo(float x, float y, float feed, bool* queued, bool aUnlock) {
     *queued = false;
     float at[4];
     if (!plannerJogFrom(at, RING_SEQ)) return "bad_state";
-    if (aLock) if (const char* why = aLockReady()) return why;
-    const bool a = aLock && framesAxis(SLOT_A);
+    if (aUnlock) if (const char* why = aUnlockReady()) return why;
+    const bool a = aUnlock && framesAxis(SLOT_A);
     const bool aThere = !a || fabsf(at[3]) < 1e-3f;
     if (fabsf(x - at[0]) < 1e-3f && fabsf(y - at[1]) < 1e-3f && aThere) return nullptr;
     const PlannerQueueResult r = plannerQueueLine(x, y, feed, RING_SEQ, a);

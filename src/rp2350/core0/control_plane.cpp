@@ -86,7 +86,8 @@ static const Cmd kControllerCommands[] = {
     { "wset",         cmdWset,        K_WRITE },
     { "wclear",       cmdWclear,      K_WRITE },
     { "mesh",         cmdMesh,        K_WRITE },
-    { "mount",        cmdMount,       K_WRITE | K_IN_TOOL },
+    { "mount",        cmdMount,       K_SEQUENCE | K_IN_TOOL },
+    { "unmount",      cmdUnmount,     K_SEQUENCE | K_IN_TOOL },
 };
 
 template <size_t N>

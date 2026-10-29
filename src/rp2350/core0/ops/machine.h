@@ -78,6 +78,10 @@ uint8_t machineView(void);
 // sequence, and no context but a paused job.
 bool machineAtRest(void);
 
+// A step or a sequence is live: legs, the ring (a paused job's excepted), or
+// a sequence between steps.
+bool machineMoving(void);
+
 // As machineAtRest, and also a homing context between legs: the bus queries.
 bool machineBusFree(void);
 

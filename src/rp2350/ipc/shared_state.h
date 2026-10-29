@@ -65,7 +65,7 @@ enum JobReason : uint8_t {
     JOB_HOLDING   = 2,   // braking for a pause or a late block
     JOB_PAUSED    = 3,   // at rest, ring dropped; a matching LAYER_HDR or `cancel`
     JOB_ABORTING  = 4,   // braking for an abort; ends IDLE
-    JOB_TOOL_CHANGE = 5, // the tool-change sequence: park Zs, lock As, a line to `mount`
+    JOB_TOOL_CHANGE = 5, // the tool-change sequence: park Zs, unlock the head's A, a line to `mount`
     JOB_TOOL_WAIT   = 6, // at rest: the operator mounts and zeroes; a header leaves
     JOB_DWELL       = 7, // at rest before a plunge, the tool off until its duty resets
 };

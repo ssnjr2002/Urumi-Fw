@@ -604,7 +604,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     const double shift = from > 0 ? planner::bezierTurn(b).total - turn.total : 0;
     const double sweepLo = fmin(sweepMin - kSweepMarginDeg - shift, turn.lo);
     const double sweepHi = fmax(sweepMax + kSweepMarginDeg - shift, turn.hi);
-    // Machine A is the heading less the tool's edge offset at the lock.
+    // Machine A is the heading less the tool's edge offset at unlock.
     const float h0 = headingDeg(d0) - layerMo.aOffsetDeg;
     const bool cable = tangential && layerMo.aMaxDeg > 0;
     const auto pickFit = [&](float h) {

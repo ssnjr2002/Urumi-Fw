@@ -19,7 +19,7 @@ static bool    started;       // the job reached TOOL_CHANGE and the change bega
 static uint8_t wantHead, wantTool;
 static uint8_t backTo;        // BUFFERING or PAUSED
 static float   targetX, targetY, feed;
-static uint8_t step;          // the next of: park the Zs, lock the As, the line
+static uint8_t step;          // the next of: park the Zs, unlock the head's A, the line
 
 // sequenceFail wants one token: `node 3 excluded` reads node_3_excluded.
 static void fail(const char* why) {
@@ -37,6 +37,7 @@ static bool ready(uint8_t head, uint8_t tool) {
 // stop is in TOOL_WAIT, or failed.
 static bool advance(void) {
     uint8_t nodes[CFG_MAX_HEADS];
+    const CfgHead& hd = machineCfg().heads[wantHead];
     while (step < 3) {
         const char* why = nullptr;
         switch (step++) {
@@ -45,8 +46,8 @@ static bool advance(void) {
                 why = parkZs();
                 break;
             case 1:
-                if (headANodes(nodes) == 0) continue;
-                why = lockAs();
+                if (!(hd.unlockRange > 0) || aAt(wantHead, 0)) continue;
+                why = turnA(wantHead, 0);
                 break;
             default: {
                 bool queued;
@@ -85,7 +86,9 @@ static void start(void) {
     feed = fminf(c.x.jogFeed, c.y.jogFeed);
     if (!(feed > 0)) { fail("no_feed"); return; }
     if (const char* why = zsReady()) { fail(why); return; }
-    if (const char* why = asReady()) { fail(why); return; }
+    if (machineCfg().heads[wantHead].unlockRange > 0)
+        if (const char* why = aReady(wantHead)) { fail(why); return; }
+    toolsMount(wantHead, 0);
 
     // The job's ring is idle and empty in TOOL_CHANGE.
     const uint32_t s = spin_lock_blocking(plannerLock);

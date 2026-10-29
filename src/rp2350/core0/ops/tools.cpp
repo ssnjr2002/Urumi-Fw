@@ -1,8 +1,12 @@
 // tools — see tools.h.
 
+#include <math.h>
 #include "tools.h"
 #include "frames.h"
+#include "machine.h"
+#include "position.h"
 #include "../config/machine_cfg.h"
+#include "../../ipc/shared_state.h"
 
 static uint8_t mounted[CFG_MAX_HEADS];
 
@@ -21,4 +25,19 @@ const char* toolsMount(uint8_t head, uint8_t id) {
 
 void toolsReset(void) {
     for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) mounted[h] = 0;
+}
+
+uint8_t toolsUnlocked(void) {
+    if (!machineCfgValid() || machineMoving()) return 0;
+    const uint8_t ctx = machineContext;
+    if (!(ctx == CTX_IDLE || (ctx == CTX_JOB && jobReason == JOB_TOOL_WAIT))) return 0;
+    const MachineCfg& c = machineCfg();
+    uint8_t mask = 0;
+    for (uint8_t h = 0; h < c.headCount; h++) {
+        const CfgAxis& a = c.heads[h].a;
+        int32_t at;
+        if (!(c.heads[h].unlockRange > 0) || !nodeMachineSteps(a.node.id, &at)) continue;
+        if (fabs(at / (double)a.stepsPerUnit) <= c.heads[h].unlockRange) mask |= 1u << h;
+    }
+    return mask;
 }

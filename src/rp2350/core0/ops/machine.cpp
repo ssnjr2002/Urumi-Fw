@@ -158,6 +158,8 @@ static bool stepLive(void) {
     return step == STEP_LEGS || (step == STEP_RING && !jobPaused());
 }
 
+bool machineMoving(void) { return stepLive() || sequenceLive(); }
+
 bool machineAtRest(void) {
     return !estopUnswept() && !stepLive() && !sequenceLive() &&
            (machineContext == CTX_IDLE || jobPaused());

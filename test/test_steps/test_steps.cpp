@@ -43,6 +43,7 @@ const char* homingArmPark(uint8_t, bool, int32_t, uint16_t, uint16_t, uint16_t) 
 }
 void homingAbandon(uint8_t, uint8_t) {}
 bool originValid(uint8_t) { return true; }
+bool nodeMachineSteps(uint8_t, int32_t*) { return false; }
 uint16_t busExcluded() { return 0; }
 uint16_t busMute() { return 0; }
 RpcResult rpcNodeCmd(uint8_t, uint8_t, uint8_t) { return RPC_OK; }

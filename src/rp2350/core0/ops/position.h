@@ -163,7 +163,8 @@ void originInvalidate(uint8_t node);
 
 // Node `n` moved under its own pulser, with its witness intact (a finished park
 // leg), and its counter now reads `nodePos`. Keep the origin and re-derive
-// machinePos for its slot, as a bind does. No-op unless `n` is homed.
+// machinePos for its slot, as a bind does, or its parked counter when it holds
+// none. No-op unless `n` is homed.
 void originAdopt(uint8_t n, int32_t nodePos);
 
 // The node counter at which homed node `n` stands at machine position
@@ -211,6 +212,10 @@ void parkForget(uint8_t n);
 // True if we hold a parked counter for `n` and it disagrees with `pos`.
 // False when no entry is held -- an unknown park cannot accuse.
 bool parkMoved(uint8_t n, int32_t pos);
+
+// Homed node `n`'s machine position, steps: its slot's machinePos when bound,
+// else its parked counter less its origin. False if unhomed or not known.
+bool nodeMachineSteps(uint8_t n, int32_t* steps);
 
 // ─── Energisation projection ─────────────────────────────────────────────────
 // axes_enabled from nodeEnabled, for bound axes. Called by the observer every

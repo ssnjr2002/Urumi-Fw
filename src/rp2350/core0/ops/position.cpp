@@ -204,6 +204,7 @@ void originAdopt(uint8_t n, int32_t nodePos) {
     if (!originValid(n)) return;
     uint8_t s = nodeAxis(n);
     if (s != SLOT_NONE) machinePos[s] = nodePos - nodeOrigin[n];
+    else                parkRecord(n, nodePos);   // a leg on a parked node: its new rest
 }
 
 int32_t originTarget(uint8_t n, int32_t machineSteps) {
@@ -248,6 +249,15 @@ void parkForget(uint8_t n) {
 
 bool parkMoved(uint8_t n, int32_t pos) {
     return n <= BUS_ADDR_MAX && (parkSeen & (1u << n)) && parkPos[n] != pos;
+}
+
+bool nodeMachineSteps(uint8_t n, int32_t* steps) {
+    if (!originValid(n)) return false;
+    const uint8_t s = nodeAxis(n);
+    if (s != SLOT_NONE) { *steps = machinePos[s]; return true; }
+    if (!(parkSeen & (1u << n))) return false;
+    *steps = parkPos[n] - nodeOrigin[n];
+    return true;
 }
 
 // ─── Binding, and the three-domain join ───────────────────────────────────────
