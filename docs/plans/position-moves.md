@@ -289,9 +289,28 @@ Done, merged 2026-10-29 (`4696983`..`81f2c35`). Unblocks G5.
 
 ### Status
 
-In progress.
+Ready to merge.
 
 ### Outcome
+
+* Deviations, agreed in Work: `unlocked=` is gated on IDLE or TOOL_WAIT at
+  rest rather than derived from position alone; `mount` locks at
+  `unlockRange` + 1° in the + direction, parks the head's Z first, takes tool
+  ids from 1 and refuses a head with any tool (`err mounted`); `mount` and
+  `unmount` are `K_SEQUENCE | K_IN_TOOL`. Refusals: `not_homed` for Z,
+  `a_not_homed` for A.
+* Interface: `gotoHead` (`seq/goto.h`) and the one-head `parkZ`, `turnA`,
+  `zReady`, `aReady` in `seq/steps.h`; `machineMoving`, `toolsUnlocked`;
+  web `mount()`, `unmount()`, `MachineStatus.unlocked`. `unlockRange` is
+  also a host validator rule. Head 0's `unlockRange` is 0.5 (about 1° in all).
+* Doc fix: `wire_protocol.md`'s `seq=` line still read `5=JOGTO`.
+* Bench (COM8, no tool): without `unlockRange`, `mount` only records and
+  `unmount` parks Z; with it, `unmount` parks Z then turns A to 0
+  (`unlocked=0x01`), `mount` parks Z and turns A to 1.5° (`0x00`),
+  `err mounted` on the same or another tool, the bit stays clear through a
+  move crossing the range. The holder released by hand after `unmount` and
+  stayed locked at 1.5°. Not seen: the tool-change stop, `mount`/`unmount`
+  in TOOL_WAIT, a second head.
 
 * Out of scope: JOB.TOOL_WAIT admission (`ops/machine.cpp:176`) checks only
   busy and the estop latch, not the faults `K_SEQUENCE` checks in IDLE, so a
