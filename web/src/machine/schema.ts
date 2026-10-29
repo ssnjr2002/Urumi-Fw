@@ -452,7 +452,7 @@ export interface ToolProfile {
     /** A corner turning a tangential tool more than this lifts to swivel (degrees). */
     readonly cornerAngleDeg: number;
     readonly minRadiusMm: number;
-    /** Cable: |A| at most this either way from home (degrees); absent = no cable. */
+    /** Cable: |A| at most this either way from home (degrees); absent or 0 = no cable. */
     readonly aMaxDeg?: number;
     /** Tangential: the edge's heading at machine A = 0, the holder's lock (degrees); absent = 0. */
     readonly aOffsetDeg?: number;

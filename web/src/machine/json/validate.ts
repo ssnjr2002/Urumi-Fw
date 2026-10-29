@@ -177,8 +177,8 @@ const toolAFields: Rule = ({ toolProfiles }) =>
             ? [error(`tools.${name}.periodCount: only a tangential tool has one`)] : []),
         ...(t.cornerAngleDeg >= 0 && t.cornerAngleDeg <= 180
             ? [] : [error(`tools.${name}.cornerAngleDeg: must be 0..180 (got ${t.cornerAngleDeg})`)]),
-        ...(t.aMaxDeg === undefined || (Number.isFinite(t.aMaxDeg) && t.aMaxDeg > 0)
-            ? [] : [error(`tools.${name}.aMaxDeg: must be > 0 (got ${t.aMaxDeg})`)]),
+        ...(t.aMaxDeg === undefined || (Number.isFinite(t.aMaxDeg) && t.aMaxDeg >= 0)
+            ? [] : [error(`tools.${name}.aMaxDeg: must be >= 0 (got ${t.aMaxDeg})`)]),
         ...(t.aOffsetDeg === undefined || (Number.isFinite(t.aOffsetDeg) && t.tangential)
             ? [] : [error(`tools.${name}.aOffsetDeg: a finite angle, tangential tools only`)]),
         ...(Number.isFinite(t.offsetMm) && t.offsetMm >= 0 && (t.tangential || t.offsetMm === 0)

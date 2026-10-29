@@ -118,12 +118,15 @@ TEST_CASE("config/controller.jsonc decodes") {
     CHECK(c.headCount == 2);
     CHECK(c.x.homing.present);
     CHECK(c.heads[1].a.homing.present);
-    REQUIRE(c.toolCount == 2);
+    REQUIRE(c.toolCount == 3);
     const CfgTool* knife = configTool(c, 1);
     REQUIRE(knife != nullptr);
     CHECK(knife->tangential);
     CHECK(knife->cutFeed == doctest::Approx(40));
     CHECK(knife->plungeFeed == doctest::Approx(10));
+    const CfgTool* crease = configTool(c, 3);
+    REQUIRE(crease != nullptr);
+    CHECK(crease->aMaxDeg == 0);   // no cable
 }
 
 TEST_CASE("tools decode by id") {
