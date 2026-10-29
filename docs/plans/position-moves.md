@@ -135,6 +135,9 @@ Planned.
 
 ### Outcome
 
+* `jogto mount` unlocks only the selected A along the line; the tool-change
+  stop still unlocks every A by legs (`lockAs`) until G5.
+
 ## Branch G2: `feature/home-xy`
 
 ### Plan

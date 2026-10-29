@@ -3,14 +3,16 @@
 // The XY form takes work mm (framesToMachine), a name a stored position
 // (framesNamed), probe_park the switch of the head the tool is mounted on (else
 // the selected head's, selecting it first) under that tool's tip
-// (framesProbeFor), with A to the holder's lock for a mount; each hands the
-// anchor's machine XY to the recipe (controller/seq/jogto), which parks the Zs
-// before the line. `ok` once it starts.
+// (framesProbeFor). `mount` and probe_park turn the selected A to unlock
+// (machine 0) along the line. Each hands the anchor's machine XY to the recipe
+// (controller/seq/jogto), which parks the Zs before the line. `ok` once it
+// starts.
 
 #include <Arduino.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include "table.h"
 #include "../seq/jogto.h"
 #include "../../config/machine_cfg.h"
@@ -20,7 +22,9 @@
 
 bool cmdJogTo(const char* args) {
     float m[2];
+    bool unlock = false;
     if (isalpha((unsigned char)*args)) {
+        unlock = strcmp(args, "mount") == 0;
         if (const char* why = framesNamed(args, &m[0], &m[1])) {
             Serial.printf("err %s\n", why); return true;
         }
@@ -39,7 +43,7 @@ bool cmdJogTo(const char* args) {
             Serial.printf("err %s\n", why); return true;
         }
     }
-    const char* why = jogtoStart(m[0], m[1], false);
+    const char* why = jogtoStart(m[0], m[1], unlock);
     if (why) Serial.printf("err %s\n", why);
     else     Serial.println("ok");
     return true;
