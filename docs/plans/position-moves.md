@@ -83,17 +83,24 @@ The tool holder on a head's A releases only near machine A 0.
 
 * **Unlocked:** |machine A| ≤ `unlockRange`; the tool can come out.
   **Locked:** outside it. Going to machine 0 unlocks.
-* **`unlockRange`:** optional head-block config field, degrees. Absent: the
-  head has no interlock, no lock status, and `mount` does not turn A.
-* **`unlocked=`** status mask, bit h = head h. Derived on each read from the
-  head's A node position and origin (as `head=` is derived from the map), so
-  it needs no mapping: set when that A is homed and inside the range; clear
-  when unhomed (its homed bit says the state is unknown).
-* **`unmount <head>`:** each step skipped if already true: tool → 0 (clears
+* **`unlockRange`:** optional head-block config field, degrees. Absent or 0:
+  the head has no interlock, no lock status, and `mount` does not turn A.
+* **`unlocked=`** status mask, bit h = head h. Derived on each read (as
+  `head=` is derived from the map): set when the machine is in IDLE or
+  JOB.TOOL_WAIT with no motion running (planner ring and legs idle, so a
+  `jog` in IDLE doesn't count), and that A is homed and inside the range.
+  The lock matters only at rest, so an A passing through the range while
+  moving never reads as unlocked.
+* **`unmount <head>`** (head number, as `mount`): each step skipped if already true: tool → 0 (clears
   the head's work Z, as `mount`), that head's Z parks, that head's A unlocks.
   A sequence of legs.
-* **`mount <head> <tool>`** turns that head's A out of the unlock range,
-  locking it, when the head has `unlockRange`.
+* **`mount <head> <tool>`** turns that head's A to machine
+  `unlockRange` + 1°, locking it, when the head has `unlockRange`. Always the
+  + direction: the lock matters only at rest, so the cable, `aOffsetDeg` and
+  the job's first heading don't enter into it. On such a head `mount` moves,
+  so it runs as a sequence (`ok` once it starts) and refuses with
+  `err not_homed` while that A is unhomed; on a head without `unlockRange` it
+  stays an instant, motionless reply.
 * **Tool change:** the stop unmounts the head about to cut only. Other heads
   stay as they are, so a holder not in use stays locked and can't be emptied
   by mistake; the operator `unmount`s a head to load it.
@@ -275,9 +282,6 @@ Done, merged 2026-10-29 (`4696983`..`81f2c35`). Unblocks G5.
   * Docs: `docs/wire_protocol.md` (`unmount`, `mount`, `probe_park`, the
     tool-change stop :263, status keys), the config schema doc.
 * Depends on: G1, G4 (`goto unlock`, the shared recipe).
-* Open: which way, and how far, `mount` turns A out of the range (away from
-  the cable's wound side keeps the full `aMaxDeg`); a config value or a fixed
-  margin past `unlockRange`.
 
 ### Status
 
