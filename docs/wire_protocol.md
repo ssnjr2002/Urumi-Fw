@@ -259,11 +259,12 @@ is back every record, and every header outside JOB.TOOL_WAIT, is
 
 * the tool mounted and zeroed, another head selected: the head is selected,
   and back (JOB.BUFFERING, or JOB.PAUSED for a change made from a pause);
-* otherwise JOB.TOOL_CHANGE, the stop (`get seq=6`): the head is selected,
-  every head's Z parks, every head's A turns to the holder's lock (machine 0,
-  unwinding what it turned), then a line to the stored `mount` position. Then
-  JOB.TOOL_WAIT: the operator mounts tools on any head (`mount`; a changed
-  tool clears that head's work Z), jogs (`jog`, continuous jogs), moves a
+* otherwise JOB.TOOL_CHANGE, the stop (`get seq=6`): the head is selected
+  and unmounted (no tool, its work Z cleared), every head's Z parks, and with
+  an `unlockRange` that head's A turns to machine 0, unlocking its holder
+  (unwinding what it turned); other heads' As stay, so their holders stay
+  locked. Then a line to the stored `mount` position. Then JOB.TOOL_WAIT: the
+  operator mounts and unmounts tools on any head (`mount`, `unmount`), jogs (`jog`, continuous jogs), moves a
   tool's tip over its switch (`probe_park`) and zeroes Z (`wzero`).
 
 Only a header leaves JOB.TOOL_WAIT. With its tool mounted on its head and
@@ -503,13 +504,14 @@ prefixed `0x`.
 | `bez` | `<p1x> <p1y> <p2x> <p2y> <p3x> <p3y> <feed>` | `ok <depth>` / `err usage\|bad_state\|unconfigured\|no_limits\|full\|bad_curve\|no_head\|soft_limit x\|soft_limit y` | Bring-up only: queue a cubic Bézier from where the last move ends (machinePos on an empty, idle queue) through handles p1, p2 to p3, work mm, at `feed` mm/s; analysed on the Pico. `bad_curve` = a handle on its endpoint, a cusp, or an arc-length fit that runs backwards. Same states and checks as `line`, on every handle |
 | `jog` | `<x\|y\|z\|a> <dist> [scale]` \| `xy <dx> <dy> [scale]` | `ok <depth>` / `err usage\|unconfigured\|no_head\|not_homed\|too_far\|no_feed\|busy\|bad_state\|soft_limit <axis> <mm>` (and `line`'s queue errors) | Step jog: move one axis by `dist` machine mm (A: degrees) from where the queued jogs end, or X and Y by (`dx`, `dy`) in one line; Z and A are the selected head's (`no_head` with none bound), as a jog (state JOGGING). Relative, so the same in either frame. Feed = the axis's `jogFeed` × `scale` (default 1), capped at `maxFeed`; `xy` takes the slower of X's and Y's. Clicks join the running jog; `busy` with 4 blocks queued. Unhomed: `not_homed` unless `jogUnhomed`, then `jogFeedUnhomed`, no soft range, and `too_far` past `maxTravel` (one turn on A). A has no soft range. `soft_limit <axis> <mm>` = the target is outside the soft range on a homed axis with `softLimits`; `<mm>` is the distance still free in that direction. Also in JOB.TOOL_WAIT |
 | `goto` | `<m\|w> xy <x> <y> [scale]` \| `<m\|w> <z\|a> <pos> [scale]` \| `park\|load\|mount [scale]` \| `up\|unlock` | `ok` / `err usage\|unconfigured\|not_homed\|a_not_homed\|no_head\|no_work\|too_far\|no_position\|no_feed\|busy\|bad_state\|soft_limit <axis> <mm>\|node <n> excluded\|mute\|<rpc>` (and `line`'s queue errors) | Controller command, a sequence, published as JOGGING with `jogging=3` throughout. Feed = `jogFeed` × `scale` (default 1), capped at `maxFeed`; XY at the slower of X's and Y's. **XY forms** park every present head's Z (legs, in parallel), then run a straight line: `m xy` is the anchor's machine mm (as `mpos`), `w xy` work mm for the selected tip; `park` (where homing parks X and Y without a stored one), `load` and `mount` are stored anchor positions, `no_position` when the config has none; `mount` also turns the selected head's A to unlock (machine 0) along the line (`a_not_homed` unless A is homed). X, Y and every present head's Z must be homed. **`z\|a`** move the selected head's axis through the planner, no Z park; that axis must be homed. `m` is machine units; `w z` is work mm (the head's work Z and the bed mesh at the tip, `no_work` until `wzero z`), `w a` the edge heading in degrees, on the turn nearest the current A, kept within the mounted tool's `aMaxDeg` of machine 0 for a cabled tool (`too_far` with none). **`up`** parks every present head's Z, **`unlock`** turns every present head's A to machine 0 (legs, at the homing park speeds), each homed. IDLE only, and refused with any fault but a latch; `busy` while anything runs. `ok` once it starts, or at once with nothing to move; a failed park is `F_HOMING` (`homefail=8`), a line refused after the park `F_SEQUENCE` (`seqfail=soft_limit\|full\|no_limits\|unconfigured\|bad_state`); with no Z to park the line's refusal is the reply. Refuses at the soft range as `jog`. |
-| `probe_park` | `<tool id>` | as `goto`, and `err no_tool` | Controller command: `goto` (an XY form) to the position that puts tool `<tool id>`'s tip on its head's probe switch, whether or not it is mounted: the head it is mounted on (selected first), else the selected head; the switch (machine XY, one per head) less the head's offset and the tool's `toolOffset`. A head with an A turns it to machine 0, the holder's lock, along the line (`a_not_homed` unless A is homed). `no_head` with none selected, `no_position` when the head has no switch. Also in JOB.TOOL_WAIT |
+| `probe_park` | `<tool id>` | as `goto`, and `err no_tool` | Controller command: `goto` (an XY form) to the position that puts tool `<tool id>`'s tip on its head's probe switch, whether or not it is mounted: the head it is mounted on (selected first), else the selected head; the switch (machine XY, one per head) less the head's offset and the tool's `toolOffset`. A head with an A turns it to machine 0, unlocking the holder, along the line (`a_not_homed` unless A is homed). `no_head` with none selected, `no_position` when the head has no switch. Also in JOB.TOOL_WAIT |
 | `select` | `<head>\|anchor` | `ok` / `err usage\|bad_state\|degraded\|no_head` / as `axes_map` | Controller command: the controlled point. A head commits its Z and A as the axes map (`axes_map`'s replies) and turns the laser off; `anchor` is the laser tip (laser on; maps X and Y if either is unmapped, Z and A unchanged) or, without a laser, the head at (0, 0). Never moves. IDLE/PAUSED/ALARM, not while probing. The selection is derived from the axes map: a head needs X, Y and its Z and A mapped, the laser X and Y, else none. A raw `axes_map` that binds a different head selects it (laser off) |
 | `wzero` | `[x] [y] [z]` | `ok` / `err usage\|bad_state\|no_head\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head. Volatile: reboot or a config commit restores the config's `work` block. IDLE/PAUSED/ALARM, and JOB.TOOL_WAIT |
 | `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
 | `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset back to the config's `work` block |
 | `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again. IDLE/PAUSED/ALARM. See "Bed mesh" |
-| `mount` | `<head> <tool id>` | `ok` / `err usage\|bad_state\|no_head\|no_tool` | Controller command: what `head` has mounted, a config tool id (`tools.<name>.id`) or 0 for none. RAM only: kept across jobs, cleared at boot and by a config push. Separate from `select`; never moves. IDLE/PAUSED/ALARM and JOB.TOOL_WAIT. A different tool clears the head's work Z until `wzero z`; a header for it then stops for a tool change. `get tools` reports it. The mounted tool's `toolOffset` adds to its head's offset in the tip, so work positions and the readout follow it |
+| `mount` | `<head> <tool id>` | `ok` / `err usage\|unconfigured\|bad_state\|busy\|no_head\|no_tool\|mounted\|not_homed\|a_not_homed\|node <n> excluded\|mute\|<rpc>` | Controller command: `head` takes tool `<tool id>` (`tools.<name>.id`, from 1). A head holds one tool: `mounted` while it has any, `unmount` first. On a head with `unlockRange` it is a sequence (as `goto`, `jogging=3`): that head's Z parks, then its A turns to machine `unlockRange` + 1°, locking the holder; no turn when A is already outside the range; Z and A must be homed. Without one it only records the tool. RAM only: kept across jobs and soft resets, cleared at boot and by a config push. Separate from `select`. IDLE (refused with any fault but a latch) and JOB.TOOL_WAIT; `busy` while anything runs. A new tool clears the head's work Z until `wzero z`. `get tools` reports it. The mounted tool's `toolOffset` adds to its head's offset in the tip, so work positions and the readout follow it |
+| `unmount` | `<head>` | as `mount`, without `no_tool\|mounted` | Controller command, a sequence as `mount`: `head` has no tool (its work Z cleared), its Z parks, then with `unlockRange` its A turns to machine 0, unlocking the holder; each step skipped when already there. Admitted as `mount` |
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Override of the config's `feed.cutFallback` and `feed.travelDefault` (mm/s, each at least 1), held until reboot: cut for the curves, travel for the line to a `START` record's p0. A layer header's feed, then its tool's `cutFeed`, overrides the cut |
 | `seqreset` | — | `seq reset` | Data-plane support: zero the duplicate-guard seq (`expectedSeq`), which is also the cumulative ACK value, and forget an open BEZIER contour. Host sends this before each MSEG/jog/BEZIER stream so packet index 0 lines up. See "Duplicate guard" below. |
 
@@ -525,7 +527,7 @@ one namespace. A key asked for twice is printed once, where first asked, so
 `get status homed` prints `homed` once.
 
 ```
-status = state ctx homed enabled nodehomed nodeenabled head tools pos mpos wpos buf mute excluded touched mesh
+status = state ctx homed enabled nodehomed nodeenabled head tools unlocked pos mpos wpos buf mute excluded touched mesh
 ```
 
 ```
@@ -544,7 +546,7 @@ onms=<ms>          its duty on-time since the duty's last reset, the open span i
 latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with the HOMING fault)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
-seq=<s>       sequenceId      the running sequence, else the one that failed (with the SEQUENCE, HOMING or PROBE fault): 1=LEG 2=TRAVERSE 3=HOME 4=RECOVERY 5=JOGTO 6=TOOL_CHANGE
+seq=<s>       sequenceId      the running sequence, else the one that failed (with the SEQUENCE, HOMING or PROBE fault): 1=LEG 2=TRAVERSE 3=HOME 4=RECOVERY 5=GOTO 6=TOOL_CHANGE
 seqfail=<r>   sequenceFailWhy what refused a sequence after its ok, one token (e.g. soft_limit)  (only with the SEQUENCE fault)
 cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with the CONFIG fault)
 jogging=<j>   ringOwner       1=STEP 2=CONT 3=GOTO  (only while state=JOGGING; STEP = jog/line/bez, CONT = a continuous jog, GOTO = goto)
@@ -567,6 +569,7 @@ mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an u
 wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetMm`) − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; X/Y `-` with no head
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
 tools=<id>,…         the tool id each head has mounted (`mount`), head order, `-` for none  (`-` without a config)
+unlocked=<hex>       bit h = head h's holder can release now: IDLE or JOB.TOOL_WAIT, nothing running, its A homed and within `unlockRange`  (`-` with no head having one)
 mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)
 meshslope=<s>        its steepest slope between neighbouring points, mm/mm  (`-` without a loaded mesh)
 late=<n>             planner blocks Core 1 found late, since boot; a job lands PAUSED, a jog holds and runs on
