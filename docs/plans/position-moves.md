@@ -237,7 +237,7 @@ Waits on a constant-acceleration node ramp.
 
 ### Status
 
-Done, ready to merge.
+Done, merged 2026-10-29 (`4696983`..`81f2c35`). Unblocks G5.
 
 ### Outcome
 
