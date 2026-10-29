@@ -94,13 +94,17 @@ The tool holder on a head's A releases only near machine A 0.
 * **`unmount <head>`** (head number, as `mount`): each step skipped if already true: tool → 0 (clears
   the head's work Z, as `mount`), that head's Z parks, that head's A unlocks.
   A sequence of legs.
-* **`mount <head> <tool>`** turns that head's A to machine
+* **`mount <head> <tool>`** parks that head's Z, then turns its A to machine
   `unlockRange` + 1°, locking it, when the head has `unlockRange`. Always the
   + direction: the lock matters only at rest, so the cable, `aOffsetDeg` and
-  the job's first heading don't enter into it. On such a head `mount` moves,
-  so it runs as a sequence (`ok` once it starts) and refuses with
-  `err not_homed` while that A is unhomed; on a head without `unlockRange` it
-  stays an instant, motionless reply.
+  the job's first heading don't enter into it. On such a head `mount` moves:
+  `ok` once it starts, `err not_homed` or `a_not_homed` while that Z or A is
+  unhomed, no turn if A is already locked. On a head without `unlockRange` it
+  only records the tool. Tool ids from 1. A head holds one tool: `mount` on a
+  head with any tool mounted is `err mounted`; `unmount` empties it.
+* **Admission:** `mount` and `unmount` are `K_SEQUENCE | K_IN_TOOL` (as
+  `probe_park`), interlock or not: IDLE or JOB.TOOL_WAIT only, so not in a
+  paused job, probe or homing.
 * **Tool change:** the stop unmounts the head about to cut only. Other heads
   stay as they are, so a holder not in use stays locked and can't be emptied
   by mistake; the operator `unmount`s a head to load it.
@@ -285,6 +289,17 @@ Done, merged 2026-10-29 (`4696983`..`81f2c35`). Unblocks G5.
 
 ### Status
 
-Planned.
+In progress.
 
 ### Outcome
+
+* Out of scope: JOB.TOOL_WAIT admission (`ops/machine.cpp:176`) checks only
+  busy and the estop latch, not the faults `K_SEQUENCE` checks in IDLE, so a
+  `K_IN_TOOL` sequence (`probe_park`, `mount`, `unmount`) runs with a fault
+  set.
+* Fix in scope: a park leg on a parked (unselected) node now refreshes its
+  parked counter (`originAdopt`), so selecting that head no longer reads it as
+  moved while parked and drops its origin. `nodeMachineSteps` gives any homed
+  node's position. Needs a two-head bench check.
+* Mounted tools survive a soft reset (`ops/tools.h`), by design: the holder
+  is unchanged and a tool change clears the work Z.
