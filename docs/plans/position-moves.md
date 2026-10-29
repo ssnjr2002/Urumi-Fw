@@ -289,7 +289,7 @@ Done, merged 2026-10-29 (`4696983`..`81f2c35`). Unblocks G5.
 
 ### Status
 
-Ready to merge.
+Done, merged 2026-10-29 (`0b5d1a7`..`59550c7`). Last branch of the plan; G3 stays shelved.
 
 ### Outcome
 
