@@ -131,7 +131,7 @@ Order: G1 and G2 are independent; G3 lands before G4; G5 after G1 and G4.
 
 ### Status
 
-Planned.
+Done, merged 2026-10-29 (`ec7ce88`). Unblocks G5 (with G4).
 
 ### Outcome
 
