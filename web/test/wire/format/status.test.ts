@@ -267,6 +267,12 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
         expect(parse("state=0 homed=0x00 tools=-").tools).toBeUndefined();   // no config
     });
 
+    it("reads unlocked, undefined with no interlock", () => {
+        expect(parse("state=0 homed=0x00 unlocked=0x01").unlocked).toBe(1);
+        expect(parse("state=0 homed=0x00 unlocked=-").unlocked).toBeUndefined();
+        expect(parse("state=0 homed=0x00").unlocked).toBeUndefined();
+    });
+
     it("defaults enabled to 0 when absent", () => {
         const st = parse("state=9 homed=0x03");
         expect(st.state).toBe(MachineState.JOB);

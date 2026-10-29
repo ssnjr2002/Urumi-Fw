@@ -689,6 +689,9 @@ export class SimTransport implements Transport {
         if (this.state !== MachineState.JOB) return;
         if (this.job === JobReason.TOOL_CHANGE && Date.now() - this.toolChangeAt >= this.toolChangeMs) {
             this.job = JobReason.TOOL_WAIT;
+            // The stop unmounts the head about to cut.
+            this.mounted.delete(this.toolHead);
+            this.zeroed.delete(this.toolHead);
         }
         if (this.job === JobReason.BUFFERING) {
             const n = this.motion.length;
@@ -1005,11 +1008,19 @@ export class SimTransport implements Transport {
                 const toolWait = S.state === MachineState.JOB && S.job === JobReason.TOOL_WAIT;
                 if (!S.checkTools || !(S.state === MachineState.IDLE || toolWait)) return "err bad_state";
                 const head = parseInt(args[0] ?? "", 10), tool = parseInt(args[1] ?? "", 10);
-                if (!(head >= 0) || !(tool >= 0)) return "err bad_arg";
-                // A new tool needs a new zero.
-                if (S.mounted.get(head) !== tool) S.zeroed.delete(head);
-                if (tool === 0) S.mounted.delete(head);
-                else S.mounted.set(head, tool);
+                if (!(head >= 0) || !(tool >= 1)) return "err usage";
+                if (S.mounted.has(head)) return "err mounted";
+                S.zeroed.delete(head);   // a new tool needs a new zero
+                S.mounted.set(head, tool);
+                return "ok";
+            }
+            case "unmount": {
+                const toolWait = S.state === MachineState.JOB && S.job === JobReason.TOOL_WAIT;
+                if (!S.checkTools || !(S.state === MachineState.IDLE || toolWait)) return "err bad_state";
+                const head = parseInt(args[0] ?? "", 10);
+                if (!(head >= 0)) return "err usage";
+                S.mounted.delete(head);
+                S.zeroed.delete(head);
                 return "ok";
             }
             case "wzero": {

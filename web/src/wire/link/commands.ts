@@ -139,6 +139,20 @@ export async function wzero(link: Link, axes: readonly ("x" | "y" | "z")[] = [])
     await okOrThrow(link, ["wzero", ...axes].join(" "));
 }
 
+/**
+ * `mount <head> <tool>`: the head takes `tool` (id from 1). A head with
+ * `unlockRange` parks its Z and turns A out of the range, locking the holder.
+ * Refused (`mounted`) while the head has a tool: `unmount` first.
+ */
+export async function mount(link: Link, head: number, tool: number): Promise<void> {
+    await okOrThrow(link, `mount ${head} ${tool}`);
+}
+
+/** `unmount <head>`: no tool; that head's Z parks and, with `unlockRange`, its A unlocks. */
+export async function unmount(link: Link, head: number): Promise<void> {
+    await okOrThrow(link, `unmount ${head}`);
+}
+
 /** `wset`: the work offset in machine units, per axis. */
 export async function wset(link: Link, offset: Partial<Record<"x" | "y" | "z", number>>): Promise<void> {
     const parts = Object.entries(offset).map(([k, v]) => `${k} ${v}`);

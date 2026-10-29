@@ -202,6 +202,7 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"dup_node", "dup_node"}, {"heads", "heads"}, {"homing", "homing"},
         {"homing_kind", "homing"}, {"no_invert_dir", "missing"},
         {"frames", "frames"}, {"probe_reach", "frames"}, {"laser_node", "node_id"},
+        {"unlock_range", "heads"},
         {"travel", "ceiling"}, {"no_jog_feed", "missing"},
         {"no_jog_unhomed", "missing"},
         {"no_mesh_on",     "missing"},

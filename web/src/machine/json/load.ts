@@ -144,6 +144,7 @@ interface JsonHead {
     readonly xOffset?: number;
     readonly yOffset?: number;
     readonly probeSwitch?: JsonPoint;
+    readonly unlockRange?: number;
     readonly z: JsonAxis;
     readonly a: JsonAxis;
 }
@@ -374,6 +375,7 @@ export function parseConfig(jsonText: string): ConfigResult {
             xOffset: jh.xOffset ?? 0,
             yOffset: jh.yOffset ?? 0,
             ...(probeSwitch ? { probeSwitch } : {}),
+            ...(jh.unlockRange !== undefined ? { unlockRange: jh.unlockRange } : {}),
         }));
     }
 

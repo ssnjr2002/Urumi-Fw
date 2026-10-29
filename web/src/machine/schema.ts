@@ -527,6 +527,11 @@ export interface ToolHead extends ReferencePoint {
      * Each head reaches only its own (docs/plans/coordinate-system.md).
      */
     readonly probeSwitch?: BedPoint;
+    /**
+     * The holder interlock: |machine A| within this many degrees releases the
+     * tool; `mount` turns A past it to lock. Absent or 0: no interlock.
+     */
+    readonly unlockRange?: number;
 }
 
 /**

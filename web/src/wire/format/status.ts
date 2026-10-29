@@ -327,6 +327,12 @@ export class MachineStatus {
         readonly tools: readonly number[] | undefined = undefined,
         /** What is held between commands; layer is set exactly while JOB. */
         readonly context: MachineContext | undefined = undefined,
+        /**
+         * The holders that can release now, bit h = head h: at rest in IDLE or
+         * JOB.TOOL_WAIT, A homed and within unlockRange. undefined with no
+         * interlock, on the binary plane or older firmware.
+         */
+        readonly unlocked: number | undefined = undefined,
     ) {}
 
     /** True if any of `mask`'s Fault bits is set. */
@@ -454,6 +460,7 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
         fields.ctx !== undefined
             ? enumFromStr(MACHINE_CONTEXT_VALUES, fields.ctx, MachineContext.IDLE)
             : undefined,
+        fields.unlocked !== undefined ? toInt(fields.unlocked) : undefined,
     );
 }
 

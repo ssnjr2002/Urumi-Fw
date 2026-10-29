@@ -205,6 +205,18 @@ const defaultHeadInRange: Rule = ({ machine }) => {
         : [error(`machine.defaultHead: ${i} is out of range (machine has ${n} head(s))`)];
 };
 
+/** An interlock needs an A to turn, and a range it can be inside. */
+const unlockRangeValid: Rule = ({ machine }) =>
+    machine.heads.flatMap((h, i) => {
+        const r = h.unlockRange;
+        if (r === undefined || r === 0) return [];
+        if (!Number.isFinite(r) || r < 0)
+            return [error(`machine.heads[${i}].unlockRange: ${r} must be a number >= 0`)];
+        return h.a.node.present
+            ? []
+            : [error(`machine.heads[${i}].unlockRange: the head has no A node to unlock with`)];
+    });
+
 /**
  * A head cannot accept a tool it has no axes for.
  *
@@ -457,6 +469,7 @@ const RULES: readonly Rule[] = [
     uniqueNodeIds,
     headCountSupported,
     defaultHeadInRange,
+    unlockRangeValid,
     clearanceNonNegative,
     bufferPositive,
     feedAtLeastOne,

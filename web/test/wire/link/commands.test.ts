@@ -45,6 +45,8 @@ import {
     wzero,
     wset,
     wclear,
+    mount,
+    unmount,
 } from "../../../src/wire/link/commands.js";
 import { MachineState, Fault, JobReason } from "../../../src/wire/format/status.js";
 
@@ -409,6 +411,24 @@ describe("wire/link/commands: goto and jog xy", () => {
     it("throws on err", async () => {
         const link = { command: async () => "err no_work" } as unknown as Link;
         await expect(goto(link, { frame: "w", axis: "z", pos: 0 })).rejects.toThrow(/no_work/);
+    });
+});
+
+describe("wire/link/commands: mount and unmount", () => {
+    it("a head holds one tool: mount refuses until unmount", async () => {
+        const sim = new SimTransport({ axisMap: [1, 2, 3, 4], tools: {} });
+        const link = new Link(sim);
+        try {
+            await expect(mount(link, 0, 0)).rejects.toThrow(/usage/);
+            await mount(link, 0, 1);
+            await expect(mount(link, 0, 1)).rejects.toThrow(/mounted/);
+            await expect(mount(link, 0, 2)).rejects.toThrow(/mounted/);
+            await unmount(link, 0);
+            await mount(link, 0, 2);
+            expect((await getStatus(link)).tools).toEqual([2, 0]);
+        } finally {
+            await link.close();
+        }
     });
 });
 
