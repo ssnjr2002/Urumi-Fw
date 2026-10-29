@@ -12,6 +12,7 @@ bool cmdHome(const char*);
 bool cmdHomeUnhomed(const char*);
 bool cmdHomeCycle(const char*);
 bool cmdHomeHead(const char*);
+bool cmdHomeXY(const char*);
 
 // ─── jogto.cpp ────────────────────────────────────────────────────────────────
 bool cmdJogTo(const char*);

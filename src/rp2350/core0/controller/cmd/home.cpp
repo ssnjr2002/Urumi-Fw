@@ -101,6 +101,20 @@ bool cmdHomeCycle(const char* args) {
     return true;
 }
 
+// home_xy: `home <X> <Y>`, so the Zs (an earlier cycle) park or home first.
+bool cmdHomeXY(const char* args) {
+    if (*args) { Serial.println("err usage"); return true; }
+    const MachineCfg& cfg = machineCfg();
+    uint8_t nodes[2];
+    uint8_t n = 0;
+    const CfgAxis* both[2] = { &cfg.x, &cfg.y };
+    for (const CfgAxis* a : both)
+        if (a->node.present && homeable(a)) nodes[n++] = a->node.id;
+    if (n == 0) { Serial.println("err usage"); return true; }
+    homeRun(nodes, n, false);
+    return true;
+}
+
 // home_head <n>: `home only <Zn> <An>`, n the index into heads[].
 bool cmdHomeHead(const char* args) {
     char* end;

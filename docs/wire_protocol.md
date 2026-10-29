@@ -489,6 +489,7 @@ prefixed `0x`.
 | `home_unhomed` | — | as `home` | `home` of every homeable node with no origin; `ok` with no motion if none |
 | `home_cycle` | `<k>` | as `home` | `home` of cycle k's nodes; an empty cycle is `err usage` |
 | `home_head` | `<n>` | as `home` | `home only` of `heads[n]`'s Z and A |
+| `home_xy` | — | as `home` | `home` of the config's X and Y nodes, so earlier cycles (the Zs by default) park or home first; `err usage` when neither is homeable |
 | `axes_map` | `[<x> <y> <z> <a>]` | `ok` / `err degraded` / `err unconfigured` / `err node <id> not_in_config\|not_stepper\|timeout\|<rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | The axis request: `-`/`0` = no axis. Each id must be a stepper axis node the config marks present; applied as a `slot_map` of the same ids once all are confirmed. A silent node stays pending, its slot parked, and UNMAPPED is set. No-arg: `axes_map <t> <t> <t> <t>`, `t` = `-`, `n` or `?n` (pending). See engage_and_axis_map.md §5.4 |
 | `slot_map` | `[<n0> <n1> <n2> <n3>]` | `ok` / `err degraded` / `err node <id> <rpc>` / `err fenced <t> <t> <t> <t>` / `err dup` / `err bad_node` | Console primitive: bind any node to stream slots 0..3, no config. A node that does not engage leaves the request unmet (UNMAPPED). `err fenced` names the node of each requested fenced slot whose make-safe went unconfirmed, `-` elsewhere. No-arg: `slot_map <t> <t> <t> <t>`, `t` = `-`, `n` or `!n` (fenced). See engage_and_axis_map.md §5.5 |
 | `pause` | — | `ok` / `err <reason>` | Pause a buffering or running job: planner motion brakes to a hold, lands PAUSED and drops its queue. A layer header resumes it (see "Layer Header") |
@@ -651,7 +652,7 @@ Phase 2.
 | `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✓ |
 | `leg_abort` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `home_end` | ✗ | ✗ | ✗ | ✗ | between legs |
-| `home` / `home_unhomed` / `home_cycle` / `home_head` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✗ |
+| `home` / `home_unhomed` / `home_cycle` / `home_head` / `home_xy` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✗ |
 | `axes_map` / `slot_map` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `pause` | ✗ | ✓ | ✗ | ✗ | ✗ |
 | `cancel` | ✗ | ✗ | ✓ | ✗ | ✗ |

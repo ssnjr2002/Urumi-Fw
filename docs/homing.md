@@ -860,9 +860,9 @@ actually wanted — not worth solving here for one subtraction.
 
 ### 2.8 `home`: the controller recipe
 
-`home [only] [<node> …]`, `home_unhomed`, `home_cycle <k>` and `home_head <n>`
-(controller/cmd/home.cpp, controller/seq/home.cpp) home nodes from the homing
-config. Admitted from IDLE or `ALARM_LIMIT_LATCHED`; every check (config, mute,
+`home [only] [<node> …]`, `home_unhomed`, `home_cycle <k>`, `home_head <n>` and
+`home_xy` (controller/cmd/home.cpp, controller/seq/home.cpp) home nodes from the
+homing config. Admitted from IDLE or `ALARM_LIMIT_LATCHED`; every check (config, mute,
 excluded, the enables) happens before anything moves. `ok` means started.
 
 - **The run set.** The named nodes; no nodes means every homeable node.
@@ -870,7 +870,8 @@ excluded, the enables) happens before anything moves. `ok` means started.
   joins: a homed linear node parks (a park leg to its park position, at
   `startFeed` → `seekFeed`), an unhomed one homes, a homed rotary one stays.
   `home_unhomed` names the unhomed nodes, `home_cycle k` cycle k's,
-  `home_head n` is `home only` of head n's Z and A.
+  `home_head n` is `home only` of head n's Z and A, `home_xy` is `home` of X
+  and Y.
 - **Cycles,** lowest first. A cycle runs its legs in parallel, in lockstep
   phases: seek, back-off, slow re-approach, pull-off (§3.4); a rotary node
   sweeps forward then back in the first two; a park runs in the first. A phase
