@@ -495,7 +495,23 @@ Done (merged at `5272a56`). Unblocks Z4.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* No version byte in `LAYER_HDR`: the new header is magic `0xA1` (`0xA3` is a
+  retired status frame), and `0xA2` is retired and dropped as an unknown byte,
+  so an old host's `k` is never read as `p`. Host and firmware flash together.
+* `LayerMotion` gains `top` (the thickness); `clearZ`/`cutZ` sit over
+  `workZ + top`.
+* `p` must be finite for every tool, otherwise it is unused on a tool with
+  `plunge: false`; no upper cap besides `p − t ≤ maxOvercut`.
+* Host: `packLayerHdr` defaults `p` to the thickness (a cut to the bed). No
+  overcut setting exists on the host yet; a caller passes `p` for one.
+  `sim.ts` never read the field and is unchanged.
+* Benched without a tool: overcut past `maxOvercut`, `p` 0, −1 and NaN refused
+  as `NACK_JOB`, an unknown tool as `NACK_TOOL_UNKNOWN`, `0xA2` dropped. Not
+  benched: an accepted header and a cut at `workZ + t − p`.
 
 ## Open questions
 
