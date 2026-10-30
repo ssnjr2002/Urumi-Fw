@@ -389,13 +389,24 @@ A dependent chain, Single Session: every branch after C1 edits
     coordinate-system.md Z1.
   * Checks: `pnpm typecheck` clean; `pnpm test` 630 passed, 1 skipped.
 
-### D3: mount and home XY
+### D3: mount and home
 
 * Type: `feature/demo-mount`
-* Purpose:
-  * Mount controls: a head and a tool picker (the pulled config's tools)
-    with mount and unmount, through `mount` / `unmount` (`commands.ts:153,158`).
-  * A home XY button through `homeXY` (`commands.ts:576`).
+* Purpose: two rows at the top of the Machine group, sent as text through
+  `submit()` like D2:
+
+  ```
+  Machine
+    home:   home  home xy  home head [0▾]
+    tool:   head [0▾]  tool [knife▾]  mount  unmount
+    goto:   park  load  mount pos  up  unlock
+  ```
+
+  * Mount controls: a head and a tool picker (the pulled config's heads and
+    tools, the tool's `id` sent) with `mount` / `unmount`.
+  * Home: `home`, `home_xy`, `home_head <h>`; the demo had none.
+  * goto's `mount` button reads **mount pos**, apart from the tool row's
+    mount.
   * No `unlocked` row: it is on the text plane only, and the operator
     unmounts right before releasing a tool, so unmount's `ok` is the release.
     The status table's `tools` row shows what each head holds.
