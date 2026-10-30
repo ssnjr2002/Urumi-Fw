@@ -370,7 +370,23 @@ A dependent chain, Single Session: every branch after C1 edits
   `index.js:33-35,463-470`).
 * Depends on: D1.
 * Bench: each button moves as `goto` documents (Z parks first on XY forms).
-* Status: planned.
+* Status: ready to merge.
+* Outcome:
+  * Deviations, agreed in Read and Write: text through `submit()`, not the
+    library's `goto()`; the Machine/Work layout above; no machine `0 xy`,
+    `0 z` or `0 a`; the bare `wzero` button removed.
+  * Benched on COM8, no tool, as text commands: park, mount (A to 0,
+    `unlocked=0x01`), up, unlock; `load` is `no_position` (none configured);
+    `m xy`, `m a`, `m z`; `w xy` after `wzero x y`; `w a 0`; `w z` 5 and 0
+    after `wset z -40`, `w z -1` refused by the Z floor; scale 0.5 slows a
+    move, 2 matches 1 (jogFeed at maxFeed). The page itself: the refusals
+    with empty inputs or t unset, found and fixed on the bench.
+  * Found, out of scope (firmware): at boot and on `wclear` every head's work
+    Z is the config's (0, the top here) and counts as set
+    (`core0/ops/frames.cpp:28`), so the Z floor (`maxOvercut` below it) holds
+    Z at the top until a `mount` or `wset z`. wire_protocol.md, Z floor,
+    says a head without a work Z keeps its full range to touch off.
+  * Checks: `pnpm typecheck` clean; `pnpm test` 630 passed, 1 skipped.
 
 ### D3: mount and home XY
 
