@@ -84,8 +84,8 @@ frame is in docs/plans/controller-homing.md.
     sheet.
   * No zero on the material: `t` never enters the zero.
 * Z0 by probing builds on the probe's contact height (`pz`) later.
-* `wclear` and reset restore config's `work.z` and mark every head zeroed,
-  whatever its tool (Branch Z1, considered and not implemented).
+* `wclear` and reset leave every head's Z unset until a Z zero; config has no
+  `work.z` (Branch Z1).
 * A has no work offset: the heading is absolute, and a constant offset would
   cut sideways. Machine A 0 is machine calibration, `indexPos`
   in the homing config; the edge's offset from it is the tool's
@@ -253,7 +253,7 @@ Proposed; each gets a full Plan section when its turn comes.
 
 The bed zero (Work frame, Limits and reach) is branches Z2–Z4, a Single
 Session in that order: Z2 and Z3 share the config files, and Z4 needs Z3's
-`maxOvercut`. Z1 was considered and is not implemented.
+`maxOvercut`. Z1, first left out, is reopened after Z3.
 
 ## Branch 1: `feature/pico-frames`
 
@@ -386,11 +386,36 @@ motion-sessions jog branches (`jogto` calls into `frames`).
   remove `work.z` from config (a config change for tidiness only) and show
   `WPos` Z as `-` while unzeroed (display only).
 
+Not implemented then: the operator checks the zero by going to it before a
+job, and `wclear` and a reset are deliberate.
+
+### Plan
+
+Reopened after Z3: the false "zeroed" now turns on the Z floor, so at boot
+and after `wclear` Z is held at config `work.z` (0, the top here) until a
+`mount` or `wset z` (demo-console.md D2 Outcome), against wire_protocol.md's
+Z floor ("Without a work Z ... jogged down to touch off").
+
+* Type: fix.
+* Purpose: no head has a work Z until a Z zero.
+  * `framesClearWork` (`ops/frames.cpp:23`) restores XY from config and
+    leaves every head's Z unset (0, `zSet` false), at boot and on `wclear`.
+    The floor is off, `goto w z` is `no_work`, a layer header stops for a
+    tool change, until `wzero z` / `wset z`.
+  * Config `work.z` goes: firmware decoder (`config_decode.*`,
+    `CFG_SCHEMA_VERSION`), web `schema.ts`, `load.ts` (`buildWork`, the old
+    key rejected by name), `validate.ts`, `blob.ts` (`CONFIG_BLOB_VERSION`
+    14), fixtures; `config/controller.jsonc`.
+  * `WPos` Z while unset stays machine Z less 0.
+* Test: no native test reaches `frames.cpp` (`test_cjog` stubs it); benched
+  instead: after boot and after `wclear`, `jog z -1` from the top is ok.
+* Files: the above; `test/test_config`; `docs/wire_protocol.md` (`wclear`,
+  `wzero`, the Z floor); this doc's Work frame bullet.
+* Depends on: Z3.
+
 ### Status
 
-Not implemented. The operator checks the zero by going to it before a job;
-`wclear` and a reset are deliberate operator actions, so the guard they
-bypass is left as it is.
+Planned.
 
 ## Branch Z2: `feature/z-switch-zero`
 

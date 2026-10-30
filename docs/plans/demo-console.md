@@ -385,7 +385,8 @@ A dependent chain, Single Session: every branch after C1 edits
     Z is the config's (0, the top here) and counts as set
     (`core0/ops/frames.cpp:28`), so the Z floor (`maxOvercut` below it) holds
     Z at the top until a `mount` or `wset z`. wire_protocol.md, Z floor,
-    says a head without a work Z keeps its full range to touch off.
+    says a head without a work Z keeps its full range to touch off. Fixed by
+    coordinate-system.md Z1.
   * Checks: `pnpm typecheck` clean; `pnpm test` 630 passed, 1 skipped.
 
 ### D3: mount and home XY
