@@ -406,7 +406,7 @@ Z floor ("Without a work Z ... jogged down to touch off").
     `CFG_SCHEMA_VERSION`), web `schema.ts`, `load.ts` (`buildWork`, the old
     key rejected by name), `validate.ts`, `blob.ts` (`CONFIG_BLOB_VERSION`
     14), fixtures; `config/controller.jsonc`.
-  * `WPos` Z while unset stays machine Z less 0.
+  * `WPos` Z reads `-` (NaN in `STATUS_RSP`) until a Z zero.
 * Test: no native test reaches `frames.cpp` (`test_cjog` stubs it); benched
   instead: after boot and after `wclear`, `jog z -1` from the top is ok.
 * Files: the above; `test/test_config`; `docs/wire_protocol.md` (`wclear`,
@@ -415,7 +415,20 @@ Z floor ("Without a work Z ... jogged down to touch off").
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Changed in Write, agreed: `WPos` Z reads `-` while unset (`framesWPos`
+  false), through the existing no-value path; the plan first kept machine Z.
+* `validate.ts` and `controller.jsonc` needed no change (no rule on `work`,
+  no `work` block in the file).
+* Benched on COM8 (v14 config, homed, no tool): after boot `wpos` Z `-` and
+  `goto w z 0` `no_work`; `jog z -1` from the top ok (refused before);
+  `wzero z` then `jog z -1` refused by the floor; `wclear` back to `-` and
+  `no_work`; `wset z -3` reads 3.
+* Overlap: `feature/park-speed` touches the same config files and fixtures;
+  merged after this, it rebases and regenerates them.
 
 ## Branch Z2: `feature/z-switch-zero`
 
