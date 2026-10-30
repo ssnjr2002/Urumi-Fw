@@ -300,38 +300,63 @@ A dependent chain, Single Session: every branch after C1 edits
   * Execute is disabled while a session runs; Continue, not Execute, leaves
     TOOL_WAIT.
   * The buttons mirror the Session API and read as duplicates on the bench
-    (Resume / Continue, Cancel / Abort). Left as they are until the library
-    change under Open, "Session abort and one resume", then fixed in a UI
-    branch of their own.
+    (Resume / Continue, Cancel / Abort). Folded by job-session-web.md E1
+    (`Session.end()`, one `resume()`) and E2 (Pause, Resume, Cancel, End
+    job).
   * Abort is `link.abort()` then `session.truncate()`, so the job line stops
     at once; the landing in IDLE shows in the status table when the poll
     resumes.
 
+### D1: plunge depth and wzero
+
+* Type: `fix/demo-plunge-wzero`
+* Purpose: the demo catches up with the firmware since `514fff9`; the
+  library already did.
+  * The job's `k` field is sent as `k`, which `LayerHdr` no longer has
+    (`web/src/wire/format/layer.ts:27`), so it is dropped and every job
+    plunges p = t. Replace it with **p (mm)**, sent as `p`; empty = t plus
+    the pulled config's `maxOvercut` (a through cut). The session line and
+    log name p.
+  * `wzero xy` sends `wzero xy`, refused as `err usage` (single-letter axes,
+    `core0/controller/cmd/frames.cpp:25`). Send `wzero x y`, and add a
+    `wzero z_switch` button beside `wzero z`.
+* Files: `web/demo/index.{html,js}` (`index.html:49,71`, `index.js:43,621`).
+* Depends on: C5.
+* Bench: a layer with t and p set cuts at work Z t − p; `wzero x y` and
+  `wzero z_switch` reply `ok`.
+* Status: planned.
+
+### D2: goto
+
+* Type: `fix/demo-goto`
+* Purpose: the Jog to row sends `jogto`, which is gone. Send through the
+  library's `goto` (`web/src/wire/link/commands.ts:212`): go = `w xy <x>
+  <y>`, park, load; add mount, up and unlock. The `jogto` ids and class
+  become `goto`.
+* Files: `web/demo/index.{html,js}` (`index.html:41-45`,
+  `index.js:33-35,463-470`).
+* Depends on: D1.
+* Bench: each button moves as `goto` documents (Z parks first on XY forms).
+* Status: planned.
+
+### D3: mount, unlocked and home XY
+
+* Type: `feature/demo-mount`
+* Purpose:
+  * Mount controls: a head and a tool picker (the pulled config's tools)
+    with mount and unmount, through `mount` / `unmount` (`commands.ts:153,158`).
+  * Status panel (`statusRows`): an `unlocked` row (per-head mask, `-` when
+    undefined); the sequence name reads GOTO where shown.
+  * A home XY button through `homeXY` (`commands.ts:576`).
+* Files: `web/demo/index.{html,js}`.
+* Depends on: D2.
+* Bench: mount on head 0 parks Z and locks A; unmount unlocks; `unlocked`
+  follows; a held job's tool change completes from the demo alone.
+* Status: planned.
+
 ## Open
 
 Found while doing this plan, out of its scope. Each needs its own plan.
-
-### Session abort and one resume
-
-The demo's job buttons follow the Session API, which splits what the
-operator sees as one action. Two library changes in
-`web/src/wire/link/session.ts`, then a demo branch to match:
-
-1. **`Session.abort()`.** ABORT is binary only (`ABORT_MAGIC`, no text
-   command), and Session has no method for it, so a host sends
-   `link.abort()` and truncates, ending the session before the job leaves
-   JOB. Like `cancel()`, `abort()` would send it, mark the end as asked
-   for, and let `run()` return once the job leaves JOB, not as
-   `FATAL_JOB_LOST`. ABORT closes any job state, braking first if moving,
-   and lifts Z once (`abortSettle`, `core0/ops/machine.cpp`); `cancel` only
-   at rest, without the lift. The demo's Cancel and Abort then fold into
-   one End job.
-2. **One `resume()`.** The firmware has no resume command: both holds are
-   left by a LAYER_HDR. From `paused`/`refused`, `resume()` restarts from
-   the status's resume point (SEQRESET, a fresh header, the rest of the
-   records); from `tool`, `continue()` resends the refused window. `held`
-   already says which, so one `resume()` can pick, and the demo has one
-   Resume button.
 
 ### Boot counter and uptime in status
 
