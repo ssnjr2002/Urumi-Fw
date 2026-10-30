@@ -314,8 +314,9 @@ A dependent chain, Single Session: every branch after C1 edits
   library already did.
   * The job's `k` field is sent as `k`, which `LayerHdr` no longer has
     (`web/src/wire/format/layer.ts:27`), so it is dropped and every job
-    plunges p = t. Replace it with **p (mm)**, sent as `p`; empty = t plus
-    the pulled config's `maxOvercut` (a through cut). The session line and
+    plunges p = t. Replace it with **p (mm)**, sent as `p`; empty leaves `p`
+    out, so the library sends t (a cut to the bed). `maxOvercut` is a limit,
+    not a default; an overcut is typed into p. The session line and
     log name p.
   * `wzero xy` sends `wzero xy`, refused as `err usage` (single-letter axes,
     `core0/controller/cmd/frames.cpp:25`). Send `wzero x y`, and add a
