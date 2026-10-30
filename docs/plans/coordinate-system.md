@@ -417,7 +417,19 @@ bypass is left as it is.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* `probeSwitch.z` must also be ≥ 0, not only finite: a switch below the
+  bed is refused (`frames` on the Pico, `switchHeightValid` on the host).
+  The firmware holds it as `CfgHead.hasSwitchZ` / `switchZ`.
+* `sim.ts` unchanged: its `wzero` already treats any word with a `z` as Z.
+* `controller.jsonc` has no `probeSwitch` yet: head 0's switch XY and height
+  are still to be measured.
+* Benched without a tool: refusals, and `wzero z_switch` at Z park reads
+  `WPos` Z = the switch height (mesh off). The touch-off check (switch, then
+  bed ≈ 0) waits for the measured switch.
 
 ## Branch Z3: `feature/z-overcut-limit`
 
