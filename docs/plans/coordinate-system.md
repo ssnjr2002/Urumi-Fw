@@ -15,7 +15,7 @@ frame is in docs/plans/controller-homing.md.
 * Rotary A (a rotation about Z; ISO would name it C): + is counter-clockwise
   seen from above (the right-hand rule about Z+). A heading of 0° is the
   edge facing X+, so a cut's heading is `atan2(dy, dx)` with no sign flip.
-  Machine A's 0 is the holder's release angle; a tool's `aOffsetDeg` is its edge's
+  Machine A 0 is where the holder releases the tool; a tool's `aOffsetDeg` is its edge's
   heading there (A, below).
 * **`invertDir`** per axis is the wiring fix that makes the motor obey it.
   Commissioning checks it by jogging each axis +.
@@ -87,27 +87,26 @@ frame is in docs/plans/controller-homing.md.
 * `wclear` and reset restore config's `work.z` and mark every head zeroed,
   whatever its tool (Branch Z1, considered and not implemented).
 * A has no work offset: the heading is absolute, and a constant offset would
-  cut sideways. Machine A's 0 (the release angle) is machine calibration, `indexPos`
+  cut sideways. Machine A 0 is machine calibration, `indexPos`
   in the homing config; the edge's offset from it is the tool's
   `aOffsetDeg`. A skewed sheet is a job rotation in XY
   (the G68 role), not an A offset.
 
 ### A
 
-* **The release angle.** The tool holder's interlock releases the tool at
-  one angle only; turned away from it, the holder holds the tool. Machine A's
-  0 is the release angle. A head's `unlockRange` (degrees, absent or 0: no
-  interlock) is how far either side of 0 it still releases.
+* **Machine A 0.** The tool holder's interlock releases the tool at one
+  angle only; turned away from it, the holder holds the tool. Machine A 0 is
+  where the holder releases the tool. A head's `unlockRange` (degrees, absent
+  or 0: no interlock) is how far either side of 0 it still releases.
   * `mount <h> <tool>` parks the head's Z, then turns A to
     `unlockRange` + 1° so the holder holds the tool.
   * `unmount <h>` parks Z, then turns A to 0 so the tool can come out.
   * `get unlocked` names the heads whose holder releases now (at rest, A
     homed, |A| ≤ `unlockRange`).
 * **`indexPos`** (the head's A homing config) is the machine A given to the
-  hall index when homing finds it. The release angle sits 46.7°
+  hall index when homing finds it. Machine A 0 sits 46.7°
   counter-clockwise of the index on head 0, so `indexPos` is −46.7: the
-  index reads −46.7 and the release angle 0. It is per head (holder and
-  sensor), not per tool.
+  index reads −46.7. It is per head (holder and sensor), not per tool.
 * **`aOffsetDeg`** (per tangential tool, absent = 0) is the heading the tool's
   edge points at when the holder is at 0, i.e. how the tool sits in the
   holder. Measure it on mount: with A at 0, see where the edge points.
@@ -126,7 +125,7 @@ frame is in docs/plans/controller-homing.md.
 * `WPos` A is the edge heading: `MPos` A plus the mounted tool's `aOffsetDeg`
   (as `WPos` XY is the tip), folded to (−180°, 180°]. With a tool mounted,
   machine 0 reads `aOffsetDeg` and `WPos` 0 (edge along X+) is at `MPos`
-  −`aOffsetDeg`. With no tool it is `MPos` folded, 0 at the release angle.
+  −`aOffsetDeg`. With no tool it is `MPos` folded.
   Motion and range checks use `MPos`; the fold loses the turn count.
 
 ### Stored positions
@@ -147,7 +146,7 @@ frame is in docs/plans/controller-homing.md.
   only numbers it), so it is the safe height while Z homes toward a switch at
   the top, which the homing cycle order already assumes. No safe-Z setting.
 * `probe_park <tool>` and a job's tool change also turn the head's A to
-  machine 0, the release angle, along the XY line, so a tool can be mounted
+  machine 0 along the XY line, so a tool can be mounted
   or unmounted there; `a_not_homed` unless A is homed. A head without A
   parks XY only. `jogto` never moves A. The tool-change stop unmounts the
   head about to cut (motion-sessions.md, position-moves.md G5).
@@ -476,7 +475,7 @@ Planned.
   in docs/plans/job-a.md. Still open:
   * Tool tip offset: in the knife's frame, rotating with A; found by a test
     cut (opposite-direction slits coincide when it is right).
-  * Homing A to end at the release angle rather than wherever the index search
+  * Homing A to end at machine 0 rather than wherever the index search
     stops.
   * Headings made continuous in `flatten.ts` (each one the previous plus the
     shortest difference). Whether `web/src/toolpath/flatten.ts:70` takes
