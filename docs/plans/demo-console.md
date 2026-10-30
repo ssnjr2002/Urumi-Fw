@@ -325,7 +325,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Depends on: C5.
 * Bench: a layer with t and p set cuts at work Z t − p; `wzero x y` and
   `wzero z_switch` reply `ok`.
-* Status: ready to merge.
+* Status: done, merged at `2ed1938`. Unblocks D2.
 * Outcome:
   * Deviation, agreed in Read: an empty p is left out of the header and the
     library sends t; the demo does not add `maxOvercut`.
