@@ -60,6 +60,7 @@ import {
     type QualityConfig,
     type PipelineConfig,
     type BedPoint,
+    type ProbeSwitch,
     type LaserPointer,
     type WorkOffset,
     type StoredPositions,
@@ -143,7 +144,7 @@ interface JsonHead {
     readonly tool?: string;
     readonly xOffset?: number;
     readonly yOffset?: number;
-    readonly probeSwitch?: JsonPoint;
+    readonly probeSwitch?: JsonPoint & { readonly z?: number };
     readonly unlockRange?: number;
     readonly z: JsonAxis;
     readonly a: JsonAxis;
@@ -369,7 +370,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         const jh = machine.heads[i]!;
         const z = buildAxis(jh.z, errors, `machine.heads[${i}].z`);
         const a = buildAxis(jh.a, errors, `machine.heads[${i}].a`);
-        const probeSwitch = buildPoint(jh.probeSwitch, errors, `machine.heads[${i}].probeSwitch`);
+        const probeSwitch = buildSwitch(jh.probeSwitch, errors, `machine.heads[${i}].probeSwitch`);
         heads.push(toolHead(z, a, {
             accepts: resolveAccepts(jh.accepts, errors, `machine.heads[${i}].accepts`),
             xOffset: jh.xOffset ?? 0,
@@ -492,6 +493,20 @@ function buildPoint(j: JsonPoint | undefined, errors: string[], at: string): Bed
         return undefined;
     }
     return { x: j.x, y: j.y };
+}
+
+function buildSwitch(
+    j: (JsonPoint & { readonly z?: number }) | undefined,
+    errors: string[],
+    at: string,
+): ProbeSwitch | undefined {
+    const p = buildPoint(j, errors, at);
+    if (p === undefined || j?.z === undefined) return p;
+    if (typeof j.z !== "number") {
+        errors.push(`${at}.z: must be a height in mm`);
+        return undefined;
+    }
+    return { ...p, z: j.z };
 }
 
 /** The work offset default, filled to 0; `z` must have one entry per head. */

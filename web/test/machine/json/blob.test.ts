@@ -98,6 +98,7 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "no_period", host: false, mutate: (c) => delete c.toolProfiles.knife.periodCount },
     { name: "unlock_range", host: true, mutate: (c) => (c.machine.heads[0].unlockRange = -1) },
     { name: "probe_reach", host: false, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 1e4, y: 0 }) },
+    { name: "switch_height", host: true, mutate: (c) => (c.machine.heads[0].probeSwitch = { x: 0, y: 0, z: -1 }) },
 ];
 
 const DIR = join(FIXTURES, "config");
@@ -122,6 +123,13 @@ function checkFixture(file: string, bytes: Uint8Array): void {
 describe("config fixtures (shared with the Pico decoder test)", () => {
     it("good.msgpack is the encoded test machine", () => {
         checkFixture("good.msgpack", encodeConfigBlob(testMachine()));
+    });
+
+    it("switch.msgpack is the test machine with a switch height", () => {
+        const config = plain(testMachine());
+        config.machine.heads[0].probeSwitch = { x: 0, y: 0, z: 12.5 };
+        expect(validateConfig(config as PipelineConfig).errors).toEqual([]);
+        checkFixture("switch.msgpack", encode({ v: CONFIG_BLOB_VERSION, ...config }));
     });
 
     it("controller.msgpack is the encoded config/controller.jsonc", () => {

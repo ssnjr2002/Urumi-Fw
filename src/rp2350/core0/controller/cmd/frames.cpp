@@ -2,7 +2,8 @@
 // (docs/plans/coordinate-system.md). All from IDLE, PAUSED or ALARM.
 //
 //   select <head>|anchor     the controlled point; a head binds its Z and A
-//   wzero [x] [y] [z]        work offset = the selected tip here (bare: all)
+//   wzero [x] [y] [z|z_switch]  work offset = the selected tip here (bare: all);
+//                            Z with the tip on the bed, or on its switch
 //   wset <axis> <v> …        work offset in machine units
 //   wclear                   work offset back to the config's `work` block
 //   mesh on|off              the bed mesh, from the next ring start
@@ -89,6 +90,7 @@ bool cmdSelect(const char* args) {
 
 bool cmdWzero(const char* args) {
     bool want[3] = { false, false, false };
+    bool onSwitch = false;   // z_switch: the tip is on the switch, not the bed
     if (*args == '\0') {
         want[SLOT_X] = want[SLOT_Y] = true;
         want[SLOT_Z] = framesZHead() != FRAMES_NONE;
@@ -97,12 +99,24 @@ bool cmdWzero(const char* args) {
         size_t len;
         const char* w = word(&p, &len);
         if (len == 0) break;
+        if (len == 8 && strncmp(w, "z_switch", 8) == 0) {
+            want[SLOT_Z] = onSwitch = true;
+            continue;
+        }
         const uint8_t k = axisSlot(w, len);
         if (k == SLOT_NONE) { Serial.println("err usage"); return true; }
         want[k] = true;
     }
 
     // Check every axis before setting any.
+    float switchZ = 0;
+    if (onSwitch) {
+        const uint8_t h = framesZHead();
+        if (h == FRAMES_NONE) { Serial.println("err no_head"); return true; }
+        const CfgHead& hd = machineCfg().heads[h];
+        if (!hd.hasSwitchZ) { Serial.println("err no_switch_height"); return true; }
+        switchZ = hd.switchZ;
+    }
     float tip[3];
     float dx = 0, dy = 0;
     if ((want[SLOT_X] || want[SLOT_Y]) &&
@@ -119,7 +133,7 @@ bool cmdWzero(const char* args) {
     // stored flat, so a Z zeroed away from the origin is not corrected twice.
     for (uint8_t k = 0; k < 2; k++)
         if (want[k]) framesSetWork(k, tip[k]);
-    if (want[SLOT_Z]) framesSetWork(SLOT_Z, tip[SLOT_Z] - framesMeshOffset());
+    if (want[SLOT_Z]) framesSetWork(SLOT_Z, tip[SLOT_Z] - framesMeshOffset() - switchZ);
     Serial.println("ok");
     return true;
 }

@@ -9,7 +9,7 @@
 // config is skipped by an ArduinoJson filter. The blob is the host's RESOLVED
 // config, so every field decoded here must be present: there is no defaults
 // table on this side. Exceptions: the homing block (absent: not homeable),
-// and inside it `cycle` and `parkPos`; `laser`, a head's `probeSwitch`, and
+// and inside it `cycle` and `parkPos`; `laser`, a head's `probeSwitch` and its `z`, and
 // `positions.park` / `positions.load`; a tool's `cutFeed`, `plungeFeed` and
 // `chamberOffsets`.
 //
@@ -82,6 +82,8 @@ struct CfgHead {
     float    yOffset;
     bool     hasProbeSwitch;
     CfgPoint probeSwitch;    // a tip position; valid if hasProbeSwitch
+    bool     hasSwitchZ;
+    float    switchZ;        // probeSwitch.z, the switch's height above the bed, mm
     float    unlockRange;    // |machine A| that releases the holder, degrees; 0: no interlock
 };
 

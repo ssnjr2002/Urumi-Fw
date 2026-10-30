@@ -134,8 +134,14 @@ export async function select(link: Link, target: number | "anchor"): Promise<voi
     await okOrThrow(link, `select ${target}`);
 }
 
-/** `wzero [axes]`: the work offset becomes the selected tip here (no axes: all). */
-export async function wzero(link: Link, axes: readonly ("x" | "y" | "z")[] = []): Promise<void> {
+/**
+ * `wzero [axes]`: the work offset becomes the selected tip here (no axes: all).
+ * `z` with the tip on the bed, `z_switch` on its head's switch (`probeSwitch.z`).
+ */
+export async function wzero(
+    link: Link,
+    axes: readonly ("x" | "y" | "z" | "z_switch")[] = [],
+): Promise<void> {
     await okOrThrow(link, ["wzero", ...axes].join(" "));
 }
 

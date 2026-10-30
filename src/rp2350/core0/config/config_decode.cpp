@@ -223,7 +223,7 @@ static bool inRange(const CfgAxis& a, float v) {
 }
 
 // An anchor at (0, 0); every head's probe switch within its tip's reach (the
-// anchor's range shifted by the head offset); park and load within the
+// anchor's range shifted by the head offset) at a height >= 0; park and load within the
 // anchor's range.
 static CfgDecodeError checkFrames(const MachineCfg& c) {
     bool anchor = c.laserNode != 0;
@@ -235,6 +235,7 @@ static CfgDecodeError checkFrames(const MachineCfg& c) {
         if (hd.hasProbeSwitch &&
             (!inRange(c.x, hd.probeSwitch.x - hd.xOffset) ||
              !inRange(c.y, hd.probeSwitch.y - hd.yOffset))) return CFG_DEC_FRAMES;
+        if (hd.hasSwitchZ && !(isfinite(hd.switchZ) && hd.switchZ >= 0)) return CFG_DEC_FRAMES;
     }
     if (!anchor || !isfinite(c.workX) || !isfinite(c.workY)) return CFG_DEC_FRAMES;
     if (c.hasPark && (!inRange(c.x, c.park.x) || !inRange(c.y, c.park.y))) return CFG_DEC_FRAMES;
@@ -384,6 +385,9 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
             !readOptPoint(heads[h]["probeSwitch"], &hd.hasProbeSwitch, &hd.probeSwitch) ||
             !readOptFloat(heads[h]["unlockRange"], &hd.unlockRange))
             return CFG_DEC_MISSING;
+        JsonVariantConst sz = heads[h]["probeSwitch"]["z"];
+        hd.hasSwitchZ = hd.hasProbeSwitch && !sz.isNull();
+        if (hd.hasSwitchZ && !readFloat(sz, &hd.switchZ)) return CFG_DEC_MISSING;
         if (!(isfinite(hd.unlockRange) && hd.unlockRange >= 0) ||
             (hd.unlockRange > 0 && !hd.a.node.present)) return CFG_DEC_HEADS;
     }

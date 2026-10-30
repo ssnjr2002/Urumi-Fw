@@ -526,7 +526,7 @@ export interface ToolHead extends ReferencePoint {
      * This head's tool-probe switch, as a tip position in machine coordinates.
      * Each head reaches only its own (docs/plans/coordinate-system.md).
      */
-    readonly probeSwitch?: BedPoint;
+    readonly probeSwitch?: ProbeSwitch;
     /**
      * The holder interlock: |machine A| within this many degrees releases the
      * tool; `mount` turns A past it to lock. Absent or 0: no interlock.
@@ -566,6 +566,11 @@ export interface LaserPointer {
 export interface BedPoint {
     readonly x: number;
     readonly y: number;
+}
+
+/** A head's probe switch; `z` is its height above the bed (mm), for `wzero z_switch`. */
+export interface ProbeSwitch extends BedPoint {
+    readonly z?: number;
 }
 
 /**

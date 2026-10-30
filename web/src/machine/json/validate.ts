@@ -205,6 +205,15 @@ const defaultHeadInRange: Rule = ({ machine }) => {
         : [error(`machine.defaultHead: ${i} is out of range (machine has ${n} head(s))`)];
 };
 
+/** A switch's height is above the bed. */
+const switchHeightValid: Rule = ({ machine }) =>
+    machine.heads.flatMap((h, i) => {
+        const z = h.probeSwitch?.z;
+        return z === undefined || (Number.isFinite(z) && z >= 0)
+            ? []
+            : [error(`machine.heads[${i}].probeSwitch.z: ${z} must be a number >= 0`)];
+    });
+
 /** An interlock needs an A to turn, and a range it can be inside. */
 const unlockRangeValid: Rule = ({ machine }) =>
     machine.heads.flatMap((h, i) => {
@@ -470,6 +479,7 @@ const RULES: readonly Rule[] = [
     headCountSupported,
     defaultHeadInRange,
     unlockRangeValid,
+    switchHeightValid,
     clearanceNonNegative,
     bufferPositive,
     feedAtLeastOne,

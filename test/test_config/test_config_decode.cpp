@@ -171,6 +171,7 @@ TEST_CASE("frame fields decode with their defaults") {
     CHECK(c.heads[0].xOffset == doctest::Approx(0));
     CHECK(c.heads[0].yOffset == doctest::Approx(0));
     CHECK_FALSE(c.heads[0].hasProbeSwitch);
+    CHECK_FALSE(c.heads[0].hasSwitchZ);
     CHECK(c.laserNode == 0);
     CHECK(c.workX == doctest::Approx(0));
     CHECK(c.workZ[0] == doctest::Approx(0));
@@ -182,6 +183,15 @@ TEST_CASE("frame fields decode with their defaults") {
     CHECK(lo == doctest::Approx(0));
     CHECK(hi == doctest::Approx(480));
     CHECK_FALSE(configAxisRange(c.heads[0].a, &lo, &hi));
+}
+
+TEST_CASE("a probe switch carries its height") {
+    std::vector<uint8_t> b = readBlob("switch.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    CHECK(c.heads[0].hasProbeSwitch);
+    REQUIRE(c.heads[0].hasSwitchZ);
+    CHECK(c.heads[0].switchZ == doctest::Approx(12.5));
 }
 
 TEST_CASE("an absent node maps to none") {
@@ -201,7 +211,8 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"node_id", "node_id"}, {"node_type", "node_type"},
         {"dup_node", "dup_node"}, {"heads", "heads"}, {"homing", "homing"},
         {"homing_kind", "homing"}, {"no_invert_dir", "missing"},
-        {"frames", "frames"}, {"probe_reach", "frames"}, {"laser_node", "node_id"},
+        {"frames", "frames"}, {"probe_reach", "frames"}, {"switch_height", "frames"},
+        {"laser_node", "node_id"},
         {"unlock_range", "heads"},
         {"travel", "ceiling"}, {"no_jog_feed", "missing"},
         {"no_jog_unhomed", "missing"},
