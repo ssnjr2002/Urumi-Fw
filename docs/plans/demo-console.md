@@ -341,10 +341,31 @@ A dependent chain, Single Session: every branch after C1 edits
 ### D2: goto
 
 * Type: `fix/demo-goto`
-* Purpose: the Jog to row sends `jogto`, which is gone. Send through the
-  library's `goto` (`web/src/wire/link/commands.ts:212`): go = `w xy <x>
-  <y>`, park, load; add mount, up and unlock. The `jogto` ids and class
-  become `goto`.
+* Purpose: the Jog to row sends `jogto`, which is gone. The Jog panel is
+  split into Machine and Work, every `goto` sent as text through `submit()`
+  like the page's other buttons, the jog speed its `scale` (not on `up`,
+  `unlock`):
+
+  ```
+  Jog: [x] key jog   speed (× jogFeed): [1]
+
+  Machine
+    goto:     park  load  mount  up  unlock
+    anchor xy: [x] [y] go     z: [z] go     a: [a] go
+
+  Work
+    select: 0  1  anchor     selected: none
+    zero:     wzero x y  wzero z  wzero z_switch
+    goto:     0 xy  material top  0 a
+    xy: [x] [y] go     z: [z] go     a: [a] go
+  ```
+
+  * Machine rows send `goto m …`. No machine `0 xy` (the pull-off keeps the
+    anchor off machine 0, 0: `soft_limit`), `0 z` (it is `up` for one head)
+    or `0 a` (A at 0 unlocks the holder with its tool mounted).
+  * Work rows send `goto w …`. Material top is `goto w z <t>`, t from the
+    Job panel; refused on the page with t unset, since work Z 0 is the bed.
+  * The bare `wzero` button goes: it zeroes Z too.
 * Files: `web/demo/index.{html,js}` (`index.html:41-45`,
   `index.js:33-35,463-470`).
 * Depends on: D1.
