@@ -414,7 +414,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Depends on: D2.
 * Bench: mount on head 0 parks Z and locks A; unmount unlocks; a held job's
   tool change completes from the demo alone.
-* Status: ready to merge.
+* Status: done, merged at `b815e27`. Last branch of D1–D3; unblocks none.
 * Outcome:
   * Agreed in Read: plain `home` and `home head` beside home XY; goto's
     mount reads mount pos. Agreed after: a Control heading over Jog,
