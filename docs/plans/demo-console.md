@@ -325,7 +325,18 @@ A dependent chain, Single Session: every branch after C1 edits
 * Depends on: C5.
 * Bench: a layer with t and p set cuts at work Z t − p; `wzero x y` and
   `wzero z_switch` reply `ok`.
-* Status: planned.
+* Status: ready to merge.
+* Outcome:
+  * Deviation, agreed in Read: an empty p is left out of the header and the
+    library sends t; the demo does not add `maxOvercut`.
+  * The session line and the `LAYER_HDR` log show t and p.
+  * With t left at 0 and p empty, a plunging tool's header is now `NACK_JOB`
+    (p ≤ 0); t's default stays 0.
+  * Kept: the bare `wzero` button zeroes Z too (work Z 0 is the bed), so a
+    press with the tip in the air sets Z wrong; `wzero x y` is the XY-only
+    one.
+  * Checks: `pnpm typecheck` clean; `pnpm test` 630 passed, 1 skipped (the
+    demo has no tests). Not benched.
 
 ### D2: goto
 
