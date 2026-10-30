@@ -45,7 +45,7 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (62 B) |
-| `LAYER_HDR_MAGIC` | `0xA2` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head, feed and plunge (22 B) |
+| `LAYER_HDR_MAGIC` | `0xA1` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head, feed and plunge (22 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
@@ -204,9 +204,9 @@ blade tip: with a tool whose `offsetMm` is d mounted, the Pico runs the knife
 axis d ahead of the tip along the edge heading (A + `aOffsetDeg`), in jobs
 and jogs alike, and shrinks X's and Y's soft ranges by d.
 
-### Layer Header — `LAYER_HDR_MAGIC` (0xA2, 22 bytes)
+### Layer Header — `LAYER_HDR_MAGIC` (0xA1, 22 bytes)
 ```
-[0]      magic = 0xA2
+[0]      magic = 0xA1
 [1]      chamber    uint8      — 1..chamberCount; 0 for a tool without chambers
 [2]      seq        uint8      — rolling stream seq, shared with BEZIER
 [3]      tool       uint8      — the config tool's `id`
@@ -214,15 +214,21 @@ and jogs alike, and shrinks X's and Y's soft ranges by d.
 [5..6]   layer      uint16 LE
 [7..10]  record     uint32 LE  — the next BEZIER's number within the layer
 [11..14] feed       float32 LE — cut, mm/s; 0 = the tool's cutFeed, then the machine's (`feed`, else `feed.cutFallback`)
-[15..18] k          float32 LE — plunge scale 0..2
+[15..18] p          float32 LE — plunge depth below the material top, mm
 [19..20] t          uint16 LE  — material thickness, µm
 [21]     CRC8 over bytes [0..20]
 ```
-**Heights.** Work Z is the tip on the material top. Every contour's START
-moves Z to `machine.zClearance` over work Z, travels to its p0 and plunges to
-k·t under work Z (0 for a tool with `plunge: false`) at the tool's
+`0xA2`, the header with a plunge scale `k` in place of `p`, is retired and
+dropped as an unknown byte.
+
+**Heights.** Work Z 0 is the tip on the bed. Every contour's START moves Z
+to `machine.zClearance` over the material top (work Z t), travels to its p0
+and plunges to work Z t − p (t for a tool with `plunge: false`) at the tool's
 `plungeFeed`, else `feed.plungeFallback`; its END lifts back to clearance at
-`feed.liftFeed`. A height outside Z's soft range is `NACK_SOFT_LIMIT`. A head
+`feed.liftFeed`. A through cut is p = t plus the overcut into the mat. Refused
+as `NACK_JOB`: a p not finite, and on a plunging tool p ≤ 0 or
+p − t > `machine.maxOvercut`. A height outside Z's soft range is
+`NACK_SOFT_LIMIT`. A head
 with no work Z set (its tool changed by `mount`, until a Z zero) stops for a
 tool change (below).
 

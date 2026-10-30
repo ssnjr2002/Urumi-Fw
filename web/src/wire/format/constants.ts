@@ -15,7 +15,7 @@ export const BEZIER_SIZE = 62;
 export const BEZIER_SEQ_OFFSET = 2;
 
 // ── LAYER_HDR — 22-byte layer header, opens a job (format/layer.ts) ────────────
-export const MAGIC_LAYER_HDR = 0xa2; // host → Pico: tool, head, chamber, feed, k, t
+export const MAGIC_LAYER_HDR = 0xa1; // host → Pico: tool, head, chamber, feed, p, t
 export const LAYER_HDR_SIZE = 22;
 export const LAYER_HDR_SEQ_OFFSET = 2;
 
@@ -80,7 +80,7 @@ export const NACK_MIXED_AXES = 0x0a;
 // A continuous-jog packet refused while a step or sequence holds the machine.
 export const NACK_BUSY = 0x0b;
 // A BEZIER with no job open, or a LAYER_HDR inside a contour or with a bad
-// chamber, feed or k.
+// chamber, feed, thickness or p.
 export const NACK_JOB = 0x0c;
 // A LAYER_HDR whose tool id is not in the config.
 export const NACK_TOOL_UNKNOWN = 0x0d;

@@ -270,7 +270,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
 
 // The `feed` command's override of the config's feeds; 0 = none.
 static float cutFeed = 0, travelFeed = 0;
-static LayerMotion layerMo = {}; // the open layer's feeds and plunge depth
+static LayerMotion layerMo = {}; // the open layer's feeds and heights
 static bool inContour = false;
 // The record the next BEZIER is, and whether it is the first since a LAYER_HDR.
 static uint16_t curLayer = 0;
@@ -451,10 +451,10 @@ bool plannerJobSwap(uint8_t from, uint8_t to) {
     return ok;
 }
 
-// Flat Z of a lift or travel (zClearance over work Z) and of the cut (the
-// layer's depth under it).
-static float clearZ() { return framesWork(SLOT_Z) + machineCfg().zClearance; }
-static float cutZ()   { return framesWork(SLOT_Z) - layerMo.depth; }
+// Flat Z of a lift or travel (zClearance over the material top, work Z the
+// bed) and of the cut (the layer's depth under the top).
+static float clearZ() { return framesWork(SLOT_Z) + layerMo.top + machineCfg().zClearance; }
+static float cutZ()   { return framesWork(SLOT_Z) + layerMo.top - layerMo.depth; }
 
 // A Z-only move at (x, y) from flat `from` to flat `to` inside Z's soft range.
 static bool zMoveFits(planner::Vec2 at, float from, float to) {

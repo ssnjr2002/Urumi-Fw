@@ -5,7 +5,7 @@
  * mounted there and the head selected it is NACK_TOOL_CHANGE.
  *
  * Layout (little-endian):
- *   [0]      magic 0xA2
+ *   [0]      magic 0xA1
  *   [1]      chamber  1..chamberCount; 0 for a tool without chambers
  *   [2]      seq      stamped by the sender (stampSeq); 0 here
  *   [3]      tool     the config tool's `id`
@@ -13,9 +13,12 @@
  *   [5..6]   layer    u16
  *   [7..10]  record   u32, the next BEZIER's number within the layer
  *   [11..14] feed     f32 mm/s; 0 = the tool's cutFeed, then the machine's
- *   [15..18] k        f32 plunge scale, 0..2: the plunge goes k·t below work Z
+ *   [15..18] p        f32 plunge depth below the material top, mm
  *   [19..20] t        u16 material thickness, µm
  *   [21]     CRC8 over bytes [0..20]
+ *
+ * Work Z 0 is the bed: the cut is at t − p, so a through cut is p = t plus
+ * the overcut into the mat.
  */
 
 import { LAYER_HDR_SEQ_OFFSET, LAYER_HDR_SIZE, MAGIC_LAYER_HDR } from "./constants.js";
@@ -28,7 +31,8 @@ export interface LayerHdr {
     readonly layer?: number;
     readonly record?: number;
     readonly feed?: number;
-    readonly k?: number;
+    /** Plunge depth below the material top, mm; defaults to `thickness` (a through cut to the bed). */
+    readonly p?: number;
     /** Material thickness, mm (to 65.535). */
     readonly thickness?: number;
 }
@@ -44,7 +48,7 @@ export function packLayerHdr(l: LayerHdr, seq = 0): Uint8Array {
     dv.setUint16(5, l.layer ?? 0, true);
     dv.setUint32(7, l.record ?? 0, true);
     dv.setFloat32(11, l.feed ?? 0, true);
-    dv.setFloat32(15, l.k ?? 1, true);
+    dv.setFloat32(15, l.p ?? l.thickness ?? 0, true);
     const um = Math.round((l.thickness ?? 0) * 1000);
     if (!(um >= 0 && um <= 0xffff)) throw new RangeError(`LAYER_HDR: thickness ${l.thickness} mm out of range`);
     dv.setUint16(19, um, true);

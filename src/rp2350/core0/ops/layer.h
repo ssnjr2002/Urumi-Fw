@@ -3,11 +3,12 @@
 #include "../config/config_decode.h"
 
 // layer — what a LAYER_HDR asks for (usb_protocol.h): its tool on its head, the
-// cut and plunge feeds, and the plunge depth. Pure; the data plane applies it.
+// cut and plunge feeds, and the heights. Pure; the data plane applies it.
 
 enum LayerResult : uint8_t {
     LAYER_OK,
-    LAYER_BAD,            // head, chamber, feed, k or thickness out of range, or a
+    LAYER_BAD,            // head, chamber, feed, thickness or p out of range, a
+                          // plunge past maxOvercut below the bed, or a
                           // tangential or chamber tool on a head without A
     LAYER_TOOL_UNKNOWN,   // the id is not in the config
     LAYER_NOT_MOUNTED,    // the head has another tool mounted, or none
@@ -15,13 +16,15 @@ enum LayerResult : uint8_t {
 
 struct LayerHdr {
     uint8_t tool, head, chamber;
-    float   feed, k;
+    float   feed;
+    float   p;            // plunge depth below the material top, mm
     float   thickness;    // mm
 };
 
 struct LayerMotion {
     float cutFeed, plungeFeed;
-    float depth;          // mm below work Z; 0 for a tool that does not plunge
+    float top;            // the material top, mm above work Z
+    float depth;          // mm below the top; 0 for a tool that does not plunge
     uint8_t tool;
     CfgPower power;       // node 0 on a passive tool
     bool  tangential;     // A swivels to the path heading

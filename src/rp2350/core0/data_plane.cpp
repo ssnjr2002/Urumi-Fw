@@ -2,7 +2,7 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA2), 22 bytes;
+//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA1), 22 bytes;
 //                continuous jog (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
@@ -226,7 +226,7 @@ static void acceptLayer() {
     memcpy(&layerNo, &pktBuf[5], 2);
     memcpy(&record,  &pktBuf[7], 4);
     memcpy(&l.feed,  &pktBuf[11], 4);
-    memcpy(&l.k,     &pktBuf[15], 4);
+    memcpy(&l.p,     &pktBuf[15], 4);
     uint16_t um;
     memcpy(&um,      &pktBuf[19], 2);
     l.thickness = um * 0.001f;

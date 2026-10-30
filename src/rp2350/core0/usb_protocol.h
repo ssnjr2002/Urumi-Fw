@@ -12,7 +12,8 @@
 // The two must agree byte for byte. Change one, change the other.
 
 // ─── USB Wire Packets ─────────────────────────────────────────────────────────
-// 0xAB (MicroSegment), 0xAC (tool packet) and 0xAE (jog burst) are retired;
+// 0xAB (MicroSegment), 0xAC (tool packet), 0xAE (jog burst) and 0xA2 (the
+// LAYER_HDR with a plunge scale k) are retired;
 // the data plane drops them as unknown bytes.
 
 // BEZIER record (62 bytes, little-endian, floats in machine mm):
@@ -41,7 +42,7 @@
 // resume_record`). The BEZIERs after it run with its tool on `head`, numbered on
 // from `record`; the first is a START. Accepted only with the tool mounted on
 // `head` and that head selected; otherwise NACK_TOOL_CHANGE.
-//   [0]      magic = 0xA2
+//   [0]      magic = 0xA1
 //   [1]      chamber  1..chamberCount; 0 for a tool without chambers
 //   [2]      seq
 //   [3]      tool id  (config `tools`)
@@ -49,11 +50,13 @@
 //   [5..6]   layer    u16
 //   [7..10]  record   u32, the next BEZIER's number within the layer
 //   [11..14] feed     f32 mm/s; 0 = the tool's cutFeed, then the machine's
-//   [15..18] k        f32 plunge scale, 0..2: the plunge goes k·t below work Z
+//   [15..18] p        f32 plunge depth below the material top, mm
 //   [19..20] t        u16 material thickness, µm
 //   [21]     CRC8 over bytes [0..20]
-// The head needs its work Z set (a Z zero); otherwise NACK_JOB.
-#define LAYER_HDR_MAGIC       0xA2
+// Work Z 0 is the bed: travel at work Z t + zClearance, the cut at t − p (t
+// for a tool with `plunge: false`). NACK_JOB for a p not finite, or on a
+// plunging tool p ≤ 0 or p − t > maxOvercut.
+#define LAYER_HDR_MAGIC       0xA1
 #define LAYER_HDR_PACKET_SIZE 22
 
 // Inter-byte timeout for a half-received BEZIER or jog packet. A whole
@@ -187,7 +190,7 @@
 // A CJOG packet refused while a step or sequence holds the machine.
 #define MSEG_NACK_BUSY       0x0B
 // A BEZIER with no job open, or a LAYER_HDR inside a contour, with a bad
-// chamber, feed or k, or in a paused job not naming where it stopped.
+// chamber, feed, thickness or p, or in a paused job not naming where it stopped.
 #define MSEG_NACK_JOB          0x0C
 // A LAYER_HDR whose tool id is not in the config.
 #define MSEG_NACK_TOOL_UNKNOWN 0x0D

@@ -25,10 +25,10 @@ static MachineCfg twoHeads() {
     return c;
 }
 
-static LayerHdr hdr(uint8_t tool, uint8_t head, uint8_t chamber = 0, float feed = 0, float k = 1,
-                    float thickness = 0) {
+static LayerHdr hdr(uint8_t tool, uint8_t head, uint8_t chamber = 0, float feed = 0, float p = 1,
+                    float thickness = 1) {
     LayerHdr l;
-    l.tool = tool; l.head = head; l.chamber = chamber; l.feed = feed; l.k = k;
+    l.tool = tool; l.head = head; l.chamber = chamber; l.feed = feed; l.p = p;
     l.thickness = thickness;
     return l;
 }
@@ -98,7 +98,7 @@ TEST_CASE("layer refusals") {
     CHECK(layerResolve(c, mounted, hdr(1, 0, 1), 10, &mo) == LAYER_BAD);   // no chambers
     CHECK(layerResolve(c, mounted, hdr(1, 0, 0, -1), 10, &mo) == LAYER_BAD);
     CHECK(layerResolve(c, mounted, hdr(1, 0, 0, NAN), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 0, 2.5f), 10, &mo) == LAYER_BAD);
+    CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 0, NAN), 10, &mo) == LAYER_BAD);
     CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 0, 1, -1), 10, &mo) == LAYER_BAD);
     CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 0, 1, NAN), 10, &mo) == LAYER_BAD);
 
@@ -108,7 +108,7 @@ TEST_CASE("layer refusals") {
     CHECK(layerResolve(c, pen, hdr(4, 0, 3), 10, &mo) == LAYER_OK);
 }
 
-TEST_CASE("layer plunge: k times t for a plunging tool, 0 for one that is not") {
+TEST_CASE("layer plunge: p under the top for a plunging tool, 0 for one that is not") {
     MachineCfg c = twoHeads();
     c.plungeFallback = 8;
     c.tools[0].plunge = true;               // knife
@@ -116,9 +116,25 @@ TEST_CASE("layer plunge: k times t for a plunging tool, 0 for one that is not") 
     const uint8_t mounted[2] = { 4, 1 };
     LayerMotion mo;
     REQUIRE(layerResolve(c, mounted, hdr(1, 1, 0, 0, 1.5f, 2), 10, &mo) == LAYER_OK);
-    CHECK(mo.depth == doctest::Approx(3));
+    CHECK(mo.top == doctest::Approx(2));
+    CHECK(mo.depth == doctest::Approx(1.5f));
     CHECK(mo.plungeFeed == 8);
-    REQUIRE(layerResolve(c, mounted, hdr(4, 0, 1, 0, 1.5f, 2), 10, &mo) == LAYER_OK);
+    REQUIRE(layerResolve(c, mounted, hdr(4, 0, 1, 0, 0, 2), 10, &mo) == LAYER_OK);   // p unused
+    CHECK(mo.top == doctest::Approx(2));
     CHECK(mo.depth == 0);
     CHECK(mo.plungeFeed == 3);
+}
+
+TEST_CASE("layer plunge: p > 0 and at most maxOvercut past the material on a plunging tool") {
+    MachineCfg c = twoHeads();
+    c.tools[0].plunge = true;               // knife
+    c.maxOvercut = 0.5f;
+    const uint8_t mounted[2] = { 4, 1 };
+    LayerMotion mo;
+    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 2.5f, 2), 10, &mo) == LAYER_OK);
+    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 2.6f, 2), 10, &mo) == LAYER_BAD);
+    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 0, 2), 10, &mo) == LAYER_BAD);
+    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, -1, 2), 10, &mo) == LAYER_BAD);
+    CHECK(layerResolve(c, mounted, hdr(4, 0, 1, 0, 9, 2), 10, &mo) == LAYER_OK);    // pen: p unused
+    CHECK(layerResolve(c, mounted, hdr(4, 0, 1, 0, NAN, 2), 10, &mo) == LAYER_BAD);
 }

@@ -61,7 +61,7 @@ PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record)
 // Start the layer (checked as plannerLayerCheck on mo.cutFeed): opens the job
 // (JOB.BUFFERING) from IDLE, and resumes a paused one, its first record cut
 // from kResumeMargin before where it stopped. Records count from `record`, and
-// run at `mo`'s feeds and plunge depth.
+// run at `mo`'s feeds and heights.
 PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layer, uint32_t record);
 
 // Hold the job for a tool change (a layer checked as plannerLayerCheck):

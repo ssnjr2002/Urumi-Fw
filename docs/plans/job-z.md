@@ -31,6 +31,8 @@ here. Until then a `BREAK` runs through without a lift.
   (to 65.5 mm; Z travels 48 mm, so preflight bounds it first). A tool with
   `plunge: false` (a pen) has depth 0 whatever `k` says.
   A head with no work Z set refuses the layer header (`NACK_JOB`).
+  Superseded by coordinate-system.md Z4: work Z 0 is the bed and the header
+  carries `p` (plunge depth below the top) for `k`.
 * **Feeds:** a plunge at the tool's `plungeFeed`, else
   `machine.feed.plungeFallback`; a lift at `machine.feed.liftFeed` (new,
   machine-wide, ≥ 1).
