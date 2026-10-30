@@ -495,7 +495,8 @@ Done (merged at `5272a56`). Unblocks Z4.
 
 ### Status
 
-Ready to merge.
+Done (merged at `ac3d804`). Completes the bed zero (Z2–Z4); unblocks nothing
+further in this plan.
 
 ### Outcome
 
