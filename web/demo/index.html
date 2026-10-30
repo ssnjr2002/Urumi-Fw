@@ -46,8 +46,9 @@
   </div>
   <div>Work zero:
     <button class="wzero" value="" disabled>wzero</button>
-    <button class="wzero" value="xy" disabled>wzero xy</button>
+    <button class="wzero" value="x y" disabled>wzero x y</button>
     <button class="wzero" value="z" disabled>wzero z</button>
+    <button class="wzero" value="z_switch" disabled>wzero z_switch</button>
   </div>
   <div>Selected: <span id="selected">none</span></div>
   <div id="select-btns">
@@ -68,7 +69,7 @@
   <canvas id="preview" width="480" height="320" style="border: 1px solid"></canvas>
   <div>
     <label>feed (mm/s, 0 = tool's): <input type="number" id="job-feed" min="0" step="any" value="0" style="width: 5em"></label>
-    <label>k: <input type="number" id="job-k" min="0" max="2" step="0.1" value="1" style="width: 4em"></label>
+    <label>p (mm, empty = t): <input type="number" id="job-p" min="0" step="0.1" style="width: 5em"></label>
     <label>t (mm): <input type="number" id="job-t" min="0" step="0.1" value="0" style="width: 5em"></label>
     <label>head: <select id="job-head"></select></label>
   </div>

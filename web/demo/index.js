@@ -40,7 +40,7 @@ const layerSel      = document.getElementById('layer');
 const svgWarnOut    = document.getElementById('svg-warnings');
 const previewCv     = document.getElementById('preview');
 const jobFeedIn     = document.getElementById('job-feed');
-const jobKIn        = document.getElementById('job-k');
+const jobPIn        = document.getElementById('job-p');
 const jobTIn        = document.getElementById('job-t');
 const jobHeadSel    = document.getElementById('job-head');
 const jobRunBtn     = document.getElementById('job-run');
@@ -618,7 +618,7 @@ jobRunBtn.addEventListener('click', async () => {
         head: Number(jobHeadSel.value),
         chamber: tl.chamber,
         feed: Number(jobFeedIn.value) || 0,
-        k: Number(jobKIn.value),
+        ...(jobPIn.value !== '' && { p: Number(jobPIn.value) }),
         thickness: Number(jobTIn.value) || 0,
     };
     try {
@@ -628,8 +628,9 @@ jobRunBtn.addEventListener('click', async () => {
         return binOut(`job: ${e.message}`);
     }
     jobTotal = job.packets.length;
-    jobSessionOut.textContent = `${key} · tool ${hdr.tool} · head ${hdr.head} · chamber ${hdr.chamber}`;
-    binOut(`→ LAYER_HDR ${key} tool=${hdr.tool} head=${hdr.head} chamber=${hdr.chamber}, ${jobTotal} BEZIER`);
+    const p = hdr.p ?? hdr.thickness;
+    jobSessionOut.textContent = `${key} · tool ${hdr.tool} · head ${hdr.head} · chamber ${hdr.chamber} · t ${hdr.thickness} p ${p}`;
+    binOut(`→ LAYER_HDR ${key} tool=${hdr.tool} head=${hdr.head} chamber=${hdr.chamber} t=${hdr.thickness} p=${p}, ${jobTotal} BEZIER`);
     setJobButtons();
     watchJob();
     const ok = await session.run();
