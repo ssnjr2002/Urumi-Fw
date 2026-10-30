@@ -455,7 +455,24 @@ Done (merged at `78ccd49`). Unblocks Z3.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* `maxOvercut` is required in the blob, defaulted to 0 by the host (no tip
+  below the bed until set); blob v13, decode error `overcut`.
+* The floor takes the mesh offset as an argument: `framesTipRange(k, lo, hi,
+  mesh)` and `framesCheckMove(..., off)`, defaulting to 0. Each Z caller passes
+  the offset it already uses (latched at the jog's XY, the walk's lo/hi in
+  `zInRange`), so the bound is on flat Z: `workZ − maxOvercut`.
+* The refusal is the existing `soft_limit z <left>` / `NACK_SOFT_LIMIT`.
+* Unchanged: `framesCheckNode` (park legs only go up) and raw `leg` moves,
+  which have no soft check.
+* Until Z4, a layer plunging `k·t` deeper than `maxOvercut` below the work Z
+  is refused at the plunge.
+* Benched without a tool: jog and `goto w z` refused at the floor with the
+  right room left. Not benched: continuous jog, a job, the mesh, and a head
+  without a work Z.
 
 ## Branch Z4: `feature/layer-plunge-depth`
 
