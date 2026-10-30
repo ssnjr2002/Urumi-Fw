@@ -33,6 +33,10 @@ const cfgInfoOut    = document.getElementById('cfg-info');
 const gotoBtns      = document.querySelectorAll('button.goto, button.goto-row');
 const stopBtn       = document.getElementById('stop');
 const wzeroBtns     = document.querySelectorAll('button.wzero');
+const textCmdBtns   = document.querySelectorAll('button.text-cmd');
+const homeHeadSel   = document.getElementById('home-head');
+const mountHeadSel  = document.getElementById('mount-head');
+const mountToolSel  = document.getElementById('mount-tool');
 const svgFileIn     = document.getElementById('svg-file');
 const layerSel      = document.getElementById('layer');
 const svgWarnOut    = document.getElementById('svg-warnings');
@@ -85,7 +89,7 @@ function setConnected(on) {
     statusGetBtn.disabled = !on;
     statusPollBox.disabled = !on;
     jogKeysBox.disabled = !on;
-    for (const b of [...selectBtnsDiv.children, ...gotoBtns, ...wzeroBtns, stopBtn]) b.disabled = !on;
+    for (const b of [...selectBtnsDiv.children, ...gotoBtns, ...wzeroBtns, ...textCmdBtns, stopBtn]) b.disabled = !on;
     cfgPullBtn.disabled = !on;
     cfgPushBtn.disabled = !on || !pushBlob;
     setJobButtons();
@@ -377,7 +381,9 @@ function buildSelectButtons(headCount) {
         });
         return b;
     }));
-    jobHeadSel.replaceChildren(...[...Array(headCount).keys()].map((h) => new Option(String(h), String(h))));
+    for (const sel of [jobHeadSel, homeHeadSel, mountHeadSel]) {
+        sel.replaceChildren(...[...Array(headCount).keys()].map((h) => new Option(String(h), String(h))));
+    }
 }
 
 buildSelectButtons(0);
@@ -445,6 +451,8 @@ async function pullConfig() {
     }
     cfgSaveBtn.disabled = !pulledConfig;
     buildSelectButtons(pulledConfig?.machine.heads.length ?? 0);
+    mountToolSel.replaceChildren(...Object.entries(pulledConfig?.toolProfiles ?? {})
+        .map(([name, t]) => new Option(name, String(t.id))));
     loadLayers();
 }
 
@@ -485,6 +493,17 @@ for (const b of gotoBtns) {
 }
 
 for (const b of wzeroBtns) b.addEventListener('click', () => submit(`wzero ${b.value}`));
+
+// ── home and tool ─────────────────────────────────────────────────────────────
+// A button's data-head / data-tool name the pickers its arguments come from.
+
+for (const b of textCmdBtns) {
+    b.addEventListener('click', () => {
+        const args = [b.dataset.head, b.dataset.tool].filter(Boolean).map((id) => document.getElementById(id).value);
+        if (args.includes('')) return textOut(`${b.value}: pull a config first`);
+        submit([b.value, ...args].join(' '));
+    });
+}
 
 // ── job ───────────────────────────────────────────────────────────────────────
 // The picked SVG is split into tool layers against the pulled config's tools,

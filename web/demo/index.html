@@ -33,16 +33,29 @@
   <button id="bin-clear">Clear</button>
   <button id="bin-copy">Copy</button>
 
-  <h2>Jog</h2>
+  <h2>Control</h2>
+  <h3>Jog</h3>
   <label><input type="checkbox" id="jog-keys" disabled> Key jog (hold: W/S = +Y/−Y, A/D = −X/+X, R/F = +Z/−Z, Q/E = −A/+A)</label>
   <label>Speed (× jogFeed): <input type="number" id="jog-speed" min="0.02" max="3.98" step="0.25" value="1" style="width: 5em"></label>
   <span id="jog-dir"></span>
 
   <h3>Machine</h3>
+  <div>home:
+    <button class="text-cmd" value="home" disabled>home</button>
+    <button class="text-cmd" value="home_xy" disabled>home xy</button>
+    <button class="text-cmd" value="home_head" data-head="home-head" disabled>home head</button>
+    <select id="home-head"></select>
+  </div>
+  <div>tool:
+    <label>head <select id="mount-head"></select></label>
+    <label>tool <select id="mount-tool"></select></label>
+    <button class="text-cmd" value="mount" data-head="mount-head" data-tool="mount-tool" disabled>mount</button>
+    <button class="text-cmd" value="unmount" data-head="mount-head" disabled>unmount</button>
+  </div>
   <div>goto:
     <button class="goto" value="park" disabled>park</button>
     <button class="goto" value="load" disabled>load</button>
-    <button class="goto" value="mount" disabled>mount</button>
+    <button class="goto" value="mount" disabled>mount pos</button>
     <button class="goto" value="up" data-noscale disabled>up</button>
     <button class="goto" value="unlock" data-noscale disabled>unlock</button>
   </div>
