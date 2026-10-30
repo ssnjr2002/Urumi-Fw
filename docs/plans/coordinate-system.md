@@ -415,7 +415,8 @@ Z floor ("Without a work Z ... jogged down to touch off").
 
 ### Status
 
-Ready to merge.
+Done (merged at `a23e180`). Unblocks nothing; fixes demo-console.md D2's
+Z floor finding.
 
 ### Outcome
 
