@@ -414,7 +414,18 @@ A dependent chain, Single Session: every branch after C1 edits
 * Depends on: D2.
 * Bench: mount on head 0 parks Z and locks A; unmount unlocks; a held job's
   tool change completes from the demo alone.
-* Status: planned.
+* Status: ready to merge.
+* Outcome:
+  * Agreed in Read: plain `home` and `home head` beside home XY; goto's
+    mount reads mount pos. Agreed after: a Control heading over Jog,
+    Machine and Work, each a subheading.
+  * The tool picker fills on each config pull, not at load (`pulledConfig`
+    is declared after the first `buildSelectButtons`).
+  * Benched on COM8 as text commands: `home`, `home_xy`, `home_head 0`;
+    `mount 0 1` (A to −63, `unlocked=0x00`), `unmount 0` (A to 0,
+    `unlocked=0x01`); `err mounted`, `no_tool`, `no_head`. The page itself
+    not opened.
+  * Checks: `pnpm typecheck` clean; `pnpm test` 631 passed, 1 skipped.
 
 ## Open
 
