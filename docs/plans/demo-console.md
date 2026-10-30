@@ -370,7 +370,7 @@ A dependent chain, Single Session: every branch after C1 edits
   `index.js:33-35,463-470`).
 * Depends on: D1.
 * Bench: each button moves as `goto` documents (Z parks first on XY forms).
-* Status: ready to merge.
+* Status: done, merged at `734fc0f`. Unblocks D3.
 * Outcome:
   * Deviations, agreed in Read and Write: text through `submit()`, not the
     library's `goto()`; the Machine/Work layout above; no machine `0 xy`,
