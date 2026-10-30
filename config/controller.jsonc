@@ -20,6 +20,7 @@
     "feed": { "cutFallback": 80, "travelDefault": 80, "plungeFallback": 10, "liftFeed": 10 },   // mm/s; `feed` overrides
     "positions": { "mount": { "x": 200, "y": 150 } },   // anchor, machine mm: a tool change stops here
     "zClearance": 2,       // mm above the material top for lifts and travel
+    "maxOvercut": 0,       // mm a zeroed tip may go below the bed
     "slew": {},
     "x": {
       "node": { "id": 1, "present": true },

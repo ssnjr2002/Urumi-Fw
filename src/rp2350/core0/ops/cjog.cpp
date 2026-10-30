@@ -11,6 +11,7 @@
 #include "machine.h"           // machineAdmit
 #include "position.h"          // SLOT_Z, SLOT_A
 #include "frames.h"
+#include "mesh.h"
 #include "../usb_protocol.h"
 #include "../config/machine_cfg.h"
 #include "../planner/queue.h"
@@ -64,7 +65,8 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
         const bool homed = axes_homed & (1u << k);
         if (!homed && !cfg.jogUnhomed) return MSEG_NACK_BAD_STATE;
         float lo, hi, room = k == SLOT_A ? CJOG_A_RUN : a->maxTravel;
-        if (k != SLOT_A && homed && a->softLimits && framesTipRange(k, &lo, &hi))
+        const float off = k == SLOT_Z ? meshLatchedOffset(at[0], at[1]) : 0;
+        if (k != SLOT_A && homed && a->softLimits && framesTipRange(k, &lo, &hi, off))
             room = d[k] > 0 ? hi - at[k] : at[k] - lo;
         run = fminf(run, room);
         float f = (homed ? a->jogFeed : a->jogFeedUnhomed) * speed / 64.0f;

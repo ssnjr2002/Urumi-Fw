@@ -594,6 +594,15 @@ the host parser tolerates later additions.
 
 ---
 
+### Z floor
+
+While the selected head has a work Z, its Z's soft range ends
+`machine.maxOvercut` below the bed (work Z 0, the mesh followed): a jog,
+`goto`, continuous jog or job Z move past it is refused as `soft_limit z`
+(`NACK_SOFT_LIMIT`), as at the axis's end. Without a work Z (a tool just
+mounted) only the axis range holds, so the tip can be jogged down to touch
+off. Needs Z homed with `softLimits`, as the rest of the soft range.
+
 ### Bed mesh
 
 `/mesh.bin` (docs/config_storage.md) is a grid of bed heights the selected

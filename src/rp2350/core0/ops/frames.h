@@ -54,8 +54,10 @@ void framesBlade(float* d, float* aOffsetDeg);
 bool framesTipMPos(float* x, float* y);
 
 // Slot k's soft range for the blade tip, units: the axis's range, shrunk by
-// the blade's d on X and Y. False when configAxisRange is.
-bool framesTipRange(uint8_t k, float* lo, float* hi);
+// the blade's d on X and Y. Z's floor rises to maxOvercut below the bed
+// while the bound head has a work Z, `off` the mesh offset where Z is.
+// False when configAxisRange is.
+bool framesTipRange(uint8_t k, float* lo, float* hi, float off = 0);
 
 // The head whose Z node is bound in slot Z, or FRAMES_NONE: Z, A and the
 // per-head work Z belong to it.
@@ -118,8 +120,8 @@ const char* framesCheckNode(uint8_t node, int32_t machineSteps);
 // range (framesTipRange) when that axis is homed with softLimits; from outside
 // it, one that holds or heads in also passes. nullptr, or "soft_limit x|y|z"
 // with `*left` the mm still free in the move's direction (never negative).
-// A has no soft range.
-const char* framesCheckMove(uint8_t k, float from, float to, float* left);
+// `off` is Z's mesh offset, as framesTipRange. A has no soft range.
+const char* framesCheckMove(uint8_t k, float from, float to, float* left, float off = 0);
 
 // Machine XY inside the soft range on every homed X/Y axis with softLimits.
 // Returns nullptr, or "soft_limit x|y".

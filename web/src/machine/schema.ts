@@ -610,6 +610,8 @@ export interface MachineConfig {
     readonly slew: OpTarget;
     /** Lift and travel height above the material top, mm. */
     readonly zClearance: number;
+    /** How far a zeroed tip may go below the bed (work Z 0), mm; the bed's underlay. */
+    readonly maxOvercut: number;
     readonly peripherals: readonly BusNode[];
     /** Optional laser pointer module (alignment reference). */
     readonly laser?: LaserPointer;

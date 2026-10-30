@@ -147,9 +147,13 @@ bool framesTipMPos(float* x, float* y) {
     return true;
 }
 
-bool framesTipRange(uint8_t k, float* lo, float* hi) {
+bool framesTipRange(uint8_t k, float* lo, float* hi, float mesh) {
     const CfgAxis* a = framesAxis(k);
     if (!a || !configAxisRange(*a, lo, hi)) return false;
+    if (k == SLOT_Z) {
+        const uint8_t h = framesZHead();
+        if (framesWorkZSet(h)) *lo = fmaxf(*lo, workZ[h] - machineCfg().maxOvercut + mesh);
+    }
     if (k > SLOT_Y) return true;
     float d, off;
     framesBlade(&d, &off);
@@ -312,12 +316,12 @@ const char* framesCheckNode(uint8_t node, int32_t machineSteps) {
     return (m < lo || m > hi) ? "soft_limit" : nullptr;
 }
 
-const char* framesCheckMove(uint8_t k, float from, float to, float* left) {
+const char* framesCheckMove(uint8_t k, float from, float to, float* left, float off) {
     static const char* const kWhy[3] = { "soft_limit x", "soft_limit y", "soft_limit z" };
     if (k > SLOT_Z) return nullptr;
     const CfgAxis* a = framesAxis(k);
     float lo, hi;
-    if (!a || !a->softLimits || !(axes_homed & (1u << k)) || !framesTipRange(k, &lo, &hi))
+    if (!a || !a->softLimits || !(axes_homed & (1u << k)) || !framesTipRange(k, &lo, &hi, off))
         return nullptr;
     if (to >= lo && to <= hi) return nullptr;
     // Outside already (a blade mounted near the edge): it may hold or head in.

@@ -150,6 +150,12 @@ describe("load: optional defaults", () => {
         expect(r.errors).toContain("machine.rapid: removed — use machine.feed.travelDefault");
     });
 
+    it("maxOvercut defaults to 0", () => {
+        const ok = parseConfig(TEST_MACHINE);
+        if (!ok.ok) throw new Error("expected ok");
+        expect(ok.config.machine.maxOvercut).toBe(0);
+    });
+
     it("zClearance defaults to 2; the old clearanceMm is rejected by name", () => {
         const json = JSON.parse(TEST_MACHINE);
         const ok = parseConfig(JSON.stringify(json));

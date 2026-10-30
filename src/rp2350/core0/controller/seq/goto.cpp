@@ -7,6 +7,7 @@
 #include "steps.h"
 #include "../../config/machine_cfg.h"
 #include "../../ops/frames.h"
+#include "../../ops/mesh.h"
 #include "../../ops/position.h"
 #include "../../ops/sequence.h"
 #include "../../planner/queue.h"
@@ -95,7 +96,8 @@ const char* gotoAxis(uint8_t k, float to, float f) {
     float at[4];
     if (!plannerJogFrom(at, RING_SEQ)) return "bad_state";
     float left;
-    if (const char* why = framesCheckMove(k, at[k], to, &left)) {
+    const float off = k == SLOT_Z ? meshLatchedOffset(at[0], at[1]) : 0;
+    if (const char* why = framesCheckMove(k, at[k], to, &left, off)) {
         snprintf(refusal, sizeof refusal, "%s %.2f", why, left); return refusal;
     }
     // A swings a blade's axis about the tip: the tip inside its range keeps it in.

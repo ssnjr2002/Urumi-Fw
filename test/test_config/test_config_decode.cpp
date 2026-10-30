@@ -57,6 +57,7 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(c.plungeFallback == doctest::Approx(20.0));
     CHECK(c.liftFeed == doctest::Approx(20.0));
     CHECK(c.zClearance == doctest::Approx(2.0));
+    CHECK(c.maxOvercut == doctest::Approx(0.0));
     CHECK(c.y.node.id == 2);
     CHECK_FALSE(c.y.invertDir);
     CHECK(c.heads[0].z.node.id == 3);
@@ -221,6 +222,7 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"no_feed",        "missing"}, {"feed", "feed"},
         {"no_lift_feed",   "missing"}, {"no_z_clearance", "missing"},
         {"z_clearance",    "z_clearance"},
+        {"no_max_overcut", "missing"}, {"overcut", "overcut"},
         {"tools",          "tools"}, {"tool_chambers", "tools"},
         {"tool_period",    "tools"}, {"no_period", "missing"},
         {"tool_a_offset",  "tools"}, {"tool_blade_offset", "tools"},

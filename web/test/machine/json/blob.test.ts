@@ -84,6 +84,8 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "no_lift_feed", host: false, mutate: (c) => delete c.machine.feed.liftFeed },
     { name: "no_z_clearance", host: false, mutate: (c) => delete c.machine.zClearance },
     { name: "z_clearance", host: true, mutate: (c) => (c.machine.zClearance = -1) },
+    { name: "no_max_overcut", host: false, mutate: (c) => delete c.machine.maxOvercut },
+    { name: "overcut", host: true, mutate: (c) => (c.machine.maxOvercut = -1) },
     { name: "feed", host: true, mutate: (c) => (c.machine.feed.cutFallback = 0.5) },
     { name: "power", host: true, mutate: (c) => (c.toolProfiles.knife.power.node.id = 5) },
     { name: "power_absent", host: true, mutate: (c) => (c.machine.peripherals[0].present = false) },

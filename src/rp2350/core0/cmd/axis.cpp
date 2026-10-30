@@ -14,6 +14,7 @@
 #include "gate.h"
 #include "../ops/position.h"
 #include "../ops/frames.h"
+#include "../ops/mesh.h"
 #include "../ops/homing.h"
 #include "../ops/traverse.h"
 #include "../ops/sequence.h"
@@ -703,7 +704,8 @@ static void queueAxisJog(uint8_t k, float d, float feed) {
     float at[4];
     if (!plannerJogFrom(at, RING_JOG_STEP)) { Serial.println("err bad_state"); return; }
     float left;
-    if (const char* why = framesCheckMove(k, at[k], at[k] + d, &left)) {
+    const float off = k == SLOT_Z ? meshLatchedOffset(at[0], at[1]) : 0;
+    if (const char* why = framesCheckMove(k, at[k], at[k] + d, &left, off)) {
         Serial.printf("err %s %.2f\n", why, left); return;
     }
     // A swings a blade's axis about the tip: the tip inside its range keeps it in.

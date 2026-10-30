@@ -121,7 +121,7 @@ static planner::Vec2 tipOffset() { return {plannerMesh.tipX, plannerMesh.tipY}; 
 static bool zInRange(float z, float off) {
     const planner::Pos e = plannerRing.end();
     float left;
-    return !framesCheckMove(SLOT_Z, e.z + meshLatchedOffset(e.x, e.y), z + off, &left);
+    return !framesCheckMove(SLOT_Z, e.z + meshLatchedOffset(e.x, e.y), z + off, &left, off);
 }
 
 // A block at flat Z `z` whose offset walk is `w`.
@@ -460,7 +460,7 @@ static float cutZ()   { return framesWork(SLOT_Z) - layerMo.depth; }
 static bool zMoveFits(planner::Vec2 at, float from, float to) {
     const float off = meshLatchedOffset(at.x, at.y);
     float left;
-    return !framesCheckMove(SLOT_Z, from + off, to + off, &left);
+    return !framesCheckMove(SLOT_Z, from + off, to + off, &left, off);
 }
 
 static void pushZ(float z, float feed, const planner::AxisLimits& limits) {

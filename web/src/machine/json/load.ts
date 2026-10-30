@@ -173,6 +173,7 @@ interface JsonMachine {
     readonly z?: unknown;
     readonly slew?: JsonOpTarget;
     readonly zClearance?: number;
+    readonly maxOvercut?: number;
     /** Renamed to zClearance. Typed so the check can see it. */
     readonly clearanceMm?: unknown;
     readonly x: JsonAxis;
@@ -420,6 +421,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         feed: buildFeed(machine, errors),
         slew: opTarget(machine.slew, DEFAULTS.machine.slew),
         zClearance: buildZClearance(machine, errors),
+        maxOvercut: buildMaxOvercut(machine, errors),
         peripherals,
         defaultHead: machine.defaultHead ?? 0,
         laser: buildLaser(machine.laser, errors),
@@ -578,6 +580,13 @@ function buildZClearance(machine: JsonMachine, errors: string[]): number {
     const v = machine.zClearance;
     if (v === undefined) return DEFAULTS.machine.zClearance;
     if (typeof v !== "number") errors.push("machine.zClearance: must be a number");
+    return v;
+}
+
+function buildMaxOvercut(machine: JsonMachine, errors: string[]): number {
+    const v = machine.maxOvercut;
+    if (v === undefined) return DEFAULTS.machine.maxOvercut;
+    if (typeof v !== "number") errors.push("machine.maxOvercut: must be a number");
     return v;
 }
 

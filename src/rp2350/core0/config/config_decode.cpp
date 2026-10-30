@@ -322,6 +322,7 @@ static CfgDecodeError validate(MachineCfg& c) {
     for (float f : {c.cutFallback, c.travelDefault, c.plungeFallback, c.liftFeed})
         if (!(f >= 1.0f) || !isfinite(f)) return CFG_DEC_FEED;
     if (!(c.zClearance >= 0.0f) || !isfinite(c.zClearance)) return CFG_DEC_Z_CLEARANCE;
+    if (!(c.maxOvercut >= 0.0f) || !isfinite(c.maxOvercut)) return CFG_DEC_OVERCUT;
     if ((e = checkTools(c)) != CFG_DEC_OK) return e;
     if ((e = checkPower(c)) != CFG_DEC_OK) return e;
     return checkFrames(c);
@@ -351,6 +352,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["buffer"]      = true;
     fm["feed"]        = true;
     fm["zClearance"]  = true;
+    fm["maxOvercut"]  = true;
     filterNode(fm["peripherals"].to<JsonArray>().add<JsonObject>());
     JsonObject ft = filter["toolProfiles"]["*"].to<JsonObject>();
     for (const char* k : {"id", "toolType", "tangential", "periodCount", "cornerAngleDeg",
@@ -427,7 +429,8 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
         !readFloat(fd["travelDefault"], &out->travelDefault) ||
         !readFloat(fd["plungeFallback"], &out->plungeFallback) ||
         !readFloat(fd["liftFeed"], &out->liftFeed) ||
-        !readFloat(m["zClearance"], &out->zClearance)) return CFG_DEC_MISSING;
+        !readFloat(m["zClearance"], &out->zClearance) ||
+        !readFloat(m["maxOvercut"], &out->maxOvercut)) return CFG_DEC_MISSING;
 
     JsonVariantConst dh = m["defaultHead"];
     if (!dh.is<unsigned>()) return CFG_DEC_MISSING;
@@ -465,6 +468,7 @@ const char* configDecodeErrorName(CfgDecodeError e) {
         case CFG_DEC_TOOLS:     return "tools";
         case CFG_DEC_FEED:      return "feed";
         case CFG_DEC_Z_CLEARANCE: return "z_clearance";
+        case CFG_DEC_OVERCUT:     return "overcut";
         case CFG_DEC_POWER:     return "power";
     }
     return "?";

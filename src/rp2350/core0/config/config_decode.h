@@ -18,7 +18,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 12u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 13u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      2u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -158,6 +158,7 @@ struct MachineCfg {
     float    plungeFallback;
     float    liftFeed;       // every lift
     float    zClearance;     // mm above the material top for lifts and travel
+    float    maxOvercut;     // mm a zeroed tip may go below the bed (work Z 0)
     CfgTool  tools[CFG_MAX_TOOLS];
     uint8_t  toolCount;
 };
@@ -180,6 +181,7 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_TOOLS,          // too many tools or chambers, an id 0 or repeated, a bad number
     CFG_DEC_FEED,           // a machine feed missing or below 1 mm/s
     CFG_DEC_Z_CLEARANCE,    // zClearance negative or not finite
+    CFG_DEC_OVERCUT,        // maxOvercut negative or not finite
     CFG_DEC_POWER,          // a power node not a present switchable one, or a bad settle or duty
 };
 

@@ -34,6 +34,7 @@ export const DEFAULTS = {
         slew: {},
         /** Margin above the material top that counts as clear, mm. */
         zClearance: 2,
+        maxOvercut: 0,
         /** Job buffering thresholds, s (follower.cpp). */
         buffer: { queueTime: 1, idleTime: 0.5 },
         defaultHead: 0,

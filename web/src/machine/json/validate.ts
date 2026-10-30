@@ -143,6 +143,11 @@ const clearanceNonNegative: Rule = ({ machine }) =>
         ? []
         : [error(`machine.zClearance: must be >= 0 (got ${machine.zClearance})`)];
 
+const overcutNonNegative: Rule = ({ machine }) =>
+    Number.isFinite(machine.maxOvercut) && machine.maxOvercut >= 0
+        ? []
+        : [error(`machine.maxOvercut: must be >= 0 (got ${machine.maxOvercut})`)];
+
 const bufferPositive: Rule = ({ machine }) =>
     (["queueTime", "idleTime"] as const)
         .filter((k) => !(Number.isFinite(machine.buffer[k]) && machine.buffer[k] > 0))
@@ -481,6 +486,7 @@ const RULES: readonly Rule[] = [
     unlockRangeValid,
     switchHeightValid,
     clearanceNonNegative,
+    overcutNonNegative,
     bufferPositive,
     feedAtLeastOne,
     toolIdsUnique,
