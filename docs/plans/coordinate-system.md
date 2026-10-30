@@ -417,7 +417,7 @@ bypass is left as it is.
 
 ### Status
 
-Ready to merge.
+Done (merged at `78ccd49`). Unblocks Z3.
 
 ### Outcome
 
