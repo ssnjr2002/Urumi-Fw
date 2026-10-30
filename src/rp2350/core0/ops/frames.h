@@ -69,8 +69,8 @@ bool framesMPos(uint8_t k, float* out);
 
 // Work position of slot k, units: tip − work offset on X/Y/Z (the blade tip), Z less the bed
 // mesh; on A, the edge heading (MPos + the mounted tool's aOffsetDeg) folded
-// to (−180, 180]. False as framesMPos, or X/Y with no
-// selection.
+// to (−180, 180]. False as framesMPos, X/Y with no selection, or Z with
+// no work Z.
 bool framesWPos(uint8_t k, float* out);
 
 // The bed mesh's offset at the selected tip now, mm (0 while inactive).
@@ -84,7 +84,7 @@ const CfgAxis* framesAxis(uint8_t k);
 float framesWork(uint8_t k);
 // Set the work offset of slot k (0..2) in machine units. Z needs a Z head.
 bool framesSetWork(uint8_t k, float v);
-// Back to the config's `work` block.
+// XY back to the config's `work` block; every head's Z unset.
 void framesClearWork(void);
 // Clear head h's work Z for a new tool: 0 and unset until the next Z zero
 // (framesSetWork). framesWorkZSet reports it.

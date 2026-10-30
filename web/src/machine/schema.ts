@@ -575,13 +575,12 @@ export interface ProbeSwitch extends BedPoint {
 
 /**
  * The work offset's default, in machine coordinates: XY a point on the
- * material shared by every head, Z one entry per head (that head's tip on the
- * material). The Pico holds a runtime offset over it.
+ * material shared by every head. The Pico holds a runtime offset over it;
+ * each head's work Z is set only by a Z zero (`wzero z`).
  */
 export interface WorkOffset {
     readonly x: number;
     readonly y: number;
-    readonly z: readonly number[];
 }
 
 /**
@@ -653,7 +652,7 @@ export function machineConfig(
 ): MachineConfig {
     return {
         x, y, heads, ...DEFAULTS.machine,
-        work: { x: 0, y: 0, z: heads.map(() => 0) },
+        work: { x: 0, y: 0 },
         positions: {},
         jogUnhomed: false,
         meshOn: false,

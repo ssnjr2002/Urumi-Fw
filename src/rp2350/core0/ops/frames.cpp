@@ -13,7 +13,7 @@
 
 static uint8_t selected = FRAMES_NONE;
 static float   workX = 0, workY = 0, workZ[CFG_MAX_HEADS] = {0};
-static bool    zSet[CFG_MAX_HEADS];   // false from a tool change until a Z zero
+static bool    zSet[CFG_MAX_HEADS];   // false until a Z zero, and again on a tool change
 
 static void laserSet(bool on) {
     if (!machineCfgValid() || !machineCfg().laserNode) return;
@@ -25,7 +25,7 @@ void framesClearWork(void) {
     const MachineCfg& c = machineCfg();
     workX = c.workX;
     workY = c.workY;
-    for (uint8_t h = 0; h < c.headCount; h++) { workZ[h] = c.workZ[h]; zSet[h] = true; }
+    for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) framesUnsetWorkZ(h);
 }
 
 void framesUnsetWorkZ(uint8_t h) {
@@ -217,6 +217,7 @@ bool framesWPos(uint8_t k, float* out) {
     float dx = 0, dy = 0, tx, ty;
     if (k != SLOT_Z && !framesTipOffset(&dx, &dy)) return false;
     if (k != SLOT_Z && framesTipMPos(&tx, &ty)) m = k == SLOT_X ? tx : ty;
+    if (k == SLOT_Z && !framesWorkZSet(framesZHead())) return false;
     if (k == SLOT_Z) m -= framesMeshOffset();
     *out = m + (k == SLOT_X ? dx : k == SLOT_Y ? dy : 0) - framesWork(k);
     return true;

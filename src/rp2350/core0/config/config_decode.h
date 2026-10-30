@@ -18,7 +18,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 13u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 14u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      2u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -132,10 +132,10 @@ struct MachineCfg {
     CfgNode  peripherals[CFG_MAX_PERIPH];
     uint8_t  periphCount;
     uint8_t  laserNode;      // bus id the laser is wired to, 0 = none; the anchor, (0, 0)
-    // The work offset's config default: XY shared, Z per head.
+    // The work offset's config default, XY. Z is per head and set only by a
+    // Z zero.
     float    workX;
     float    workY;
-    float    workZ[CFG_MAX_HEADS];
     // Anchor positions. Absent park: where homing parks. Mount: where a tool
     // change stops for the operator.
     bool     hasPark;

@@ -229,7 +229,7 @@ static CfgDecodeError checkFrames(const MachineCfg& c) {
     bool anchor = c.laserNode != 0;
     for (uint8_t h = 0; h < c.headCount; h++) {
         const CfgHead& hd = c.heads[h];
-        if (!isfinite(hd.xOffset) || !isfinite(hd.yOffset) || !isfinite(c.workZ[h]))
+        if (!isfinite(hd.xOffset) || !isfinite(hd.yOffset))
             return CFG_DEC_FRAMES;
         if (hd.xOffset == 0.0f && hd.yOffset == 0.0f) anchor = true;
         if (hd.hasProbeSwitch &&
@@ -405,12 +405,8 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     }
 
     JsonObjectConst work = m["work"];
-    JsonArrayConst workZ = work["z"];
     if (work.isNull() || !readFloat(work["x"], &out->workX) ||
-        !readFloat(work["y"], &out->workY) || workZ.isNull()) return CFG_DEC_MISSING;
-    if (workZ.size() != out->headCount) return CFG_DEC_FRAMES;
-    for (uint8_t h = 0; h < out->headCount; h++)
-        if (!readFloat(workZ[h], &out->workZ[h])) return CFG_DEC_MISSING;
+        !readFloat(work["y"], &out->workY)) return CFG_DEC_MISSING;
 
     JsonObjectConst pos = m["positions"];
     if (pos.isNull() || !readOptPoint(pos["park"], &out->hasPark, &out->park) ||

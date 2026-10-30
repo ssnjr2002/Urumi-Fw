@@ -175,7 +175,6 @@ TEST_CASE("frame fields decode with their defaults") {
     CHECK_FALSE(c.heads[0].hasSwitchZ);
     CHECK(c.laserNode == 0);
     CHECK(c.workX == doctest::Approx(0));
-    CHECK(c.workZ[0] == doctest::Approx(0));
     CHECK_FALSE(c.hasPark);
     CHECK_FALSE(c.hasLoad);
 

@@ -179,8 +179,8 @@ interface JsonMachine {
     readonly x: JsonAxis;
     readonly y: JsonAxis;
     readonly laser?: JsonLaser;
-    /** Work offset default; `z` per head. Absent fields: 0. */
-    readonly work?: { readonly x?: number; readonly y?: number; readonly z?: readonly number[] };
+    /** Work offset default, XY. Absent fields: 0. `z` is removed, typed so the check can see it. */
+    readonly work?: { readonly x?: number; readonly y?: number; readonly z?: unknown };
     readonly positions?: {
         readonly park?: JsonPoint;
         readonly load?: JsonPoint;
@@ -425,7 +425,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         peripherals,
         defaultHead: machine.defaultHead ?? 0,
         laser: buildLaser(machine.laser, errors),
-        work: buildWork(machine.work, heads.length, errors),
+        work: buildWork(machine.work, errors),
         positions: buildPositions(machine.positions, errors),
         jogUnhomed: machine.jogUnhomed ?? false,
         meshOn: machine.meshOn === true,
@@ -511,13 +511,10 @@ function buildSwitch(
     return { ...p, z: j.z };
 }
 
-/** The work offset default, filled to 0; `z` must have one entry per head. */
-function buildWork(j: JsonMachine["work"], headCount: number, errors: string[]): WorkOffset {
-    const z = j?.z ?? new Array<number>(headCount).fill(0);
-    if (z.length !== headCount || z.some((v) => typeof v !== "number")) {
-        errors.push(`machine.work.z: one number per head (${headCount})`);
-    }
-    return { x: j?.x ?? 0, y: j?.y ?? 0, z: [...z] };
+/** The work offset default, filled to 0. */
+function buildWork(j: JsonMachine["work"], errors: string[]): WorkOffset {
+    if (j?.z !== undefined) errors.push("machine.work.z: removed — each head's work Z is set by wzero z");
+    return { x: j?.x ?? 0, y: j?.y ?? 0 };
 }
 
 function buildLaser(j: JsonLaser | null | undefined, errors: string[]): LaserPointer | undefined {
