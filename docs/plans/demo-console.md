@@ -351,19 +351,20 @@ A dependent chain, Single Session: every branch after C1 edits
 * Bench: each button moves as `goto` documents (Z parks first on XY forms).
 * Status: planned.
 
-### D3: mount, unlocked and home XY
+### D3: mount and home XY
 
 * Type: `feature/demo-mount`
 * Purpose:
   * Mount controls: a head and a tool picker (the pulled config's tools)
     with mount and unmount, through `mount` / `unmount` (`commands.ts:153,158`).
-  * Status panel (`statusRows`): an `unlocked` row (per-head mask, `-` when
-    undefined); the sequence name reads GOTO where shown.
   * A home XY button through `homeXY` (`commands.ts:576`).
+  * No `unlocked` row: it is on the text plane only, and the operator
+    unmounts right before releasing a tool, so unmount's `ok` is the release.
+    The status table's `tools` row shows what each head holds.
 * Files: `web/demo/index.{html,js}`.
 * Depends on: D2.
-* Bench: mount on head 0 parks Z and locks A; unmount unlocks; `unlocked`
-  follows; a held job's tool change completes from the demo alone.
+* Bench: mount on head 0 parks Z and locks A; unmount unlocks; a held job's
+  tool change completes from the demo alone.
 * Status: planned.
 
 ## Open
