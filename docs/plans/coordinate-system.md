@@ -15,7 +15,7 @@ frame is in docs/plans/controller-homing.md.
 * Rotary A (a rotation about Z; ISO would name it C): + is counter-clockwise
   seen from above (the right-hand rule about Z+). A heading of 0° is the
   edge facing X+, so a cut's heading is `atan2(dy, dx)` with no sign flip.
-  Machine A's 0 is the holder's lock; a tool's `aOffsetDeg` is its edge's
+  Machine A's 0 is the holder's release angle; a tool's `aOffsetDeg` is its edge's
   heading there (A, below).
 * **`invertDir`** per axis is the wiring fix that makes the motor obey it.
   Commissioning checks it by jogging each axis +.
@@ -84,25 +84,33 @@ frame is in docs/plans/controller-homing.md.
     sheet.
   * No zero on the material: `t` never enters the zero.
 * Z0 by probing builds on the probe's contact height (`pz`) later.
-* `wclear` and reset restore config's `work.z` but must not mark a head
-  zeroed whose tool changed (today `framesClearWork` marks every head).
+* `wclear` and reset restore config's `work.z` and mark every head zeroed,
+  whatever its tool (Branch Z1, considered and not implemented).
 * A has no work offset: the heading is absolute, and a constant offset would
-  cut sideways. Machine A's 0 (the lock) is machine calibration, `indexPos`
+  cut sideways. Machine A's 0 (the release angle) is machine calibration, `indexPos`
   in the homing config; the edge's offset from it is the tool's
   `aOffsetDeg`. A skewed sheet is a job rotation in XY
   (the G68 role), not an A offset.
 
 ### A
 
-* **The lock.** The tool holder has a lock button that latches at one angle
-  only; a tool is mounted and unmounted there. Machine A's 0 is the lock.
+* **The release angle.** The tool holder's interlock releases the tool at
+  one angle only; turned away from it, the holder holds the tool. Machine A's
+  0 is the release angle. A head's `unlockRange` (degrees, absent or 0: no
+  interlock) is how far either side of 0 it still releases.
+  * `mount <h> <tool>` parks the head's Z, then turns A to
+    `unlockRange` + 1° so the holder holds the tool.
+  * `unmount <h>` parks Z, then turns A to 0 so the tool can come out.
+  * `get unlocked` names the heads whose holder releases now (at rest, A
+    homed, |A| ≤ `unlockRange`).
 * **`indexPos`** (the head's A homing config) is the machine A given to the
-  hall index when homing finds it. The lock sits 46.7° counter-clockwise of
-  the index on head 0, so `indexPos` is −46.7: the index reads −46.7 and the
-  lock 0. It is per head (holder and sensor), not per tool.
+  hall index when homing finds it. The release angle sits 46.7°
+  counter-clockwise of the index on head 0, so `indexPos` is −46.7: the
+  index reads −46.7 and the release angle 0. It is per head (holder and
+  sensor), not per tool.
 * **`aOffsetDeg`** (per tangential tool, absent = 0) is the heading the tool's
-  edge points at when the holder is at the lock, i.e. how the tool sits in the
-  holder. Measure it on mount: lock the holder, see where the edge points.
+  edge points at when the holder is at 0, i.e. how the tool sits in the
+  holder. Measure it on mount: with A at 0, see where the edge points.
 
   | Tool mounted with edge along | `aOffsetDeg` |
   |---|---|
@@ -116,10 +124,10 @@ frame is in docs/plans/controller-homing.md.
   equivalent for the tool's period inside its cable range).
 * `MPos` A is the count in degrees, unbounded: it is never folded.
 * `WPos` A is the edge heading: `MPos` A plus the mounted tool's `aOffsetDeg`
-  (as `WPos` XY is the tip), folded to (−180°, 180°]. With a tool mounted, the
-  lock reads `aOffsetDeg` and `WPos` 0 (edge along X+) is at `MPos`
-  −`aOffsetDeg`. With no tool it is `MPos` folded, 0 at the lock. Motion and range checks use `MPos`; the fold
-  loses the turn count.
+  (as `WPos` XY is the tip), folded to (−180°, 180°]. With a tool mounted,
+  machine 0 reads `aOffsetDeg` and `WPos` 0 (edge along X+) is at `MPos`
+  −`aOffsetDeg`. With no tool it is `MPos` folded, 0 at the release angle.
+  Motion and range checks use `MPos`; the fold loses the turn count.
 
 ### Stored positions
 
@@ -139,9 +147,10 @@ frame is in docs/plans/controller-homing.md.
   only numbers it), so it is the safe height while Z homes toward a switch at
   the top, which the homing cycle order already assumes. No safe-Z setting.
 * `probe_park <tool>` and a job's tool change also turn the head's A to
-  machine 0, the lock, along the XY line, so a tool can be mounted or
-  unmounted there; `a_not_homed` unless A is homed. A head without A parks
-  XY only. `jogto` never moves A.
+  machine 0, the release angle, along the XY line, so a tool can be mounted
+  or unmounted there; `a_not_homed` unless A is homed. A head without A
+  parks XY only. `jogto` never moves A. The tool-change stop unmounts the
+  head about to cut (motion-sessions.md, position-moves.md G5).
 
 ### Commands and frames
 
@@ -179,7 +188,9 @@ frame is in docs/plans/controller-homing.md.
   `select` never moves, so it cannot fail on reach.
 * Z's lower limit: `WPos` −`maxOvercut` (machine `workZ − maxOvercut`, mesh
   applied), for every move while the head has a work Z. `maxOvercut` is a
-  property of the bed, in config. Without a work Z, Z is held high.
+  property of the bed, in config. Without a work Z, Z keeps only its axis
+  range, so a tool can be jogged down to a touch-off; work-Z gotos and jobs
+  already refuse it.
 * Layer depth: the layer header carries `t` (material thickness) and `p`
   (plunge depth below the material top), replacing job-z.md's `k`. Plunge
   `workZ + t − p`, travel `workZ + t + c`. Refused: `p − t > maxOvercut`,
@@ -240,6 +251,10 @@ Proposed; each gets a full Plan section when its turn comes.
    `MPos`/`WPos` as `get` keys, stored positions, soft ranges. Lands before the
    motion-sessions jog branches, which use its frames, positions and range
    check.
+
+The bed zero (Work frame, Limits and reach) is branches Z2–Z4, a Single
+Session in that order: Z2 and Z3 share the config files, and Z4 needs Z3's
+`maxOvercut`. Z1 was considered and is not implemented.
 
 ## Branch 1: `feature/pico-frames`
 
@@ -359,14 +374,109 @@ motion-sessions jog branches (`jogto` calls into `frames`).
   `wclear` in `wire/link/commands.ts`; the Sim does not model frames (it
   answers `!` for the new keys).
 
+## Branch Z1: `fix/wclear-zeroed`
+
+### Considered
+
+* Found: `framesClearWork` (`ops/frames.cpp:23`), run by `wclear` and reset,
+  restores config's `work.z` and sets `zSet` on every head. A `mount` then
+  `wclear` (or a reset with the tool kept) passes the tool-change and
+  layer-header checks with a zero made for no tool; the Z3 limit, measured
+  from that zero, does not catch it either.
+* Weighed: unset Z on every head in `framesClearWork` (one line); also
+  remove `work.z` from config (a config change for tidiness only) and show
+  `WPos` Z as `-` while unzeroed (display only).
+
+### Status
+
+Not implemented. The operator checks the zero by going to it before a job;
+`wclear` and a reset are deliberate operator actions, so the guard they
+bypass is left as it is.
+
+## Branch Z2: `feature/z-switch-zero`
+
+### Plan
+
+* Type: feature.
+* Purpose: zero a head's Z on its bed switch, touched off by hand.
+  * Config: a head's `probeSwitch` gains `z`, the switch's height above the
+    bed (mm). Optional; the decoder refuses a non-finite value.
+  * `wzero z_switch`: the selected head's work Z = its tip's machine Z − the
+    mesh − `probeSwitch.z`. `err no_switch_height` without one; the rest as
+    `wzero z`. Combines with `x`/`y` like `z` does.
+  * `wset z` stays.
+* Files: `config/config_decode.{h,cpp}` (`CfgHead`, `:235`, `:384`),
+  `controller/cmd/frames.cpp` (`cmdWzero`), `test/test_config`; web
+  `machine/schema.ts`, `json/load.ts`, `json/validate.ts`,
+  `wire/link/commands.ts` (`wzero`), `wire/link/backends/sim.ts`, fixtures;
+  `config/controller.jsonc` (head 0's value measured on the bench);
+  `docs/wire_protocol.md`.
+* Bench: bed zero, read `WPos` Z on the switch, set `probeSwitch.z`, upload;
+  remount, `wzero z_switch`, touch the bed: `WPos` Z ≈ 0.
+* Not here: `tripMm` folded into `probeSwitch.z` (with the working probe).
+* Depends on: nothing.
+
+### Status
+
+Planned.
+
+## Branch Z3: `feature/z-overcut-limit`
+
+### Plan
+
+* Type: feature.
+* Purpose: no move takes a zeroed head's tip deeper than `maxOvercut` below
+  the bed.
+  * Config: `machine.maxOvercut` (mm, ≥ 0), a property of the bed. Required
+    or defaulted: read phase decides with the user (a blob version bump if
+    required).
+  * Limit: while the bound head has a work Z, Z's lower bound is machine
+    `workZ − maxOvercut + mesh at the tip`, in `framesCheckMove`
+    (`ops/frames.cpp:315`) and `framesTipRange`; it reaches jogs
+    (`cmd/axis.cpp:693`, `:706`), gotos (`seq/goto.cpp:73`, `:98`) and job Z
+    moves (`planner/queue.cpp:124`, `:463`). The node-side check
+    (`framesCheckNode`, `cmd/axis.cpp:530`) and continuous jog: read phase.
+  * Without a work Z: the axis range only, so a tool can be jogged to a
+    touch-off.
+* Files: the above; `config_decode.*`, `test/test_config`; web config files,
+  fixtures; `config/controller.jsonc`; `docs/wire_protocol.md` (the refusal).
+* Depends on: Z2 (shares the config files; not its behaviour).
+
+### Status
+
+Planned.
+
+## Branch Z4: `feature/layer-plunge-depth`
+
+### Plan
+
+* Type: feature, wire protocol.
+* Purpose: work Z 0 is the bed in the job's heights.
+  * `LAYER_HDR` `[15..18]` `k` (f32) becomes `p` (plunge depth below the
+    material top, mm, f32), same size; the header's version changes.
+  * Heights (`planner/queue.cpp:456-457`): travel `workZ + t + zClearance`,
+    cut `workZ + t − p`; a tool with `plunge: false` cuts at `workZ + t`.
+  * Refused at the header (`ops/layer.cpp:8`): `p − t > maxOvercut`, `p ≤ 0`
+    on a plunging tool; `depth` (`:21`) becomes `p`.
+  * Host: `wire/format/layer.ts` sends `p`; the toolpath side derives
+    `p = t + overcut` for a through cut; `sim.ts`.
+* Files: `data_plane.cpp:229`, `ops/layer.{h,cpp}`, `planner/queue.{h,cpp}`,
+  web `wire/format/layer.ts` and its callers, `sim.ts`, tests;
+  `docs/wire_protocol.md`; a pointer in job-z.md's work Z bullet.
+* Depends on: Z3 (`maxOvercut`).
+
+### Status
+
+Planned.
+
 ## Open questions
 
-* Rotary A: the cable range (`aMaxDeg`, from the lock), the tool's symmetry
+* Rotary A: the cable range (`aMaxDeg`, from machine 0), the tool's symmetry
   period, headings from the path tangent and A capping XY speed are settled
   in docs/plans/job-a.md. Still open:
   * Tool tip offset: in the knife's frame, rotating with A; found by a test
     cut (opposite-direction slits coincide when it is right).
-  * Homing A to end at the lock rather than wherever the index search
+  * Homing A to end at the release angle rather than wherever the index search
     stops.
   * Headings made continuous in `flatten.ts` (each one the previous plus the
     shortest difference). Whether `web/src/toolpath/flatten.ts:70` takes
@@ -376,9 +486,6 @@ motion-sessions jog branches (`jogto` calls into `frames`).
   today); the probe config (`switchXMm/YMm`, `tripMm`) restated in these
   frames, its switch position replaced by the head's `probeSwitch` and
   `tripMm` by `probeSwitch.z`.
-* Z: the branch split for the bed zero (config and `wzero z_switch`, the
-  layer header's `p` and job-z.md's heights, the lower limit, the `wclear`
-  fix).
 * More work offsets (G55–G59), and which stored positions besides park.
 * Soft limits for tips beyond the anchor's range (heads that reach past the
   bed edge).
