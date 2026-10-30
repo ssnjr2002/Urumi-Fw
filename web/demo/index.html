@@ -37,22 +37,42 @@
   <label><input type="checkbox" id="jog-keys" disabled> Key jog (hold: W/S = +Y/−Y, A/D = −X/+X, R/F = +Z/−Z, Q/E = −A/+A)</label>
   <label>Speed (× jogFeed): <input type="number" id="jog-speed" min="0.02" max="3.98" step="0.25" value="1" style="width: 5em"></label>
   <span id="jog-dir"></span>
-  <div>Jog to:
-    <label>x: <input type="number" id="jogto-x" step="any" style="width: 6em"></label>
-    <label>y: <input type="number" id="jogto-y" step="any" style="width: 6em"></label>
-    <button class="jogto" value="xy" disabled>go</button>
-    <button class="jogto" value="park" disabled>park</button>
-    <button class="jogto" value="load" disabled>load</button>
+
+  <h3>Machine</h3>
+  <div>goto:
+    <button class="goto" value="park" disabled>park</button>
+    <button class="goto" value="load" disabled>load</button>
+    <button class="goto" value="mount" disabled>mount</button>
+    <button class="goto" value="up" data-noscale disabled>up</button>
+    <button class="goto" value="unlock" data-noscale disabled>unlock</button>
   </div>
-  <div>Work zero:
-    <button class="wzero" value="" disabled>wzero</button>
+  <div>
+    <span>anchor xy: <input type="number" step="any" style="width: 6em"> <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="m xy" disabled>go</button></span>
+    <span>z: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="m z" disabled>go</button></span>
+    <span>a: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="m a" disabled>go</button></span>
+  </div>
+
+  <h3>Work</h3>
+  <div>select:
+    <span id="select-btns">
+      <button class="select" value="anchor" disabled>anchor</button>
+    </span>
+    selected: <span id="selected">none</span>
+  </div>
+  <div>zero:
     <button class="wzero" value="x y" disabled>wzero x y</button>
     <button class="wzero" value="z" disabled>wzero z</button>
     <button class="wzero" value="z_switch" disabled>wzero z_switch</button>
   </div>
-  <div>Selected: <span id="selected">none</span></div>
-  <div id="select-btns">
-    <button class="select" value="anchor" disabled>anchor</button>
+  <div>goto:
+    <button class="goto" value="w xy 0 0" disabled>0 xy</button>
+    <button class="goto" value="top" disabled>material top</button>
+    <button class="goto" value="w a 0" disabled>0 a</button>
+  </div>
+  <div>
+    <span>xy: <input type="number" step="any" style="width: 6em"> <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="w xy" disabled>go</button></span>
+    <span>z: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="w z" disabled>go</button></span>
+    <span>a: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="w a" disabled>go</button></span>
   </div>
 
   <h2>Config</h2>

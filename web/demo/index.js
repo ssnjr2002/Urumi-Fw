@@ -30,9 +30,7 @@ const cfgPushBtn    = document.getElementById('cfg-push');
 const cfgPullBtn    = document.getElementById('cfg-pull');
 const cfgSaveBtn    = document.getElementById('cfg-save');
 const cfgInfoOut    = document.getElementById('cfg-info');
-const jogtoBtns     = document.querySelectorAll('button.jogto');
-const jogtoXIn      = document.getElementById('jogto-x');
-const jogtoYIn      = document.getElementById('jogto-y');
+const gotoBtns      = document.querySelectorAll('button.goto, button.goto-row');
 const stopBtn       = document.getElementById('stop');
 const wzeroBtns     = document.querySelectorAll('button.wzero');
 const svgFileIn     = document.getElementById('svg-file');
@@ -87,7 +85,7 @@ function setConnected(on) {
     statusGetBtn.disabled = !on;
     statusPollBox.disabled = !on;
     jogKeysBox.disabled = !on;
-    for (const b of [...selectBtnsDiv.children, ...jogtoBtns, ...wzeroBtns, stopBtn]) b.disabled = !on;
+    for (const b of [...selectBtnsDiv.children, ...gotoBtns, ...wzeroBtns, stopBtn]) b.disabled = !on;
     cfgPullBtn.disabled = !on;
     cfgPushBtn.disabled = !on || !pushBlob;
     setJobButtons();
@@ -459,18 +457,34 @@ cfgSaveBtn.addEventListener('click', () => {
     URL.revokeObjectURL(url);
 });
 
-// ── jog to ────────────────────────────────────────────────────────────────────
-// `jogto <x> <y>` (work mm, the selected tip), `jogto park|load`; text commands.
+// ── goto ──────────────────────────────────────────────────────────────────────
+// `goto m|w …` and the named targets, text commands; the jog speed is the scale.
+// A row's go button reads the inputs beside it. Material top is work Z t, from
+// the Job panel: work Z 0 is the bed.
 
-for (const b of jogtoBtns) {
+function gotoTarget(b) {
+    if (b.classList.contains('goto-row')) {
+        const vals = [...b.parentElement.querySelectorAll('input')].map((i) => i.value);
+        if (vals.includes('')) { textOut(`goto ${b.value}: value needed`); return null; }
+        return `${b.value} ${vals.join(' ')}`;
+    }
+    if (b.value !== 'top') return b.value;
+    const t = Number(jobTIn.value);
+    if (!(t > 0)) { textOut('material top: set t first'); return null; }
+    return `w z ${t}`;
+}
+
+for (const b of gotoBtns) {
     b.addEventListener('click', () => {
-        if (b.value !== 'xy') return submit(`jogto ${b.value}`);
-        if (jogtoXIn.value === '' || jogtoYIn.value === '') return textOut('jogto: x and y needed');
-        submit(`jogto ${jogtoXIn.value} ${jogtoYIn.value}`);
+        const to = gotoTarget(b);
+        if (!to) return;
+        const speed = Number(jogSpeedIn.value) || 1;
+        const scale = 'noscale' in b.dataset || speed === 1 ? '' : ` ${speed}`;
+        submit(`goto ${to}${scale}`);
     });
 }
 
-for (const b of wzeroBtns) b.addEventListener('click', () => submit(b.value ? `wzero ${b.value}` : 'wzero'));
+for (const b of wzeroBtns) b.addEventListener('click', () => submit(`wzero ${b.value}`));
 
 // ── job ───────────────────────────────────────────────────────────────────────
 // The picked SVG is split into tool layers against the pulled config's tools,
