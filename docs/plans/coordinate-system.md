@@ -455,7 +455,7 @@ Done (merged at `78ccd49`). Unblocks Z3.
 
 ### Status
 
-Ready to merge.
+Done (merged at `5272a56`). Unblocks Z4.
 
 ### Outcome
 
