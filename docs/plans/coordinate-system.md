@@ -67,15 +67,25 @@ frame is in docs/plans/controller-homing.md.
 * One work offset to start (the G54 role), in machine coordinates, valid
   across re-homing (homing re-establishes the machine frame exactly):
   * XY: a point on the material, shared by every head.
-  * Z: per head, the Z where that head's tip meets the material.
+  * Z: per head, the Z where that head's tip meets the bed (the underlay's
+    top), whatever the material. With a bed zero, `WPos` Z with the tip on
+    the switch is the switch's height, and on the material it is `t`.
 * A `work` config block gives the default (absent: 0, so `WPos` equals
   `MPos`). A volatile runtime offset overrides it: set by "zero here" (the
   selected tip's position) or by coordinates, cleared back to the config
   value, lost on reboot. The Pico never writes the config; to keep an offset
   the host writes it there.
 * `WPos` = selected tip − work offset. Signed.
-* Z0 by probing builds on the probe's contact height (`pz`) later; "zero
-  here" with a tip touched off by hand works from the start.
+* Zeroing Z, on the selected head's mounted tool:
+  * `wzero z`: the tip is on the bed.
+  * `wzero z_switch`: the tip is on the head's bed switch, touched off by
+    hand or probed; work Z = here − `probeSwitch.z`. Refused when the head
+    has no `probeSwitch.z`. Covers a bed the tip cannot reach beside the
+    sheet.
+  * No zero on the material: `t` never enters the zero.
+* Z0 by probing builds on the probe's contact height (`pz`) later.
+* `wclear` and reset restore config's `work.z` but must not mark a head
+  zeroed whose tool changed (today `framesClearWork` marks every head).
 * A has no work offset: the heading is absolute, and a constant offset would
   cut sideways. Machine A's 0 (the lock) is machine calibration, `indexPos`
   in the homing config; the edge's offset from it is the tool's
@@ -120,7 +130,8 @@ frame is in docs/plans/controller-homing.md.
   switch at each end of X and a head reaches only its own. Since
   tip = anchor + head offset, the anchor goes to switch − head offset to put
   the tip on it. The decoder refuses a switch outside
-  its head's reach.
+  its head's reach. `probeSwitch.z` is the switch's height above the bed,
+  measured as `WPos` Z with a tip on it after a bed zero.
 * Going to one is `jogto park|load|probe` (motion-sessions.md): `probe` is the
   selected head's switch, since a head reaches and probes only its own. Every
   head's Z goes to its park position first, then XY; a numeric `jogto` moves
@@ -166,6 +177,16 @@ frame is in docs/plans/controller-homing.md.
 * Each tip reaches the anchor's range shifted by its offsets. Checked at job
   preflight (each tool's bbox, shifted by the work offset) and on every jog.
   `select` never moves, so it cannot fail on reach.
+* Z's lower limit: `WPos` −`maxOvercut` (machine `workZ − maxOvercut`, mesh
+  applied), for every move while the head has a work Z. `maxOvercut` is a
+  property of the bed, in config. Without a work Z, Z is held high.
+* Layer depth: the layer header carries `t` (material thickness) and `p`
+  (plunge depth below the material top), replacing job-z.md's `k`. Plunge
+  `workZ + t − p`, travel `workZ + t + c`. Refused: `p − t > maxOvercut`,
+  and `p ≤ 0` on a plunging tool. The host derives `p` from the same `t`
+  (`p = t + overcut` for a through cut), so an error in `t` moves only a
+  partial cut's bottom (`p < t`). A tool with `plunge: false` stays at
+  `workZ + t`.
 
 ### Jobs from SVG
 
@@ -189,6 +210,15 @@ frame is in docs/plans/controller-homing.md.
 * A left-most-anchor rule to avoid negative tip coordinates: signs are
   harmless.
 * Positive-down Z and a host-side Z sign flip: ISO Z, since ranges are signed.
+* Work Z 0 on the material top: a through cut's bottom would then carry the
+  error in `t`, and the lower limit would depend on a number the host sends.
+* A stricter Z limit at `WPos` 0 for jogs and gotos: a zero set slightly high
+  could not be jogged down to the real bed to re-zero, and the mat takes
+  `maxOvercut` by definition.
+* `wzero z_material`, and storing bed, switch and material heights (`wref`):
+  reading `WPos` after a bed zero gives both heights.
+* Overcut as a fraction of `t` (`k` above 1): the overcut is a distance, set
+  by the material, blade and mat, not the sheet's thickness.
 
 ## Wire changes
 
@@ -342,9 +372,13 @@ motion-sessions jog branches (`jogto` calls into `frames`).
     shortest difference). Whether `web/src/toolpath/flatten.ts:70` takes
     headings before or after the y reflection (before means its angles are
     clockwise-positive today).
-* Z: the work Z0 by probing; the probe config (`switchXMm/YMm`, `tripMm`)
-  restated in these frames, its switch position replaced by the head's
-  `probeSwitch`.
+* Z: whether a successful probe sets the work Z (`probeZ` feeds nothing
+  today); the probe config (`switchXMm/YMm`, `tripMm`) restated in these
+  frames, its switch position replaced by the head's `probeSwitch` and
+  `tripMm` by `probeSwitch.z`.
+* Z: the branch split for the bed zero (config and `wzero z_switch`, the
+  layer header's `p` and job-z.md's heights, the lower limit, the `wclear`
+  fix).
 * More work offsets (G55–G59), and which stored positions besides park.
 * Soft limits for tips beyond the anchor's range (heads that reach past the
   bed edge).

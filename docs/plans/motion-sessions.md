@@ -1406,6 +1406,7 @@ had the mount state pick a layer's head and dropped the head byte from
   `wzero z_material` (subtracts the layer's `t`). Which surface work Z 0
   means changes job-z.md's heights (bed favoured: a full cut ends at the bed
   whatever `t`'s error, and a zero made ahead needs no `t`).
+  Resolved: the bed (coordinate-system.md, Work frame).
 * `cancel` from `PAUSED`: ends the session to IDLE at once, tool and vacuum
   off (proposed).
 * **Vacuum zones from the bbox (later):** the servo ids drawn as seen from
