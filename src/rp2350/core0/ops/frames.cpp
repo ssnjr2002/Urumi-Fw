@@ -284,20 +284,18 @@ const char* framesNamed(const char* name, float* mx, float* my) {
         *my = c.mount.y;
         return nullptr;
     }
+    if (strcmp(name, "probe") == 0) {
+        const uint8_t sel = framesSelected();
+        if (sel >= c.headCount) return "no_head";
+        const CfgTool* t = configTool(c, toolsMounted(sel));
+        if (!t) return "no_tool";
+        const CfgHead& h = c.heads[sel];
+        if (!h.hasProbeSwitch) return "no_position";
+        *mx = h.probeSwitch.x - h.xOffset - t->xOffset;
+        *my = h.probeSwitch.y - h.yOffset - t->yOffset;
+        return nullptr;
+    }
     return "usage";
-}
-
-const char* framesProbeFor(uint8_t tool, float* mx, float* my) {
-    const MachineCfg& c = machineCfg();
-    const uint8_t sel = framesSelected();
-    if (sel >= c.headCount) return "no_head";
-    const CfgTool* t = configTool(c, tool);
-    if (!t) return "no_tool";
-    const CfgHead& h = c.heads[sel];
-    if (!h.hasProbeSwitch) return "no_position";
-    *mx = h.probeSwitch.x - h.xOffset - t->xOffset;
-    *my = h.probeSwitch.y - h.yOffset - t->yOffset;
-    return nullptr;
 }
 
 const char* framesCheckNode(uint8_t node, int32_t machineSteps) {

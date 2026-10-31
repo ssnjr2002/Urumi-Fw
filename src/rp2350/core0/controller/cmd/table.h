@@ -12,7 +12,6 @@ bool cmdHome(const char*);
 
 // ─── goto.cpp ─────────────────────────────────────────────────────────────────
 bool cmdGoto(const char*);
-bool cmdProbePark(const char*);
 
 // ─── frames.cpp ───────────────────────────────────────────────────────────────
 bool cmdSelect(const char*);

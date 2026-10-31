@@ -1,12 +1,11 @@
-// goto.cpp — `goto <m|w> <xy|z|a> <pos…> [scale]`, `goto park|load|mount
-// [scale]`, `goto up|unlock` and `probe_park <tool>`.
+// goto.cpp — `goto <m|w> <xy|z|a> <pos…> [scale]`, `goto park|load|mount|probe
+// [scale]` and `goto up|unlock`.
 //
 // m targets are machine units (X and Y the anchor's, as mpos), w targets work
 // units (XY the selected tip, framesToMachine; Z and A framesWorkToMachine). A
-// name is a stored position (framesNamed), probe_park the switch of the head
-// the tool is mounted on (else the selected head's, selecting it first) under
-// that tool's tip (framesProbeFor). XY forms park the Zs first; `mount` and
-// probe_park turn the selected A to unlock (machine 0) along the line. Feeds
+// name is a stored position, or `probe` the selected head's switch under its
+// mounted tool's tip (framesNamed). XY forms park the Zs first; `mount` and
+// `probe` turn the selected A to unlock (machine 0) along the line. Feeds
 // are jogFeed × scale, capped at maxFeed. `ok` once it starts.
 
 #include <Arduino.h>
@@ -20,7 +19,6 @@
 #include "../../ops/axes_map.h"
 #include "../../ops/frames.h"
 #include "../../ops/position.h"
-#include "../../ops/tools.h"
 
 static float capped(const CfgAxis& a, float scale) {
     const float f = a.jogFeed * scale;
@@ -80,7 +78,7 @@ static const char* run(const char* args) {
         if (!parseArgs(p, v, 0, &scale)) return "usage";
         float m[2];
         if (const char* why = framesNamed(w, &m[0], &m[1])) return why;
-        return gotoXY(m[0], m[1], scale, strcmp(w, "mount") == 0);
+        return gotoXY(m[0], m[1], scale, strcmp(w, "mount") == 0 || strcmp(w, "probe") == 0);
     }
 
     const bool work = w[0] == 'w';
@@ -109,33 +107,5 @@ static const char* run(const char* args) {
 bool cmdGoto(const char* args) {
     if (const char* why = run(args)) Serial.printf("err %s\n", why);
     else                             Serial.println("ok");
-    return true;
-}
-
-bool cmdProbePark(const char* args) {
-    char* end;
-    const unsigned long id = strtoul(args, &end, 10);
-    while (*end == ' ') end++;
-    if (end == args || *end || id == 0 || id > 0xFF) { Serial.println("err usage"); return true; }
-    // The selected head if it has the tool, else the first that has it.
-    const char* why = nullptr;
-    const MachineCfg& c = machineCfg();
-    const uint8_t sel = framesSelected();
-    uint8_t head = sel;
-    if (sel >= c.headCount || toolsMounted(sel) != id)
-        for (uint8_t h = 0; h < c.headCount; h++)
-            if (toolsMounted(h) == id) { head = h; break; }
-    if (head != sel && head < c.headCount) {
-        if (!c.heads[head].hasProbeSwitch) why = "no_position";
-        else {
-            axesSelectHead(head, &why);
-            if (!why && framesSelected() != head) why = "no_head";
-        }
-    }
-    float m[2];
-    if (!why) why = framesProbeFor((uint8_t)id, &m[0], &m[1]);
-    if (!why) why = gotoXY(m[0], m[1], 1, true);
-    if (why) Serial.printf("err %s\n", why);
-    else     Serial.println("ok");
     return true;
 }

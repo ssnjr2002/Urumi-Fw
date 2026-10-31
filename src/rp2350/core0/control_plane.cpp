@@ -75,8 +75,9 @@ static const Cmd kCommands[] = {
 static const Cmd kControllerCommands[] = {
     { "unalarm",      cmdUnalarm,     K_CLEAR },
     { "home",         cmdHome,        K_SEQUENCE },
+    { "goto", "probe", cmdGoto,       K_SEQUENCE | K_IN_TOOL },
+    { "goto", "mount", cmdGoto,       K_SEQUENCE | K_IN_TOOL },
     { "goto",         cmdGoto,        K_SEQUENCE },
-    { "probe_park",   cmdProbePark,   K_SEQUENCE | K_IN_TOOL },
     { "select",       cmdSelect,      K_WRITE },
     { "wzero",        cmdWzero,       K_WRITE | K_IN_TOOL },
     { "wset",         cmdWset,        K_WRITE },
@@ -86,10 +87,21 @@ static const Cmd kControllerCommands[] = {
     { "unmount",      cmdUnmount,     K_SEQUENCE | K_IN_TOOL },
 };
 
+// Whole word `w` (`len` long) is `name`.
+static bool is(const char* w, size_t len, const char* name) {
+    return strlen(name) == len && strncmp(w, name, len) == 0;
+}
+
+// The first row for the command word, its `sub` (if any) matching the second
+// word; rows with a `sub` come before their command's catch-all.
 template <size_t N>
 static const Cmd* lookup(const Cmd (&table)[N], const char* s, size_t wordLen) {
+    const char* w2 = s + wordLen;
+    while (*w2 == ' ') w2++;
+    size_t len2 = 0;
+    while (w2[len2] && w2[len2] != ' ') len2++;
     for (size_t i = 0; i < N; i++)
-        if (strlen(table[i].name) == wordLen && strncmp(s, table[i].name, wordLen) == 0)
+        if (is(s, wordLen, table[i].name) && (!table[i].sub || is(w2, len2, table[i].sub)))
             return &table[i];
     return nullptr;
 }

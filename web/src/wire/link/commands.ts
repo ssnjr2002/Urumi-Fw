@@ -202,7 +202,7 @@ export type GotoFrame = "m" | "w";
 export type GotoTarget =
     | { frame: GotoFrame; axis: "xy"; x: number; y: number; scale?: number }
     | { frame: GotoFrame; axis: "z" | "a"; pos: number; scale?: number }
-    | { name: "park" | "load" | "mount"; scale?: number }
+    | { name: "park" | "load" | "mount" | "probe"; scale?: number }
     | { name: "up" | "unlock" };
 
 /**

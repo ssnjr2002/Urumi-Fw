@@ -22,8 +22,13 @@
 
 struct Cmd {
     const char* name;
+    const char* sub;                // the second word this row needs, or nullptr for any
     bool (*fn)(const char* args);   // args: past the command word and its spaces
     uint8_t kind;                   // CmdKind with its K_IN_* / K_BARE_READ flags
+    constexpr Cmd(const char* n, bool (*f)(const char*), uint8_t k)
+        : name(n), sub(nullptr), fn(f), kind(k) {}
+    constexpr Cmd(const char* n, const char* s, bool (*f)(const char*), uint8_t k)
+        : name(n), sub(s), fn(f), kind(k) {}
 };
 
 // ─── query.cpp — reads; nothing here changes machine state ────────────────────

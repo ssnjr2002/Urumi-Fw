@@ -103,14 +103,11 @@ const char* framesToMachine(float wx, float wy, float* mx, float* my);
 const char* framesWorkToMachine(uint8_t k, float w, float from, float* m);
 
 // A named position to the anchor's machine XY: `park` (where homing parks X
-// and Y without one), `load` or `mount` (a tool change's stop). Returns nullptr, "usage" for another name, or
-// "no_position" for one the config lacks.
+// and Y without one), `load`, `mount` (a tool change's stop) or `probe` (the
+// selected head's mounted tip on that head's probe switch). Returns nullptr,
+// "usage" for another name, "no_position" for one the config lacks, or for
+// `probe` "no_head" or "no_tool".
 const char* framesNamed(const char* name, float* mx, float* my);
-
-// The anchor's machine XY that puts tool `tool`'s tip, on the selected head, on
-// that head's probe switch, mounted or not. nullptr, "no_head", "no_tool" or
-// "no_position".
-const char* framesProbeFor(uint8_t tool, float* mx, float* my);
 
 // Node `node` at machine position `machineSteps` (wire frame) inside its
 // axis's soft range, when that axis has softLimits. nullptr, or "soft_limit".
