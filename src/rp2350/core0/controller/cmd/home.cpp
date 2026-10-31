@@ -1,4 +1,5 @@
-// home.cpp — `home [only] [<node> …]` and its selectors (docs/homing.md).
+// home.cpp — `home [only] [<node> …]` and its forms `home unhomed|cycle <k>|
+// head <n>|xy` (docs/homing.md).
 //
 // Each resolves a node list, checks it before anything moves, and hands it to
 // the recipe (controller/seq/home). `ok` once the run starts; its progress and
@@ -33,10 +34,83 @@ static const char* word(const char** p, size_t* len) {
     return w;
 }
 
+// unhomed: `home` of every homeable node with no origin; none is `ok`.
+static bool homeUnhomed(const char* args) {
+    if (*args) { Serial.println("err usage"); return true; }
+    const CfgAxis* axes[HOME_AXES_MAX];
+    const uint8_t k = homeAxes(axes);
+    uint8_t nodes[LEG_MAX];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < k && n < LEG_MAX; i++)
+        if (homeable(axes[i]) && !originValid(axes[i]->node.id))
+            nodes[n++] = axes[i]->node.id;
+    homeRun(nodes, n, false);
+    return true;
+}
+
+// cycle <k>: `home` of cycle k's nodes; an empty cycle is `err usage`.
+static bool homeCycle(const char* args) {
+    char* end;
+    const unsigned long c = strtoul(args, &end, 10);
+    if (end == args || *end || c == 0 || c > 255) { Serial.println("err usage"); return true; }
+    const CfgAxis* axes[HOME_AXES_MAX];
+    const uint8_t k = homeAxes(axes);
+    uint8_t nodes[LEG_MAX];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < k && n < LEG_MAX; i++)
+        if (homeable(axes[i]) && axes[i]->homing.cycle == c)
+            nodes[n++] = axes[i]->node.id;
+    if (n == 0) { Serial.println("err usage"); return true; }
+    homeRun(nodes, n, false);
+    return true;
+}
+
+// xy: `home <X> <Y>`, so the Zs (an earlier cycle) park or home first.
+static bool homeXY(const char* args) {
+    if (*args) { Serial.println("err usage"); return true; }
+    const MachineCfg& cfg = machineCfg();
+    uint8_t nodes[2];
+    uint8_t n = 0;
+    const CfgAxis* both[2] = { &cfg.x, &cfg.y };
+    for (const CfgAxis* a : both)
+        if (a->node.present && homeable(a)) nodes[n++] = a->node.id;
+    if (n == 0) { Serial.println("err usage"); return true; }
+    homeRun(nodes, n, false);
+    return true;
+}
+
+// head <n>: `home only <Zn> <An>`, n the index into heads[].
+static bool homeHead(const char* args) {
+    char* end;
+    const unsigned long h = strtoul(args, &end, 10);
+    const MachineCfg& cfg = machineCfg();
+    if (end == args || *end || h >= cfg.headCount) { Serial.println("err usage"); return true; }
+    uint8_t nodes[2];
+    uint8_t n = 0;
+    const CfgAxis* both[2] = { &cfg.heads[h].z, &cfg.heads[h].a };
+    for (const CfgAxis* a : both)
+        if (a->node.present && homeable(a)) nodes[n++] = a->node.id;
+    if (n == 0) { Serial.println("err usage"); return true; }
+    homeRun(nodes, n, true);
+    return true;
+}
+
+static const struct { const char* name; bool (*fn)(const char*); } kForms[] = {
+    { "unhomed", homeUnhomed },
+    { "cycle",   homeCycle },
+    { "head",    homeHead },
+    { "xy",      homeXY },
+};
+
 bool cmdHome(const char* args) {
     const char* p = args;
     size_t len;
     const char* w = word(&p, &len);
+    for (const auto& f : kForms)
+        if (strlen(f.name) == len && strncmp(w, f.name, len) == 0) {
+            while (*p == ' ') p++;
+            return f.fn(p);
+        }
     const bool only = len == 4 && strncmp(w, "only", 4) == 0;
     if (!only) p = args;
 
@@ -67,66 +141,5 @@ bool cmdHome(const char* args) {
             if (homeable(axes[i])) nodes[n++] = axes[i]->node.id;
     }
     homeRun(nodes, n, only);
-    return true;
-}
-
-// home_unhomed: `home` of every homeable node with no origin; none is `ok`.
-bool cmdHomeUnhomed(const char* args) {
-    if (*args) { Serial.println("err usage"); return true; }
-    const CfgAxis* axes[HOME_AXES_MAX];
-    const uint8_t k = homeAxes(axes);
-    uint8_t nodes[LEG_MAX];
-    uint8_t n = 0;
-    for (uint8_t i = 0; i < k && n < LEG_MAX; i++)
-        if (homeable(axes[i]) && !originValid(axes[i]->node.id))
-            nodes[n++] = axes[i]->node.id;
-    homeRun(nodes, n, false);
-    return true;
-}
-
-// home_cycle <k>: `home` of cycle k's nodes; an empty cycle is `err usage`.
-bool cmdHomeCycle(const char* args) {
-    char* end;
-    const unsigned long c = strtoul(args, &end, 10);
-    if (end == args || *end || c == 0 || c > 255) { Serial.println("err usage"); return true; }
-    const CfgAxis* axes[HOME_AXES_MAX];
-    const uint8_t k = homeAxes(axes);
-    uint8_t nodes[LEG_MAX];
-    uint8_t n = 0;
-    for (uint8_t i = 0; i < k && n < LEG_MAX; i++)
-        if (homeable(axes[i]) && axes[i]->homing.cycle == c)
-            nodes[n++] = axes[i]->node.id;
-    if (n == 0) { Serial.println("err usage"); return true; }
-    homeRun(nodes, n, false);
-    return true;
-}
-
-// home_xy: `home <X> <Y>`, so the Zs (an earlier cycle) park or home first.
-bool cmdHomeXY(const char* args) {
-    if (*args) { Serial.println("err usage"); return true; }
-    const MachineCfg& cfg = machineCfg();
-    uint8_t nodes[2];
-    uint8_t n = 0;
-    const CfgAxis* both[2] = { &cfg.x, &cfg.y };
-    for (const CfgAxis* a : both)
-        if (a->node.present && homeable(a)) nodes[n++] = a->node.id;
-    if (n == 0) { Serial.println("err usage"); return true; }
-    homeRun(nodes, n, false);
-    return true;
-}
-
-// home_head <n>: `home only <Zn> <An>`, n the index into heads[].
-bool cmdHomeHead(const char* args) {
-    char* end;
-    const unsigned long h = strtoul(args, &end, 10);
-    const MachineCfg& cfg = machineCfg();
-    if (end == args || *end || h >= cfg.headCount) { Serial.println("err usage"); return true; }
-    uint8_t nodes[2];
-    uint8_t n = 0;
-    const CfgAxis* both[2] = { &cfg.heads[h].z, &cfg.heads[h].a };
-    for (const CfgAxis* a : both)
-        if (a->node.present && homeable(a)) nodes[n++] = a->node.id;
-    if (n == 0) { Serial.println("err usage"); return true; }
-    homeRun(nodes, n, true);
     return true;
 }

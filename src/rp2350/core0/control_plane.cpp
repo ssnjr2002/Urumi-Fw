@@ -75,10 +75,6 @@ static const Cmd kCommands[] = {
 static const Cmd kControllerCommands[] = {
     { "unalarm",      cmdUnalarm,     K_CLEAR },
     { "home",         cmdHome,        K_SEQUENCE },
-    { "home_unhomed", cmdHomeUnhomed, K_SEQUENCE },
-    { "home_cycle",   cmdHomeCycle,   K_SEQUENCE },
-    { "home_head",    cmdHomeHead,    K_SEQUENCE },
-    { "home_xy",      cmdHomeXY,      K_SEQUENCE },
     { "goto",         cmdGoto,        K_SEQUENCE },
     { "probe_park",   cmdProbePark,   K_SEQUENCE | K_IN_TOOL },
     { "select",       cmdSelect,      K_WRITE },

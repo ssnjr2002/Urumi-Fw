@@ -9,10 +9,6 @@ bool cmdUnalarm(const char*);
 
 // ─── home.cpp ─────────────────────────────────────────────────────────────────
 bool cmdHome(const char*);
-bool cmdHomeUnhomed(const char*);
-bool cmdHomeCycle(const char*);
-bool cmdHomeHead(const char*);
-bool cmdHomeXY(const char*);
 
 // ─── goto.cpp ─────────────────────────────────────────────────────────────────
 bool cmdGoto(const char*);

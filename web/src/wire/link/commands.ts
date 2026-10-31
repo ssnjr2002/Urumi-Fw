@@ -559,22 +559,22 @@ export async function home(link: Link, nodes: readonly number[] = [], only = fal
 
 /** `home` of every homeable node with no origin; `ok` with no motion if none. */
 export async function homeUnhomed(link: Link): Promise<string> {
-    return link.command("home_unhomed");
+    return link.command("home unhomed");
 }
 
 /** `home` of cycle `cycle`'s nodes, earlier cycles cleared first. */
 export async function homeCycle(link: Link, cycle: number): Promise<string> {
-    return link.command(`home_cycle ${cycle}`);
+    return link.command(`home cycle ${cycle}`);
 }
 
 /** `home only` of head `head`'s Z and A (`head` indexes the config's heads). */
 export async function homeHead(link: Link, head: number): Promise<string> {
-    return link.command(`home_head ${head}`);
+    return link.command(`home head ${head}`);
 }
 
 /** `home` of X and Y; the Zs, an earlier cycle, park or home first. */
 export async function homeXY(link: Link): Promise<string> {
-    return link.command("home_xy");
+    return link.command("home xy");
 }
 
 // ── tool probe (docs/tool_probe.md §5) ───────────────────────────────────────
