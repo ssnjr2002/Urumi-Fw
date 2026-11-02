@@ -104,8 +104,7 @@ satisfied. The next boot loads the saved values.
   * consumers of renamed members (`machineCfg()` callers under
     `src/rp2350/core0/`, mostly `controller/` and `ops/`)
   * `test/test_config/test_config_decode.cpp`
-* Depends on: `feature/park-speed` merged first (it edits
-  `config_decode.{h,cpp}` and its test).
+* Depends on: nothing.
 * Checks: `pio run -e pico`, `pio test -e native`.
 
 **Status:** not started.
