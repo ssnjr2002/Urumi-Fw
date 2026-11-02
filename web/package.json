@@ -36,6 +36,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "gen:runtime": "vite-node scripts/runtime-fields.ts",
     "demo": "vite demo --open",
     "demo:dist": "vite demo --mode dist --open",
     "prepublishOnly": "npm run build"

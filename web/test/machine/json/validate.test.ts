@@ -92,7 +92,16 @@ describe("rule: nonNegativeCeilings", () => {
             ...c,
             machine: { ...c.machine, x: { ...c.machine.x, maxAccel: -1 } },
         };
-        expect(errors(bad)).toContain("machine.x.maxAccel: must be >= 0");
+        expect(errors(bad)).toContain("machine.x.maxAccel: must be >= 0 (got -1)");
+    });
+
+    it("errors on more precision than the controller keeps", () => {
+        const c = cfg();
+        const bad: ControllerConfig = {
+            ...c,
+            machine: { ...c.machine, x: { ...c.machine.x, stepsPerUnit: 1 / 3 } },
+        };
+        expect(errors(bad).join("\n")).toMatch(/machine\.x\.stepsPerUnit: .* more precision/);
     });
 
     it("0 is legal (uncapped), not an error", () => {
@@ -121,7 +130,7 @@ describe("rule: nonNegativeTargets", () => {
             ...c,
             toolProfiles: { knife: toolProfile("knife", { cutFeed: -1 }) },
         };
-        expect(errors(bad)).toContain("tools.knife.cutFeed: must be >= 0");
+        expect(errors(bad)).toContain("tools.knife.cutFeed: must be >= 0 (got -1)");
     });
 });
 

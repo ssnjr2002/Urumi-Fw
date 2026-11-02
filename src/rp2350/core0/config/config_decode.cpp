@@ -1,9 +1,37 @@
 // Config decode — see config_decode.h.
 
 #include "config_decode.h"
+#include "runtime_fields.h"
 #include <math.h>
 #include <string.h>
+#include <type_traits>
+#include <utility>
 #include <ArduinoJson.h>
+
+// ─── Runtime field check ──────────────────────────────────────────────────────
+// Every row of the generated table names a member of its scope's struct, of the
+// row's type: a wrong one fails the build.
+
+template <RtScope S> struct RtStruct;
+template <> struct RtStruct<RT_SCOPE_MACHINE> { using type = MachineCfg; };
+template <> struct RtStruct<RT_SCOPE_AXIS>    { using type = CfgAxis; };
+template <> struct RtStruct<RT_SCOPE_HEAD>    { using type = CfgHead; };
+template <> struct RtStruct<RT_SCOPE_TOOL>    { using type = CfgTool; };
+
+template <RtType T, class M> struct RtFits : std::false_type {};
+template <> struct RtFits<RT_TYPE_F32, float> : std::true_type {};
+template <> struct RtFits<RT_TYPE_BOOL, bool> : std::true_type {};
+template <> struct RtFits<RT_TYPE_U16, uint16_t> : std::true_type {};
+template <> struct RtFits<RT_TYPE_POINT, CfgPoint> : std::true_type {};
+template <> struct RtFits<RT_TYPE_POINT, CfgProbeSwitch> : std::true_type {};
+
+#define RT_MEMBER(scope, member) decltype(std::declval<RtStruct<scope>::type&>().member)
+#define RT_CHECK_REQUIRED(scope, path, member, type, ...) \
+    static_assert(RtFits<type, RT_MEMBER(scope, member)>::value, path);
+#define RT_CHECK_OPTIONAL(scope, path, member, has, type, ...) \
+    static_assert(RtFits<type, RT_MEMBER(scope, member)>::value, path); \
+    static_assert(std::is_same<RT_MEMBER(scope, has), bool>::value, path);
+RUNTIME_FIELDS(RT_CHECK_REQUIRED, RT_CHECK_OPTIONAL)
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
 
@@ -136,6 +164,8 @@ static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
         JsonObjectConst j = kv.value();
         CfgTool& t = out->tools[out->toolCount++];
         t = CfgTool{};
+        if (strlen(kv.key().c_str()) >= sizeof t.name) return CFG_DEC_TOOLS;
+        strcpy(t.name, kv.key().c_str());
         JsonVariantConst id = j["id"], type = j["toolType"];
         JsonObjectConst off = j["toolOffset"];
         if (!id.is<unsigned>() || !type.is<unsigned>() || off.isNull() ||

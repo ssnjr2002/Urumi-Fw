@@ -124,10 +124,10 @@ struct CfgToolOffset {
     float yOffset;
 };
 
-// A tool profile (the blob's `toolProfiles`, keyed by name; the Pico keeps
-// only the id).
+// A tool profile (the blob's `toolProfiles`, keyed by name).
 struct CfgTool {
-    uint8_t id;             // 1..255, unique; 0 is no tool (`mount`)
+    char    name[16];       // the blob's key; config paths address a tool by it
+    uint8_t id;             // 1..255, unique; 0 is no tool (`mount`); the wire's name for it
     uint8_t toolType;       // ToolType (web/src/machine/schema.ts)
     bool    tangential;     // A steers along the path
     uint8_t periodCount;    // tangential: looks the same every 360/n degrees

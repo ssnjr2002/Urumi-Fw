@@ -21,11 +21,11 @@ import type {
     MachineConfig,
     OpTarget,
     ControllerConfig,
-    ToolProfile,
 } from "../schema.js";
 import { NodeType } from "../schema.js";
 import { TOOL_PROFILES_BY_TYPE } from "../tools.js";
 import { requiredAxes, resolveTargets } from "../resolve.js";
+import { runtimeFieldError, runtimeValues } from "../runtime.js";
 
 
 export interface ValidationResult {
@@ -57,23 +57,18 @@ function namedAxes(machine: MachineConfig): readonly [string, AxisConfig][] {
     ];
 }
 
-/** Ceilings are magnitudes; a negative one is meaningless, not merely unwise. */
-const nonNegativeCeilings: Rule = ({ machine }) =>
-    namedAxes(machine).flatMap(([path, ax]) => [
-        ...(ax.maxFeed < 0 ? [error(`${path}.maxFeed: must be >= 0`)] : []),
-        ...(ax.maxAccel < 0 ? [error(`${path}.maxAccel: must be >= 0`)] : []),
-    ]);
+/** The Pico can edit these fields; the table holds their ranges for both sides. */
+const runtimeFieldsInRange: Rule = (config) =>
+    runtimeValues(config).flatMap(({ field, label, value }) => {
+        if (value === undefined) return [];
+        const problem = runtimeFieldError(field, value);
+        return problem === null ? [] : [error(`${label}: ${problem}`)];
+    });
 
-const nonNegativeTargets: Rule = (config) => [
-    ...(["feed", "accel"] as const)
+const nonNegativeSlew: Rule = (config) =>
+    (["feed", "accel"] as const)
         .filter((k) => (config.machine.slew[k] ?? 0) < 0)
-        .map((k) => error(`machine.slew.${k}: must be >= 0`)),
-    ...Object.entries(config.toolProfiles).flatMap(([name, t]: [string, ToolProfile]) =>
-        (["cutFeed", "plungeFeed"] as const)
-            .filter((k) => (t[k] ?? 0) < 0)
-            .map((k) => error(`tools.${name}.${k}: must be >= 0`)),
-    ),
-];
+        .map((k) => error(`machine.slew.${k}: must be >= 0`));
 
 /**
  * X/Y with a 0 (uncapped) ceiling is legal but reckless: nothing then bounds
@@ -138,26 +133,6 @@ const uniqueNodeIds: Rule = ({ machine }) => {
         );
 };
 
-const clearanceNonNegative: Rule = ({ machine }) =>
-    Number.isFinite(machine.zClearance) && machine.zClearance >= 0
-        ? []
-        : [error(`machine.zClearance: must be >= 0 (got ${machine.zClearance})`)];
-
-const overcutNonNegative: Rule = ({ machine }) =>
-    Number.isFinite(machine.maxOvercut) && machine.maxOvercut >= 0
-        ? []
-        : [error(`machine.maxOvercut: must be >= 0 (got ${machine.maxOvercut})`)];
-
-const bufferPositive: Rule = ({ machine }) =>
-    (["queueTime", "idleTime"] as const)
-        .filter((k) => !(Number.isFinite(machine.buffer[k]) && machine.buffer[k] > 0))
-        .map((k) => error(`machine.buffer.${k}: must be > 0 (got ${machine.buffer[k]})`));
-
-const feedAtLeastOne: Rule = ({ machine }) =>
-    (["cutFallback", "travelDefault", "plungeFallback", "liftFeed"] as const)
-        .filter((k) => !(Number.isFinite(machine.feed[k]) && machine.feed[k] >= 1))
-        .map((k) => error(`machine.feed.${k}: must be >= 1 (got ${machine.feed[k]})`));
-
 /** A tool id is a u8 on the wire, 0 meaning no tool, and names one tool. */
 const toolIdsUnique: Rule = ({ toolProfiles }) => {
     const seen = new Map<number, string>();
@@ -180,14 +155,10 @@ const toolAFields: Rule = ({ toolProfiles }) =>
             ? [] : [error(`tools.${name}.periodCount: must be a whole number 1..255 (got ${t.periodCount})`)]),
         ...(!t.tangential && t.periodCount !== 1
             ? [error(`tools.${name}.periodCount: only a tangential tool has one`)] : []),
-        ...(t.cornerAngleDeg >= 0 && t.cornerAngleDeg <= 180
-            ? [] : [error(`tools.${name}.cornerAngleDeg: must be 0..180 (got ${t.cornerAngleDeg})`)]),
-        ...(t.aMaxDeg === undefined || (Number.isFinite(t.aMaxDeg) && t.aMaxDeg >= 0)
-            ? [] : [error(`tools.${name}.aMaxDeg: must be >= 0 (got ${t.aMaxDeg})`)]),
-        ...(t.aOffsetDeg === undefined || (Number.isFinite(t.aOffsetDeg) && t.tangential)
-            ? [] : [error(`tools.${name}.aOffsetDeg: a finite angle, tangential tools only`)]),
-        ...(Number.isFinite(t.offsetMm) && t.offsetMm >= 0 && (t.tangential || t.offsetMm === 0)
-            ? [] : [error(`tools.${name}.offsetMm: >= 0 mm, and 0 unless tangential (got ${t.offsetMm})`)]),
+        ...(t.aOffsetDeg === undefined || t.tangential
+            ? [] : [error(`tools.${name}.aOffsetDeg: tangential tools only`)]),
+        ...(t.tangential || t.offsetMm === 0
+            ? [] : [error(`tools.${name}.offsetMm: 0 unless tangential (got ${t.offsetMm})`)]),
         ...(t.tangential && t.chamberOffsets !== undefined
             ? [error(`tools.${name}.chamberOffsets: a tangential tool has no chambers`)] : []),
     ]);
@@ -210,26 +181,13 @@ const defaultHeadInRange: Rule = ({ machine }) => {
         : [error(`machine.defaultHead: ${i} is out of range (machine has ${n} head(s))`)];
 };
 
-/** A switch's height is above the bed. */
-const switchHeightValid: Rule = ({ machine }) =>
-    machine.heads.flatMap((h, i) => {
-        const z = h.probeSwitch?.z;
-        return z === undefined || (Number.isFinite(z) && z >= 0)
-            ? []
-            : [error(`machine.heads[${i}].probeSwitch.z: ${z} must be a number >= 0`)];
-    });
-
-/** An interlock needs an A to turn, and a range it can be inside. */
+/** An interlock needs an A to turn. */
 const unlockRangeValid: Rule = ({ machine }) =>
-    machine.heads.flatMap((h, i) => {
-        const r = h.unlockRange;
-        if (r === undefined || r === 0) return [];
-        if (!Number.isFinite(r) || r < 0)
-            return [error(`machine.heads[${i}].unlockRange: ${r} must be a number >= 0`)];
-        return h.a.node.present
+    machine.heads.flatMap((h, i) =>
+        !h.unlockRange || h.a.node.present
             ? []
-            : [error(`machine.heads[${i}].unlockRange: the head has no A node to unlock with`)];
-    });
+            : [error(`machine.heads[${i}].unlockRange: the head has no A node to unlock with`)],
+    );
 
 /**
  * A head cannot accept a tool it has no axes for.
@@ -334,24 +292,8 @@ const homingCoherent: Rule = ({ machine }) =>
         const issues: Issue[] = [];
 
         if (h.kind === "rotary") {
-            // Same shape of check, different physics. Feeds are divisors either
-            // way, so a zero is still an infinite step interval.
-            for (const k of ["sweepFeed", "budgetRevs", "toleranceDeg"] as const) {
-                if (h[k] <= 0) issues.push(error(`${p}.${k}: must be > 0`));
-            }
-            if (h.rampSteps < 0) issues.push(error(`${p}.rampSteps: must be >= 0`));
             if (ax.maxFeed > 0 && h.sweepFeed > ax.maxFeed) {
                 issues.push(error(`${p}.sweepFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
-            }
-            // The measured floor, not a round number. A sweep needs three full
-            // laps in the worst starting phase plus its post-roll; under this a
-            // healthy axis reports `notfound`, which reads as a dead sensor and
-            // sends an operator to the wiring.
-            if (h.budgetRevs < 3.2) {
-                issues.push(error(
-                    `${p}.budgetRevs (${h.budgetRevs}): must be >= 3.2 — a sweep that ` +
-                    `starts just past the index needs three full laps plus post-roll`,
-                ));
             }
             // A rotary axis has no ends, so a soft-limit envelope on one is
             // either unbounded (0) or a deliberate restriction. Homing spins
@@ -363,12 +305,6 @@ const homingCoherent: Rule = ({ machine }) =>
             }
             return issues;
         }
-
-        // Feeds are divisors; a zero produces an infinite step interval.
-        for (const k of ["seekFeed", "latchFeed"] as const) {
-            if (h[k] <= 0) issues.push(error(`${p}.${k}: must be > 0`));
-        }
-        if (h.rampSteps < 0) issues.push(error(`${p}.rampSteps: must be >= 0`));
 
         // The slow leg is what sets repeatability; if it is not slower than the
         // fast one, leg 3 is not a re-approach and the whole two-pass structure
@@ -476,19 +412,14 @@ const RULES: readonly Rule[] = [
     hasAnchor,
     homingCoherent,
     probeCoherent,
-    nonNegativeCeilings,
-    nonNegativeTargets,
+    runtimeFieldsInRange,
+    nonNegativeSlew,
     xyMustBeCapped,
     targetsUnderCeilings,
     uniqueNodeIds,
     headCountSupported,
     defaultHeadInRange,
     unlockRangeValid,
-    switchHeightValid,
-    clearanceNonNegative,
-    overcutNonNegative,
-    bufferPositive,
-    feedAtLeastOne,
     toolIdsUnique,
     toolAFields,
     headsHaveAxesForAccepted,

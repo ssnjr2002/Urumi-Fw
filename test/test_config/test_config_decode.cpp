@@ -65,6 +65,8 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(c.heads[0].a.node.id == 4);
     CHECK(c.heads[0].a.stepsPerUnit == doctest::Approx(51.667));
     CHECK(c.heads[0].a.rotary);
+    REQUIRE(configTool(c, c.tools[0].id) != nullptr);
+    CHECK(strlen(c.tools[0].name) > 0);
 
     uint8_t map[4];
     configSlotMap(c, 0, 0xFF, map);
