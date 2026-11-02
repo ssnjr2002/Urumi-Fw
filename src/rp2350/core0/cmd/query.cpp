@@ -39,6 +39,7 @@ bool cmdCfg(const char*) {
     if (machineCfgError() != CFG_DEC_OK)
         Serial.printf(" rejected=%s", configDecodeErrorName(machineCfgError()));
     if (machineCfgIgnored()) Serial.print(" ignored=1");
+    if (machineCfgDirty()) Serial.print(" dirty=1");
     Serial.println();
     return true;
 }

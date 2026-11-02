@@ -1,37 +1,9 @@
 // Config decode — see config_decode.h.
 
 #include "config_decode.h"
-#include "runtime_fields.h"
 #include <math.h>
 #include <string.h>
-#include <type_traits>
-#include <utility>
 #include <ArduinoJson.h>
-
-// ─── Runtime field check ──────────────────────────────────────────────────────
-// Every row of the generated table names a member of its scope's struct, of the
-// row's type: a wrong one fails the build.
-
-template <RtScope S> struct RtStruct;
-template <> struct RtStruct<RT_SCOPE_MACHINE> { using type = MachineCfg; };
-template <> struct RtStruct<RT_SCOPE_AXIS>    { using type = CfgAxis; };
-template <> struct RtStruct<RT_SCOPE_HEAD>    { using type = CfgHead; };
-template <> struct RtStruct<RT_SCOPE_TOOL>    { using type = CfgTool; };
-
-template <RtType T, class M> struct RtFits : std::false_type {};
-template <> struct RtFits<RT_TYPE_F32, float> : std::true_type {};
-template <> struct RtFits<RT_TYPE_BOOL, bool> : std::true_type {};
-template <> struct RtFits<RT_TYPE_U16, uint16_t> : std::true_type {};
-template <> struct RtFits<RT_TYPE_POINT, CfgPoint> : std::true_type {};
-template <> struct RtFits<RT_TYPE_POINT, CfgProbeSwitch> : std::true_type {};
-
-#define RT_MEMBER(scope, member) decltype(std::declval<RtStruct<scope>::type&>().member)
-#define RT_CHECK_REQUIRED(scope, path, member, type, ...) \
-    static_assert(RtFits<type, RT_MEMBER(scope, member)>::value, path);
-#define RT_CHECK_OPTIONAL(scope, path, member, has, type, ...) \
-    static_assert(RtFits<type, RT_MEMBER(scope, member)>::value, path); \
-    static_assert(std::is_same<RT_MEMBER(scope, has), bool>::value, path);
-RUNTIME_FIELDS(RT_CHECK_REQUIRED, RT_CHECK_OPTIONAL)
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
 
@@ -223,14 +195,17 @@ static CfgDecodeError checkHoming(const CfgAxis& a) {
     if (h.cycle == 0 || !positive(h.startFeed)) return CFG_DEC_HOMING;
     if (a.rotary) {
         if (!positive(h.budgetRevs) || !positive(h.sweepFeed) ||
-            !positive(h.toleranceDeg) || !isfinite(h.indexPos)) return CFG_DEC_HOMING;
+            !positive(h.toleranceDeg) || !isfinite(h.indexPos) ||
+            (a.maxFeed > 0.0f && h.sweepFeed > a.maxFeed)) return CFG_DEC_HOMING;
         return CFG_DEC_OK;
     }
     // A seek budget is sized from maxTravel, so a linear home needs one.
     if (!positive(a.maxTravel) || !isfinite(h.seekScaler) || h.seekScaler < 1.0f ||
         !positive(h.seekFeed) || !positive(h.latchFeed) ||
         !positive(h.backoffDist) || !positive(h.pullOffDist) ||
-        (h.hasParkPos && !isfinite(h.parkPos))) return CFG_DEC_HOMING;
+        (h.hasParkPos && !isfinite(h.parkPos)) ||
+        h.latchFeed >= h.seekFeed ||
+        (a.maxFeed > 0.0f && h.seekFeed > a.maxFeed)) return CFG_DEC_HOMING;
     return CFG_DEC_OK;
 }
 

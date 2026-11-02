@@ -13,14 +13,16 @@ static bool           activeValid = false;
 static CfgDecodeError lastError   = CFG_DEC_OK;
 static CfgDecodeError bootError   = CFG_DEC_OK;   // the stored blob's, for cfgerr=
 static bool           ignored     = false;
+static bool           dirty       = false;
 
-static void publish() {
+void machineCfgPublish() {
     bufferQueueS = active.buffer.queueTime;
     bufferIdleMs = (uint32_t)(active.buffer.idleTime * 1000.0f);
 }
 
 void machineCfgLoad() {
     activeValid = false;
+    dirty       = false;
     lastError   = CFG_DEC_OK;
     if (!g_cfg.valid) return;
 
@@ -33,7 +35,7 @@ void machineCfgLoad() {
     lastError   = configDecode(buf, g_cfg.length, &active);
     activeValid = (lastError == CFG_DEC_OK);
     bootError   = lastError;
-    if (activeValid) publish();
+    if (activeValid) machineCfgPublish();
 }
 
 CfgDecodeError machineCfgStage(const uint8_t* blob, uint32_t len) {
@@ -47,7 +49,33 @@ void machineCfgAdopt() {
     activeValid = true;
     lastError   = CFG_DEC_OK;
     ignored     = false;
-    publish();
+    dirty       = false;
+    machineCfgPublish();
+}
+
+RtError machineCfgSet(const char* path, size_t len, const char* text, RtApplied* out) {
+    const RtError e = runtimeSet(active, path, len, text, out);
+    if (e == RT_OK && out->changed) dirty = true;
+    return e;
+}
+
+bool machineCfgDirty() { return dirty; }
+
+const char* machineCfgSave() {
+    uint8_t* buf = configStageBuf();
+    if (configStoreRead(0, buf, g_cfg.length) != g_cfg.length) return "flash";
+    size_t len;
+    switch (runtimeEncode(active, buf, g_cfg.length, CFG_MAX_BYTES, &pending, &len)) {
+        case RT_ENC_OK:      break;
+        case RT_ENC_DECODE:  return "decode";
+        case RT_ENC_TOO_BIG: return "too_big";
+        case RT_ENC_VERIFY:  return "verify";
+    }
+    uint8_t nack;
+    if (!configStoreCommit(len, configStoreCrc(buf, len), &nack))
+        return nack == CFG_NACK_BAD_STATE ? "bad_state" : "flash";
+    dirty = false;
+    return nullptr;
 }
 
 bool              machineCfgValid() { return activeValid; }

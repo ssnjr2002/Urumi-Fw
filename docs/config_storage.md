@@ -129,7 +129,8 @@ every soft reset's bus sweep (docs/engage_and_axis_map.md §6).
 
 `g_cfg` is updated **only** by the boot check and a successful commit. It is
 deliberately **not** cleared by soft reset — the blob lives in flash, which soft
-reset does not touch.
+reset does not touch. The decoded config survives one too, unless runtime edits
+left it dirty (§9).
 
 ---
 
@@ -306,13 +307,44 @@ cfg seq=1 len=1374 crc=0x1c291ca3 schema=1
 |---|---|
 | `cfg fs=unmounted` | LittleFS failed to mount; CFG_SET NACKs with `CFG_NACK_FLASH` |
 | `cfg none` | No valid `/config.bin` |
-| `seq` | Monotonic write counter — increments on every successful `CFG_SET` |
+| `seq` | Monotonic write counter — increments on every successful `CFG_SET` or `save` |
 | `len` | Payload byte count of the active blob |
 | `crc` | Payload CRC32 |
 | `schema` | Payload schema version of the decoded active config |
 | `decoded=0` | The stored blob is intact but did not decode (no active config) |
 | `rejected=<name>` | The most recent rejection, at boot or of a `CFG_SET` (`configDecodeErrorName`) |
 | `ignored=1` | `uncfg` set the stored config aside until power-off |
+| `dirty=1` | The active config holds edits `save` has not stored (§9) |
 
 This is a human-readable diagnostic, not a host-facing binary response. The binary
 path for reading the blob is `CFG_GET` (§5).
+
+---
+
+## 9. Runtime edits
+
+`set config.<path> <value>` edits a field of the active `MachineCfg` in RAM,
+`get config.<path>` reads one, and `save` stores them. Only fields in the
+generated `config/runtime_fields.h` can be edited. An accepted change sets dirty,
+shown by `cfg` as `dirty=1` and by `get cfgdirty`.
+
+**Effects.** A change to the following also does:
+
+| Field | Effect |
+|---|---|
+| An axis's `stepsPerUnit`, `invertDir`, `maxTravel`, `homing.pullOffDist`, `homing.parkPos`, `homing.indexPos` | The node's datum is void. X or Y puts both XY work offsets back to the config's `work`; Z unsets that head's work Z |
+| `buffer.*` | Republished to Core 1 |
+| `meshOn` | The mesh follows it, as `mesh on\|off` |
+
+**Save.** `save` loads `/config.bin` into a `JsonDocument`, writes every table
+field, encodes it back into the staging buffer, decodes that and requires each
+table field to equal RAM, then commits as in §3, without a soft reset. Everything
+else in the blob is kept, including fields the Pico does not decode. An optional
+field absent in RAM is removed. Values are preserved rather than bytes: the
+encoder writes a whole number as an integer and a double that fits a float32 as a
+float32, so saving an unedited config can change the file and its CRC.
+
+**Losing edits.** Unsaved edits end at power-off, at an accepted `CFG_SET`, and at
+a soft reset, which decodes `/config.bin` again if dirty and reapplies `meshOn`. A
+reset with nothing dirty touches neither. A reload that fails leaves no active
+config, as a failed boot does.

@@ -37,6 +37,10 @@ static inline uint32_t crc32Fold(uint32_t crc, const uint8_t* p, uint32_t n) {
     return crc;
 }
 
+uint32_t configStoreCrc(const uint8_t* p, uint32_t len) {
+    return ~crc32Fold(0xFFFFFFFFu, p, len);
+}
+
 // Validate a blob file: header well-formed, size consistent, payload CRC matches.
 static bool fileValid(const char* path, ConfigBlobHeader* out) {
     File f = LittleFS.open(path, "r");

@@ -229,6 +229,8 @@ const Key kKeys[] = {
     { "cfgerr",    [](const Snap& s, char* o, size_t n) {
         if (!(s.faults & F_CONFIG)) return KEY_NA;
         snprintf(o, n, "%s", machineCfgBlockName()); return KEY_OK; } },
+    // The active config holds edits `save` has not stored.
+    { "cfgdirty",  [](const Snap&, char* o, size_t n) { return fmtU(o, n, machineCfgDirty() ? 1 : 0); } },
     { "homing",    [](const Snap& s, char* o, size_t n) {
         return s.state == STATE_HOMING ? fmtU(o, n, s.homingReason) : KEY_NA; } },
     { "jogging",   [](const Snap& s, char* o, size_t n) {
@@ -354,7 +356,10 @@ void printKeys(const Snap& s, const uint8_t* idx, const char* const* names,
         char val[64];
         const char* v = val;
         if (idx[i] == KEY_UNKNOWN) {
-            v = "!";
+            // config.<path>: a field of the active config, by its blob path.
+            const bool field = lens[i] > 7 && strncmp(names[i], "config.", 7) == 0 && machineCfgValid() &&
+                               runtimeGet(machineCfg(), names[i] + 7, lens[i] - 7, val, sizeof(val));
+            if (!field) v = "!";
         } else {
             switch (kKeys[idx[i]].fn(s, val, sizeof(val))) {
                 case KEY_OK:     break;

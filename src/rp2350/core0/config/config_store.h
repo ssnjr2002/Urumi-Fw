@@ -65,6 +65,9 @@ uint8_t* configStageBuf();
 // bad state / size / flash failure — leaving the previous config active.
 bool configStoreCommit(uint32_t len, uint32_t crc, uint8_t* nack);
 
+// The CRC32 a commit wants, of `len` bytes at `p`.
+uint32_t configStoreCrc(const uint8_t* p, uint32_t len);
+
 // Copy up to `n` payload bytes starting at `off` of the active blob into `dst`.
 // Returns the number of bytes copied (0 when there is no valid config).
 uint32_t configStoreRead(uint32_t off, uint8_t* dst, uint32_t n);

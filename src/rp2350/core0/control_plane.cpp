@@ -85,6 +85,8 @@ static const Cmd kControllerCommands[] = {
     { "mesh",         cmdMesh,        K_WRITE },
     { "mount",        cmdMount,       K_SEQUENCE | K_IN_TOOL },
     { "unmount",      cmdUnmount,     K_SEQUENCE | K_IN_TOOL },
+    { "set",          cmdSet,         K_WRITE },
+    { "save",         cmdSave,        K_WRITE },
 };
 
 // Whole word `w` (`len` long) is `name`.

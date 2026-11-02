@@ -86,6 +86,8 @@ float framesWork(uint8_t k);
 bool framesSetWork(uint8_t k, float v);
 // XY back to the config's `work` block; every head's Z unset.
 void framesClearWork(void);
+// XY back to the config's `work` block alone.
+void framesResetWorkXY(void);
 // Clear head h's work Z for a new tool: 0 and unset until the next Z zero
 // (framesSetWork). framesWorkZSet reports it.
 void framesUnsetWorkZ(uint8_t h);

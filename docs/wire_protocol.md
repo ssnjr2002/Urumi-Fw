@@ -515,7 +515,9 @@ prefixed `0x`.
 | `wzero` | `[x] [y] [z\|z_switch]` | `ok` / `err usage\|bad_state\|no_head\|no_switch_height\|not_homed <axis>` | Controller command: the work offset becomes the selected tip's machine position on the named axes (bare: x, y, and z when a head's Z is bound). Z is per head and its 0 is the bed: `z` with the tip on the bed, `z_switch` with it on the head's switch, the work Z then the tip's less the switch's `probeSwitch.z` (`no_switch_height` without one). Volatile: reboot or a config commit restores the config's `work` block (XY) and unsets every head's Z. IDLE/PAUSED/ALARM, and JOB.TOOL_WAIT |
 | `wset` | `<axis> <v> …` | `ok` / `err usage\|bad_state\|no_head` | Controller command: set the work offset in machine units, per axis (x, y, z) |
 | `wclear` | — | `ok` / `err usage\|bad_state` | Controller command: the work offset's XY back to the config's `work` block; every head's Z unset until `wzero z` |
-| `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again. IDLE/PAUSED/ALARM. See "Bed mesh" |
+| `mesh` | `on\|off` | `ok` / `err usage\|bad_state` | Controller command: follow the bed mesh or not, from the next move started from rest; until reboot, when the config's `meshOn` applies again, or until `set` changes `meshOn` or a `reset` drops such an edit. IDLE/PAUSED/ALARM. See "Bed mesh" |
+| `set` | `config.<path> <value>` | `ok` / `err usage\|unconfigured\|busy\|bad_state\|no_field\|bad_value\|range\|precision\|absent` / `err rule <decode error>` | Controller command: edit one field of the active config in RAM (config_storage.md §9). `<path>` is the blob's own path, exact case: `machine.x.maxFeed`, `machine.heads.0.z.homing.seekFeed`, `toolProfiles.knife.cutFeed`. `<value>` is a number, `true`/`false`, or `<x> <y>` for a point. `no_field`: no such editable field on this machine; `precision`: more digits than a float32 keeps; `absent`: `probeSwitch.z` with no probe switch; a refused edit changes nothing. Takes effect at once. Setting the value already held does nothing. IDLE, or ALARM with nothing running and no estop latched |
+| `save` | — | `ok` / `err usage\|unconfigured\|busy\|bad_state\|flash\|decode\|too_big\|verify` | Controller command: store the active config's editable fields in `/config.bin`; `seq` moves, no soft reset. As `set` for state |
 | `mount` | `<head> <tool id>` | `ok` / `err usage\|unconfigured\|bad_state\|busy\|no_head\|no_tool\|mounted\|not_homed\|a_not_homed\|node <n> excluded\|mute\|<rpc>` | Controller command: `head` takes tool `<tool id>` (`tools.<name>.id`, from 1). A head holds one tool: `mounted` while it has any, `unmount` first. On a head with `unlockRange` it is a sequence (as `goto`, `jogging=3`): that head's Z parks, then its A turns to machine `unlockRange` + 1°, locking the holder; no turn when A is already outside the range; Z and A must be homed. Without one it only records the tool. RAM only: kept across jobs and soft resets, cleared at boot and by a config push. Separate from `select`. IDLE (refused with any fault but a latch) and JOB.TOOL_WAIT; `busy` while anything runs. A new tool clears the head's work Z until `wzero z`. `get tools` reports it. The mounted tool's `toolOffset` adds to its head's offset in the tip, so work positions and the readout follow it |
 | `unmount` | `<head>` | as `mount`, without `no_tool\|mounted` | Controller command, a sequence as `mount`: `head` has no tool (its work Z cleared), its Z parks, then with `unlockRange` its A turns to machine 0, unlocking the holder; each step skipped when already there. Admitted as `mount` |
 | `feed` | `<cut> <travel>` | `ok` / `err usage` | Override of the config's `feed.cutFallback` and `feed.travelDefault` (mm/s, each at least 1), held until reboot: cut for the curves, travel for the line to a `START` record's p0. A layer header's feed, then its tool's `cutFeed`, overrides the cut |
@@ -527,6 +529,10 @@ prefixed `0x`.
 asked, all read in one snapshot. In place of a value: `?` the read failed, `-`
 the key does not apply now, `!` the key is not recognised (older firmware). A
 request line is at most 255 characters.
+
+`config.<path>` reads one editable field of the active config, as `set` names it
+(exact case): `x,y` for a point, `-` for an absent optional field, `!` for no
+such field.
 
 A group name stands for its keys, expanded in place; group and key names share
 one namespace. A key asked for twice is printed once, where first asked, so
@@ -555,6 +561,7 @@ homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (wit
 seq=<s>       sequenceId      the running sequence, else the one that failed (with the SEQUENCE, HOMING or PROBE fault): 1=LEG 2=TRAVERSE 3=HOME 4=RECOVERY 5=GOTO 6=TOOL_CHANGE
 seqfail=<r>   sequenceFailWhy what refused a sequence after its ok, one token (e.g. soft_limit)  (only with the SEQUENCE fault)
 cfgerr=<r>    boot config     absent | fs | file | <decode error>  (only with the CONFIG fault)
+cfgdirty=<n>  config edits    1 while the active config holds edits `save` has not stored
 jogging=<j>   ringOwner       1=STEP 2=CONT 3=GOTO  (only while state=JOGGING; STEP = jog/line/bez, CONT = a continuous jog, GOTO = goto)
 homing=<h>    homingReason    0=LEG 1=WAIT  (only while state=HOMING; LEG = any leg runs, WAIT = none)
 probing=<p>   probingReason   probe session phase  (only while PROBING or with the PROBE fault)
@@ -670,6 +677,7 @@ Phase 2.
 | `dummy_leg` | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✓ |
 | `leg_abort` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `home_end` | ✗ | ✗ | ✗ | ✗ | between legs |
+| `set` / `save` | ✓ | ✗ | ✗ | ✓, no estop | ✗ |
 | `home` (every form) | ✓ | ✗ | ✗ | `LIMIT_LATCHED` only | ✗ |
 | `axes_map` / `slot_map` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `pause` | ✗ | ✓ | ✗ | ✗ | ✗ |

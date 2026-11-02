@@ -22,10 +22,15 @@ static void laserSet(bool on) {
 
 void framesClearWork(void) {
     if (!machineCfgValid()) return;
+    framesResetWorkXY();
+    for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) framesUnsetWorkZ(h);
+}
+
+void framesResetWorkXY(void) {
+    if (!machineCfgValid()) return;
     const MachineCfg& c = machineCfg();
     workX = c.work.x;
     workY = c.work.y;
-    for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) framesUnsetWorkZ(h);
 }
 
 void framesUnsetWorkZ(uint8_t h) {

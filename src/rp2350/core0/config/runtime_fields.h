@@ -9,8 +9,6 @@ enum RtEffect : unsigned {
     RT_FX_voidDatum = 1u << 0,
     RT_FX_applyMesh = 1u << 1,
     RT_FX_republishBuffer = 1u << 2,
-    RT_FX_refreshFrames = 1u << 3,
-    RT_FX_refreshTool = 1u << 4,
 };
 
 #define RT_NO_LIMIT NAN
@@ -49,17 +47,17 @@ enum RtEffect : unsigned {
     REQUIRED(RT_SCOPE_AXIS, "homing.budgetRevs", homing.budgetRevs, RT_TYPE_F32, 3.2f, RT_NO_LIMIT, false, RT_HOMING_ROTARY, 0) \
     REQUIRED(RT_SCOPE_AXIS, "homing.toleranceDeg", homing.toleranceDeg, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, true, RT_HOMING_ROTARY, 0) \
     REQUIRED(RT_SCOPE_AXIS, "homing.indexPos", homing.indexPos, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_ROTARY, RT_FX_voidDatum) \
-    REQUIRED(RT_SCOPE_HEAD, "xOffset", xOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, RT_FX_refreshFrames) \
-    REQUIRED(RT_SCOPE_HEAD, "yOffset", yOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, RT_FX_refreshFrames) \
+    REQUIRED(RT_SCOPE_HEAD, "xOffset", xOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
+    REQUIRED(RT_SCOPE_HEAD, "yOffset", yOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
     OPTIONAL(RT_SCOPE_HEAD, "probeSwitch", probeSwitch, hasProbeSwitch, RT_TYPE_POINT, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
     OPTIONAL(RT_SCOPE_HEAD, "probeSwitch.z", probeSwitch.z, probeSwitch.hasZ, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
     OPTIONAL(RT_SCOPE_HEAD, "unlockRange", unlockRange, hasUnlockRange, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
     OPTIONAL(RT_SCOPE_TOOL, "cutFeed", cutFeed, hasCutFeed, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
     OPTIONAL(RT_SCOPE_TOOL, "plungeFeed", plungeFeed, hasPlungeFeed, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
-    REQUIRED(RT_SCOPE_TOOL, "toolOffset.xOffset", toolOffset.xOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, RT_FX_refreshFrames) \
-    REQUIRED(RT_SCOPE_TOOL, "toolOffset.yOffset", toolOffset.yOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, RT_FX_refreshFrames) \
-    OPTIONAL(RT_SCOPE_TOOL, "offsetMm", offsetMm, hasOffsetMm, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, RT_FX_refreshTool) \
-    OPTIONAL(RT_SCOPE_TOOL, "aOffsetDeg", aOffsetDeg, hasAOffsetDeg, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, RT_FX_refreshTool) \
-    OPTIONAL(RT_SCOPE_TOOL, "aMaxDeg", aMaxDeg, hasAMaxDeg, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, RT_FX_refreshTool) \
-    REQUIRED(RT_SCOPE_TOOL, "cornerAngleDeg", cornerAngleDeg, RT_TYPE_F32, 0.0f, 180.0f, false, RT_HOMING_NONE, RT_FX_refreshTool) \
+    REQUIRED(RT_SCOPE_TOOL, "toolOffset.xOffset", toolOffset.xOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
+    REQUIRED(RT_SCOPE_TOOL, "toolOffset.yOffset", toolOffset.yOffset, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
+    OPTIONAL(RT_SCOPE_TOOL, "offsetMm", offsetMm, hasOffsetMm, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
+    OPTIONAL(RT_SCOPE_TOOL, "aOffsetDeg", aOffsetDeg, hasAOffsetDeg, RT_TYPE_F32, RT_NO_LIMIT, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
+    OPTIONAL(RT_SCOPE_TOOL, "aMaxDeg", aMaxDeg, hasAMaxDeg, RT_TYPE_F32, 0.0f, RT_NO_LIMIT, false, RT_HOMING_NONE, 0) \
+    REQUIRED(RT_SCOPE_TOOL, "cornerAngleDeg", cornerAngleDeg, RT_TYPE_F32, 0.0f, 180.0f, false, RT_HOMING_NONE, 0) \
 

@@ -30,8 +30,6 @@ export const RUNTIME_EFFECTS = [
     "voidDatum",
     "applyMesh",
     "republishBuffer",
-    "refreshFrames",
-    "refreshTool",
 ] as const;
 
 export type RuntimeEffect = (typeof RUNTIME_EFFECTS)[number];
@@ -109,20 +107,20 @@ export const RUNTIME_FIELDS: readonly RuntimeField[] = [
     axis("homing.toleranceDeg", { ...POSITIVE, homing: "rotary" }),
     axis("homing.indexPos", { homing: "rotary", effects: ["voidDatum"] }),
 
-    head("xOffset", { effects: ["refreshFrames"] }),
-    head("yOffset", { effects: ["refreshFrames"] }),
+    head("xOffset"),
+    head("yOffset"),
     head("probeSwitch", { type: "point", has: "hasProbeSwitch" }),
     head("probeSwitch.z", { ...NON_NEGATIVE, has: "probeSwitch.hasZ" }),
     head("unlockRange", { ...NON_NEGATIVE, has: "hasUnlockRange" }),
 
     tool("cutFeed", { ...NON_NEGATIVE, has: "hasCutFeed" }),
     tool("plungeFeed", { ...NON_NEGATIVE, has: "hasPlungeFeed" }),
-    tool("toolOffset.xOffset", { effects: ["refreshFrames"] }),
-    tool("toolOffset.yOffset", { effects: ["refreshFrames"] }),
-    tool("offsetMm", { ...NON_NEGATIVE, has: "hasOffsetMm", effects: ["refreshTool"] }),
-    tool("aOffsetDeg", { has: "hasAOffsetDeg", effects: ["refreshTool"] }),
-    tool("aMaxDeg", { ...NON_NEGATIVE, has: "hasAMaxDeg", effects: ["refreshTool"] }),
-    tool("cornerAngleDeg", { min: 0, max: 180, effects: ["refreshTool"] }),
+    tool("toolOffset.xOffset"),
+    tool("toolOffset.yOffset"),
+    tool("offsetMm", { ...NON_NEGATIVE, has: "hasOffsetMm" }),
+    tool("aOffsetDeg", { has: "hasAOffsetDeg" }),
+    tool("aMaxDeg", { ...NON_NEGATIVE, has: "hasAMaxDeg" }),
+    tool("cornerAngleDeg", { min: 0, max: 180 }),
 ];
 
 /** A row applied to one axis, head or tool of a config. */

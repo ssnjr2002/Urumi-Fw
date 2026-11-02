@@ -148,6 +148,13 @@ void loop() {
     serialRxLen = 0;
     dataPlaneReset();
 
+    // 5c. UNSAVED CONFIG EDITS GO. The transfer state is gone, so the staging
+    // buffer is free.
+    if (machineCfgDirty()) {
+        machineCfgLoad();
+        if (machineCfgValid()) meshEnable(machineCfg().meshOn);
+    }
+
     // 6. Release Core 1 to start working again
     soft_reset_requested = false;
 
