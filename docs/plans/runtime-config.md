@@ -178,7 +178,32 @@ satisfied. The next boot loads the saved values.
 * Checks: `pnpm typecheck`, `pnpm test` in `web/`; `pio run -e pico` with the
   header included.
 
-**Status:** not started.
+**Status:** ready to merge.
+
+**Outcome**
+
+* Deviations: paths are typed per scope (`PathOf<MachineConfig>`,
+  `PathOf<AxisConfig>`, `PathOf<ToolHead>`, `PathOf<ToolProfile>`), not by one
+  `PathOf<ControllerConfig>`, whose `toolProfiles` record would accept any tool
+  field. `runtimeValues` builds the full blob path from the scope. The branch
+  also renames `PipelineConfig` to `ControllerConfig`.
+* Added files: `web/src/machine/runtimeHeader.ts` holds the header renderer, so
+  the test can call it without running the script; the header is
+  `src/rp2350/core0/config/runtime_fields.h`.
+* Behaviour: `validate.ts` now requires table fields to be finite and fit a
+  float32, and checks fields it used to pass through (`startFeed`,
+  `seekScaler`, the distances). Range errors always end in `(got x)`. Error
+  messages keep the config file's spelling (`tools.knife`, `heads[0]`).
+* For branch 3: `RUNTIME_FIELDS(REQUIRED, OPTIONAL)` is the X-macro, and
+  `CfgTool.name` the tool's address. Effect names (`voidDatum`, `applyMesh`,
+  `republishBuffer`, `refreshFrames`, `refreshTool`) and which rows trigger them
+  are provisional: `voidDatum` on `pullOffDist` and `parkPos` especially. The
+  audit may change them by regenerating. `voidDatum` is axis-scoped, replacing
+  the four per-axis names. Table limits apply to `set` only; at load the Pico's
+  rules still allow values the table refuses (`budgetRevs` below 3.2).
+* Out of scope: `feature/park-speed` overlaps `schema.ts`, `validate.ts`,
+  `load.ts` and `config_decode.{h,cpp}`; if it merges, `parkAccelScale` needs
+  a row. Not run on the machine: nothing on the Pico reads the table yet.
 
 ## Branch 3: `feature/runtime-config`
 
