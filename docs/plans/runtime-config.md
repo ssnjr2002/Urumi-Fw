@@ -112,7 +112,7 @@ satisfied. The next boot loads the saved values.
 * Depends on: nothing.
 * Checks: `pio run -e pico`, `pio test -e native`.
 
-**Status:** ready to merge.
+**Status:** done, merged to `main`. Unblocks branch 2.
 
 **Outcome**
 
