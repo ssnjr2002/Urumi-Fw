@@ -249,7 +249,7 @@ satisfied. The next boot loads the saved values.
   `voidDatum` field and confirm the datum is void; edit, `reset`, confirm the
   saved value is back; host `CFG_GET` after a save loads in the web host.
 
-**Status:** ready to merge. Unblocks branch 4.
+**Status:** done, merged to `main`. Unblocks branch 4.
 
 **Outcome**
 
