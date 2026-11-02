@@ -11,16 +11,14 @@ satisfied. The next boot loads the saved values.
   count, tool ids and peripherals stay host-only (`CFG_SET`).
 * **One decoded config in RAM, plus a dirty flag.** Every consumer reads it;
   `set` edits it in place. Dirty is set by an accepted `set` and cleared by
-  `save` and `revert`; `cfg` and status show it.
-* **`revert` restores everything; there is no per-field or undo form.** It
-  decodes `/config.bin` again and compares each table field with RAM. The
-  gates of every differing field's effects must allow the current state, or
-  the whole revert is refused. Then all fields are restored at once and each
-  triggered effect runs once. Rules do not run: the stored config already
-  passed them, and restoring one field at a time could fail on a mix of old
-  and new values.
-* **Unsaved edits are lost at power-off.** Whether they survive a soft reset
-  is decided in branch 3's Read (see Open questions).
+  `save`, an adopted `CFG_SET` and the reload below; `cfg` and the `cfgdirty`
+  key of `get` show it. The binary `STATUS_RSP` does not carry it.
+* **There is no `revert`; `reset` restores the saved config.** Unsaved edits
+  are lost at power-off and at a soft reset. If dirty, the soft reset decodes
+  `/config.bin` again, republishes the buffer times and reapplies `meshOn`
+  before the boot sequence. A clean reset touches neither flash nor a mesh
+  state set by `mesh on/off`. A failed reload leaves no valid config, as a
+  failed boot does. One bad value is undone by another `set`, with no rehome.
 * **The field table is host data, the Pico's copy is generated.**
   `web/src/machine/runtime.ts` holds `RUNTIME_FIELDS`: path, C++ member, `has`
   member, type, min/max, homing kind, effect names. A row is a template over
@@ -61,24 +59,35 @@ satisfied. The next boot loads the saved values.
   value (0, or `cycle`'s default), so consumers ignore the flag. Save reads it;
   an accepted `set` sets it, and rollback restores it. A point is set whole:
   `set` on an absent point must supply both coordinates at once.
+* **`set` and `save` share one state check:** `machineAtRest()`,
+  `machineContext == CTX_IDLE` and no estop latched. That is IDLE, or ALARM
+  with nothing running. A paused job and JOB.TOOL_WAIT are refused, and no
+  field is editable while running.
 * **Effects are organised the same way.** An effect names the fields that
-  trigger it, a gate (`allowed(state)`) and an `apply`. The table's effect
-  names become each effect's trigger set. A field with no effects is live.
-* **`set` pipeline:** range → gate (every triggered effect must allow the
-  current state) → write into `live` → all rules (on failure restore the old
-  value and reject) → effects (each once). A rejected change
-  leaves no trace; effects follow only an accepted one.
+  trigger it and an `apply`. The table's effect names become each effect's
+  trigger set. A field with no effects is live: consumers read the struct, and
+  the planner's latches are taken again at the next ring reset. There are
+  three:
+  * `voidDatum`: `originInvalidate` on the axis's node, and its work offset
+    goes. Z unsets that head's work Z; X or Y returns both to the config's
+    `work`, since they are zeroed together; A has no work offset.
+  * `republishBuffer`: `bufferQueueS` and `bufferIdleMs`.
+  * `applyMesh`: `meshEnable(meshOn)`.
+* **`set` pipeline:** state check → range → write into `live` → all rules (on
+  failure restore the old value and reject) → effects (each once). A rejected
+  change leaves no trace; effects follow only an accepted one.
 * **No copy of the struct on `set`: write, check, roll back.** Only the one
   field's old value is kept, on the stack, and restored if a rule fails.
   Rules read the struct as at load, with no proposed-value plumbing. Safe
   because only Core 0 reads the config (`machineCfg()` has no caller under
   `src/rp2350/core1`) and `set` runs to completion in Core 0's loop.
-* **Save patches the stored blob, every table field, no diff.** Load
-  `/config.bin` into an unfiltered `JsonDocument`; write every
+* **Save re-encodes the stored blob with ArduinoJson, every table field, no
+  diff.** Load `/config.bin` into an unfiltered `JsonDocument`; write every
   `RUNTIME_FIELDS` field at its path; `serializeMsgPack` into the staging
   buffer; decode it again and require it to equal the RAM config;
   `configStoreCommit`; clear dirty. No soft reset, no effects (nothing in use
-  changes). Write-back rules:
+  changes). The result is value-identical, not byte-identical: ArduinoJson
+  writes a double that fits a float32 as a float32. Write-back rules:
   * Only table fields are written; host-only and non-editable fields are
     untouched.
   * Absent stays absent: an optional field is written only when its `has`
@@ -100,11 +109,9 @@ satisfied. The next boot loads the saved values.
     if they are table fields. None is today: `chamberOffsets` is not a row. A
     test runs the fit check over every table field in `DEFAULTS` and the tool
     presets.
-* **Save is allowed in IDLE/ALARM only**, like `CFG_SET` (flash writes stall
-  XIP). `set` states are decided per effect gate.
 * **`CFG_SET` keeps its full soft reset** and discards `live` edits. The host
-  should warn when the status shows dirty before pushing. After a save `seq`
-  moves; the host pulls again.
+  should warn when `cfgdirty` is set before pushing. After a save `seq` moves;
+  the host pulls again.
 
 ## Branch 1: `refactor/config-validate`
 
@@ -211,32 +218,38 @@ satisfied. The next boot loads the saved values.
 
 * Type: feature.
 * Purpose: the Pico side.
-  * Dirty flag in `machine_cfg.{h,cpp}`.
-  * Effect table: `voidDatumX/Y/Z/A`, `applyMesh`, tool and frame refreshes,
-    with gates. Which fields trigger what is in the field table.
+  * Dirty flag in `machine_cfg.{h,cpp}`, and the reload at a dirty soft reset.
+  * Effects: `voidDatum`, `republishBuffer`, `applyMesh`. `refreshFrames` and
+    `refreshTool` leave `RUNTIME_FIELDS` and the regenerated header: at rest
+    they have nothing to do.
   * The `set` pipeline with rollback; the float-fit check on typed values.
+    New files: `config/runtime_edit.{h,cpp}` (pipeline and write-back, free of
+    Arduino I/O), `cmd/config.cpp` (handlers and effects).
   * Rules the host has and the Pico lacks, so `set` cannot save a config the
     host refuses: `latchFeed < seekFeed`, `seekFeed <= maxFeed`,
-    `sweepFeed <= maxFeed`.
-  * Text commands `set config.<path> <value>`, `get config.<path>`,
-    `revert` (decode from flash), `save`; `cfg` shows dirty.
-    `<path>` is the table's exact blob path, camelCase included; command words
-    stay lowercase, so `docs/wire_protocol.md` changes to say so.
+    `sweepFeed <= maxFeed`. A `maxFeed` of 0 is uncapped.
+  * Text commands `set config.<path> <value>`, `get config.<path>`, `save`;
+    `cfg` shows dirty, as does `get cfgdirty`. `set` and `save` are controller
+    commands, refused without a config. `<path>` is the table's exact blob
+    path, camelCase included; command words stay lowercase, so
+    `docs/wire_protocol.md` changes to say so.
   * Save path: unfiltered load, write every table field (shortest
     round-trip floats, integers as integers, absent removed), encode,
-    re-decode check, commit without the soft reset (a sibling of the
-    `CFG_SET` commit in `data_plane.cpp`).
-  * Docs: `docs/config_storage.md` (save path), `docs/wire_protocol.md`
-    (commands, dirty in status).
+    re-decode check, commit without the soft reset.
+  * Docs: `docs/config_storage.md` (save path, reload), `docs/wire_protocol.md`
+    (commands, `cfgdirty`, `reset`).
+* Files also touched: `web/src/machine/runtime.ts`,
+  `src/rp2350/core0/config/runtime_fields.h`, `config_decode.cpp`,
+  `core0.cpp`, `control_plane.cpp`, `cmd/query.cpp`, `cmd/get.cpp`.
 * Depends on: branches 1 and 2.
-* Checks: `pio run -e pico`, `pio test -e native` (pipeline and patch
-  round-trip under native where they are free of Arduino I/O; a save of an
-  unedited config leaves the blob byte-identical). Human: set a
-  position and use it, save, power-cycle, confirm it loaded; set a
-  `rehome` field and confirm the datum is void; host `CFG_GET` after a save
-  loads in the web host.
+* Checks: `pio run -e pico`, `pio test -e native`, `pnpm typecheck`,
+  `pnpm test` (pipeline and save round-trip under native where they are free
+  of Arduino I/O; a save of an unedited config decodes to equal values). Human:
+  set a position and use it, save, power-cycle, confirm it loaded; set a
+  `voidDatum` field and confirm the datum is void; edit, `reset`, confirm the
+  saved value is back; host `CFG_GET` after a save loads in the web host.
 
-**Status:** not started.
+**Status:** in progress.
 
 ## Branch 4 (optional): `feature/runtime-config-web`
 
@@ -244,8 +257,8 @@ satisfied. The next boot loads the saved values.
 
 * Type: feature.
 * Purpose: a web panel built from `RUNTIME_FIELDS`: editable fields, ranges,
-  "voids homing" badges, dirty indicator, save/revert, warn before `CFG_SET`
-  while dirty, pull after a save.
+  "voids homing" badges, dirty indicator, save, each field's saved value to
+  set back, warn before `CFG_SET` or `reset` while dirty, pull after a save.
 * Files: `web/src/` (settled in Read).
 * Depends on: branch 3.
 * Checks: `pnpm typecheck`, `pnpm test`.
@@ -254,25 +267,7 @@ satisfied. The next boot loads the saved values.
 
 ## Open questions
 
-* Consumers that copy config values would not see a `set` until they copy
-  again. Branch 3's Read audits every `machineCfg()` caller and lists which
-  need a refresh effect. Core 1 never reads the struct; Core 0 publishes
-  copies to `shared_state`, known so far:
-  * `bufferQueueS` / `bufferIdleMs` (buffer times), published at config
-    load or adopt (`src/rp2350/core0/config/machine_cfg.cpp:18`), read by
-    `core1/emit/follower.cpp:83`. Needs a republish effect; each is one
-    32-bit write.
-  * `plannerSpm[4]` / `plannerTurnQ32` (`stepsPerUnit`, `invertDir`),
-    `plannerMesh` (`meshOn`), `plannerBlade` (the mounted tool's blade
-    offset): latched at each planner ring reset
-    (`src/rp2350/ipc/shared_state.h:203`). Picked up at the next reset,
-    provided their gates allow `set` only while `!plannerActive`.
-  * Feeds and accels reach Core 1 already applied by Core 0's planner;
-    audit `planner/queue.cpp` for copies of them.
-* Do unsaved edits survive a soft reset, or does it revert `live`?
-* Which effects allow `set` while RUNNING (feed-override style), if any.
-  Default: IDLE/ALARM.
 * Effects that need the old value (move a datum by the delta instead of
-  voiding it): leave `apply(before, live)` room, void for now.
+  voiding it): void for now.
 * Peak RAM of the unfiltered `JsonDocument` for the largest real config,
   measured in branch 3.
