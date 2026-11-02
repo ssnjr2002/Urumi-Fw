@@ -22,17 +22,33 @@ satisfied. The next boot loads the saved values.
 * **Unsaved edits are lost at power-off.** Whether they survive a soft reset
   is decided in branch 3's Read (see Open questions).
 * **The field table is host data, the Pico's copy is generated.**
-  `web/src/machine/runtime.ts` holds `RUNTIME_FIELDS`: path, C++ member, type,
-  min/max, effect names. Paths are typed against `MachineConfig`
-  (`PathOf<MachineConfig>`), so `pnpm typecheck` catches a wrong path; the
-  generated header names the C++ member, so `pio run -e pico` catches a wrong
+  `web/src/machine/runtime.ts` holds `RUNTIME_FIELDS`: path, C++ member, `has`
+  member, type, min/max, homing kind, effect names. A row is a template over
+  its scope (machine, axis, head or tool), not one concrete field. A path is
+  the blob's own path, `machine.` included: `machine.x.maxFeed`,
+  `machine.heads.0.z.maxFeed`, `toolProfiles.knife.cutFeed`. Paths are typed
+  against `ControllerConfig` (`PathOf<ControllerConfig>`), so `pnpm typecheck`
+  catches a wrong path; the generated header names the C++ member, and a
+  compile-time check over its rows makes `pio run -e pico` catch a wrong
   member. The web UI and `validate.ts` read the same ranges.
+* **Row details.**
+  * A homing row is marked linear, rotary or both. An axis is in one of three
+    states (no homing, linear, rotary), read from `homing.present` and
+    `rotary`; one without homing rejects every homing row.
+  * A point (`machine.positions.park`, `.load`, `.mount`, a head's
+    `probeSwitch`) is one row of type `point`, set as
+    `set config.machine.positions.park 100 200`. `probeSwitch.z` is its own
+    optional row; `toolOffset` is two rows, being always present.
+  * `min` and `max` are optional and inclusive; `minExclusive` covers fields
+    that must be above a bound. Checks across fields stay rules.
 * **The generated header is committed.** `pio run` never needs pnpm. A vitest
   test regenerates it in memory and fails if it differs from the committed
-  file, so `pnpm test` (Agent Scope for `web/`) is the up-to-date check.
-* **Tools are addressed by id.** `toolProfiles` is keyed by name, but each
-  entry carries its `id`; the save path finds the entry by scanning for it.
-  Rows use a tools-by-id form, e.g. `set tool.3.cutFeed 25`.
+  file, ignoring line endings (`core.autocrlf` checks it out as CRLF), so
+  `pnpm test` (Agent Scope for `web/`) is the up-to-date check.
+* **Tools are addressed by name**, as `toolProfiles` keys them:
+  `set config.toolProfiles.knife.cutFeed 25`. `CfgTool` keeps its blob key in
+  `char name[16]`, and parse rejects a longer one. The id stays for the wire
+  (`configTool`).
 * **Validation is organised by rule, not by field.** Parse and validate are
   split: `configParse` builds the struct, `configValidate` runs rules on it.
   A rule is a plain function over `MachineCfg`. Every rule runs at load and
@@ -80,10 +96,10 @@ satisfied. The next boot loads the saved values.
   * Values from the config file that do not fit are rejected by `validate.ts`
     ("more precision than the controller keeps"); `set` rejects typed text
     the same way.
-  * Values the host computes are wrapped in `f32()` where they are computed
-    (e.g. the revolver's `chamberOffsets`, `web/src/machine/tools.ts:53`, if
-    that field becomes a row). A test runs the fit check over every table
-    field in `DEFAULTS` and the tool presets.
+  * Values the host computes are wrapped in `f32()` where they are computed,
+    if they are table fields. None is today: `chamberOffsets` is not a row. A
+    test runs the fit check over every table field in `DEFAULTS` and the tool
+    presets.
 * **Save is allowed in IDLE/ALARM only**, like `CFG_SET` (flash writes stall
   XIP). `set` states are decided per effect gate.
 * **`CFG_SET` keeps its full soft reset** and discards `live` edits. The host
@@ -139,12 +155,25 @@ satisfied. The next boot loads the saved values.
   * A vitest test that the committed header is current.
   * `validate.ts` uses the table's ranges for those fields, and rejects a
     table field that does not fit a float32.
-  * `web/src/machine/f32.ts`; computed defaults on table fields wrapped in
-    it; a test of the fit over `DEFAULTS` and the tool presets.
-* Starting rows: positions (park, load, mount), feeds and accels, jog feeds,
-  `zClearance`, buffer times, `meshOn`, tool feeds and offsets, homing
-  parameters, `stepsPerUnit`, `invertDir`, `maxTravel`. The list is settled
-  with the user in Read.
+  * `web/src/machine/f32.ts`; a test of the fit over `DEFAULTS` and the tool
+    presets.
+  * `CfgTool.name`, decoded from the `toolProfiles` key.
+* Starting rows:
+  * Machine: `positions.*`, `feed.*`, `buffer.*`, `zClearance`, `maxOvercut`,
+    `meshOn`.
+  * Axis: `stepsPerUnit`, `invertDir`, `maxTravel`, `maxFeed`, `maxAccel`,
+    `jogFeed`, `jogFeedUnhomed`.
+  * Linear homing: `startFeed`, `seekFeed`, `latchFeed`, `rampSteps`,
+    `seekScaler`, `backoffDist`, `pullOffDist`, `parkPos`.
+  * Rotary homing: `startFeed`, `sweepFeed`, `rampSteps`, `budgetRevs`,
+    `toleranceDeg`, `indexPos`.
+  * Head: `xOffset`, `yOffset`, `probeSwitch`, `unlockRange`.
+  * Tool: `cutFeed`, `plungeFeed`, `toolOffset`, `offsetMm`, `aOffsetDeg`,
+    `aMaxDeg`, `cornerAngleDeg`.
+  * Not rows: `softLimits`, `jogUnhomed`, `seekPositive`, `homing.cycle`,
+    `work`, `chamberOffsets`, `power.*`.
+* Files also touched: `src/rp2350/core0/config/config_decode.{h,cpp}` (name,
+  compile-time check), `web/package.json`.
 * Depends on: branch 1 (the header names the reshaped members).
 * Checks: `pnpm typecheck`, `pnpm test` in `web/`; `pio run -e pico` with the
   header included.
@@ -161,9 +190,12 @@ satisfied. The next boot loads the saved values.
   * Effect table: `voidDatumX/Y/Z/A`, `applyMesh`, tool and frame refreshes,
     with gates. Which fields trigger what is in the field table.
   * The `set` pipeline with rollback; the float-fit check on typed values.
+  * Rules the host has and the Pico lacks, so `set` cannot save a config the
+    host refuses: `latchFeed < seekFeed`, `seekFeed <= maxFeed`,
+    `sweepFeed <= maxFeed`.
   * Text commands `set config.<path> <value>`, `get config.<path>`,
     `revert` (decode from flash), `save`; `cfg` shows dirty.
-    `<path>` is the table's exact path, camelCase included; command words
+    `<path>` is the table's exact blob path, camelCase included; command words
     stay lowercase, so `docs/wire_protocol.md` changes to say so.
   * Save path: unfiltered load, write every table field (shortest
     round-trip floats, integers as integers, absent removed), encode,
