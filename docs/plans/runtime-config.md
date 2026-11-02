@@ -35,16 +35,22 @@ satisfied. The next boot loads the saved values.
   Rows use a tools-by-id form, e.g. `set tool.3.cutFeed 25`.
 * **Validation is organised by rule, not by field.** Parse and validate are
   split: `configParse` builds the struct, `configValidate` runs rules on it.
-  A rule is a plain function over `MachineCfg` with the set of fields it
-  reads. At load every rule runs; on `set`, only the rules that read the
-  changed field. Per-field min/max come from the generated table and run
-  first.
+  A rule is a plain function over `MachineCfg`. Every rule runs at load and
+  on each `set`: the config was already valid, so only the new value can fail
+  one. Per-field min/max come from the generated table and run first.
+* **`MachineCfg` follows the blob.** Every decoded field has the blob's name
+  and nesting, except that `toolProfiles` is an array found by id, the
+  `machine` wrapper and `v` are not mirrored, and `homing.kind` is not stored.
+* **Optional fields carry a `has` flag.** The member still holds the resolved
+  value (0, or `cycle`'s default), so consumers ignore the flag. Save reads it;
+  an accepted `set` sets it, and rollback restores it. A point is set whole:
+  `set` on an absent point must supply both coordinates at once.
 * **Effects are organised the same way.** An effect names the fields that
   trigger it, a gate (`allowed(state)`) and an `apply`. The table's effect
   names become each effect's trigger set. A field with no effects is live.
 * **`set` pipeline:** range → gate (every triggered effect must allow the
-  current state) → write into `live` → rules that read the field (on failure
-  restore the old value and reject) → effects (each once). A rejected change
+  current state) → write into `live` → all rules (on failure restore the old
+  value and reject) → effects (each once). A rejected change
   leaves no trace; effects follow only an accepted one.
 * **No copy of the struct on `set`: write, check, roll back.** Only the one
   field's old value is kept, on the stack, and restored if a rule fails.
@@ -60,8 +66,7 @@ satisfied. The next boot loads the saved values.
   * Only table fields are written; host-only and non-editable fields are
     untouched.
   * Absent stays absent: an optional field is written only when its `has`
-    flag is set and removed otherwise. The struct holds no filled-in
-    defaults (`cycle` included).
+    flag is set and removed otherwise.
   * A whole number is written as an integer, as the host wrote it.
   * A float is written as its shortest round-trip decimal, as a double:
     `snprintf("%.*g")` at increasing precision until `strtof` gives the same
@@ -93,21 +98,33 @@ satisfied. The next boot loads the saved values.
   for each existing fixture.
 * Purpose: split `configDecode` (`src/rp2350/core0/config/config_decode.cpp`)
   into `configParse` and `configValidate(const MachineCfg&)`, with the
-  cross-field checks as a rule table (function + reads set). Shape the struct
-  where the field table needs it to follow the blob, e.g. `positions.{park,
+  cross-field checks as an ordered rule table. Shape the struct to follow the
+  blob, e.g. `positions.{park,
   load,mount}` nested as in the blob instead of flat in `MachineCfg`
-  (`config_decode.h:136`). Optional fields keep their absence: `cycle` gets a
-  `has` flag and its default moves to its consumer.
+  (`config_decode.h:136`). Optional fields keep their absence: `cycle`,
+  `unlockRange` and the tool's optional scalars get `has` flags.
 * Files:
   * `src/rp2350/core0/config/config_decode.{h,cpp}`
   * `src/rp2350/core0/config/machine_cfg.{h,cpp}`
   * consumers of renamed members (`machineCfg()` callers under
-    `src/rp2350/core0/`, mostly `controller/` and `ops/`)
+    `src/rp2350/core0/`: `controller/`, `ops/`, `planner/queue.cpp`)
   * `test/test_config/test_config_decode.cpp`
 * Depends on: nothing.
 * Checks: `pio run -e pico`, `pio test -e native`.
 
-**Status:** not started.
+**Status:** ready to merge.
+
+**Outcome**
+
+* Deviations: `set` runs every rule, so rules have no reads set. `MachineCfg`
+  follows the blob in full, not only where the table needs it. `cycle` keeps
+  its resolved value beside `hasCycle`, so its default stays in the parser.
+* `unlockRange` moved from parse to a rule. Checks guarding narrowing or
+  reading raw blob data (`homing.kind`, laser node, counts) stay in parse.
+* For later branches: `configParse`, `configValidate`; has flags `hasCycle`,
+  `hasUnlockRange`, `hasAMaxDeg`, `hasAOffsetDeg`, `hasOffsetMm`, `hasCutFeed`,
+  `hasPlungeFeed`, `hasDutyLimits`, `probeSwitch.hasZ`. Branch 3 needs a form
+  of `set` that supplies a whole point when it is absent.
 
 ## Branch 2: `feature/runtime-fields`
 
