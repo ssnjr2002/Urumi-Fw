@@ -1,7 +1,7 @@
 /**
  * validate.test.ts — one describe() per rule in validate.ts.
  *
- * Rules are independent functions over a whole PipelineConfig, so each is
+ * Rules are independent functions over a whole ControllerConfig, so each is
  * tested against a minimal hand-built config rather than a fixture machine.
  * Adding a rule should mean adding a describe() here and nothing else.
  *
@@ -19,7 +19,7 @@ import {
     toolHead,
     toolProfile,
     type MachineConfig,
-    type PipelineConfig,
+    type ControllerConfig,
     ToolType,
 } from "../../../src/machine/schema.js";
 import { KNIFE } from "../../../src/machine/tools.js";
@@ -27,7 +27,7 @@ import { validateConfig } from "../../../src/machine/json/validate.js";
 import { loadConfig, parseConfig } from "../../../src/machine/json/load.js";
 
 /** A sane baseline: capped X/Y, distinct node ids, one head. */
-function cfg(machine?: Partial<Parameters<typeof machineConfig>[3]>): PipelineConfig {
+function cfg(machine?: Partial<Parameters<typeof machineConfig>[3]>): ControllerConfig {
     const m = machineConfig(
         axisConfig(busNode(1), 160, { maxFeed: 80, maxAccel: 1000 }),
         axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
@@ -43,8 +43,8 @@ function cfg(machine?: Partial<Parameters<typeof machineConfig>[3]>): PipelineCo
     return { machine: m, quality: qualityConfig(), toolProfiles: {} };
 }
 
-const errors = (c: PipelineConfig) => validateConfig(c).errors;
-const warnings = (c: PipelineConfig) => validateConfig(c).warnings;
+const errors = (c: ControllerConfig) => validateConfig(c).errors;
+const warnings = (c: ControllerConfig) => validateConfig(c).warnings;
 
 describe("baseline", () => {
     it("a sane config produces no errors and no warnings", () => {
@@ -53,7 +53,7 @@ describe("baseline", () => {
 });
 
 describe("rule: powerCoherent", () => {
-    const knife = (power: object, machine?: Partial<MachineConfig>): PipelineConfig => {
+    const knife = (power: object, machine?: Partial<MachineConfig>): ControllerConfig => {
         const c = cfg(machine);
         return { ...c, toolProfiles: { knife: toolProfile("knife", { ...KNIFE, id: 1, power } as any) } };
     };
@@ -88,7 +88,7 @@ describe("rule: powerCoherent", () => {
 describe("rule: nonNegativeCeilings", () => {
     it("errors on a negative axis ceiling", () => {
         const c = cfg();
-        const bad: PipelineConfig = {
+        const bad: ControllerConfig = {
             ...c,
             machine: { ...c.machine, x: { ...c.machine.x, maxAccel: -1 } },
         };
@@ -97,7 +97,7 @@ describe("rule: nonNegativeCeilings", () => {
 
     it("0 is legal (uncapped), not an error", () => {
         const c = cfg();
-        const zero: PipelineConfig = {
+        const zero: ControllerConfig = {
             ...c,
             machine: { ...c.machine, x: { ...c.machine.x, maxAccel: 0 } },
         };
@@ -117,7 +117,7 @@ describe("rule: nonNegativeTargets", () => {
 
     it("errors on a negative tool target feed", () => {
         const c = cfg();
-        const bad: PipelineConfig = {
+        const bad: ControllerConfig = {
             ...c,
             toolProfiles: { knife: toolProfile("knife", { cutFeed: -1 }) },
         };
@@ -128,7 +128,7 @@ describe("rule: nonNegativeTargets", () => {
 describe("rule: xyMustBeCapped", () => {
     it("warns when X/Y feed is uncapped", () => {
         const c = cfg();
-        const un: PipelineConfig = {
+        const un: ControllerConfig = {
             ...c,
             machine: { ...c.machine, y: { ...c.machine.y, maxFeed: 0 } },
         };
@@ -143,7 +143,7 @@ describe("rule: xyMustBeCapped", () => {
 describe("rule: targetsUnderCeilings", () => {
     it("warns when a tool cut feed exceeds the XY ceiling", () => {
         const c = cfg();
-        const over: PipelineConfig = {
+        const over: ControllerConfig = {
             ...c,
             toolProfiles: { knife: toolProfile("knife", { cutFeed: 500 }) },
         };
@@ -156,7 +156,7 @@ describe("rule: targetsUnderCeilings", () => {
         // plungeFallback 20 > Z maxFeed 10 — the exact latent bug the value
         // model surfaced in the bench config.
         const c = cfg({ feed: { cutFallback: 80, travelDefault: 80, plungeFallback: 20, liftFeed: 20 } });
-        const withTool: PipelineConfig = { ...c, toolProfiles: { knife: toolProfile("knife") } };
+        const withTool: ControllerConfig = { ...c, toolProfiles: { knife: toolProfile("knife") } };
         expect(warnings(withTool)).toContain(
             "tools.knife.plungeFeed 20 exceeds axis ceiling 10 (clamped)",
         );
@@ -164,7 +164,7 @@ describe("rule: targetsUnderCeilings", () => {
 
     it("an uncapped (0) ceiling never triggers the warning", () => {
         const c = cfg();
-        const uncapped: PipelineConfig = {
+        const uncapped: ControllerConfig = {
             ...c,
             machine: {
                 ...c.machine,

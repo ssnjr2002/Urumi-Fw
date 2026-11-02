@@ -686,9 +686,9 @@ export function qualityConfig(overrides?: Partial<QualityConfig>): QualityConfig
     return { ...DEFAULTS.quality, ...overrides };
 }
 
-// ── pipeline config ──────────────────────────────────────────────────────────
+// ── controller config ────────────────────────────────────────────────────────
 
-export interface PipelineConfig {
+export interface ControllerConfig {
     readonly machine: MachineConfig;
     readonly quality: QualityConfig;
     readonly toolProfiles: Readonly<Record<string, ToolProfile>>;

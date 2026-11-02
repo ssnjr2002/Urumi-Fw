@@ -12,7 +12,7 @@
  * The `json/` subdirectory is the ADAPTER, and only it knows a config document
  * exists:
  *
- *   json/load.ts      JSON → PipelineConfig, structure only
+ *   json/load.ts      JSON → ControllerConfig, structure only
  *   json/validate.ts  semantic rules, one array; loadConfig() runs it after parse
  *
  * The direction is one-way — json/ imports the model, never the reverse — so

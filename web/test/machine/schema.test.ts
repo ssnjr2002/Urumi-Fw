@@ -1,7 +1,7 @@
 /**
  * Tests for config.ts — fresh (no Python test_config.py to port).
  * Verifies defaultConfig calibration, uniformMachine builder, preset
- * values, registries, quality defaults, and pipelineConfig overrides.
+ * values, registries, quality defaults, and controllerConfig overrides.
  */
 
 import { describe, it, expect } from "vitest";
@@ -24,7 +24,7 @@ import {
 import {
     uniformMachine,
     defaultConfig,
-    pipelineConfig,
+    controllerConfig,
 } from "../machines.js";
 import { toolLayer } from "../../src/svg/load.js";
 
@@ -357,22 +357,22 @@ describe("config: QualityConfig", () => {
     });
 });
 
-describe("config: pipelineConfig overrides", () => {
+describe("config: controllerConfig overrides", () => {
     it("patches machine with a custom one", () => {
         const custom = uniformMachine(200, 100);
-        const cfg = pipelineConfig({ machine: custom });
+        const cfg = controllerConfig({ machine: custom });
         expect(cfg.machine.x.stepsPerUnit).toBe(200);
         expect(cfg.machine.y.stepsPerUnit).toBe(200);
     });
 
     it("patches quality", () => {
-        const cfg = pipelineConfig({ quality: qualityConfig({ vMin: 1.0 }) });
+        const cfg = controllerConfig({ quality: qualityConfig({ vMin: 1.0 }) });
         expect(cfg.quality.vMin).toBe(1.0);
     });
 
     it("patches toolProfiles", () => {
         const fastPen = toolProfile("pen", { cutFeed: 120 });
-        const cfg = pipelineConfig({ toolProfiles: { pen: fastPen } });
+        const cfg = controllerConfig({ toolProfiles: { pen: fastPen } });
         expect(cfg.toolProfiles.pen?.cutFeed).toBe(120);
     });
 });

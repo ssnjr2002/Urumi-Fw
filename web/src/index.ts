@@ -49,7 +49,7 @@ export { stripJsonComments } from "./machine/json/image.js";
 
 export {
     // top-level config
-    type PipelineConfig,
+    type ControllerConfig,
     type MachineConfig,
     machineConfig,
     type QualityConfig,

@@ -6,10 +6,10 @@
  * through machine/json/load.ts; if production code imports this file, a
  * miscalibrated machine will run silently and cut wrong.
  *
- * That is exactly why these moved out of schema.ts: `pipelineConfig()` used to
+ * That is exactly why these moved out of schema.ts: `controllerConfig()` used to
  * default `machine` to defaultMachine(), so anyone calling `defaultConfig()` in
  * a production path got the 160/1200/51.667 test machine with no error. The
- * loader no longer touches this file at all — it builds its PipelineConfig
+ * loader no longer touches this file at all — it builds its ControllerConfig
  * directly — so that path is now impossible to take by accident.
  *
  * It sits under test/ rather than src/ for the same reason, made structural:
@@ -24,7 +24,7 @@ import {
     qualityConfig,
     toolHead,
     type MachineConfig,
-    type PipelineConfig,
+    type ControllerConfig,
     type ToolProfile,
 } from "../src/machine/schema.js";
 import { ToolType } from "../src/machine/schema.js";
@@ -143,8 +143,8 @@ export function twoHeadMachine(offsets: { xOffset: number; yOffset: number }[] =
     );
 }
 
-/** A complete PipelineConfig around defaultMachine(). Tests/demos only. */
-export function pipelineConfig(overrides?: Partial<PipelineConfig>): PipelineConfig {
+/** A complete ControllerConfig around defaultMachine(). Tests/demos only. */
+export function controllerConfig(overrides?: Partial<ControllerConfig>): ControllerConfig {
     return {
         machine: defaultMachine(),
         quality: qualityConfig(),
@@ -155,7 +155,7 @@ export function pipelineConfig(overrides?: Partial<PipelineConfig>): PipelineCon
     };
 }
 
-/** Alias for pipelineConfig() with no overrides. Tests/demos only. */
-export function defaultConfig(): PipelineConfig {
-    return pipelineConfig();
+/** Alias for controllerConfig() with no overrides. Tests/demos only. */
+export function defaultConfig(): ControllerConfig {
+    return controllerConfig();
 }

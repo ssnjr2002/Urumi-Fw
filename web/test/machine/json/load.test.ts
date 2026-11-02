@@ -1,5 +1,5 @@
 /**
- * Tests for load.ts — JSON → PipelineConfig (structural pass).
+ * Tests for load.ts — JSON → ControllerConfig (structural pass).
  * Verifies required-field checking, optional defaults, tool preset
  * patching, quality overrides, and error reporting.
  */

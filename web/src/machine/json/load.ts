@@ -1,5 +1,5 @@
 /**
- * load.ts — JSON → PipelineConfig. STRUCTURE ONLY.
+ * load.ts — JSON → ControllerConfig. STRUCTURE ONLY.
  *
  * The production config source: a config.json file carries all
  * machine-specific calibration (stepsPerUnit, fCpu, node bindings,
@@ -31,7 +31,7 @@
  *
  * Parse, then validate — two passes, never interleaved:
  *
- *   parseConfig(json)      shape + required fields  → PipelineConfig | errors
+ *   parseConfig(json)      shape + required fields  → ControllerConfig | errors
  *   validateConfig(cfg)    semantics (ranges, ids)  → errors + warnings
  *   loadConfig(json)       parse ⨟ validate — the entry point callers want
  *
@@ -58,7 +58,7 @@ import {
     type ToolProfile,
     type ToolType,
     type QualityConfig,
-    type PipelineConfig,
+    type ControllerConfig,
     type BedPoint,
     type ProbeSwitch,
     type LaserPointer,
@@ -258,13 +258,13 @@ interface ConfigJson {
 // ── result type ───────────────────────────────────────────────────────────────
 
 export type ConfigResult =
-    | { readonly ok: true; readonly config: PipelineConfig }
+    | { readonly ok: true; readonly config: ControllerConfig }
     | { readonly ok: false; readonly errors: readonly string[] };
 
 // ── parser ────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a config.json string into a PipelineConfig.
+ * Parse a config.json string into a ControllerConfig.
  *
  * Returns { ok: true, config } on success, or { ok: false, errors } with
  * a list of every problem found (not just the first). The caller decides
@@ -856,7 +856,7 @@ function err(msg: string): ConfigResult {
 export type LoadResult =
     | {
           readonly ok: true;
-          readonly config: PipelineConfig;
+          readonly config: ControllerConfig;
           /** Non-fatal advisories (e.g. a target above its axis ceiling). */
           readonly warnings: readonly string[];
       }

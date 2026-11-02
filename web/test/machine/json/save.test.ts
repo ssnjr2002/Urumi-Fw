@@ -10,15 +10,15 @@ import { loadConfig } from "../../../src/machine/json/load.js";
 import { stripJsonComments } from "../../../src/machine/json/image.js";
 import { decodeConfigBlob } from "../../../src/machine/json/blob.js";
 import { modelToFile } from "../../../src/machine/json/save.js";
-import type { PipelineConfig } from "../../../src/machine/schema.js";
+import type { ControllerConfig } from "../../../src/machine/schema.js";
 
-function load(text: string): PipelineConfig {
+function load(text: string): ControllerConfig {
     const r = loadConfig(text);
     if (!r.ok) throw new Error(r.errors.join("; "));
     return r.config;
 }
 
-const sources: [string, () => PipelineConfig][] = [
+const sources: [string, () => ControllerConfig][] = [
     ["config/controller.jsonc", () => load(stripJsonComments(
         readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8")))],
     ["test-machine.json", () => load(readFixture("test-machine.json"))],

@@ -1,5 +1,5 @@
 /**
- * Tests for blob.ts — PipelineConfig ↔ the msgpack blob stored on the Pico.
+ * Tests for blob.ts — ControllerConfig ↔ the msgpack blob stored on the Pico.
  *
  * Also owns the shared fixture set in test/fixtures/config/: one good blob and
  * one bad blob per Pico rejection, read by the firmware's decoder test
@@ -22,16 +22,16 @@ import {
     decodeConfigBlob,
     encodeConfigBlob,
 } from "../../../src/machine/json/blob.js";
-import type { PipelineConfig } from "../../../src/machine/schema.js";
+import type { ControllerConfig } from "../../../src/machine/schema.js";
 
-function testMachine(): PipelineConfig {
+function testMachine(): ControllerConfig {
     const r = loadConfig(readFixture("test-machine.json"));
     if (!r.ok) throw new Error(r.errors.join("; "));
     return r.config;
 }
 
 /** A plain mutable copy with undefined fields dropped, as msgpack sees it. */
-function plain(config: PipelineConfig): Record<string, any> {
+function plain(config: ControllerConfig): Record<string, any> {
     return JSON.parse(JSON.stringify(config));
 }
 
@@ -130,7 +130,7 @@ describe("config fixtures (shared with the Pico decoder test)", () => {
     it("switch.msgpack is the test machine with a switch height", () => {
         const config = plain(testMachine());
         config.machine.heads[0].probeSwitch = { x: 0, y: 0, z: 12.5 };
-        expect(validateConfig(config as PipelineConfig).errors).toEqual([]);
+        expect(validateConfig(config as ControllerConfig).errors).toEqual([]);
         checkFixture("switch.msgpack", encode({ v: CONFIG_BLOB_VERSION, ...config }));
     });
 
@@ -146,7 +146,7 @@ describe("config fixtures (shared with the Pico decoder test)", () => {
             const { config, bytes } = badBlob(b);
             checkFixture(`bad_${b.name}.msgpack`, bytes);
             if (b.host) {
-                expect(validateConfig(config as PipelineConfig).errors).not.toEqual([]);
+                expect(validateConfig(config as ControllerConfig).errors).not.toEqual([]);
             }
         });
     }

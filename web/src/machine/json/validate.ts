@@ -2,7 +2,7 @@
  * validate.ts — semantic validation. The second of the two passes.
  *
  * load.ts already proved the config is well-FORMED; this pass asks whether the
- * values make SENSE. It assumes a structurally valid PipelineConfig and never
+ * values make SENSE. It assumes a structurally valid ControllerConfig and never
  * inspects raw JSON.
  *
  * Adding a rule = write a function, append it to RULES. Nothing else. Each rule
@@ -20,7 +20,7 @@ import type {
     AxisConfig,
     MachineConfig,
     OpTarget,
-    PipelineConfig,
+    ControllerConfig,
     ToolProfile,
 } from "../schema.js";
 import { NodeType } from "../schema.js";
@@ -38,7 +38,7 @@ interface Issue {
     readonly message: string;
 }
 
-type Rule = (config: PipelineConfig) => Issue[];
+type Rule = (config: ControllerConfig) => Issue[];
 
 const error = (message: string): Issue => ({ level: "error", message });
 const warn = (message: string): Issue => ({ level: "warning", message });
@@ -499,7 +499,7 @@ const RULES: readonly Rule[] = [
 
 // ── entry ─────────────────────────────────────────────────────────────────────
 
-export function validateConfig(config: PipelineConfig): ValidationResult {
+export function validateConfig(config: ControllerConfig): ValidationResult {
     const issues = RULES.flatMap((rule) => rule(config));
     return {
         errors: issues.filter((i) => i.level === "error").map((i) => i.message),
