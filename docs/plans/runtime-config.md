@@ -249,7 +249,37 @@ satisfied. The next boot loads the saved values.
   `voidDatum` field and confirm the datum is void; edit, `reset`, confirm the
   saved value is back; host `CFG_GET` after a save loads in the web host.
 
-**Status:** in progress.
+**Status:** ready to merge. Unblocks branch 4.
+
+**Outcome**
+
+* Deviations and details:
+  * The handlers are in `controller/cmd/config.cpp`, not `cmd/config.cpp`.
+  * Setting the value a field already holds does nothing: no dirty flag, no
+    effects.
+  * Added `configStoreCrc` and `framesResetWorkXY`.
+  * `get` prints a point as `x,y`; `set` takes `x y`.
+  * `probeSwitch.z` on a head with no probe switch answers `err absent`.
+  * `maxTravel` keeps its unconditional `voidDatum`.
+  * `set meshOn` overrides `mesh on|off`, and a dirty `reset` reapplies the
+    stored value.
+* For branch 4: `dirty=1` is in `cfg` and `cfgdirty` in `get`, not in
+  STATUS_RSP. `CFG_SET` over unsaved edits clears dirty. Saved blobs are
+  value-identical to the source, not byte-identical.
+* Bench, on the machine with no tools mounted: everything in Checks passed,
+  and `set` and `save` answer `err busy` in a jog and `err bad_state` in estop.
+  A rebooted Pico stood in for a power-cycle. The saved blob was pulled with
+  `CFG_GET` and read with the host decoder, not through a live web connection.
+  The paused job refusal is untested; it shares the estop check.
+* Peak RAM of `save`, 2.8 KB config: 14.1 KB of JSON documents against 413 KB
+  free heap, no leak over 10 saves. About 1.5 KB of stack is left at its
+  deepest (2.35 KB used of 3.9 KB free on entry), so stack is the limit to
+  watch.
+* Out of scope:
+  * `save` with nothing changed still rewrites flash and bumps `seq`.
+  * The host's `probe.seekFeed` rule compares with the now editable `maxFeed`
+    if a config has that block. `config/controller.jsonc` has none, and the
+    block looks dead in `web/src`, so it may be removable.
 
 ## Branch 4 (optional): `feature/runtime-config-web`
 
@@ -269,5 +299,3 @@ satisfied. The next boot loads the saved values.
 
 * Effects that need the old value (move a datum by the delta instead of
   voiding it): void for now.
-* Peak RAM of the unfiltered `JsonDocument` for the largest real config,
-  measured in branch 3.
