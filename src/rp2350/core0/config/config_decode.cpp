@@ -76,7 +76,8 @@ static bool readHoming(JsonObjectConst j, uint8_t defaultCycle, bool* rotaryKind
     else if (!kind.is<const char*>()) return false;
     else                             *rotaryKind = strcmp(kind.as<const char*>(), "rotary") == 0;
 
-    if (cycle.isNull()) out->cycle = defaultCycle;
+    out->hasCycle = !cycle.isNull();
+    if (!out->hasCycle) out->cycle = defaultCycle;
     else if (!cycle.is<unsigned>() || cycle.as<unsigned>() > 0xFF) return false;
     else out->cycle = (uint8_t)cycle.as<unsigned>();
     if (!ramp.is<unsigned>() || ramp.as<unsigned>() > 0xFFFF) return false;
@@ -121,9 +122,10 @@ static CfgDecodeError readAxis(JsonObjectConst j, uint8_t defaultCycle, CfgAxis*
 }
 
 // An optional number: absent is 0.
-static bool readOptFloat(JsonVariantConst v, float* out) {
+static bool readOptFloat(JsonVariantConst v, bool* has, float* out) {
     *out = 0.0f;
-    return v.isNull() || readFloat(v, out);
+    *has = !v.isNull();
+    return !*has || readFloat(v, out);
 }
 
 static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
@@ -140,19 +142,19 @@ static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
             !readBool(j["tangential"], &t.tangential) ||
             !j["periodCount"].is<unsigned>() ||
             !readFloat(j["cornerAngleDeg"], &t.cornerAngleDeg) ||
-            !readOptFloat(j["aMaxDeg"], &t.aMaxDeg) ||
-            !readOptFloat(j["aOffsetDeg"], &t.aOffsetDeg) ||
-            !readOptFloat(j["offsetMm"], &t.offsetMm) ||
+            !readOptFloat(j["aMaxDeg"], &t.hasAMaxDeg, &t.aMaxDeg) ||
+            !readOptFloat(j["aOffsetDeg"], &t.hasAOffsetDeg, &t.aOffsetDeg) ||
+            !readOptFloat(j["offsetMm"], &t.hasOffsetMm, &t.offsetMm) ||
             !readBool(j["plunge"], &t.plunge) ||
-            !readFloat(off["xOffset"], &t.xOffset) ||
-            !readFloat(off["yOffset"], &t.yOffset) ||
-            !readOptFloat(j["cutFeed"], &t.cutFeed) ||
-            !readOptFloat(j["plungeFeed"], &t.plungeFeed)) return CFG_DEC_MISSING;
+            !readFloat(off["xOffset"], &t.toolOffset.xOffset) ||
+            !readFloat(off["yOffset"], &t.toolOffset.yOffset) ||
+            !readOptFloat(j["cutFeed"], &t.hasCutFeed, &t.cutFeed) ||
+            !readOptFloat(j["plungeFeed"], &t.hasPlungeFeed, &t.plungeFeed)) return CFG_DEC_MISSING;
         if (id.as<unsigned>() > 0xFF || type.as<unsigned>() > 0xFF ||
             j["periodCount"].as<unsigned>() > 0xFF) return CFG_DEC_TOOLS;
         t.periodCount = (uint8_t)j["periodCount"].as<unsigned>();
         t.id   = (uint8_t)id.as<unsigned>();
-        t.type = (uint8_t)type.as<unsigned>();
+        t.toolType = (uint8_t)type.as<unsigned>();
         JsonObjectConst pw = j["power"];
         if (!pw.isNull()) {
             JsonVariantConst id = pw["node"]["id"], nt = pw["node"]["type"];
@@ -160,14 +162,14 @@ static CfgDecodeError readTools(JsonObjectConst tools, MachineCfg* out) {
                 !readFloat(pw["settleS"], &t.power.settleS)) return CFG_DEC_MISSING;
             if (id.as<unsigned>() == 0 || id.as<unsigned>() > 0xFF || nt.as<unsigned>() > 0xFF)
                 return CFG_DEC_POWER;
-            t.power.node = (uint8_t)id.as<unsigned>();
-            t.power.nodeType = (uint8_t)nt.as<unsigned>();
+            t.power.node.id = (uint8_t)id.as<unsigned>();
+            t.power.node.type = (uint8_t)nt.as<unsigned>();
             JsonObjectConst d = pw["dutyLimits"];
-            t.power.hasDuty = !d.isNull();
-            if (t.power.hasDuty &&
-                (!readFloat(d["maxOnS"], &t.power.maxOnS) ||
-                 !readFloat(d["minOnS"], &t.power.minOnS) ||
-                 !readFloat(d["dwellS"], &t.power.dwellS))) return CFG_DEC_MISSING;
+            t.power.hasDutyLimits = !d.isNull();
+            if (t.power.hasDutyLimits &&
+                (!readFloat(d["maxOnS"], &t.power.dutyLimits.maxOnS) ||
+                 !readFloat(d["minOnS"], &t.power.dutyLimits.minOnS) ||
+                 !readFloat(d["dwellS"], &t.power.dutyLimits.dwellS))) return CFG_DEC_MISSING;
         }
         JsonVariantConst ch = j["chamberOffsets"];
         if (ch.isNull()) continue;
@@ -226,7 +228,7 @@ static bool inRange(const CfgAxis& a, float v) {
 // anchor's range shifted by the head offset) at a height >= 0; park and load within the
 // anchor's range.
 static CfgDecodeError checkFrames(const MachineCfg& c) {
-    bool anchor = c.laserNode != 0;
+    bool anchor = c.laser.node != 0;
     for (uint8_t h = 0; h < c.headCount; h++) {
         const CfgHead& hd = c.heads[h];
         if (!isfinite(hd.xOffset) || !isfinite(hd.yOffset))
@@ -235,12 +237,14 @@ static CfgDecodeError checkFrames(const MachineCfg& c) {
         if (hd.hasProbeSwitch &&
             (!inRange(c.x, hd.probeSwitch.x - hd.xOffset) ||
              !inRange(c.y, hd.probeSwitch.y - hd.yOffset))) return CFG_DEC_FRAMES;
-        if (hd.hasSwitchZ && !(isfinite(hd.switchZ) && hd.switchZ >= 0)) return CFG_DEC_FRAMES;
+        if (hd.hasProbeSwitch && hd.probeSwitch.hasZ &&
+            !(isfinite(hd.probeSwitch.z) && hd.probeSwitch.z >= 0)) return CFG_DEC_FRAMES;
     }
-    if (!anchor || !isfinite(c.workX) || !isfinite(c.workY)) return CFG_DEC_FRAMES;
-    if (c.hasPark && (!inRange(c.x, c.park.x) || !inRange(c.y, c.park.y))) return CFG_DEC_FRAMES;
-    if (c.hasLoad && (!inRange(c.x, c.load.x) || !inRange(c.y, c.load.y))) return CFG_DEC_FRAMES;
-    if (c.hasMount && (!inRange(c.x, c.mount.x) || !inRange(c.y, c.mount.y))) return CFG_DEC_FRAMES;
+    if (!anchor || !isfinite(c.work.x) || !isfinite(c.work.y)) return CFG_DEC_FRAMES;
+    const CfgPositions& p = c.positions;
+    if (p.hasPark && (!inRange(c.x, p.park.x) || !inRange(c.y, p.park.y))) return CFG_DEC_FRAMES;
+    if (p.hasLoad && (!inRange(c.x, p.load.x) || !inRange(c.y, p.load.y))) return CFG_DEC_FRAMES;
+    if (p.hasMount && (!inRange(c.x, p.mount.x) || !inRange(c.y, p.mount.y))) return CFG_DEC_FRAMES;
     return CFG_DEC_OK;
 }
 
@@ -249,7 +253,7 @@ static bool feed(float v) { return isfinite(v) && v >= 0.0f; }
 static CfgDecodeError checkTools(const MachineCfg& c) {
     for (uint8_t i = 0; i < c.toolCount; i++) {
         const CfgTool& t = c.tools[i];
-        if (t.id == 0 || !isfinite(t.xOffset) || !isfinite(t.yOffset) ||
+        if (t.id == 0 || !isfinite(t.toolOffset.xOffset) || !isfinite(t.toolOffset.yOffset) ||
             !feed(t.cutFeed) || !feed(t.plungeFeed) || t.periodCount == 0 ||
             !(t.cornerAngleDeg >= 0 && t.cornerAngleDeg <= 180) ||
             !(isfinite(t.aMaxDeg) && t.aMaxDeg >= 0) ||
@@ -267,30 +271,29 @@ static CfgDecodeError checkTools(const MachineCfg& c) {
 
 // A powered tool's node: a present knife oscillator peripheral, or (bench
 // builds) the laser's stepper node.
-static CfgDecodeError checkPower(MachineCfg& c) {
+static CfgDecodeError checkPower(const MachineCfg& c) {
     for (uint8_t i = 0; i < c.toolCount; i++) {
-        CfgPower& p = c.tools[i].power;
-        if (p.node == 0) continue;
+        const CfgPower& p = c.tools[i].power;
+        if (p.node.id == 0) continue;
         bool ok = false;
         for (uint8_t k = 0; k < c.periphCount; k++) {
             const CfgNode& n = c.peripherals[k];
-            if (n.id == p.node && n.present && n.type == p.nodeType &&
+            if (n.id == p.node.id && n.present && n.type == p.node.type &&
                 n.type == CFG_NODE_KNIFE_OSC) ok = true;
         }
 #ifdef ACCEPT_LASER_AS_POWER_TOOL
-        if (c.laserNode != 0 && p.node == c.laserNode && p.nodeType == CFG_NODE_STEPPER) ok = true;
+        if (c.laser.node != 0 && p.node.id == c.laser.node && p.node.type == CFG_NODE_STEPPER) ok = true;
 #endif
         if (!ok) return CFG_DEC_POWER;
         if (!(p.settleS >= 0.0f) || !isfinite(p.settleS)) return CFG_DEC_POWER;
-        if (p.hasDuty && (!positive(p.maxOnS) || !positive(p.minOnS) ||
-                          !positive(p.dwellS) || p.minOnS >= p.maxOnS)) return CFG_DEC_POWER;
+        const CfgDutyLimits& d = p.dutyLimits;
+        if (p.hasDutyLimits && (!positive(d.maxOnS) || !positive(d.minOnS) ||
+                                !positive(d.dwellS) || d.minOnS >= d.maxOnS)) return CFG_DEC_POWER;
     }
     return CFG_DEC_OK;
 }
 
-static CfgDecodeError validate(MachineCfg& c) {
-    CfgDecodeError e;
-    const CfgAxis* axes[2 + 2 * CFG_MAX_HEADS];
+static uint8_t allAxes(const MachineCfg& c, const CfgAxis** axes) {
     uint8_t n = 0;
     axes[n++] = &c.x;
     axes[n++] = &c.y;
@@ -298,13 +301,33 @@ static CfgDecodeError validate(MachineCfg& c) {
         axes[n++] = &c.heads[h].z;
         axes[n++] = &c.heads[h].a;
     }
+    return n;
+}
+
+static CfgDecodeError checkUnlockRanges(const MachineCfg& c) {
+    for (uint8_t h = 0; h < c.headCount; h++) {
+        const CfgHead& hd = c.heads[h];
+        if (!(isfinite(hd.unlockRange) && hd.unlockRange >= 0) ||
+            (hd.unlockRange > 0 && !hd.a.node.present)) return CFG_DEC_HEADS;
+    }
+    return CFG_DEC_OK;
+}
+
+static CfgDecodeError checkAxes(const MachineCfg& c) {
+    const CfgAxis* axes[2 + 2 * CFG_MAX_HEADS];
+    const uint8_t n = allAxes(c, axes);
     for (uint8_t i = 0; i < n; i++) {
-        e = checkAxis(*axes[i]);
+        CfgDecodeError e = checkAxis(*axes[i]);
         if (e != CFG_DEC_OK) return e;
     }
+    return CFG_DEC_OK;
+}
 
-    // Every node id — axes and peripherals — must be distinct, fitted or not:
-    // one bus address cannot be two devices.
+// Every node id — axes and peripherals — must be distinct, fitted or not:
+// one bus address cannot be two devices.
+static CfgDecodeError checkNodeIds(const MachineCfg& c) {
+    const CfgAxis* axes[2 + 2 * CFG_MAX_HEADS];
+    const uint8_t n = allAxes(c, axes);
     uint16_t seen = 0;
     for (uint8_t i = 0; i < n; i++) {
         uint16_t bit = (uint16_t)(1u << axes[i]->node.id);
@@ -318,19 +341,58 @@ static CfgDecodeError validate(MachineCfg& c) {
         if (seen & bit) return CFG_DEC_DUP_NODE;
         seen |= bit;
     }
-    if (!positive(c.bufferQueueTime) || !positive(c.bufferIdleTime)) return CFG_DEC_BUFFER;
-    for (float f : {c.cutFallback, c.travelDefault, c.plungeFallback, c.liftFeed})
+    return CFG_DEC_OK;
+}
+
+static CfgDecodeError checkBuffer(const MachineCfg& c) {
+    return positive(c.buffer.queueTime) && positive(c.buffer.idleTime) ? CFG_DEC_OK : CFG_DEC_BUFFER;
+}
+
+static CfgDecodeError checkFeeds(const MachineCfg& c) {
+    const CfgFeed& fd = c.feed;
+    for (float f : {fd.cutFallback, fd.travelDefault, fd.plungeFallback, fd.liftFeed})
         if (!(f >= 1.0f) || !isfinite(f)) return CFG_DEC_FEED;
-    if (!(c.zClearance >= 0.0f) || !isfinite(c.zClearance)) return CFG_DEC_Z_CLEARANCE;
-    if (!(c.maxOvercut >= 0.0f) || !isfinite(c.maxOvercut)) return CFG_DEC_OVERCUT;
-    if ((e = checkTools(c)) != CFG_DEC_OK) return e;
-    if ((e = checkPower(c)) != CFG_DEC_OK) return e;
-    return checkFrames(c);
+    return CFG_DEC_OK;
+}
+
+static CfgDecodeError checkZClearance(const MachineCfg& c) {
+    return c.zClearance >= 0.0f && isfinite(c.zClearance) ? CFG_DEC_OK : CFG_DEC_Z_CLEARANCE;
+}
+
+static CfgDecodeError checkOvercut(const MachineCfg& c) {
+    return c.maxOvercut >= 0.0f && isfinite(c.maxOvercut) ? CFG_DEC_OK : CFG_DEC_OVERCUT;
+}
+
+// In the order their errors take precedence.
+static CfgDecodeError (*const RULES[])(const MachineCfg&) = {
+    checkUnlockRanges,
+    checkAxes,
+    checkNodeIds,
+    checkBuffer,
+    checkFeeds,
+    checkZClearance,
+    checkOvercut,
+    checkTools,
+    checkPower,
+    checkFrames,
+};
+
+CfgDecodeError configValidate(const MachineCfg& c) {
+    for (auto rule : RULES) {
+        CfgDecodeError e = rule(c);
+        if (e != CFG_DEC_OK) return e;
+    }
+    return CFG_DEC_OK;
 }
 
 // ─── Entry ────────────────────────────────────────────────────────────────────
 
 CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
+    CfgDecodeError e = configParse(blob, len, out);
+    return e != CFG_DEC_OK ? e : configValidate(*out);
+}
+
+CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out) {
     JsonDocument filter;
     filter["v"] = true;
     JsonObject fm = filter["machine"].to<JsonObject>();
@@ -384,47 +446,50 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
         if ((e = readAxis(heads[h]["a"], 2, &hd.a)) != CFG_DEC_OK) return e;
         if (!readFloat(heads[h]["xOffset"], &hd.xOffset) ||
             !readFloat(heads[h]["yOffset"], &hd.yOffset) ||
-            !readOptPoint(heads[h]["probeSwitch"], &hd.hasProbeSwitch, &hd.probeSwitch) ||
-            !readOptFloat(heads[h]["unlockRange"], &hd.unlockRange))
+            !readOptFloat(heads[h]["unlockRange"], &hd.hasUnlockRange, &hd.unlockRange))
             return CFG_DEC_MISSING;
-        JsonVariantConst sz = heads[h]["probeSwitch"]["z"];
-        hd.hasSwitchZ = hd.hasProbeSwitch && !sz.isNull();
-        if (hd.hasSwitchZ && !readFloat(sz, &hd.switchZ)) return CFG_DEC_MISSING;
-        if (!(isfinite(hd.unlockRange) && hd.unlockRange >= 0) ||
-            (hd.unlockRange > 0 && !hd.a.node.present)) return CFG_DEC_HEADS;
+        JsonVariantConst ps = heads[h]["probeSwitch"];
+        hd.hasProbeSwitch = !ps.isNull();
+        if (hd.hasProbeSwitch &&
+            (!ps.is<JsonObjectConst>() || !readFloat(ps["x"], &hd.probeSwitch.x) ||
+             !readFloat(ps["y"], &hd.probeSwitch.y))) return CFG_DEC_MISSING;
+        JsonVariantConst sz = ps["z"];
+        hd.probeSwitch.hasZ = hd.hasProbeSwitch && !sz.isNull();
+        if (hd.probeSwitch.hasZ && !readFloat(sz, &hd.probeSwitch.z)) return CFG_DEC_MISSING;
     }
 
     // A laser is (0, 0) by definition; it carries only the node that switches it.
     JsonVariantConst laser = m["laser"];
-    out->laserNode = 0;
+    out->laser.node = 0;
     if (!laser.isNull()) {
         JsonVariantConst ln = laser["node"];
         if (!ln.is<unsigned>()) return CFG_DEC_MISSING;
         if (ln.as<unsigned>() < 1 || ln.as<unsigned>() > CFG_BUS_ADDR_MAX) return CFG_DEC_NODE_ID;
-        out->laserNode = (uint8_t)ln.as<unsigned>();
+        out->laser.node = (uint8_t)ln.as<unsigned>();
     }
 
     JsonObjectConst work = m["work"];
-    if (work.isNull() || !readFloat(work["x"], &out->workX) ||
-        !readFloat(work["y"], &out->workY)) return CFG_DEC_MISSING;
+    if (work.isNull() || !readFloat(work["x"], &out->work.x) ||
+        !readFloat(work["y"], &out->work.y)) return CFG_DEC_MISSING;
 
     JsonObjectConst pos = m["positions"];
-    if (pos.isNull() || !readOptPoint(pos["park"], &out->hasPark, &out->park) ||
-        !readOptPoint(pos["load"], &out->hasLoad, &out->load) ||
-        !readOptPoint(pos["mount"], &out->hasMount, &out->mount)) return CFG_DEC_MISSING;
+    CfgPositions& p = out->positions;
+    if (pos.isNull() || !readOptPoint(pos["park"], &p.hasPark, &p.park) ||
+        !readOptPoint(pos["load"], &p.hasLoad, &p.load) ||
+        !readOptPoint(pos["mount"], &p.hasMount, &p.mount)) return CFG_DEC_MISSING;
 
     if (!readBool(m["jogUnhomed"], &out->jogUnhomed) ||
         !readBool(m["meshOn"], &out->meshOn)) return CFG_DEC_MISSING;
 
     JsonObjectConst buf = m["buffer"];
-    if (buf.isNull() || !readFloat(buf["queueTime"], &out->bufferQueueTime) ||
-        !readFloat(buf["idleTime"], &out->bufferIdleTime)) return CFG_DEC_MISSING;
+    if (buf.isNull() || !readFloat(buf["queueTime"], &out->buffer.queueTime) ||
+        !readFloat(buf["idleTime"], &out->buffer.idleTime)) return CFG_DEC_MISSING;
 
     JsonObjectConst fd = m["feed"];
-    if (fd.isNull() || !readFloat(fd["cutFallback"], &out->cutFallback) ||
-        !readFloat(fd["travelDefault"], &out->travelDefault) ||
-        !readFloat(fd["plungeFallback"], &out->plungeFallback) ||
-        !readFloat(fd["liftFeed"], &out->liftFeed) ||
+    if (fd.isNull() || !readFloat(fd["cutFallback"], &out->feed.cutFallback) ||
+        !readFloat(fd["travelDefault"], &out->feed.travelDefault) ||
+        !readFloat(fd["plungeFallback"], &out->feed.plungeFallback) ||
+        !readFloat(fd["liftFeed"], &out->feed.liftFeed) ||
         !readFloat(m["zClearance"], &out->zClearance) ||
         !readFloat(m["maxOvercut"], &out->maxOvercut)) return CFG_DEC_MISSING;
 
@@ -440,9 +505,7 @@ CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out) {
     for (uint8_t i = 0; i < out->periphCount; i++) {
         if (!readNode(periph[i], &out->peripherals[i])) return CFG_DEC_MISSING;
     }
-    if ((e = readTools(doc["toolProfiles"], out)) != CFG_DEC_OK) return e;
-
-    return validate(*out);
+    return readTools(doc["toolProfiles"], out);
 }
 
 const char* configDecodeErrorName(CfgDecodeError e) {

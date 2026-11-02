@@ -18,7 +18,7 @@ LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
         return LAYER_BAD;
 
     out->cutFeed    = l.feed > 0 ? l.feed : t->cutFeed > 0 ? t->cutFeed : machineFeed;
-    out->plungeFeed = t->plungeFeed > 0 ? t->plungeFeed : c.plungeFallback;
+    out->plungeFeed = t->plungeFeed > 0 ? t->plungeFeed : c.feed.plungeFallback;
     out->top        = l.thickness;
     out->depth      = t->plunge ? l.p : 0;
     out->tool       = t->id;

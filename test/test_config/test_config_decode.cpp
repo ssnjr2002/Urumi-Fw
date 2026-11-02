@@ -50,12 +50,12 @@ TEST_CASE("good blob decodes to the test machine") {
     CHECK(c.y.jogFeedUnhomed == doctest::Approx(80));
     CHECK_FALSE(c.jogUnhomed);
     CHECK_FALSE(c.meshOn);
-    CHECK(c.bufferQueueTime == doctest::Approx(1.0));   // defaults
-    CHECK(c.bufferIdleTime == doctest::Approx(0.5));
-    CHECK(c.cutFallback == doctest::Approx(80.0));
-    CHECK(c.travelDefault == doctest::Approx(80.0));
-    CHECK(c.plungeFallback == doctest::Approx(20.0));
-    CHECK(c.liftFeed == doctest::Approx(20.0));
+    CHECK(c.buffer.queueTime == doctest::Approx(1.0));   // defaults
+    CHECK(c.buffer.idleTime == doctest::Approx(0.5));
+    CHECK(c.feed.cutFallback == doctest::Approx(80.0));
+    CHECK(c.feed.travelDefault == doctest::Approx(80.0));
+    CHECK(c.feed.plungeFallback == doctest::Approx(20.0));
+    CHECK(c.feed.liftFeed == doctest::Approx(20.0));
     CHECK(c.zClearance == doctest::Approx(2.0));
     CHECK(c.maxOvercut == doctest::Approx(0.0));
     CHECK(c.y.node.id == 2);
@@ -150,19 +150,44 @@ TEST_CASE("tools decode by id") {
     CHECK(rev->aOffsetDeg == 0);
     CHECK(knife->offsetMm == doctest::Approx(0.25));
     CHECK(rev->offsetMm == 0);
-    CHECK(knife->power.node == 8);
-    CHECK(knife->power.nodeType == CFG_NODE_KNIFE_OSC);
+    CHECK(knife->power.node.id == 8);
+    CHECK(knife->power.node.type == CFG_NODE_KNIFE_OSC);
     CHECK(knife->power.settleS == doctest::Approx(0.3));
-    CHECK(knife->power.hasDuty);
-    CHECK(knife->power.maxOnS == doctest::Approx(30));
-    CHECK(knife->power.minOnS == doctest::Approx(20));
-    CHECK(knife->power.dwellS == doctest::Approx(2));
-    CHECK(rev->power.node == 0);
+    CHECK(knife->power.hasDutyLimits);
+    CHECK(knife->power.dutyLimits.maxOnS == doctest::Approx(30));
+    CHECK(knife->power.dutyLimits.minOnS == doctest::Approx(20));
+    CHECK(knife->power.dutyLimits.dwellS == doctest::Approx(2));
+    CHECK(rev->power.node.id == 0);
     CHECK_FALSE(rev->tangential);
     CHECK(rev->chamberCount == 7);
     CHECK(rev->chamberOffsets[1] == doctest::Approx(360.0 / 7));
     CHECK(configTool(c, 0) == nullptr);
     CHECK(configTool(c, 3) == nullptr);
+}
+
+TEST_CASE("has flags record what the blob held, with the value resolved") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    CHECK_FALSE(c.x.homing.hasCycle);
+    CHECK(c.x.homing.cycle == 2);
+    CHECK(c.heads[0].a.homing.hasCycle);
+    const CfgTool* knife = configTool(c, 1);
+    const CfgTool* rev   = configTool(c, 2);
+    REQUIRE(knife != nullptr);
+    REQUIRE(rev != nullptr);
+    CHECK(knife->hasAMaxDeg);
+    CHECK_FALSE(rev->hasAMaxDeg);
+    CHECK(rev->aMaxDeg == 0);
+}
+
+TEST_CASE("configValidate judges a parsed config, and an edit to it") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configParse(b.data(), b.size(), &c) == CFG_DEC_OK);
+    CHECK(configValidate(c) == CFG_DEC_OK);
+    c.buffer.queueTime = 0;
+    CHECK(configValidate(c) == CFG_DEC_BUFFER);
 }
 
 TEST_CASE("frame fields decode with their defaults") {
@@ -172,11 +197,11 @@ TEST_CASE("frame fields decode with their defaults") {
     CHECK(c.heads[0].xOffset == doctest::Approx(0));
     CHECK(c.heads[0].yOffset == doctest::Approx(0));
     CHECK_FALSE(c.heads[0].hasProbeSwitch);
-    CHECK_FALSE(c.heads[0].hasSwitchZ);
-    CHECK(c.laserNode == 0);
-    CHECK(c.workX == doctest::Approx(0));
-    CHECK_FALSE(c.hasPark);
-    CHECK_FALSE(c.hasLoad);
+    CHECK_FALSE(c.heads[0].probeSwitch.hasZ);
+    CHECK(c.laser.node == 0);
+    CHECK(c.work.x == doctest::Approx(0));
+    CHECK_FALSE(c.positions.hasPark);
+    CHECK_FALSE(c.positions.hasLoad);
 
     float lo, hi;
     REQUIRE(configAxisRange(c.x, &lo, &hi));     // seeks +, no parkPos: [0, max]
@@ -190,8 +215,8 @@ TEST_CASE("a probe switch carries its height") {
     MachineCfg c;
     REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
     CHECK(c.heads[0].hasProbeSwitch);
-    REQUIRE(c.heads[0].hasSwitchZ);
-    CHECK(c.heads[0].switchZ == doctest::Approx(12.5));
+    REQUIRE(c.heads[0].probeSwitch.hasZ);
+    CHECK(c.heads[0].probeSwitch.z == doctest::Approx(12.5));
 }
 
 TEST_CASE("an absent node maps to none") {

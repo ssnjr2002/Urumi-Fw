@@ -56,7 +56,7 @@ bool cmdSelect(const char* args) {
 
     uint8_t head = FRAMES_NONE;
     if (len == 6 && strncmp(w, "anchor", 6) == 0) {
-        if (c.laserNode) {
+        if (c.laser.node) {
             // The laser has no slot: map X and Y if missing, Z and A as they are.
             const char* why = nullptr;
             if (axesReqAt(SLOT_X) == SLOT_NONE || axesReqAt(SLOT_Y) == SLOT_NONE) {
@@ -114,8 +114,8 @@ bool cmdWzero(const char* args) {
         const uint8_t h = framesZHead();
         if (h == FRAMES_NONE) { Serial.println("err no_head"); return true; }
         const CfgHead& hd = machineCfg().heads[h];
-        if (!hd.hasSwitchZ) { Serial.println("err no_switch_height"); return true; }
-        switchZ = hd.switchZ;
+        if (!hd.probeSwitch.hasZ) { Serial.println("err no_switch_height"); return true; }
+        switchZ = hd.probeSwitch.z;
     }
     float tip[3];
     float dx = 0, dy = 0;

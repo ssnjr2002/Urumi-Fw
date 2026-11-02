@@ -110,7 +110,7 @@ TEST_CASE("layer refusals") {
 
 TEST_CASE("layer plunge: p under the top for a plunging tool, 0 for one that is not") {
     MachineCfg c = twoHeads();
-    c.plungeFallback = 8;
+    c.feed.plungeFallback = 8;
     c.tools[0].plunge = true;               // knife
     c.tools[1].plungeFeed = 3;              // revolver pen: on the surface
     const uint8_t mounted[2] = { 4, 1 };

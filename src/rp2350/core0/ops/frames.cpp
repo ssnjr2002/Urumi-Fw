@@ -16,15 +16,15 @@ static float   workX = 0, workY = 0, workZ[CFG_MAX_HEADS] = {0};
 static bool    zSet[CFG_MAX_HEADS];   // false until a Z zero, and again on a tool change
 
 static void laserSet(bool on) {
-    if (!machineCfgValid() || !machineCfg().laserNode) return;
-    rpcNodeCmd(CMD_LASER, machineCfg().laserNode, on ? 1u : 0u);   // best effort
+    if (!machineCfgValid() || !machineCfg().laser.node) return;
+    rpcNodeCmd(CMD_LASER, machineCfg().laser.node, on ? 1u : 0u);   // best effort
 }
 
 void framesClearWork(void) {
     if (!machineCfgValid()) return;
     const MachineCfg& c = machineCfg();
-    workX = c.workX;
-    workY = c.workY;
+    workX = c.work.x;
+    workY = c.work.y;
     for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) framesUnsetWorkZ(h);
 }
 
@@ -61,7 +61,7 @@ uint8_t framesSelected(void) {
     if (!machineCfgValid()) return FRAMES_NONE;
     const MachineCfg& c = machineCfg();
     if (selected < c.headCount && headMapped(selected)) return selected;
-    return (xyMapped() && c.laserNode) ? FRAMES_ANCHOR : FRAMES_NONE;
+    return (xyMapped() && c.laser.node) ? FRAMES_ANCHOR : FRAMES_NONE;
 }
 
 bool framesSelectLaser(void) {
@@ -97,12 +97,12 @@ void framesOnMap(void) {
 
     // A map that leaves the head as it was keeps a laser selection: the laser
     // has no slot. A head switch selects that head and turns the laser off.
-    if (!switched && selected == FRAMES_ANCHOR && c.laserNode) return;
+    if (!switched && selected == FRAMES_ANCHOR && c.laser.node) return;
     if (bound != FRAMES_NONE) {
         if (switched || selected != bound) laserSet(false);
         selected = bound;
     } else {
-        selected = c.laserNode ? FRAMES_ANCHOR : FRAMES_NONE;
+        selected = c.laser.node ? FRAMES_ANCHOR : FRAMES_NONE;
     }
 }
 
@@ -119,8 +119,8 @@ bool framesTipOffset(float* dx, float* dy) {
     const MachineCfg& c = machineCfg();
     const CfgHead& h = c.heads[sel];
     const CfgTool* t = configTool(c, toolsMounted(sel));
-    *dx = h.xOffset + (t ? t->xOffset : 0);
-    *dy = h.yOffset + (t ? t->yOffset : 0);
+    *dx = h.xOffset + (t ? t->toolOffset.xOffset : 0);
+    *dy = h.yOffset + (t ? t->toolOffset.yOffset : 0);
     return true;
 }
 
@@ -268,20 +268,20 @@ const char* framesWorkToMachine(uint8_t k, float w, float from, float* m) {
 const char* framesNamed(const char* name, float* mx, float* my) {
     const MachineCfg& c = machineCfg();
     if (strcmp(name, "park") == 0) {
-        *mx = c.hasPark ? c.park.x : configParkPos(c.x);
-        *my = c.hasPark ? c.park.y : configParkPos(c.y);
+        *mx = c.positions.hasPark ? c.positions.park.x : configParkPos(c.x);
+        *my = c.positions.hasPark ? c.positions.park.y : configParkPos(c.y);
         return nullptr;
     }
     if (strcmp(name, "load") == 0) {
-        if (!c.hasLoad) return "no_position";
-        *mx = c.load.x;
-        *my = c.load.y;
+        if (!c.positions.hasLoad) return "no_position";
+        *mx = c.positions.load.x;
+        *my = c.positions.load.y;
         return nullptr;
     }
     if (strcmp(name, "mount") == 0) {
-        if (!c.hasMount) return "no_position";
-        *mx = c.mount.x;
-        *my = c.mount.y;
+        if (!c.positions.hasMount) return "no_position";
+        *mx = c.positions.mount.x;
+        *my = c.positions.mount.y;
         return nullptr;
     }
     if (strcmp(name, "probe") == 0) {
@@ -291,8 +291,8 @@ const char* framesNamed(const char* name, float* mx, float* my) {
         if (!t) return "no_tool";
         const CfgHead& h = c.heads[sel];
         if (!h.hasProbeSwitch) return "no_position";
-        *mx = h.probeSwitch.x - h.xOffset - t->xOffset;
-        *my = h.probeSwitch.y - h.yOffset - t->yOffset;
+        *mx = h.probeSwitch.x - h.xOffset - t->toolOffset.xOffset;
+        *my = h.probeSwitch.y - h.yOffset - t->toolOffset.yOffset;
         return nullptr;
     }
     return "usage";

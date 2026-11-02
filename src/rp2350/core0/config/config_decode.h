@@ -11,7 +11,8 @@
 // table on this side. Exceptions: the homing block (absent: not homeable),
 // and inside it `cycle` and `parkPos`; `laser`, a head's `probeSwitch` and its `z`, and
 // `positions.park` / `positions.load`; a tool's `cutFeed`, `plungeFeed` and
-// `chamberOffsets`.
+// `chamberOffsets`. An optional scalar's `has` flag says whether the blob held
+// it; the member holds the resolved value either way.
 //
 // Validation is consumer-scoped: it checks what would make the Pico's own use
 // of a field wrong, and leaves every other judgement to the host's
@@ -36,6 +37,7 @@ struct CfgNode {
 // The homing block (docs/plans/controller-homing.md). Feeds are mm/s or deg/s.
 struct CfgHoming {
     bool     present;      // false: no switch or index, the axis cannot be homed
+    bool     hasCycle;
     uint8_t  cycle;        // lower homes first; absent: Z 1, everything else 2
     uint16_t rampSteps;
     float    startFeed;
@@ -75,53 +77,113 @@ struct CfgPoint {
     float y;
 };
 
+// A tip position.
+struct CfgProbeSwitch {
+    float x;
+    float y;
+    bool  hasZ;
+    float z;     // the switch's height above the bed, mm; valid if hasZ
+};
+
 struct CfgHead {
     CfgAxis  z;
     CfgAxis  a;
     float    xOffset;        // tip − anchor, signed
     float    yOffset;
     bool     hasProbeSwitch;
-    CfgPoint probeSwitch;    // a tip position; valid if hasProbeSwitch
-    bool     hasSwitchZ;
-    float    switchZ;        // probeSwitch.z, the switch's height above the bed, mm
+    CfgProbeSwitch probeSwitch;  // valid if hasProbeSwitch
+    bool     hasUnlockRange;
     float    unlockRange;    // |machine A| that releases the holder, degrees; 0: no interlock
 };
 
-// A powered tool's `power` block; node 0 on a passive tool. The node's type
+struct CfgPowerNode {
+    uint8_t id;
+    uint8_t type;
+};
+
+struct CfgDutyLimits {
+    float maxOnS;
+    float minOnS;
+    float dwellS;
+};
+
+// A powered tool's `power` block; node id 0 on a passive tool. The node's type
 // picks the command that switches it: KNIFE_OSC CMD_KNIFE_OSC, STEPPER (the
 // laser standing in, ACCEPT_LASER_AS_POWER_TOOL) CMD_LASER. Duty limits are
 // optional inside it.
 struct CfgPower {
-    uint8_t node;         // power.node.id
-    uint8_t nodeType;     // power.node.type
-    float   settleS;      // on → plunge
-    bool    hasDuty;
-    float   maxOnS;
-    float   minOnS;
-    float   dwellS;
+    CfgPowerNode  node;
+    float         settleS;      // on → plunge
+    bool          hasDutyLimits;
+    CfgDutyLimits dutyLimits;
+};
+
+// Tip − head centre, mm.
+struct CfgToolOffset {
+    float xOffset;
+    float yOffset;
 };
 
 // A tool profile (the blob's `toolProfiles`, keyed by name; the Pico keeps
 // only the id).
 struct CfgTool {
     uint8_t id;             // 1..255, unique; 0 is no tool (`mount`)
-    uint8_t type;           // ToolType (web/src/machine/schema.ts)
+    uint8_t toolType;       // ToolType (web/src/machine/schema.ts)
     bool    tangential;     // A steers along the path
     uint8_t periodCount;    // tangential: looks the same every 360/n degrees
     float   cornerAngleDeg; // tangential: a corner turning more lifts to swivel
+    bool    hasAMaxDeg;
     float   aMaxDeg;        // |A| limit either way from home; 0 = no cable
+    bool    hasAOffsetDeg;
     float   aOffsetDeg;     // tangential: the edge's heading at machine A = 0 (unlock)
+    bool    hasOffsetMm;
     float   offsetMm;       // tangential: the blade tip's trail behind the A axis, mm
     bool    plunge;         // cuts into the material, not on it
-    float   xOffset;        // toolOffset: tip − head centre, mm
-    float   yOffset;
+    CfgToolOffset toolOffset;
+    bool    hasCutFeed;
     float   cutFeed;        // mm/s; 0 = the machine's
+    bool    hasPlungeFeed;
     float   plungeFeed;     // mm/s; 0 = the machine's
     uint8_t chamberCount;   // 0 without chambers
     float   chamberOffsets[CFG_MAX_CHAMBERS];   // A angle per chamber, degrees
     CfgPower power;         // kind NONE on a passive tool
 };
 
+// Anchor positions. Absent park: where homing parks. Mount: where a tool
+// change stops for the operator.
+struct CfgPositions {
+    bool     hasPark;
+    CfgPoint park;
+    bool     hasLoad;
+    CfgPoint load;
+    bool     hasMount;
+    CfgPoint mount;
+};
+
+struct CfgLaser {
+    uint8_t node;   // bus id the laser is wired to, 0 = none; the anchor, (0, 0)
+};
+
+// A job leaves BUFFERING once this much motion is queued, or once no record
+// has arrived for this long. Seconds; jobs only.
+struct CfgBuffer {
+    float queueTime;
+    float idleTime;
+};
+
+// Job feeds, mm/s: the cut feed when neither the layer nor its tool sets one,
+// the travel to a contour's start (`feed` overrides both), and the plunge feed
+// when the tool sets none.
+struct CfgFeed {
+    float cutFallback;
+    float travelDefault;
+    float plungeFallback;
+    float liftFeed;       // every lift
+};
+
+// Each member has its blob field's name and nesting. The exceptions:
+// `toolProfiles` is `tools`, found by id; `v` is `version`; `machine` has no
+// layer here.
 struct MachineCfg {
     uint16_t version;
     CfgAxis  x;
@@ -131,33 +193,16 @@ struct MachineCfg {
     uint8_t  defaultHead;
     CfgNode  peripherals[CFG_MAX_PERIPH];
     uint8_t  periphCount;
-    uint8_t  laserNode;      // bus id the laser is wired to, 0 = none; the anchor, (0, 0)
+    CfgLaser laser;
     // The work offset's config default, XY. Z is per head and set only by a
     // Z zero.
-    float    workX;
-    float    workY;
-    // Anchor positions. Absent park: where homing parks. Mount: where a tool
-    // change stops for the operator.
-    bool     hasPark;
-    CfgPoint park;
-    bool     hasLoad;
-    CfgPoint load;
-    bool     hasMount;
-    CfgPoint mount;
+    CfgPoint work;
+    CfgPositions positions;
     bool     jogUnhomed;     // relative jogs before homing, no soft limits (testing)
     bool     meshOn;         // bed mesh on at boot (the `mesh` command changes it)
-    // A job leaves BUFFERING once this much motion is queued, or once no record
-    // has arrived for this long. Seconds; jobs only.
-    float    bufferQueueTime;
-    float    bufferIdleTime;
-    // Job feeds, mm/s: the cut feed when neither the layer nor its tool sets
-    // one, the travel to a contour's start (`feed` overrides both), and the
-    // plunge feed when the tool sets none.
-    float    cutFallback;
-    float    travelDefault;
-    float    plungeFallback;
-    float    liftFeed;       // every lift
-    float    zClearance;     // mm above the material top for lifts and travel
+    CfgBuffer buffer;
+    CfgFeed  feed;
+    float    zClearance;    // mm above the material top for lifts and travel
     float    maxOvercut;     // mm a zeroed tip may go below the bed (work Z 0)
     CfgTool  tools[CFG_MAX_TOOLS];
     uint8_t  toolCount;
@@ -185,8 +230,15 @@ enum CfgDecodeError : uint8_t {
     CFG_DEC_POWER,          // a power node not a present switchable one, or a bad settle or duty
 };
 
-// Decode and validate `len` bytes at `blob` into *out. On failure *out is left
-// in an unspecified state and the first error found is returned.
+// Build *out from `len` bytes at `blob`. Checks only what the struct cannot
+// hold: presence, types, and counts and ids that would not fit.
+CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out);
+
+// Run every rule over `c`; the first failure is returned.
+CfgDecodeError configValidate(const MachineCfg& c);
+
+// configParse then configValidate. On failure *out is left in an unspecified
+// state and the first error found is returned.
 CfgDecodeError configDecode(const uint8_t* blob, size_t len, MachineCfg* out);
 
 // Short lowercase name for status output, e.g. "dup_node".

@@ -15,8 +15,8 @@ static CfgDecodeError bootError   = CFG_DEC_OK;   // the stored blob's, for cfge
 static bool           ignored     = false;
 
 static void publish() {
-    bufferQueueS = active.bufferQueueTime;
-    bufferIdleMs = (uint32_t)(active.bufferIdleTime * 1000.0f);
+    bufferQueueS = active.buffer.queueTime;
+    bufferIdleMs = (uint32_t)(active.buffer.idleTime * 1000.0f);
 }
 
 void machineCfgLoad() {

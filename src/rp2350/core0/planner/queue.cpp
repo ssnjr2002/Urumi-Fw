@@ -296,12 +296,12 @@ void plannerSetFeed(float cut, float travel) {
 
 float plannerMachineFeed() {
     if (cutFeed > 0) return cutFeed;
-    return machineCfgValid() ? machineCfg().cutFallback : 0;
+    return machineCfgValid() ? machineCfg().feed.cutFallback : 0;
 }
 
 static float travelSpeed() {
     if (travelFeed > 0) return travelFeed;
-    return machineCfgValid() ? machineCfg().travelDefault : 0;
+    return machineCfgValid() ? machineCfg().feed.travelDefault : 0;
 }
 
 void plannerEndContour() { inContour = false; }
@@ -393,13 +393,13 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
             estOnS = 0;
         }
         const CfgPower& p = mo.power;
-        jobPower.node    = p.node;
-        jobPower.cmd     = p.nodeType == CFG_NODE_KNIFE_OSC ? CMD_KNIFE_OSC : CMD_LASER;
+        jobPower.node    = p.node.id;
+        jobPower.cmd     = p.node.type == CFG_NODE_KNIFE_OSC ? CMD_KNIFE_OSC : CMD_LASER;
         jobPower.settleS = p.settleS;
-        jobPower.hasDuty = p.hasDuty;
-        jobPower.minOnS  = p.minOnS;
-        jobPower.dwellS  = p.dwellS;
-        jobPower.maxOnS  = p.maxOnS;
+        jobPower.hasDuty = p.hasDutyLimits;
+        jobPower.minOnS  = p.dutyLimits.minOnS;
+        jobPower.dwellS  = p.dutyLimits.dwellS;
+        jobPower.maxOnS  = p.dutyLimits.maxOnS;
         layerMo = mo;
         curLayer = layerNo;
         nextRecord = record;
@@ -567,7 +567,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     // A resumed record starts at its trim, travelled to as a START's p0.
     const float from = firstRecord ? resumeTrim : 0;
     const planner::Vec2 p0 = from > 0 ? planner::bezierPoint(b, planner::bezierT(b, from)) : b.p[0];
-    const float liftFeed = machineCfg().liftFeed;
+    const float liftFeed = machineCfg().feed.liftFeed;
     const float up = clearZ(), down = cutZ();
     // Measured from p0; the trim is shorter than the stretch, which holds this record.
     if (from > 0 && breakDist != 0 && breakDist != UINT16_MAX)
@@ -579,18 +579,18 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     const float dx = p0.x - e.x, dy = p0.y - e.y;
     // A START: Z to clearance, travel, [tool on,] plunge, then the curve; an
     // END lifts after it [and switches the tool off].
-    const bool powered = layerMo.power.node != 0;
+    const bool powered = layerMo.power.node.id != 0;
     const CfgPower& pw = layerMo.power;
     const float liftS = zMoveS(up - down, liftFeed, limits);
     const float plungeS = zMoveS(up - down, layerMo.plungeFeed, limits);
     // At a BREAK past minOnS, a duty lift here if the next corner is certainly
     // too late: lift, tool off, tool on (its dwell), plunge, then the curve.
-    const bool dutyStop = powered && pw.hasDuty && !start && breakDist != 0 &&
-                          estOnS >= pw.minOnS &&
-                          estOnS + cutS(breakDist, limits) + liftS + kDutyMarginS > pw.maxOnS;
+    const bool dutyStop = powered && pw.hasDutyLimits && !start && breakDist != 0 &&
+                          estOnS >= pw.dutyLimits.minOnS &&
+                          estOnS + cutS(breakDist, limits) + liftS + kDutyMarginS > pw.dutyLimits.maxOnS;
     // A tool with a duty keeps 4 slots for a deadline lift (plannerDutyLift).
     int blocks = 1 + (start ? 3 + powered : 0) + (dutyStop ? 4 : 0) +
-                       (end ? 1 + powered : 0) + (powered && pw.hasDuty ? 4 : 0);
+                       (end ? 1 + powered : 0) + (powered && pw.hasDutyLimits ? 4 : 0);
     // A tangential tool follows the curve's heading. It turns to the start
     // heading during a START's travel and swivels at a BREAK, lifting for a
     // swivel past cornerAngleDeg; the whole curve stays inside the cable.
@@ -700,7 +700,7 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     spin_unlock(plannerLock, s);
     if (out != PQ_OK) return out;
 
-    if (start && estOnS >= pw.minOnS) estOnS = 0;   // ZB's rule: this START dwells
+    if (start && estOnS >= pw.dutyLimits.minOnS) estOnS = 0;   // ZB's rule: this START dwells
     if (start || dutyStop) estOnS = (dutyStop ? 0 : estOnS) + pw.settleS + plungeS;
     // A stretch counts whole at its first record; without its length, by record.
     if (breakDist != 0) stretchCounted = true;
@@ -735,7 +735,7 @@ void plannerDutyLift() {
             plannerRing.setTag(d.layer, d.record, 0, d.s);
             plannerRing.setLift(LIFT_DEADLINE);
             plannerRing.beginFront(d.at);
-            pushZ(up, machineCfg().liftFeed, limits);
+            pushZ(up, machineCfg().feed.liftFeed, limits);
             plannerRing.pushEvent(TOOL_EV_OFF);
             plannerRing.pushEvent(TOOL_EV_ON);
             pushZ(d.at.z, layerMo.plungeFeed, limits);
@@ -755,7 +755,7 @@ bool plannerQueueLift(uint8_t why) {
     if (!machineCfgValid() || !fillLimits(limits) ||
         !(limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0)) return false;
     const float up = clearZ();
-    const float feed = machineCfg().liftFeed;
+    const float feed = machineCfg().feed.liftFeed;
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     const planner::Pos e = plannerRing.end();
