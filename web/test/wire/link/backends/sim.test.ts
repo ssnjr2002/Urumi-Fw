@@ -29,7 +29,7 @@ import {
 } from "../../../../src/wire/format/status.js";
 import { stampSeq } from "../../../../src/wire/format/packet.js";
 import { packBezier } from "../../../../src/wire/format/bezier.js";
-import { packLayerHdr } from "../../../../src/wire/format/layer.js";
+import { packJobHdr, packLayerHdr, packToolHdr } from "../../../../src/wire/format/layer.js";
 import { BezierFlag } from "../../../../src/toolpath/annotate.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
 import { packCjog, type JogDir } from "../../../../src/wire/format/cjog.js";
@@ -48,10 +48,14 @@ function rec(x = 1): Uint8Array {
     });
 }
 
-const layer = () => packLayerHdr({ tool: 1, head: 0 });
+const BOX = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
+const layer = () => packLayerHdr({});
+const tool = () => packToolHdr({ tool: 1, head: 0, bbox: BOX });
+/** A job header and its tool header, then a new layer with its own. */
+const opening = () => [packJobHdr({ recordCount: 0, toolCount: 1 }), tool(), layer(), tool()];
 
 /** A layer header, then records ending at 1..n mm. */
-const upTo = (n: number) => [layer(), ...Array.from({ length: n }, (_, i) => rec(i + 1))];
+const upTo = (n: number) => [...opening(), ...Array.from({ length: n }, (_, i) => rec(i + 1))];
 
 /** Poll until `cond` holds or `ms` pass; returns the last status. */
 async function until(link: Link, cond: (st: Awaited<ReturnType<Link["getStatus"]>>) => boolean, ms = 1000) {
@@ -326,7 +330,7 @@ describe("wire/link/backends/sim: buffering", () => {
     it("a layer header opens the job in BUFFERING; it runs once enough is queued", async () => {
         await withLink(
             async (link) => {
-                await link.stream([layer(), rec(1)], 4);
+                await link.stream([...opening(), rec(1)], 4);
                 let st = await link.getStatus();
                 expect([st.state, st.reason, st.bufCount]).toEqual([MachineState.JOB, JobReason.BUFFERING, 1]);
                 await link.stream([rec(2)], 4); // 200 ms queued: enough
@@ -345,14 +349,14 @@ describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
             // Send seq 0 directly via writeBatch — accepted + executed
             const p0 = stampSeq(rec(5), 0);
             // (use the link's writer through a one-packet session)
-            await link.stream([layer(), p0], 4);
+            await link.stream([...opening(), p0], 4);
             await until(link, (s) => s.wpos![0] === 5);
             expect(sim.pos[0]).toBe(5);
 
             // Now reset and send seq 0 again — the sim's expectedSeq is back to
             // 0, so this is a fresh accept and runs.
             await link.resetSeq();
-            await link.stream([layer(), stampSeq(rec(10), 0)], 4);
+            await link.stream([layer(), tool(), stampSeq(rec(10), 0)], 4);
             await until(link, (s) => s.wpos![0] === 10);
             expect(sim.pos[0]).toBe(10);
         });
@@ -459,8 +463,8 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
     it("pause keeps the queued record; only a header naming it resumes", async () => {
         await withLink(async (link) => {
             await link.resetSeq();
-            const hdr = (layer: number, record: number) => packLayerHdr({ tool: 1, head: 0, layer, record });
-            expect((await link.stream([hdr(2, 10), rec(1), rec(2), rec(3)], 4)).ok).toBe(true);
+            const hdr = (layer: number, record: number) => packLayerHdr({ layer, record });
+            expect((await link.stream([packJobHdr({ recordCount: 0, toolCount: 1 }), tool(), hdr(2, 10), tool(), rec(1), rec(2), rec(3)], 4)).ok).toBe(true);
             expect(await link.command("pause")).toBe("ok");
             expect(await link.command("get resume_layer resume_record"))
                 .toBe("resume_layer=2 resume_record=10");
@@ -581,11 +585,13 @@ describe("wire/link/backends/sim: continuous jog", () => {
         await withLink(async (link, sim) => {
             await link.command("setorigin");
             await link.resetSeq();
-            const hdr = packLayerHdr({ tool: 1, head: 0, layer: 2, record: 10 });
-            await sim.write(stampSeq(hdr, 0)); // NACK_TOOL_CHANGE
+            const hdr = packLayerHdr({ layer: 2, record: 10 });
+            await sim.write(stampSeq(packJobHdr({ recordCount: 0, toolCount: 1 }), 0));
+            await sim.write(stampSeq(tool(), 1));
+            await sim.write(stampSeq(hdr, 2));
+            await sim.write(stampSeq(tool(), 3)); // NACK_TOOL_CHANGE
             await until(link, (st) => st.reason === JobReason.TOOL_WAIT);
             const layer = (await link.getStatus()).layer;
-            expect(layer).not.toBe(NO_LAYER);
             const r = replies(sim);
             await hold(sim, 1, 0, 90);
             let st = await link.getStatus();

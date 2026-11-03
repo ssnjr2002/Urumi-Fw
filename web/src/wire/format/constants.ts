@@ -14,9 +14,15 @@ export const MAGIC_BEZIER = 0xad; // host → Pico: Bézier piece for the planne
 export const BEZIER_SIZE = 62;
 export const BEZIER_SEQ_OFFSET = 2;
 
-// ── LAYER_HDR — 22-byte layer header, opens a job (format/layer.ts) ────────────
-export const MAGIC_LAYER_HDR = 0xa1; // host → Pico: tool, head, chamber, feed, p, t
-export const LAYER_HDR_SIZE = 22;
+// ── Job, tool and layer headers (format/layer.ts) ──────────────────────────────
+export const MAGIC_JOB_HDR = 0xb8; // host → Pico: opens a job in JOB.PREFLIGHT
+export const JOB_HDR_SIZE = 17;
+export const JOB_HDR_VERSION = 1;
+export const JOB_MAX_TOOLS = 4;
+export const MAGIC_TOOL_HDR = 0xb9; // host → Pico: tool, head, bbox
+export const TOOL_HDR_SIZE = 21;
+export const MAGIC_LAYER_HDR = 0xa1; // host → Pico: chamber, layer, record, feed, p, t
+export const LAYER_HDR_SIZE = 20;
 export const LAYER_HDR_SEQ_OFFSET = 2;
 
 // ── Continuous jog — 7-byte deadman packet and its stop byte (format/cjog.ts) ──
@@ -79,15 +85,27 @@ export const NACK_SOFT_LIMIT = 0x09;
 export const NACK_MIXED_AXES = 0x0a;
 // A continuous-jog packet refused while a step or sequence holds the machine.
 export const NACK_BUSY = 0x0b;
-// A BEZIER with no job open, or a LAYER_HDR inside a contour or with a bad
-// chamber, feed, thickness or p.
+// A frame out of the job's order, a tool not seen in preflight, a LAYER_HDR inside
+// a contour or with a bad chamber, feed, thickness or p, or a bad JOB_HDR.
 export const NACK_JOB = 0x0c;
-// A LAYER_HDR whose tool id is not in the config.
+// A TOOL_HDR whose tool id is not in the config.
 export const NACK_TOOL_UNKNOWN = 0x0d;
-// A LAYER_HDR whose tool is not mounted on its head, or whose head is not
-// selected: not consumed, and the job holds for a tool change; every header and
-// record meanwhile. The host waits and resends from the header.
+// A TOOL_HDR or resuming LAYER_HDR whose tool is not mounted on its head, or whose
+// head is not selected: not consumed, and the job holds for a tool change; every
+// header and record meanwhile. The host waits and resends from the header.
 export const NACK_TOOL_CHANGE = 0x0f;
+// A TOOL_HDR whose head does not exist or has no A for its tool, or whose power
+// node is missing or excluded.
+export const NACK_TOOL_UNAVAILABLE = 0x10;
+// A TOOL_HDR with no valid origin or outside the current one, or a JOB_HDR with
+// softLimits off on X or Y; Nack.detail says which.
+export const NACK_OUT_OF_RANGE = 0x11;
+// A JOB_HDR with X or Y not homed.
+export const NACK_NOT_HOMED = 0x12;
+// Nack.detail on OUT_OF_RANGE: Y (else X), the high side (else low), softLimits off.
+export const NACK_DETAIL_AXIS_Y = 0x01;
+export const NACK_DETAIL_SIDE_HI = 0x02;
+export const NACK_DETAIL_NO_LIMITS = 0x04;
 
 // ── Config plane magics (Phase-2) — CFG blob push/pull over the data plane ──────
 // docs/wire_protocol.md "CRC Algorithms" + packets.py. CFG_SET/GET are host→Pico

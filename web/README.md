@@ -31,11 +31,11 @@ pnpm test
 ## A job
 
 ```ts
-import { prepareBezierJob, packLayerHdr } from "urumi-host";
+import { prepareBezierJob, JobSource } from "urumi-host";
 
 const job = prepareBezierJob(svgText, "knife", { offset: { x: 100, y: 50 } });
 if ("error" in job) throw new Error(job.error);
-// Stream packLayerHdr({ tool, head, ... }) and then job.packets through a Session.
+// Run new JobSource([{ hdr, tool, head, bbox: job.bbox, packets: job.packets }]) through a Session.
 ```
 
 The real-port transports have their own subpaths, so a Node consumer never

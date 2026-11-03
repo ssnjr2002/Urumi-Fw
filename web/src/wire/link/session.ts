@@ -41,14 +41,17 @@ import {
     NACK_JOB,
     NACK_TOOL_UNKNOWN,
     NACK_TOOL_CHANGE,
+    NACK_TOOL_UNAVAILABLE,
+    NACK_OUT_OF_RANGE,
+    NACK_NOT_HOMED,
     NACK_BUSY,
+    JOB_MAX_TOOLS,
     MAGIC_ABORT,
-    MAGIC_LAYER_HDR,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
 } from "../format/constants.js";
 import { stampSeq } from "../format/packet.js";
-import { packLayerHdr, type LayerHdr } from "../format/layer.js";
+import { packJobHdr, packLayerHdr, packToolHdr, type LayerHdr, type ToolBox, type ToolHdr } from "../format/layer.js";
 import { Ack, Nack } from "./demux.js";
 import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../format/status.js";
 
@@ -181,26 +184,80 @@ export interface ReplayableSource {
     start(): PacketSource;
     /** From `record` of `layer` on, behind a header naming that point. */
     from(layer: number, record: number): PacketSource;
+    /** Whether `layer` is one of the job's. */
+    hasLayer(layer: number): boolean;
+    /** How many frames open the job, before its first layer. */
+    readonly preflightFrames: number;
 }
 
-/** One layer in memory: its header's fields and its BEZIER packets, record n = packets[n - hdr.record]. */
-export class JobSource implements ReplayableSource {
-    private readonly _hdr: LayerHdr;
-    private readonly _packets: readonly Uint8Array[];
+/** A layer in memory: its header's fields, tool and bbox, and its BEZIER packets, record n = packets[n - hdr.record]. */
+export interface JobLayer {
+    readonly hdr: LayerHdr;
+    readonly tool: number;
+    readonly head: number;
+    readonly bbox: ToolBox;
+    readonly packets: readonly Uint8Array[];
+}
 
-    constructor(hdr: LayerHdr, packets: readonly Uint8Array[]) {
-        this._hdr = hdr;
-        this._packets = packets;
+function unionBox(a: ToolBox, b: ToolBox): ToolBox {
+    return {
+        minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY),
+        maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY),
+    };
+}
+
+/** A job's layers in memory, each tool's header carrying the bbox over all its layers. */
+export class JobSource implements ReplayableSource {
+    private readonly _id: number;
+    private readonly _layers: readonly JobLayer[];
+    private readonly _tools: readonly ToolHdr[];
+
+    constructor(layers: readonly JobLayer[], id = 0) {
+        const tools = new Map<number, ToolHdr>();
+        for (const l of layers) {
+            const t = tools.get(l.tool);
+            if (t && t.head !== l.head) throw new RangeError(`tool ${l.tool} on heads ${t.head} and ${l.head}`);
+            tools.set(l.tool, { tool: l.tool, head: l.head, bbox: t ? unionBox(t.bbox, l.bbox) : l.bbox });
+        }
+        if (tools.size < 1 || tools.size > JOB_MAX_TOOLS) throw new RangeError(`a job has 1..${JOB_MAX_TOOLS} tools, not ${tools.size}`);
+        this._id = id;
+        this._layers = layers;
+        this._tools = [...tools.values()];
+    }
+
+    get preflightFrames(): number {
+        return 1 + this._tools.length;
+    }
+
+    hasLayer(layer: number): boolean {
+        return this._layers.some((l) => (l.hdr.layer ?? 0) === layer);
     }
 
     start(): PacketSource {
-        return this.from(this._hdr.layer ?? 0, this._hdr.record ?? 0);
+        const recordCount = this._layers.reduce((n, l) => n + l.packets.length, 0);
+        return new ListSource([
+            packJobHdr({ id: this._id, recordCount, thickness: this._layers[0]!.hdr.thickness, toolCount: this._tools.length }),
+            ...this._tools.map((t) => packToolHdr(t)),
+            ...this._layers.flatMap((l) => this._newLayer(l)),
+        ]);
     }
 
+    /** A resume: this layer's header alone, its records, then the layers after it. */
     from(layer: number, record: number): PacketSource {
-        const first = this._hdr.record ?? 0;
-        if (layer !== (this._hdr.layer ?? 0) || record < first) return new ListSource([]);
-        return new ListSource([packLayerHdr({ ...this._hdr, layer, record }), ...this._packets.slice(record - first)]);
+        const i = this._layers.findIndex((l) => (l.hdr.layer ?? 0) === layer);
+        const l = this._layers[i];
+        const first = l?.hdr.record ?? 0;
+        if (!l || record < first || record > first + l.packets.length) return new ListSource([]);
+        return new ListSource([
+            packLayerHdr({ ...l.hdr, layer, record }),
+            ...l.packets.slice(record - first),
+            ...this._layers.slice(i + 1).flatMap((n) => this._newLayer(n)),
+        ]);
+    }
+
+    private _newLayer(l: JobLayer): Uint8Array[] {
+        const t = this._tools.find((x) => x.tool === l.tool)!;
+        return [packLayerHdr(l.hdr), packToolHdr({ ...t, head: l.head }), ...l.packets];
     }
 }
 
@@ -248,7 +305,6 @@ export class Session {
     private _done = false; // source returned null
 
     // Job session only.
-    private _layer: number | undefined; // the last header's layer
     private _jobSeen = false; // a status has shown JOB
     private _ending = false; // cancel() or end() asked
     private _go = false; // resume() asked
@@ -268,6 +324,8 @@ export class Session {
      *  For a NACK it is the NACK reason byte; FATAL_STALL / FATAL_CRC_LIMIT
      *  are self-inflicted. Read via `fatalReasonName()` for a human label. */
     fatalReason: number | undefined;
+    /** The fatal NACK's detail byte (NACK_DETAIL_*), 0 for most reasons. */
+    fatalDetail = 0;
 
     constructor(
         writer: Writer,
@@ -450,7 +508,8 @@ export class Session {
                 v?.(`FATAL: a record lies outside the soft range`);
                 return false; // fatal — the job does not fit where it is placed
             }
-            if (r === NACK_JOB || r === NACK_TOOL_UNKNOWN) {
+            if (r === NACK_JOB || r === NACK_TOOL_UNKNOWN || r === NACK_TOOL_UNAVAILABLE ||
+                r === NACK_OUT_OF_RANGE || r === NACK_NOT_HOMED) {
                 this.fatalReason = r;
                 v?.(`FATAL: the Pico refused the layer (${fatalReasonName(r)})`);
                 return false; // fatal — no job open, or the layer's tool cannot run
@@ -555,8 +614,12 @@ export class Session {
             const r = resp.reason;
             v?.(`NACK reason=0x${r.toString(16)} (${fatalReasonName(r)}) base=${this._base}`);
             if (this._ending) continue;
+            // A preflight refusal has already ended the session on the Pico.
+            const refusedPreflight = r === NACK_JOB && this._base < this._job!.preflightFrames;
             if (r === NACK_BAD_MAGIC || r === NACK_BAD_CURVE || r === NACK_SOFT_LIMIT ||
-                r === NACK_TOOL_UNKNOWN || r === NACK_BAD_STATE) {
+                r === NACK_TOOL_UNKNOWN || r === NACK_TOOL_UNAVAILABLE || r === NACK_OUT_OF_RANGE ||
+                r === NACK_NOT_HOMED || r === NACK_BAD_STATE || refusedPreflight) {
+                this.fatalDetail = resp.detail;
                 this.fatalReason = r;
                 v?.(`FATAL: ${fatalReasonName(r)}`);
                 return false; // the job, or the machine's state, is wrong
@@ -599,7 +662,7 @@ export class Session {
     /**
      * Send nothing but STATUS_REQ until the hold is left: null then, else
      * what run() returns. A paused, refused or silent job must still be JOB on
-     * the session's layer; anything else is a lost job, and resending to it
+     * one of the job's layers; anything else is a lost job, and resending to it
      * would be ACKed as stale duplicates without running (a rebooted Pico).
      */
     private async _hold(h: Hold, v: ((m: string) => void) | null): Promise<boolean | null> {
@@ -617,8 +680,8 @@ export class Session {
                     const end = this._ended(st);
                     if (end !== undefined) return end;
                     if (!this._ending) {
-                        if (h !== "tool" && this._layer !== undefined && st.layer !== undefined &&
-                            st.layer !== NO_LAYER && st.layer !== this._layer) {
+                        if (h !== "tool" && st.layer !== undefined && st.layer !== NO_LAYER &&
+                            !this._job!.hasLayer(st.layer)) {
                             this.fatalReason = FATAL_JOB_LOST;
                             return false;
                         }
@@ -766,7 +829,6 @@ export class Session {
                 return;
             }
             for (const pkt of batch) {
-                if (pkt[0] === MAGIC_LAYER_HDR) this._layer = pkt[5]! | (pkt[6]! << 8);
                 this._window.push(stampSeq(pkt, this._seq));
                 this._seq = (this._seq + 1) & 0xff;
                 this._emitted++;
@@ -825,6 +887,9 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [NACK_JOB]: "NACK_JOB",
     [NACK_TOOL_UNKNOWN]: "NACK_TOOL_UNKNOWN",
     [NACK_TOOL_CHANGE]: "NACK_TOOL_CHANGE",
+    [NACK_TOOL_UNAVAILABLE]: "NACK_TOOL_UNAVAILABLE",
+    [NACK_OUT_OF_RANGE]: "NACK_OUT_OF_RANGE",
+    [NACK_NOT_HOMED]: "NACK_NOT_HOMED",
     [NACK_BUSY]: "NACK_BUSY",
     [FATAL_STALL]: "FATAL_STALL",
     [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",

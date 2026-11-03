@@ -12,7 +12,12 @@ import { MachineState, JobReason } from "../../../src/wire/format/status.js";
 import { packBezier } from "../../../src/wire/format/bezier.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
 import { packCjog } from "../../../src/wire/format/cjog.js";
-import { CJOG_DEADMAN_MS } from "../../../src/wire/format/constants.js";
+import {
+    CJOG_DEADMAN_MS, MAGIC_BEZIER, MAGIC_JOB_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR,
+    NACK_DETAIL_AXIS_Y, NACK_DETAIL_SIDE_HI, NACK_JOB, NACK_OUT_OF_RANGE,
+} from "../../../src/wire/format/constants.js";
+import { packJobHdr, packToolHdr } from "../../../src/wire/format/layer.js";
+import { stampSeq } from "../../../src/wire/format/packet.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -26,7 +31,12 @@ function rec(x: number): Uint8Array {
     });
 }
 
-const job = (n: number) => new JobSource({ tool: 1, head: 0 }, Array.from({ length: n }, (_, i) => rec(i + 1)));
+const BOX = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
+const layerOf = (layer: number, tool: number, packets: Uint8Array[], bbox = BOX) =>
+    ({ hdr: { layer }, tool, head: 0, bbox, packets });
+const job = (n: number) => new JobSource([layerOf(0, 1, Array.from({ length: n }, (_, i) => rec(i + 1)))]);
+/** JOB_HDR, its TOOL_HDR and the first layer's TOOL_HDR, ahead of LAYER_HDR and records. */
+const HDRS = 3;
 
 async function withLink<T>(
     fn: (link: Link, sim: SimTransport) => Promise<T>,
@@ -63,7 +73,7 @@ describe("wire/link/session: job life", () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 6);
             await until(() => atX(link, 6));
-            expect(sess.stats()).toMatchObject({ acked: 7, held: null });
+            expect(sess.stats()).toMatchObject({ acked: HDRS + 7, held: null });
             let ended = false;
             void done.then(() => { ended = true; });
             await tick(100);
@@ -89,7 +99,7 @@ describe("wire/link/session: job life", () => {
     it("end() ends a held session", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 1);
-            await until(() => sess.stats().acked === 2);
+            await until(() => sess.stats().acked === HDRS + 2);
             await link.command("pause");
             await until(() => sess.held === "paused");
             sess.end();
@@ -101,7 +111,7 @@ describe("wire/link/session: job life", () => {
     it("truncate() ends a held session", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 1);
-            await until(() => sess.stats().acked === 2);
+            await until(() => sess.stats().acked === HDRS + 2);
             await link.command("pause");
             await until(() => sess.held === "paused");
             sess.truncate();
@@ -112,7 +122,7 @@ describe("wire/link/session: job life", () => {
     it("a job cancelled behind its back is FATAL_JOB_LOST", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 1);
-            await until(() => sess.stats().acked === 2);
+            await until(() => sess.stats().acked === HDRS + 2);
             await link.command("pause");
             await until(() => sess.held === "paused");
             expect(await link.command("cancel")).toBe("ok");
@@ -141,7 +151,7 @@ describe("wire/link/session: pause", () => {
     it("holds on a status PAUSED after the last ACK", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 10);
-            await until(() => sess.stats().acked === 11);
+            await until(() => sess.stats().acked === HDRS + 11);
             expect(await link.command("pause")).toBe("ok");
             await until(() => sess.held === "paused");
             sess.resume();
@@ -156,7 +166,7 @@ describe("wire/link/session: pause()", () => {
     it("holds on its own ok after the last ACK and resumes", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 10);
-            await until(() => sess.stats().acked === 11);
+            await until(() => sess.stats().acked === HDRS + 11);
             expect(await sess.pause()).toBe("ok");
             await until(() => sess.held === "paused");
             sess.resume();
@@ -196,6 +206,99 @@ describe("wire/link/session: pause()", () => {
             sess.truncate();
             expect(await done).toBe(true);
         });
+    });
+});
+
+describe("wire/link/session: job headers", () => {
+    const frames = (s: JobSource): Promise<Uint8Array[] | null> =>
+        s.start().pull({ room: 100 } as never);
+
+    it("emits JOB_HDR, one TOOL_HDR per tool with its union bbox, then each layer with its tool's header", async () => {
+        const src = new JobSource([
+            layerOf(0, 1, [rec(1)], { minX: 0, minY: 0, maxX: 5, maxY: 5 }),
+            layerOf(1, 2, [rec(2)]),
+            layerOf(2, 1, [rec(3)], { minX: -1, minY: 0, maxX: 7, maxY: 5 }),
+        ]);
+        const out = (await frames(src))!;
+        expect(out.map((p) => p[0])).toEqual([
+            MAGIC_JOB_HDR, MAGIC_TOOL_HDR, MAGIC_TOOL_HDR,
+            MAGIC_LAYER_HDR, MAGIC_TOOL_HDR, MAGIC_BEZIER,
+            MAGIC_LAYER_HDR, MAGIC_TOOL_HDR, MAGIC_BEZIER,
+            MAGIC_LAYER_HDR, MAGIC_TOOL_HDR, MAGIC_BEZIER,
+        ]);
+        expect(src.preflightFrames).toBe(3);
+        expect(out[0]![15]).toBe(2);
+        // Each layer's TOOL_HDR names that layer's tool.
+        expect([out[4]![1], out[7]![1], out[10]![1]]).toEqual([1, 2, 1]);
+        const minX = new DataView(out[1]!.buffer).getFloat32(4, true);
+        const maxX = new DataView(out[1]!.buffer).getFloat32(8, true);
+        expect([minX, maxX]).toEqual([-1, 7]);
+    });
+
+    it("a resume is LAYER_HDR alone, then the later layers with their tool headers", async () => {
+        const src = new JobSource([layerOf(0, 1, [rec(1), rec(2)]), layerOf(1, 2, [rec(3)])]);
+        const out = (await src.from(0, 1).pull({ room: 100 } as never))!;
+        expect(out.map((p) => p[0])).toEqual([MAGIC_LAYER_HDR, MAGIC_BEZIER, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR, MAGIC_BEZIER]);
+        const atEnd = (await src.from(0, 2).pull({ room: 100 } as never))!;
+        expect(atEnd.map((p) => p[0])).toEqual([MAGIC_LAYER_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR, MAGIC_BEZIER]);
+        expect(await src.from(0, 3).pull({ room: 100 } as never)).toBeNull();
+    });
+
+    it("refuses a job of too many tools, or a tool on two heads", () => {
+        expect(() => new JobSource([1, 2, 3, 4, 5].map((t) => layerOf(t, t, [])))).toThrow(RangeError);
+        expect(() => new JobSource([layerOf(0, 1, []), { ...layerOf(1, 1, []), head: 1 }])).toThrow(RangeError);
+    });
+
+    it("a preflight refusal is fatal, with its detail", async () => {
+        await withLink(async (link, sim) => {
+            sim.refuseTool = { tool: 1, reason: NACK_OUT_OF_RANGE, detail: NACK_DETAIL_AXIS_Y | NACK_DETAIL_SIDE_HI };
+            const { sess, done } = await start(link, 2);
+            expect(await done).toBe(false);
+            expect(sess.fatalReason).toBe(NACK_OUT_OF_RANGE);
+            expect(sess.fatalDetail).toBe(NACK_DETAIL_AXIS_Y | NACK_DETAIL_SIDE_HI);
+            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+        });
+    });
+
+    it("NACK_JOB in preflight is fatal, not a hold", async () => {
+        await withLink(async (link, sim) => {
+            sim.refuseTool = { tool: 1, reason: NACK_JOB };
+            const { sess, done } = await start(link, 2);
+            expect(await done).toBe(false);
+            expect(sess.fatalReason).toBe(NACK_JOB);
+        });
+    });
+
+    it("refuses a pause before the first layer opens", async () => {
+        await withLink(async (link, sim) => {
+            await link.resetSeq();
+            await sim.write(stampSeq(packJobHdr({ recordCount: 0, toolCount: 1 }), 0));
+            expect(await link.command("pause")).toMatch(/^err/);
+            expect((await link.getStatus()).reason).toBe(JobReason.PREFLIGHT);
+            await sim.write(stampSeq(packToolHdr({ tool: 1, head: 0, bbox: BOX }), 1));
+            expect((await link.getStatus()).reason).toBe(JobReason.BUFFERING);
+            expect(await link.command("pause")).toMatch(/^err/);
+            expect(await link.command("cancel")).toBe("ok");
+        });
+    });
+
+    it("a pause with the next layer already sent resumes, not lost", async () => {
+        await withLink(async (link) => {
+            await link.resetSeq();
+            const sess = link.session(new JobSource([
+                layerOf(0, 1, Array.from({ length: 20 }, (_, i) => rec(i + 1))),
+                layerOf(1, 2, Array.from({ length: 20 }, (_, i) => rec(i + 21))),
+            ]), 8);
+            const done = sess.run();
+            await until(async () => (await link.getStatus()).reason === JobReason.RUNNING);
+            expect(await link.command("pause")).toBe("ok");
+            await until(() => sess.held === "paused");
+            expect(sess.resume()).toBe(true);
+            await until(() => atX(link, 40));
+            expect(sess.fatalReason).toBeUndefined();
+            await sess.cancel();
+            expect(await done).toBe(true);
+        }, { recordMs: 20, ringSize: 30 });
     });
 });
 

@@ -122,6 +122,8 @@ export const JobReason = {
     TOOL_WAIT: 6,
     /** At rest before a plunge, the tool off until its duty resets. */
     DWELL: 7,
+    /** JOB_HDR taken, waiting on its TOOL_HDRs; nothing moves. */
+    PREFLIGHT: 8,
 } as const;
 export type JobReason = (typeof JobReason)[keyof typeof JobReason];
 

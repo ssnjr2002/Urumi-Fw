@@ -37,6 +37,10 @@ import {
     BEZIER_SEQ_OFFSET,
     MAGIC_LAYER_HDR,
     LAYER_HDR_SIZE,
+    MAGIC_JOB_HDR,
+    JOB_HDR_SIZE,
+    MAGIC_TOOL_HDR,
+    TOOL_HDR_SIZE,
     NACK_FULL,
     NACK_JOB,
     NACK_BAD_STATE,
@@ -56,6 +60,7 @@ import {
     MachineContext,
     Fault,
     JobReason,
+    NO_LAYER,
     axisMask,
     packStatusRsp,
 } from "../../format/status.js";
@@ -228,6 +233,15 @@ export class SimTransport implements Transport {
     private motion: Array<{ x: number; y: number; layer: number; record: number }> = [];
     /** The record the next BEZIER is (the last layer header's, counted on). */
     private curLayer = 0;
+    private preCount = 0; // this job's tool headers: promised, and the ids taken
+    private preIds: number[] = [];
+    private heldLayer: { layer: number; record: number } | null = null; // waiting on its TOOL_HDR
+    private layerOpen = false;
+    private curHead = 0; // the open layer's
+    private curTool = 0;
+    private toolFromPaused = false;
+    /** Refuse this tool's preflight header, as the Pico would for its bbox or head. */
+    refuseTool: { tool: number; reason: number; detail?: number } | null = null;
     private nextRecord = 0;
     /** Where a paused job resumes. */
     private resumeAt: { layer: number; record: number } | null = null;
@@ -372,11 +386,13 @@ export class SimTransport implements Transport {
             const m = data[off];
             const size = m === MAGIC_BEZIER ? BEZIER_SIZE
                 : m === MAGIC_LAYER_HDR ? LAYER_HDR_SIZE
+                : m === MAGIC_JOB_HDR ? JOB_HDR_SIZE
+                : m === MAGIC_TOOL_HDR ? TOOL_HDR_SIZE
                 : m === MAGIC_CJOG ? CJOG_SIZE
                 : 0;
             if (size === 0 || off + size > data.length) break; // unframeable — drop the rest
             const pkt = data.subarray(off, off + size);
-            if (m === MAGIC_BEZIER || m === MAGIC_LAYER_HDR) this._writeRecord(pkt);
+            if (m === MAGIC_BEZIER || m === MAGIC_LAYER_HDR || m === MAGIC_JOB_HDR || m === MAGIC_TOOL_HDR) this._writeRecord(pkt);
             else if (m === MAGIC_CJOG) this._writeCjog(pkt);
             off += size;
         }
@@ -476,8 +492,8 @@ export class SimTransport implements Transport {
         this.reply(new Uint8Array([MAGIC_JOG_ACK]));
     }
 
-    private _nack(reason: number): void {
-        this.reply(new Uint8Array([MAGIC_NACK, reason, 0]));
+    private _nack(reason: number, detail = 0): void {
+        this.reply(new Uint8Array([MAGIC_NACK, reason, detail]));
     }
 
     private _jogNack(reason: number): void {
@@ -576,10 +592,11 @@ export class SimTransport implements Transport {
     }
 
     /**
-     * BEZIER and LAYER_HDR ingest (data_plane.cpp + queue.cpp admit): CRC and
-     * seq checked, then gated like the firmware. A layer header opens the job
-     * from IDLE, or resumes a paused one if it names where it stopped; a BEZIER
-     * needs one open.
+     * BEZIER and header ingest (data_plane.cpp + queue.cpp admit): CRC and seq
+     * checked, then gated like the firmware. A job header opens the job from
+     * IDLE; a layer header is held for its tool header, or resumes a paused job
+     * if it names where it stopped; a BEZIER needs a layer open. Homing and the
+     * bbox are not modelled: `refuseTool` stands in for a preflight refusal.
      */
     private _writeRecord(data: Uint8Array): void {
         const size = data.length;
@@ -594,66 +611,97 @@ export class SimTransport implements Transport {
         // ALARM lands in BAD_STATE, which is how every alarm refuses motion.
         let st = this.state;
         const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const header = data[0] === MAGIC_LAYER_HDR;
+        const m = data[0];
+        const accept = (): void => {
+            this.expectedSeq = (this.expectedSeq + 1) & 0xff;
+            this._markAck();
+        };
+        const refuse = (reason: number, detail = 0): void => {
+            this._flushAck(); // ACKs earned before a rewind land first
+            this._nack(reason, detail);
+        };
+        if (m === MAGIC_JOB_HDR) {
+            if (st !== MachineState.IDLE) return refuse(NACK_BAD_STATE);
+            this.state = MachineState.JOB;
+            this.context = MachineContext.JOB;
+            this.job = JobReason.PREFLIGHT;
+            this.timeCredit = 0;
+            this.preCount = data[15]!;
+            this.preIds = [];
+            this.heldLayer = null;
+            this.layerOpen = false;
+            this.curLayer = NO_LAYER;
+            this.nextRecord = 0;
+            return accept();
+        }
+        if (st === MachineState.JOB && this.job === JobReason.PREFLIGHT) {
+            // Any preflight refusal ends the session.
+            const end = (reason: number, detail = 0): void => {
+                this.state = MachineState.IDLE;
+                this.context = MachineContext.IDLE;
+                refuse(reason, detail);
+            };
+            if (m !== MAGIC_TOOL_HDR || this.preIds.includes(data[1]!)) return end(NACK_JOB);
+            const refused = this.refuseTool;
+            if (refused && refused.tool === data[1]) return end(refused.reason, refused.detail ?? 0);
+            this.preIds.push(data[1]!);
+            if (this.preIds.length === this.preCount) this.job = JobReason.BUFFERING;
+            return accept();
+        }
+        const stopped = st === MachineState.JOB &&
+            (this.job === JobReason.TOOL_CHANGE || this.job === JobReason.TOOL_WAIT);
+        if (st === MachineState.JOB && this.job === JobReason.PAUSED) this.heldLayer = null;
+        const resuming = m === MAGIC_LAYER_HDR && st === MachineState.JOB && !this.heldLayer &&
+            (this.job === JobReason.PAUSED || stopped);
+        // The tool and head this frame asks for: its own, or a resume's current ones.
+        const want = m === MAGIC_TOOL_HDR ? { head: data[3]!, tool: data[1]! }
+            : resuming ? { head: this.curHead, tool: this.curTool } : null;
         if (this.checkTools) {
-            const stopped = st === MachineState.JOB &&
-                (this.job === JobReason.TOOL_CHANGE || this.job === JobReason.TOOL_WAIT);
-            const ready = header && this.mounted.get(data[4]!) === data[3] && this.zeroed.has(data[4]!);
+            const ready = want !== null && this.mounted.get(want.head) === want.tool && this.zeroed.has(want.head);
             if (stopped) {
                 // Only a resent header leaves, in TOOL_WAIT, with its tool ready.
-                if (!ready || this.job === JobReason.TOOL_CHANGE) {
-                    this._flushAck();
-                    return this._nack(NACK_TOOL_CHANGE);
-                }
-                this.job = JobReason.BUFFERING;
-            } else if (header && !ready && (st === MachineState.IDLE || st === MachineState.JOB)) {
-                this.state = MachineState.JOB;
-                this.context = MachineContext.JOB;
+                if (!ready || this.job === JobReason.TOOL_CHANGE) return refuse(NACK_TOOL_CHANGE);
+                this.job = this.toolFromPaused ? JobReason.PAUSED : JobReason.BUFFERING;
+            } else if (want && !ready && st === MachineState.JOB && (this.heldLayer || resuming)) {
+                this.toolFromPaused = this.job === JobReason.PAUSED;
                 this.job = JobReason.TOOL_CHANGE;
-                this.toolHead = data[4]!;
+                this.toolHead = want.head;
                 this.toolChangeAt = Date.now();
                 this.motion = [];
-                this._flushAck();
-                return this._nack(NACK_TOOL_CHANGE);
+                return refuse(NACK_TOOL_CHANGE);
             }
             st = this.state;
         }
         if (st === MachineState.JOB && this.job === JobReason.PAUSED) {
             const at = this.resumeAt;
-            if (data[0] !== MAGIC_LAYER_HDR) {
-                this._flushAck();
-                return this._nack(NACK_PAUSED);
-            }
-            if (!at || dv.getUint16(5, true) !== at.layer || dv.getUint32(7, true) !== at.record) {
-                this._flushAck();
-                return this._nack(NACK_JOB);
-            }
+            if (m !== MAGIC_LAYER_HDR) return refuse(NACK_PAUSED);
+            if (!at || dv.getUint16(3, true) !== at.layer || dv.getUint32(5, true) !== at.record) return refuse(NACK_JOB);
             this.job = JobReason.BUFFERING;
             this.resumeAt = null;
+            this.curLayer = at.layer;
+            this.nextRecord = at.record;
+            return accept();
         }
+        if (st === MachineState.IDLE) return refuse(NACK_JOB);
         const jobOpen = st === MachineState.JOB &&
             (this.job === JobReason.BUFFERING || this.job === JobReason.RUNNING);
-        if (st !== MachineState.IDLE && !jobOpen) {
-            this._flushAck(); // ACKs earned before a rewind land first
-            return this._nack(NACK_BAD_STATE);
+        if (!jobOpen) return refuse(NACK_BAD_STATE);
+        if (m === MAGIC_LAYER_HDR) {
+            if (this.heldLayer) return refuse(NACK_JOB);
+            this.heldLayer = { layer: dv.getUint16(3, true), record: dv.getUint32(5, true) };
+            return accept();
         }
-        if (data[0] === MAGIC_LAYER_HDR) {
-            this.curLayer = dv.getUint16(5, true);
-            this.nextRecord = dv.getUint32(7, true);
-            if (st === MachineState.IDLE) {
-                this.state = MachineState.JOB;
-                this.context = MachineContext.JOB;
-                this.job = JobReason.BUFFERING;
-                this.timeCredit = 0;
-            }
-            this.expectedSeq = (this.expectedSeq + 1) & 0xff;
-            this._markAck();
-            return;
+        if (m === MAGIC_TOOL_HDR) {
+            if (!this.heldLayer || !this.preIds.includes(data[1]!)) return refuse(NACK_JOB);
+            this.curLayer = this.heldLayer.layer;
+            this.nextRecord = this.heldLayer.record;
+            this.curHead = data[3]!;
+            this.curTool = data[1]!;
+            this.heldLayer = null;
+            this.layerOpen = true;
+            return accept();
         }
-        if (st === MachineState.IDLE) {
-            this._flushAck();
-            return this._nack(NACK_JOB);
-        }
+        if (this.heldLayer || !this.layerOpen) return refuse(NACK_JOB);
         if (this.motion.length >= this.ringSize) {
             this._flushAck();
             return this._nack(NACK_FULL); // backpressure — sender retries
@@ -992,7 +1040,7 @@ export class SimTransport implements Transport {
                 return "ok";
             }
             case "pause":
-                if (S.state === MachineState.JOB &&
+                if (S.state === MachineState.JOB && S.layerOpen &&
                     (S.job === JobReason.BUFFERING || S.job === JobReason.RUNNING)) {
                     // The oldest queued record is the one running; an empty
                     // ring resumes at the next.
@@ -1033,7 +1081,7 @@ export class SimTransport implements Transport {
             case "cancel":
                 if (S.state === MachineState.JOB &&
                     (S.job === JobReason.PAUSED || S.job === JobReason.BUFFERING ||
-                     S.job === JobReason.TOOL_WAIT)) {
+                     S.job === JobReason.TOOL_WAIT || S.job === JobReason.PREFLIGHT)) {
                     S.state = MachineState.IDLE;
                     S.context = MachineContext.IDLE;
                     S.motion = [];
@@ -1240,5 +1288,6 @@ export class SimTransport implements Transport {
         this.state = MachineState.JOB;
         this.context = MachineContext.JOB;
         this.job = JobReason.RUNNING;
+        this.layerOpen = true;
     }
 }

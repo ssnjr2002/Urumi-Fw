@@ -46,7 +46,7 @@ export class Ack {
 
 /** Stream NACK — `reason` is one of the NACK_* constants. */
 export class Nack {
-    constructor(readonly reason: number) {}
+    constructor(readonly reason: number, readonly detail: number = 0) {}
 }
 
 /** Continuous jog started. A refused jog arrives as a Nack on the jog sink. */
@@ -261,7 +261,7 @@ export class Demux {
         if (magic === MAGIC_ACK) {
             this.ack.put(new Ack(buf[1]!));
         } else if (magic === MAGIC_NACK) {
-            this.ack.put(new Nack(buf[1]!));
+            this.ack.put(new Nack(buf[1]!, buf[2]!));
         } else if (magic === MAGIC_JOG_NACK) {
             this.jog.put(new Nack(buf[1]!));
         } else if (magic === MAGIC_STATUS_RSP) {

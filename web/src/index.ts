@@ -122,7 +122,10 @@ export {
 } from "./toolpath/annotate.js";
 export { prepareBezierJob, type BezierJob, type BezierJobOptions, type BBox } from "./toolpath/job.js";
 export { packBezier } from "./wire/format/bezier.js";
-export { packLayerHdr, type LayerHdr } from "./wire/format/layer.js";
+export {
+    packJobHdr, packLayerHdr, packToolHdr,
+    type JobHdr, type LayerHdr, type ToolBox, type ToolHdr,
+} from "./wire/format/layer.js";
 
 
 export { crc8, crc32 } from "./wire/format/crc.js";

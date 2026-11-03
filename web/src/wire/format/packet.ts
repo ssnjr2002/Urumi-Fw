@@ -1,16 +1,17 @@
 /**
  * packet.ts — stamping the rolling sequence number into a BEZIER record or a
- * LAYER_HDR.
+ * job, tool or layer header.
  */
 
 import {
     BEZIER_SEQ_OFFSET, BEZIER_SIZE, MAGIC_BEZIER,
+    JOB_HDR_SIZE, MAGIC_JOB_HDR, MAGIC_TOOL_HDR, TOOL_HDR_SIZE,
     LAYER_HDR_SEQ_OFFSET, LAYER_HDR_SIZE, MAGIC_LAYER_HDR,
 } from "./constants.js";
 import { crc8 } from "./crc.js";
 
 /**
- * Stamp a rolling 8-bit sequence number into a BEZIER record or a LAYER_HDR and
+ * Stamp a rolling 8-bit sequence number into a BEZIER record or a header and
  * recompute the CRC. The Pico only executes a record whose seq matches the one it expects
  * next; a stale Go-Back-N retransmit (one it already accepted) is ACKed but NOT
  * executed. Without that, any go-back after the Pico accepted in-flight records
@@ -18,8 +19,10 @@ import { crc8 } from "./crc.js";
  */
 export function stampSeq(packet: Uint8Array, seq: number): Uint8Array {
     const bezier = packet[0] === MAGIC_BEZIER && packet.length === BEZIER_SIZE;
-    const layer = packet[0] === MAGIC_LAYER_HDR && packet.length === LAYER_HDR_SIZE;
-    if (!bezier && !layer) throw new Error("stampSeq: not a BEZIER record or LAYER_HDR");
+    const header = (packet[0] === MAGIC_LAYER_HDR && packet.length === LAYER_HDR_SIZE) ||
+        (packet[0] === MAGIC_JOB_HDR && packet.length === JOB_HDR_SIZE) ||
+        (packet[0] === MAGIC_TOOL_HDR && packet.length === TOOL_HDR_SIZE);
+    if (!bezier && !header) throw new Error("stampSeq: not a BEZIER record or a header");
     const size = packet.length;
     const out = new Uint8Array(size);
     out.set(packet.subarray(0, size - 1));
