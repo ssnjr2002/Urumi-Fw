@@ -117,8 +117,9 @@ layer (TOOL_REC)
   opens the layer.
 * **A new layer:** a `LAYER_HDR` admitted anywhere but `PAUSED` is new, and is
   held until its `TOOL_HDR`. No layer numbers are compared: a retransmit stops
-  at the seq guard. A `BEZIER` or `LAYER_HDR` while one is held, or a `TOOL_HDR`
-  after preflight with none held, is `NACK_JOB`. A pause drops the held layer,
+  at the seq guard. A `BEZIER` or `LAYER_HDR` while one is held, a `TOOL_HDR`
+  after preflight with none held, or one naming a tool not seen in preflight, is
+  `NACK_JOB`. A pause drops the held layer,
   and `cancel` clears it; the resume point stays at the last record accepted.
 * **The Pico keeps the current tool and head,** not a tool-to-head map. A resume
   uses them: a different tool holds the job until the ring is dry, so the ring
@@ -1517,19 +1518,23 @@ decisions above.
   4. The held layer and current tool and head; `layerResolve` splits into its
      no-tool and tool parts. `NACK_TOOL_CHANGE` moves to `TOOL_HDR`, with the
      resume `LAYER_HDR`'s check beside it.
-  5. Interim, until JH2: after the last preflight `TOOL_HDR` the job waits for
-     its first layer in `PREFLIGHT`, and that layer's `TOOL_HDR` checks the current
-     origin against the valid origins (`OUT_OF_RANGE`), since nothing moves it.
+  5. The last preflight `TOOL_HDR` puts the job in `BUFFERING` (`PLACE` first,
+     from JH2). `pause` is `err bad_state` until a layer has opened: there is no
+     resume point or current tool before then. A tool change on the first layer
+     comes back to `BUFFERING` like any other.
+     Interim, until JH2: the first layer's `TOOL_HDR` checks the current origin
+     against the valid origins (`OUT_OF_RANGE`), since nothing moves it.
   6. Web: encoders, `Nack` carries the detail, the sim, `JobSource` emitting
      per-tool bboxes and `LAYER_HDR`, `TOOL_HDR` at a layer start and `LAYER_HDR`
      alone on resume; a test that each layer's tool matches its `TOOL_HDR`.
   7. Docs: `docs/wire_protocol.md`.
+  Also in the session: `NACK_JOB` is fatal until preflight is ACKed; a hold's
+  layer check accepts any layer of the job, not only the last one pulled.
 * Not in scope: placement (JH2); how the record count bounds a job, which stays
-  open, so a job still ends by `cancel`; job id matching on a restart.
+  open, so a job still ends by `cancel`; job id matching on a restart. The demo
+  (`web/demo/index.js`), whose job button stays broken until a later branch.
 * Checks: `pio run -e pico`; `pio test -e native`; `pnpm typecheck` and `pnpm
-  test` in `web/`. Human checks: each preflight refusal and its detail; a
-  two-tool job across a tool change; pause and resume with no `TOOL_HDR`; a
-  pause while a layer is held.
+  test` in `web/`. No human checks.
 
 **Depends on:** nothing.
 
