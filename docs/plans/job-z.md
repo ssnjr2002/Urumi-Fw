@@ -95,8 +95,9 @@ tool off and keeps the vacuum on.
 
 ### Out of range
 
-* Preflight checks the lift and plunge heights against Z's soft range over
-  the bbox, with the mesh; a failure is `NACK_PREFLIGHT`.
+* `place ok` checks the lift and plunge heights against Z's soft range over
+  the bbox, with the mesh; a failure stays in `PLACE` (motion-sessions.md,
+  Placement).
 
 ## Branches
 

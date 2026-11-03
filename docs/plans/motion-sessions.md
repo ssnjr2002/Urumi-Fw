@@ -96,22 +96,42 @@ layer (TOOL_REC)
 
 ### Job records
 
-* **Three records before the geometry:** a job header, one tool header per
-  tool, then tool records, each starting a run of `BEZIER`s:
+* **`TOOL_REC` in this document is `LAYER_HDR`.**
+* **The stream:** a job header and one tool header per tool, then each layer's
+  header followed by its tool's header and `BEZIER`s:
 
   ```
   JOB_HDR                job id, record count, t, tool count n
-  n × TOOL_HDR           any order; one per tool that will run
-  TOOL_REC(L, N)         tool, layer L, record N, feed, k
+  n × TOOL_HDR           preflight: any order; one per tool that will run
+  LAYER_HDR(L, N)        layer L, record N, chamber, feed, p, t
+  TOOL_HDR(a)            the layer's tool, head and bbox
   BEZIER …               record N of layer L onward
-  TOOL_REC(M, 0) …       the next layer, in any order
+  LAYER_HDR(M, 0) …      the next layer, in any order, with its TOOL_HDR
+  LAYER_HDR(L, N)        resume from PAUSED: no TOOL_HDR
+  BEZIER …
   ```
 
+* **`TOOL_HDR` has two roles,** by when it arrives. In `PREFLIGHT` it narrows
+  the valid origins (Placement). After a new layer's header it checks its bbox
+  against the actual origin, then the mount, zero and head (Tool change), and
+  opens the layer.
+* **A new layer:** a `LAYER_HDR` admitted anywhere but `PAUSED` is new, and is
+  held until its `TOOL_HDR`. No layer numbers are compared: a retransmit stops
+  at the seq guard. A `BEZIER` or `LAYER_HDR` while one is held, or a `TOOL_HDR`
+  after preflight with none held, is `NACK_JOB`. A pause drops the held layer,
+  and `cancel` clears it; the resume point stays at the last record accepted.
+* **The Pico keeps the current tool and head,** not a tool-to-head map. A resume
+  uses them: a different tool holds the job until the ring is dry, so the ring
+  never mixes tools.
+* **Validation splits:** `LAYER_HDR` checks what needs no tool (contour framing,
+  finite feed and p); `TOOL_HDR` checks the chamber, p against `maxOvercut` and
+  the feed fallback.
 * **Every start sends the headers;** the host picks where to start. A job
-  start is `TOOL_REC(0)`; a restart after an alarm or power loss is a fresh
+  start is layer 0; a restart after an alarm or power loss is a fresh
   `JOB_HDR` with the same record count, tool headers for only the tools
-  still to run, and `TOOL_REC`s from where it left off. A resume from
-  `PAUSED` is `TOOL_REC(N)` alone, guarded by the resume point and job id.
+  still to run, and layers from where it left off. A resume from
+  `PAUSED` is `LAYER_HDR(N)` alone, guarded by the resume point. Matching the
+  job id on a restart waits for the host's restart.
 * **No `config_crc32` and no `required_axes`.** The host no longer models the
   machine; the Pico infers axes and peripherals from each tool's profile.
 * **Only `BEZIER` records are numbered, per layer,** and the number is not on
@@ -128,8 +148,8 @@ layer (TOOL_REC)
   slot). The host maps sub-layers to chamber numbers; `TOOL_REC` carries the
   number, 0 for a tool without chambers. One tool header covers all
   chambers.
-* The first record after a `TOOL_REC` is treated as `START`: the Pico lifts,
-  travels to it and plunges (Lifts, below). `TOOL_REC` selects the tool (as
+* The first record after a layer opens is treated as `START`: the Pico lifts,
+  travels to it and plunges (Lifts, below). `TOOL_HDR` selects the head (as
   `select`, below).
 * **Feed** in `TOOL_REC` is absolute (mm/s; 0 the profile's `path.feed`). A
   live feed override (a scale, re-planning the ring) is a later branch,
@@ -142,26 +162,28 @@ layer (TOOL_REC)
 Little-endian, seq at byte 2 in all three, CRC8 over the bytes before it.
 
 ```
-JOB_HDR 0xA0, 17 B
+JOB_HDR 0xB8, 17 B
 [0] magic  [1] version (1)  [2] seq
 [3..6] job id u32  [7..10] record count u32  [11..14] t f32 mm  [15] tool count 1..4
 [16] CRC8
 
-TOOL_HDR 0xA1, 21 B
+TOOL_HDR 0xB9, 21 B
 [0] magic  [1] tool id  [2] seq  [3] head
 [4..19] xmin, xmax, ymin, ymax f32, work coordinates at the tip
 [20] CRC8
 
-TOOL_REC (LAYER_HDR) 0xA2, 22 B
+LAYER_HDR 0xA1, 20 B
 [0] magic  [1] chamber (0 = none)  [2] seq
-[3] tool id  [4] head  [5..6] layer u16  [7..10] record u32
-[11..14] feed f32  [15..18] k f32  [19..20] t u16 µm  [21] CRC8
+[3..4] layer u16  [5..8] record u32
+[9..12] feed f32  [13..16] p f32  [17..18] t u16 µm  [19] CRC8
 ```
 
-`LAYER_HDR` is the one sent today; `JOB_HDR` and `TOOL_HDR` are not built.
-Both name the head (Tool change).
+`LAYER_HDR` is sent today at 22 B, with tool id and head; `JOB_HDR` and
+`TOOL_HDR` are not built. The head is named only in `TOOL_HDR` (Tool change).
 
-The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
+The bbox is of the control points, as the per-record check is, and is four
+numbers rather than a length and width: its position against work (0, 0)
+matters.
 
 ### Preflight
 
@@ -170,15 +192,24 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 
   | frame | checks | NACK |
   |---|---|---|
-  | `JOB_HDR` | state, homed, version, tool count 1–4 | `BAD_STATE`, `NOT_HOMED` |
+  | `JOB_HDR` | state, X and Y homed with `softLimits` on, version, tool count 1–4 | `BAD_STATE`, `NOT_HOMED`, `OUT_OF_RANGE`, `JOB` |
   | `TOOL_HDR` | id in the config, no duplicate; head and peripheral present and bound; the valid origins (Placement) not empty | `TOOL_UNKNOWN`, `TOOL_UNAVAILABLE`, `OUT_OF_RANGE` (detail: axis and side) |
-  | `TOOL_REC` | its tool has a header; index valid (the resume point in `PAUSED`); chamber valid | `JOB` |
+  | `LAYER_HDR` | index valid (the resume point in `PAUSED`); no layer already held | `JOB` |
 
+* **Unavailable:** the head does not exist; it has no A for a tangential or
+  chamber tool (shared with `layerResolve`); or the tool's power node is missing
+  or excluded. A head's `accepts` is not checked, as `mount` does not.
+* **New codes:** `TOOL_UNAVAILABLE` 0x10, `OUT_OF_RANGE` 0x11, `NOT_HOMED` 0x12.
+* **The NACK's third byte** carries `OUT_OF_RANGE`'s detail: bit 0 the axis (X,
+  Y), bit 1 the side (low, high), bit 2 `softLimits` off. 0 otherwise. Cjog
+  replies have their own frame, so the byte is free.
 * **Any preflight NACK ends the session to IDLE;** the host fixes the job and
-  sends the header again.
-* **`JOB.PREFLIGHT`** lasts from `JOB_HDR` until the first `TOOL_REC` after all
-  n tool headers are ACKed; a `TOOL_REC` or `BEZIER` before then is `NACK_JOB`.
-* Codes for the new reasons are picked in the branch, after `0x0A`.
+  sends the header again. After preflight, a `TOOL_HDR`'s `OUT_OF_RANGE` keeps
+  the job open, as a record's `NACK_SOFT_LIMIT` does.
+* **`JOB.PREFLIGHT`** lasts from `JOB_HDR` until all n tool headers are ACKed; a
+  `LAYER_HDR` or `BEZIER` before then is `NACK_JOB`.
+* **Requiring `softLimits`** on X and Y means the valid origins are always
+  bounded. Jogging with them off stays, for testing.
 
 ### Placement
 
@@ -192,10 +223,13 @@ On a rectangular sheet the first two corners square it, as a side effect.
   `web/src/svg/load.ts`), with +x right and +y away from the operator.
 * **The valid origins.** For a tool with tip offset d (its head's offset and
   `toolOffset`, whether or not it is mounted) and the anchor's soft range
-  [lo, hi], `workX` lies in [lo − xmin + d, hi − xmax + d]; Y the same. The
-  origin must lie in the intersection over the job's tools and the anchor
-  (d = 0, the job's whole bbox), so every tool and every preview point is in
-  reach. Empty: `TOOL_HDR`'s `OUT_OF_RANGE`.
+  [lo, hi], shrunk by the tool's blade `offsetMm`, `workX` lies in
+  [lo − xmin + d, hi − xmax + d]; Y the same. The origin must lie in the
+  intersection over the job's tools and the anchor (d = 0, the job's whole
+  bbox), so every tool and every preview point is in reach. Each `TOOL_HDR`
+  intersects its two intervals into a running one, which equals the whole-bbox
+  anchor check; the union bbox is kept only for the corners. Empty: `TOOL_HDR`'s
+  `OUT_OF_RANGE`.
 * **The pointer is the anchor,** laser or not. Keeping it in reach costs the
   strip the anchor cannot reach: about 70 mm at the front of the bed, inside
   its border, on the bench machine. Pointing with a head instead is left
@@ -284,7 +318,7 @@ On a rectangular sheet the first two corners square it, as a side effect.
 ### Out of range
 
 * **Preflight** checks that the bbox has a valid origin, with the offsets the
-  Pico adds after the wire; a failure is `NACK_PREFLIGHT`, since the host
+  Pico adds after the wire; a failure is `OUT_OF_RANGE`, since the host
   waits on the header's reply. Z and the mesh are checked at `place ok`
   (Placement), once XY is final.
 * **In a job** a record out of range at ingest (control points, a Bézier
@@ -314,13 +348,15 @@ On a rectangular sheet the first two corners square it, as a side effect.
   across jobs, in RAM, set by `mount <head> <tool>` (0 none). There is no
   job mount plan: the Pico keeps nothing about which head a tool should be
   on (JT).
-* **The host picks the head** and names it in each header: `TOOL_HDR`, so
-  preflight checks the bbox with that head's offset and forgets it, and
-  every `TOOL_REC`, checked against the mount state as it arrives. Keeping
-  the two the same is the host's; the per-record soft-limit check still
-  holds if they differ.
-* **A header whose tool is not mounted on its head, or not zeroed,** is
-  `NACK_TOOL_CHANGE` and holds the job; once the ring is dry the stop: park
+* **The host picks the head** and names it in `TOOL_HDR` alone: preflight checks
+  the bbox with that head's offset and forgets it; a layer's `TOOL_HDR` checks
+  the bbox again, at the actual origin, and against the mount state. A host
+  that names another head at the layer is refused before the layer moves.
+* **A `TOOL_HDR` whose tool is not mounted on its head, or not zeroed,** is
+  `NACK_TOOL_CHANGE`, is not consumed (the layer stays held; the host rewinds to
+  the `TOOL_HDR`) and holds the job. A resume `LAYER_HDR` makes the same check
+  on the current tool and head, since `mount` and `select` are allowed while
+  paused, and is NACKed and resent the same way. Once the ring is dry the stop: park
   every Z, lock every A to 0, an XY line to `machine.positions.mount`, then
   `TOOL_WAIT`. There `mount` (any head), `jog`, `wzero` and `probe_park` are
   admitted.
@@ -1440,8 +1476,87 @@ had the mount state pick a layer's head and dropped the head byte from
   at preflight if the header names that head. Without it the check needs the
   bbox kept until the mount, or a tool-to-head map kept from the headers;
   both are job state on the Pico, which JT removed.
-* So the host picks the head, in `TOOL_HDR` and in every `LAYER_HDR`
-  (Tool change, above). The operator mounts on the head the header names.
+* Superseded for the wire by the JH decisions: the head is in `TOOL_HDR` alone,
+  and each new layer sends its `TOOL_HDR` (Job records, above). The objection
+  still holds: the Pico keeps no tool-to-head map, only the current pair.
+* The host picks the head (Tool change, above). The operator mounts on the head
+  the header names.
+
+## Job headers
+
+A dependent chain, one session: JH1, then JH2.
+
+## Branch JH1: `feature/job-headers`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** `JOB_HDR`, `TOOL_HDR` and `JOB.PREFLIGHT`; a new layer is
+`LAYER_HDR` then `TOOL_HDR`, by the Job records, Record layouts and Preflight
+decisions above.
+
+* What the code has today:
+  * `LAYER_HDR` (`core0/usb_protocol.h:40-60`, `acceptLayer`,
+    `core0/data_plane.cpp:216`) opens a job from IDLE, names tool and head.
+  * `layerResolve` (`core0/ops/layer.h:42`) validates tool, head, chamber and p
+    together.
+  * `framesTipOffset` and `framesBlade` (`core0/ops/frames.cpp:120`, `:132`) read
+    only the selected head's mounted tool.
+  * Web: `packLayerHdr` (`web/src/wire/format/layer.ts`), `JobSource` and the
+    fixed layer offset (`web/src/wire/link/session.ts:187`, `:769`), one bbox per
+    layer (`web/src/toolpath/job.ts:42`). Nothing reads the NACK's third byte.
+* Scope:
+  1. Frames, the new NACK codes and the detail byte, firmware and
+     `web/src/wire/format/constants.ts`. `LAYER_HDR` shrinks to 20 B.
+  2. `JOB_PREFLIGHT` and its session state: tool count, ids seen, the running
+     intervals, the union bbox. A `LAYER_HDR` in IDLE is `NACK_JOB`.
+  3. `framesTipOffset` and `framesBlade` gain optional head and tool arguments,
+     defaulting to the selected head and its mounted tool. A pure interval
+     function beside `layerResolve`, with native tests.
+  4. The held layer and current tool and head; `layerResolve` splits into its
+     no-tool and tool parts. `NACK_TOOL_CHANGE` moves to `TOOL_HDR`, with the
+     resume `LAYER_HDR`'s check beside it.
+  5. Interim, until JH2: after the last preflight `TOOL_HDR` the job waits for
+     its first layer in `PREFLIGHT`, and that layer's `TOOL_HDR` checks the current
+     origin against the valid origins (`OUT_OF_RANGE`), since nothing moves it.
+  6. Web: encoders, `Nack` carries the detail, the sim, `JobSource` emitting
+     per-tool bboxes and `LAYER_HDR`, `TOOL_HDR` at a layer start and `LAYER_HDR`
+     alone on resume; a test that each layer's tool matches its `TOOL_HDR`.
+  7. Docs: `docs/wire_protocol.md`.
+* Not in scope: placement (JH2); how the record count bounds a job, which stays
+  open, so a job still ends by `cancel`; job id matching on a restart.
+* Checks: `pio run -e pico`; `pio test -e native`; `pnpm typecheck` and `pnpm
+  test` in `web/`. Human checks: each preflight refusal and its detail; a
+  two-tool job across a tool change; pause and resume with no `TOOL_HDR`; a
+  pause while a layer is held.
+
+**Depends on:** nothing.
+
+**Overlap:** `usb_protocol.h`, `data_plane.cpp`, `ops/frames.*`, `ops/layer.*`,
+`web/src/wire/`, `toolchange.*`.
+
+### Status
+
+Planned.
+
+## Branch JH2: `feature/job-place`
+
+### Plan
+
+**Type:** feature.
+
+**Purpose:** `JOB.PLACE` (Placement, above): the origin, the laser's corners,
+`place next|back|ok`, the origin jog, XY held from `place ok`. Removes JH1's
+interim origin check.
+
+**Depends on:** JH1.
+
+**Overlap:** `cmd/table.h`, `controller/seq/`, `ops/frames.*`.
+
+### Status
+
+Planned.
 
 ## Open
 
