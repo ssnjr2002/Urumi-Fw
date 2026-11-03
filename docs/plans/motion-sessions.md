@@ -55,7 +55,7 @@ layer (TOOL_REC)
 * **`STATE_JOB` with a reason byte**, like `STATE_HOMING` and `STATE_PROBING`
   (`ProbingReason`). Every session has the same shape: IDLE between sessions,
   the session owns the machine, ALARM ends it.
-* **Job reasons:** `PREFLIGHT`, `TOOL_CHANGE`, `BUFFERING`, `RUNNING`,
+* **Job reasons:** `PREFLIGHT`, `PLACE`, `TOOL_CHANGE`, `BUFFERING`, `RUNNING`,
   `HOLDING`, `PAUSED`,
   `DWELL`, `ABORTING`.
 * **Writers.** Core 0 writes the entries it is asked for; Core 1 writes every
@@ -64,9 +64,11 @@ layer (TOOL_REC)
   | from | to | writer | trigger |
   |---|---|---|---|
   | IDLE | `PREFLIGHT` | Core 0 | `JOB_HDR` accepted |
-  | `PREFLIGHT` | `BUFFERING` | Core 0 | first `TOOL_REC`, all tool headers ACKed, tools mounted |
-  | `PREFLIGHT`, `RUNNING` | `TOOL_CHANGE` → `BUFFERING` | Core 0 / Core 1 | the next tool is not mounted and zeroed; a resent `TOOL_REC` |
+  | `PREFLIGHT` | `PLACE` | Core 0 | all tool headers ACKed |
+  | `PLACE` | `BUFFERING` | Core 0 | `place ok`, then the first `TOOL_REC`, tools mounted |
+  | `PLACE`, `RUNNING` | `TOOL_CHANGE` → `BUFFERING` | Core 0 / Core 1 | the next tool is not mounted and zeroed; a resent `TOOL_REC` |
   | `PREFLIGHT` | IDLE | Core 0 | any preflight NACK |
+  | `PLACE` | IDLE | Core 0 | `cancel` |
   | `BUFFERING` | `RUNNING` | Core 1 | buffered time, last record, or timeout |
   | `RUNNING` | `BUFFERING` | Core 1 | dry ring or late adoption, at rest |
   | `RUNNING` | `HOLDING` | Core 0 | `pause` |
@@ -169,7 +171,7 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
   | frame | checks | NACK |
   |---|---|---|
   | `JOB_HDR` | state, homed, version, tool count 1–4 | `BAD_STATE`, `NOT_HOMED` |
-  | `TOOL_HDR` | id in the config, no duplicate; head and peripheral present and bound; bbox with offsets, mesh and heights in range | `TOOL_UNKNOWN`, `TOOL_UNAVAILABLE`, `OUT_OF_RANGE` (detail: axis and side) |
+  | `TOOL_HDR` | id in the config, no duplicate; head and peripheral present and bound; the valid origins (Placement) not empty | `TOOL_UNKNOWN`, `TOOL_UNAVAILABLE`, `OUT_OF_RANGE` (detail: axis and side) |
   | `TOOL_REC` | its tool has a header; index valid (the resume point in `PAUSED`); chamber valid | `JOB` |
 
 * **Any preflight NACK ends the session to IDLE;** the host fixes the job and
@@ -177,6 +179,48 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 * **`JOB.PREFLIGHT`** lasts from `JOB_HDR` until the first `TOOL_REC` after all
   n tool headers are ACKed; a `TOOL_REC` or `BEZIER` before then is `NACK_JOB`.
 * Codes for the new reasons are picked in the branch, after `0x0A`.
+
+### Placement
+
+Between preflight and the first `TOOL_REC`, the operator sees where the job
+lands and puts the material under it. Not a squaring procedure and no
+assumption of a rectangular sheet: the sheet's size is unknown to the Pico.
+On a rectangular sheet the first two corners square it, as a side effect.
+
+* **Work (0, 0)** is a point on the material, by default the sheet's
+  front-left corner: the SVG's bottom-left maps there (`viewportMatrix`,
+  `web/src/svg/load.ts`), with +x right and +y away from the operator.
+* **The valid origins.** For a tool with tip offset d (its head's offset and
+  `toolOffset`, whether or not it is mounted) and the anchor's soft range
+  [lo, hi], `workX` lies in [lo − xmin + d, hi − xmax + d]; Y the same. The
+  origin must lie in the intersection over the job's tools and the anchor
+  (d = 0, the job's whole bbox), so every tool and every preview point is in
+  reach. Empty: `TOOL_HDR`'s `OUT_OF_RANGE`.
+* **The pointer is the anchor,** laser or not. Keeping it in reach costs the
+  strip the anchor cannot reach: about 70 mm at the front of the bed, inside
+  its border, on the bench machine. Pointing with a head instead is left
+  until that strip matters.
+* **`JOB.PLACE`** starts when the last `TOOL_HDR` is ACKed:
+  1. The origin stays at the current work XY if valid, else moves to the
+     nearest valid point.
+  2. Every Z parks, the anchor is selected, laser on, and the dot goes to the
+     tight bbox's first corner, (xmin, ymin) over the job's tools.
+  3. `place next` and `place back` step the dot round the corners and back to
+     the first. `jog` is admitted at the first corner only: it moves the
+     origin with the dot, clamped to the valid origins.
+  4. `place ok` checks Z and the mesh over the bbox at the final XY. A failure
+     is an error reply and stays in `PLACE`, so the origin can be moved.
+     Otherwise: vacuum on, laser off, and the job waits for its first
+     `TOOL_REC`, which handles tool changes as usual. `cancel` ends the
+     session to IDLE.
+* **A `TOOL_REC` or `BEZIER` in `PLACE`** is `NACK_JOB`.
+* **The bbox is conservative:** a job whose box overhangs an irregular sheet
+  may still fit. Tracing the outline needs geometry that arrives later.
+* **XY is held from `place ok` to the session's end:** `wzero x y` and `wset`
+  on X or Y are refused, in `TOOL_WAIT` too, since they could take the job out
+  of the checked range and off the sheet.
+* Open: placement on a restart after an alarm or power loss, where the sheet
+  has not moved.
 
 ### Buffering (jobs only)
 
@@ -239,9 +283,10 @@ The reserved `TOOL_MAGIC` (`0xAC`) goes with MicroSegment.
 
 ### Out of range
 
-* **Preflight** checks the bbox against the soft range, with what the Pico
-  adds after the wire (offsets, mesh, lift heights, travels); a failure is
-  `NACK_PREFLIGHT`, since the host waits on the header's reply.
+* **Preflight** checks that the bbox has a valid origin, with the offsets the
+  Pico adds after the wire; a failure is `NACK_PREFLIGHT`, since the host
+  waits on the header's reply. Z and the mesh are checked at `place ok`
+  (Placement), once XY is final.
 * **In a job** a record out of range at ingest (control points, a Bézier
   lying in their hull) never enters the ring: `NACK_SOFT_LIMIT`, which the
   host session treats as fatal. The Pico keeps the job open; it runs what it
