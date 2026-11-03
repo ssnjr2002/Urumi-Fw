@@ -1543,7 +1543,7 @@ decisions above.
 
 ### Status
 
-Ready to merge.
+Done, merged. Unblocks JH2.
 
 ### Outcome
 
