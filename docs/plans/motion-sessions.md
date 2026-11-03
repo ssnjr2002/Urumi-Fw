@@ -214,14 +214,15 @@ matters.
 
 ### Placement
 
-Between preflight and the first `TOOL_REC`, the operator sees where the job
-lands and puts the material under it. Not a squaring procedure and no
-assumption of a rectangular sheet: the sheet's size is unknown to the Pico.
-On a rectangular sheet the first two corners square it, as a side effect.
+Between preflight and the first layer, the operator aligns the material to the
+laser dot and sets the job's position. This happens every job. Not a squaring
+procedure and no assumption of a rectangular sheet: the sheet's size is unknown
+to the Pico. The corners are a visual check.
 
-* **Work (0, 0)** is a point on the material, by default the sheet's
-  front-left corner: the SVG's bottom-left maps there (`viewportMatrix`,
-  `web/src/svg/load.ts`), with +x right and +y away from the operator.
+* **The dot marks the job's own corner,** (xmin, ymin) of the tight bbox over the
+  job's tools, not work (0, 0). A job never has to reach its zero, so the zero
+  may lie off the machine. A margin in the drawing does not position the job on
+  the sheet: the operator leaves one by placing the sheet past the dot.
 * **The valid origins.** For a tool with tip offset d (its head's offset and
   `toolOffset`, whether or not it is mounted) and the anchor's soft range
   [lo, hi], shrunk by the tool's blade `offsetMm`, `workX` lies in
@@ -235,20 +236,33 @@ On a rectangular sheet the first two corners square it, as a side effect.
   strip the anchor cannot reach: about 70 mm at the front of the bed, inside
   its border, on the bench machine. Pointing with a head instead is left
   until that strip matters.
-* **`JOB.PLACE`** starts when the last `TOOL_HDR` is ACKed:
-  1. The origin stays at the current work XY if valid, else moves to the
-     nearest valid point.
+* **`JOB.PLACE`** starts when the last `TOOL_HDR` is ACKed; the ACK means
+  accepted, and status shows when the move is done:
+  1. The handoff origin is the last job's origin if valid, else the valid
+     origin nearest the machine's origin. The Pico does not write the zero.
   2. Every Z parks, the anchor is selected, laser on, and the dot goes to the
-     tight bbox's first corner, (xmin, ymin) over the job's tools.
-  3. `place next` and `place back` step the dot round the corners and back to
-     the first. `jog` is admitted at the first corner only: it moves the
-     origin with the dot, clamped to the valid origins.
-  4. `place ok` checks Z and the mesh over the bbox at the final XY. A failure
-     is an error reply and stays in `PLACE`, so the origin can be moved.
-     Otherwise: vacuum on, laser off, and the job waits for its first
-     `TOOL_REC`, which handles tool changes as usual. `cancel` ends the
-     session to IDLE.
-* **A `TOOL_REC` or `BEZIER` in `PLACE`** is `NACK_JOB`.
+     handoff origin plus (xmin, ymin).
+  3. The operator jogs if they want another spot, aligns the material to the
+     dot, and sends `place set`.
+  4. The operator checks the corners, then sends `place ok`.
+* **Commands in `PLACE`:**
+
+  | command | allowed | does |
+  |---|---|---|
+  | `jog` | not set | moves the dot, clamped to the valid origins |
+  | `place set` | not set | makes the dot's position the job's (xmin, ymin): the zero is the dot minus that corner |
+  | `place reset` | set | clears the zero and returns the dot to the first corner |
+  | `place go <xmin\|xmax> <ymin\|ymax>` | set | moves the dot to that corner |
+  | `place frame` | set | traces the box once: (xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax), (xmin, ymin) |
+  | `place ok` | set | checks Z and the mesh over the bbox; on success vacuum on, laser off, to `BUFFERING` |
+  | `cancel` | either | stops any motion, laser off, ends the session to IDLE |
+
+  The wrong state is `err bad_state`; a command while the dot is moving is
+  `err busy`. `go` and `frame` move at the jog speed. A failed `place ok` is an
+  error reply and stays in `PLACE`.
+* **`wzero x y` and `wset` on X or Y are refused in `PLACE`.**
+* **A `LAYER_HDR`, `TOOL_HDR` or `BEZIER` in `PLACE`** is `NACK_JOB`. The host
+  streams once status shows `BUFFERING`.
 * **The bbox is conservative:** a job whose box overhangs an irregular sheet
   may still fit. Tracing the outline needs geometry that arrives later.
 * **XY is held from `place ok` to the session's end:** `wzero x y` and `wset`
@@ -1580,13 +1594,22 @@ Done, merged. Unblocks JH2.
 
 **Type:** feature.
 
-**Purpose:** `JOB.PLACE` (Placement, above): the origin, the laser's corners,
-`place next|back|ok`, the origin jog, XY held from `place ok`. Removes JH1's
-interim origin check.
+**Purpose:** `JOB.PLACE` (Placement, above): the handoff origin, the laser dot,
+`place set|reset|go|frame|ok`, the jog before `place set`, XY held from
+`place ok`. Removes JH1's interim origin check. The host's `JobSource` waits for
+`BUFFERING` before streaming layers; status decodes the new state. No placement
+UI: `place` is driven from the session API and tests.
+
+**Not in scope:** placement on a restart after an alarm or power loss.
+
+**Read phase checks:** which Z check the headers allow at `place ok`, since layer
+depths arrive later; that nothing travels to the zero or checks it against the
+soft range; that a missing anchor or laser can be refused at `JOB_HDR`
+(`TOOL_UNAVAILABLE`); that an alarm or lost host turns the laser off in `PLACE`.
 
 **Depends on:** JH1.
 
-**Overlap:** `cmd/table.h`, `controller/seq/`, `ops/frames.*`.
+**Overlap:** `cmd/table.h`, `controller/seq/`, `ops/frames.*`, `web/src/wire/`.
 
 ### Status
 
