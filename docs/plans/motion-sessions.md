@@ -1543,7 +1543,36 @@ decisions above.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+* Deviations:
+  * `JobSource` takes a list of layers and derives each tool's union bbox; it
+    throws on more than 4 tools or a tool on two heads.
+  * The first layer's origin check stays in `layerTool`; JH2 removes it.
+  * `plannerQueueLift` skips the lift until a layer has opened, since `layerMo` is
+    the last job's until then. `curLayer` is `NO_LAYER` until the first layer
+    opens, a first-layer tool change included.
+  * `Session.fatalDetail` carries the fatal NACK's detail byte.
+  * The side bit names the bound that closed the range.
+  * Only `0xA1`'s layout changed; a host on the old layout gets `NACK_CRC`.
+* For JH2: `plannerOpenJob`, `plannerClosePreflight`, `plannerLayerOpened`;
+  `preX` and `preY` in `data_plane.cpp` hold the valid origins; the last preflight
+  `TOOL_HDR` swaps `PREFLIGHT` to `BUFFERING`, where `PLACE` goes.
+* Bench, COM8, nothing mounted: the refusals, the held layer, a tool-change stop,
+  pause and `LAYER_HDR`-alone resume, and two knife layers at p 1 and 0.5 cutting
+  at their own depths without leaving `RUNNING`. Frames came from a Python script.
+  Not benched: the web session on hardware, a held layer dropped by a pause with
+  records running, a head switch without a stop, a resume needing a tool change,
+  the `softLimits`-off and power-node refusals, a real tool.
+* Findings out of scope:
+  * Pause and duty lifts read the newest `layerMo`, so a lift while an older
+    same-tool layer still runs can use the new layer's height.
+  * A job with A not homed passes preflight and fails at its first tool change
+    (`a_not_homed`).
+  * `mount` parks Z, so a zero made before it is lost.
+  * The demo's job button is broken (`web/demo/index.js`), as agreed.
 
 ## Branch JH2: `feature/job-place`
 
