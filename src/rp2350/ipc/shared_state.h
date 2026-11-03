@@ -68,6 +68,7 @@ enum JobReason : uint8_t {
     JOB_TOOL_CHANGE = 5, // the tool-change sequence: park Zs, unlock the head's A, a line to `mount`
     JOB_TOOL_WAIT   = 6, // at rest: the operator mounts and zeroes; a header leaves
     JOB_DWELL       = 7, // at rest before a plunge, the tool off until its duty resets
+    JOB_PREFLIGHT   = 8, // JOB_HDR taken, waiting on its TOOL_HDRs; nothing moves
 };
 
 // Why we are in STATE_PROBING (docs/tool_probe.md §5.2). Activity, plus the one

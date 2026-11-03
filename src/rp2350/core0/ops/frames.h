@@ -42,12 +42,17 @@ void framesSelectHead(uint8_t h);
 void framesOnMap(void);
 
 // The selected tip's XY offset from the anchor: the head's offset plus its
-// mounted tool's. False with no selection.
-bool framesTipOffset(float* dx, float* dy);
+// mounted tool's. False with no selection. `head` and `tool` ask the same of a
+// head and tool that need not be selected or mounted.
+#define FRAMES_MOUNTED 0xFF   // `tool`: the head's mounted tool
+bool framesTipOffset(float* dx, float* dy, uint8_t head = FRAMES_NONE,
+                     uint8_t tool = FRAMES_MOUNTED);
 
 // The selected head's mounted blade: the tip's trail `*d` mm behind the knife
-// axis and the edge's heading at machine A = 0. d is 0 without one.
-void framesBlade(float* d, float* aOffsetDeg);
+// axis and the edge's heading at machine A = 0. d is 0 without one. `head` and
+// `tool` as framesTipOffset.
+void framesBlade(float* d, float* aOffsetDeg, uint8_t head = FRAMES_NONE,
+                 uint8_t tool = FRAMES_MOUNTED);
 
 // Machine XY of the blade tip: MPos less the knife axis's lead at the
 // current A. False as framesMPos.

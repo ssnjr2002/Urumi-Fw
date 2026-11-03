@@ -81,7 +81,7 @@ bool cmdSeqReset(const char*) {            // data-plane support (see wire doc)
 // ring; a LAYER_HDR naming where it stopped resumes it (data_plane.cpp).
 bool cmdPause(const char*) {
     const uint8_t why = jobReason;
-    if (machineContext != CTX_JOB ||
+    if (machineContext != CTX_JOB || !plannerLayerOpened() ||
         (why != JOB_BUFFERING && why != JOB_RUNNING && why != JOB_DWELL)) {
         Serial.println("err bad_state"); return true;
     }
@@ -97,7 +97,7 @@ bool cmdCancel(const char*) {
     const uint32_t s = spin_lock_blocking(plannerLock);
     const uint8_t why = jobReason;
     const bool atRest = machineContext == CTX_JOB &&
-        (why == JOB_PAUSED || why == JOB_BUFFERING ||
+        (why == JOB_PAUSED || why == JOB_BUFFERING || why == JOB_PREFLIGHT ||
          (why == JOB_TOOL_WAIT && !plannerActive && plannerRing.count() == 0));
     if (atRest) {
         const planner::Pos at = plannerExec.position();

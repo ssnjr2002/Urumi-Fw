@@ -45,7 +45,9 @@ done; the banner is informational. Send nothing between `reset` / `CFG_ACK` and
 | `CJOG_MAGIC` | `0xAF` | Host → Pico | Continuous jog — deadman packet for a held XY, Z or A jog (7 B) |
 | `CJOG_STOP_MAGIC` | `0xB3` | Host → Pico | Stop a continuous jog (1 B, no reply) |
 | `BEZIER_MAGIC` | `0xAD` | Host → Pico | BEZIER record — one annotated cubic for the Pico's planner (62 B) |
-| `LAYER_HDR_MAGIC` | `0xA1` | Host → Pico | Layer header — opens or resumes a job, sets the layer's tool, head, feed and plunge (22 B) |
+| `JOB_HDR_MAGIC` | `0xB8` | Host → Pico | Job header — opens a job in preflight (17 B) |
+| `TOOL_HDR_MAGIC` | `0xB9` | Host → Pico | Tool header — tool, head and bbox: preflight, then each new layer (21 B) |
+| `LAYER_HDR_MAGIC` | `0xA1` | Host → Pico | Layer header — starts or resumes a layer: chamber, feed and plunge (20 B) |
 | `TOOL_MAGIC` | `0xAC` | Host → Pico | ToolConfig — local production (future) |
 | `MCFG_MAGIC` | `0x4D434647` (4B "MCFG") | Host → Pico | Job stream preamble (required_axes + config CRC32 in Phase 2) |
 | `MSEG_ACK`   | `0xAA` | Pico → Host | ACK response |
@@ -204,19 +206,77 @@ blade tip: with a tool whose `offsetMm` is d mounted, the Pico runs the knife
 axis d ahead of the tip along the edge heading (A + `aOffsetDeg`), in jobs
 and jogs alike, and shrinks X's and Y's soft ranges by d.
 
-### Layer Header — `LAYER_HDR_MAGIC` (0xA1, 22 bytes)
+### Job stream
+
+```
+JOB_HDR                job id, record count, t, tool count n
+n × TOOL_HDR           preflight: one per tool that will run
+LAYER_HDR(L, N)        a new layer, held until its tool header
+TOOL_HDR(a)            the layer's tool, head and bbox
+BEZIER …
+LAYER_HDR(L, N)        resume from JOB.PAUSED: no TOOL_HDR
+```
+
+`JOB_HDR` opens the job in `JOB.PREFLIGHT`. Any refusal there ends the session to
+IDLE. The last preflight `TOOL_HDR` leaves for `JOB.BUFFERING`; `pause` is
+`err bad_state` until a layer has opened. A `LAYER_HDR` or `BEZIER` before then,
+a `BEZIER` or `LAYER_HDR` while a layer is held, or a `TOOL_HDR` with none held
+or naming a tool not seen in preflight, is `NACK_JOB`. A pause drops a held
+layer.
+
+### Job Header — `JOB_HDR_MAGIC` (0xB8, 17 bytes)
+```
+[0]      magic = 0xB8
+[1]      version     uint8      — 1
+[2]      seq         uint8      — rolling stream seq, shared with BEZIER
+[3..6]   job id      uint32 LE
+[7..10]  record count uint32 LE
+[11..14] t           float32 LE — material thickness, mm
+[15]     tool count  uint8      — 1..4
+[16]     CRC8 over bytes [0..15]
+```
+`NACK_BAD_STATE` outside IDLE; `NACK_NOT_HOMED` with X or Y not homed;
+`NACK_OUT_OF_RANGE` with `softLimits` off on either; `NACK_JOB` for a bad version
+or tool count.
+
+### Tool Header — `TOOL_HDR_MAGIC` (0xB9, 21 bytes)
+```
+[0]      magic = 0xB9
+[1]      tool        uint8      — the config tool's `id`
+[2]      seq         uint8
+[3]      head        uint8      — the head the tool goes on
+[4..19]  xmin, xmax, ymin, ymax float32 LE — of the control points, work coordinates at the tip
+[20]     CRC8 over bytes [0..19]
+```
+In preflight: `NACK_TOOL_UNKNOWN` for an id not in the config, `NACK_JOB` for a
+duplicate or a bad bbox, `NACK_TOOL_UNAVAILABLE` for a head that does not exist or
+has no A for a tangential or chamber tool, or a power node mute or excluded, and
+`NACK_OUT_OF_RANGE` when no origin keeps this and the earlier tools in range.
+
+After a layer's header it checks the bbox at the current origin
+(`NACK_OUT_OF_RANGE`, which keeps the job open), then the mount, zero and head as
+below, and opens the layer. Until `JOB.PLACE` exists, the first layer's also checks
+the origin against preflight's valid origins.
+
+**Valid origins.** For a tool with tip offset d and blade `offsetMm` b on an axis of
+soft range [lo, hi], work X lies in [lo + b − xmin + d, hi − b − xmax + d]; Y the
+same. The origin must lie in the intersection over the job's tools and the anchor
+(d = 0, b = 0).
+
+**NACK detail.** Byte 2 of a NACK frame, on `NACK_OUT_OF_RANGE`: bit 0 the axis (X, Y),
+bit 1 the side (low, high), bit 2 `softLimits` off. 0 otherwise.
+
+### Layer Header — `LAYER_HDR_MAGIC` (0xA1, 20 bytes)
 ```
 [0]      magic = 0xA1
 [1]      chamber    uint8      — 1..chamberCount; 0 for a tool without chambers
 [2]      seq        uint8      — rolling stream seq, shared with BEZIER
-[3]      tool       uint8      — the config tool's `id`
-[4]      head       uint8      — the head the tool goes on
-[5..6]   layer      uint16 LE
-[7..10]  record     uint32 LE  — the next BEZIER's number within the layer
-[11..14] feed       float32 LE — cut, mm/s; 0 = the tool's cutFeed, then the machine's (`feed`, else `feed.cutFallback`)
-[15..18] p          float32 LE — plunge depth below the material top, mm
-[19..20] t          uint16 LE  — material thickness, µm
-[21]     CRC8 over bytes [0..20]
+[3..4]   layer      uint16 LE
+[5..8]   record     uint32 LE  — the next BEZIER's number within the layer
+[9..12]  feed       float32 LE — cut, mm/s; 0 = the tool's cutFeed, then the machine's (`feed`, else `feed.cutFallback`)
+[13..16] p          float32 LE — plunge depth below the material top, mm
+[17..18] t          uint16 LE  — material thickness, µm
+[19]     CRC8 over bytes [0..18]
 ```
 `0xA2`, the header with a plunge scale `k` in place of `p`, is retired and
 dropped as an unknown byte.

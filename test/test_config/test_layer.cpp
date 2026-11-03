@@ -96,11 +96,12 @@ TEST_CASE("layer refusals") {
     CHECK(layerResolve(c, mounted, hdr(9, 0), 10, &mo) == LAYER_TOOL_UNKNOWN);
     CHECK(layerResolve(c, mounted, hdr(4, 1, 1), 10, &mo) == LAYER_NOT_MOUNTED);
     CHECK(layerResolve(c, mounted, hdr(1, 0, 1), 10, &mo) == LAYER_BAD);   // no chambers
-    CHECK(layerResolve(c, mounted, hdr(1, 0, 0, -1), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, mounted, hdr(1, 0, 0, NAN), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 0, NAN), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 0, 1, -1), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 0, 1, NAN), 10, &mo) == LAYER_BAD);
+    CHECK_FALSE(layerValid(hdr(1, 0, 0, -1)));
+    CHECK_FALSE(layerValid(hdr(1, 0, 0, NAN)));
+    CHECK_FALSE(layerValid(hdr(1, 0, 0, 0, NAN)));
+    CHECK_FALSE(layerValid(hdr(1, 0, 0, 0, 1, -1)));
+    CHECK_FALSE(layerValid(hdr(1, 0, 0, 0, 1, NAN)));
+    CHECK(layerValid(hdr(1, 0)));
 
     const uint8_t pen[2] = { 4, 0 };
     CHECK(layerResolve(c, pen, hdr(4, 0, 0), 10, &mo) == LAYER_BAD);
@@ -136,5 +137,42 @@ TEST_CASE("layer plunge: p > 0 and at most maxOvercut past the material on a plu
     CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 0, 2), 10, &mo) == LAYER_BAD);
     CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, -1, 2), 10, &mo) == LAYER_BAD);
     CHECK(layerResolve(c, mounted, hdr(4, 0, 1, 0, 9, 2), 10, &mo) == LAYER_OK);    // pen: p unused
-    CHECK(layerResolve(c, mounted, hdr(4, 0, 1, 0, NAN, 2), 10, &mo) == LAYER_BAD);
+    CHECK_FALSE(layerValid(hdr(4, 0, 1, 0, NAN, 2)));
+}
+
+TEST_CASE("the origins a bbox allows: tip offset and blade") {
+    // Range 0..100, a bbox 10..30: the anchor's origin runs -10..70.
+    OriginRange r = layerOrigins(0, 100, 10, 30, 0, 0);
+    CHECK(r.lo == doctest::Approx(-10));
+    CHECK(r.hi == doctest::Approx(70));
+    // A tip 5 from the anchor moves them with it; a blade of 2 shrinks both ends.
+    r = layerOrigins(0, 100, 10, 30, 5, 2);
+    CHECK(r.lo == doctest::Approx(-3));
+    CHECK(r.hi == doctest::Approx(73));
+    // Too wide for the range.
+    r = layerOrigins(0, 10, 0, 30, 0, 0);
+    CHECK(r.lo > r.hi);
+}
+
+TEST_CASE("the origins narrow over a job's tools") {
+    OriginRange r = { -INFINITY, INFINITY };
+    bool high;
+    REQUIRE(layerOriginsNarrow(&r, { -10, 70 }, &high));
+    REQUIRE(layerOriginsNarrow(&r, { 20, 90 }, &high));
+    CHECK(r.lo == doctest::Approx(20));
+    CHECK(r.hi == doctest::Approx(70));
+    OriginRange low = r;
+    CHECK_FALSE(layerOriginsNarrow(&low, { 75, 90 }, &high));   // above the range
+    CHECK_FALSE(high);
+    CHECK_FALSE(layerOriginsNarrow(&r, { 0, 10 }, &high));      // below it
+    CHECK(high);
+}
+
+TEST_CASE("a head fits a tool that needs A only if it has one") {
+    MachineCfg c = twoHeads();
+    c.heads[1].a.node.present = false;
+    CHECK(layerHeadFits(c, c.tools[1], 0));
+    CHECK_FALSE(layerHeadFits(c, c.tools[1], 1));   // chambers, no A
+    CHECK(layerHeadFits(c, c.tools[0], 1));
+    CHECK_FALSE(layerHeadFits(c, c.tools[0], 2));   // no head 2
 }

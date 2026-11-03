@@ -2,8 +2,9 @@
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
 // leading magic byte and tracked in rxKind (docs/wire_protocol.md):
-//   RX_PACKET  — BEZIER (0xAD), 56 bytes; LAYER_HDR (0xA1), 22 bytes;
-//                continuous jog (0xAF), 7 bytes
+//   RX_PACKET  — BEZIER (0xAD), 62 bytes; LAYER_HDR (0xA1), 20 bytes; JOB_HDR
+//                (0xB8), 17 bytes; TOOL_HDR (0xB9), 21 bytes; continuous jog
+//                (0xAF), 7 bytes
 //   RX_CFG     — config write (0xB0), a variable-length transfer
 //   (CFG_GET 0xB1 is answered inline — no receive state)
 //
@@ -16,6 +17,7 @@
 //   [8..]    payload  <length> bytes  → staged, CRC folded incrementally
 
 #include <Arduino.h>
+#include <math.h>
 #include <string.h>
 #include "../ipc/shared_state.h"
 #include "usb_protocol.h"
@@ -24,6 +26,7 @@
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "ops/axes_map.h"
+#include "ops/bus.h"
 #include "ops/frames.h"
 #include "ops/layer.h"
 #include "ops/tools.h"
@@ -89,12 +92,12 @@ static inline void markAck() {
     if (++pendingAcks >= ACK_COALESCE_MAX) flushAck();
 }
 
-static void sendNack(uint8_t reason) {          // shared 3-byte NACK frame
+static void sendNack(uint8_t reason, uint8_t detail = 0) {   // shared 3-byte NACK frame
     // Ordering matters more than latency here: a NACK rewinds the host's window,
     // so any ACK earned before it must land first. Otherwise the host applies a
     // rewind and then an advance past it, and re-skips packets it just resent.
     if (pendingAcks) flushAck();
-    const uint8_t frame[3] = { MSEG_NACK, reason, 0x00 };
+    const uint8_t frame[3] = { MSEG_NACK, reason, detail };
     Serial.write(frame, sizeof(frame));
 }
 
@@ -106,6 +109,8 @@ static void sendCfgNack(uint8_t r) { Serial.write(CFG_NACK); Serial.write(r); }
 
 static void acceptBezier();
 static void acceptLayer();
+static void acceptJobHdr();
+static void acceptToolHdr();
 static void acceptCjog();
 
 // ─── Packet state machine ─────────────────────────────────────────────────────
@@ -141,13 +146,14 @@ static void feedPacket(uint8_t b) {
     // A job holding for a tool change takes nothing until it is back, except a
     // header in TOOL_WAIT, which may bring it back.
     const bool layer = pktBuf[0] == LAYER_HDR_MAGIC;
-    if (toolChangeHolding() && !(layer && toolChangeWaiting())) {
+    const bool header = layer || pktBuf[0] == TOOL_HDR_MAGIC;
+    if (toolChangeHolding() && !(header && toolChangeWaiting())) {
         sendNack(MSEG_NACK_TOOL_CHANGE);
         return;
     }
 
-    // A layer header opens a job from IDLE or resumes a paused one, and records
-    // join it; the planner's admit narrows JOB to the reasons that take them.
+    // A job header opens a job from IDLE and a layer header resumes a paused one;
+    // the planner's admit narrows JOB to the reasons that take records.
     const uint8_t st = machineView();
     if (st == STATE_JOB && jobReason == JOB_PAUSED && !layer) { sendNack(MSEG_NACK_PAUSED); return; }
     if (st != STATE_IDLE && st != STATE_JOB)        { sendNack(MSEG_NACK_BAD_STATE); return; }
@@ -163,12 +169,228 @@ static void feedPacket(uint8_t b) {
         return;
     }
 
-    if (layer) acceptLayer();
-    else                              acceptBezier();
+    switch (pktBuf[0]) {
+        case LAYER_HDR_MAGIC: acceptLayer();   break;
+        case JOB_HDR_MAGIC:   acceptJobHdr();  break;
+        case TOOL_HDR_MAGIC:  acceptToolHdr(); break;
+        default:              acceptBezier();  break;
+    }
+}
+
+// ─── The job's headers ────────────────────────────────────────────────────────
+
+static uint8_t     preCount, preSeen;          // this job's tool headers: promised, ACKed
+static uint8_t     preIds[JOB_MAX_TOOLS];
+static OriginRange preX, preY;                 // the valid work origins so far
+static uint8_t     curTool, curHead;           // the last opened layer's
+
+static bool      heldLayer;                    // a new LAYER_HDR waiting on its TOOL_HDR
+static LayerHdr  heldHdr;
+static uint16_t  heldNo;
+static uint32_t  heldRecord;
+
+static bool inPreflight() { return machineContext == CTX_JOB && jobReason == JOB_PREFLIGHT; }
+
+// Any preflight refusal ends the session; the host fixes the job and starts over.
+static void preflightFail(uint8_t reason, uint8_t detail = 0) {
+    plannerClosePreflight();
+    sendNack(reason, detail);
+}
+
+static void acceptJobHdr() {
+    if (machineView() != STATE_IDLE || !machineCfgValid()) { sendNack(MSEG_NACK_BAD_STATE); return; }
+    const MachineCfg& c = machineCfg();
+    const CfgAxis* axes[2] = { &c.x, &c.y };
+    for (uint8_t k = 0; k < 2; k++)
+        if (!(axes_homed & (1u << k))) { sendNack(MSEG_NACK_NOT_HOMED); return; }
+    for (uint8_t k = 0; k < 2; k++) {
+        if (!axes[k]->softLimits) {
+            sendNack(MSEG_NACK_OUT_OF_RANGE, NACK_DETAIL_NO_LIMITS | (k ? NACK_DETAIL_AXIS_Y : 0));
+            return;
+        }
+    }
+    const uint8_t count = pktBuf[15];
+    if (pktBuf[1] != JOB_HDR_VERSION || count < 1 || count > JOB_MAX_TOOLS) {
+        sendNack(MSEG_NACK_JOB);
+        return;
+    }
+    if (plannerOpenJob() != PQ_OK) { sendNack(MSEG_NACK_BAD_STATE); return; }
+    preCount = count;
+    preSeen = 0;
+    preX = preY = { -INFINITY, INFINITY };
+    heldLayer = false;
+    expectedSeq++;
+    markAck();
+}
+
+// Tool `tool` on `head`, its bbox [bmin, bmax] on axis k: the work origins it allows.
+static bool toolOrigins(uint8_t k, uint8_t tool, uint8_t head, float bmin, float bmax, OriginRange* out) {
+    const MachineCfg& c = machineCfg();
+    float lo, hi, dx, dy, blade, off;
+    if (!configAxisRange(k ? c.y : c.x, &lo, &hi) || !framesTipOffset(&dx, &dy, head, tool)) return false;
+    framesBlade(&blade, &off, head, tool);
+    *out = layerOrigins(lo, hi, bmin, bmax, k ? dy : dx, blade);
+    return true;
+}
+
+// The tool's power node answers on the bus.
+static bool powerAvailable(const CfgPower& p) {
+    if (!p.node.id) return true;
+    const uint16_t bit = 1u << p.node.id;
+    return !(busExcluded() & bit) && !(busMute() & bit);
+}
+
+// A preflight TOOL_HDR: the tool can run on its head, and some origin keeps its
+// bbox and the anchor (the job's preview) in range.
+static void preflightTool(uint8_t id, uint8_t head, const float* box) {
+    const MachineCfg& c = machineCfg();
+    const CfgTool* t = configTool(c, id);
+    if (!t) { preflightFail(MSEG_NACK_TOOL_UNKNOWN); return; }
+    for (uint8_t i = 0; i < preSeen; i++)
+        if (preIds[i] == id) { preflightFail(MSEG_NACK_JOB); return; }
+    if (!layerHeadFits(c, *t, head) || !powerAvailable(t->power)) {
+        preflightFail(MSEG_NACK_TOOL_UNAVAILABLE);
+        return;
+    }
+    for (uint8_t k = 0; k < 2; k++) {
+        OriginRange tip;
+        float lo, hi;
+        const float bmin = box[2 * k], bmax = box[2 * k + 1];
+        if (!toolOrigins(k, id, head, bmin, bmax, &tip) ||
+            !configAxisRange(k ? c.y : c.x, &lo, &hi)) {
+            preflightFail(MSEG_NACK_OUT_OF_RANGE, k ? NACK_DETAIL_AXIS_Y : 0);
+            return;
+        }
+        OriginRange& r = k ? preY : preX;
+        bool high;
+        const bool fits = layerOriginsNarrow(&r, tip, &high) &&
+                          layerOriginsNarrow(&r, layerOrigins(lo, hi, bmin, bmax, 0, 0), &high);
+        if (!fits) {
+            preflightFail(MSEG_NACK_OUT_OF_RANGE,
+                          (k ? NACK_DETAIL_AXIS_Y : 0) | (high ? NACK_DETAIL_SIDE_HI : 0));
+            return;
+        }
+    }
+    preIds[preSeen++] = id;
+    if (preSeen == preCount && !plannerJobSwap(JOB_PREFLIGHT, JOB_BUFFERING)) {
+        preflightFail(MSEG_NACK_BAD_STATE);
+        return;
+    }
+    expectedSeq++;
+    markAck();
+}
+
+// Start or resume the layer on `l`'s tool and head. A head switch maps axes over
+// the bus, so it happens here only while the bus is free (a paused job resuming);
+// otherwise, or with the tool not mounted on the head, the job holds for a tool
+// change and the header is NACKed, not consumed. False if refused.
+static bool takeLayer(const LayerHdr& l, uint16_t layerNo, uint32_t record) {
+    const MachineCfg& c = machineCfg();
+    uint8_t mounted[CFG_MAX_HEADS];
+    for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) mounted[h] = toolsMounted(h);
+    LayerMotion mo;
+    const LayerResult res = layerResolve(c, mounted, l, plannerMachineFeed(), &mo);
+    switch (res) {
+        case LAYER_OK:           break;
+        case LAYER_NOT_MOUNTED:  break;
+        case LAYER_TOOL_UNKNOWN: sendNack(MSEG_NACK_TOOL_UNKNOWN); return false;
+        default:                 sendNack(MSEG_NACK_JOB);          return false;
+    }
+    // In TOOL_WAIT only this header leaves: its tool mounted and zeroed, the
+    // job goes back and the header is taken as any other.
+    if (toolChangeWaiting() && !toolChangeLeave(l.head, l.tool)) {
+        sendNack(MSEG_NACK_TOOL_CHANGE);
+        return false;
+    }
+    // Lifts and plunges are heights over the head's work Z: a head not zeroed
+    // since its tool was mounted stops for it as for a mount.
+    const bool ready = res == LAYER_OK && framesWorkZSet(l.head);
+
+    // Checked before the select or the change, so a refused layer changes nothing.
+    PlannerQueueResult r = plannerLayerCheck(mo.cutFeed, layerNo, record);
+    if (r == PQ_OK && (!ready || l.head != framesSelected())) {
+        if (!ready || !machineBusFree()) {
+            sendNack(toolChangeBegin(l.head, l.tool) ? MSEG_NACK_TOOL_CHANGE : MSEG_NACK_BAD_STATE);
+            return false;
+        }
+        const char* why;
+        axesSelectHead(l.head, &why);
+        if (why || framesSelected() != l.head) { sendNack(MSEG_NACK_BAD_STATE); return false; }
+    }
+    if (r == PQ_OK) r = plannerOpenLayer(mo, layerNo, record);
+    switch (r) {
+        case PQ_OK:        break;
+        case PQ_BAD_CURVE: sendNack(MSEG_NACK_JOB);       return false;   // inside a contour
+        case PQ_NO_RESUME: sendNack(MSEG_NACK_JOB);       return false;
+        default:           sendNack(MSEG_NACK_BAD_STATE); return false;   // state, config, feed
+    }
+    curTool = l.tool;
+    curHead = l.head;
+    return true;
+}
+
+// A TOOL_HDR after preflight opens the held layer, its bbox in reach from the
+// origin as it stands.
+static void layerTool(uint8_t id, uint8_t head, const float* box) {
+    if (!heldLayer) { sendNack(MSEG_NACK_JOB); return; }
+    bool seen = false;
+    for (uint8_t i = 0; i < preCount; i++) seen = seen || preIds[i] == id;
+    if (!seen) { sendNack(MSEG_NACK_JOB); return; }
+    const CfgTool* t = configTool(machineCfg(), id);
+    if (!t || !layerHeadFits(machineCfg(), *t, head)) { sendNack(MSEG_NACK_TOOL_UNAVAILABLE); return; }
+    for (uint8_t k = 0; k < 2; k++) {
+        OriginRange r;
+        const float work = framesWork(k);
+        const uint8_t axis = k ? NACK_DETAIL_AXIS_Y : 0;
+        if (!toolOrigins(k, id, head, box[2 * k], box[2 * k + 1], &r)) {
+            sendNack(MSEG_NACK_OUT_OF_RANGE, axis);
+            return;
+        }
+        // Until JOB.PLACE moves it, the first layer also holds the origin to preflight's.
+        if (!plannerLayerOpened()) {
+            const OriginRange& all = k ? preY : preX;
+            if (all.lo > r.lo) r.lo = all.lo;
+            if (all.hi < r.hi) r.hi = all.hi;
+        }
+        if (work < r.lo || work > r.hi) {
+            sendNack(MSEG_NACK_OUT_OF_RANGE, axis | (work > r.hi ? NACK_DETAIL_SIDE_HI : 0));
+            return;
+        }
+    }
+    LayerHdr l = heldHdr;
+    l.tool = id;
+    l.head = head;
+    if (!takeLayer(l, heldNo, heldRecord)) return;
+    heldLayer = false;
+    expectedSeq++;
+    markAck();
+}
+
+static void acceptToolHdr() {
+    if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
+    if (machineContext != CTX_JOB || !machineCfgValid()) { sendNack(MSEG_NACK_JOB); return; }
+    float box[4];
+    memcpy(box, &pktBuf[4], sizeof box);
+    bool good = true;
+    for (uint8_t k = 0; k < 2; k++)
+        good = good && isfinite(box[2 * k]) && isfinite(box[2 * k + 1]) && box[2 * k] <= box[2 * k + 1];
+    const bool pre = inPreflight();
+    if (!good) {
+        if (pre) preflightFail(MSEG_NACK_JOB);
+        else     sendNack(MSEG_NACK_JOB);
+        return;
+    }
+    if (pre) preflightTool(pktBuf[1], pktBuf[3], box);
+    else     layerTool(pktBuf[1], pktBuf[3], box);
 }
 
 static void acceptBezier() {
     if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
+    if (inPreflight()) { preflightFail(MSEG_NACK_JOB); return; }
+    if (machineContext != CTX_JOB || heldLayer || !plannerLayerOpened()) {
+        sendNack(MSEG_NACK_JOB);
+        return;
+    }
 
     planner::Bezier bz;
     const uint8_t* p = &pktBuf[3];
@@ -209,66 +431,38 @@ static void acceptBezier() {
     markAck();
 }
 
-// The layer names its tool and head. A head switch maps axes over the bus, so
-// it happens here only while the bus is free (IDLE, or a paused job resuming);
-// otherwise, or with the tool not mounted on the head, the job holds for a tool
-// change and the header is NACKed, not consumed.
+// In JOB.PAUSED, or back in TOOL_WAIT from there with none held, the layer
+// resumes on the current tool and head. Anywhere else it is new: held for its
+// TOOL_HDR, and no layer numbers are compared, a retransmit stops at the seq guard.
 static void acceptLayer() {
     if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
-    if (!machineCfgValid()) { sendNack(MSEG_NACK_BAD_STATE); return; }
+    if (inPreflight()) { preflightFail(MSEG_NACK_JOB); return; }
+    if (machineContext != CTX_JOB || !machineCfgValid()) { sendNack(MSEG_NACK_JOB); return; }
 
     LayerHdr l;
     l.chamber = pktBuf[1];
-    l.tool    = pktBuf[3];
-    l.head    = pktBuf[4];
     uint16_t layerNo;
     uint32_t record;
-    memcpy(&layerNo, &pktBuf[5], 2);
-    memcpy(&record,  &pktBuf[7], 4);
-    memcpy(&l.feed,  &pktBuf[11], 4);
-    memcpy(&l.p,     &pktBuf[15], 4);
+    memcpy(&layerNo, &pktBuf[3], 2);
+    memcpy(&record,  &pktBuf[5], 4);
+    memcpy(&l.feed,  &pktBuf[9], 4);
+    memcpy(&l.p,     &pktBuf[13], 4);
     uint16_t um;
-    memcpy(&um,      &pktBuf[19], 2);
+    memcpy(&um,      &pktBuf[17], 2);
     l.thickness = um * 0.001f;
+    if (!layerValid(l)) { sendNack(MSEG_NACK_JOB); return; }
 
-    const MachineCfg& c = machineCfg();
-    uint8_t mounted[CFG_MAX_HEADS];
-    for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) mounted[h] = toolsMounted(h);
-    LayerMotion mo;
-    const LayerResult res = layerResolve(c, mounted, l, plannerMachineFeed(), &mo);
-    switch (res) {
-        case LAYER_OK:           break;
-        case LAYER_NOT_MOUNTED:  break;
-        case LAYER_TOOL_UNKNOWN: sendNack(MSEG_NACK_TOOL_UNKNOWN); return;
-        default:                 sendNack(MSEG_NACK_JOB);          return;
-    }
-    // In TOOL_WAIT only this header leaves: its tool mounted and zeroed, the
-    // job goes back and the header is taken as any other.
-    if (toolChangeWaiting() && !toolChangeLeave(l.head, l.tool)) {
-        sendNack(MSEG_NACK_TOOL_CHANGE);
-        return;
-    }
-    // Lifts and plunges are heights over the head's work Z: a head not zeroed
-    // since its tool was mounted stops for it as for a mount.
-    const bool ready = res == LAYER_OK && framesWorkZSet(l.head);
-
-    // Checked before the select or the change, so a refused layer changes nothing.
-    PlannerQueueResult r = plannerLayerCheck(mo.cutFeed, layerNo, record);
-    if (r == PQ_OK && (!ready || l.head != framesSelected())) {
-        if (!ready || !machineBusFree()) {
-            sendNack(toolChangeBegin(l.head, l.tool) ? MSEG_NACK_TOOL_CHANGE : MSEG_NACK_BAD_STATE);
-            return;
-        }
-        const char* why;
-        axesSelectHead(l.head, &why);
-        if (why || framesSelected() != l.head) { sendNack(MSEG_NACK_BAD_STATE); return; }
-    }
-    if (r == PQ_OK) r = plannerOpenLayer(mo, layerNo, record);
-    switch (r) {
-        case PQ_OK:        break;
-        case PQ_BAD_CURVE: sendNack(MSEG_NACK_JOB);       return;   // inside a contour
-        case PQ_NO_RESUME: sendNack(MSEG_NACK_JOB);       return;
-        default:           sendNack(MSEG_NACK_BAD_STATE); return;   // state, config, feed
+    if (jobReason == JOB_PAUSED) heldLayer = false;   // a pause drops the held layer
+    if (jobReason == JOB_PAUSED || (toolChangeWaiting() && !heldLayer)) {
+        l.tool = curTool;
+        l.head = curHead;
+        if (!takeLayer(l, layerNo, record)) return;
+    } else {
+        if (heldLayer || plannerInContour()) { sendNack(MSEG_NACK_JOB); return; }
+        heldHdr    = l;
+        heldNo     = layerNo;
+        heldRecord = record;
+        heldLayer  = true;
     }
     expectedSeq++;
     markAck();
@@ -378,11 +572,14 @@ bool dataPlaneConsume(uint8_t b) {
     }
 
     // Idle — dispatch on the leading magic byte.
-    if (b == BEZIER_MAGIC || b == LAYER_HDR_MAGIC || b == CJOG_MAGIC) {
+    if (b == BEZIER_MAGIC || b == LAYER_HDR_MAGIC || b == JOB_HDR_MAGIC ||
+        b == TOOL_HDR_MAGIC || b == CJOG_MAGIC) {
         pktBuf[0] = b;
         pktIdx    = 1;
         pktSize   = b == BEZIER_MAGIC    ? BEZIER_PACKET_SIZE
                   : b == LAYER_HDR_MAGIC ? LAYER_HDR_PACKET_SIZE
+                  : b == JOB_HDR_MAGIC   ? JOB_HDR_PACKET_SIZE
+                  : b == TOOL_HDR_MAGIC  ? TOOL_HDR_PACKET_SIZE
                   :                        CJOG_PACKET_SIZE;
         pktLastMs = millis();
         rxKind    = RX_PACKET;

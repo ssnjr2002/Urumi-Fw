@@ -37,27 +37,52 @@
 #define BEZIER_FLAG_BREAK  0x02   // corner or cusp before this piece
 #define BEZIER_FLAG_END    0x04   // closes the contour
 
-// LAYER_HDR (22 bytes, little-endian): opens a job from IDLE and starts a layer,
-// or resumes a paused job from where it stopped (`get resume_layer
-// resume_record`). The BEZIERs after it run with its tool on `head`, numbered on
-// from `record`; the first is a START. Accepted only with the tool mounted on
-// `head` and that head selected; otherwise NACK_TOOL_CHANGE.
+// JOB_HDR (17 bytes, little-endian): opens a job from IDLE, in JOB.PREFLIGHT until
+// `tool count` TOOL_HDRs are ACKed. X and Y must be homed with softLimits on.
+//   [0]      magic = 0xB8
+//   [1]      version (JOB_HDR_VERSION)
+//   [2]      seq
+//   [3..6]   job id        u32
+//   [7..10]  record count  u32
+//   [11..14] t             f32 mm
+//   [15]     tool count    1..JOB_MAX_TOOLS
+//   [16]     CRC8 over bytes [0..15]
+#define JOB_HDR_MAGIC       0xB8
+#define JOB_HDR_PACKET_SIZE 17
+#define JOB_HDR_VERSION     1
+#define JOB_MAX_TOOLS       4
+
+// TOOL_HDR (21 bytes, little-endian). In JOB.PREFLIGHT it narrows the valid
+// origins, one per tool. After a new layer's LAYER_HDR it checks the bbox at the
+// actual origin, then the mount, zero and head, and opens the layer.
+//   [0]      magic = 0xB9
+//   [1]      tool id  (config `tools`)
+//   [2]      seq
+//   [3]      head     the head the tool goes on
+//   [4..19]  xmin, xmax, ymin, ymax  f32, of the control points, work coordinates
+//   [20]     CRC8 over bytes [0..19]
+#define TOOL_HDR_MAGIC       0xB9
+#define TOOL_HDR_PACKET_SIZE 21
+
+// LAYER_HDR (20 bytes, little-endian). Outside JOB.PAUSED a new layer, held until
+// its TOOL_HDR. In JOB.PAUSED it resumes from where the job stopped (`get
+// resume_layer resume_record`), on the current tool and head: otherwise
+// NACK_TOOL_CHANGE. The BEZIERs after it are numbered on from `record`; the first
+// is a START.
 //   [0]      magic = 0xA1
 //   [1]      chamber  1..chamberCount; 0 for a tool without chambers
 //   [2]      seq
-//   [3]      tool id  (config `tools`)
-//   [4]      head     the head the tool goes on
-//   [5..6]   layer    u16
-//   [7..10]  record   u32, the next BEZIER's number within the layer
-//   [11..14] feed     f32 mm/s; 0 = the tool's cutFeed, then the machine's
-//   [15..18] p        f32 plunge depth below the material top, mm
-//   [19..20] t        u16 material thickness, µm
-//   [21]     CRC8 over bytes [0..20]
+//   [3..4]   layer    u16
+//   [5..8]   record   u32, the next BEZIER's number within the layer
+//   [9..12]  feed     f32 mm/s; 0 = the tool's cutFeed, then the machine's
+//   [13..16] p        f32 plunge depth below the material top, mm
+//   [17..18] t        u16 material thickness, µm
+//   [19]     CRC8 over bytes [0..18]
 // Work Z 0 is the bed: travel at work Z t + zClearance, the cut at t − p (t
 // for a tool with `plunge: false`). NACK_JOB for a p not finite, or on a
 // plunging tool p ≤ 0 or p − t > maxOvercut.
 #define LAYER_HDR_MAGIC       0xA1
-#define LAYER_HDR_PACKET_SIZE 22
+#define LAYER_HDR_PACKET_SIZE 20
 
 // Inter-byte timeout for a half-received BEZIER or jog packet. A whole
 // packet arrives in microseconds over USB CDC, so a gap this long means the
@@ -67,7 +92,7 @@
 
 // ACK/NACK responses (Pico → Host, 3 bytes each):
 //   ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
-//   NACK: [0xBB] [reason] [0x00]
+//   NACK: [0xBB] [reason] [detail]   detail: NACK_DETAIL_* on OUT_OF_RANGE, else 0
 //     reason 0x01 = CRC error
 //     reason 0x02 = buffer full (backpressure)
 //     reason 0x03 = bad magic
@@ -189,14 +214,29 @@
 #define MSEG_NACK_MIXED_AXES 0x0A
 // A CJOG packet refused while a step or sequence holds the machine.
 #define MSEG_NACK_BUSY       0x0B
-// A BEZIER with no job open, or a LAYER_HDR inside a contour, with a bad
-// chamber, feed, thickness or p, or in a paused job not naming where it stopped.
+// A frame out of the job's order (a BEZIER or LAYER_HDR while a layer is held or
+// before preflight ends, a TOOL_HDR with none held or naming a tool not seen in
+// preflight), a LAYER_HDR inside a contour, with a bad chamber, feed, thickness
+// or p, or in a paused job not naming where it stopped; a bad JOB_HDR version or
+// tool count.
 #define MSEG_NACK_JOB          0x0C
-// A LAYER_HDR whose tool id is not in the config.
+// A TOOL_HDR whose tool id is not in the config.
 #define MSEG_NACK_TOOL_UNKNOWN 0x0D
-// A LAYER_HDR whose tool is not mounted on its head or not zeroed, or whose
-// head is not selected: not consumed. The job changes the tool or the head
-// (JOB.TOOL_CHANGE, TOOL_WAIT); records are refused the same way meanwhile. The
-// host resends from the header; in TOOL_WAIT only a header with its tool
-// mounted and zeroed is taken.
+// A TOOL_HDR, or a resuming LAYER_HDR, whose tool is not mounted on its head or
+// not zeroed, or whose head is not selected: not consumed. The job changes the
+// tool or the head (JOB.TOOL_CHANGE, TOOL_WAIT); records are refused the same way
+// meanwhile. The host resends from the header; in TOOL_WAIT only a header with
+// its tool mounted and zeroed is taken.
 #define MSEG_NACK_TOOL_CHANGE  0x0F
+// A TOOL_HDR whose head does not exist or has no A for its tool, or whose power
+// node is missing or excluded.
+#define MSEG_NACK_TOOL_UNAVAILABLE 0x10
+// A TOOL_HDR with no valid origin or outside the current one, or a JOB_HDR with
+// softLimits off on X or Y; see the detail byte.
+#define MSEG_NACK_OUT_OF_RANGE 0x11
+// A JOB_HDR with X or Y not homed.
+#define MSEG_NACK_NOT_HOMED    0x12
+
+#define NACK_DETAIL_AXIS_Y   0x01
+#define NACK_DETAIL_SIDE_HI  0x02
+#define NACK_DETAIL_NO_LIMITS 0x04

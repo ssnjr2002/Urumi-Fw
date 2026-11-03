@@ -117,24 +117,24 @@ void framesSelectHead(uint8_t h) {
     selected = h;
 }
 
-bool framesTipOffset(float* dx, float* dy) {
-    const uint8_t sel = framesSelected();
+bool framesTipOffset(float* dx, float* dy, uint8_t head, uint8_t tool) {
+    const uint8_t sel = head != FRAMES_NONE ? head : framesSelected();
     if (sel == FRAMES_NONE) return false;
     if (sel == FRAMES_ANCHOR) { *dx = 0; *dy = 0; return true; }
     const MachineCfg& c = machineCfg();
     const CfgHead& h = c.heads[sel];
-    const CfgTool* t = configTool(c, toolsMounted(sel));
+    const CfgTool* t = configTool(c, tool != FRAMES_MOUNTED ? tool : toolsMounted(sel));
     *dx = h.xOffset + (t ? t->toolOffset.xOffset : 0);
     *dy = h.yOffset + (t ? t->toolOffset.yOffset : 0);
     return true;
 }
 
-void framesBlade(float* d, float* aOffsetDeg) {
+void framesBlade(float* d, float* aOffsetDeg, uint8_t head, uint8_t tool) {
     *d = 0;
     *aOffsetDeg = 0;
-    const uint8_t sel = framesSelected();
+    const uint8_t sel = head != FRAMES_NONE ? head : framesSelected();
     if (sel >= machineCfg().headCount) return;
-    if (const CfgTool* t = configTool(machineCfg(), toolsMounted(sel))) {
+    if (const CfgTool* t = configTool(machineCfg(), tool != FRAMES_MOUNTED ? tool : toolsMounted(sel))) {
         *d = t->offsetMm;
         *aOffsetDeg = t->aOffsetDeg;
     }

@@ -271,6 +271,7 @@ PlannerQueueResult plannerQueueBezier(float x1, float y1, float x2, float y2,
 // The `feed` command's override of the config's feeds; 0 = none.
 static float cutFeed = 0, travelFeed = 0;
 static LayerMotion layerMo = {}; // the open layer's feeds and heights
+static bool layerOpened = false; // layerMo is this job's
 static bool inContour = false;
 // The record the next BEZIER is, and whether it is the first since a LAYER_HDR.
 static uint16_t curLayer = 0;
@@ -361,8 +362,9 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
 
     const uint32_t s = spin_lock_blocking(plannerLock);
     PlannerQueueResult out = PQ_OK;
-    const bool opening = machineContext != CTX_JOB;
-    if (resume) {
+    if (machineContext != CTX_JOB) {
+        out = PQ_BAD_STATE;
+    } else if (resume) {
         // Paused, the ring is empty and idle: the first record resets it, from
         // wherever the head is now.
         if (!paused()) {
@@ -375,20 +377,9 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
             __dmb();
             jobReason = JOB_BUFFERING;
         }
-    } else if (machineContext != CTX_JOB) {
-        // From IDLE: no jog runs, so the ring is empty and becomes the job's.
-        if (resetIfIdle(RING_JOB)) {
-            jobExec.known = false;
-            jobLift = {0, 0, 0};
-            jobReason = JOB_BUFFERING;
-            __dmb();
-            machineContext = CTX_JOB;
-        } else {
-            out = PQ_BAD_STATE;
-        }
     }
     if (out == PQ_OK) {
-        if (opening || mo.tool != layerMo.tool) {
+        if (!layerOpened || mo.tool != layerMo.tool) {
             dutyEpoch = dutyEpoch + 1;
             estOnS = 0;
         }
@@ -401,6 +392,7 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
         jobPower.dwellS  = p.dutyLimits.dwellS;
         jobPower.maxOnS  = p.dutyLimits.maxOnS;
         layerMo = mo;
+        layerOpened = true;
         curLayer = layerNo;
         nextRecord = record;
         firstRecord = true;
@@ -408,6 +400,38 @@ PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layerNo, uin
     spin_unlock(plannerLock, s);
     return out;
 }
+
+PlannerQueueResult plannerOpenJob() {
+    if (!machineCfgValid()) return PQ_NO_CONFIG;
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    PlannerQueueResult out = PQ_BAD_STATE;
+    // From IDLE: no jog runs, so the ring is empty and becomes the job's.
+    if (machineContext == CTX_IDLE && !pauseRequested && !abortRequested && resetIfIdle(RING_JOB)) {
+        jobExec.known = false;
+        jobResume.known = false;
+        jobLift = {0, 0, 0};
+        layerOpened = false;
+        curLayer = 0xFFFF;      // NO_LAYER on the status until one opens
+        nextRecord = 0;
+        inContour = false;
+        jobReason = JOB_PREFLIGHT;
+        __dmb();
+        machineContext = CTX_JOB;
+        out = PQ_OK;
+    }
+    spin_unlock(plannerLock, s);
+    return out;
+}
+
+void plannerClosePreflight() {
+    const uint32_t s = spin_lock_blocking(plannerLock);
+    if (machineContext == CTX_JOB && jobReason == JOB_PREFLIGHT) machineContext = CTX_IDLE;
+    spin_unlock(plannerLock, s);
+}
+
+bool plannerLayerOpened() { return layerOpened; }
+
+bool plannerInContour() { return inContour; }
 
 PlannerQueueResult plannerHoldForTool(bool* fromPaused) {
     *fromPaused = false;
@@ -419,13 +443,7 @@ PlannerQueueResult plannerHoldForTool(bool* fromPaused) {
         *fromPaused = true;
         jobReason = JOB_TOOL_CHANGE;
     } else if (machineContext != CTX_JOB) {
-        if (resetIfIdle(RING_JOB)) {
-            jobReason = JOB_TOOL_CHANGE;
-            __dmb();
-            machineContext = CTX_JOB;
-        } else {
-            out = PQ_BAD_STATE;
-        }
+        out = PQ_BAD_STATE;
     } else if (why == JOB_BUFFERING && idle) {
         jobReason = JOB_TOOL_CHANGE;
     } else if (why == JOB_BUFFERING || why == JOB_RUNNING || why == JOB_DWELL ||
@@ -549,7 +567,7 @@ static constexpr float kDutyMarginS = 0.05f;
 
 PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, bool end,
                                       uint16_t breakDist, int16_t sweepMin, int16_t sweepMax) {
-    if (machineContext != CTX_JOB) return PQ_NO_JOB;
+    if (machineContext != CTX_JOB || !layerOpened) return PQ_NO_JOB;
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, false);
     if (r != PQ_OK) return r;
@@ -752,7 +770,8 @@ void plannerDutyLift() {
 
 bool plannerQueueLift(uint8_t why) {
     planner::AxisLimits limits;
-    if (!machineCfgValid() || !fillLimits(limits) ||
+    // Before a layer opens nothing has moved, and layerMo is the last job's.
+    if (!layerOpened || !machineCfgValid() || !fillLimits(limits) ||
         !(limits.max_feed[SLOT_Z] > 0 && limits.max_accel[SLOT_Z] > 0)) return false;
     const float up = clearZ();
     const float feed = machineCfg().feed.liftFeed;

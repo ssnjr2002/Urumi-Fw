@@ -1,9 +1,9 @@
 #pragma once
 #include <stdint.h>
 
-// A job's tool change (docs/plans/motion-sessions.md, JB4 and JT). A LAYER_HDR
-// whose tool is not mounted on its head, or not zeroed (no work Z set), or
-// whose head is not selected while the bus is busy, is NACKed
+// A job's tool change (docs/plans/motion-sessions.md, JB4 and JT). A TOOL_HDR or
+// resuming LAYER_HDR whose tool is not mounted on its head, or not zeroed (no work
+// Z set), or whose head is not selected while the bus is busy, is NACKed
 // (NACK_TOOL_CHANGE) and holds the job; once the ring is dry the job is in
 // TOOL_CHANGE:
 //   * the tool mounted and zeroed: select the head, then back;

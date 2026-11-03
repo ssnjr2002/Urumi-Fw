@@ -2,14 +2,15 @@
 #include <stdint.h>
 #include "../config/config_decode.h"
 
-// layer — what a LAYER_HDR asks for (usb_protocol.h): its tool on its head, the
-// cut and plunge feeds, and the heights. Pure; the data plane applies it.
+// layer — what a LAYER_HDR and its TOOL_HDR ask for (usb_protocol.h): the tool on
+// its head, the cut and plunge feeds, and the heights; and the origins a tool's
+// bbox allows. Pure; the data plane applies them.
 
 enum LayerResult : uint8_t {
     LAYER_OK,
-    LAYER_BAD,            // head, chamber, feed, thickness or p out of range, a
-                          // plunge past maxOvercut below the bed, or a
-                          // tangential or chamber tool on a head without A
+    LAYER_BAD,            // head or chamber out of range, a plunge past
+                          // maxOvercut below the bed, or a tangential or chamber
+                          // tool on a head without A
     LAYER_TOOL_UNKNOWN,   // the id is not in the config
     LAYER_NOT_MOUNTED,    // the head has another tool mounted, or none
 };
@@ -36,8 +37,25 @@ struct LayerMotion {
     float chamberDeg;     // the chamber's machine A, any equivalent
 };
 
-// `mounted[h]` is head h's tool id (tools.h). `machineFeed` is the cut feed
-// when neither the header nor the tool sets one. Fills *out on LAYER_OK and
-// LAYER_NOT_MOUNTED.
+// What needs no tool: feed, p and thickness finite and in range.
+bool layerValid(const LayerHdr& l);
+
+// The head exists and has the A this tool needs.
+bool layerHeadFits(const MachineCfg& c, const CfgTool& t, uint8_t head);
+
+// `l` passed layerValid. `mounted[h]` is head h's tool id (tools.h).
+// `machineFeed` is the cut feed when neither the header nor the tool sets one.
+// Fills *out on LAYER_OK and LAYER_NOT_MOUNTED.
 LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
                          const LayerHdr& l, float machineFeed, LayerMotion* out);
+
+// One axis's valid work offsets for a tip `d` from the anchor, its blade `blade`
+// mm off the axis: what keeps [bmin, bmax] inside the soft range [lo, hi].
+struct OriginRange {
+    float lo, hi;
+};
+OriginRange layerOrigins(float lo, float hi, float bmin, float bmax, float d, float blade);
+
+// Narrow `r` by `by`. False when nothing is left; *high then says the high bound
+// was the one that closed it.
+bool layerOriginsNarrow(OriginRange* r, const OriginRange& by, bool* high);

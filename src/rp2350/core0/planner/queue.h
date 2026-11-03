@@ -58,16 +58,28 @@ float plannerMachineFeed();
 // PQ_BAD_CURVE inside a contour, else admit's verdict.
 PlannerQueueResult plannerLayerCheck(float cut, uint16_t layer, uint32_t record);
 
-// Start the layer (checked as plannerLayerCheck on mo.cutFeed): opens the job
-// (JOB.BUFFERING) from IDLE, and resumes a paused one, its first record cut
-// from kResumeMargin before where it stopped. Records count from `record`, and
-// run at `mo`'s feeds and heights.
+// Start the layer (checked as plannerLayerCheck on mo.cutFeed), and resume a
+// paused job, its first record cut from kResumeMargin before where it stopped.
+// Records count from `record`, and run at `mo`'s feeds and heights.
 PlannerQueueResult plannerOpenLayer(const LayerMotion& mo, uint16_t layer, uint32_t record);
 
+// Open a job from IDLE in JOB.PREFLIGHT, its ring empty and no layer open.
+PlannerQueueResult plannerOpenJob();
+
+// End a job in JOB.PREFLIGHT back to IDLE.
+void plannerClosePreflight();
+
+// A layer has opened in this job: until then there is no resume point or
+// current tool, so `pause` is refused and records are PQ_NO_JOB.
+bool plannerLayerOpened();
+
+// A contour is open: its END has not been queued.
+bool plannerInContour();
+
 // Hold the job for a tool change (a layer checked as plannerLayerCheck):
-// JOB.TOOL_CHANGE at once from IDLE (opening the job), PAUSED or a dry
-// BUFFERING; otherwise toolChangePending, and Core 1 lands it when the ring
-// runs dry. *fromPaused: it came from PAUSED.
+// JOB.TOOL_CHANGE at once from PAUSED or a dry BUFFERING; otherwise
+// toolChangePending, and Core 1 lands it when the ring runs dry. *fromPaused: it
+// came from PAUSED.
 PlannerQueueResult plannerHoldForTool(bool* fromPaused);
 
 // JOB reason `from` to `to` with the ring idle and empty, handing the ring back
