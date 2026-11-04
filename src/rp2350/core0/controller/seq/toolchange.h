@@ -10,8 +10,8 @@
 //   * otherwise the sequence SEQ_TOOL_CHANGE, the stop: select the head and
 //     unmount it (tool 0), park every Z, turn its A to machine 0 if it has
 //     `unlockRange` (LEGS), a line to the mount position (RING). Then
-//     TOOL_WAIT: `mount`, `unmount` (any head), `jog`, `wzero`, `goto
-//     probe` and `goto mount` are admitted.
+//     TOOL_WAIT: `mount`, `unmount` (any head), `jog`, `select`, `wzero`,
+//     `goto probe` and `goto mount` are admitted.
 // Only a resent header leaves TOOL_WAIT: with its tool mounted on its head and
 // zeroed it goes back and is taken; otherwise it is NACK_TOOL_CHANGE again.
 // Back is BUFFERING, or PAUSED if the change came from there. A refusal after

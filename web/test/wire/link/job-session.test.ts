@@ -522,6 +522,19 @@ describe("wire/link/session: tool change", () => {
         }, { tools: {} });
     });
 
+    it("zeroes another head after selecting it in TOOL_WAIT", async () => {
+        await withLink(async (link, sim) => {
+            const { sess, done } = await start(link, 3);
+            await until(async () => (await link.getStatus()).reason === JobReason.TOOL_WAIT);
+            expect(await link.command("select 1")).toBe("ok");
+            expect(await link.command("wzero z")).toBe("ok");
+            expect(sim.zeroed.has(1)).toBe(true);
+            expect(sim.zeroed.has(0)).toBe(false);
+            await sess.cancel();
+            expect(await done).toBe(true);
+        }, { tools: {}, toolChangeMs: 20 });
+    });
+
     it("refuses resume() during TOOL_CHANGE, and end() leaves the hold", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 3);

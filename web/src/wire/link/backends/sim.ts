@@ -260,7 +260,7 @@ export class SimTransport implements Transport {
     readonly toolChangeMs: number;
     readonly mounted = new Map<number, number>();
     readonly zeroed = new Set<number>();
-    private toolHead = 0; // the stopped header's head, which `wzero z` zeroes
+    private toolHead = 0; // the stop's selected head, which `wzero z` zeroes
     private toolChangeAt = 0;
 
     private timer: ReturnType<typeof setInterval> | null = null;
@@ -1079,6 +1079,15 @@ export class SimTransport implements Transport {
                 if (!(head >= 0)) return "err usage";
                 S.mounted.delete(head);
                 S.zeroed.delete(head);
+                return "ok";
+            }
+            // Only a stop's selection is modelled: `wzero z` follows it.
+            case "select": {
+                const toolWait = S.state === MachineState.JOB && S.job === JobReason.TOOL_WAIT;
+                if (!S.checkTools || !toolWait) return "err bad_state";
+                const head = parseInt(args[0] ?? "", 10);
+                if (!(head >= 0)) return "err usage";
+                S.toolHead = head;
                 return "ok";
             }
             case "wzero": {

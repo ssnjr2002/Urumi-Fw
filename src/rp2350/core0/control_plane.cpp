@@ -78,7 +78,7 @@ static const Cmd kControllerCommands[] = {
     { "goto", "probe", cmdGoto,       K_SEQUENCE | K_IN_TOOL },
     { "goto", "mount", cmdGoto,       K_SEQUENCE | K_IN_TOOL },
     { "goto",         cmdGoto,        K_SEQUENCE },
-    { "select",       cmdSelect,      K_WRITE },
+    { "select",       cmdSelect,      K_WRITE | K_IN_TOOL },
     { "wzero",        cmdWzero,       K_WRITE | K_IN_TOOL },
     { "wset",         cmdWset,        K_WRITE },
     { "wclear",       cmdWclear,      K_WRITE },

@@ -1,5 +1,6 @@
 // frames.cpp — `select` and the work offset commands
-// (docs/plans/coordinate-system.md). All from IDLE, PAUSED or ALARM.
+// (docs/plans/coordinate-system.md). All from IDLE, PAUSED or ALARM;
+// `select` and `wzero` also from JOB.TOOL_WAIT.
 //
 //   select <head>|anchor     the controlled point; a head binds its Z and A
 //   wzero [x] [y] [z|z_switch]  work offset = the selected tip here (bare: all);
