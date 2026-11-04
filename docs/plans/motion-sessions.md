@@ -254,20 +254,19 @@ to the Pico. The corners are a visual check.
   | `place reset` | set | clears the zero and returns the dot to the first corner |
   | `place go <xmin\|xmax> <ymin\|ymax>` | set | moves the dot to that corner |
   | `place frame` | set | traces the box once: (xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax), (xmin, ymin) |
-  | `place ok` | set | checks Z and the mesh over the bbox; on success vacuum on, laser off, to `BUFFERING` |
+  | `place ok` | set | laser off, to `BUFFERING` (vacuum: a later branch) |
   | `cancel` | either | stops any motion, laser off, ends the session to IDLE |
 
   The wrong state is `err bad_state`; a command while the dot is moving is
-  `err busy`. `go` and `frame` move at the jog speed. A failed `place ok` is an
-  error reply and stays in `PLACE`.
+  `err busy`. `go` and `frame` move at the jog speed.
 * **`wzero x y` and `wset` on X or Y are refused in `PLACE`.**
 * **A `LAYER_HDR`, `TOOL_HDR` or `BEZIER` in `PLACE`** is `NACK_JOB`. The host
   streams once status shows `BUFFERING`.
 * **The bbox is conservative:** a job whose box overhangs an irregular sheet
   may still fit. Tracing the outline needs geometry that arrives later.
-* **XY is held from `place ok` to the session's end:** `wzero x y` and `wset`
-  on X or Y are refused, in `TOOL_WAIT` too, since they could take the job out
-  of the checked range and off the sheet.
+* **XY is held from `place ok` to the session's end:** only `wzero z` and
+  `wzero z_switch` remain, in `TOOL_WAIT` and `PAUSED`, since the rest could take
+  the job out of the checked range and off the sheet.
 * Open: placement on a restart after an alarm or power loss, where the sheet
   has not moved.
 
@@ -334,8 +333,7 @@ to the Pico. The corners are a visual check.
 
 * **Preflight** checks that the bbox has a valid origin, with the offsets the
   Pico adds after the wire; a failure is `OUT_OF_RANGE`, since the host
-  waits on the header's reply. Z and the mesh are checked at `place ok`
-  (Placement), once XY is final.
+  waits on the header's reply. Z and the mesh are checked record by record.
 * **In a job** a record out of range at ingest (control points, a Bézier
   lying in their hull) never enters the ring: `NACK_SOFT_LIMIT`, which the
   host session treats as fatal. The Pico keeps the job open; it runs what it
@@ -1602,10 +1600,16 @@ UI: `place` is driven from the session API and tests.
 
 **Not in scope:** placement on a restart after an alarm or power loss.
 
-**Read phase checks:** which Z check the headers allow at `place ok`, since layer
-depths arrive later; that nothing travels to the zero or checks it against the
-soft range; that a missing anchor or laser can be refused at `JOB_HDR`
-(`TOOL_UNAVAILABLE`); that an alarm or lost host turns the laser off in `PLACE`.
+**Settled in Read:**
+
+* `place ok` checks neither Z nor the mesh: depths and tool zeros come later, and
+  records already get `NACK_SOFT_LIMIT`.
+* Vacuum is its own later branch: the config has no vacuum node.
+* From `place ok` to the session's end only `wzero z` and `wzero z_switch` remain;
+  `wzero x|y`, bare `wzero`, `wset x|y` and `wclear` are `err bad_state`.
+* `JOB_HDR` is `NOT_HOMED` with any head's Z unhomed, and `TOOL_UNAVAILABLE` with a
+  configured laser's node excluded or mute. With no laser, the head at (0, 0) points.
+* Continuous jog is admitted before `place set`; jogs in `PLACE` are XY only.
 
 **Depends on:** JH1.
 
