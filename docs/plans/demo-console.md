@@ -427,6 +427,76 @@ A dependent chain, Single Session: every branch after C1 edits
     not opened.
   * Checks: `pnpm typecheck` clean; `pnpm test` 631 passed, 1 skipped.
 
+### D4: multi-layer job panel
+
+* Type: `feature/demo-multi-layer`
+* Purpose: the Job panel runs several layers as one job, with placement. Today
+  Execute layer always fails: `new JobSource(hdr, job.packets)`
+  (`web/demo/index.js:659`) is the old signature, and the panel has no way
+  through the `place` hold.
+
+  ```
+  Job
+  [Choose File] job.svg
+  [All] [None]
+    ☑ knife
+    ☐ pen        (selected row highlighted; 4 rows, scrolls)
+    ☑ crease
+  Preview: selected layer black, the others grey
+
+  Selected layer: feed (mm/s, 0 = tool's) [0]  p (mm, empty = t) [ ]  head [0▾]
+
+  Job options: t (mm) [0]  [ ] stop after each layer
+  Session: none  [Start session]
+  [place set] [place reset] [place frame]
+  Go to corner:
+    [↖ xmin ymax] [xmax ymax ↗]
+    [↙ xmin ymin] [xmax ymin ↘]
+  Layer: none
+  [Execute | Execute next] [Pause] [Resume]
+  [Cancel] [Abort]
+  ```
+
+  * Layer list: a custom list, since `<select>` options can't hold checkboxes.
+    Click selects, ↑/↓ moves the selected row, Space ticks it. Order and ticks
+    lock once a session starts. All and None skip layers that can't run, which
+    stay listed, greyed.
+  * Unticked layers leave the job: tool list, record count and bbox. They stay
+    grey in the preview.
+  * Feed, p, head, tick and order are cached by layer name and survive a config
+    pull; a new SVG clears them.
+  * t is the job's and goes in every layer header. Start session is refused on
+    the page when a plunging tool would get p ≤ 0, and when one tool is on two
+    heads, naming the layers (`JobSource` throws on it).
+  * Layers are numbered in run order, each with records from 0.
+  * Start session prepares every ticked layer and sends preflight. The first
+    Execute sends `place ok` and needs `place set` first.
+  * Library: `JobSource` stays automatic by default. A manual mode holds back
+    each layer until a release method is called, by returning `[]` from
+    `pull()`, so `Session` is unchanged; it holds on a resume too (`from()`).
+    The checkbox can change mid-job: unticking lets the remaining layers run.
+  * One job row replaces `machine-ctl` and `session-ctl`. With a session,
+    Pause, Cancel and Abort go through it (`pause()`, `cancel()`, `end()`).
+    Without one, they send `pause`, `cancel` and `link.abort()`, so a job the
+    page has lost (a reload) can still be stopped. Resume and Execute need a
+    session: only it holds the packets.
+  * A tool hold shows on the Layer line; Resume leaves it once mounted and
+    zeroed.
+  * The job line's done check counts the frames that aren't BEZIERs instead of
+    `s.emitted > jobTotal` (`index.js:613`).
+  * `web/README.md`: `demo/` is the current console, not old pages.
+* Files: `web/demo/index.{html,js}`, `web/src/wire/link/session.ts`,
+  `web/src/index.ts` (`JobLayer` type export), `web/test/wire/link/`,
+  `web/README.md`.
+* Depends on: D3; JH2 (motion-sessions.md, done).
+* Tests: manual mode against the sim, including a pause at a layer boundary
+  whose resume keeps the later layers back. The page has none.
+* Bench: placement and corners from the page; a multi-layer job in both modes;
+  idling between layers in manual; a tool change between layers; Abort after a
+  page reload; continuous jog in `PLACE`. Ask before any downward Z move.
+* Status: planned. Worktree `../urumi-demo-multi-layer` is created from
+  `9700afe`.
+
 ## Open
 
 Found while doing this plan, out of its scope. Each needs its own plan.
