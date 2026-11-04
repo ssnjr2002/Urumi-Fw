@@ -228,7 +228,9 @@ layer.
 **Placement.** In `JOB.PLACE` every Z parks, the laser (without one, the head at the
 anchor) is selected and the dot goes to the job's (xmin, ymin) at the handoff origin:
 the current work XY if valid, else the valid origin nearest machine 0. The operator
-aligns the material to the dot.
+aligns the material to the dot. Leaving, the prior selection returns: a head turns the
+laser off, the anchor keeps it on until a layer selects its head. An estop or alarm
+turns it off.
 
 | Command | Allowed | Does |
 |---|---|---|
@@ -662,6 +664,7 @@ pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on ho
 mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
 wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetMm`) − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; X/Y `-` with no head, Z `-` until the head's Z is zeroed
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
+laser=<on|off>       the laser as its node last acked a `CMD_LASER`, not the pin  (`?` before the first command or after a failed one, `-` with no laser)
 tools=<id>,…         the tool id each head has mounted (`mount`), head order, `-` for none  (`-` without a config)
 unlocked=<hex>       bit h = head h's holder can release now: IDLE or JOB.TOOL_WAIT, nothing running, its A homed and within `unlockRange`  (`-` with no head having one)
 mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)

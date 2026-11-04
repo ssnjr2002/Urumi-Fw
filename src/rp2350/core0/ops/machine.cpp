@@ -163,6 +163,8 @@ static bool stepLive(void) {
 
 bool machineMoving(void) { return stepLive() || sequenceLive(); }
 
+bool machineJobAborting(void) { return jobAborted; }
+
 bool machineAtRest(void) {
     return !estopUnswept() && !stepLive() && !sequenceLive() &&
            (machineContext == CTX_IDLE || jobPaused());

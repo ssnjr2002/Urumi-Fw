@@ -304,6 +304,12 @@ RpcResult rpcCall(const RpcRequest* req, RpcReply* out, uint32_t timeoutMs);
 // not read a broadcast's RPC_OK as evidence of node state.
 RpcResult rpcNodeCmd(uint8_t cmd, uint8_t node, uint8_t arg);
 
+// The last CMD_LASER rpcNodeCmd sent `node`, as its ack left it. Unknown before
+// the first and after a refused or unanswered one. Not the pin: a rebooted node
+// is off whatever this says, and a job's tool switching goes by Core 1's bus.
+enum LaserState : uint8_t { LASER_UNKNOWN, LASER_OFF, LASER_ON };
+LaserState rpcLaserState(uint8_t node);
+
 // Command whose ack is a full status payload (NODE_STATUS, DATUM_SET, ENGAGE).
 // Decodes on the way out, so callers never see raw bytes.
 RpcResult rpcNodeStatus(uint8_t cmd, uint8_t node, uint8_t arg, NodeStatus* out);

@@ -21,6 +21,7 @@
 #include "../data_plane.h"
 #include "../planner/queue.h"
 #include "../../ipc/shared_state.h"
+#include "../../ipc/core1_rpc.h"
 #include "../config/machine_cfg.h"
 
 namespace {
@@ -42,7 +43,8 @@ struct Snap {
     int32_t  pos[4];
     float    mpos[4], wpos[4];
     bool     mposOk[4], wposOk[4];
-    uint8_t  head;
+    uint8_t  head, laserNode;
+    LaserState laser;
     uint8_t  tools[CFG_MAX_HEADS], headCount, unlocked;
     bool     interlock;
     uint32_t late, aMiss;
@@ -97,6 +99,8 @@ void takeSnap(Snap& s) {
         if (machineCfg().heads[h].unlockRange > 0) s.interlock = true;
     }
     s.unlocked = toolsUnlocked();
+    s.laserNode = machineCfgValid() ? machineCfg().laser.node : 0;
+    s.laser = rpcLaserState(s.laserNode);
     s.probeCause    = probeLastCause();
     s.probeRetries  = probeLastRetries();
     s.probeSteps    = probeLastSteps();
@@ -277,6 +281,12 @@ const Key kKeys[] = {
         if (s.head == FRAMES_NONE) return KEY_NA;
         if (s.head == FRAMES_ANCHOR) { snprintf(o, n, "anchor"); return KEY_OK; }
         return fmtU(o, n, s.head); } },
+    // The laser as its node last acked; n/a with none configured.
+    { "laser",     [](const Snap& s, char* o, size_t n) {
+        if (!s.laserNode) return KEY_NA;
+        if (s.laser == LASER_UNKNOWN) return KEY_FAILED;
+        snprintf(o, n, s.laser == LASER_ON ? "on" : "off");
+        return KEY_OK; } },
     // The tool id each head has mounted, head order, `-` for none.
     { "tools",     [](const Snap& s, char* o, size_t n) {
         if (s.headCount == 0) return KEY_NA;

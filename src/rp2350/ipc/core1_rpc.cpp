@@ -272,6 +272,13 @@ const char* rotaryIdxCauseText(uint8_t cause) {
 
 // ─── Convenience wrappers ─────────────────────────────────────────────────────
 
+static uint8_t  s_laserNode;
+static LaserState s_laser = LASER_UNKNOWN;
+
+LaserState rpcLaserState(uint8_t node) {
+    return node == s_laserNode ? s_laser : LASER_UNKNOWN;
+}
+
 RpcResult rpcNodeCmd(uint8_t cmd, uint8_t node, uint8_t arg) {
     RpcRequest req = {};
     req.op  = RPC_OP_NODE;
@@ -281,7 +288,12 @@ RpcResult rpcNodeCmd(uint8_t cmd, uint8_t node, uint8_t arg) {
     req.args[0] = arg;
 
     RpcReply rep;
-    return rpcCall(&req, &rep, RPC_CALL_TIMEOUT_MS);
+    const RpcResult r = rpcCall(&req, &rep, RPC_CALL_TIMEOUT_MS);
+    if (cmd == CMD_LASER) {
+        s_laserNode = node;
+        s_laser = r != RPC_OK ? LASER_UNKNOWN : arg ? LASER_ON : LASER_OFF;
+    }
+    return r;
 }
 
 RpcResult rpcNodeStatus(uint8_t cmd, uint8_t node, uint8_t arg, NodeStatus* out) {

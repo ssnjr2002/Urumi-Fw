@@ -82,6 +82,10 @@ bool machineAtRest(void);
 // a sequence between steps.
 bool machineMoving(void);
 
+// A job's abort is under way, from ABORT until its context closes. Unlike
+// abortRequested, which a jog's stop also raises.
+bool machineJobAborting(void);
+
 // As machineAtRest, and also a homing context between legs: the bus queries.
 bool machineBusFree(void);
 

@@ -116,8 +116,8 @@ static void start(void) {
     if (const char* why = runRoute(1, true)) fail(why);
 }
 
+// The anchor before the job stays selected, its laser on; a head's selection turns it off.
 static void giveBackHead(void) {
-    framesLaserOff();
     if (prevHead >= machineCfg().headCount) return;
     if (machineCfg().laser.node) { framesSelectHead(prevHead); return; }
     const char* why = nullptr;
@@ -135,7 +135,8 @@ void placeBegin(const OriginRange& x, const OriginRange& y, const float box[4]) 
 void placeTick(void) {
     if (!active) return;
     const bool job = machineContext == CTX_JOB;
-    if (job && jobReason == JOB_PLACE && !abortRequested) {
+    // A job's abort only: stopping a jog also raises abortRequested.
+    if (job && jobReason == JOB_PLACE && !machineJobAborting()) {
         if (started) return;
         started = true;
         start();
@@ -144,15 +145,16 @@ void placeTick(void) {
     if (!leaving) {
         leaving = true;
         framesDotWindowOff();
-        framesLaserOff();
     }
     if (job) return;
     active = false;
-    if (started && machineAtRest()) giveBackHead();
+    if (!started) return;
+    if (machineAtRest()) giveBackHead();
+    else framesLaserOff();   // an estop or alarm: nothing to give back to, no dot left on
 }
 
 static const char* admit(bool wantSet) {
-    if (!active || machineContext != CTX_JOB || jobReason != JOB_PLACE) return "bad_state";
+    if (!active || leaving || machineContext != CTX_JOB || jobReason != JOB_PLACE) return "bad_state";
     if (!started || machineMoving()) return "busy";
     return isSet == wantSet ? nullptr : "bad_state";
 }
