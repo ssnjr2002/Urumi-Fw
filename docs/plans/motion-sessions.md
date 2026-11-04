@@ -255,9 +255,11 @@ to the Pico. The corners are a visual check.
   | `place go <xmin\|xmax> <ymin\|ymax>` | set | moves the dot to that corner |
   | `place frame` | set | traces the box once: (xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax), (xmin, ymin) |
   | `place ok` | set | laser off, to `BUFFERING` (vacuum: a later branch) |
-  | `cancel` | either | stops any motion, laser off, ends the session to IDLE |
+  | `cancel` | either, at rest | laser off, ends the session to IDLE |
+  | `ABORT` | either | stops any motion, laser off, ends the session to IDLE |
 
-  The wrong state is `err bad_state`; a command while the dot is moving is
+  As in the rest of a job, `cancel` while moving is `err bad_state`. Otherwise
+  the wrong state is `err bad_state`; a command while the dot is moving is
   `err busy`. `go` and `frame` move at the jog speed.
 * **`wzero x y` and `wset` on X or Y are refused in `PLACE`.**
 * **A `LAYER_HDR`, `TOOL_HDR` or `BEZIER` in `PLACE`** is `NACK_JOB`. The host
@@ -1617,7 +1619,59 @@ UI: `place` is driven from the session API and tests.
 
 ### Status
 
-Planned.
+Ready to merge.
+
+### Outcome
+
+**Interfaces later branches rely on:**
+
+* `JobReason.PLACE` (9), and `SEQ_PLACE` (7) as the sequence during placement
+  motion. A jog in placement reads `JOGGING`.
+* `Hold` gains `"place"`. The session sends only the preflight frames until a fresh
+  status shows `BUFFERING`; `resume()` does not leave this hold.
+* No `place` helper on the session: operators send `link.command("place ok")`.
+  A placement UI can add one.
+
+**Deviations:**
+
+* The sim has a `skipPlace` flag, used by `sim.test.ts`, whose tests stream whole
+  jobs and are not about placement.
+* The sim models neither the dot nor the work offset: `place go` and `place frame`
+  are at rest at once.
+
+* `cancel` ends a job at rest and `ABORT` stops motion, in placement as in the rest
+  of a job. The plan had `cancel` stop placement motion; it is now refused there.
+* `jobAbort()` cuts the job's sequence, so `ABORT` also stops a tool change. Before
+  this a frame ran on after the job had closed. Outside a job, `ABORT` leaves a
+  sequence alone.
+* `Session.cancel()` goes on with the session when `cancel` is refused.
+
+**Benched on COM8:**
+
+* Firmware: handoff, jog and set, corners, frame, clamps, `place ok`, the XY lock.
+  A knife layer cut after placement finished with the tip on the dot. Lowest Z was
+  −5.0, with no faults.
+* `ABORT` during the handoff, a frame, a `place go`, a placement jog and a tool change:
+  each ended IDLE with no faults and the node counters still. `cancel` was refused
+  during a frame and a jog, and ended the job at rest.
+* The real `Session`: `end()` and `cancel()` in the hold, a cancel from outside
+  (`FATAL_JOB_LOST`), nothing sent through a jog and a frame, then `place ok` to
+  the tool hold.
+
+**Not benched:**
+
+* The visible laser on and off, including after an estop: node make-safe may not
+  turn it off, and the firmware tick sends off best effort.
+* The Z-only and laser-only `JOB_HDR` refusals, continuous jog in `PLACE`, an alarm
+  during placement, and real material.
+
+**Findings out of scope:**
+
+* `set` on X or Y in a paused job can call `framesResetWorkXY`, a gap in the XY lock.
+* A pointer without a laser ignores a mounted tool's offset.
+* `hostTimeoutMin` is not implemented.
+* Vacuum needs its own branch.
+* `web/demo/index.js` still calls `JobSource` with its old arguments.
 
 ## Open
 
