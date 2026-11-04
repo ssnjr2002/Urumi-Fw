@@ -55,7 +55,7 @@ static const Cmd kCommands[] = {
     { "step",         cmdStep,        K_WRITE },
     { "line",         cmdLine,        K_STEP },
     { "bez",          cmdBez,         K_STEP },
-    { "jog",          cmdJog,         K_STEP | K_IN_TOOL },
+    { "jog",          cmdJog,         K_STEP | K_IN_TOOL | K_IN_PLACE },
     { "feed",         cmdFeed,        K_ANY },
     { "hallscan",     cmdHallScan,    K_WRITE },
     { "leg",          cmdLeg,         K_STEP | K_IN_HOMING | K_IN_PROBE },
@@ -85,6 +85,7 @@ static const Cmd kControllerCommands[] = {
     { "mesh",         cmdMesh,        K_WRITE },
     { "mount",        cmdMount,       K_SEQUENCE | K_IN_TOOL },
     { "unmount",      cmdUnmount,     K_SEQUENCE | K_IN_TOOL },
+    { "place",        cmdPlace,       K_CONTEXT },
     { "set",          cmdSet,         K_WRITE },
     { "save",         cmdSave,        K_WRITE },
 };

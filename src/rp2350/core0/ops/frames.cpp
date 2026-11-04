@@ -14,6 +14,8 @@
 static uint8_t selected = FRAMES_NONE;
 static float   workX = 0, workY = 0, workZ[CFG_MAX_HEADS] = {0};
 static bool    zSet[CFG_MAX_HEADS];   // false until a Z zero, and again on a tool change
+static bool    dotOn;
+static float   dotLo[2], dotHi[2];
 
 static void laserSet(bool on) {
     if (!machineCfgValid() || !machineCfg().laser.node) return;
@@ -74,6 +76,22 @@ bool framesSelectLaser(void) {
     selected = FRAMES_ANCHOR;
     laserSet(true);
     return true;
+}
+
+void framesLaserOff(void) { laserSet(false); }
+
+void framesDotWindow(float xlo, float xhi, float ylo, float yhi) {
+    dotLo[0] = xlo; dotHi[0] = xhi;
+    dotLo[1] = ylo; dotHi[1] = yhi;
+    dotOn = true;
+}
+
+void framesDotWindowOff(void) { dotOn = false; }
+
+bool framesDotWindowOn(void) { return dotOn; }
+
+float framesDotClamp(uint8_t k, float v) {
+    return dotOn && k <= SLOT_Y ? fminf(fmaxf(v, dotLo[k]), dotHi[k]) : v;
 }
 
 // The head whose node on slot k (Z or A) is `node`, or FRAMES_NONE.
@@ -164,6 +182,10 @@ bool framesTipRange(uint8_t k, float* lo, float* hi, float mesh) {
     framesBlade(&d, &off);
     *lo += d;
     *hi -= d;
+    if (dotOn) {
+        *lo = fmaxf(*lo, dotLo[k]);
+        *hi = fminf(*hi, dotHi[k]);
+    }
     return true;
 }
 

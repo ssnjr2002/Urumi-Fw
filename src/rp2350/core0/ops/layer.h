@@ -59,3 +59,7 @@ OriginRange layerOrigins(float lo, float hi, float bmin, float bmax, float d, fl
 // Narrow `r` by `by`. False when nothing is left; *high then says the high bound
 // was the one that closed it.
 bool layerOriginsNarrow(OriginRange* r, const OriginRange& by, bool* high);
+
+// Where placement hands the job over: `last` if valid, else the valid origin
+// nearest the machine's.
+float layerHandoff(float last, const OriginRange& r);

@@ -218,11 +218,32 @@ LAYER_HDR(L, N)        resume from JOB.PAUSED: no TOOL_HDR
 ```
 
 `JOB_HDR` opens the job in `JOB.PREFLIGHT`. Any refusal there ends the session to
-IDLE. The last preflight `TOOL_HDR` leaves for `JOB.BUFFERING`; `pause` is
-`err bad_state` until a layer has opened. A `LAYER_HDR` or `BEZIER` before then,
-a `BEZIER` or `LAYER_HDR` while a layer is held, or a `TOOL_HDR` with none held
-or naming a tool not seen in preflight, is `NACK_JOB`. A pause drops a held
+IDLE. The last preflight `TOOL_HDR` leaves for `JOB.PLACE`; the host streams on once
+status shows `JOB.BUFFERING`. `pause` is `err bad_state` until a layer has opened. A
+`LAYER_HDR`, `TOOL_HDR` or `BEZIER` in `JOB.PLACE`, a `LAYER_HDR` or `BEZIER` before
+a layer opens, a `BEZIER` or `LAYER_HDR` while a layer is held, or a `TOOL_HDR` with
+none held or naming a tool not seen in preflight, is `NACK_JOB`. A pause drops a held
 layer.
+
+**Placement.** In `JOB.PLACE` every Z parks, the laser (without one, the head at the
+anchor) is selected and the dot goes to the job's (xmin, ymin) at the handoff origin:
+the current work XY if valid, else the valid origin nearest machine 0. The operator
+aligns the material to the dot.
+
+| Command | Allowed | Does |
+|---|---|---|
+| `jog`, continuous jog | not set | XY only, kept inside the valid origins |
+| `place set` | not set | the dot is the job's (xmin, ymin); the work XY follows |
+| `place reset` | set | clears it; the dot back to (xmin, ymin) |
+| `place go <xmin\|xmax> <ymin\|ymax>` | set | the dot to that corner, at jog speed |
+| `place frame` | set | traces the box once, ending at (xmin, ymin) |
+| `place ok` | set | laser off, the prior head selected, to `JOB.BUFFERING` |
+| `cancel` | either, at rest | laser off, ends to IDLE |
+| `ABORT` | either | stops any motion, laser off, ends to IDLE |
+
+`cancel` while moving is `err bad_state`, as in the rest of a job. Otherwise the wrong
+state is `err bad_state`, a command while moving `err busy`. From `place ok`
+to the session's end only `wzero z` and `wzero z_switch` change the work offset.
 
 ### Job Header — `JOB_HDR_MAGIC` (0xB8, 17 bytes)
 ```
@@ -235,7 +256,8 @@ layer.
 [15]     tool count  uint8      — 1..4
 [16]     CRC8 over bytes [0..15]
 ```
-`NACK_BAD_STATE` outside IDLE; `NACK_NOT_HOMED` with X or Y not homed;
+`NACK_BAD_STATE` outside IDLE; `NACK_NOT_HOMED` with X, Y or any head's Z not homed;
+`NACK_TOOL_UNAVAILABLE` with a configured laser's node mute or excluded;
 `NACK_OUT_OF_RANGE` with `softLimits` off on either; `NACK_JOB` for a bad version
 or tool count.
 
@@ -255,8 +277,7 @@ has no A for a tangential or chamber tool, or a power node mute or excluded, and
 
 After a layer's header it checks the bbox at the current origin
 (`NACK_OUT_OF_RANGE`, which keeps the job open), then the mount, zero and head as
-below, and opens the layer. Until `JOB.PLACE` exists, the first layer's also checks
-the origin against preflight's valid origins.
+below, and opens the layer.
 
 **Valid origins.** For a tool with tip offset d and blade `offsetMm` b on an axis of
 soft range [lo, hi], work X lies in [lo + b − xmin + d, hi − b − xmax + d]; Y the

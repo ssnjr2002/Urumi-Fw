@@ -33,7 +33,7 @@ static bool cjogWanted() {
 
 // machineAdmit(K_STEP) as a NACK reason, or 0.
 static uint8_t cjogAdmit() {
-    const char* why = machineAdmit(K_STEP | K_IN_TOOL);
+    const char* why = machineAdmit(K_STEP | K_IN_TOOL | K_IN_PLACE);
     if (!why) return 0;
     return strcmp(why, "busy") == 0 ? MSEG_NACK_BUSY : MSEG_NACK_BAD_STATE;
 }
@@ -49,6 +49,9 @@ void cjogStop(void) {
 static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
     if (!machineCfgValid()) return MSEG_NACK_BAD_STATE;
     const MachineCfg& cfg = machineCfg();
+    // In JOB.PLACE only the dot jogs, and only until `place set`.
+    if (machineContext == CTX_JOB && jobReason == JOB_PLACE &&
+        (!framesDotWindowOn() || d[2] != 0 || d[3] != 0)) return MSEG_NACK_BAD_STATE;
     float at[4];
     if (!plannerJogFrom(at, RING_JOG_CONT)) return MSEG_NACK_BAD_STATE;
     // A swings a blade's axis about the tip: the tip inside its range keeps it in.

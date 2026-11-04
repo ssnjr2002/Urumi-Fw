@@ -28,11 +28,13 @@
 #include "ops/axes_map.h"
 #include "ops/bus.h"
 #include "ops/frames.h"
+#include "ops/position.h"          // originValid
 #include "ops/layer.h"
 #include "ops/tools.h"
 #include "ops/cjog.h"
 #include "ops/machine.h"           // jobAbort
 #include "controller/seq/toolchange.h"
+#include "controller/seq/place.h"
 #include "planner/queue.h"
 #include <planner/bezier.h>
 
@@ -182,6 +184,7 @@ static void feedPacket(uint8_t b) {
 static uint8_t     preCount, preSeen;          // this job's tool headers: promised, ACKed
 static uint8_t     preIds[JOB_MAX_TOOLS];
 static OriginRange preX, preY;                 // the valid work origins so far
+static float       preBox[4];                  // xmin, xmax, ymin, ymax over the tools so far
 static uint8_t     curTool, curHead;           // the last opened layer's
 
 static bool      heldLayer;                    // a new LAYER_HDR waiting on its TOOL_HDR
@@ -203,6 +206,15 @@ static void acceptJobHdr() {
     const CfgAxis* axes[2] = { &c.x, &c.y };
     for (uint8_t k = 0; k < 2; k++)
         if (!(axes_homed & (1u << k))) { sendNack(MSEG_NACK_NOT_HOMED); return; }
+    // Placement parks every Z and points with the laser.
+    for (uint8_t h = 0; h < c.headCount; h++) {
+        const CfgNode& z = c.heads[h].z.node;
+        if (z.present && !originValid(z.id)) { sendNack(MSEG_NACK_NOT_HOMED); return; }
+    }
+    if (c.laser.node && ((busExcluded() | busMute()) & (1u << c.laser.node))) {
+        sendNack(MSEG_NACK_TOOL_UNAVAILABLE);
+        return;
+    }
     for (uint8_t k = 0; k < 2; k++) {
         if (!axes[k]->softLimits) {
             sendNack(MSEG_NACK_OUT_OF_RANGE, NACK_DETAIL_NO_LIMITS | (k ? NACK_DETAIL_AXIS_Y : 0));
@@ -218,6 +230,8 @@ static void acceptJobHdr() {
     preCount = count;
     preSeen = 0;
     preX = preY = { -INFINITY, INFINITY };
+    preBox[0] = preBox[2] = INFINITY;
+    preBox[1] = preBox[3] = -INFINITY;
     heldLayer = false;
     expectedSeq++;
     markAck();
@@ -271,10 +285,17 @@ static void preflightTool(uint8_t id, uint8_t head, const float* box) {
             return;
         }
     }
+    for (uint8_t i = 0; i < 2; i++) {
+        preBox[2 * i]     = fminf(preBox[2 * i], box[2 * i]);
+        preBox[2 * i + 1] = fmaxf(preBox[2 * i + 1], box[2 * i + 1]);
+    }
     preIds[preSeen++] = id;
-    if (preSeen == preCount && !plannerJobSwap(JOB_PREFLIGHT, JOB_BUFFERING)) {
-        preflightFail(MSEG_NACK_BAD_STATE);
-        return;
+    if (preSeen == preCount) {
+        if (!plannerJobSwap(JOB_PREFLIGHT, JOB_PLACE)) {
+            preflightFail(MSEG_NACK_BAD_STATE);
+            return;
+        }
+        placeBegin(preX, preY, preBox);
     }
     expectedSeq++;
     markAck();
@@ -345,12 +366,6 @@ static void layerTool(uint8_t id, uint8_t head, const float* box) {
         if (!toolOrigins(k, id, head, box[2 * k], box[2 * k + 1], &r)) {
             sendNack(MSEG_NACK_OUT_OF_RANGE, axis);
             return;
-        }
-        // Until JOB.PLACE moves it, the first layer also holds the origin to preflight's.
-        if (!plannerLayerOpened()) {
-            const OriginRange& all = k ? preY : preX;
-            if (all.lo > r.lo) r.lo = all.lo;
-            if (all.hi < r.hi) r.hi = all.hi;
         }
         if (work < r.lo || work > r.hi) {
             sendNack(MSEG_NACK_OUT_OF_RANGE, axis | (work > r.hi ? NACK_DETAIL_SIDE_HI : 0));
@@ -437,7 +452,10 @@ static void acceptBezier() {
 static void acceptLayer() {
     if (pauseRequested) { sendNack(MSEG_NACK_PAUSED); return; }
     if (inPreflight()) { preflightFail(MSEG_NACK_JOB); return; }
-    if (machineContext != CTX_JOB || !machineCfgValid()) { sendNack(MSEG_NACK_JOB); return; }
+    if (machineContext != CTX_JOB || jobReason == JOB_PLACE || !machineCfgValid()) {
+        sendNack(MSEG_NACK_JOB);
+        return;
+    }
 
     LayerHdr l;
     l.chamber = pktBuf[1];

@@ -12,6 +12,7 @@
 #include "../ops/slot_map.h"
 #include "../ops/position.h"
 #include "../ops/machine.h"
+#include "../ops/sequence.h"
 #include "../ops/bus.h"
 #include "../config/machine_cfg.h"
 #include "../usb_protocol.h" // BUS_ADDR_MAX
@@ -93,11 +94,16 @@ bool cmdPause(const char*) {
 // End a job at rest (buffering, paused, or waiting on the operator with no jog
 // running): its ring is dropped and its context closed. Core 1 starts a
 // buffered job only under the lock, so the check holds.
+// Motion is ABORT's; placement moves outside the ring, so it is checked here.
 bool cmdCancel(const char*) {
+    if (machineContext == CTX_JOB && jobReason == JOB_PLACE && machineMoving()) {
+        Serial.println("err bad_state");
+        return true;
+    }
     const uint32_t s = spin_lock_blocking(plannerLock);
     const uint8_t why = jobReason;
     const bool atRest = machineContext == CTX_JOB &&
-        (why == JOB_PAUSED || why == JOB_BUFFERING || why == JOB_PREFLIGHT ||
+        (why == JOB_PAUSED || why == JOB_BUFFERING || why == JOB_PREFLIGHT || why == JOB_PLACE ||
          (why == JOB_TOOL_WAIT && !plannerActive && plannerRing.count() == 0));
     if (atRest) {
         const planner::Pos at = plannerExec.position();

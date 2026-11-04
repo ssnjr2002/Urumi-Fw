@@ -24,6 +24,9 @@ bool cmdMesh(const char*);
 bool cmdMount(const char*);
 bool cmdUnmount(const char*);
 
+// ─── place.cpp ────────────────────────────────────────────────────────────────
+bool cmdPlace(const char*);
+
 // ─── config.cpp ───────────────────────────────────────────────────────────────
 bool cmdSet(const char*);
 bool cmdSave(const char*);

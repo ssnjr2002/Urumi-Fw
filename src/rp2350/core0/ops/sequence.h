@@ -28,6 +28,7 @@ enum SequenceId : uint8_t {
     SEQ_RECOVERY = 4,
     SEQ_GOTO     = 5,
     SEQ_TOOL_CHANGE = 6,   // a job's tool change: park the Zs, a line to the switch
+    SEQ_PLACE    = 7,   // a job's placement: park the Zs, the dot's lines
 };
 
 // What ended a step or a wait, as next() is told. A wait's event is tied to

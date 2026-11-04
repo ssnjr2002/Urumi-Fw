@@ -24,6 +24,11 @@ bool layerOriginsNarrow(OriginRange* r, const OriginRange& by, bool* high) {
     return r->lo <= r->hi;
 }
 
+float layerHandoff(float last, const OriginRange& r) {
+    if (last >= r.lo && last <= r.hi) return last;
+    return r.lo > 0 ? r.lo : r.hi < 0 ? r.hi : 0;
+}
+
 LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
                          const LayerHdr& l, float machineFeed, LayerMotion* out) {
     if (l.head >= c.headCount) return LAYER_BAD;

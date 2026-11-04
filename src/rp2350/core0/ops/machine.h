@@ -53,8 +53,8 @@ void contextClose(uint8_t ctx);
 
 uint8_t machineStep(void);
 
-// Abort a job's motion (the host's ABORT): Core 1 brakes and drops the ring;
-// the job's context closes once it has.
+// Abort a job's motion (the host's ABORT): its sequence is cut, Core 1 brakes and
+// drops the ring; the job's context closes once it has.
 void jobAbort(void);
 
 // Step, sequence, then context: legs dropped (estop: Core 1 is sweeping) or
@@ -98,11 +98,12 @@ enum CmdKind : uint8_t {
     K_CONTEXT  = 5,   // opens or closes a context, by the handler's rules; no estop
     K_CLEAR    = 6,   // unalarm, unstop: no step, no sequence, no context
 };
+#define K_IN_PLACE  0x08   // also admitted in JOB.PLACE: the handler holds it to the dot
 #define K_IN_TOOL   0x10   // also admitted in JOB.TOOL_WAIT: the operator's touch-off
 #define K_IN_PROBE  0x40   // also admitted inside the probe context
 #define K_IN_HOMING 0x80   // also admitted inside the homing context
 #define K_BARE_READ 0x20   // the bare form (no arguments) is a read
-#define K_KIND(k)   ((k) & 0x0F)
+#define K_KIND(k)   ((k) & 0x07)
 
 // nullptr, or the refusal: "busy" when a step or sequence is what refuses,
 // else "bad_state". Inside a manual context only K_ANY, K_READ and the rows

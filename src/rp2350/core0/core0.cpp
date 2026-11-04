@@ -16,6 +16,7 @@
 #include "ops/position.h"
 #include "ops/observe.h"
 #include "controller/seq/toolchange.h"
+#include "controller/seq/place.h"
 #include "ops/mesh.h"
 #include "ops/slot_map.h"
 #include "ops/bus.h"
@@ -182,6 +183,7 @@ void loop() {
         runnerTick();
         sequenceTick();
         toolChangeTick();
+        placeTick();
         // And a probe leg, for the same reason and on the same terms: a leg runs
         // for seconds with a tool descending onto a bed, and holding `get`
         // and `stop` shut for the whole of it is exactly what a supervisor out

@@ -13,6 +13,7 @@
 
 volatile uint8_t ringOwner;
 volatile uint8_t axes_homed;
+volatile uint8_t machineContext, jobReason;
 volatile bool    plannerActive, abortRequested;
 
 namespace {
@@ -31,6 +32,7 @@ PlannerQueueResult queueResult;
 struct Move { bool axis; uint8_t k; float x, y, d, feed; uint8_t reason; };
 Move moves[8];
 int  moveCount, jogStops;
+bool dotWindow;
 
 CfgAxis linear(float travel, float feed) {
     CfgAxis a;
@@ -63,6 +65,9 @@ void reset() {
     admit = nullptr;
     queueResult = PQ_OK;
     moveCount = jogStops = 0;
+    machineContext = CTX_IDLE;
+    jobReason = JOB_BUFFERING;
+    dotWindow = false;
 }
 
 const int8_t XP[4]   = { 1, 0, 0, 0 };
@@ -88,10 +93,11 @@ bool framesTipRange(uint8_t k, float* l, float* h, float) {
     return framesAxis(k) && configAxisRange(*framesAxis(k), l, h);
 }
 const char* framesCheckXY(float, float) { return nullptr; }
+bool framesDotWindowOn() { return dotWindow; }
 float meshLatchedOffset(float, float) { return 0; }
 // A running ring is a live step.
 const char* machineAdmit(uint8_t kind) {
-    CHECK(kind == (K_STEP | K_IN_TOOL));
+    CHECK(kind == (K_STEP | K_IN_TOOL | K_IN_PLACE));
     return depth != 0 || plannerActive ? "busy" : admit;
 }
 
@@ -130,6 +136,19 @@ TEST_CASE("a bad direction or speed is BAD_STATE, two axis sets MIXED_AXES") {
     const int8_t za[4] = { 0, 0, 1, 1 };
     CHECK(cjogPacket(za, 64, 0) == MSEG_NACK_MIXED_AXES);
     CHECK(moveCount == 0);
+}
+
+TEST_CASE("in JOB.PLACE only XY jogs, and only until place set") {
+    reset();
+    machineContext = CTX_JOB;
+    jobReason = JOB_PLACE;
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BAD_STATE);    // set: no window
+    dotWindow = true;
+    CHECK(cjogPacket(ZN, 64, 0) == MSEG_NACK_BAD_STATE);
+    CHECK(cjogPacket(AP, 64, 0) == MSEG_NACK_BAD_STATE);
+    CHECK(moveCount == 0);
+    CHECK(cjogPacket(XP, 64, 0) == CJOG_ACK);
+    CHECK(moveCount == 1);
 }
 
 // ── the line it queues ──────────────────────────────────────────────────────

@@ -38,7 +38,8 @@
 #define BEZIER_FLAG_END    0x04   // closes the contour
 
 // JOB_HDR (17 bytes, little-endian): opens a job from IDLE, in JOB.PREFLIGHT until
-// `tool count` TOOL_HDRs are ACKed. X and Y must be homed with softLimits on.
+// `tool count` TOOL_HDRs are ACKed, then in JOB.PLACE until `place ok`. X and Y must
+// be homed with softLimits on, every head's Z homed, and a configured laser answering.
 //   [0]      magic = 0xB8
 //   [1]      version (JOB_HDR_VERSION)
 //   [2]      seq

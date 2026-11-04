@@ -689,7 +689,7 @@ static void queueJog(const float to[2], bool rel, float feed) {
     if (!plannerJogFrom(at, RING_JOG_STEP)) { Serial.println("err bad_state"); return; }
     float target[2];
     for (uint8_t k = 0; k < 2; k++) {
-        target[k] = isnan(to[k]) ? at[k] : rel ? at[k] + to[k] : to[k];
+        target[k] = framesDotClamp(k, isnan(to[k]) ? at[k] : rel ? at[k] + to[k] : to[k]);
         float left;
         if (const char* why = framesCheckMove(k, at[k], target[k], &left)) {
             Serial.printf("err %s %.2f\n", why, left); return;
@@ -745,10 +745,19 @@ static void jogXY(const char* p) {
     queueJog(d, true, feed);
 }
 
+// In JOB.PLACE only the dot jogs, and only until `place set`.
+static bool placeRefuses(bool xy) {
+    return machineContext == CTX_JOB && jobReason == JOB_PLACE && !(xy && framesDotWindowOn());
+}
+
 bool cmdJog(const char* args) {
     const char* p = args;
     while (*p == ' ') p++;
-    if ((p[0] | 0x20) == 'x' && (p[1] | 0x20) == 'y' && (p[2] == ' ' || !p[2])) {
+    const bool xyCmd = (p[0] | 0x20) == 'x' && (p[1] | 0x20) == 'y' && (p[2] == ' ' || !p[2]);
+    if (placeRefuses(xyCmd || (p[0] | 0x20) == 'x' || (p[0] | 0x20) == 'y')) {
+        Serial.println("err bad_state"); return true;
+    }
+    if (xyCmd) {
         jogXY(p + 2); return true;
     }
     static const char kNames[] = "xyza";

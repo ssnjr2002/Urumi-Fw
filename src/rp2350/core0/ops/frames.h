@@ -32,6 +32,17 @@ uint8_t framesSelected(void);
 // False, laser untouched, while X or Y is unmapped.
 bool framesSelectLaser(void);
 
+// The laser off, the selection as it is.
+void framesLaserOff(void);
+
+// While the placement dot may jog: its machine XY stays in this window, and Z and A
+// do not jog. framesTipRange narrows to it.
+void framesDotWindow(float xlo, float xhi, float ylo, float yhi);
+void framesDotWindowOff(void);
+bool framesDotWindowOn(void);
+// `v` on axis k (X or Y) inside the window.
+float framesDotClamp(uint8_t k, float v);
+
 // `select <head>` after committing that head's map: selects it (laser off)
 // if the request binds it, even when the map did not change.
 void framesSelectHead(uint8_t h);

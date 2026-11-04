@@ -88,6 +88,9 @@ bool cmdSelect(const char* args) {
     return true;
 }
 
+// A job's XY is held from `place ok` on; these commands are not admitted before it.
+static bool xyHeld(void) { return machineContext == CTX_JOB; }
+
 bool cmdWzero(const char* args) {
     bool want[3] = { false, false, false };
     bool onSwitch = false;   // z_switch: the tip is on the switch, not the bed
@@ -107,6 +110,7 @@ bool cmdWzero(const char* args) {
         if (k == SLOT_NONE) { Serial.println("err usage"); return true; }
         want[k] = true;
     }
+    if (xyHeld() && (want[SLOT_X] || want[SLOT_Y])) { Serial.println("err bad_state"); return true; }
 
     // Check every axis before setting any.
     float switchZ = 0;
@@ -157,6 +161,8 @@ bool cmdWset(const char* args) {
     }
     if (n == 0) { Serial.println("err usage"); return true; }
     for (uint8_t i = 0; i < n; i++)
+        if (xyHeld() && ks[i] != SLOT_Z) { Serial.println("err bad_state"); return true; }
+    for (uint8_t i = 0; i < n; i++)
         if (ks[i] == SLOT_Z && framesZHead() == FRAMES_NONE) { Serial.println("err no_head"); return true; }
     for (uint8_t i = 0; i < n; i++) framesSetWork(ks[i], vs[i]);
     Serial.println("ok");
@@ -165,6 +171,7 @@ bool cmdWset(const char* args) {
 
 bool cmdWclear(const char* args) {
     if (*args != '\0') { Serial.println("err usage"); return true; }
+    if (xyHeld()) { Serial.println("err bad_state"); return true; }
     framesClearWork();
     Serial.println("ok");
     return true;

@@ -81,7 +81,10 @@ uint8_t machineStep(void) {
 }
 
 void jobAbort(void) {
-    if (machineContext == CTX_JOB) jobAborted = true;
+    if (machineContext == CTX_JOB) {
+        sequenceAbort();   // a sequence would queue its next move over the brake
+        jobAborted = true;
+    }
     __dmb();
     abortRequested = true;
 }
@@ -134,7 +137,7 @@ static uint8_t stateOf(uint16_t faults) {
     const uint8_t seq = sequenceId();
     if (seq == SEQ_HOME || seq == SEQ_RECOVERY) return STATE_HOMING;
     if (seq == SEQ_GOTO) return STATE_JOGGING;
-    if (seq == SEQ_TOOL_CHANGE) return STATE_JOB;
+    if (seq == SEQ_TOOL_CHANGE || seq == SEQ_PLACE) return STATE_JOB;
     // A manual context keeps its name over its raw legs.
     if (machineContext == CTX_PROBE)  return STATE_PROBING;
     if (machineContext == CTX_HOMING) return STATE_HOMING;
@@ -175,7 +178,8 @@ const char* machineAdmit(uint8_t kind) {
     const uint8_t ctx = machineContext;
     if (k == K_ANY || k == K_READ) return nullptr;
     const bool busy = stepLive() || sequenceLive();
-    if (ctx == CTX_JOB && jobReason == JOB_TOOL_WAIT && (kind & K_IN_TOOL)) {
+    if (ctx == CTX_JOB && ((jobReason == JOB_TOOL_WAIT && (kind & K_IN_TOOL)) ||
+                           (jobReason == JOB_PLACE && (kind & K_IN_PLACE)))) {
         if (busy) return "busy";
         return latched ? "bad_state" : nullptr;
     }

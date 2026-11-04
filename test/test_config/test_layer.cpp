@@ -168,6 +168,13 @@ TEST_CASE("the origins narrow over a job's tools") {
     CHECK(high);
 }
 
+TEST_CASE("the handoff keeps a valid last origin, else the valid one nearest the machine's") {
+    CHECK(layerHandoff(40, { 20, 70 }) == doctest::Approx(40));
+    CHECK(layerHandoff(90, { 20, 70 }) == doctest::Approx(20));
+    CHECK(layerHandoff(90, { -70, -20 }) == doctest::Approx(-20));
+    CHECK(layerHandoff(90, { -10, 70 }) == doctest::Approx(0));
+}
+
 TEST_CASE("a head fits a tool that needs A only if it has one") {
     MachineCfg c = twoHeads();
     c.heads[1].a.node.present = false;

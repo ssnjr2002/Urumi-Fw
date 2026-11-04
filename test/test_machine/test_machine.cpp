@@ -225,6 +225,22 @@ TEST_CASE("a fault stops a jog; an abort with no job opens nothing") {
     CHECK(machineState == STATE_IDLE);
 }
 
+TEST_CASE("a job's abort cuts its sequence; outside a job a sequence runs on") {
+    reset();
+    machineContext = CTX_JOB;
+    seqId = SEQ_PLACE;
+    jobAbort();
+    CHECK(seqId == SEQ_NONE);
+    CHECK(seqAborts == 1);
+
+    reset();
+    seqId = SEQ_HOME;
+    jobAbort();
+    CHECK(seqId == SEQ_HOME);
+    CHECK(seqAborts == 0);
+    reset();
+}
+
 TEST_CASE("admission per kind at rest, in ALARM and in a paused job") {
     reset();
     for (uint8_t k = K_ANY; k <= K_CLEAR; k++) CHECK(machineAdmit(k) == nullptr);

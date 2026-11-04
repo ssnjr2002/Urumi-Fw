@@ -48,7 +48,8 @@ static PlannerQueueResult admit(planner::AxisLimits& limits, bool jog) {
     const uint8_t st = machineView();
     const uint8_t why = jobReason;
     // A tool change's line and the operator's jogs run inside the job.
-    const bool tool = st == STATE_JOB && (why == JOB_TOOL_CHANGE || why == JOB_TOOL_WAIT);
+    const bool tool = st == STATE_JOB && (why == JOB_TOOL_CHANGE || why == JOB_TOOL_WAIT ||
+                                          why == JOB_PLACE);
     const bool joins = jog ? st == STATE_JOGGING || tool
                            : st == STATE_JOB && (why == JOB_BUFFERING || why == JOB_RUNNING ||
                                                  why == JOB_DWELL);
