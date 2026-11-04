@@ -494,7 +494,7 @@ A dependent chain, Single Session: every branch after C1 edits
 * Bench: placement and corners from the page; a multi-layer job in both modes;
   idling between layers in manual; a tool change between layers; Abort after a
   page reload; continuous jog in `PLACE`. Ask before any downward Z move.
-* Status: ready to merge.
+* Status: done, merged.
 * Outcome:
   * Added to the plan: the Layer line shows the placement step and the last
     `place` refusal; after a failed job the page reads status and says whether
