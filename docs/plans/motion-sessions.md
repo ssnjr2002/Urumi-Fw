@@ -1619,7 +1619,7 @@ UI: `place` is driven from the session API and tests.
 
 ### Status
 
-Ready to merge.
+Done, merged.
 
 ### Outcome
 
@@ -1657,11 +1657,12 @@ Ready to merge.
 * The real `Session`: `end()` and `cancel()` in the hold, a cancel from outside
   (`FATAL_JOB_LOST`), nothing sent through a jog and a frame, then `place ok` to
   the tool hold.
+* The visible laser works, checked by the operator.
 
 **Not benched:**
 
-* The visible laser on and off, including after an estop: node make-safe may not
-  turn it off, and the firmware tick sends off best effort.
+* The laser after an estop: node make-safe may not turn it off, and the firmware
+  tick sends off best effort.
 * The Z-only and laser-only `JOB_HDR` refusals, continuous jog in `PLACE`, an alarm
   during placement, and real material.
 
