@@ -206,13 +206,54 @@ function unionBox(a: ToolBox, b: ToolBox): ToolBox {
     };
 }
 
+/** A frame and the index of the layer it belongs to; -1 for preflight. */
+interface LayerFrame {
+    readonly packet: Uint8Array;
+    readonly layer: number;
+}
+
+/** A job's frames, stopping at the first layer `allowed` refuses. */
+class LayerStream implements PacketSource {
+    private _i = 0;
+
+    constructor(
+        private readonly _frames: readonly LayerFrame[],
+        private readonly _allowed: (layer: number) => boolean,
+    ) {}
+
+    get drained(): boolean {
+        return this._i >= this._frames.length;
+    }
+
+    get nextLayer(): number {
+        return this._frames[this._i]?.layer ?? -1;
+    }
+
+    pull(ctx: StreamContext): Promise<Uint8Array[] | null> {
+        if (this.drained) return Promise.resolve(null);
+        const out: Uint8Array[] = [];
+        const take = Math.max(1, ctx.room);
+        while (out.length < take && !this.drained && (this.nextLayer < 0 || this._allowed(this.nextLayer))) {
+            out.push(this._frames[this._i++]!.packet);
+        }
+        return Promise.resolve(out);
+    }
+}
+
 /** A job's layers in memory, each tool's header carrying the bbox over all its layers. */
 export class JobSource implements ReplayableSource {
     private readonly _id: number;
     private readonly _layers: readonly JobLayer[];
     private readonly _tools: readonly ToolHdr[];
 
-    constructor(layers: readonly JobLayer[], id = 0) {
+    /** Hold each layer back until release(). May change mid-job. */
+    manual: boolean;
+    /** Layers below this index may be sent in manual mode. */
+    private _released = 0;
+    private _stream: LayerStream | null = null;
+
+    constructor(layers: readonly JobLayer[], id = 0, options: { manual?: boolean } = {}) {
+        this.manual = options.manual ?? false;
         const tools = new Map<number, ToolHdr>();
         for (const l of layers) {
             const t = tools.get(l.tool);
@@ -233,12 +274,31 @@ export class JobSource implements ReplayableSource {
         return this._layers.some((l) => (l.hdr.layer ?? 0) === layer);
     }
 
+    /** Manual mode: the next unsent layer is waiting for release(). */
+    get waiting(): boolean {
+        const s = this._stream;
+        return this.manual && !!s && !s.drained && s.nextLayer >= this._released;
+    }
+
+    /** Every frame has been handed to the session. */
+    get drained(): boolean {
+        return this._stream?.drained ?? false;
+    }
+
+    /** Manual mode: let the next unsent layer go. */
+    release(): void {
+        if (this._stream && !this._stream.drained) this._released = Math.max(this._released, this._stream.nextLayer + 1);
+    }
+
     start(): PacketSource {
         const recordCount = this._layers.reduce((n, l) => n + l.packets.length, 0);
-        return new ListSource([
+        const preflight = [
             packJobHdr({ id: this._id, recordCount, thickness: this._layers[0]!.hdr.thickness, toolCount: this._tools.length }),
             ...this._tools.map((t) => packToolHdr(t)),
-            ...this._layers.flatMap((l) => this._newLayer(l)),
+        ];
+        return this._open([
+            ...preflight.map((packet) => ({ packet, layer: -1 })),
+            ...this._layers.flatMap((l, i) => this._newLayer(l).map((packet) => ({ packet, layer: i }))),
         ]);
     }
 
@@ -248,11 +308,17 @@ export class JobSource implements ReplayableSource {
         const l = this._layers[i];
         const first = l?.hdr.record ?? 0;
         if (!l || record < first || record > first + l.packets.length) return new ListSource([]);
-        return new ListSource([
-            packLayerHdr({ ...l.hdr, layer, record }),
-            ...l.packets.slice(record - first),
-            ...this._layers.slice(i + 1).flatMap((n) => this._newLayer(n)),
+        // The layer the job stopped in has gone already; the ones after wait as before.
+        this._released = Math.max(this._released, i + 1);
+        return this._open([
+            ...[packLayerHdr({ ...l.hdr, layer, record }), ...l.packets.slice(record - first)].map((packet) => ({ packet, layer: i })),
+            ...this._layers.flatMap((n, k) => (k > i ? this._newLayer(n).map((packet) => ({ packet, layer: k })) : [])),
         ]);
+    }
+
+    private _open(frames: readonly LayerFrame[]): LayerStream {
+        this._stream = new LayerStream(frames, (layer) => !this.manual || layer < this._released);
+        return this._stream;
     }
 
     private _newLayer(l: JobLayer): Uint8Array[] {

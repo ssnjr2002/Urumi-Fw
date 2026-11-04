@@ -315,6 +315,78 @@ describe("wire/link/session: job headers", () => {
     });
 });
 
+describe("wire/link/session: manual layers", () => {
+    const twoLayers = () => new JobSource([
+        layerOf(0, 1, [rec(1), rec(2)]), layerOf(1, 1, [rec(3), rec(4)]),
+    ], 0, { manual: true });
+
+    it("sends each layer only on release()", async () => {
+        await withLink(async (link) => {
+            await link.resetSeq();
+            const src = twoLayers();
+            const sess = link.session(src, 4);
+            const done = sess.run();
+            await signOff(link, sess, done);
+            await tick(60);
+            expect(sess.stats().emitted).toBe(src.preflightFrames);
+            expect(src.waiting).toBe(true);
+
+            src.release();
+            await until(() => atX(link, 2));
+            await tick(60);
+            expect((await link.getStatus()).wpos?.[0]).toBe(2);
+            expect(src.waiting).toBe(true);
+            expect(src.drained).toBe(false);
+
+            src.release();
+            await until(() => atX(link, 4));
+            expect(src.drained).toBe(true);
+            expect(src.waiting).toBe(false);
+            expect(await sess.cancel()).toBe("ok");
+            expect(await done).toBe(true);
+        });
+    });
+
+    it("clearing manual lets the remaining layers run", async () => {
+        await withLink(async (link) => {
+            await link.resetSeq();
+            const src = twoLayers();
+            const sess = link.session(src, 4);
+            const done = sess.run();
+            await signOff(link, sess, done);
+            src.release();
+            await until(() => atX(link, 2));
+            src.manual = false;
+            await until(() => atX(link, 4));
+            expect(await sess.cancel()).toBe("ok");
+            await done;
+        });
+    });
+
+    it("a resume at a layer boundary keeps the later layers back", async () => {
+        const src = twoLayers();
+        const ctx = { room: 100 } as never;
+        const first = src.start();
+        await first.pull(ctx);
+        src.release();
+        await first.pull(ctx);
+        const out = (await src.from(0, 2).pull(ctx))!;
+        expect(out.map((p) => p[0])).toEqual([MAGIC_LAYER_HDR]);
+        expect(src.waiting).toBe(true);
+        src.release();
+        expect(src.waiting).toBe(false);
+    });
+
+    it("is off by default", async () => {
+        const src = new JobSource([layerOf(0, 1, [rec(1)]), layerOf(1, 1, [rec(2)])]);
+        const stream = src.start();
+        const out = (await stream.pull({ room: 100 } as never))!;
+        expect(out.length).toBe(src.preflightFrames + 6);
+        expect(src.drained).toBe(true);
+        expect(src.waiting).toBe(false);
+    });
+});
+
 describe("wire/link/session: placement", () => {
     const open = async (link: Link) => {
         await link.resetSeq();
