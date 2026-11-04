@@ -36,6 +36,7 @@ import { prepareBezierJob, JobSource } from "urumi-host";
 const job = prepareBezierJob(svgText, "knife", { offset: { x: 100, y: 50 } });
 if ("error" in job) throw new Error(job.error);
 // Run new JobSource([{ hdr, tool, head, bbox: job.bbox, packets: job.packets }]) through a Session.
+// It holds as `place` after preflight; layers go once the operator sends `place set` and `place ok`.
 ```
 
 The real-port transports have their own subpaths, so a Node consumer never
