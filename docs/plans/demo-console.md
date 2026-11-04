@@ -494,8 +494,21 @@ A dependent chain, Single Session: every branch after C1 edits
 * Bench: placement and corners from the page; a multi-layer job in both modes;
   idling between layers in manual; a tool change between layers; Abort after a
   page reload; continuous jog in `PLACE`. Ask before any downward Z move.
-* Status: planned. Worktree `../urumi-demo-multi-layer` is created from
-  `9700afe`.
+* Status: ready to merge.
+* Outcome:
+  * Added to the plan: the Layer line shows the placement step and the last
+    `place` refusal; after a failed job the page reads status and says whether
+    a job is still open. The home xy and home head buttons send the current
+    forms.
+  * Bench, from the page: placement and corners, jog in `PLACE`, and a
+    three-layer automatic job with tool changes.
+  * Not benched: stop after each layer, Abort after a reload, the refusal and
+    failure messages, clicking a layer's checkbox, the two home buttons.
+  * Findings out of scope: `select` is refused in `TOOL_WAIT`, so `wzero z`
+    reaches only the selected head, while `docs/wire_protocol.md` says the next
+    layer's tool can be mounted and zeroed in the same stop. Earlier, a knife
+    layer on a closed ellipse failed with `NACK_SOFT_LIMIT`; the later
+    three-layer run ended without it, cause unconfirmed.
 
 ## Open
 
