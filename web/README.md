@@ -26,7 +26,7 @@ pnpm test
 | `src/wire/link/` | transports (sim, WebSerial, Node serialport), session, control commands |
 | `src/machine/` | the config document: schema, tool presets, validation, binary image |
 | `scripts/config-image.ts` | `config/*.jsonc` → `data/config.bin`, run by `pio run -e pico -t uploadfs` |
-| `demo/` | old demo pages, built on an API that no longer exists; kept for reference |
+| `demo/` | the machine console, a plain page over this library (`pnpm demo`) |
 
 ## A job
 

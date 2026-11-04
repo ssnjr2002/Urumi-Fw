@@ -6,6 +6,10 @@
   <style>
     pre { height: 20em; overflow-y: auto; border: 1px solid; padding: 4px; margin: 4px 0; }
     #cmd { width: 40em; font-family: monospace; }
+    #layers { height: 6em; width: 30em; overflow-y: auto; border: 1px solid; margin: 4px 0; }
+    #layers > div { height: 1.5em; line-height: 1.5em; }
+    #layers > .selected { background: Highlight; color: HighlightText; }
+    #layers > .unavailable { opacity: 0.5; }
   </style>
 </head>
 <body>
@@ -42,8 +46,8 @@
   <h3>Machine</h3>
   <div>home:
     <button class="text-cmd" value="home" disabled>home</button>
-    <button class="text-cmd" value="home_xy" disabled>home xy</button>
-    <button class="text-cmd" value="home_head" data-head="home-head" disabled>home head</button>
+    <button class="text-cmd" value="home xy" disabled>home xy</button>
+    <button class="text-cmd" value="home head" data-head="home-head" disabled>home head</button>
     <select id="home-head"></select>
   </div>
   <div>tool:
@@ -97,26 +101,49 @@
 
   <h2>Job</h2>
   <input type="file" id="svg-file" accept=".svg">
-  <label>Layer: <select id="layer"></select></label>
   <pre id="svg-warnings" style="height: auto; max-height: 6em"></pre>
-  <canvas id="preview" width="480" height="320" style="border: 1px solid"></canvas>
   <div>
+    <button id="layers-all" disabled>All</button>
+    <button id="layers-none" disabled>None</button>
+    ↑/↓ moves the selected layer, Space ticks it
+  </div>
+  <div id="layers" tabindex="0" role="listbox" aria-label="Layers"></div>
+  <canvas id="preview" width="480" height="320" style="border: 1px solid"></canvas>
+  <div>Selected layer:
     <label>feed (mm/s, 0 = tool's): <input type="number" id="job-feed" min="0" step="any" value="0" style="width: 5em"></label>
     <label>p (mm, empty = t): <input type="number" id="job-p" min="0" step="0.1" style="width: 5em"></label>
-    <label>t (mm): <input type="number" id="job-t" min="0" step="0.1" value="0" style="width: 5em"></label>
     <label>head: <select id="job-head"></select></label>
   </div>
-  <div>Machine job:
-    <button class="machine-ctl" value="pause" disabled>Pause</button>
-    <button class="machine-ctl" value="cancel" disabled>Cancel</button>
+  <div>Job options:
+    <label>t (mm): <input type="number" id="job-t" min="0" step="0.1" value="0" style="width: 5em"></label>
+    <label><input type="checkbox" id="job-manual"> Stop after each layer</label>
   </div>
-  <hr>
-  <div>Session: <span id="job-session">none</span></div>
+  <div>Session: <span id="job-session">none</span> <button id="job-start" disabled>Start session</button></div>
+  <div>
+    <button class="text-cmd" value="place set" disabled>place set</button>
+    <button class="text-cmd" value="place reset" disabled>place reset</button>
+    <button class="text-cmd" value="place frame" disabled>place frame</button>
+  </div>
+  <div>Go to corner:
+    <div>
+      <button class="text-cmd" value="place go xmin ymax" disabled>↖ xmin ymax</button>
+      <button class="text-cmd" value="place go xmax ymax" disabled>xmax ymax ↗</button>
+    </div>
+    <div>
+      <button class="text-cmd" value="place go xmin ymin" disabled>↙ xmin ymin</button>
+      <button class="text-cmd" value="place go xmax ymin" disabled>xmax ymin ↘</button>
+    </div>
+  </div>
+  <div>Layer: <span id="job-layer">none</span></div>
   <div id="job-info"></div>
   <div>
-    <button id="job-run" disabled>Execute layer</button>
-    <button class="session-ctl" value="resume" disabled>Resume</button>
-    <button class="session-ctl" value="end" disabled>End job</button>
+    <button id="job-run" disabled>Execute</button>
+    <button id="job-pause" disabled>Pause</button>
+    <button id="job-resume" disabled>Resume</button>
+  </div>
+  <div>
+    <button id="job-cancel" disabled>Cancel</button>
+    <button id="job-abort" disabled>Abort</button>
   </div>
 
   <script type="module" src="./index.js"></script>

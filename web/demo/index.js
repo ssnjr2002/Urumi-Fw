@@ -38,7 +38,9 @@ const homeHeadSel   = document.getElementById('home-head');
 const mountHeadSel  = document.getElementById('mount-head');
 const mountToolSel  = document.getElementById('mount-tool');
 const svgFileIn     = document.getElementById('svg-file');
-const layerSel      = document.getElementById('layer');
+const layersDiv     = document.getElementById('layers');
+const layersAllBtn  = document.getElementById('layers-all');
+const layersNoneBtn = document.getElementById('layers-none');
 const svgWarnOut    = document.getElementById('svg-warnings');
 const previewCv     = document.getElementById('preview');
 const jobFeedIn     = document.getElementById('job-feed');
@@ -46,9 +48,14 @@ const jobPIn        = document.getElementById('job-p');
 const jobTIn        = document.getElementById('job-t');
 const jobHeadSel    = document.getElementById('job-head');
 const jobRunBtn     = document.getElementById('job-run');
-const machineCtlBtns = document.querySelectorAll('button.machine-ctl');
-const sessionCtlBtns = document.querySelectorAll('button.session-ctl');
+const jobManualBox  = document.getElementById('job-manual');
+const jobStartBtn   = document.getElementById('job-start');
+const jobPauseBtn   = document.getElementById('job-pause');
+const jobResumeBtn  = document.getElementById('job-resume');
+const jobCancelBtn  = document.getElementById('job-cancel');
+const jobAbortBtn   = document.getElementById('job-abort');
 const jobSessionOut = document.getElementById('job-session');
+const jobLayerOut   = document.getElementById('job-layer');
 const jobInfoOut    = document.getElementById('job-info');
 
 /** The Link, once connected — null otherwise. */
@@ -148,6 +155,7 @@ async function submit(line) {
     const reply = await link.command(line);
     textOut(reply ? `← ${reply}` : '← (timeout)');
     desyncsOut.textContent = link.textDesyncs;
+    notePlace(line, reply);
     return reply;
 }
 
@@ -507,24 +515,37 @@ for (const b of textCmdBtns) {
 
 // ── job ───────────────────────────────────────────────────────────────────────
 // The picked SVG is split into tool layers against the pulled config's tools,
-// again after each pull. Execute runs one layer as a job session: a LAYER_HDR
-// and its BEZIERs. The session lives until the job leaves JOB, so a finished
-// layer stays in JOB, dry, until Cancel or End job closes it.
+// again after each pull. The ticked layers run top to bottom as one job. Each
+// layer's settings live on its row, by name, until a new SVG is picked; order,
+// ticks and settings lock while a session runs.
 //
-// Pause and Cancel act on whatever job the machine has: through the session
-// while one runs, so it expects the hold or the end, else as text commands.
-// Resume and End job need the session.
+// Start session sends preflight and holds for placement; the first Execute
+// sends `place ok`. A finished job stays in JOB, dry, until Cancel or Abort.
+//
+// Pause, Cancel and Abort act on whatever job the machine has: through the
+// session while one runs, so it expects the hold or the end, else directly.
+// Resume and Execute need the session, which holds the packets.
 
 /** The picked SVG's text — null until one is picked. */
 let svgText = null;
 /** The picked SVG's layers, by key; empty without an SVG or a config. */
 let svgLayers = new Map();
-/** The running job session — null outside a job. */
+/** Every layer seen in the picked SVG, in run order: { key, on, feed, p, head }. */
+let rows = [];
+/** The selected row's key — null with none. */
+let selectedKey = null;
+/** The running job session and its source — null outside a job. */
 let session = null;
-/** The running layer's BEZIER count. */
-let jobTotal = 0;
+let source = null;
+/** The running job's layers, by layer number: { key, total }. */
+let jobLayers = [];
+/** This session's `place set` is standing, and the last place command's refusal. */
+let placed = false;
+let placeRefusal = '';
 
 const toolNames = () => Object.keys(pulledConfig?.toolProfiles ?? {});
+const visibleRows = () => rows.filter((r) => svgLayers.has(r.key));
+const selectedRow = () => rows.find((r) => r.key === selectedKey && svgLayers.has(r.key)) ?? null;
 
 /** Why a layer can't run, or '' if it can. */
 function layerProblem(key) {
@@ -537,10 +558,12 @@ function layerProblem(key) {
     return ok ? '' : chambers ? `chamber ${tl.chamber} not in 1..${chambers}` : 'tool has no chambers';
 }
 
+const runnable = (r) => layerProblem(r.key) === '';
+const jobRows = () => visibleRows().filter((r) => r.on && runnable(r));
+
 function loadLayers() {
     svgLayers = new Map();
     svgWarnOut.textContent = '';
-    layerSel.replaceChildren();
     if (svgText && pulledConfig) {
         try {
             const loaded = loadSvgPaths(svgText, { tools: toolNames() });
@@ -553,24 +576,82 @@ function loadLayers() {
         svgWarnOut.textContent = 'pull a config to list the layers';
     }
     for (const key of svgLayers.keys()) {
-        const problem = layerProblem(key);
-        const o = new Option(`${key || '(no tool)'}${problem ? ` — ${problem}` : ''}`, key);
-        o.disabled = problem !== '';
-        layerSel.append(o);
+        if (!rows.some((r) => r.key === key)) rows.push({ key, on: true, feed: '0', p: '', head: '0' });
     }
-    const first = [...layerSel.options].find((o) => !o.disabled);
-    if (first) layerSel.value = first.value;
-    drawPreview();
-    setJobButtons();
+    if (!selectedRow()) selectedKey = (visibleRows().find(runnable) ?? visibleRows()[0])?.key ?? null;
+    renderLayers();
 }
 
 svgFileIn.addEventListener('change', async () => {
     const file = svgFileIn.files[0];
     svgText = file ? await file.text() : null;
+    rows = [];
+    selectedKey = null;
     loadLayers();
 });
 
-layerSel.addEventListener('change', drawPreview);
+function renderLayers() {
+    layersDiv.replaceChildren(...visibleRows().map((r) => {
+        const problem = layerProblem(r.key);
+        const div = document.createElement('div');
+        div.setAttribute('role', 'option');
+        div.setAttribute('aria-selected', String(r.key === selectedKey));
+        div.classList.toggle('selected', r.key === selectedKey);
+        div.classList.toggle('unavailable', problem !== '');
+        const box = Object.assign(document.createElement('input'), {
+            type: 'checkbox', tabIndex: -1, checked: r.on && !problem, disabled: !!problem || !!session,
+        });
+        // On click, not change: the row's click below re-renders, and a removed box fires no change.
+        box.addEventListener('click', () => { r.on = box.checked; });
+        div.append(box, ` ${r.key || '(no tool)'}${problem ? ` — ${problem}` : ''}`);
+        div.addEventListener('click', () => { selectedKey = r.key; layersDiv.focus(); renderLayers(); });
+        return div;
+    }));
+    layersDiv.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+    showLayerSettings();
+    drawPreview();
+    setJobButtons();
+}
+
+layersDiv.addEventListener('keydown', (e) => {
+    const r = selectedRow();
+    if (!r || session) return;
+    if (e.key === ' ') {
+        e.preventDefault();
+        if (runnable(r)) r.on = !r.on;
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const seen = visibleRows();
+        const other = seen[seen.indexOf(r) + (e.key === 'ArrowUp' ? -1 : 1)];
+        if (!other) return;
+        const a = rows.indexOf(r), b = rows.indexOf(other);
+        [rows[a], rows[b]] = [rows[b], rows[a]];
+    } else {
+        return;
+    }
+    renderLayers();
+});
+
+for (const [btn, on] of [[layersAllBtn, true], [layersNoneBtn, false]]) {
+    btn.addEventListener('click', () => {
+        for (const r of rows) r.on = on;
+        renderLayers();
+    });
+}
+
+function showLayerSettings() {
+    const r = selectedRow();
+    jobFeedIn.value = r?.feed ?? '0';
+    jobPIn.value = r?.p ?? '';
+    if (r) jobHeadSel.value = r.head;
+}
+
+for (const [input, field] of [[jobFeedIn, 'feed'], [jobPIn, 'p'], [jobHeadSel, 'head']]) {
+    input.addEventListener(input === jobHeadSel ? 'change' : 'input', () => {
+        const r = selectedRow();
+        if (r) r[field] = input.value;
+    });
+}
 
 /** Every layer in grey, the selected one in black, fitted to the canvas, Y up. */
 function drawPreview() {
@@ -584,8 +665,10 @@ function drawPreview() {
     const pad = 8;
     const s = Math.min((previewCv.width - 2 * pad) / (maxX - minX || 1), (previewCv.height - 2 * pad) / (maxY - minY || 1));
     const tx = (p) => [pad + (p.x - minX) * s, previewCv.height - pad - (p.y - minY) * s];
-    for (const [key, subpaths] of svgLayers) {
-        ctx.strokeStyle = key === layerSel.value ? '#000' : '#ccc';
+    // The selected layer last, so grey never draws over it.
+    const order = [...svgLayers].sort(([a], [b]) => (a === selectedKey) - (b === selectedKey));
+    for (const [key, subpaths] of order) {
+        ctx.strokeStyle = key === selectedKey ? '#000' : '#ccc';
         ctx.beginPath();
         for (const sp of subpaths) {
             ctx.moveTo(...tx(sp.curves[0].p0));
@@ -596,26 +679,70 @@ function drawPreview() {
     }
 }
 
-function setJobButtons() {
-    const on = !!link && !link.closed;
-    const layer = layerSel.selectedOptions[0];
-    jobRunBtn.disabled = !on || !!session || !layer || layer.disabled;
-    for (const b of machineCtlBtns) b.disabled = !on;
-    for (const b of sessionCtlBtns) b.disabled = !on || !session;
+/** The ring is dry and every frame sent so far is taken. */
+function jobDry() {
+    const s = session?.stats();
+    const st = link?.status;
+    return !!s && !!st && st.context === MachineContext.JOB && st.state === MachineState.JOB
+        && st.reason === JobReason.BUFFERING && st.bufCount === 0 && s.acked === s.emitted;
 }
 
-/** Records executed of the total; done once the ring is dry with every packet taken. */
-function showJob() {
-    if (!session) return;
-    const s = session.stats();
-    const st = link?.status;
-    const inJob = st?.context === MachineContext.JOB;
-    const done = inJob && st.state === MachineState.JOB && st.reason === JobReason.BUFFERING && st.bufCount === 0
-        && s.emitted > jobTotal && s.acked === s.emitted;
-    const executed = done ? jobTotal : inJob ? Math.min(st.record, jobTotal) : 0;
-    jobInfoOut.textContent = `records ${executed}/${jobTotal}, ${jobTotal - executed} left`
-        + (done ? ' — done, Cancel or End job closes it' : '')
-        + ` | held ${s.held ?? '-'} sent ${s.sent} acked ${s.acked} nacks ${s.nacks} retries ${s.retries}`;
+function setJobButtons() {
+    const on = !!link && !link.closed;
+    const locked = !!session;
+    jobStartBtn.disabled = !on || locked || jobRows().length === 0;
+    for (const el of [layersAllBtn, layersNoneBtn]) el.disabled = locked || rows.length === 0;
+    for (const el of [jobFeedIn, jobPIn, jobHeadSel]) el.disabled = locked || !selectedRow();
+    for (const el of [jobTIn, svgFileIn]) el.disabled = locked;
+    jobRunBtn.textContent = jobManualBox.checked ? 'Execute next' : 'Execute';
+    jobRunBtn.disabled = !session || !(session.held === 'place' || (!session.held && source.waiting && jobDry()));
+    for (const b of [jobPauseBtn, jobCancelBtn, jobAbortBtn]) b.disabled = !on;
+    jobResumeBtn.disabled = !on || !session;
+}
+
+/** The job's layers for JobSource, or why it can't run. */
+function buildJob() {
+    const t = Number(jobTIn.value) || 0;
+    const toolHeads = new Map();
+    const layers = [];
+    const names = [];
+    for (const [i, r] of jobRows().entries()) {
+        const tl = toolLayer(r.key, toolNames());
+        const profile = pulledConfig.toolProfiles[tl.tool];
+        const head = Number(r.head);
+        const p = r.p === '' ? t : Number(r.p);
+        if (profile.plunge && !(p > 0)) return { error: `${r.key}: plunges, so needs p or t above 0` };
+        const other = toolHeads.get(profile.id);
+        if (other && other.head !== head) return { error: `${other.key} and ${r.key}: tool ${tl.tool} on heads ${other.head} and ${head}` };
+        toolHeads.set(profile.id, { key: r.key, head });
+        const job = prepareBezierJob(svgText, r.key, { tools: toolNames(), quality: pulledConfig.quality });
+        if ('error' in job) return { error: `${r.key}: ${job.error}` };
+        const hdr = {
+            layer: i,
+            record: 0,
+            chamber: tl.chamber,
+            feed: Number(r.feed) || 0,
+            ...(r.p !== '' && { p }),
+            thickness: t,
+        };
+        layers.push({ hdr, tool: profile.id, head, bbox: job.bbox, packets: job.packets });
+        names.push({ key: r.key, total: job.packets.length });
+    }
+    return { layers, names };
+}
+
+/** Follow placement from the replies to `place` commands, from a button or the console. */
+function notePlace(line, reply) {
+    if (!line.startsWith('place ')) return;
+    placeRefusal = reply === 'ok' ? '' : `${line}: ${reply || 'no reply'}`;
+    if (reply !== 'ok') return;
+    if (line === 'place set') placed = true;
+    else if (line === 'place reset') placed = false;
+}
+
+function placeHint() {
+    const step = placed ? 'placed, Execute to start' : 'jog the dot to the job\'s xmin ymin, then place set';
+    return placeRefusal ? `${step} (${placeRefusal})` : step;
 }
 
 const HOLD_HINTS = {
@@ -624,6 +751,22 @@ const HOLD_HINTS = {
     refused: 'header refused, Resume to retry',
     silent: 'no replies, resending',
 };
+const holdHint = (held) => (held === 'place' ? placeHint() : HOLD_HINTS[held]);
+
+/** The layer and record the machine is on; done once the last layer is dry and all sent. */
+function showJob() {
+    if (!session) return;
+    const s = session.stats();
+    const st = link?.status;
+    const inJob = st?.context === MachineContext.JOB;
+    const layer = inJob && st.layer !== NO_LAYER ? jobLayers[st.layer] : null;
+    const done = source.drained && jobDry();
+    const waiting = source.waiting && jobDry();
+    jobLayerOut.textContent = (layer ? `${layer.key} (${st.layer + 1} of ${jobLayers.length}), record ${done ? layer.total : Math.min(st.record, layer.total)}/${layer.total}` : 'none')
+        + (session.held ? ` — ${session.held}: ${holdHint(session.held)}` : '')
+        + (done ? ' — done, Cancel or Abort closes it' : waiting ? ' — waiting, Execute next' : '');
+    jobInfoOut.textContent = `sent ${s.sent} acked ${s.acked} nacks ${s.nacks} retries ${s.retries}`;
+}
 
 /** Redraw the status and the job line on each of the session's samples; log each change of hold. */
 async function watchJob() {
@@ -634,61 +777,97 @@ async function watchJob() {
         stamp = at;
         if (raw && link?.status) showStatus(link.status);
         showJob();
+        setJobButtons();
         if (session && session.held !== held) {
             held = session.held;
-            binOut(held ? `held: ${held} — ${HOLD_HINTS[held]}` : 'running');
+            binOut(held ? `held: ${held} — ${holdHint(held)}` : 'running');
         }
     }
 }
 
-jobRunBtn.addEventListener('click', async () => {
-    const key = layerSel.value;
-    const tl = toolLayer(key, toolNames());
-    const job = prepareBezierJob(svgText, key, { tools: toolNames(), quality: pulledConfig.quality });
-    if ('error' in job) return binOut(`job: ${job.error}`);
-    const hdr = {
-        tool: pulledConfig.toolProfiles[tl.tool].id,
-        head: Number(jobHeadSel.value),
-        chamber: tl.chamber,
-        feed: Number(jobFeedIn.value) || 0,
-        ...(jobPIn.value !== '' && { p: Number(jobPIn.value) }),
-        thickness: Number(jobTIn.value) || 0,
-    };
+jobStartBtn.addEventListener('click', async () => {
+    jobStartBtn.disabled = true;
+    const job = buildJob();
+    if (job.error) {
+        binOut(`job: ${job.error}`);
+        return setJobButtons();
+    }
     try {
         await link.resetSeq();
-        session = link.session(new JobSource(hdr, job.packets));
+        source = new JobSource(job.layers, 0, { manual: jobManualBox.checked });
+        session = link.session(source);
     } catch (e) {
-        return binOut(`job: ${e.message}`);
+        session = source = null;
+        binOut(`job: ${e.message}`);
+        return setJobButtons();
     }
-    jobTotal = job.packets.length;
-    const p = hdr.p ?? hdr.thickness;
-    jobSessionOut.textContent = `${key} · tool ${hdr.tool} · head ${hdr.head} · chamber ${hdr.chamber} · t ${hdr.thickness} p ${p}`;
-    binOut(`→ LAYER_HDR ${key} tool=${hdr.tool} head=${hdr.head} chamber=${hdr.chamber} t=${hdr.thickness} p=${p}, ${jobTotal} BEZIER`);
-    setJobButtons();
+    jobLayers = job.names;
+    placed = false;
+    placeRefusal = '';
+    jobSessionOut.textContent = `${jobLayers.length} layer(s), t ${Number(jobTIn.value) || 0}`;
+    binOut(`→ JOB_HDR ${jobLayers.map((l) => `${l.key}:${l.total}`).join(' ')}`);
+    renderLayers();
     watchJob();
     const ok = await session.run();
     const r = session.result();
     showJob();
     binOut(`job ${ok ? (r.truncated ? 'truncated' : 'ended') : `failed: ${fatalReasonName(r.fatalReason)}`}`
         + ` — sent ${r.sent} acked ${r.acked} nacks ${r.nacks} retries ${r.retries}`);
-    session = null;
+    session = source = null;
     jobSessionOut.textContent = 'none';
-    setJobButtons();
+    jobLayerOut.textContent = 'none';
+    renderLayers();
+    if (!ok) await reportAfterFailure();
     if (statusPollBox.checked) poll();
 });
 
-for (const b of machineCtlBtns) {
-    b.addEventListener('click', async () => {
-        if (!session) return submit(b.value);
-        textOut(`→ ${b.value}`);
-        textOut(`← ${await session[b.value]()}`);
+/** A failed session leaves the machine as it was: say whether a job is still open there. */
+async function reportAfterFailure() {
+    try {
+        const st = await link.getStatus();
+        showStatus(st);
+        const open = st.context === MachineContext.JOB;
+        const line = open
+            ? `machine still in the job (${st.state === MachineState.JOB ? jobName(st.reason) : stateName(st.state)}), Cancel or Abort closes it`
+            : `machine ${stateName(st.state)}, faults ${faultNames(st.faults)}`;
+        binOut(line);
+        jobInfoOut.textContent = line;
+    } catch (e) {
+        binOut(`status after the failure: ${e.message}`);
+    }
+}
+
+jobManualBox.addEventListener('change', () => {
+    if (source) source.manual = jobManualBox.checked;
+    setJobButtons();
+});
+
+jobRunBtn.addEventListener('click', async () => {
+    if (!session) return;
+    jobRunBtn.disabled = true;
+    if (session.held === 'place' && await submit('place ok') !== 'ok') return setJobButtons();
+    source?.release();
+    setJobButtons();
+});
+
+for (const [btn, name] of [[jobPauseBtn, 'pause'], [jobCancelBtn, 'cancel']]) {
+    btn.addEventListener('click', async () => {
+        if (!session) return submit(name);
+        textOut(`→ ${name}`);
+        textOut(`← ${await session[name]()}`);
     });
 }
+
+jobAbortBtn.addEventListener('click', () => {
+    if (session) session.end();
+    else link?.abort();
+    binOut('→ ABORT');
+});
 
 const RESUME_WAIT_MS = 2000;
 
 /** Rewrite a resume's log line with what came of it: the first ACK or NACK after it. */
-async function resumeOutcome(node, line, held, before) {
+async function resumeOutcome(node, held, before) {
     const until = Date.now() + RESUME_WAIT_MS;
     let outcome = 'no reply yet';
     while (session && Date.now() < until) {
@@ -700,24 +879,17 @@ async function resumeOutcome(node, line, held, before) {
     node.data = node.data.replace(/\n$/, ` — ${outcome}\n`);
 }
 
-for (const b of sessionCtlBtns) {
-    b.addEventListener('click', () => {
-        if (!session) return;
-        if (b.value === 'end') {
-            session.end();
-            return binOut('→ ABORT (end job)');
-        }
-        // True only means the session resends; the firmware checks again, and
-        // a refusal brings the hold back (logged by watchJob). A tool hold is
-        // left only from TOOL_WAIT, not while the change moves.
-        const held = session.held;
-        const before = session.stats();
-        if (!session.resume()) {
-            const st = link?.status;
-            const moving = held && st && st.state !== MachineState.JOB ? `, ${stateName(st.state)}` : '';
-            return binOut(`resume: ${held ? `not yet (${held}${moving})` : 'not held'}`);
-        }
-        const line = held === 'tool' ? 'resume: header resent' : 'resume: restarting from the resume point';
-        resumeOutcome(binOut(line), line, held, before);
-    });
-}
+// True only means the session resends; the firmware checks again, and a refusal
+// brings the hold back (logged by watchJob). A tool hold is left only from
+// TOOL_WAIT, not while the change moves.
+jobResumeBtn.addEventListener('click', () => {
+    if (!session) return;
+    const held = session.held;
+    const before = session.stats();
+    if (!session.resume()) {
+        const st = link?.status;
+        const moving = held && st && st.state !== MachineState.JOB ? `, ${stateName(st.state)}` : '';
+        return binOut(`resume: ${held ? `not yet (${held}${moving})` : 'not held'}`);
+    }
+    resumeOutcome(binOut(held === 'tool' ? 'resume: header resent' : 'resume: restarting from the resume point'), held, before);
+});
