@@ -14,7 +14,7 @@ import { cubic } from "../../../src/toolpath/geometry.js";
 import { packCjog } from "../../../src/wire/format/cjog.js";
 import {
     CJOG_DEADMAN_MS, MAGIC_BEZIER, MAGIC_JOB_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR,
-    NACK_DETAIL_AXIS_Y, NACK_DETAIL_SIDE_HI, NACK_JOB, NACK_OUT_OF_RANGE,
+    NACK_DETAIL_AXIS_Y, NACK_DETAIL_SIDE_HI, NACK_JOB, NACK_NOT_HOMED, NACK_OUT_OF_RANGE,
 } from "../../../src/wire/format/constants.js";
 import { packJobHdr, packLayerHdr, packToolHdr } from "../../../src/wire/format/layer.js";
 import { stampSeq } from "../../../src/wire/format/packet.js";
@@ -533,6 +533,16 @@ describe("wire/link/session: tool change", () => {
             await sess.cancel();
             expect(await done).toBe(true);
         }, { tools: {}, toolChangeMs: 20 });
+    });
+
+    it("an unhomed A refused in preflight is fatal", async () => {
+        await withLink(async (link, sim) => {
+            sim.refuseTool = { tool: 1, reason: NACK_NOT_HOMED };
+            const { sess, done } = await start(link, 2);
+            expect(await done).toBe(false);
+            expect(sess.fatalReason).toBe(NACK_NOT_HOMED);
+            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+        });
     });
 
     it("refuses resume() during TOOL_CHANGE, and end() leaves the hold", async () => {

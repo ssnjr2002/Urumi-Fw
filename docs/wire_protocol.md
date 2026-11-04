@@ -274,8 +274,9 @@ or tool count.
 ```
 In preflight: `NACK_TOOL_UNKNOWN` for an id not in the config, `NACK_JOB` for a
 duplicate or a bad bbox, `NACK_TOOL_UNAVAILABLE` for a head that does not exist or
-has no A for a tangential or chamber tool, or a power node mute or excluded, and
-`NACK_OUT_OF_RANGE` when no origin keeps this and the earlier tools in range.
+has no A for a tangential or chamber tool, or a power node mute or excluded,
+`NACK_NOT_HOMED` for an unhomed A on a head with an `unlockRange` or under a
+tangential or chamber tool, and `NACK_OUT_OF_RANGE` when no origin keeps this and the earlier tools in range.
 
 After a layer's header it checks the bbox at the current origin
 (`NACK_OUT_OF_RANGE`, which keeps the job open), then the mount, zero and head as

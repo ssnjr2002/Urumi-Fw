@@ -266,6 +266,13 @@ static void preflightTool(uint8_t id, uint8_t head, const float* box) {
         preflightFail(MSEG_NACK_TOOL_UNAVAILABLE);
         return;
     }
+    // A tool change turns an `unlockRange` head's A to 0; these tools cut with A.
+    const CfgHead& hd = c.heads[head];
+    if (hd.a.node.present && !originValid(hd.a.node.id) &&
+        (hd.unlockRange > 0 || t->tangential || t->chamberCount > 0)) {
+        preflightFail(MSEG_NACK_NOT_HOMED);
+        return;
+    }
     for (uint8_t k = 0; k < 2; k++) {
         OriginRange tip;
         float lo, hi;
