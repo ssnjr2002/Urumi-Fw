@@ -80,6 +80,7 @@ async function withLink<T>(
     // unconfigured, unmapped boot.
     // Short records and buffer timeout keep a job's tests fast.
     const sim = new SimTransport({ axisMap: [1, 2, 3, 4], recordMs: 5, bufferIdleMs: 20, ...simOpts });
+    sim.skipPlace = true;
     const link = new Link(sim);
     try {
         return await fn(link, sim);

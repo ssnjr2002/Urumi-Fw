@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { Link } from "../../../src/wire/link/link.js";
 import { SimTransport } from "../../../src/wire/link/backends/sim.js";
-import { JobSource, FATAL_JOB_LOST, type Session } from "../../../src/wire/link/session.js";
+import { JobSource, ListSource, FATAL_JOB_LOST, type Session } from "../../../src/wire/link/session.js";
 import { MachineState, JobReason } from "../../../src/wire/format/status.js";
 import { packBezier } from "../../../src/wire/format/bezier.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
@@ -16,7 +16,7 @@ import {
     CJOG_DEADMAN_MS, MAGIC_BEZIER, MAGIC_JOB_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR,
     NACK_DETAIL_AXIS_Y, NACK_DETAIL_SIDE_HI, NACK_JOB, NACK_OUT_OF_RANGE,
 } from "../../../src/wire/format/constants.js";
-import { packJobHdr, packToolHdr } from "../../../src/wire/format/layer.js";
+import { packJobHdr, packLayerHdr, packToolHdr } from "../../../src/wire/format/layer.js";
 import { stampSeq } from "../../../src/wire/format/packet.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
@@ -60,10 +60,22 @@ async function until(cond: () => boolean | Promise<boolean>, ms = 3000): Promise
     }
 }
 
+/** Sign off placement once the session holds for it; a session that ends first is left alone. */
+async function signOff(link: Link, sess: Session, done: Promise<boolean>): Promise<void> {
+    let ended = false;
+    void done.then(() => { ended = true; });
+    await until(() => ended || sess.held === "place");
+    if (ended) return;
+    expect(await link.command("place set")).toBe("ok");
+    expect(await link.command("place ok")).toBe("ok");
+}
+
 async function start(link: Link, n: number): Promise<{ sess: Session; done: Promise<boolean> }> {
     await link.resetSeq();
     const sess = link.session(job(n), 4);
-    return { sess, done: sess.run() };
+    const done = sess.run();
+    await signOff(link, sess, done);
+    return { sess, done };
 }
 
 const atX = async (link: Link, x: number) => (await link.getStatus()).wpos?.[0] === x;
@@ -276,7 +288,7 @@ describe("wire/link/session: job headers", () => {
             expect(await link.command("pause")).toMatch(/^err/);
             expect((await link.getStatus()).reason).toBe(JobReason.PREFLIGHT);
             await sim.write(stampSeq(packToolHdr({ tool: 1, head: 0, bbox: BOX }), 1));
-            expect((await link.getStatus()).reason).toBe(JobReason.BUFFERING);
+            expect((await link.getStatus()).reason).toBe(JobReason.PLACE);
             expect(await link.command("pause")).toMatch(/^err/);
             expect(await link.command("cancel")).toBe("ok");
         });
@@ -290,6 +302,7 @@ describe("wire/link/session: job headers", () => {
                 layerOf(1, 2, Array.from({ length: 20 }, (_, i) => rec(i + 21))),
             ]), 8);
             const done = sess.run();
+            await signOff(link, sess, done);
             await until(async () => (await link.getStatus()).reason === JobReason.RUNNING);
             expect(await link.command("pause")).toBe("ok");
             await until(() => sess.held === "paused");
@@ -299,6 +312,116 @@ describe("wire/link/session: job headers", () => {
             await sess.cancel();
             expect(await done).toBe(true);
         }, { recordMs: 20, ringSize: 30 });
+    });
+});
+
+describe("wire/link/session: placement", () => {
+    const open = async (link: Link) => {
+        await link.resetSeq();
+        const sess = link.session(job(3), 4);
+        const done = sess.run();
+        await until(() => sess.held === "place");
+        return { sess, done };
+    };
+
+    it("sends no layer until `place ok`, then runs the job", async () => {
+        await withLink(async (link) => {
+            const { sess, done } = await open(link);
+            await tick(150);
+            expect(sess.stats()).toMatchObject({ sent: 2, acked: 2, nacks: 0, held: "place" });
+            expect(sess.resume()).toBe(false);
+            expect(await link.command("place ok")).toBe("err bad_state"); // no zero set
+            expect(await link.command("place set")).toBe("ok");
+            expect(await link.command("place go xmax ymax")).toBe("ok");
+            expect(await link.command("place frame")).toBe("ok");
+            await tick(150);
+            expect(sess.held).toBe("place");
+            expect(await link.command("place ok")).toBe("ok");
+            await until(() => atX(link, 3));
+            expect(sess.held).toBeNull();
+            await sess.cancel();
+            expect(await done).toBe(true);
+        });
+    });
+
+    it("a jog holds on, and `place reset` lets it jog again", async () => {
+        await withLink(async (link) => {
+            await link.command("setorigin");
+            const { sess, done } = await open(link);
+            expect(await link.command("jog z 1")).toBe("err bad_state");
+            expect(await link.command("jog x 5 100")).toMatch(/^ok/);
+            expect(await link.command("place set")).toBe("err busy");
+            await until(async () => (await link.getStatus()).state === MachineState.JOB);
+            expect(sess.held).toBe("place");
+            expect(await link.command("place set")).toBe("ok");
+            expect(await link.command("jog x 1")).toBe("err bad_state");
+            expect(await link.command("place reset")).toBe("ok");
+            expect(await link.command("jog x 1 100")).toMatch(/^ok/);
+            await until(async () => (await link.getStatus()).state === MachineState.JOB);
+            await sess.cancel();
+            expect(await done).toBe(true);
+        }, { frameMs: 5, cjogStepsPerS: 1000 });
+    });
+
+    it("cancel() is refused while moving and the hold goes on; end() stops it", async () => {
+        await withLink(async (link) => {
+            await link.command("setorigin");
+            const { sess, done } = await open(link);
+            expect(await link.command("jog x 5000 1")).toMatch(/^ok/);
+            expect(await sess.cancel()).toBe("err bad_state");
+            await tick(150);
+            expect(sess.held).toBe("place");
+            sess.end();
+            expect(await done).toBe(true);
+            expect(sess.fatalReason).toBeUndefined();
+            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+        }, { frameMs: 5, cjogStepsPerS: 1000 });
+    });
+
+    it("refuses layers and bad usage", async () => {
+        await withLink(async (link, sim) => {
+            await link.resetSeq();
+            await sim.write(stampSeq(packJobHdr({ recordCount: 0, toolCount: 1 }), 0));
+            await sim.write(stampSeq(packToolHdr({ tool: 1, head: 0, bbox: BOX }), 1));
+            expect(await link.command("place go xmax")).toBe("err usage");
+            await link.resetSeq();
+            const layer = link.session(new ListSource([packLayerHdr({ layer: 0 })]));
+            expect(await layer.run()).toBe(false);
+            expect(layer.fatalReason).toBe(NACK_JOB);
+            const st = await link.getStatus();
+            expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PLACE]);
+            expect(await link.command("cancel")).toBe("ok");
+        });
+    });
+
+    it("cancel() and end() leave the hold; a cancel behind its back is lost", async () => {
+        await withLink(async (link) => {
+            const a = await open(link);
+            expect(await a.sess.cancel()).toBe("ok");
+            expect(await a.done).toBe(true);
+
+            const b = await open(link);
+            b.sess.end();
+            expect(await b.done).toBe(true);
+            expect(b.sess.fatalReason).toBeUndefined();
+
+            const c = await open(link);
+            expect(await link.command("cancel")).toBe("ok");
+            expect(await c.done).toBe(false);
+            expect(c.sess.fatalReason).toBe(FATAL_JOB_LOST);
+        });
+    });
+
+    it("locks XY in TOOL_WAIT, Z alone may be zeroed", async () => {
+        await withLink(async (link) => {
+            const { sess, done } = await start(link, 3);
+            await until(async () => (await link.getStatus()).reason === JobReason.TOOL_WAIT);
+            expect(await link.command("wzero x")).toBe("err bad_state");
+            expect(await link.command("wzero")).toBe("err bad_state");
+            expect(await link.command("wzero z")).toBe("ok");
+            await sess.cancel();
+            expect(await done).toBe(true);
+        }, { tools: {}, toolChangeMs: 20 });
     });
 });
 

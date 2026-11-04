@@ -124,6 +124,8 @@ export const JobReason = {
     DWELL: 7,
     /** JOB_HDR taken, waiting on its TOOL_HDRs; nothing moves. */
     PREFLIGHT: 8,
+    /** Preflight passed: the operator places the job with `place` until `place ok`. */
+    PLACE: 9,
 } as const;
 export type JobReason = (typeof JobReason)[keyof typeof JobReason];
 

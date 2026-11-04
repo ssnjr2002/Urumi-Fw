@@ -151,6 +151,10 @@ export class SimTransport implements Transport {
     context: MachineContext = MachineContext.IDLE;
     /** What the job is doing; meaningful only while the context is JOB. */
     job: JobReason = JobReason.BUFFERING;
+    /** In PLACE: `place set` has been given. */
+    placeSet = false;
+    /** Sign off placement by itself, for a test about what follows it. */
+    skipPlace = false;
     /**
      * DERIVED, per slot. Never assign it directly — call `_rederiveHomed()`.
      * The firmware holds the datum against the NODE (`nodeOrigin`/`nodeHomed`
@@ -564,7 +568,9 @@ export class SimTransport implements Transport {
         if (k < 0 || !Number.isFinite(dist) || dist === 0 ||
             !(scale > 0) || !Number.isFinite(scale)) return "err usage";
         const stepping = this.state === MachineState.JOGGING && this.jogQueue.length > 0;
-        if (this.state !== MachineState.IDLE && !stepping) return "err bad_state";
+        const placing = this.context === MachineContext.JOB && this.job === JobReason.PLACE;
+        if (placing ? (this.placeSet || k >= 2 || (this.state !== MachineState.JOB && !stepping))
+                    : (this.state !== MachineState.IDLE && !stepping)) return "err bad_state";
         if (!(this.axesHomed & (1 << k)) && !this.jogUnhomed) return "err not_homed";
         if (this.jogQueue.length >= JOG_MAX_QUEUED) return "err busy";
         const steps = Math.round(dist * this.jogSpm[k]!);
@@ -645,9 +651,13 @@ export class SimTransport implements Transport {
             const refused = this.refuseTool;
             if (refused && refused.tool === data[1]) return end(refused.reason, refused.detail ?? 0);
             this.preIds.push(data[1]!);
-            if (this.preIds.length === this.preCount) this.job = JobReason.BUFFERING;
+            if (this.preIds.length === this.preCount) {
+                this.job = this.skipPlace ? JobReason.BUFFERING : JobReason.PLACE;
+                this.placeSet = false;
+            }
             return accept();
         }
+        if (this.context === MachineContext.JOB && this.job === JobReason.PLACE) return refuse(NACK_JOB);
         const stopped = st === MachineState.JOB &&
             (this.job === JobReason.TOOL_CHANGE || this.job === JobReason.TOOL_WAIT);
         if (st === MachineState.JOB && this.job === JobReason.PAUSED) this.heldLayer = null;
@@ -1075,13 +1085,32 @@ export class SimTransport implements Transport {
                 if (!S.checkTools) return "err bad_state";
                 const toolWait = S.state === MachineState.JOB && S.job === JobReason.TOOL_WAIT;
                 if (!(S.state === MachineState.IDLE || toolWait)) return "err bad_state";
+                // XY is held for the whole job.
+                if (toolWait && args[0] !== "z" && args[0] !== "z_switch") return "err bad_state";
                 if ((args[0] ?? "xyz").includes("z")) S.zeroed.add(toolWait ? S.toolHead : 0);
+                return "ok";
+            }
+            // The dot and the work offset are not modelled, so a `go` or `frame` is at rest at once.
+            case "place": {
+                const go = args[0] === "go";
+                const known = go
+                    ? args.length === 3 && (args[1] === "xmin" || args[1] === "xmax") &&
+                      (args[2] === "ymin" || args[2] === "ymax")
+                    : args.length === 1 && ["set", "reset", "frame", "ok"].includes(args[0]!);
+                if (!known) return "err usage";
+                if (S.context !== MachineContext.JOB || S.job !== JobReason.PLACE) return "err bad_state";
+                if (S.state !== MachineState.JOB) return "err busy";
+                if ((args[0] === "set") === S.placeSet) return "err bad_state";
+                if (args[0] === "set") S.placeSet = true;
+                else if (args[0] === "reset") S.placeSet = false;
+                else if (args[0] === "ok") S.job = JobReason.BUFFERING;
                 return "ok";
             }
             case "cancel":
                 if (S.state === MachineState.JOB &&
                     (S.job === JobReason.PAUSED || S.job === JobReason.BUFFERING ||
-                     S.job === JobReason.TOOL_WAIT || S.job === JobReason.PREFLIGHT)) {
+                     S.job === JobReason.TOOL_WAIT || S.job === JobReason.PREFLIGHT ||
+                     S.job === JobReason.PLACE)) {
                     S.state = MachineState.IDLE;
                     S.context = MachineContext.IDLE;
                     S.motion = [];

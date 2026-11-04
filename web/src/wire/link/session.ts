@@ -80,7 +80,7 @@ export const FATAL_CRC_LIMIT = 0xe1; // NACK_CRC count exceeded MAX_CRC_ERRORS
 export const FATAL_JOB_LOST = 0xe2; // a job session's job left JOB without its cancel or end
 
 /** Why a job session sends nothing (see Session.held). */
-export type Hold = "paused" | "tool" | "refused" | "silent";
+export type Hold = "place" | "paused" | "tool" | "refused" | "silent";
 
 function delay(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
@@ -186,7 +186,7 @@ export interface ReplayableSource {
     from(layer: number, record: number): PacketSource;
     /** Whether `layer` is one of the job's. */
     hasLayer(layer: number): boolean;
-    /** How many frames open the job, before its first layer. */
+    /** How many frames open the job. The session sends no more until placement signs off. */
     readonly preflightFrames: number;
 }
 
@@ -306,6 +306,7 @@ export class Session {
 
     // Job session only.
     private _jobSeen = false; // a status has shown JOB
+    private _placed = false; // placement signed off: layers may go
     private _ending = false; // cancel() or end() asked
     private _go = false; // resume() asked
     private _pauseAsked = false; // pause() got `ok`
@@ -381,12 +382,19 @@ export class Session {
         this._abortResolve();
     }
 
-    /** Job session: send `cancel`; run() returns true once the job leaves JOB. Resolves to the reply. */
+    /**
+     * Job session: send `cancel`, which ends a job at rest; run() returns true
+     * once the job leaves JOB. Resolves to the reply: refused while moving, the
+     * session carries on and end() is the way to stop.
+     */
     async cancel(): Promise<string> {
         if (!this._job || !this._command) throw new Error("cancel() needs a job session with a command path");
+        const ending = this._ending;
         this._ending = true;
         this._wake();
-        return this._command("cancel");
+        const reply = await this._command("cancel");
+        if (!reply.startsWith("ok")) this._ending = ending;
+        return reply;
     }
 
     /**
@@ -586,6 +594,13 @@ export class Session {
                 continue;
             }
 
+            if (!this._placed && this._base >= this._job!.preflightFrames) {
+                const r = await hold("place");
+                if (r !== null) return r;
+                this._placed = true;
+                continue;
+            }
+
             if (this._next <= this._base) {
                 // All taken: the job runs on until the host ends it.
                 await this._sleep(STATUS_POLL_MS);
@@ -680,7 +695,7 @@ export class Session {
                     const end = this._ended(st);
                     if (end !== undefined) return end;
                     if (!this._ending) {
-                        if (h !== "tool" && st.layer !== undefined && st.layer !== NO_LAYER &&
+                        if (h !== "tool" && h !== "place" && st.layer !== undefined && st.layer !== NO_LAYER &&
                             !this._job!.hasLayer(st.layer)) {
                             this.fatalReason = FATAL_JOB_LOST;
                             return false;
@@ -709,6 +724,8 @@ export class Session {
     /** Leave `h` if the status and the operator allow it, resending from where the job is. */
     private async _leave(h: Hold, st: MachineStatus): Promise<boolean> {
         switch (h) {
+            case "place":
+                return st.reason === JobReason.BUFFERING; // `place ok`
             case "silent":
                 await this._goBack(0x00, 0);
                 return true;
@@ -817,8 +834,11 @@ export class Session {
         // Retransmission first: these are already in _window, never re-pulled.
         let pending = this._window.slice(this._next - this._base);
 
-        if (pending.length === 0 && !this._done) {
-            this._ctx.room = room;
+        // A job pulls nothing past its preflight frames until placement signs off.
+        const gate = this._job && !this._placed ? this._job.preflightFrames - this._emitted : room;
+
+        if (pending.length === 0 && !this._done && gate > 0) {
+            this._ctx.room = Math.min(room, gate);
             this._ctx.inFlight = this._next - this._base;
             this._ctx.emitted = this._emitted;
             this._ctx.acked = this.acked;
