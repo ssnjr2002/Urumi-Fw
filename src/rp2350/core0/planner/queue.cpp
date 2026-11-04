@@ -494,13 +494,17 @@ static float headingDeg(planner::Vec2 d) { return atan2f(d.y, d.x) * (180.0f / (
 
 static double aAbs(const planner::Pos& p) { return (double)p.turns * 360.0 + p.a; }
 
+// Float drift a cable check forgives: a contour's summed turns can land just
+// past ±aMax at a join that sits exactly on it.
+static constexpr double kCableSlackDeg = 0.01;
+
 // The equivalent of heading `h` mod `period` nearest `cur` whose curve, turning
 // `turn` from it, stays inside ±`aMax` (0 = no cable); false if none fits.
 static bool pickA(double cur, float h, float period, float aMax,
                   const planner::BezierTurn& turn, double* out) {
     double c = h + period * round((cur - h) / period);
     if (aMax > 0) {
-        const double hi = aMax - turn.hi, lo = -aMax - turn.lo;
+        const double hi = aMax + kCableSlackDeg - turn.hi, lo = -aMax - kCableSlackDeg - turn.lo;
         if (c > hi) c -= period * ceil((c - hi) / period);
         else if (c < lo) c += period * ceil((lo - c) / period);
         if (c > hi || c < lo) return false;
@@ -520,7 +524,7 @@ static bool pickCentredA(double cur, float h, float period, float aMax, double l
     const double d0 = fabs(c0 + mid), d1 = fabs(c1 + mid);
     const double c = fabs(d0 - d1) < 1e-6 ? (fabs(c0 - cur) <= fabs(c1 - cur) ? c0 : c1)
                                           : (d0 < d1 ? c0 : c1);
-    if (c + hi > aMax || c + lo < -aMax) return false;
+    if (c + hi > aMax + kCableSlackDeg || c + lo < -aMax - kCableSlackDeg) return false;
     *out = c;
     return true;
 }
@@ -633,13 +637,13 @@ PlannerQueueResult plannerQueueRecord(planner::Bezier& b, bool start, bool brk, 
     bool aFits = !swivel || (cable ? pickFit(h0) : pickA(aAbs(e), h0, layerMo.periodDeg, 0, turn, &aTo));
     // A smooth join this record no longer fits from unwinds: lift, A by whole
     // periods from where it is, plunge at the same heading.
-    const bool unwind = cable && !swivel && (aTo + turn.hi > layerMo.aMaxDeg ||
-                                             aTo + turn.lo < -layerMo.aMaxDeg);
+    const double aHi = layerMo.aMaxDeg + kCableSlackDeg, aLo = -aHi;
+    const bool unwind = cable && !swivel && (aTo + turn.hi > aHi || aTo + turn.lo < aLo);
     if (unwind) aFits = pickFit((float)aAbs(e));
     // A chamber layer turns to its chamber during a START's travel and holds it.
     if (chamber && start) aFits = pickA(aAbs(e), layerMo.chamberDeg, 360, layerMo.aMaxDeg, turn, &aTo);
     if (tangential && layerMo.aMaxDeg > 0)
-        aFits = aFits && aTo + turn.hi <= layerMo.aMaxDeg && aTo + turn.lo >= -layerMo.aMaxDeg;
+        aFits = aFits && aTo + turn.hi <= aHi && aTo + turn.lo >= aLo;
     const bool cornerLift = swivel && !start && !dutyStop &&
                             fabs(aTo - aAbs(e)) > layerMo.cornerAngleDeg;
     // A planned duty stop needs a breakDist, sent only on a START or BREAK, so
