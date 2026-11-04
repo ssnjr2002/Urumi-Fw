@@ -500,15 +500,17 @@ A dependent chain, Single Session: every branch after C1 edits
     `place` refusal; after a failed job the page reads status and says whether
     a job is still open. The home xy and home head buttons send the current
     forms.
-  * Bench, from the page: placement and corners, jog in `PLACE`, and a
-    three-layer automatic job with tool changes.
-  * Not benched: stop after each layer, Abort after a reload, the refusal and
-    failure messages, clicking a layer's checkbox, the two home buttons.
+  * Bench, from the page: placement and corners, jog in `PLACE`, a three-layer
+    automatic job with tool changes, layer checkbox clicks, home xy and home
+    head, placement refusals, Abort after a reload, and the failure message
+    with no job left open.
+  * Not benched: stop after each layer; the failure message with a job still
+    open.
   * Findings out of scope: `select` is refused in `TOOL_WAIT`, so `wzero z`
     reaches only the selected head, while `docs/wire_protocol.md` says the next
-    layer's tool can be mounted and zeroed in the same stop. Earlier, a knife
-    layer on a closed ellipse failed with `NACK_SOFT_LIMIT`; the later
-    three-layer run ended without it, cause unconfirmed.
+    layer's tool can be mounted and zeroed in the same stop. A layer on a head
+    whose A is not homed passes preflight and `place ok`, then alarms
+    (`SEQUENCE`, `seqfail=a_not_homed`) at the tool change.
 
 ## Open
 
