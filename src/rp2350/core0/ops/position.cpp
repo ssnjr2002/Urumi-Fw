@@ -172,6 +172,7 @@ void originRecord(uint8_t n, int32_t nodePos, int32_t machineSteps) {
     nodeProbed   &= ~(1u << n);        // measured against the origin just replaced
     uint8_t s = nodeAxis(n);
     if (s != SLOT_NONE) { machinePos[s] = machineSteps; axes_homed |= (1 << s); }
+    else                parkRecord(n, nodePos);   // its rest, until a bind or a park leg
 }
 
 const char* originDatum(const uint8_t* nodes, const int32_t* steps, uint8_t n,
