@@ -593,6 +593,17 @@ export interface StoredPositions {
     readonly mount?: BedPoint;
 }
 
+/**
+ * The rectangle a job's tips stay inside, bed mm (the laser dot on the point).
+ * Absent: the axes' soft ranges alone. Jogs are not confined to it.
+ */
+export interface WorkArea {
+    readonly xMin: number;
+    readonly xMax: number;
+    readonly yMin: number;
+    readonly yMax: number;
+}
+
 export interface MachineConfig {
     readonly x: AxisConfig;
     readonly y: AxisConfig;
@@ -616,6 +627,7 @@ export interface MachineConfig {
     readonly laser?: LaserPointer;
     readonly work: WorkOffset;
     readonly positions: StoredPositions;
+    readonly workArea?: WorkArea;
     /** Relative jogs allowed before homing, without soft limits (testing). */
     readonly jogUnhomed: boolean;
     /** Bed mesh on at boot; the Pico's `mesh on|off` changes it until reboot. */

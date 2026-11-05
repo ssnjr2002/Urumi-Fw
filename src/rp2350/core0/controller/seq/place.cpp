@@ -110,8 +110,9 @@ static void start(void) {
     if (!selectPointer()) { fail("no_pointer"); return; }
     if (const char* why = zsReady()) { fail(why); return; }
     // The zero is written only by `place set`, so the handoff is carried by the dot.
-    route[0][0] = layerHandoff(framesWork(SLOT_X), rangeX) + bbox[0];
-    route[0][1] = layerHandoff(framesWork(SLOT_Y), rangeY) + bbox[2];
+    const bool low = machineCfg().workArea.present;
+    route[0][0] = layerHandoff(framesWork(SLOT_X), rangeX, low) + bbox[0];
+    route[0][1] = layerHandoff(framesWork(SLOT_Y), rangeY, low) + bbox[2];
     openWindow();
     if (const char* why = runRoute(1, true)) fail(why);
 }

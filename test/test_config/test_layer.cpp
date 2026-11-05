@@ -175,6 +175,12 @@ TEST_CASE("the handoff keeps a valid last origin, else the valid one nearest the
     CHECK(layerHandoff(90, { -10, 70 }) == doctest::Approx(0));
 }
 
+TEST_CASE("with a work area the handoff falls back to the lowest valid origin") {
+    CHECK(layerHandoff(40, { 20, 70 }, true) == doctest::Approx(40));
+    CHECK(layerHandoff(90, { 20, 70 }, true) == doctest::Approx(20));
+    CHECK(layerHandoff(90, { -10, 70 }, true) == doctest::Approx(-10));
+}
+
 TEST_CASE("a head fits a tool that needs A only if it has one") {
     MachineCfg c = twoHeads();
     c.heads[1].a.node.present = false;

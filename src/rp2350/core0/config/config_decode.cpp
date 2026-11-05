@@ -250,6 +250,9 @@ static CfgDecodeError checkFrames(const MachineCfg& c) {
     if (p.hasPark && (!inRange(c.x, p.park.x) || !inRange(c.y, p.park.y))) return CFG_DEC_FRAMES;
     if (p.hasLoad && (!inRange(c.x, p.load.x) || !inRange(c.y, p.load.y))) return CFG_DEC_FRAMES;
     if (p.hasMount && (!inRange(c.x, p.mount.x) || !inRange(c.y, p.mount.y))) return CFG_DEC_FRAMES;
+    const CfgWorkArea& w = c.workArea;
+    if (w.present && !(isfinite(w.xMin) && isfinite(w.xMax) && isfinite(w.yMin) && isfinite(w.yMax) &&
+                       w.xMin < w.xMax && w.yMin < w.yMax)) return CFG_DEC_FRAMES;
     return CFG_DEC_OK;
 }
 
@@ -414,6 +417,7 @@ CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out) {
     fm["laser"]       = true;
     fm["work"]        = true;
     fm["positions"]   = true;
+    fm["workArea"]    = true;
     fm["jogUnhomed"]  = true;
     fm["meshOn"]      = true;
     fm["buffer"]      = true;
@@ -482,6 +486,15 @@ CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out) {
     if (pos.isNull() || !readOptPoint(pos["park"], &p.hasPark, &p.park) ||
         !readOptPoint(pos["load"], &p.hasLoad, &p.load) ||
         !readOptPoint(pos["mount"], &p.hasMount, &p.mount)) return CFG_DEC_MISSING;
+
+    JsonVariantConst areaV = m["workArea"];
+    CfgWorkArea& area = out->workArea;
+    area.present = !areaV.isNull();
+    if (area.present) {
+        JsonObjectConst a = areaV;
+        if (a.isNull() || !readFloat(a["xMin"], &area.xMin) || !readFloat(a["xMax"], &area.xMax) ||
+            !readFloat(a["yMin"], &area.yMin) || !readFloat(a["yMax"], &area.yMax)) return CFG_DEC_MISSING;
+    }
 
     if (!readBool(m["jogUnhomed"], &out->jogUnhomed) ||
         !readBool(m["meshOn"], &out->meshOn)) return CFG_DEC_MISSING;

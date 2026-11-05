@@ -237,14 +237,32 @@ static void acceptJobHdr() {
     markAck();
 }
 
-// Tool `tool` on `head`, its bbox [bmin, bmax] on axis k: the work origins it allows.
+// Tool `tool` on `head`, its bbox [bmin, bmax] on axis k: the work origins it
+// allows, inside the work area if there is one.
 static bool toolOrigins(uint8_t k, uint8_t tool, uint8_t head, float bmin, float bmax, OriginRange* out) {
     const MachineCfg& c = machineCfg();
     float lo, hi, dx, dy, blade, off;
     if (!configAxisRange(k ? c.y : c.x, &lo, &hi) || !framesTipOffset(&dx, &dy, head, tool)) return false;
     framesBlade(&blade, &off, head, tool);
     *out = layerOrigins(lo, hi, bmin, bmax, k ? dy : dx, blade);
+    const CfgWorkArea& w = c.workArea;
+    if (w.present) {
+        bool high;
+        layerOriginsNarrow(out, layerOrigins(k ? w.yMin : w.xMin, k ? w.yMax : w.xMax, bmin, bmax, 0, blade), &high);
+    }
     return true;
+}
+
+// A work point's tip inside the work area, its blade included. The tolerance
+// is for a job placed against the border.
+static bool inWorkArea(float wx, float wy) {
+    const CfgWorkArea& w = machineCfg().workArea;
+    if (!w.present) return true;
+    float blade, off;
+    framesBlade(&blade, &off);
+    const float margin = blade - 0.01f;
+    const float x = wx + framesWork(SLOT_X), y = wy + framesWork(SLOT_Y);
+    return x >= w.xMin + margin && x <= w.xMax - margin && y >= w.yMin + margin && y <= w.yMax - margin;
 }
 
 // The tool's power node answers on the bus.
@@ -434,6 +452,7 @@ static void acceptBezier() {
     // Work → machine: a translation, so the analysed fields stand as sent.
     for (int i = 0; i < 4; i++) {
         planner::Vec2& q = bz.p[i];
+        if (!inWorkArea(q.x, q.y)) { sendNack(MSEG_NACK_SOFT_LIMIT); return; }
         if (framesToMachine(q.x, q.y, &q.x, &q.y)) { sendNack(MSEG_NACK_BAD_STATE); return; }
         if (framesCheckXY(q.x, q.y)) { sendNack(MSEG_NACK_SOFT_LIMIT); return; }
     }

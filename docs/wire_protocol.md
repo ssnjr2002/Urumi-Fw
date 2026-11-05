@@ -227,7 +227,9 @@ layer.
 
 **Placement.** In `JOB.PLACE` every Z parks, the laser (without one, the head at the
 anchor) is selected and the dot goes to the job's (xmin, ymin) at the handoff origin:
-the current work XY if valid, else the valid origin nearest machine 0. The operator
+the current work XY if valid, else the lowest valid origin with a `workArea` (the
+job's corner on the border's, as near as the dot reaches), or the valid origin nearest
+machine 0 without one. The operator
 aligns the material to the dot. Leaving, the prior selection returns: a head turns the
 laser off, the anchor keeps it on until a layer selects its head. An estop or alarm
 turns it off.
@@ -285,7 +287,10 @@ below, and opens the layer.
 **Valid origins.** For a tool with tip offset d and blade `offsetMm` b on an axis of
 soft range [lo, hi], work X lies in [lo + b − xmin + d, hi − b − xmax + d]; Y the
 same. The origin must lie in the intersection over the job's tools and the anchor
-(d = 0, b = 0).
+(d = 0, b = 0). With a `workArea`, each tool's work-coordinate bbox, less b, must also
+fit inside it (work + xmin ≥ xMin + b, work + xmax ≤ xMax − b; Y the same), and a
+`BEZIER` with a control point outside is `NACK_SOFT_LIMIT`. Jogs, gotos and tool-change
+moves are not confined to it.
 
 **NACK detail.** Byte 2 of a NACK frame, on `NACK_OUT_OF_RANGE`: bit 0 the axis (X, Y),
 bit 1 the side (low, high), bit 2 `softLimits` off. 0 otherwise.

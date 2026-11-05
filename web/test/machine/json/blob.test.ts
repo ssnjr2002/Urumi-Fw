@@ -73,6 +73,7 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
     { name: "homing_kind", host: false, mutate: (c) => (c.machine.heads[0].z.homing = c.machine.heads[0].a.homing) },
     { name: "no_invert_dir", host: false, mutate: (c) => delete c.machine.y.invertDir },
     { name: "frames", host: true, mutate: (c) => (c.machine.heads[0].xOffset = 5) },
+    { name: "work_area", host: true, mutate: (c) => (c.machine.workArea = { xMin: 10, xMax: 5, yMin: 0, yMax: 10 }) },
     { name: "laser_node", host: true, mutate: (c) => (c.machine.laser = { node: 9 }) },
     { name: "travel", host: false, mutate: (c) => (c.machine.heads[0].z.maxTravel = 0) },
     { name: "no_jog_feed", host: false, mutate: (c) => delete c.machine.x.jogFeed },
@@ -125,6 +126,12 @@ function checkFixture(file: string, bytes: Uint8Array): void {
 describe("config fixtures (shared with the Pico decoder test)", () => {
     it("good.msgpack is the encoded test machine", () => {
         checkFixture("good.msgpack", encodeConfigBlob(testMachine()));
+    });
+
+    it("work_area.msgpack is the test machine with a work area", () => {
+        const config = plain(testMachine());
+        config.machine.workArea = { xMin: 10, xMax: 900, yMin: -70, yMax: 600 };
+        checkFixture("work_area.msgpack", encode({ v: CONFIG_BLOB_VERSION, ...config }));
     });
 
     it("switch.msgpack is the test machine with a switch height", () => {

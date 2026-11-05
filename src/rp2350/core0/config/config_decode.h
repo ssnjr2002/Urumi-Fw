@@ -19,7 +19,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 14u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 15u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      2u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -160,6 +160,13 @@ struct CfgPositions {
     CfgPoint mount;
 };
 
+// The rectangle a job's tips stay inside, bed mm (the laser dot on the point).
+// Absent: the axes' soft ranges alone.
+struct CfgWorkArea {
+    bool  present;
+    float xMin, xMax, yMin, yMax;
+};
+
 struct CfgLaser {
     uint8_t node;   // bus id the laser is wired to, 0 = none; the anchor, (0, 0)
 };
@@ -198,6 +205,7 @@ struct MachineCfg {
     // Z zero.
     CfgPoint work;
     CfgPositions positions;
+    CfgWorkArea workArea;
     bool     jogUnhomed;     // relative jogs before homing, no soft limits (testing)
     bool     meshOn;         // bed mesh on at boot (the `mesh` command changes it)
     CfgBuffer buffer;

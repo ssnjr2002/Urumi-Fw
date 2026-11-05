@@ -24,8 +24,9 @@ bool layerOriginsNarrow(OriginRange* r, const OriginRange& by, bool* high) {
     return r->lo <= r->hi;
 }
 
-float layerHandoff(float last, const OriginRange& r) {
+float layerHandoff(float last, const OriginRange& r, bool low) {
     if (last >= r.lo && last <= r.hi) return last;
+    if (low) return r.lo;
     return r.lo > 0 ? r.lo : r.hi < 0 ? r.hi : 0;
 }
 

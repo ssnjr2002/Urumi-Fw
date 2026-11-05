@@ -221,6 +221,20 @@ TEST_CASE("a probe switch carries its height") {
     CHECK(c.heads[0].probeSwitch.z == doctest::Approx(12.5));
 }
 
+TEST_CASE("a work area is optional") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    CHECK_FALSE(c.workArea.present);
+    b = readBlob("work_area.msgpack");
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    REQUIRE(c.workArea.present);
+    CHECK(c.workArea.xMin == doctest::Approx(10));
+    CHECK(c.workArea.xMax == doctest::Approx(900));
+    CHECK(c.workArea.yMin == doctest::Approx(-70));
+    CHECK(c.workArea.yMax == doctest::Approx(600));
+}
+
 TEST_CASE("an absent node maps to none") {
     std::vector<uint8_t> b = readBlob("good.msgpack");
     MachineCfg c;
@@ -239,6 +253,7 @@ TEST_CASE("each bad blob is rejected for its own reason") {
         {"dup_node", "dup_node"}, {"heads", "heads"}, {"homing", "homing"},
         {"homing_kind", "homing"}, {"no_invert_dir", "missing"},
         {"frames", "frames"}, {"probe_reach", "frames"}, {"switch_height", "frames"},
+        {"work_area", "frames"},
         {"laser_node", "node_id"},
         {"unlock_range", "heads"},
         {"travel", "ceiling"}, {"no_jog_feed", "missing"},

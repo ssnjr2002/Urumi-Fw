@@ -64,6 +64,7 @@ import {
     type LaserPointer,
     type WorkOffset,
     type StoredPositions,
+    type WorkArea,
     type JobBuffer,
     type JobFeed,
 } from "../schema.js";
@@ -186,6 +187,7 @@ interface JsonMachine {
         readonly load?: JsonPoint;
         readonly mount?: JsonPoint;
     };
+    readonly workArea?: { readonly xMin: number; readonly xMax: number; readonly yMin: number; readonly yMax: number };
     readonly jogUnhomed?: boolean;
     readonly meshOn: boolean;
     readonly buffer?: { readonly queueTime?: number; readonly idleTime?: number };
@@ -427,6 +429,7 @@ export function parseConfig(jsonText: string): ConfigResult {
         laser: buildLaser(machine.laser, errors),
         work: buildWork(machine.work, errors),
         positions: buildPositions(machine.positions, errors),
+        workArea: buildWorkArea(machine.workArea, errors),
         jogUnhomed: machine.jogUnhomed ?? false,
         meshOn: machine.meshOn === true,
         buffer: buildBuffer(machine.buffer, errors),
@@ -524,6 +527,17 @@ function buildLaser(j: JsonLaser | null | undefined, errors: string[]): LaserPoi
         return undefined;
     }
     return { node: j.node };
+}
+
+function buildWorkArea(j: JsonMachine["workArea"], errors: string[]): WorkArea | undefined {
+    if (j === undefined) return undefined;
+    if (typeof j !== "object" || j === null ||
+        typeof j.xMin !== "number" || typeof j.xMax !== "number" ||
+        typeof j.yMin !== "number" || typeof j.yMax !== "number") {
+        errors.push("machine.workArea: must be {xMin, xMax, yMin, yMax} in mm");
+        return undefined;
+    }
+    return { xMin: j.xMin, xMax: j.xMax, yMin: j.yMin, yMax: j.yMax };
 }
 
 function buildPositions(j: JsonMachine["positions"], errors: string[]): StoredPositions {

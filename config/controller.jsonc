@@ -19,6 +19,8 @@
     },
     "feed": { "cutFallback": 80, "travelDefault": 80, "plungeFallback": 10, "liftFeed": 10 },   // mm/s; `feed` overrides
     "positions": { "mount": { "x": 200, "y": 150 } },   // anchor, machine mm: a tool change stops here
+    // Where a job's tips stay, laser dot on the border, machine mm; absent: soft limits only.
+    // "workArea": { "xMin": 0, "xMax": 0, "yMin": 0, "yMax": 0 },
     "zClearance": 2,       // mm above the material top for lifts and travel
     "maxOvercut": 0,       // mm a zeroed tip may go below the bed
     "slew": {},

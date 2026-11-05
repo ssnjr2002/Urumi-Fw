@@ -185,6 +185,14 @@ frame is in docs/plans/controller-homing.md.
 * Each tip reaches the anchor's range shifted by its offsets. Checked at job
   preflight (each tool's bbox, shifted by the work offset) and on every jog.
   `select` never moves, so it cannot fail on reach.
+* `machine.workArea` (optional): the rectangle a job's tips stay inside, in
+  `MPos`, read with the laser dot on the border. An edge the dot cannot reach
+  is extrapolated, so it may be negative. Absent: no border.
+* A job's work origin is confined by the intersection of the border, each
+  tool's reach and the anchor's reach, the tightest winning on each side. The
+  anchor counts because the dot previews the job's box, so a border edge
+  beyond the dot's reach is limited by the dot, even where a tip could reach
+  further. Jogs, gotos and tool-change moves keep only the soft limits.
 * Z's lower limit: `WPos` −`maxOvercut` (machine `workZ − maxOvercut`, mesh
   applied), for every move while the head has a work Z. `maxOvercut` is a
   property of the bed, in config. Without a work Z, Z keeps only its axis

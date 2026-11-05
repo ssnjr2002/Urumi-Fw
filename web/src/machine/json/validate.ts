@@ -408,8 +408,19 @@ const hasAnchor: Rule = ({ machine }) => {
     return issues;
 };
 
+/** It may reach past the axes: a border can lie beyond the laser's reach. */
+const workAreaCoherent: Rule = ({ machine }) => {
+    const w = machine.workArea;
+    if (!w) return [];
+    const finite = [w.xMin, w.xMax, w.yMin, w.yMax].every(Number.isFinite);
+    return finite && w.xMin < w.xMax && w.yMin < w.yMax
+        ? []
+        : [error("machine.workArea: needs finite bounds with xMin < xMax and yMin < yMax")];
+};
+
 const RULES: readonly Rule[] = [
     hasAnchor,
+    workAreaCoherent,
     homingCoherent,
     probeCoherent,
     runtimeFieldsInRange,
