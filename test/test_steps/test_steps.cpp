@@ -17,22 +17,18 @@ float      at[4];
 bool       jogFromOk;
 PlannerQueueResult queueResult;
 int        queued, rings;
-bool       hasA, aZeroed;
-CfgAxis    axisA;
 
 void reset() {
     at[0] = at[1] = at[2] = at[3] = 0;
     jogFromOk = true;
     queueResult = PQ_OK;
     queued = rings = 0;
-    hasA = true;
-    aZeroed = false;
     axes_homed = 0x0f;
 }
 }  // namespace
 
 volatile uint8_t axes_homed;
-const CfgAxis* framesAxis(uint8_t k) { return k == SLOT_A && hasA ? &axisA : nullptr; }
+const CfgAxis* framesAxis(uint8_t) { return nullptr; }
 
 bool machineCfgValid() { return true; }
 const MachineCfg& machineCfg() { return cfg; }
@@ -54,8 +50,7 @@ bool plannerJogFrom(float a[4], uint8_t) {
     for (int i = 0; i < 4; i++) a[i] = at[i];
     return jogFromOk;
 }
-PlannerQueueResult plannerQueueLine(float, float, float, uint8_t, bool aZero) {
-    aZeroed = aZero;
+PlannerQueueResult plannerQueueLine(float, float, float, uint8_t) {
     if (queueResult == PQ_OK) queued++;
     return queueResult;
 }
@@ -97,27 +92,10 @@ TEST_CASE("a refused line returns its refusal") {
     CHECK(strcmp(why, "bad_state") == 0);
 }
 
-TEST_CASE("a lock park takes A to 0, even with XY there") {
+TEST_CASE("a line ignores A: at the target with A elsewhere queues nothing") {
     reset();
-    bool q;
     at[3] = 30;
-    CHECK(lineTo(0, 0, 50, &q, true) == nullptr);
-    CHECK(q);
-    CHECK(aZeroed);
-    reset();
-    CHECK(lineTo(0, 0, 50, &q, true) == nullptr);   // A at the lock already
+    bool q = true;
+    CHECK(lineTo(0, 0, 50, &q) == nullptr);
     CHECK_FALSE(q);
-}
-
-TEST_CASE("a lock park: XY only without A, refused with A unhomed") {
-    reset();
-    bool q;
-    hasA = false;
-    CHECK(lineTo(10, 0, 50, &q, true) == nullptr);
-    CHECK_FALSE(aZeroed);
-    reset();
-    axes_homed = 0x07;
-    CHECK(strcmp(lineTo(10, 0, 50, &q, true), "a_not_homed") == 0);
-    CHECK_FALSE(q);
-    CHECK(lineTo(10, 0, 50, &q) == nullptr);   // a plain line does not ask
 }

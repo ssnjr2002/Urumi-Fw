@@ -62,13 +62,8 @@ bool aDeg(uint8_t h, float* deg);
 // A planner refusal as its reply word (`full`, `soft_limit`, …).
 const char* queueText(PlannerQueueResult r);
 
-// A line that unlocks (lineTo's aUnlock) is possible: the selected head has no
-// A, or A is homed. nullptr, or the refusal text.
-const char* aUnlockReady(void);
-
 // RING: a straight XY line to machine mm (x, y) at `feed` mm/s, owned by the
-// live sequence (RING_SEQ); the step ends when the ring drains. `aUnlock`: A
-// rides it to machine 0, unlocking the holder (no A on the head: XY only; A
-// unhomed: a_not_homed). Returns nullptr, or the refusal text; `*queued` is
-// false when it queued nothing (refused, or the head is there already).
-const char* lineTo(float x, float y, float feed, bool* queued, bool aUnlock = false);
+// live sequence (RING_SEQ); the step ends when the ring drains. Returns nullptr,
+// or the refusal text; `*queued` is false when it queued nothing (refused, or
+// the head is there already).
+const char* lineTo(float x, float y, float feed, bool* queued);

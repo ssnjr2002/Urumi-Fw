@@ -160,8 +160,8 @@ frame is in docs/plans/controller-homing.md.
   the wire is in machine coordinates.
 * `select <head> [tool]`: binds the head's Z and A (`axes_map`) and makes it
   the controlled point. It never moves.
-* `select anchor`: offset (0, 0). With a laser, the laser tip; Z and A stay
-  bound as they were. Without one, the head at (0, 0), same as selecting it.
+* `select anchor`: offset (0, 0). With a laser, the laser tip; Z and A are
+  released, except in a held job, which keeps them. Without one, the head at (0, 0), same as selecting it.
   A defined laser is (0, 0) by definition: its config is `laser: {node}`, the
   bus id of the node it is wired to, with no offsets. `select anchor` turns
   it on (when the anchor is the laser); a head switch, by `select` or by a
@@ -367,7 +367,7 @@ motion-sessions jog branches (`jogto` calls into `frames`).
   unmaps (`unstop`, `bus_exclude`) can't leave a stale head: a head needs X,
   Y and its Z/A mapped, else the anchor (laser, X and Y mapped), else none.
   `select n` writes `x y zn an`; `select anchor` maps X and Y if missing and
-  leaves Z and A.
+  unmaps Z and A outside a job.
 * Out of scope: the laser's on/off state can't be read on the wire
   (`nodestat` doesn't report it); a `laser` get key would.
   `bus_exclude` settling `ALARM_BUS_DEGRADED` stays unmapped (decided).

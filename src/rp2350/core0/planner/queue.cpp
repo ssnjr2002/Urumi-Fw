@@ -177,7 +177,7 @@ static planner::Vec2 meshClip(planner::Vec2 to) {
     return at(ok);
 }
 
-PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason, bool aZero) {
+PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason) {
     planner::AxisLimits limits;
     const PlannerQueueResult r = admit(limits, true);
     if (r != PQ_OK) return r;
@@ -196,11 +196,6 @@ PlannerQueueResult plannerQueueLine(float x, float y, float feed, uint8_t reason
     }
     planner::Pos target = plannerRing.end();
     target.setXy(to);
-    if (aZero) target.addA(planner::Pos().aSince(target));
-    // A turning swings a blade's axis about the tip, from a start that must fit.
-    if (fit == PQ_OK && target.aSince(plannerRing.end()) != 0 &&
-        framesCheckXY(plannerRing.end().x, plannerRing.end().y))
-        fit = PQ_SOFT_LIMIT;
     const bool pushed = mine && fit == PQ_OK && plannerRing.pushMove(target, feed, limits, kDeviation, cap);
     spin_unlock(plannerLock, s);
     if (!mine) return PQ_BAD_STATE;

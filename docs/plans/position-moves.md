@@ -42,7 +42,7 @@ goto  park | load | mount | up | unlock [scale]
 | `goto up` | every present Z, to machine park | — | park legs |
 | `goto unlock` | every present A, to machine 0 | no | park legs |
 | `goto park\|load` | anchor, stored position | every Z parks | legs, then planner line |
-| `goto mount` | anchor, stored position; the selected A to unlock along the line | every Z parks | legs, then planner line |
+| `goto mount` | anchor, stored position; A does not move | every Z parks | legs, then planner line |
 | `probe_park <tool>` | as `mount`, the target the tool's switch | every Z parks | legs, then planner line |
 
 * **Absolute XY is the travel move** and always parks Z. Relative XY is the

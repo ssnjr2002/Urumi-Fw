@@ -9,9 +9,8 @@
 
 // Park every present head's Z (LEGS), then the anchor in a straight line to
 // machine mm (mx, my) at `feed` (RING, owner RING_SEQ). X, Y and every present
-// Z must be homed. `aUnlock`: the selected A rides the line to unlock (machine
-// 0), as steps.h lineTo.
-const char* gotoLine(float mx, float my, float feed, bool aUnlock);
+// Z must be homed.
+const char* gotoLine(float mx, float my, float feed);
 
 // Slot k (Z or A, the selected head's) to machine `to` at `feed`, through the
 // planner (RING). That axis must be homed; no Z park.

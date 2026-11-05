@@ -159,19 +159,12 @@ const char* queueText(PlannerQueueResult r) {
     }
 }
 
-const char* aUnlockReady(void) {
-    return framesAxis(SLOT_A) && !(axes_homed & 0x8) ? "a_not_homed" : nullptr;
-}
-
-const char* lineTo(float x, float y, float feed, bool* queued, bool aUnlock) {
+const char* lineTo(float x, float y, float feed, bool* queued) {
     *queued = false;
     float at[4];
     if (!plannerJogFrom(at, RING_SEQ)) return "bad_state";
-    if (aUnlock) if (const char* why = aUnlockReady()) return why;
-    const bool a = aUnlock && framesAxis(SLOT_A);
-    const bool aThere = !a || fabsf(at[3]) < 1e-3f;
-    if (fabsf(x - at[0]) < 1e-3f && fabsf(y - at[1]) < 1e-3f && aThere) return nullptr;
-    const PlannerQueueResult r = plannerQueueLine(x, y, feed, RING_SEQ, a);
+    if (fabsf(x - at[0]) < 1e-3f && fabsf(y - at[1]) < 1e-3f) return nullptr;
+    const PlannerQueueResult r = plannerQueueLine(x, y, feed, RING_SEQ);
     if (r != PQ_OK) return queueText(r);
     sequenceRing();
     *queued = true;

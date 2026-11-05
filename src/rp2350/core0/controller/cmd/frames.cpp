@@ -58,13 +58,15 @@ bool cmdSelect(const char* args) {
     uint8_t head = FRAMES_NONE;
     if (len == 6 && strncmp(w, "anchor", 6) == 0) {
         if (c.laser.node) {
-            // The laser has no slot: map X and Y if missing, Z and A as they are.
+            // The laser has no slot: map X and Y if missing and release Z and A,
+            // so no jog moves a head. A held job keeps them to resume on.
             const char* why = nullptr;
-            if (axesReqAt(SLOT_X) == SLOT_NONE || axesReqAt(SLOT_Y) == SLOT_NONE) {
+            const bool job = machineContext == CTX_JOB;
+            if (!job || axesReqAt(SLOT_X) == SLOT_NONE || axesReqAt(SLOT_Y) == SLOT_NONE) {
                 uint8_t map[4];
                 configSlotMap(c, c.defaultHead, SLOT_NONE, map);
-                map[SLOT_Z] = axesReqAt(SLOT_Z);
-                map[SLOT_A] = axesReqAt(SLOT_A);
+                map[SLOT_Z] = job ? axesReqAt(SLOT_Z) : SLOT_NONE;
+                map[SLOT_A] = job ? axesReqAt(SLOT_A) : SLOT_NONE;
                 axesMapApply(map, /*keepWrongType=*/false, &why);
             }
             if (!framesSelectLaser() && !why) why = "unmapped";

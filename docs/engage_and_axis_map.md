@@ -372,9 +372,9 @@ bitmasks are advisory and enforce nothing). Unmapped is not an alarm: with no ma
 requested since the last soft reset the machine is IDLE with nothing bound.
 Motion gating on an unmapped machine is later work
 (docs/plans/state-handling.md). The map comes from the stored config
-(docs/plans/pico-config.md): the Pico's controller commits the config's
-`defaultHead` map itself, through the same `axesMapApply` path as a host
-`axes_map`.
+(docs/plans/pico-config.md): the Pico's controller selects the laser anchor
+itself (X and Y bound, laser on), or with no laser commits the config's
+`defaultHead` map, through the same `axesMapApply` path as a host `axes_map`.
 
 ```
 boot / soft reset                  → sweep: make-safe to every bus id

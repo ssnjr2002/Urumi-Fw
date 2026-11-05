@@ -7,8 +7,9 @@
 // web/src/controller does moves here over time (docs/plans/pico-config.md).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Commit the config's defaultHead axis map through axesMapApply, as a host
-// `axes_map` would. Without a valid config nothing is requested and the machine
+// Select the laser anchor, as `select anchor` (X and Y mapped, laser on); with
+// no laser, commit the config's defaultHead axis map. Both go through
+// axesMapApply, as a host `axes_map` would. Without a valid config nothing is requested and the machine
 // settles IDLE, unmapped; a node that does not answer, or is not a stepper,
 // leaves it in ALARM with F_UNMAPPED. Needs Core 1
 // running (it goes to the bus), so it runs in the boot sequence after the

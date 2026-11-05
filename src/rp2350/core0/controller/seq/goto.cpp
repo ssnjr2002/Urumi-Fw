@@ -16,7 +16,6 @@
 
 static float   targetX, targetY, feed;
 static bool    lining;          // the line is queued, or there is none to come
-static bool    unlock;           // A rides the line to unlock
 static char    refusal[40];
 static uint8_t turnHead = 0xFF; // gotoHead: the head whose A turns next, or none
 static float   turnTo;
@@ -31,7 +30,7 @@ static bool gotoNext(uint8_t) {
     if (lining) return false;
     lining = true;
     bool queued;
-    if (const char* why = lineTo(targetX, targetY, feed, &queued, unlock)) {
+    if (const char* why = lineTo(targetX, targetY, feed, &queued)) {
         sequenceFail(why);
         return false;
     }
@@ -60,9 +59,8 @@ static const char* legs(const char* (*arm)(void)) {
     return nullptr;
 }
 
-const char* gotoLine(float mx, float my, float f, bool aUnlock) {
+const char* gotoLine(float mx, float my, float f) {
     if ((axes_homed & 0x3) != 0x3) return "not_homed";
-    if (aUnlock) if (const char* why = aUnlockReady()) return why;
     uint8_t zs[CFG_MAX_HEADS];
     const uint8_t nz = headZNodes(zs);
 
@@ -80,13 +78,12 @@ const char* gotoLine(float mx, float my, float f, bool aUnlock) {
     targetX = mx;
     targetY = my;
     feed    = f;
-    unlock  = aUnlock;
     open(true);
     if (nz) return legs(parkZs);
     // No Z to park: the line is the first step, refused as the command.
     lining = true;
     bool queued;
-    const char* why = lineTo(targetX, targetY, feed, &queued, unlock);
+    const char* why = lineTo(targetX, targetY, feed, &queued);
     if (!queued) sequenceEnd();
     return why;
 }

@@ -4,9 +4,8 @@
 // m targets are machine units (X and Y the anchor's, as mpos), w targets work
 // units (XY the selected tip, framesToMachine; Z and A framesWorkToMachine). A
 // name is a stored position, or `probe` the selected head's switch under its
-// mounted tool's tip (framesNamed). XY forms park the Zs first; `mount` and
-// `probe` turn the selected A to unlock (machine 0) along the line. Feeds
-// are jogFeed × scale, capped at maxFeed. `ok` once it starts.
+// mounted tool's tip (framesNamed). XY forms park the Zs first. Feeds are
+// jogFeed × scale, capped at maxFeed. `ok` once it starts.
 
 #include <Arduino.h>
 #include <ctype.h>
@@ -55,11 +54,11 @@ static bool word(const char** p, char* w, size_t n) {
     return i > 0;
 }
 
-static const char* gotoXY(float mx, float my, float scale, bool unlock) {
+static const char* gotoXY(float mx, float my, float scale) {
     const MachineCfg& c = machineCfg();
     const float f = fminf(capped(c.x, scale), capped(c.y, scale));
     if (!(f > 0)) return "no_feed";
-    return gotoLine(mx, my, f, unlock);
+    return gotoLine(mx, my, f);
 }
 
 static const char* run(const char* args) {
@@ -78,7 +77,7 @@ static const char* run(const char* args) {
         if (!parseArgs(p, v, 0, &scale)) return "usage";
         float m[2];
         if (const char* why = framesNamed(w, &m[0], &m[1])) return why;
-        return gotoXY(m[0], m[1], scale, strcmp(w, "mount") == 0 || strcmp(w, "probe") == 0);
+        return gotoXY(m[0], m[1], scale);
     }
 
     const bool work = w[0] == 'w';
@@ -87,7 +86,7 @@ static const char* run(const char* args) {
         if (!parseArgs(p, v, 2, &scale)) return "usage";
         float m[2] = {v[0], v[1]};
         if (work) if (const char* why = framesToMachine(v[0], v[1], &m[0], &m[1])) return why;
-        return gotoXY(m[0], m[1], scale, false);
+        return gotoXY(m[0], m[1], scale);
     }
     const uint8_t k = strcmp(w, "z") == 0 ? SLOT_Z : strcmp(w, "a") == 0 ? SLOT_A : 0xFF;
     if (k == 0xFF || !parseArgs(p, v, 1, &scale)) return "usage";

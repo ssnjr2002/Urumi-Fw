@@ -17,8 +17,10 @@ void controllerApplyDefaultMap() {
     const MachineCfg& cfg = machineCfg();
     uint8_t map[4];
     configSlotMap(cfg, cfg.defaultHead, SLOT_NONE, map);
+    if (cfg.laser.node) map[SLOT_Z] = map[SLOT_A] = SLOT_NONE;   // as `select anchor`
     // Quiet: nothing asked for this, so there is no command to answer. The
     // outcome is the state axesMapApply leaves behind. A wrong type in the
     // config is kept pending rather than refused, so it shows as NODE_FAULT.
     axesMapApply(map, /*keepWrongType=*/true);
+    if (cfg.laser.node) framesSelectLaser();
 }
