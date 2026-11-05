@@ -46,8 +46,9 @@ void sendStatusRsp() {
     uint8_t tools[CFG_MAX_HEADS];
     for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) tools[h] = h < heads ? toolsMounted(h) : 0;
     float wpos[4];
+    const uint8_t axesHomed = axes_homed;
     for (uint8_t i = 0; i < 4; i++)
-        if (!framesWPos(i, &wpos[i])) wpos[i] = NAN;
+        if (!framesWPos(i, &wpos[i]) || !(axesHomed & (1u << i))) wpos[i] = NAN;
     uint16_t layer  = 0xFFFF;
     uint32_t record = 0;
     uint8_t  ctx    = CTX_IDLE;

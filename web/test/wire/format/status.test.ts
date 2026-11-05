@@ -14,7 +14,6 @@ import {
     JobReason,
     AXIS_BITS,
     axisMask,
-    MachineStatus,
     parseGetReply,
     getValue,
     statusFromGet,
@@ -150,13 +149,6 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(st.context).toBe(MachineContext.JOB);
     });
 
-    it("leaves the text-plane slot masks undefined", () => {
-        const st = parseStatusRsp(REF_JOB);
-        expect(st.axesHomed).toBeUndefined();
-        expect(st.axesEnabled).toBeUndefined();
-        expect(st.homed("x")).toBe(false);
-    });
-
     it("round-trips the IDLE vector exactly", () => {
         const st = parseStatusRsp(REF_IDLE);
         expect(st.state).toBe(MachineState.IDLE);
@@ -231,10 +223,11 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
     const parse = (line: string) => statusFromGet(parseGetReply(line));
 
     it("parses a standard reply", () => {
-        const st = parse("state=9 enabled=0x0f homed=0x0f faults=0x0000 job=3");
+        const st = parse("state=9 enabled=0x01e homed=0x018 latched=0x004 faults=0x0000 job=3");
         expect(st.state).toBe(MachineState.JOB);
-        expect(st.axesEnabled).toBe(0x0f);
-        expect(st.axesHomed).toBe(0x0f);
+        expect(st.nodeEnabled).toBe(0x01e);
+        expect(st.nodeHomed).toBe(0x018);
+        expect(st.nodeLatched).toBe(0x004);
         expect(st.faults).toBe(0);
         expect(st.reason).toBe(JobReason.PAUSED);
     });
@@ -255,7 +248,7 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
     });
 
     it("reads the node, selection and work position keys", () => {
-        const st = parse("state=0 homed=0x00 nodeenabled=0x01e head=1 tools=2,5 wpos=1.500,-2.000,-,-");
+        const st = parse("state=0 homed=0x00 enabled=0x01e head=1 tools=2,5 wpos=1.500,-2.000,-,-");
         expect(st.nodeEnabled).toBe(0x01e);
         expect(st.selection).toBe(1);
         expect(st.tools).toEqual([2, 5]);
@@ -276,8 +269,8 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
     it("defaults enabled to 0 when absent", () => {
         const st = parse("state=9 homed=0x03");
         expect(st.state).toBe(MachineState.JOB);
-        expect(st.axesEnabled).toBe(0);
-        expect(st.axesHomed).toBe(0x03);
+        expect(st.nodeEnabled).toBe(0);
+        expect(st.nodeHomed).toBe(0x03);
     });
 
     it("tolerates unknown trailing tokens (forward-compat)", () => {
@@ -299,22 +292,20 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
         expect(() => parse("state=0 enabled=0x0f")).toThrow(/lacks state or homed/);
     });
 
-    it("parses homecycle and nodehomed", () => {
-        const st = parse("state=5 homed=0x00 homing=0 probed=0 homecycle=2 nodehomed=0x018");
+    it("parses homecycle", () => {
+        const st = parse("state=5 homed=0x00 homing=0 probed=0 homecycle=2");
         expect(st.homeCycle).toBe(2);
-        expect(st.nodeHomed).toBe(0x18);
     });
 
-    it("leaves homecycle and nodehomed undefined when absent", () => {
+    it("leaves homecycle undefined when absent", () => {
         const st = parse("state=0 homed=0x0f");
         expect(st.homeCycle).toBeUndefined();
-        expect(st.nodeHomed).toBeUndefined();
     });
 });
 
 describe("wire/format/status: get reply", () => {
     it("keeps keys in reply order with their raw values", () => {
-        const r = parseGetReply("pos=1,-2,3,4 homed=0x0f homefail=- bogus=!");
+        const r = parseGetReply("pos=1:-2,3:- homed=0x0f homefail=- bogus=!");
         expect([...r.keys()]).toEqual(["pos", "homed", "homefail", "bogus"]);
         expect(r.get("homefail")).toBe("-");
     });
@@ -338,10 +329,10 @@ describe("wire/format/status: get reply", () => {
         const withMarkers = statusFromGet(parseGetReply(
             "state=3 enabled=0x00 homed=0x01 faults=0x0010 job=- latched=0x00 homefail=2 " +
             "homenode=3 cfgerr=- homing=- probing=- probe=- retries=- psteps=- probed=0 " +
-            "pz=- homecycle=? nodehomed=0x008 future=!"));
+            "pz=- homecycle=? future=!"));
         const without = statusFromGet(parseGetReply(
             "state=3 enabled=0x00 homed=0x01 faults=0x0010 job=- latched=0x00 homefail=2 " +
-            "homenode=3 probed=0 nodehomed=0x008"));
+            "homenode=3 probed=0"));
         expect(withMarkers).toEqual(without);
     });
 
@@ -358,35 +349,3 @@ describe("wire/format/status: get reply", () => {
     });
 });
 
-describe("wire/format/status: MachineStatus helpers", () => {
-    // axesHomed=0x06 (Y+Z homed, X+A not), axesEnabled=0x0f (all energised)
-    const st = new MachineStatus(
-        MachineState.IDLE,
-        0x06,
-        0x0f,
-        0,
-        0,
-    );
-
-    it("homed(axis) reads the homed mask", () => {
-        expect(st.homed("x")).toBe(false); // bit0 not in 0x06
-        expect(st.homed("y")).toBe(true); // bit1 in 0x06
-        expect(st.homed("z")).toBe(true); // bit2 in 0x06
-        expect(st.homed("a")).toBe(false); // bit3 not in 0x06
-    });
-
-    it("enabled(axis) reads the enabled mask", () => {
-        expect(st.enabled("x")).toBe(true); // bit0 in 0x0f
-        expect(st.enabled("a")).toBe(true); // bit3 in 0x0f
-    });
-
-    it("allHomed requires every bit", () => {
-        expect(st.allHomed(0x06)).toBe(true);
-        expect(st.allHomed(0x0f)).toBe(false); // x + a missing from 0x06
-    });
-
-    it("allEnabled requires every bit", () => {
-        expect(st.allEnabled(0x0f)).toBe(true);
-        expect(st.allEnabled(0x10)).toBe(false); // bit4 not in 0x0f
-    });
-});

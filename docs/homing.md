@@ -768,10 +768,10 @@ state to change — nothing moved.
 
 #### Reporting it: `latched=` on the text plane only
 
-`get` reports it as the `latched` key:
+`get` reports it as the `latched` key, bit n = bus node n, bound or not:
 
 ```
-latched=0x00
+latched=0x000
 ```
 
 Firmware that predates it answers `latched=!`, so a new host reading old

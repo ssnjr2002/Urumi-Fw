@@ -442,8 +442,8 @@ packets by inserting the byte at a packet boundary.
 [1]      machineState  uint8   — 0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
 [2]      reason        uint8   — the current state's reason: `job=`, `jogging=`, `homing=` or `probing=`; 0 otherwise
 [3..4]   faults        uint16 LE — fault mask (below)
-[5..6]   nodeEnabled   uint16 LE — bit n = bus node n enabled, mapped or not (`get nodeenabled`)
-[7..8]   nodeHomed     uint16 LE — bit n = bus node n holds an origin (`get nodehomed`)
+[5..6]   nodeEnabled   uint16 LE — bit n = bus node n enabled, mapped or not (`get enabled`)
+[7..8]   nodeHomed     uint16 LE — bit n = bus node n holds an origin (`get homed`)
 [9]      selection     uint8   — the controlled point: head index, 0xFE anchor, 0xFF none (`get head`)
 [10..11] tools[2]      uint8   — the tool id each head has mounted, head order; 0 none or no such head (`get tools`)
 [12..27] wpos[4]       float32 LE — work position x, y, z, a, mm and degrees; NaN with no value (`get wpos`)
@@ -628,14 +628,14 @@ one namespace. A key asked for twice is printed once, where first asked, so
 `get status homed` prints `homed` once.
 
 ```
-status = state ctx homed enabled nodehomed nodeenabled head tools unlocked pos mpos wpos buf mute excluded touched mesh
+status = state ctx homed enabled head tools unlocked mpos wpos buf mute excluded touched mesh
 ```
 
 ```
 state=<s>     machineState    0=IDLE 2=ESTOP 3=ALARM 5=HOMING 6=PROBING 7=JOGGING 8=TRAVERSE 9=JOB (1 and 4 retired)
 ctx=<c>       machineContext  0=IDLE 1=JOB 2=PROBE 3=HOMING
-enabled=<hex> axes_enabled    bitmask, bit0=X bit1=Y bit2=Z bit3=A — energised axes
-homed=<hex>   axes_homed      bitmask, bit0=X bit1=Y bit2=Z bit3=A (e.g. 0x0f = all)
+enabled=<hex> nodeEnabled     bitmask, bit n = bus node n enabled, mapped or not
+homed=<hex>   originMask      bitmask, bit n = bus node n holds an origin, mapped or not
 faults=<hex>  machineFaults   fault mask, as STATUS_RSP (e.g. 0x0004)
 job=<j>       jobReason       0=BUFFERING 1=RUNNING 2=HOLDING 3=PAUSED 4=ABORTING 5=TOOL_CHANGE 6=TOOL_WAIT 7=DWELL  (only while ctx=1)
 resume_layer=<l>   the layer a paused job resumes at  (only while job=3)
@@ -644,7 +644,7 @@ liftreason=<r>,…   the latest lift's reasons: end corner duty deadline unwind 
 liftcount=<n>      lifts begun since the job opened  (only while state=JOB)
 toolon=<0|1>       the powered tool's switch  (only while state=JOB, with a powered tool)
 onms=<ms>          its duty on-time since the duty's last reset, the open span included  (as toolon)
-latched=<hex> homingLatched   bitmask per slot, an axis held by a latched limit
+latched=<hex> nodeLatched     bitmask, bit n = bus node n held by a latched limit, mapped or not
 homefail=<f>  homingFailWhy   LEGFAIL_* of the leg that failed  (only with the HOMING fault)
 homenode=<n>  homingFailNode  bus id of that leg's node, 0 for a dummy leg  (with homefail)
 seq=<s>       sequenceId      the running sequence, else the one that failed (with the SEQUENCE, HOMING or PROBE fault): 1=LEG 2=TRAVERSE 3=HOME 4=RECOVERY 5=GOTO 6=TOOL_CHANGE
@@ -660,15 +660,13 @@ psteps=<n>    last leg steps  (with probing)
 probed=<0|1>  a probe height is held for the Z in slot 2
 pz=<z>        that height in steps  (only with probed=1)
 homecycle=<k> homingHeld      the cycle a `home` run is in  (only while one runs)
-nodehomed=<hex> originMask    bitmask, bit n = bus node n holds an origin, mapped or not
-nodeenabled=<hex> nodeEnabled bitmask, bit n = bus node n enabled, mapped or not
 mute=<hex> excluded=<hex> touched=<hex>  bus id masks, bit n = node n (core0/ops/bus.h)
 buf=<n>              planner blocks queued
 queued=<us>          the motion time of the queued blocks not yet started, µs
 expectedseq=<n>      the next wire seq the data plane will execute; informational, not flow control (ACKs advance the window)
-pos=<x>,<y>,<z>,<a>  machinePos  steps, slot order; never a sentinel, gate on homed
-mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` for an unbound Z/A
-wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetMm`) − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; X/Y `-` with no head, Z `-` until the head's Z is zeroed
+pos=<n>:<steps>,…    debug: each config axis node's machine position, id order; `<n>:-` while unhomed or not known. What the Pico believes; `nodepos` reads the node's counter
+mpos=<x>,<y>,<z>,<a> machine position, units (mm, deg), + physical; `-` while unbound or unhomed
+wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetMm`) − work offset; A the edge heading (MPos + the mounted tool's `aOffsetDeg`) folded to (−180, 180]; `-` while unbound or unhomed, X/Y `-` with no head, Z `-` until the head's Z is zeroed. STATUS_RSP carries NaN for each `-`
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
 laser=<on|off>       the laser as its node last acked a `CMD_LASER`, not the pin  (`?` before the first command or after a failed one, `-` with no laser)
 tools=<id>,…         the tool id each head has mounted (`mount`), head order, `-` for none  (`-` without a config)

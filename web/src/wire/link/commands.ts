@@ -61,7 +61,7 @@ export const STATE_KEYS = [
     "state", "ctx", "enabled", "homed", "faults", "job", "latched",
     "homefail", "homenode", "cfgerr", "homing",
     "probing", "probe", "retries", "psteps", "probed", "pz",
-    "homecycle", "nodehomed", "seqfail", "seq",
+    "homecycle", "seqfail", "seq",
 ] as const;
 
 /**
@@ -90,16 +90,6 @@ export async function getState(link: Link): Promise<MachineStatus> {
 /** Binary status snapshot (STATUS_REQ / STATUS_RSP) — the cheaper poll. */
 export function getStatus(link: Link): Promise<MachineStatus> {
     return link.getStatus();
-}
-
-/** Absolute machinePos in steps via `get pos`: [x, y, z, a], slot order. */
-export async function getPos(link: Link): Promise<readonly [number, number, number, number]> {
-    const v = getValue(await get(link, ["pos"]), "pos");
-    const p = (v ?? "").split(",").map((s) => parseInt(s, 10));
-    if (p.length !== 4 || p.some((n) => !Number.isInteger(n))) {
-        throw new Error(`bad get pos value: ${JSON.stringify(v)}`);
-    }
-    return [p[0]!, p[1]!, p[2]!, p[3]!];
 }
 
 // ── frames (docs/plans/coordinate-system.md) ──────────────────────────────────

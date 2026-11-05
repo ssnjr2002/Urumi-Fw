@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include "table.h"
 #include "../ops/position.h"
+#include "../ops/axes_map.h"
 #include "../ops/homing.h"
 #include "../ops/probe.h"
 #include "../ops/frames.h"
@@ -29,8 +30,8 @@ namespace {
 // Everything a key can report, read up front so the reply describes one
 // instant rather than the span of the print.
 struct Snap {
-    uint8_t  state, ctx, enabled, homed, job, latched;
-    uint16_t faults;
+    uint8_t  state, ctx, job;
+    uint16_t faults, nodeLatched;
     uint8_t  homingReason, homeFailWhy, homeFailNode, homeCycle;
     uint8_t  probingReason, probeCause, probeRetries, ringOwner;
     int32_t  probeSteps;
@@ -40,7 +41,8 @@ struct Snap {
     uint16_t buf, mute, excluded, touched;
     uint32_t queuedUs;
     uint8_t  expectedSeq;
-    int32_t  pos[4];
+    int32_t  nodePos[BUS_ADDR_MAX + 1];
+    uint16_t nodeAxes, nodePosOk;   // bit n = node n: a config axis; nodePos[n] is valid
     float    mpos[4], wpos[4];
     bool     mposOk[4], wposOk[4];
     uint8_t  head, laserNode;
@@ -80,12 +82,10 @@ uint32_t dutyOnTime() {
 void takeSnap(Snap& s) {
     s.state         = machineState;
     s.ctx           = machineContext;
-    s.enabled       = axes_enabled;
-    s.homed         = axes_homed;
     s.faults        = machineFaults();
     s.job           = jobReason;
     s.resumeOk      = plannerResumePoint(&s.resumeLayer, &s.resumeRecord);
-    s.latched       = homingLatched;
+    s.nodeLatched   = nodeLatchMask();
     s.homingReason  = homingReason;
     s.homeFailWhy   = homingFailWhy();
     s.homeFailNode  = homingFailNode();
@@ -122,10 +122,17 @@ void takeSnap(Snap& s) {
         spin_unlock(plannerLock, k);
         s.queuedUs = (uint32_t)(q * 1e6f);
     }
-    for (uint8_t i = 0; i < 4; i++) s.pos[i] = machinePos[i];
+    s.nodeAxes = s.nodePosOk = 0;
+    for (uint8_t n = 1; n <= BUS_ADDR_MAX; n++) {
+        if (!axisNodeInConfig(n)) continue;
+        s.nodeAxes |= 1u << n;
+        if (nodeMachineSteps(n, &s.nodePos[n])) s.nodePosOk |= 1u << n;
+    }
+    const uint8_t homed = axes_homed;
     for (uint8_t i = 0; i < 4; i++) {
-        s.mposOk[i] = framesMPos(i, &s.mpos[i]);
-        s.wposOk[i] = framesWPos(i, &s.wpos[i]);
+        const bool h = homed & (1u << i);
+        s.mposOk[i] = framesMPos(i, &s.mpos[i]) && h;
+        s.wposOk[i] = framesWPos(i, &s.wpos[i]) && h;
     }
     s.head = framesSelected();
     s.late = plannerExec.lateAdoptions();
@@ -158,8 +165,8 @@ KeyResult fmtU(char* out, size_t n, unsigned v)            { snprintf(out, n, "%
 KeyResult fmtL(char* out, size_t n, long v)                { snprintf(out, n, "%ld", v); return KEY_OK; }
 KeyResult fmtHex(char* out, size_t n, unsigned v, int w)   { snprintf(out, n, "0x%0*x", w, v); return KEY_OK; }
 
-// x,y,z,a in units, `-` for a slot with no value (an unbound Z/A, or X/Y
-// with no head selected for wpos).
+// x,y,z,a in units, `-` for no position in this frame: unbound, unhomed, or no
+// work zero or selection for wpos.
 KeyResult fmtUnits(char* out, size_t n, const float* v, const bool* ok) {
     size_t at = 0;
     for (uint8_t i = 0; i < 4 && at < n; i++) {
@@ -182,6 +189,20 @@ KeyResult fmtLift(char* out, size_t n, uint8_t mask) {
     return KEY_OK;
 }
 
+// `<node>:<steps>` per config axis node, id order; `-` steps with no position.
+KeyResult fmtNodePos(char* out, size_t n, const Snap& s) {
+    if (!s.nodeAxes) return KEY_NA;
+    size_t at = 0;
+    for (uint8_t b = 1; b <= BUS_ADDR_MAX && at < n; b++) {
+        if (!(s.nodeAxes & (1u << b))) continue;
+        const char* sep = at ? "," : "";
+        at += (s.nodePosOk & (1u << b))
+            ? snprintf(out + at, n - at, "%s%u:%ld", sep, b, (long)s.nodePos[b])
+            : snprintf(out + at, n - at, "%s%u:-", sep, b);
+    }
+    return KEY_OK;
+}
+
 KeyResult fmtMesh(char* out, size_t n, const Snap& s) {
     if (s.meshFile == MESH_FILE_ABSENT) snprintf(out, n, "flat");
     else if (s.meshFile == MESH_FILE_BAD) snprintf(out, n, "bad");
@@ -195,9 +216,10 @@ struct Key { const char* name; KeyFn fn; };
 const Key kKeys[] = {
     { "state",     [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.state); } },
     { "ctx",       [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.ctx); } },
-    { "enabled",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.enabled, 2); } },
-    { "homed",     [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.homed, 2); } },
-    { "faults",    [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.faults, 4); } },
+    // Bus ids, bit n = node n, bound or not, as STATUS_RSP.
+    { "enabled",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.nodeEnabled, 3); } },
+    { "homed",     [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.nodeHomed, 3); } },
+    { "faults",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.faults, 4); } },
     { "job",       [](const Snap& s, char* o, size_t n) {
         return s.ctx == CTX_JOB ? fmtU(o, n, s.job) : KEY_NA; } },
     // Where a paused job resumes: the LAYER_HDR's layer and record.
@@ -215,7 +237,7 @@ const Key kKeys[] = {
         return s.state == STATE_JOB && s.powered ? fmtU(o, n, s.toolOn ? 1 : 0) : KEY_NA; } },
     { "onms",      [](const Snap& s, char* o, size_t n) {
         return s.state == STATE_JOB && s.powered ? fmtU(o, n, (unsigned)s.onMs) : KEY_NA; } },
-    { "latched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.latched, 2); } },
+    { "latched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.nodeLatched, 3); } },
     // See homing.h for what the codes point at; homenode is 0 for a dummy leg.
     { "homefail",  [](const Snap& s, char* o, size_t n) {
         return homeFailed(s) ? fmtU(o, n, s.homeFailWhy) : KEY_NA; } },
@@ -255,10 +277,6 @@ const Key kKeys[] = {
         return s.probed ? fmtL(o, n, s.pz) : KEY_NA; } },
     { "homecycle", [](const Snap& s, char* o, size_t n) {
         return s.homeCycle ? fmtU(o, n, s.homeCycle) : KEY_NA; } },
-    // Nodes holding an origin, mapped or not; `homed` covers bound axes only.
-    { "nodehomed", [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.nodeHomed, 3); } },
-    // Enabled nodes, mapped or not; `enabled` covers bound axes only.
-    { "nodeenabled", [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.nodeEnabled, 3); } },
     // Bus ids, bit n = node n (ops/bus.h).
     { "mute",      [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.mute, 3); } },
     { "excluded",  [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.excluded, 3); } },
@@ -268,11 +286,9 @@ const Key kKeys[] = {
     { "queued",    [](const Snap& s, char* o, size_t n) { return fmtU(o, n, (unsigned)s.queuedUs); } },
     // The next wire seq the data plane will execute; not flow control.
     { "expectedseq", [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.expectedSeq); } },
-    // machinePos in steps, slot order. Never a sentinel: gate on `homed`.
-    { "pos",       [](const Snap& s, char* o, size_t n) {
-        snprintf(o, n, "%ld,%ld,%ld,%ld", (long)s.pos[0], (long)s.pos[1],
-                 (long)s.pos[2], (long)s.pos[3]);
-        return KEY_OK; } },
+    // Debug: each axis node's machine position, steps. What the Pico believes;
+    // `nodepos` reads the node's own counter.
+    { "pos",       [](const Snap& s, char* o, size_t n) { return fmtNodePos(o, n, s); } },
     // Machine and work position, units (docs/plans/coordinate-system.md).
     { "mpos",      [](const Snap& s, char* o, size_t n) { return fmtUnits(o, n, s.mpos, s.mposOk); } },
     { "wpos",      [](const Snap& s, char* o, size_t n) { return fmtUnits(o, n, s.wpos, s.wposOk); } },
@@ -318,8 +334,8 @@ uint8_t findKey(const char* name, size_t len);
 
 // A group stands for its keys, in order. Group and key names share one namespace.
 const char* const kStatusKeys[] = {
-    "state", "ctx", "homed", "enabled", "nodehomed", "nodeenabled", "head", "tools",
-    "unlocked", "pos", "mpos", "wpos", "buf", "mute", "excluded", "touched", "mesh",
+    "state", "ctx", "homed", "enabled", "head", "tools",
+    "unlocked", "mpos", "wpos", "buf", "mute", "excluded", "touched", "mesh",
 };
 struct Group { const char* name; const char* const* keys; uint8_t count; };
 const Group kGroups[] = {
@@ -363,7 +379,7 @@ void printKeys(const Snap& s, const uint8_t* idx, const char* const* names,
                const uint8_t* lens, uint8_t count) {
     bool first = true;
     for (uint8_t i = 0; i < count; i++) {
-        char val[64];
+        char val[96];   // `pos`: six axis nodes of up to 15 characters
         const char* v = val;
         if (idx[i] == KEY_UNKNOWN) {
             // config.<path>: a field of the active config, by its blob path.

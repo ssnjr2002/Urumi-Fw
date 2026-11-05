@@ -42,6 +42,7 @@ static uint16_t nodeLatched = 0;
 uint8_t homingLatched = 0;
 
 bool nodeLatchGet(uint8_t n) { return n <= BUS_ADDR_MAX && (nodeLatched & (1u << n)); }
+uint16_t nodeLatchMask(void) { return nodeLatched; }
 
 void nodeLatchSet(uint8_t n, bool latched) {
     if (n > BUS_ADDR_MAX) return;

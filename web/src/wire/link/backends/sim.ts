@@ -128,7 +128,7 @@ const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
     "state", "ctx", "enabled", "homed", "faults", "job", "latched",
-    "probed", "pz", "nodehomed", "pos", "jogging",
+    "probed", "pz", "pos", "jogging",
 ] as const;
 
 export class SimTransport implements Transport {
@@ -374,7 +374,8 @@ export class SimTransport implements Transport {
                     // No frames: the work origin is the machine's, head 0 selected.
                     selection: 0,
                     tools: [this.mounted.get(0) ?? 0, this.mounted.get(1) ?? 0],
-                    wpos: [0, 1, 2, 3].map((k) => this.pos[k]! / this.jogSpm[k]!) as
+                    wpos: [0, 1, 2, 3].map((k) =>
+                        this.axesHomed & (1 << k) ? this.pos[k]! / this.jogSpm[k]! : NaN) as
                         [number, number, number, number],
                     bufCount: this.motion.length,
                     layer: this._execPoint()?.layer,
@@ -1251,25 +1252,39 @@ export class SimTransport implements Transport {
         const hex = (v: number, w: number) => `0x${v.toString(16).padStart(w, "0")}`;
         switch (key) {
             case "state":     return String(this.state);
-            case "enabled":   return hex(this.axesEnabled, 2);
-            case "homed":     return hex(this.axesHomed, 2);
+            case "enabled":   return hex(this._nodeEnabled(), 3);
+            case "homed":     return hex(this._nodeHomedMask(), 3);
             case "faults":    return hex(this.faults, 4);
             case "ctx":       return String(this.context);
             case "job":       return this.context === MachineContext.JOB ? String(this.job) : "-";
             case "resume_layer":  return this._resumeAt()?.layer.toString() ?? "-";
             case "resume_record": return this._resumeAt()?.record.toString() ?? "-";
-            case "latched":   return hex(this.axesLatched, 2);
+            case "latched": {
+                let m = 0;
+                for (const n of this.nodeLatched) m |= 1 << n;
+                return hex(m, 3);
+            }
             case "probed":    return this._probeZ() === undefined ? "0" : "1";
             case "pz":        return String(this._probeZ() ?? "-");
-            case "nodehomed":   return hex(this._nodeHomedMask(), 3);
-            case "nodeenabled": return hex(this._nodeEnabled(), 3);
             case "buf":         return String(this.motion.length);
-            case "pos":       return this.pos.join(",");
+            case "pos":         return this._nodePos();
             case "jogging":
                 return this.state !== MachineState.JOGGING ? "-"
                     : String(this.jogQueue.length > 0 ? JOGGING_STEP : JOGGING_CONT);
             default:          return undefined;
         }
+    }
+
+    /** `<node>:<steps>` per bound node, id order; `-` steps when unhomed. */
+    private _nodePos(): string {
+        const at: [number, string][] = [];
+        for (let s = 0; s < MOTION_SLOTS; s++) {
+            const n = this.slotNode[s];
+            if (n === null || n === undefined) continue;
+            at.push([n, this.nodeHomed.has(n) ? String(this.pos[s]) : "-"]);
+        }
+        at.sort((a, b) => a[0] - b[0]);
+        return at.length ? at.map(([n, v]) => `${n}:${v}`).join(",") : "-";
     }
 
     private _nodeHomedMask(): number {

@@ -45,6 +45,7 @@ async function withLink<T>(
     const sim = new SimTransport({ axisMap: [1, 2, 3, 4], recordMs: 5, bufferIdleMs: 20, ...simOpts });
     const link = new Link(sim);
     try {
+        await link.command("setorigin");   // `wpos` tracks the job only on homed axes
         return await fn(link, sim);
     } finally {
         await link.close();

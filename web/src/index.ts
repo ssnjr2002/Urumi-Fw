@@ -297,7 +297,6 @@ export {
     STATE_KEYS,
     getState,
     getStatus,
-    getPos,
     nodePos,
     nodeStat,
     vacServo,

@@ -257,10 +257,10 @@ export const NO_LAYER = 0xffff;
 export class MachineStatus {
     constructor(
         readonly state: MachineState,
-        /** Bound axes homed, slot bits. Text plane only. */
-        readonly axesHomed: number | undefined,
-        /** Bound axes energised, slot bits. Text plane only. */
-        readonly axesEnabled: number | undefined,
+        /** Bus nodes holding an origin, bit n = node n, bound or not. */
+        readonly nodeHomed: number | undefined,
+        /** Bus nodes enabled, bit n = node n, bound or not. */
+        readonly nodeEnabled: number | undefined,
         /** The fault mask (Fault bits). */
         readonly faults: number,
         /**
@@ -270,7 +270,7 @@ export class MachineStatus {
          */
         readonly reason: number,
         readonly bufCount: number | undefined = undefined,
-        /** Work position x, y, z, a in mm and degrees; NaN where there is no value. */
+        /** Work position x, y, z, a in mm and degrees; NaN where unbound, unhomed or unzeroed. */
         readonly wpos: readonly [number, number, number, number] | undefined = undefined,
         /**
          * The job's executing layer and record (an inserted block carries the
@@ -280,18 +280,18 @@ export class MachineStatus {
         readonly layer: number | undefined = undefined,
         readonly record: number | undefined = undefined,
         /**
-         * Axes standing on a latched limit switch. Text plane only — STATUS_RSP
-         * has no spare byte, and adding one would change a fixed-length frame
-         * whose size the demux checks.
+         * Bus nodes standing on a latched limit switch, bit n = node n, bound or
+         * not. Text plane only — STATUS_RSP has no spare byte, and adding one
+         * would change a fixed-length frame whose size the demux checks.
          *
-         * `undefined` on a binary sample, following the same rule as `pos` and
-         * `bufCount` above: a plane that cannot carry a field reports no
-         * information, never a zero. Here the distinction has teeth — 0 means
-         * "no axis is on a switch", which a UI would render as safe, and a
-         * binary poll has no basis for saying that. The consequential fact (the
-         * ALARM) is in `faults`, which both planes carry.
+         * `undefined` on a binary sample, following the same rule as `bufCount`
+         * above: a plane that cannot carry a field reports no information, never
+         * a zero. Here the distinction has teeth — 0 means "no node is on a
+         * switch", which a UI would render as safe, and a binary poll has no
+         * basis for saying that. The consequential fact (the ALARM) is in
+         * `faults`, which both planes carry.
          */
-        readonly axesLatched: number | undefined = undefined,
+        readonly nodeLatched: number | undefined = undefined,
         /**
          * Which fault ended the last home, with Fault.HOMING set. See
          * HomeFail — the three causes are diagnosed in completely different
@@ -311,11 +311,6 @@ export class MachineStatus {
         readonly homeNode: number | undefined = undefined,
         /** The cycle a `home` run is in; undefined when no run is. */
         readonly homeCycle: number | undefined = undefined,
-        /**
-         * Bus nodes holding an origin, bit n = node n, mapped or not. undefined
-         * on the binary plane or older firmware.
-         */
-        readonly nodeHomed: number | undefined = undefined,
         /** What refused a sequence after its ok, with Fault.SEQUENCE set. */
         readonly seqFail: string | undefined = undefined,
         /**
@@ -323,8 +318,6 @@ export class MachineStatus {
          * that failed (Fault.SEQUENCE, HOMING or PROBE). undefined when neither.
          */
         readonly seq: number | undefined = undefined,
-        /** Bus nodes enabled, bit n = node n, mapped or not. */
-        readonly nodeEnabled: number | undefined = undefined,
         /** The controlled point: a head index or a Selection value. */
         readonly selection: number | undefined = undefined,
         /** The tool id each head has mounted, head order, 0 for none. */
@@ -342,33 +335,6 @@ export class MachineStatus {
     /** True if any of `mask`'s Fault bits is set. */
     hasFault(mask: number): boolean {
         return (this.faults & mask) !== 0;
-    }
-
-    homed(axis: AxisLetter): boolean {
-        return !!((this.axesHomed ?? 0) & AXIS_BITS[axis]);
-    }
-
-    /**
-     * True if `axis` is standing on its limit switch. False on a binary sample,
-     * which carries no latch information — check `axesLatched !== undefined`
-     * first if the difference between "clear" and "unknown" matters.
-     */
-    latched(axis: AxisLetter): boolean {
-        return !!((this.axesLatched ?? 0) & AXIS_BITS[axis]);
-    }
-
-    enabled(axis: AxisLetter): boolean {
-        return !!((this.axesEnabled ?? 0) & AXIS_BITS[axis]);
-    }
-
-    /** True if every axis in `requiredMask` is homed (the pre-flight/resume gate). */
-    allHomed(requiredMask: number): boolean {
-        return ((this.axesHomed ?? 0) & requiredMask) === requiredMask;
-    }
-
-    /** True if every axis in `requiredMask` is energised (a pre-flight gate). */
-    allEnabled(requiredMask: number): boolean {
-        return ((this.axesEnabled ?? 0) & requiredMask) === requiredMask;
     }
 }
 
@@ -455,10 +421,8 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
                 : null,
         fields.homenode !== undefined ? parseInt(fields.homenode, 10) : undefined,
         fields.homecycle !== undefined ? parseInt(fields.homecycle, 10) : undefined,
-        fields.nodehomed !== undefined ? toInt(fields.nodehomed) : undefined,
         fields.seqfail,
         fields.seq !== undefined ? parseInt(fields.seq, 10) : undefined,
-        fields.nodeenabled !== undefined ? toInt(fields.nodeenabled) : undefined,
         selectionFromGet(reply.get("head")),
         toolsFromGet(fields.tools),
         fields.ctx !== undefined
@@ -552,25 +516,23 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
     const dv = new DataView(data.buffer, data.byteOffset, STATUS_RSP_SIZE);
     return new MachineStatus(
         enumFromInt(MACHINE_STATE_VALUES, dv.getUint8(1), MachineState.IDLE),
-        undefined,
-        undefined,
+        dv.getUint16(7, true),
+        dv.getUint16(5, true),
         dv.getUint16(3, true),
         dv.getUint8(2),
         dv.getUint16(28, true),
         [dv.getFloat32(12, true), dv.getFloat32(16, true), dv.getFloat32(20, true), dv.getFloat32(24, true)],
         dv.getUint16(30, true),
         dv.getUint32(32, true),
-        undefined, // axesLatched … seq: text plane only
+        undefined, // nodeLatched … seq: text plane only
         undefined,
         undefined,
         undefined,
         undefined,
         undefined,
         undefined,
-        dv.getUint16(7, true),
         undefined,
         undefined,
-        dv.getUint16(5, true),
         dv.getUint8(9),
         Array.from(data.subarray(10, 10 + STATUS_HEADS)),
         enumFromInt(MACHINE_CONTEXT_VALUES, dv.getUint8(36), MachineContext.IDLE),

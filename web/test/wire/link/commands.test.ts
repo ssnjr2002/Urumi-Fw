@@ -17,7 +17,6 @@ import {
     getKeys,
     getState,
     getStatus,
-    getPos,
     nodePos,
     vacServo,
     vacPump,
@@ -103,16 +102,10 @@ describe("wire/link/commands: liveness + state", () => {
         });
     });
 
-    it("getPos returns [x, y, z, a]", async () => {
-        await withLink(async (link) => {
-            expect(await getPos(link)).toEqual([0, 0, 0, 0]);
-        });
-    });
-
     it("get answers each key in the order asked, unknown keys as !", async () => {
         await withLink(async (link) => {
             const r = await get(link, ["pos", "state", "nosuchkey", "pz"]);
-            expect([...r]).toEqual([["pos", "0,0,0,0"], ["state", "0"], ["nosuchkey", "!"], ["pz", "-"]]);
+            expect([...r]).toEqual([["pos", "1:-,2:-,3:-,4:-"], ["state", "0"], ["nosuchkey", "!"], ["pz", "-"]]);
         });
     });
 
@@ -343,23 +336,20 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
         });
     });
 
-    it("enable keys the axes_enabled bits on SLOT, not node id", async () => {
+    it("enable keys the enabled bits on the node, on both planes", async () => {
         await withUnconfigured(async (link) => {
-            // Head B on slots 2/3: nodes 5 and 6. Under the old `id - 1`
-            // bookkeeping, enabling node 5 would have set bit 4 — off the end
-            // of the 4-slot mask.
             await axisMap(link, 1, 2, 5, 6);
             expect(await enable(link, 5)).toBe(true);
-            expect((await getState(link)).axesEnabled).toBe(0b0100); // slot 2
+            expect((await getState(link)).nodeEnabled).toBe(1 << 5);
             expect((await getStatus(link)).nodeEnabled).toBe(1 << 5);
         });
     });
 
-    it("an unmapped node relays but touches no axis state", async () => {
+    it("an unmapped node relays and reads enabled", async () => {
         await withUnconfigured(async (link) => {
             await axisMap(link, 1, 2, 3, 4);
             expect(await enable(link, 6)).toBe(true); // e.g. a vacuum node
-            expect((await getState(link)).axesEnabled).toBe(0);
+            expect((await getState(link)).nodeEnabled).toBe(1 << 6);
             expect((await getStatus(link)).nodeEnabled).toBe(1 << 6);
         });
     });

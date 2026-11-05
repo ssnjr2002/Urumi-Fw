@@ -102,7 +102,7 @@ describe("wire/link/backends/sim: control plane", () => {
     it("get reports the state + masks", async () => {
         await withLink(async (link) => {
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x00 homed=0x00 faults=0x0000 job=- latched=0x00 probed=0",
+                "state=0 enabled=0x000 homed=0x000 faults=0x0000 job=- latched=0x000 probed=0",
             );
         });
     });
@@ -111,11 +111,11 @@ describe("wire/link/backends/sim: control plane", () => {
         await withLink(async (link) => {
             expect(await link.command("axes_enable on")).toBe("ok");
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x0f homed=0x00 faults=0x0000 job=- latched=0x00 probed=0",
+                "state=0 enabled=0x01e homed=0x000 faults=0x0000 job=- latched=0x000 probed=0",
             );
             expect(await link.command("setorigin")).toBe("ok");
             expect(await link.command(STATE)).toBe(
-                "state=0 enabled=0x0f homed=0x0f faults=0x0000 job=- latched=0x00 probed=0",
+                "state=0 enabled=0x01e homed=0x01e faults=0x0000 job=- latched=0x000 probed=0",
             );
 
             // stop → ALARM, then setorigin recovers
@@ -182,7 +182,7 @@ describe("wire/link/backends/sim: control plane", () => {
             const st = await link.getStatus();
             expect(st.state).toBe(MachineState.ALARM);
             expect(st.faults).toBe(Fault.LATCHED);
-            expect(await link.command(STATE)).toContain("latched=0x01");
+            expect(await link.command(STATE)).toContain("latched=0x002");
 
             // `unalarm` cannot clear it: nothing moved, so the switch is still
             // held. Only a retract gets out.
@@ -194,7 +194,7 @@ describe("wire/link/backends/sim: control plane", () => {
             await tick(80);
             const done = await link.getStatus();
             expect(done.state).toBe(MachineState.IDLE);
-            expect(await link.command(STATE)).toContain("latched=0x00");
+            expect(await link.command(STATE)).toContain("latched=0x000");
         });
     });
 
@@ -212,11 +212,10 @@ describe("wire/link/backends/sim: control plane", () => {
             expect(await link.command("leg 3 seek 1 2500 500 400 88000")).toBe("ok");
             await tick(60);
 
-            // Node 3 is standing on its switch, and no slot claims it, so the
-            // per-slot view is empty while the node-framed truth is not.
-            expect(await link.command(STATE)).toContain("latched=0x00");
+            // Node 3 is standing on its switch, whether or not a slot claims it.
+            expect(await link.command(STATE)).toContain("latched=0x008");
             expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
-            expect(await link.command(STATE)).toContain("latched=0x04");
+            expect(await link.command(STATE)).toContain("latched=0x008");
         }, { busNodes: [1, 2, 3, 4] });
     });
 
@@ -236,7 +235,7 @@ describe("wire/link/backends/sim: control plane", () => {
             expect(await link.command("leg 1 park 100 2500 500 400")).toBe("ok");
             expect((await link.getStatus()).state).toBe(MachineState.HOMING);
             await tick(60);
-            expect(await link.command(STATE)).toContain("homed=0x0f");
+            expect(await link.command(STATE)).toContain("homed=0x01e");
         });
     });
 
@@ -258,16 +257,14 @@ describe("wire/link/backends/sim: control plane", () => {
             sim.homingLegMs = 20;
             await link.command("leg 3 seek 1 2500 500 400 88000"); // node 3 = slot 2
             await tick(60);
-            expect(await link.command(STATE)).toContain("latched=0x04");
+            expect(await link.command(STATE)).toContain("latched=0x008");
 
-            // Slot 2 now holds node 5, which is not on a switch. The gate lifts.
+            // Slot 2 now holds node 5, which is not on a switch; node 3 still is.
             expect(await link.command("axis_map 1 2 5 6")).toBe("ok");
-            expect(await link.command(STATE)).toContain("latched=0x00");
+            expect(await link.command(STATE)).toContain("latched=0x008");
 
-            // ...and comes back with node 3, because node 3 really is still
-            // standing on its switch and really will still refuse stream steps.
             expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
-            expect(await link.command(STATE)).toContain("latched=0x04");
+            expect(await link.command(STATE)).toContain("latched=0x008");
         }, { busNodes: [1, 2, 3, 4, 5, 6] });
     });
 
@@ -287,6 +284,7 @@ describe("wire/link/backends/sim: control plane", () => {
 describe("wire/link/backends/sim: binary status poll (STATUS_RSP)", () => {
     it("getStatus returns parsed MachineStatus with wpos and no job", async () => {
         await withLink(async (link) => {
+            await link.command("setorigin");
             const st = await link.getStatus();
             expect(st.state).toBe(MachineState.IDLE);
             expect(st.bufCount).toBe(0);
@@ -295,11 +293,18 @@ describe("wire/link/backends/sim: binary status poll (STATUS_RSP)", () => {
             expect(st.context).toBe(MachineContext.IDLE);
         });
     });
+
+    it("reports no wpos on an unhomed axis", async () => {
+        await withLink(async (link) => {
+            expect((await link.getStatus()).wpos!.every(Number.isNaN)).toBe(true);
+        });
+    });
 });
 
 describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
     it("streams N records, all ACKed; the job runs them and buffers again", async () => {
         await withLink(async (link) => {
+            await link.command("setorigin");
             expect(await link.stream(upTo(16), 8)).toMatchObject({ ok: true });
             const st = await until(link, (s) => s.bufCount === 0 && s.wpos![0] === 16);
             expect(st.wpos![0]).toBe(16);
@@ -346,6 +351,7 @@ describe("wire/link/backends/sim: buffering", () => {
 describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
     it("a stale retransmit is ACKed but NOT executed (no duplicate motion)", async () => {
         await withLink(async (link, sim) => {
+            await link.command("setorigin");
             await link.resetSeq();
             // Send seq 0 directly via writeBatch — accepted + executed
             const p0 = stampSeq(rec(5), 0);
@@ -370,6 +376,7 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
             async (link) => {
                 // ringSize=2, a record per tick — the ring fills, the
                 // session sees NACK_FULL, retries, and eventually completes.
+                await link.command("setorigin");
                 expect(await link.stream(upTo(10), 8)).toMatchObject({ ok: true });
                 const st = await until(link, (s) => s.wpos![0] === 10);
                 expect(st.wpos![0]).toBe(10);
@@ -382,6 +389,7 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
 describe("wire/link/backends/sim: abort", () => {
     it("abort discards the ring, keeps position, lands IDLE", async () => {
         await withLink(async (link) => {
+            await link.command("setorigin");
             await link.resetSeq();
             // 50 records of 5 ms. Start non-awaited so we can abort MID-stream.
             const runP = link.stream(upTo(50), 16);
