@@ -67,7 +67,7 @@
     "laser": { "node": 3 },      // the anchor, (0, 0); wired to node 3 (-DNODE_HAS_LASER)
     "heads": [
       {
-        "accepts": ["knife", "crease"],
+        "accepts": ["knife", "crease", "pen", "revolver_pen"],
         "xOffset": -70,              // rough eyeball: tip − laser dot
         "yOffset": -30,
         "unlockRange": 0.5,          // ±0.5°: the holder releases within about 1° in all
@@ -79,7 +79,7 @@
           "maxAccel": 200,         // 500 lost steps on fast down-to-up reversals
           "maxTravel": 48,         // abs(-66530 / 1200) - 4 = 51.44, less 2 for the taped switch
           "softLimits": true,
-          "invertDir": true,       // derived, unconfirmed
+          "invertDir": true,
           "rotary": false,
           "homing": {
             "kind": "linear",
@@ -96,12 +96,12 @@
         },
         "a": {
           "node": { "id": 4, "present": true },
-          "stepsPerUnit": 45.9847,
+          "stepsPerUnit": 45.93,   // 16535 steps/rev at the index
           "maxFeed": 100,
           "maxAccel": 500,
           "maxTravel": 0,
           "softLimits": false,
-          "invertDir": false,      // unchecked
+          "invertDir": false,      // jogged A+: counter-clockwise from above
           "rotary": true,
           "homing": {
             "kind": "rotary",
@@ -115,17 +115,19 @@
         }
       },
       {
-        "accepts": [],               // the pen head, ["pen"] once it can move
-        "xOffset": 60,
-        "yOffset": 0,
+        "accepts": ["pen", "revolver_pen"],
+        "xOffset": 80,
+        "yOffset": -30,
+        "unlockRange": 0.5,
+        "probeSwitch": { "x": 1173, "y": 23.5 },
         "z": {
-          "node": { "id": 6, "present": false },  // head 1 cannot move
+          "node": { "id": 6, "present": true },
           "stepsPerUnit": 600,
           "maxFeed": 20,
           "maxAccel": 500,
-          "maxTravel": 36,         // estimate
-          "softLimits": false,
-          "invertDir": true,       // derived, unconfirmed
+          "maxTravel": 26,         // safe until Z is fixed
+          "softLimits": true,
+          "invertDir": true,
           "rotary": false,
           "homing": {
             "kind": "linear",
@@ -141,22 +143,22 @@
           }
         },
         "a": {
-          "node": { "id": 5, "present": false },
-          "stepsPerUnit": 2.8611,
-          "maxFeed": 360,
+          "node": { "id": 5, "present": true },
+          "stepsPerUnit": 2.8694,  // 1033 steps/rev at the index, full step
+          "maxFeed": 100,
           "maxAccel": 500,
           "maxTravel": 0,
           "softLimits": false,
-          "invertDir": false,      // unchecked
+          "invertDir": false,      // jogged A+: counter-clockwise from above
           "rotary": true,
           "homing": {
             "kind": "rotary",
             "budgetRevs": 4,
-            "startFeed": 174.76,
-            "sweepFeed": 291.27,
+            "startFeed": 18.12,
+            "sweepFeed": 54.37,
             "rampSteps": 400,
             "toleranceDeg": 2.0,
-            "indexPos": 0
+            "indexPos": -46.7      // the index's A: the holder's lock button latches at 0
           }
         }
       }
