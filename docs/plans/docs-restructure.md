@@ -86,7 +86,7 @@ Each string is written the way you meet it:
 
 ## Conventions: physical pages
 
-Settled on the homing page (`machine/homing.md`, branch 2).
+Settled on the homing page (`machine/homing.md`, branch 1 step 2).
 
 * **Subject:** a part or capability you can see: homing, a head, the knife, the
   probe, the vacuum, the bed, e-stop.
@@ -114,23 +114,25 @@ decides which of these every page shares.
 * Decision records: a log at the end of each page, or a `decisions/` folder.
 * Status words for plans and decisions.
 * Whether the operator is an audience (`howto/run-a-job.md`).
-* The branch type for docs-only work: `AGENTS.md` has none (see Branches).
 
 ## Branches
 
-`AGENTS.md` allows no docs-only branch, since docs go with their code. These
-branches change only docs. Proposed: add a `docs/` branch type to `AGENTS.md`,
-limited to restructuring docs, before branch 1. Types below assume it.
+The restructure is a one-off: after it, new pages go in the branch of the code
+they describe, as `AGENTS.md` already requires. So it runs as one `refactor`
+branch (same behaviour, different structure), with one commit per step for
+review; no new branch type.
 
-1. `docs/archive`: move the Python-host and web-planner docs to `archive/` with
-   a README naming what replaced each; add `docs/README.md` with the layout and
-   the notation. Depends on nothing.
-2. `docs/machine-homing`: moves `docs/plans/docs-restructure/homing-draft.md`,
-   written while settling these conventions, to `machine/homing.md`. Depends
+1. `refactor/docs`, in steps:
+   1. Move the Python-host and web-planner docs to `archive/` with a README
+      naming what replaced each; add `docs/README.md` with the layout and the
+      notation.
+   2. Move `docs/plans/docs-restructure/homing-draft.md`, written while
+      settling these conventions, to `machine/homing.md`.
+   3. A second machine page, to settle the template. Which part: open.
+
+   Depends on nothing.
+2. `reference/commands.md` and a test that checks it against the controller's
+   command tables. Changes code, so a branch of its own; type open. Depends
    on 1.
-3. A second machine page, to settle the template. Which part: open. Depends
-   on 2.
-4. `reference/commands.md` and a test that checks it against the controller's
-   command tables. Type open (it adds a test). Depends on 1.
 
 Each gets a full Plan section when its turn comes.
