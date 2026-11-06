@@ -1,17 +1,7 @@
 # Homing
 
-> **How to read this.** Each string is written the way you meet it:
->
-> | Written as | Is |
-> | --- | --- |
-> | `home unhomed` | a command, as you type it |
-> | `→ err estop` | the controller's reply |
-> | `get homefail`, `→ homefail=1` | a status key: asked for with `get`, read as `key=value` |
-> | `machine.x.homing.backoffDist` | a config field, as its full path in `config/controller.jsonc` |
-> | `<node>` | a placeholder you fill in |
->
-> In config paths, `<linear>` is any linear axis (`x`, `y` or `heads[].z`),
-> `<rotary>` any rotary axis (`heads[].a`), and `<axis>` either.
+Commands, replies, status keys and config fields are written as the
+[notation](../README.md#notation) says.
 
 ## 1. What homing is
 
@@ -200,7 +190,8 @@ An emergency stop is not cleared by `unalarm` (`→ err estop`); use `unstop`.
 
 ## Underneath
 
-The homing session, legs, datums and supervisor: `system/homing`, today
-`docs/plans/controller-homing.md` and `docs/homing.md`. Every command, reply
-and status key: `reference/commands`. Every config field:
-`reference/config-fields`.
+* The homing session, cycles and the `home` command on the controller:
+  [plans/controller-homing.md](../plans/controller-homing.md).
+* Legs on the node, `setorigin`, the supervisor and the rotary index:
+  [homing.md](../homing.md).
+* The homing config fields: `web/src/machine/schema.ts`.
