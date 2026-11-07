@@ -16,42 +16,7 @@ park, mount). Whether it can still be nudged with a relative `jog` is set by
 
 After a tool swap nothing is homed again; only the tool's height is probed.
 
-## 2. Commands
-
-| Command | Homes | Clears earlier cycles first |
-| --- | --- | --- |
-| `home` | every homeable axis | yes |
-| `home <node> …` | the named axes, re-homed even if already homed | yes |
-| `home only <node> …` | the named axes, in cycle order | **no**: you vouch the way is clear |
-| `home unhomed` | every axis that isn't homed; with none, `→ ok` and nothing moves | yes |
-| `home cycle <k>` | every axis in cycle *k* | yes |
-| `home head <n>` | one head's Z and A | **no**, as `only` |
-| `home xy` | the gantry's X and Y | yes, so the Zs lift first |
-
-Nodes are named by their bus id. `home` replies `→ ok` once the run starts.
-Everything is checked before anything moves:
-
-| Reply | Why |
-| --- | --- |
-| `→ err node <id> not_in_config` | no axis in the config uses that node |
-| `→ err node <id> not_homeable` | its axis has no `homing` block |
-| `→ err node <id> mute`, `→ err node <id> excluded` | the node is silent, or excluded from the bus |
-| `→ err usage` | a node named twice, or a malformed form |
-
-Follow a run with `get homing homecycle homefail homenode`. Each key reads `-`
-when it doesn't apply:
-
-| Key | Reads |
-| --- | --- |
-| `homing` | set while a home runs |
-| `homecycle` | the cycle running now |
-| `homefail` | after a failure: why (§6) |
-| `homenode` | after a failure: which node |
-
-`home` runs only from idle with no fault set, except an axis standing on its
-switch. After a failed home, clear the fault with `unalarm` first (§7).
-
-## 3. Homing cycles
+## 2. Homing cycles
 
 Every axis has a cycle number, `machine.<axis>.homing.cycle`. Lower cycles home
 first; axes with the same number home together. By default every Z is cycle 1
@@ -63,7 +28,7 @@ and everything else cycle 2, so a plain `home` looks like this:
 2. **Then X, Y and every A, together.** X and Y home against their switches;
    each A sweeps past its index.
 3. **Done.** Every linear axis rests at its park position, each A just past its
-   index (§5). Nothing else moves.
+   index (§4). Nothing else moves.
 
 Before any axis of a cycle moves, every axis of every earlier cycle is made
 clear, named or not: homed ones park, unhomed ones are homed. `home only` and
@@ -72,7 +37,44 @@ clear, named or not: homed ones park, unhomed ones are homed. `home only` and
 If an earlier-cycle axis can't be made clear (its node is silent, excluded, or
 its leg failed), nothing in a later cycle moves.
 
-## 4. Homing legs
+**Choosing what to home.** `home` on its own homes every axis that has a
+`homing` block. The other forms home part of the machine:
+
+| Form | Homes | Clears earlier cycles first |
+| --- | --- | --- |
+| `home` | every homeable axis | yes |
+| `home <node> …` | the named axes, re-homed even if already homed | yes |
+| `home only <node> …` | the named axes, in cycle order | **no**: you vouch the way is clear |
+| `home unhomed` | every axis that isn't homed; with none, `→ ok` and nothing moves | yes |
+| `home cycle <k>` | every axis in cycle *k* | yes |
+| `home head <n>` | one head's Z and A | **no**, as `only` |
+| `home xy` | the gantry's X and Y | yes, so the Zs lift first |
+
+Nodes are named by their bus id.
+
+**Starting a run.** `home` runs only from idle with no fault set, except an
+axis standing on its switch; after a failed home, clear the fault with
+`unalarm` first (§7). Everything is checked before anything moves, and
+`home` replies `→ ok` once the run starts:
+
+| Reply | Why |
+| --- | --- |
+| `→ err node <id> not_in_config` | no axis in the config uses that node |
+| `→ err node <id> not_homeable` | its axis has no `homing` block |
+| `→ err node <id> mute`, `→ err node <id> excluded` | the node is silent, or excluded from the bus |
+| `→ err usage` | a node named twice, or a malformed form |
+
+**Following a run.** `get homing homecycle homefail homenode`; each key reads
+`-` when it doesn't apply:
+
+| Key | Reads |
+| --- | --- |
+| `homing` | set while a home runs |
+| `homecycle` | the cycle running now |
+| `homefail` | after a failure: why (§6) |
+| `homenode` | after a failure: which node |
+
+## 3. Homing legs
 
 A leg is one move of one axis, ended by its sensor or by its distance. A
 linear axis homes in four legs, as grbl, Marlin and FluidNC do; a rotary axis
@@ -122,17 +124,32 @@ A **park leg** moves a homed axis to its park position without touching the
 switch. Meeting the switch on the way, or stopping anywhere but the target,
 fails it.
 
-## 5. Types
+## 4. Types
 
 | | Linear (X, Y, Z) | Rotary (A) |
 | --- | --- | --- |
 | Sensor | a limit switch at one end; `machine.<linear>.homing.seekPositive` says which | a magnet on the holder passing a Hall sensor once per turn |
-| Legs | four (§4) | two sweeps (§4), each between two and three turns depending on where it started |
+| Legs | four (§3) | two sweeps (§3), each between two and three turns depending on where it started |
 | Position comes from | the slow seek's touch | the two sweeps together: the magnet's centre, and the length of a turn |
 | Checked | the switch triggers within the budget | the sweeps agree on the magnet within `machine.<rotary>.homing.toleranceDeg`, and on a turn's length within 2% |
 | Rests at | its park position | just past the magnet on the − side, short of it by the magnet's width plus a short tail |
-| Reads there | `machine.<linear>.homing.parkPos`, or as §4 says without it | a little below `machine.<rotary>.homing.indexPos`, the angle at the magnet itself |
+| Reads there | `machine.<linear>.homing.parkPos`, or as §3 says without it | a little below `machine.<rotary>.homing.indexPos`, the angle at the magnet itself |
 | Park position | yes | none: a homed A in an earlier cycle is left where it is |
+
+## 5. Commands
+
+| Command | Does | Section |
+| --- | --- | --- |
+| `home` | homes every homeable axis | §2 |
+| `home <node> …` | homes the named axes, clearing earlier cycles first | §2 |
+| `home only <node> …` | homes the named axes, without clearing earlier cycles | §2 |
+| `home unhomed` | homes every axis that isn't homed | §2 |
+| `home cycle <k>` | homes every axis in cycle *k* | §2 |
+| `home head <n>` | homes one head's Z and A | §2 |
+| `home xy` | homes the gantry's X and Y, after the Zs lift | §2 |
+| `get homing homecycle homefail homenode` | a run's progress, and why it failed | §2 |
+| `unalarm` | clears a homing fault and backs an axis off its switch | §7 |
+| `leg_abort <node>` | stops one axis's leg | §6 |
 
 ## 6. Leg failures
 
