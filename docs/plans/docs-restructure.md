@@ -181,8 +181,50 @@ review; no new branch type.
      that starts a `goto` (a park leg, not a planner move).
      `machine/positioning.md` claims the stop only for a `goto`'s XY, Z and
      A moves.
-2. `reference/commands.md` and a test that checks it against the controller's
-   command tables. Changes code, so a branch of its own; type open. Depends
-   on 1.
+2. `feature/command-reference`: `docs/reference/commands.md`, every
+   controller command, and a test that warns when it drifts from the
+   command tables.
 
-Each gets a full Plan section when its turn comes.
+   Depends on 1.
+
+   **Plan:**
+
+   * The command words live in two arrays in
+     `src/rp2350/core0/control_plane.cpp`: `kCommands` (primitives, lines
+     20–73) and `kControllerCommands` (refused without a config, lines
+     75–91), 58 words. A row is the word, an optional second word
+     (`goto probe`, `goto mount`), the handler and a kind: `CmdKind`
+     (`src/rp2350/core0/ops/machine.h:97`) with its `K_IN_*` and
+     `K_BARE_READ` flags, admitted by `machineAdmit`
+     (`src/rp2350/core0/ops/machine.cpp:178`). Forms and replies are parsed in
+     the handlers, not the table.
+   * `docs/wire_protocol.md`'s text-command table lacks 19 words (`cfg`,
+     `nodepos`, `nodestat`, `vac_switch`, `reset`, `rst`, the five
+     peripherals, `step`, `hallscan`, `axes_enable`, `bus_enable`,
+     `probe_map`, `probe_end`, `setprobe`, `unprobe`), and its allowed-state
+     matrix predates contexts and kinds.
+   * `docs/reference/commands.md` (new): one row per table row, grouped by use
+     (reads, lifecycle, bus and nodes, peripherals, motion primitives,
+     homing, probe, positioning, tools, jobs, config). Columns: Command,
+     Forms, Replies, Runs, Does. Runs names the kind (`any`, `read`,
+     `write`, `step`, `sequence`, `context`, `clear`), its flags (`homing`,
+     `probe`, `tool wait`, `place`, `bare read`) and `needs config` for the
+     controller table; the kinds are defined once at the top. `uncfg` is
+     marked as built only with `PICO_ALLOW_UNCONFIGURED`. Forms and replies
+     are checked against the handlers by hand.
+   * `web/test/docs/commands.test.ts` (new), strict: it reads both arrays and
+     the page's tables and fails on any drift: a word or second word on one
+     side only, a Runs cell that doesn't match the row's kind and flags, a
+     build-flag row unmarked. The failure names each drifted row. Precedent
+     for reading outside `web/`: `web/test/machine/json/blob.test.ts:145`.
+   * `docs/wire_protocol.md`: the text-command table and the allowed-state
+     matrix stay, under a note that `reference/commands.md` supersedes them.
+     The `get` keys stay as they are.
+   * `src/rp2350/core0/control_plane.cpp`: the comments at lines 1 and 125
+     point to `docs/reference/commands.md`.
+   * `docs/README.md`: a `reference/` row in the folders table.
+   * This doc: reference page conventions move from "Not settled" to their
+     own Conventions section.
+   * Checks: `pnpm typecheck` and `pnpm test` in `web/`; `pio run -e pico`.
+
+   **Status:** planned.
