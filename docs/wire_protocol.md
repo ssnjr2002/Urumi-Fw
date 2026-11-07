@@ -565,6 +565,10 @@ The reason byte meaning depends on which command the NACK is responding to.
 
 ## Control Plane — Text Commands (Phase 1)
 
+> Superseded by [reference/commands.md](reference/commands.md), which lists
+> every command and when it runs. The table below is kept for its history and
+> is not maintained; the `get` keys after it are.
+
 One command per line, `\n`-terminated, lowercase ASCII. The Pico replies with a
 single text line. Arguments are space-separated. Numbers are decimal unless
 prefixed `0x`.
@@ -741,6 +745,9 @@ start of each stream so both sides agree where seq 0 is; the host issues it
 before every `send_stream` (one per operation in a multi-tool plan).
 
 ## Command Allowed-State Matrix
+
+> The control-plane matrix is superseded by the Runs column of
+> [reference/commands.md](reference/commands.md).
 
 Stream, jog, and control-command acceptance depend on state. Config commands are
 Phase 2.

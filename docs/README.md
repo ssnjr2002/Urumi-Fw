@@ -11,6 +11,7 @@ it jobs and commands over USB.
 | Folder | Holds |
 | --- | --- |
 | `machine/` | what you see the machine do and what to expect: one page per thing you start, watch and end: [homing](machine/homing.md) and [positioning](machine/positioning.md) |
+| `reference/` | exact strings, each page marked with the commit it was checked against: [commands](reference/commands.md) |
 | `plans/` | one plan per change, with a section per branch; done with once its branches merge |
 | `archive/` | docs from hosts and designs the project has left; its README names what replaced each |
 

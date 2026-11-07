@@ -1,4 +1,4 @@
-// Core 0 control plane: text command dispatch (docs/wire_protocol.md).
+// Core 0 control plane: text command dispatch (docs/reference/commands.md).
 // One command per line; replies with exactly one text line.
 //
 // Two tables: primitives (cmd/), atomic and config-free, and controller
@@ -110,7 +110,7 @@ static const Cmd* lookup(const Cmd (&table)[N], const char* s, size_t wordLen) {
 }
 
 // Handle one control-plane text line. Replies with exactly one line per the wire
-// contract (docs/wire_protocol.md): `ok` / `err <reason>` / a typed read.
+// contract (docs/reference/commands.md): `ok` / `err <reason>` / a typed read.
 // Returns false if the line names no command -- the caller decides what to say.
 bool handleCommand(const String& input) {
     const char* s = input.c_str();
