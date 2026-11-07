@@ -86,10 +86,13 @@ Each string is written the way you meet it:
 
 ## Conventions: physical pages
 
-Settled on the homing page (`machine/homing.md`, branch 1 step 2).
+Settled on `machine/homing.md` and `machine/positioning.md` (branch 1).
 
-* **Subject:** a part or capability you can see: homing, a head, the knife, the
-  probe, the vacuum, the bed, e-stop.
+* **Subject:** an activity: something you start, watch and end (homing,
+  positioning, tools, running a job). Parts (gantry, head, holder, bed) are
+  the words every page uses, not pages. Things that happen to any activity
+  (e-stop, pause, faults, limits) are rows in each page's refusals or
+  recovery, not pages of their own.
 * **Nodes, controller and host are named by their role**, as you can tell them
   from what they are wired to: "the axis's node", "the controller". Never by
   config instance: no "head 0", "node 7".
@@ -103,9 +106,23 @@ Settled on the homing page (`machine/homing.md`, branch 1 step 2).
 * **Recovery says where it doesn't help.**
 * **Ends with "Underneath":** links to the `system/` and `reference/` pages.
 
-Section order on the homing page: what it is, commands, the sequence you see,
-its steps, its kinds, failures, recovery. Not yet a template: a second page
-decides which of these every page shares.
+* **Notation by link:** a page links the README's notation, not its own copy.
+
+Section order:
+
+1. **What it is.**
+2. **The concepts**, each with the commands, replies and status keys that
+   belong to it, and when those commands run. These sections are the page's
+   own: cycles, legs and kinds for homing; coordinates, selection, zeroing,
+   moves and limits for positioning.
+3. **Commands:** an index table only (command, what it does, section), one
+   row per form.
+4. **Failures or refusals**, as a table.
+5. **Recovery and stops**, with where it doesn't help.
+6. **Underneath.**
+
+A linear-and-rotary comparison sits with the concepts, wherever the page's
+kinds differ.
 
 ## Not settled
 
@@ -131,6 +148,39 @@ review; no new branch type.
    3. A second machine page, to settle the template. Which part: open.
 
    Depends on nothing.
+
+   **Status:** ready to merge.
+
+   **Outcome:**
+
+   * Step 1 archived 28 docs, not just the Python-host and web-planner ones:
+     also Pico-era designs never built or since rewritten (`bus_alarm.md`,
+     `feed_override.md`, `coordinate_frames_and_limits.md`, the LittleFS
+     migration, `validation_checklist.md`, the planner audit and spaces
+     notes). `config_storage.md` stays: it describes the store as built.
+     `docs/README.md` lists only the folders that exist.
+   * Step 3 is `machine/positioning.md`: coordinates, head selection, manual
+     zeroing (`wzero z` and `wzero z_switch`), jogs, `goto`, limits.
+     Automatic zeroing and the bed mesh are left out; the holder lock,
+     `mount` and `unmount` belong to a later tools page.
+   * A fourth commit reshaped the homing page to the settled section order.
+   * The homing page's Underneath links today's docs, not the `system/` and
+     `reference/` pages, which don't exist yet.
+   * Out of scope, for a later pass:
+     * Code comments naming archived docs: `src/rp2350/core0/ops/position.h`
+       (`bus_alarm.md`), `web/src/machine/schema.ts` and
+       `web/src/machine/json/load.ts` (`feed_accel_value_model.md`,
+       `coordinate_frames_and_limits.md`), `web/test/machines.ts`
+       (`planner_audit.md`, `head_binding.md`).
+     * Live docs naming archived ones in plain text: `comms_architecture.md`,
+       `homing.md`, `PLAN_rp2350_refactor.md`, `node_state_ingest.md`, and the
+       plans `job-z.md`, `planner-za.md`,
+       `state-handling.md`, `motion-sessions.md`, `coordinate-system.md`,
+       `pico-config.md`.
+   * Not verified on the machine: whether the host's stop brakes the Z lift
+     that starts a `goto` (a park leg, not a planner move).
+     `machine/positioning.md` claims the stop only for a `goto`'s XY, Z and
+     A moves.
 2. `reference/commands.md` and a test that checks it against the controller's
    command tables. Changes code, so a branch of its own; type open. Depends
    on 1.
