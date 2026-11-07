@@ -240,7 +240,7 @@ review; no new branch type.
      own Conventions section.
    * Checks: `pio run -e pico`.
 
-   **Status:** ready to merge.
+   **Status:** done, merged at `ae46941`. Unblocks nothing; it is the last branch of this plan.
 
    **Outcome:**
 
