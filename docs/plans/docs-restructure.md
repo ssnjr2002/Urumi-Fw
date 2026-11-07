@@ -149,7 +149,7 @@ review; no new branch type.
 
    Depends on nothing.
 
-   **Status:** ready to merge.
+   **Status:** done, merged at `f5f1a08`. Unblocks branch 2.
 
    **Outcome:**
 
