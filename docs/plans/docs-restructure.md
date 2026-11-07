@@ -124,10 +124,25 @@ Section order:
 A linear-and-rotary comparison sits with the concepts, wherever the page's
 kinds differ.
 
+## Conventions: reference pages
+
+Settled on `reference/commands.md` (branch 2).
+
+* **Subject:** one kind of exact string (commands, status keys, packets,
+  config fields), every one of them, one row each, grouped by use.
+* **Checked against a commit.** The page names the commit whose code it was
+  checked against, and the `git diff` that shows what changed since. Updating
+  the page means re-checking the diff and moving the commit. No test.
+* **Second words get their own table:** a command whose second word picks a
+  form (`home`, `leg`, `goto`, `place`) leaves its group's table for a
+  section after it: what every form shares, then one row per form.
+* **Shared answers once:** what many rows share (reply shapes, node results,
+  when a kind is admitted) is a table at the top; rows name it.
+* **Links to the physical page** for an activity, not a copy of it.
+
 ## Not settled
 
 * Logical (`system/`) page conventions.
-* Reference page conventions, and which pages a test checks against the code.
 * Decision records: a log at the end of each page, or a `decisions/` folder.
 * Status words for plans and decisions.
 * Whether the operator is an audience (`howto/run-a-job.md`).
@@ -181,9 +196,8 @@ review; no new branch type.
      that starts a `goto` (a park leg, not a planner move).
      `machine/positioning.md` claims the stop only for a `goto`'s XY, Z and
      A moves.
-2. `feature/command-reference`: `docs/reference/commands.md`, every
-   controller command, and a test that warns when it drifts from the
-   command tables.
+2. `refactor/command-reference`: `docs/reference/commands.md`, every
+   controller command, marked with the commit it was checked against.
 
    Depends on 1.
 
@@ -209,14 +223,13 @@ review; no new branch type.
      Forms, Replies, Runs, Does. Runs names the kind (`any`, `read`,
      `write`, `step`, `sequence`, `context`, `clear`), its flags (`homing`,
      `probe`, `tool wait`, `place`, `bare read`) and `needs config` for the
-     controller table; the kinds are defined once at the top. `uncfg` is
-     marked as built only with `PICO_ALLOW_UNCONFIGURED`. Forms and replies
-     are checked against the handlers by hand.
-   * `web/test/docs/commands.test.ts` (new), strict: it reads both arrays and
-     the page's tables and fails on any drift: a word or second word on one
-     side only, a Runs cell that doesn't match the row's kind and flags, a
-     build-flag row unmarked. The failure names each drifted row. Precedent
-     for reading outside `web/`: `web/test/machine/json/blob.test.ts:145`.
+     controller table, then any narrower check the handler adds; the kinds
+     are defined once at the top. `uncfg` is marked as built only with
+     `PICO_ALLOW_UNCONFIGURED`. Everything is checked against the handlers
+     by hand.
+   * No test. The page names the commit whose code it was checked against;
+     a reader diffs `control_plane.cpp` and the handlers from there to see
+     what may have drifted.
    * `docs/wire_protocol.md`: the text-command table and the allowed-state
      matrix stay, under a note that `reference/commands.md` supersedes them.
      The `get` keys stay as they are.
@@ -225,6 +238,24 @@ review; no new branch type.
    * `docs/README.md`: a `reference/` row in the folders table.
    * This doc: reference page conventions move from "Not settled" to their
      own Conventions section.
-   * Checks: `pnpm typecheck` and `pnpm test` in `web/`; `pio run -e pico`.
+   * Checks: `pio run -e pico`.
 
-   **Status:** planned.
+   **Status:** ready to merge.
+
+   **Outcome:**
+
+   * Planned as `feature/` with a test that checked the page against the
+     command tables. The test was dropped for the checked-against commit
+     (`ecd2b3c`), and with no new behaviour left the branch was renamed
+     `refactor/`.
+   * `home`, `leg`, `goto` and `place` each have a section of their own, one
+     row per form, rather than one crowded row; recorded in the reference
+     conventions.
+   * The second comment in `control_plane.cpp` was at line 113, not 125.
+   * Out of scope, for a later pass:
+     * `wire_protocol.md` says a bare `enable` or `disable` reaches every
+       node; both need an id and answer `err bad_node` without one.
+     * The comment above `cmdStep` (`src/rp2350/core0/cmd/axis.cpp`) says
+       the count is clamped; it is refused with `err too_many`.
+     * The `get` keys are still only in `wire_protocol.md`; they are the
+       next reference page.
