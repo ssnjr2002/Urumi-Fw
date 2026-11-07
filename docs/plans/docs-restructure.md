@@ -284,9 +284,9 @@ review; no new branch type.
 ### The logical layer
 
 One `system/` page per layer. Branch 3 writes the first and settles the
-logical page conventions; branches 4–11 each write one more page and depend
+logical page conventions; branches 4–14 each write one more page and depend
 only on branch 3, so they can run in parallel sessions, except branch 7,
-which waits for branch 11. Each branch that lands a page moves what the page
+which waits for branch 12. Each branch that lands a page moves what the page
 replaces to `archive/`, with a line in `archive/README.md`, and adds the
 page to `docs/README.md` (the first one also adds the `system/` row). A
 `docs/README.md` conflict between parallel branches is one line each.
@@ -300,10 +300,13 @@ page.
 | 5 | `bus` | RS485: 9-bit framing, stream bytes and command packets, slots and `ENGAGE`, `axes_map`, keepalive and silence, make safe | `core1/bus/`, `node/rs485/`, `ops/slot_map.*`, `ops/axes_map.*` | `engage_and_axis_map.md` |
 | 6 | `planner` | bezier to trapezoid to the ring to steps; the mesh | `lib/planner/`, `core0/planner/`, `core1/emit/` | `generic_planner_firmware_design.md` |
 | 7 | `nodes` | node firmware: the core and type split, the hooks, the stepper, vacuum and knife types, legs on the node, the hall index | `src/node/` | `node_type_architecture.md`, `homing.md` §1, the architecture half of `src/node/README.md` |
-| 8 | `jobs` | the job stream and its headers, layers, placement, tool change, pause, cancel and abort | `data_plane.cpp`, `controller/seq/place.*`, `toolchange.*`, `web/src/toolpath/` | the job sections of `wire_protocol.md` and the `job-*` plans |
+| 8 | `jobs` | the job stream and its headers, layers, placement, tool change, pause, cancel and abort | `data_plane.cpp`, `controller/seq/place.*`, `toolchange.*`, `web/src/toolpath/job.ts` | the job sections of `wire_protocol.md` and the `job-*` plans |
 | 9 | `config` | jsonc, validation, the msgpack blob, the store, the decode to `MachineCfg`; `set` and `save` | `core0/config/`, `web/src/machine/` | `config_storage.md` |
 | 10 | `host` | the link (reader, writer, sessions, demux), the backends and the Sim, the machine model | `web/src/wire/link/`, `web/src/index.ts` | `comms_architecture.md` |
-| 11 | `build` | `platformio.ini`, the Arduino cores and libraries, the Pico SDK, upload | `platformio.ini`, `scripts/pio/`, `src/rp2350/main.cpp`, `uart_9bit.pio` | the `platformio.ini` half of `src/node/README.md` |
+| 11 | `toolpath` | an SVG to BEZIER records: load, layers and tools, clean, annotate, the job's packets | `web/src/svg/`, `web/src/toolpath/`, `web/src/wire/format/bezier.ts`, `layer.ts` | nothing live |
+| 12 | `firmware-build` | `platformio.ini`, the Arduino cores and libraries, the Pico SDK, upload | `platformio.ini`, `scripts/pio/`, `src/rp2350/main.cpp`, `uart_9bit.pio` | the `platformio.ini` half of `src/node/README.md` |
+| 13 | `host-build` | the `web/` package: pnpm, TypeScript and its two configs, ESM exports, eslint, vitest, the vite demo, the generator scripts | `web/package.json`, `tsconfig*.json`, `vitest.config.ts`, `eslint.config.js`, `web/scripts/`, `web/demo/` | the Development section of `web/README.md` |
+| 14 | `tests` | the firmware suites (`native`, doctest, stubs) and the host suites (vitest), and the fixtures that cross between them | `test/`, `web/test/` | `test/README` |
 
 Every branch is `refactor/` (no behaviour change). Checks: none for
 docs-only branches; a branch that edits code comments runs the check for
@@ -372,14 +375,14 @@ that code (see `AGENTS.md`, Agent Scope).
 
 7. `refactor/system-nodes`: `docs/system/nodes.md`, the node firmware.
 
-   Depends on 3 and 11.
+   Depends on 3 and 12.
 
    * Covers: the core and type split, the hooks, the stepper, vacuum and
      knife types, the board headers, legs on the node, the hall index, the
      two dispatch paths.
    * Code: `src/node/`.
    * Replaces `node_type_architecture.md`, `docs/homing.md` §1 (the node
-     half), and the architecture half of `src/node/README.md`. Branch 11
+     half), and the architecture half of `src/node/README.md`. Branch 12
      takes the README's `platformio.ini` half; this branch moves the rest
      to `archive/node_readme.md`.
    * Overlap: the shelved `feature/park-speed` edits `docs/homing.md`.
@@ -392,10 +395,11 @@ that code (see `AGENTS.md`, Agent Scope).
    Depends on 3.
 
    * Covers: the job stream and its headers, layers, placement, tool
-     change, pause, cancel and abort, and the host's toolpath.
+     change, pause, cancel and abort. How the records are made from an SVG
+     is branch 11's; this page starts at the stream.
    * Code: `src/rp2350/core0/data_plane.cpp`,
      `src/rp2350/core0/controller/seq/place.*`, `toolchange.*`,
-     `web/src/toolpath/`.
+     `web/src/toolpath/job.ts`.
    * Replaces the done `job-*` plans' decisions; which plans move to
      `archive/` is settled in the branch's Read.
 
@@ -425,8 +429,24 @@ that code (see `AGENTS.md`, Agent Scope).
 
     **Status:** not started.
 
-11. `refactor/system-build`: `docs/system/build.md`, how the firmware is
-    built.
+11. `refactor/system-toolpath`: `docs/system/toolpath.md`, an SVG to BEZIER
+    records.
+
+    Depends on 3.
+
+    * Covers: loading an SVG (the transform walk, mm with Y up, layers and
+      tool layers), cleaning subpaths (joins, gaps), annotating curves
+      (start, break and end flags, refused curves), and the layer's packets
+      (`prepareBezierJob`). What the controller does with them is branch 8's.
+    * Code: `web/src/svg/load.ts`, `web/src/toolpath/`,
+      `web/src/wire/format/bezier.ts`, `layer.ts`.
+    * Replaces nothing live: the earlier designs are already in `archive/`
+      (`PLAN_svg_tile_motion.md`, `planner_spaces.md`).
+
+    **Status:** not started.
+
+12. `refactor/system-firmware-build`: `docs/system/firmware-build.md`, how
+    the firmware is built.
 
     Depends on 3.
 
@@ -451,5 +471,51 @@ that code (see `AGENTS.md`, Agent Scope).
     * Replaces the `platformio.ini` half of `src/node/README.md` (its env
       table is out of date: no vacuum or knife envs). `AGENTS.md` keeps its
       flag lists.
+
+    **Status:** not started.
+
+13. `refactor/system-host-build`: `docs/system/host-build.md`, how the host
+    is built.
+
+    Depends on 3.
+
+    * Covers:
+      * pnpm: `web/package.json`, `pnpm-workspace.yaml`, the lockfile, Node
+        18 or later.
+      * TypeScript: `tsconfig.json` (typecheck) and `tsconfig.build.json`
+        (`dist/`), ESM, the package's `exports` (the root, the WebSerial
+        and Node backends).
+      * Dependencies: `@msgpack/msgpack`; the dev tools (vitest, vite,
+        vite-node, eslint, `@xmldom/xmldom` for SVG in Node).
+      * Scripts: `build`, `typecheck`, `lint`, `test`, `gen:runtime`,
+        `demo`; and `web/scripts/` (`config-image.ts`, `mesh-image.ts`,
+        `runtime-fields.ts`), with what runs them (`uploadfs` runs
+        `config-image.ts` through `scripts/pio/config_image.py`).
+      * The demo: `web/demo/`, its vite config and its bridge.
+    * Code: `web/package.json`, `web/tsconfig*.json`,
+      `web/vitest.config.ts`, `web/eslint.config.js`, `web/scripts/`,
+      `web/demo/`.
+    * Replaces the Development section of `web/README.md`, which stays as
+      the package's README and links here.
+
+    **Status:** not started.
+
+14. `refactor/system-tests`: `docs/system/tests.md`, the firmware and host
+    tests.
+
+    Depends on 3.
+
+    * One page for both, since their fixtures cross: the web tests write
+      the config blobs (`web/test/fixtures/config/`) and the BEZIER records
+      (`test/data/bezier_records.txt`, `GEN_CPP_REF=1`) that the C++ suites
+      read.
+    * Covers:
+      * Firmware: the `native` env, doctest, `test/main.cpp`, the stubs
+        (`test/stubs/`), each suite and what it checks, running one suite.
+      * Host: vitest, `web/test/setup.ts`, the helpers and test machines,
+        the suites by folder, the production data.
+      * What neither covers: the Human Scope list in `AGENTS.md`.
+    * Code: `test/`, `web/test/`, `web/vitest.config.ts`.
+    * Replaces `test/README`.
 
     **Status:** not started.
