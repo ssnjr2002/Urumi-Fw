@@ -140,10 +140,31 @@ Settled on `reference/commands.md` (branch 2).
   when a kind is admitted) is a table at the top; rows name it.
 * **Links to the physical page** for an activity, not a copy of it.
 
+## Conventions: logical pages
+
+Proposed; settled on `system/controller.md` (branch 3).
+
+* **Subject:** one layer: what it owns, who writes each value, and what
+  crosses its edges, up and down.
+* **Checked against a commit**, as reference pages are, with a `git diff`
+  over the layer's files.
+* **Code named by file**, never by line.
+* **Decisions** at the end of the page: each one with the alternatives it
+  rejected. Settles decision records for logical pages.
+
+Section order:
+
+1. **What it is.**
+2. **What it owns:** a table of value, writer, readers.
+3. **Edges:** what crosses each one, and over which channel.
+4. **States and lifecycle.**
+5. **Failures.**
+6. **Decisions.**
+7. **Code:** the files.
+
 ## Not settled
 
-* Logical (`system/`) page conventions.
-* Decision records: a log at the end of each page, or a `decisions/` folder.
+* Decision records outside logical pages.
 * Status words for plans and decisions.
 * Whether the operator is an audience (`howto/run-a-job.md`).
 
@@ -240,7 +261,7 @@ review; no new branch type.
      own Conventions section.
    * Checks: `pio run -e pico`.
 
-   **Status:** done, merged at `ae46941`. Unblocks nothing; it is the last branch of this plan.
+   **Status:** done, merged at `ae46941`. Unblocks branch 3.
 
    **Outcome:**
 
@@ -259,3 +280,176 @@ review; no new branch type.
        the count is clamped; it is refused with `err too_many`.
      * The `get` keys are still only in `wire_protocol.md`; they are the
        next reference page.
+
+### The logical layer
+
+One `system/` page per layer. Branch 3 writes the first and settles the
+logical page conventions; branches 4–11 each write one more page and depend
+only on branch 3, so they can run in parallel sessions, except branch 7,
+which waits for branch 11. Each branch that lands a page moves what the page
+replaces to `archive/`, with a line in `archive/README.md`, and adds the
+page to `docs/README.md` (the first one also adds the `system/` row). A
+`docs/README.md` conflict between parallel branches is one line each.
+`wire_protocol.md` stays: it becomes `reference/` pages, not a `system/`
+page.
+
+| Branch | Page | Covers | Code | Replaces |
+| --- | --- | --- | --- | --- |
+| 3 | `controller` | how Core 0 runs the machine: contexts, sequences and steps; faults and the e-stop latch; the published state; command kinds and admission; the one state writer | `core0/ops/machine.*`, `sequence.*`, `runner.*`, `control_plane.cpp`, `core0.cpp` | `plans/machine-model.md`, `sequences.md`, `state-handling.md`, `core0-layers.md` |
+| 4 | `cores` | Core 0 and Core 1: the three channels (RPC, shared state, the planner ring), facts, the e-stop sweep, the flash park | `ipc/`, `core1/core1.cpp`, `rpc_server.cpp` | `node_frame_ownership_migration.md`, `node_state_ingest.md` |
+| 5 | `bus` | RS485: 9-bit framing, stream bytes and command packets, slots and `ENGAGE`, `axes_map`, keepalive and silence, make safe | `core1/bus/`, `node/rs485/`, `ops/slot_map.*`, `ops/axes_map.*` | `engage_and_axis_map.md` |
+| 6 | `planner` | bezier to trapezoid to the ring to steps; the mesh | `lib/planner/`, `core0/planner/`, `core1/emit/` | `generic_planner_firmware_design.md` |
+| 7 | `nodes` | node firmware: the core and type split, the hooks, the stepper, vacuum and knife types, legs on the node, the hall index | `src/node/` | `node_type_architecture.md`, `homing.md` §1, the architecture half of `src/node/README.md` |
+| 8 | `jobs` | the job stream and its headers, layers, placement, tool change, pause, cancel and abort | `data_plane.cpp`, `controller/seq/place.*`, `toolchange.*`, `web/src/toolpath/` | the job sections of `wire_protocol.md` and the `job-*` plans |
+| 9 | `config` | jsonc, validation, the msgpack blob, the store, the decode to `MachineCfg`; `set` and `save` | `core0/config/`, `web/src/machine/` | `config_storage.md` |
+| 10 | `host` | the link (reader, writer, sessions, demux), the backends and the Sim, the machine model | `web/src/wire/link/`, `web/src/index.ts` | `comms_architecture.md` |
+| 11 | `build` | `platformio.ini`, the Arduino cores and libraries, the Pico SDK, upload | `platformio.ini`, `scripts/pio/`, `src/rp2350/main.cpp`, `uart_9bit.pio` | the `platformio.ini` half of `src/node/README.md` |
+
+Every branch is `refactor/` (no behaviour change). Checks: none for
+docs-only branches; a branch that edits code comments runs the check for
+that code (see `AGENTS.md`, Agent Scope).
+
+3. `refactor/system-controller`: `docs/system/controller.md`, how Core 0
+   runs the machine.
+
+   Depends on 2.
+
+   **Plan:**
+
+   * Covers: contexts, sequences and steps (the levels); the fault mask and
+     the e-stop latch; the published state; command kinds and admission; the
+     one state writer; teardown. `reference/commands.md`'s "When a command
+     runs" links here.
+   * Code: `src/rp2350/core0/ops/machine.*`, `sequence.*`, `runner.*`,
+     `src/rp2350/core0/control_plane.cpp`, `core0.cpp`,
+     `src/rp2350/ipc/shared_state.h` (`MachineState`).
+   * Replaces the merged plans `plans/machine-model.md`,
+     `plans/sequences.md`, `plans/state-handling.md`,
+     `plans/core0-layers.md`: moved to `archive/`.
+   * This doc: the logical page conventions above lose "Proposed".
+
+   **Status:** not started.
+
+4. `refactor/system-cores`: `docs/system/cores.md`, the split between Core 0
+   and Core 1.
+
+   Depends on 3.
+
+   * Covers: the three channels (RPC, shared state, the planner ring),
+     facts, the e-stop sweep, the flash park, which core owns which value.
+   * Code: `src/rp2350/ipc/`, `src/rp2350/core1/core1.cpp`,
+     `core1/rpc_server.cpp`, `src/rp2350/main.cpp`.
+   * Replaces `node_frame_ownership_migration.md`, `node_state_ingest.md`
+     (proposals, not built: their decisions go in the page's Decisions).
+
+   **Status:** not started.
+
+5. `refactor/system-bus`: `docs/system/bus.md`, RS485.
+
+   Depends on 3.
+
+   * Covers: 9-bit framing, stream bytes and command packets, slots and
+     `ENGAGE`, `slot_map` and `axes_map`, keepalive and bus silence, make
+     safe, node results.
+   * Code: `src/rp2350/core1/bus/`, `src/node/rs485/`,
+     `src/rp2350/core0/ops/slot_map.*`, `ops/axes_map.*`, `ops/bus.*`,
+     `include/common.h`.
+   * Replaces `engage_and_axis_map.md`.
+
+   **Status:** not started.
+
+6. `refactor/system-planner`: `docs/system/planner.md`, from curve to step.
+
+   Depends on 3.
+
+   * Covers: bezier and line records, the trapezoid, the planner queue and
+     ring, the follower on Core 1, the mesh.
+   * Code: `lib/planner/`, `src/rp2350/core0/planner/`,
+     `src/rp2350/core1/emit/`, `src/rp2350/core0/ops/mesh.*`.
+   * Replaces `generic_planner_firmware_design.md`.
+
+   **Status:** not started.
+
+7. `refactor/system-nodes`: `docs/system/nodes.md`, the node firmware.
+
+   Depends on 3 and 11.
+
+   * Covers: the core and type split, the hooks, the stepper, vacuum and
+     knife types, the board headers, legs on the node, the hall index, the
+     two dispatch paths.
+   * Code: `src/node/`.
+   * Replaces `node_type_architecture.md`, `docs/homing.md` §1 (the node
+     half), and the architecture half of `src/node/README.md`. Branch 11
+     takes the README's `platformio.ini` half; this branch moves the rest
+     to `archive/node_readme.md`.
+   * Overlap: the shelved `feature/park-speed` edits `docs/homing.md`.
+     Archiving it conflicts with that branch when it is picked up.
+
+   **Status:** not started.
+
+8. `refactor/system-jobs`: `docs/system/jobs.md`, a job from host to cut.
+
+   Depends on 3.
+
+   * Covers: the job stream and its headers, layers, placement, tool
+     change, pause, cancel and abort, and the host's toolpath.
+   * Code: `src/rp2350/core0/data_plane.cpp`,
+     `src/rp2350/core0/controller/seq/place.*`, `toolchange.*`,
+     `web/src/toolpath/`.
+   * Replaces the done `job-*` plans' decisions; which plans move to
+     `archive/` is settled in the branch's Read.
+
+   **Status:** not started.
+
+9. `refactor/system-config`: `docs/system/config.md`, the config path.
+
+   Depends on 3.
+
+   * Covers: `config/controller.jsonc`, validation, the msgpack blob, the
+     store, the decode to `MachineCfg`, runtime edits (`set`, `save`),
+     `uploadfs`.
+   * Code: `src/rp2350/core0/config/`, `web/src/machine/`,
+     `scripts/pio/config_image.py`.
+   * Replaces `config_storage.md`.
+
+   **Status:** not started.
+
+10. `refactor/system-host`: `docs/system/host.md`, the web host.
+
+    Depends on 3.
+
+    * Covers: the link (reader, writer, sessions, demux), the backends
+      (WebSerial, node, the Sim), the machine model.
+    * Code: `web/src/wire/link/`, `web/src/index.ts`.
+    * Replaces `comms_architecture.md`.
+
+    **Status:** not started.
+
+11. `refactor/system-build`: `docs/system/build.md`, how the firmware is
+    built.
+
+    Depends on 3.
+
+    * Covers:
+      * `platformio.ini`: the MCU templates (`attiny_base`,
+        `attiny3226_base`, `avr128db_base`), `node_core`, the type sections,
+        how a node env composes them (interpolation, not `extends`), the
+        build flags, the `pico` env (PIO program, filesystem size,
+        `extra_scripts`, `custom_config_json`), `native`, the scratch envs,
+        and the `f_cpu` caveat.
+      * Arduino cores: megaTinyCore (ATtiny), DxCore (AVR128DB),
+        Earle Philhower's arduino-pico through the maxgerhardt platform
+        (RP2350).
+      * Libraries: TMCStepper, Servo and SPI on the nodes; ArduinoJson and
+        LittleFS on the controller.
+      * The Pico SDK under arduino-pico: what the controller uses directly
+        (`hardware/sync`, `hardware/pio`, `hardware/gpio`,
+        `hardware/clocks`, `pico/util/queue`) and the second core.
+      * Upload: `serialupdi`, `picotool`, `uploadfs`.
+    * Code: `platformio.ini`, `scripts/pio/`, `src/rp2350/main.cpp`,
+      `src/rp2350/core1/bus/uart_9bit.pio`, `src/node/board/`.
+    * Replaces the `platformio.ini` half of `src/node/README.md` (its env
+      table is out of date: no vacuum or knife envs). `AGENTS.md` keeps its
+      flag lists.
+
+    **Status:** not started.
