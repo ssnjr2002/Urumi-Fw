@@ -142,7 +142,7 @@ Settled on `reference/commands.md` (branch 2).
 
 ## Conventions: logical pages
 
-Proposed; settled on `system/controller.md` (branch 3).
+Settled on `system/controller.md` (branch 3).
 
 * **Subject:** one layer: what it owns, who writes each value, and what
   crosses its edges, up and down.
@@ -357,7 +357,33 @@ that code (see `AGENTS.md`, Agent Scope).
      Underneath.
    * This doc: the logical page conventions above lose "Proposed".
 
-   **Status:** in progress.
+   **Status:** ready to merge.
+
+   **Outcome:**
+
+   * Plans are not archived: they stay in `plans/`, open or closed, with the
+     "Current behaviour" line ("Conventions: plans"). `machine-model.md` is
+     open (M4); the other three are closed.
+   * The logical page conventions changed on review: Hardware and I/O first,
+     Failures folded into Lifecycle's faults, the owns table moved late as
+     "Who writes what", and the reads-in-order rule.
+   * `machine/homing.md`'s node-reset line was wrong and is fixed: the datum
+     witness catches a reset at the node's next bind or leg end.
+   * Comments that disagree with the code, left for a code branch:
+     * `ipc/shared_state.h`: the `MachineState` comment omits the
+       sequence-by-name rule.
+     * `ops/machine.h`: `K_WRITE` says "at rest", narrower than the code.
+     * `controller/cmd/unalarm.cpp` cites `engage_and_axis_map.md` §6.1,
+       which branch 5 archives.
+   * For branch 5: `F_BUS` comes only from the boot sweep, so a bus outage
+     after boot raises no fault; the silence timeout and the keep-alive are
+     the page's to cover. `state-handling.md`'s open items (SET_SESSION, the
+     silence timeout, a node watchdog) go to branches 5 and 7; its
+     `alarmReason` two-writers item is stale.
+   * For branch 7: the shelved `feature/park-speed` branch touches
+     `docs/homing.md`.
+   * `machine-model.md` said `home` runs in `JOB.PAUSED`; the code needs an
+     IDLE context. That is M4's to settle.
 
 4. `refactor/system-cores`: `docs/system/cores.md`, the split between Core 0
    and Core 1.
