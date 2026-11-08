@@ -357,7 +357,8 @@ that code (see `AGENTS.md`, Agent Scope).
      Underneath.
    * This doc: the logical page conventions above lose "Proposed".
 
-   **Status:** ready to merge.
+   **Status:** merged. Unblocks branches 4–11, 13 and 14; branch 7 also
+   waits for 12.
 
    **Outcome:**
 
