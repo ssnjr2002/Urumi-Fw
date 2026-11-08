@@ -52,7 +52,7 @@ docs/
   reference/     exact commands, replies, status keys, packets, config fields
   howto/         step-by-step tasks
   measurements/  dated bench results, each with date, firmware commit and hardware
-  plans/         as now; disposable once their branches merge
+  plans/         one plan per change, kept; its status line says open or closed
   archive/       dead-era docs, frozen, with a README naming what replaced each
 ```
 
@@ -152,20 +152,41 @@ Proposed; settled on `system/controller.md` (branch 3).
 * **Decisions** at the end of the page: each one with the alternatives it
   rejected. Settles decision records for logical pages.
 
+* **Reads in order:** no section leans on a term a later one introduces. A
+  short overview names the parts before the sections that detail them.
+* **One subject per section;** a section that holds several splits.
+* **Plain headings:** I/O, not Edges. Each I/O boundary is named by its
+  ends: "Host to Core 0", not "Up, to the host".
+
 Section order:
 
-1. **What it is.**
-2. **What it owns:** a table of value, writer, readers.
-3. **Edges:** what crosses each one, and over which channel.
-4. **States and lifecycle.**
-5. **Failures.**
-6. **Decisions.**
-7. **Code:** the files.
+1. **Intro**, under the title: what the layer is, in a few sentences.
+2. **Hardware:** what the layer runs on and touches.
+3. **I/O:** what crosses each boundary, and over which channel.
+4. **Lifecycle:** boot, the overview of the parts, failures and how the
+   layer recovers, teardown. Failures sit with the faults that report them,
+   not in a section of their own.
+5. **The layer's own sections**, each a part the overview named.
+6. **Who writes what:** a table of value, writer, readers.
+7. **Decisions.**
+8. **Code:** the files.
+
+## Conventions: plans
+
+Settled in branch 3.
+
+* **A plan stays in `plans/`** whatever its state; moving it breaks its
+  links. `archive/` holds docs from eras the project has left, not plans.
+* **Open or closed:** a plan is open while any branch is neither merged nor
+  dropped, closed once every branch is. Its first lines say which.
+* **Replaced by a page:** a plan whose decisions a `system/` page now
+  describes opens with a line naming the page: "Current behaviour:
+  `system/<page>.md`; this plan records how it was built."
 
 ## Not settled
 
 * Decision records outside logical pages.
-* Status words for plans and decisions.
+* Status words for decisions.
 * Whether the operator is an audience (`howto/run-a-job.md`).
 
 ## Branches
@@ -286,8 +307,10 @@ review; no new branch type.
 One `system/` page per layer. Branch 3 writes the first and settles the
 logical page conventions; branches 4–14 each write one more page and depend
 only on branch 3, so they can run in parallel sessions, except branch 7,
-which waits for branch 12. Each branch that lands a page moves what the page
-replaces to `archive/`, with a line in `archive/README.md`, and adds the
+which waits for branch 12. Each branch that lands a page moves the
+top-level docs it replaces to `archive/`, with a line in
+`archive/README.md`; the plans it replaces stay and get the line from
+"Conventions: plans". It also adds the
 page to `docs/README.md` (the first one also adds the `system/` row). A
 `docs/README.md` conflict between parallel branches is one line each.
 `wire_protocol.md` stays: it becomes `reference/` pages, not a `system/`
@@ -326,12 +349,15 @@ that code (see `AGENTS.md`, Agent Scope).
    * Code: `src/rp2350/core0/ops/machine.*`, `sequence.*`, `runner.*`,
      `src/rp2350/core0/control_plane.cpp`, `core0.cpp`,
      `src/rp2350/ipc/shared_state.h` (`MachineState`).
-   * Replaces the merged plans `plans/machine-model.md`,
+   * Replaces the plans `plans/machine-model.md` (open: M4),
      `plans/sequences.md`, `plans/state-handling.md`,
-     `plans/core0-layers.md`: moved to `archive/`.
+     `plans/core0-layers.md` (closed). They stay in `plans/` and get the
+     line from "Conventions: plans", with open or closed.
+   * `machine/homing.md` and `machine/positioning.md` link the page in their
+     Underneath.
    * This doc: the logical page conventions above lose "Proposed".
 
-   **Status:** not started.
+   **Status:** in progress.
 
 4. `refactor/system-cores`: `docs/system/cores.md`, the split between Core 0
    and Core 1.
@@ -400,8 +426,8 @@ that code (see `AGENTS.md`, Agent Scope).
    * Code: `src/rp2350/core0/data_plane.cpp`,
      `src/rp2350/core0/controller/seq/place.*`, `toolchange.*`,
      `web/src/toolpath/job.ts`.
-   * Replaces the done `job-*` plans' decisions; which plans move to
-     `archive/` is settled in the branch's Read.
+   * Replaces the `job-*` plans' decisions; which plans get the line from
+     "Conventions: plans" is settled in the branch's Read.
 
    **Status:** not started.
 
