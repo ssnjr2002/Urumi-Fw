@@ -1,5 +1,7 @@
 # Core 0 layers: primitives, ops, controller
 
+**Closed.** Current behaviour: [system/controller.md](../system/controller.md); this plan records how it was built.
+
 Split Core 0 into explicit layers so the controller can grow on the Pico
 without losing the atomic, config-free command set the host-as-controller
 design produced. Follows docs/plans/pico-config.md, whose Open questions this

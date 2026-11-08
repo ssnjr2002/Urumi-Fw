@@ -1,5 +1,7 @@
 # State handling: config, bus, sessions, alarm exits
 
+**Closed.** Current behaviour: [system/controller.md](../system/controller.md); this plan records how it was built.
+
 Where the Pico's state machine goes after docs/plans/core0-layers.md. That plan
 settled the layers (primitives in `cmd/`, state writes in `ops/`, controller
 commands in `controller/cmd/` gated on a valid config); this one settles what

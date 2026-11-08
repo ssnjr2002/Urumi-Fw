@@ -12,7 +12,8 @@ it jobs and commands over USB.
 | --- | --- |
 | `machine/` | what you see the machine do and what to expect: one page per thing you start, watch and end: [homing](machine/homing.md) and [positioning](machine/positioning.md) |
 | `reference/` | exact strings, each page marked with the commit it was checked against: [commands](reference/commands.md) |
-| `plans/` | one plan per change, with a section per branch; done with once its branches merge |
+| `system/` | what happens underneath, one page per layer, each marked with the commit it was checked against: [controller](system/controller.md) |
+| `plans/` | one plan per change, with a section per branch; it stays here, open or closed, and records how its change was built |
 | `archive/` | docs from hosts and designs the project has left; its README names what replaced each |
 
 The docs directly in `docs/` are design notes, audits and measurements written

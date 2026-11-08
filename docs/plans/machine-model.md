@@ -1,5 +1,7 @@
 # Machine model: faults, levels, sequences
 
+**Open:** M4 is planned. Current behaviour: [system/controller.md](../system/controller.md); this plan records how it was built.
+
 `machineState` and `alarmReason` hold three things in two bytes: what runs,
 what is wrong, and what everyone else is told. One byte cannot hold a probe
 inside a paused job (`returnState`), nor two faults at once, so the code

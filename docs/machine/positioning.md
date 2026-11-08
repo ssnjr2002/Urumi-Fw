@@ -225,6 +225,8 @@ homed: home again before positioning.
 
 ## Underneath
 
+* Contexts, sequences, faults and when a command runs:
+  [system/controller.md](../system/controller.md).
 * Frames, the controlled point, the work zero, limits and named positions:
   [plans/coordinate-system.md](../plans/coordinate-system.md).
 * Jog and `goto` forms, what each does, and their speeds:

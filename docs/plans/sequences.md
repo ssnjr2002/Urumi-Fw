@@ -1,5 +1,7 @@
 # Sequences: one state writer, Core 1 facts, steps that move
 
+**Closed:** R1 merged; R2a–R4 dropped for machine-model.md. Current behaviour: [system/controller.md](../system/controller.md); this plan records how it was built.
+
 **Superseded from R2a on by docs/plans/machine-model.md.** R1 is done and
 kept; R2a–R4 and the Decisions on session, admission and sequences are
 replaced there.

@@ -201,12 +201,16 @@ An emergency stop is not cleared by `unalarm` (`→ err estop`); use `unstop`.
 * **An axis that didn't hear the stop.** When a cycle fails, an axis whose node
   doesn't acknowledge the stop may keep moving under the fault. Nothing stops
   it.
-* **A node that resets after homing.** The controller still believes its axis
-  is homed, so nothing asks you to home again.
+* **A node that resets after homing.** The node forgets its position, and the
+  controller notices the next time it binds the node or ends a leg on it: the
+  axis then reads unhomed. Until then, during a job, a `goto` or a jog, it
+  still counts as homed.
 * **No usable config.** `unalarm` can't fix that; load a new config.
 
 ## Underneath
 
+* Contexts, sequences, faults and when a command runs:
+  [system/controller.md](../system/controller.md).
 * The homing session, cycles and the `home` command on the controller:
   [plans/controller-homing.md](../plans/controller-homing.md).
 * Legs on the node, `setorigin`, the supervisor and the rotary index:

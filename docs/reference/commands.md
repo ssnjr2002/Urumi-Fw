@@ -45,7 +45,8 @@ A line whose first word is in neither table answers `err unknown`.
 
 Each row has a kind. The kind is checked before the handler runs; a refused
 command answers `err busy` when something running is the reason, else
-`err bad_state`.
+`err bad_state`. Contexts, sequences and steps are described in
+[system/controller.md](../system/controller.md#admission).
 
 | Kind | Admitted when |
 | --- | --- |
