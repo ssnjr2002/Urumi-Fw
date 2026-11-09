@@ -6,12 +6,12 @@
   <style>
     pre { height: 20em; overflow-y: auto; border: 1px solid; padding: 4px; margin: 4px 0; }
     #cmd { width: 40em; font-family: monospace; }
-    #layers { height: 6em; width: 30em; overflow-y: auto; border: 1px solid; }
+    #layers { height: 6em; overflow-y: auto; border: 1px solid; }
     #layers > div { height: 1.5em; line-height: 1.5em; }
     #layers > .selected { background: Highlight; color: HighlightText; }
     #layers > .unavailable { opacity: 0.5; }
     /* label | controls */
-    .form { display: grid; grid-template-columns: max-content auto; gap: 4px 12px; align-items: center; justify-content: start; }
+    .form { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; align-items: center; }
     .corners { display: grid; grid-template-columns: max-content max-content; gap: 2px; }
     /* x, y, go: a single value spans x and y, so every go lines up */
     .axis { display: grid; grid-template-columns: 7em 7em max-content; gap: 4px; }

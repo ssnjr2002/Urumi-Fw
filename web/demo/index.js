@@ -597,6 +597,10 @@ svgFileIn.addEventListener('change', async () => {
     loadLayers();
 });
 
+/** A row's settings as the list shows them: what an empty or 0 value falls back to. */
+const settingsText = (r) =>
+    ` · feed: ${Number(r.feed) ? r.feed : 'default'} | p: ${r.p === '' ? 't' : r.p} | head: ${r.head}`;
+
 function renderLayers() {
     layersDiv.replaceChildren(...visibleRows().map((r) => {
         const problem = layerProblem(r.key);
@@ -610,7 +614,8 @@ function renderLayers() {
         });
         // On click, not change: the row's click below re-renders, and a removed box fires no change.
         box.addEventListener('click', () => { r.on = box.checked; });
-        div.append(box, ` ${r.key || '(no tool)'}${problem ? ` — ${problem}` : ''}`);
+        const settings = Object.assign(document.createElement('span'), { className: 'settings', textContent: settingsText(r) });
+        div.append(box, ` ${r.key || '(no tool)'}`, settings, problem ? ` — ${problem}` : '');
         div.addEventListener('click', () => { selectedKey = r.key; layersDiv.focus(); renderLayers(); });
         return div;
     }));
@@ -656,7 +661,9 @@ function showLayerSettings() {
 for (const [input, field] of [[jobFeedIn, 'feed'], [jobPIn, 'p'], [jobHeadSel, 'head']]) {
     input.addEventListener(input === jobHeadSel ? 'change' : 'input', () => {
         const r = selectedRow();
-        if (r) r[field] = input.value;
+        if (!r) return;
+        r[field] = input.value;
+        layersDiv.querySelector('.selected .settings').textContent = settingsText(r);
     });
 }
 
