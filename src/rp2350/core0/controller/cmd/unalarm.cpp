@@ -11,7 +11,7 @@
 // The event bits' cleanup ran when they were raised, so they just clear. The
 // held bits are fixed in dependency order and the first that cannot be stops
 // it: a mute node is `bus_exclude`'s, then an unmet slot request is retried
-// once (docs/engage_and_axis_map.md §6.1; one from axes_map re-checks its
+// once (docs/system/bus.md §5; one from axes_map re-checks its
 // pending axes first). F_LATCHED starts the `recovery` sequence, `ok` once it
 // runs; F_CONFIG has no fix here (a config) and is reported in what is left.
 bool cmdUnalarm(const char*) {

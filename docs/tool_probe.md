@@ -421,7 +421,7 @@ switch node is an axis in the axes request), `err node <id> not_stepper` /
 
 A **full alternative binding**, not an overlay, and an ordinary one: the probe
 binding is the slot map `- - <z> <vac>`
-([engage_and_axis_map.md](engage_and_axis_map.md) §5.4). The axes request is
+([system/bus.md](system/bus.md) §6). The axes request is
 untouched.
 
 1. Check both types with `CMD_NODE_STATUS` while nothing has been rebound, so a

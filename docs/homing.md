@@ -13,7 +13,7 @@ drives the axis into a hard stop at seek speed.
 **Cross-links:** [node_session_and_datum.md](node_session_and_datum.md) (`nodeOrigin`,
 `NODE_FLAG_DATUM`), [coordinate_frames_and_limits.md](coordinate_frames_and_limits.md)
 (the *home* frame), [wire_protocol.md](wire_protocol.md) (host↔Pico framing),
-[engage_and_axis_map.md](engage_and_axis_map.md) (slots — homing deliberately does
+[system/bus.md](system/bus.md) (slots — homing deliberately does
 not use them), [../web/src/machine/schema.ts](../web/src/machine/schema.ts) (config).
 
 Limit switches are fitted to **X, Y, Z0, Z1**. Neither A axis has one. The A axes

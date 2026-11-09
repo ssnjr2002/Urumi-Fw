@@ -55,3 +55,12 @@ built, a store since rewritten, and a checklist from before the Pico ran jobs.
 | `coordinate_frames_and_limits.md` | frames and soft limits for the C++ planner | `docs/plans/coordinate-system.md` |
 | `feed_override.md` | one feed dial for every unplanned stop; simulated only | nothing |
 | `validation_checklist.md` | finding which of host, Pico and nodes a fault is in | nothing yet |
+
+## Replaced by system pages
+
+Design docs for code that is built, replaced by the `system/` page that now
+describes it.
+
+| Doc | Was | Replaced by |
+| --- | --- | --- |
+| `engage_and_axis_map.md` | run-time stream slots, `CMD_ENGAGE`, the slot and axes maps, the fence | `docs/system/bus.md` |

@@ -10,7 +10,7 @@
 #include "../usb_protocol.h"   // NODE_FLAG_*, BUS_ADDR_MAX
 #include "hardware/sync.h"     // __dmb
 
-// ─── Slot binding (docs/engage_and_axis_map.md §5) ────────────────────────────
+// ─── Slot binding (docs/system/bus.md §5) ────────────────────────────
 // slotNode[i] = the bus id currently ENGAGE-bound to stream slot i, or
 // SLOT_NONE. Core 0 owns this map and the abstraction; Core 1 only ever sees
 // granular per-node CMD_ENGAGE.

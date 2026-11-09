@@ -333,7 +333,7 @@ input arrives over USART0 and would not feed the timer.
 
 The timer runs in `loop()`, so it does not catch a hung `loop()`: the RX ISR
 keeps stepping from stream bytes while commands go unanswered. The Pico then
-fences the node's slot (docs/engage_and_axis_map.md §5.5), which stops the
+fences the node's slot (docs/system/bus.md §5), which stops the
 Pico relying on it but does not stop the node. Only a hardware watchdog fed
 from `loop()` would.
 
@@ -403,7 +403,7 @@ elsewhere; it's just no longer load-bearing for stream latency.)
 
 ## 7. Stream slots and dual heads (`ENGAGE`) — stepper-only
 
-> **Now specced in [engage_and_axis_map.md](engage_and_axis_map.md).** That doc
+> **Now specced in [system/bus.md](system/bus.md).** That doc
 > is the source of truth for the ENGAGE / `axis_map` work; the sketch below is
 > the original framing it grew out of.
 

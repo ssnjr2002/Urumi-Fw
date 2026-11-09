@@ -123,7 +123,7 @@ bool cmdBusEnable(const char* args) {
 // ── enable / disable <id> (IDLE/PAUSED/ALARM) ────────────────────────────────
 // Relays to any bus node — the generic CMD_ENABLE effect is delegated per type
 // (motor energize / pump on …); the axis bookkeeping applies only when the id
-// is an axis node (docs/engage_and_axis_map.md §9).
+// is an axis node (docs/archive/engage_and_axis_map.md §9).
 bool cmdEnable(const char* args) {
     uint8_t node = parseNode(args, nullptr);
     if (!node) { Serial.println("err bad_node"); return true; }

@@ -125,7 +125,7 @@ answer `err unconfigured` and `axes_map` refuses. An accepted `CFG_SET` is the
 way out. A build with `PICO_ALLOW_UNCONFIGURED` adds `uncfg`, which ignores the
 file until power-off and lands IDLE unconfigured, primitives only (`slot_map`
 still binds nodes for the bench). With one, the controller commits the config's `defaultHead` axis map after
-every soft reset's bus sweep (docs/engage_and_axis_map.md §6).
+every soft reset's bus sweep (docs/system/bus.md §3).
 
 `g_cfg` is updated **only** by the boot check and a successful commit. It is
 deliberately **not** cleared by soft reset — the blob lives in flash, which soft

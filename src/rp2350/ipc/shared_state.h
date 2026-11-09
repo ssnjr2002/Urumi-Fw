@@ -173,7 +173,7 @@ extern volatile uint16_t nodeEnabled;
 
 // Provisional bus-address ceiling for command relays. A real node registry
 // replaces this range check when the axis-map/ENGAGE work lands
-// (docs/engage_and_axis_map.md §9); until then a wrong id simply relays and
+// (docs/archive/engage_and_axis_map.md §9); until then a wrong id simply relays and
 // times out.
 //
 // Shared between cores because the safe-off sweep must cover the WHOLE bus, not

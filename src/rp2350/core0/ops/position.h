@@ -8,7 +8,7 @@
 // One module, not two, and deliberately so. "Which bus id occupies stream slot
 // i" and "where is that node, in whose frame" are the same fact stated twice —
 // which is exactly what the node-frame design is FOR (docs/node_session_and_datum.md
-// §2, docs/engage_and_axis_map.md §5). Validity is a conjunction across three
+// §2, docs/system/bus.md §5). Validity is a conjunction across three
 // ownership domains:
 //
 //   Core-0 statics   slotNode[], nodeOrigin[], nodeHomed, parkPos[], parkSeen

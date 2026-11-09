@@ -1,7 +1,7 @@
 # Node Sessions & the Position Datum
 
 **Status:** design, not implemented
-**Companion to:** `engage_and_axis_map.md` (slots), `wire_protocol.md` (`nodestat`)
+**Companion to:** `system/bus.md` (slots), `wire_protocol.md` (`nodestat`)
 
 Two changes that share one reply and one question — *when may the Pico trust a
 position?*
@@ -57,7 +57,7 @@ Two properties worth naming:
 - A Pico reboot issues fresh nonces, so it cannot inherit stale trust.
 - `token == 0` means *never configured by me* — which is the detector for the
   connect-time unknown-stale-engagement gap left open in
-  `engage_and_axis_map.md`.
+  `system/bus.md`.
 
 ### What it catches
 

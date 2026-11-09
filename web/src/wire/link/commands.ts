@@ -9,7 +9,7 @@
  * instead of raw text.
  *
  * `axisMap` is a designed-for stub — the firmware does not yet accept the
- * command (docs/engage_and_axis_map.md, PROPOSED), but the signature is the
+ * command (docs/archive/engage_and_axis_map.md, PROPOSED), but the signature is the
  * one the eventual helper will have, so an orchestrator can code against it
  * now without a later API break.
  */
@@ -660,7 +660,7 @@ export type SlotBinding = number | null;
  *
  * The Pico commits its config's defaultHead map itself at boot; this is how a
  * host switches heads, and how it leaves ALARM_NODE_FAULT once a node that
- * failed to engage answers again (docs/engage_and_axis_map.md §6).
+ * failed to engage answers again (docs/system/bus.md §5).
  *
  * Throws with the firmware's reason on rejection (`err dup`, `err bad_node`,
  * `err unconfigured`, `err node <id> not_in_config`, `err bad_state`,

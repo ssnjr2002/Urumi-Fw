@@ -25,7 +25,7 @@
 // ─── Stream slot (runtime-assigned via CMD_ENGAGE) ──────────────────────────
 // The stream byte is four 2-bit slots (bit(2n)=step, bit(2n+1)=dir). Which slot
 // this node reads is NO LONGER derived from NODE_ID — it is assigned at runtime
-// by the Pico's axis map (docs/engage_and_axis_map.md §4). The node boots
+// by the Pico's axis map (docs/system/bus.md §5). The node boots
 // DISENGAGED (slot == SLOT_NONE): masks are 0, so it ignores every stream byte
 // and its position freezes until an ENGAGE binds it to a slot.
 enum Slot : uint8_t {
@@ -136,7 +136,7 @@ void node_setup(void) {
 // CMD_ENABLE / CMD_DISABLE effect: ENERGIZE ONLY — no stream role.
 // The stream gate is the slot (ENGAGE), decoupled from holding torque (ENABLE):
 // a parked dual-head axis is ENABLED (holds Z height) but DISENGAGED (ignores
-// the stream). See docs/engage_and_axis_map.md §4.3.
+// the stream). See docs/system/bus.md §5.
 void node_set_enabled(bool on) {
     if (on) {
         HAL_MOTOR_ENABLE();

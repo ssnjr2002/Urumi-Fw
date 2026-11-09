@@ -101,7 +101,7 @@ admitted only with nothing running, so no motion is cut.
    (`estopRequested`). Every step emitter on Core 1 stops on it.
 2. **Core 1**, in its next pass, drops any pending pause or abort and the
    planner ring, broadcasts a disable, then makes every node safe one by one
-   (the `bus` page). It sets the e-stop swept (`estopSwept`) and posts the
+   ([bus](bus.md)). It sets the e-stop swept (`estopSwept`) and posts the
    e-stop swept fact (`FACT_ESTOP_SWEPT`).
 3. **Core 0** publishes ALARM once `estopSwept` is set, and clears the
    fenced slots' positions when it reads `FACT_ESTOP_SWEPT`.
@@ -119,7 +119,7 @@ Each pass of Core 1's loop (`processBus()`), in order:
    request (`abortRequested`); if there was motion to drop, posts the ring
    drained fact (`FACT_RING_DRAINED`).
 4. **The keep-alive** (`busKeepalive()`): an empty stream byte when nothing
-   was sent for 333 ms (the `bus` page).
+   was sent for 333 ms ([bus](bus.md)).
 5. **One RPC request** (`rpcServerPoll()`), if one waits.
 
 The order is the policy. A node command takes up to 20 ms on the bus, many
