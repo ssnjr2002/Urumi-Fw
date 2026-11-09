@@ -332,7 +332,7 @@ shown by `cfg` as `dirty=1` and by `get cfgdirty`.
 
 | Field | Effect |
 |---|---|
-| An axis's `stepsPerUnit`, `invertDir`, `maxTravel`, `homing.pullOffDist`, `homing.parkPos`, `homing.indexPos` | The node's datum is void. X or Y puts both XY work offsets back to the config's `work`; Z unsets that head's work Z |
+| An axis's `stepsPerUnit`, `invertDir`, `maxTravel`, `homing.pullOffDist`, `homing.parkPos`, `homing.indexPos` | The node's datum is void. X or Y puts both XY work offsets back to the work area's min corner; Z unsets that head's work Z |
 | `buffer.*` | Republished to Core 1 |
 | `meshOn` | The mesh follows it, as `mesh on\|off` |
 

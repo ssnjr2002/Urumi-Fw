@@ -201,7 +201,6 @@ TEST_CASE("frame fields decode with their defaults") {
     CHECK_FALSE(c.heads[0].hasProbeSwitch);
     CHECK_FALSE(c.heads[0].probeSwitch.hasZ);
     CHECK(c.laser.node == 0);
-    CHECK(c.work.x == doctest::Approx(0));
     CHECK_FALSE(c.positions.hasPark);
     CHECK_FALSE(c.positions.hasLoad);
 
@@ -210,6 +209,27 @@ TEST_CASE("frame fields decode with their defaults") {
     CHECK(lo == doctest::Approx(0));
     CHECK(hi == doctest::Approx(480));
     CHECK_FALSE(configAxisRange(c.heads[0].a, &lo, &hi));
+}
+
+TEST_CASE("the work origin is the work area's min corner, else the soft range's low end") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    float x, y, lo, hi;
+    REQUIRE(configAxisRange(c.y, &lo, &hi));
+    configWorkOrigin(c, &x, &y);
+    CHECK(x == doctest::Approx(0));              // X seeks +, no parkPos: [0, max]
+    CHECK(y == doctest::Approx(lo));
+
+    c.y.homing.present = false;                  // no range: 0
+    configWorkOrigin(c, &x, &y);
+    CHECK(y == doctest::Approx(0));
+
+    b = readBlob("work_area.msgpack");
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    configWorkOrigin(c, &x, &y);
+    CHECK(x == doctest::Approx(10));
+    CHECK(y == doctest::Approx(-70));
 }
 
 TEST_CASE("a probe switch carries its height") {

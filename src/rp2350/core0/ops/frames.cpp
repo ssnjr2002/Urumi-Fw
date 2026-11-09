@@ -30,9 +30,7 @@ void framesClearWork(void) {
 
 void framesResetWorkXY(void) {
     if (!machineCfgValid()) return;
-    const MachineCfg& c = machineCfg();
-    workX = c.work.x;
-    workY = c.work.y;
+    configWorkOrigin(machineCfg(), &workX, &workY);
 }
 
 void framesUnsetWorkZ(uint8_t h) {

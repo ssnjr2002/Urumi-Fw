@@ -245,7 +245,7 @@ static CfgDecodeError checkFrames(const MachineCfg& c) {
         if (hd.hasProbeSwitch && hd.probeSwitch.hasZ &&
             !(isfinite(hd.probeSwitch.z) && hd.probeSwitch.z >= 0)) return CFG_DEC_FRAMES;
     }
-    if (!anchor || !isfinite(c.work.x) || !isfinite(c.work.y)) return CFG_DEC_FRAMES;
+    if (!anchor) return CFG_DEC_FRAMES;
     const CfgPositions& p = c.positions;
     if (p.hasPark && (!inRange(c.x, p.park.x) || !inRange(c.y, p.park.y))) return CFG_DEC_FRAMES;
     if (p.hasLoad && (!inRange(c.x, p.load.x) || !inRange(c.y, p.load.y))) return CFG_DEC_FRAMES;
@@ -415,7 +415,6 @@ CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out) {
     fh["unlockRange"] = true;
     fm["defaultHead"] = true;
     fm["laser"]       = true;
-    fm["work"]        = true;
     fm["positions"]   = true;
     fm["workArea"]    = true;
     fm["jogUnhomed"]  = true;
@@ -476,10 +475,6 @@ CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out) {
         if (ln.as<unsigned>() < 1 || ln.as<unsigned>() > CFG_BUS_ADDR_MAX) return CFG_DEC_NODE_ID;
         out->laser.node = (uint8_t)ln.as<unsigned>();
     }
-
-    JsonObjectConst work = m["work"];
-    if (work.isNull() || !readFloat(work["x"], &out->work.x) ||
-        !readFloat(work["y"], &out->work.y)) return CFG_DEC_MISSING;
 
     JsonObjectConst pos = m["positions"];
     CfgPositions& p = out->positions;
@@ -568,6 +563,17 @@ bool configAxisRange(const CfgAxis& a, float* lo, float* hi) {
     *lo = a.homing.seekPositive ? park - a.maxTravel : park;
     *hi = a.homing.seekPositive ? park : park + a.maxTravel;
     return true;
+}
+
+void configWorkOrigin(const MachineCfg& c, float* x, float* y) {
+    if (c.workArea.present) {
+        *x = c.workArea.xMin;
+        *y = c.workArea.yMin;
+        return;
+    }
+    float hi;
+    if (!configAxisRange(c.x, x, &hi)) *x = 0;
+    if (!configAxisRange(c.y, y, &hi)) *y = 0;
 }
 
 void configSlotMap(const MachineCfg& cfg, uint8_t head, uint8_t none, uint8_t out[4]) {

@@ -39,7 +39,10 @@ config does.
 * A: no work zero. Work A is the heading the blade's edge points at: 0 is along
   X+, read from −180 to 180.
 
-With no work zero set, work X and Y equal machine X and Y, and work Z reads `-`.
+With no work zero set, work X and Y are measured from the work area's min
+corner (`machine.workArea`'s `xMin`, `yMin`), the nearest point to machine 0
+that a job can use. Without a work area, from the low end of X's and Y's soft
+range. Work Z reads `-`.
 
 Read the position with `get mpos wpos`:
 
@@ -89,8 +92,8 @@ while a node is silent (`→ err degraded`).
 ## 4. Zeroing
 
 Zeroing sets the work zero at the selected tip. It is held until it is
-cleared, or until the controller restarts; to keep one, put it in the config's
-`machine.work` block.
+cleared, or until the controller restarts, which puts X and Y back to the
+work area's min corner (§2).
 
 **X and Y:** jog the tip, or the laser dot, onto the point that should be 0,
 then `wzero x y`.
@@ -112,8 +115,8 @@ The switch is for a bed the tip can't reach beside the material.
   at a different height. Zero it again before a work-Z `goto` or a job.
 * `wset` sets the work zero by number instead, in machine coordinates:
   `wset x 120 y 40`.
-* `wclear` sets X and Y back to `machine.work`, or 0, and unsets every head's
-  Z.
+* `wclear` sets X and Y back to the work area's min corner, and unsets every
+  head's Z.
 * All three run at rest; `wzero` also while a job waits for a tool change.
   While a job runs, its X and Y zero is held: `→ err bad_state`.
 
@@ -187,7 +190,7 @@ unhomed jog running into the end of an axis. A `goto` always needs homing.
 | `select <head>`, `select anchor` | makes that head's tip, or the laser dot, the controlled point; never moves | §3 |
 | `wzero [x] [y] [z\|z_switch]` | sets the work zero where the tip is now | §4 |
 | `wset <x\|y\|z> <v> …` | sets the work zero by number, in machine coordinates | §4 |
-| `wclear` | puts the work zero back to the config's | §4 |
+| `wclear` | puts the work zero back to the work area's min corner | §4 |
 | `jog <x\|y\|z\|a> <d> [scale]` | moves one axis by `<d>` | §5 |
 | `jog xy <dx> <dy> [scale]` | moves X and Y together, in one straight line | §5 |
 | `goto <m\|w> xy <x> <y> [scale]` | every Z lifts, then the tip goes to (x, y) | §5 |

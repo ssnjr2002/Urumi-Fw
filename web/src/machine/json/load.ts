@@ -62,7 +62,6 @@ import {
     type BedPoint,
     type ProbeSwitch,
     type LaserPointer,
-    type WorkOffset,
     type StoredPositions,
     type WorkArea,
     type JobBuffer,
@@ -180,8 +179,8 @@ interface JsonMachine {
     readonly x: JsonAxis;
     readonly y: JsonAxis;
     readonly laser?: JsonLaser;
-    /** Work offset default, XY. Absent fields: 0. `z` is removed, typed so the check can see it. */
-    readonly work?: { readonly x?: number; readonly y?: number; readonly z?: unknown };
+    /** Removed: the work origin starts at workArea's min corner. Typed so the check can see it. */
+    readonly work?: unknown;
     readonly positions?: {
         readonly park?: JsonPoint;
         readonly load?: JsonPoint;
@@ -427,9 +426,8 @@ export function parseConfig(jsonText: string): ConfigResult {
         peripherals,
         defaultHead: machine.defaultHead ?? 0,
         laser: buildLaser(machine.laser, errors),
-        work: buildWork(machine.work, errors),
         positions: buildPositions(machine.positions, errors),
-        workArea: buildWorkArea(machine.workArea, errors),
+        workArea: buildWorkArea(machine, errors),
         jogUnhomed: machine.jogUnhomed ?? false,
         meshOn: machine.meshOn === true,
         buffer: buildBuffer(machine.buffer, errors),
@@ -514,12 +512,6 @@ function buildSwitch(
     return { ...p, z: j.z };
 }
 
-/** The work offset default, filled to 0. */
-function buildWork(j: JsonMachine["work"], errors: string[]): WorkOffset {
-    if (j?.z !== undefined) errors.push("machine.work.z: removed — each head's work Z is set by wzero z");
-    return { x: j?.x ?? 0, y: j?.y ?? 0 };
-}
-
 function buildLaser(j: JsonLaser | null | undefined, errors: string[]): LaserPointer | undefined {
     if (j === null || j === undefined) return undefined;
     if (typeof j !== "object" || typeof j.node !== "number") {
@@ -529,7 +521,11 @@ function buildLaser(j: JsonLaser | null | undefined, errors: string[]): LaserPoi
     return { node: j.node };
 }
 
-function buildWorkArea(j: JsonMachine["workArea"], errors: string[]): WorkArea | undefined {
+// `work` was the work origin's default; rejected by name so an old config's
+// origin does not move unnoticed.
+function buildWorkArea(machine: JsonMachine, errors: string[]): WorkArea | undefined {
+    if (machine.work !== undefined) errors.push("machine.work: removed — the work origin starts at machine.workArea's min corner");
+    const j = machine.workArea;
     if (j === undefined) return undefined;
     if (typeof j !== "object" || j === null ||
         typeof j.xMin !== "number" || typeof j.xMax !== "number" ||

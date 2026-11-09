@@ -6,7 +6,7 @@
 //   wzero [x] [y] [z|z_switch]  work offset = the selected tip here (bare: all);
 //                            Z with the tip on the bed, or on its switch
 //   wset <axis> <v> …        work offset in machine units
-//   wclear                   work offset back to the config's `work` block
+//   wclear                   work offset XY back to the work area's min corner
 //   mesh on|off              the bed mesh, from the next ring start
 
 #include <Arduino.h>

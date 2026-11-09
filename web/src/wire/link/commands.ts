@@ -156,7 +156,7 @@ export async function wset(link: Link, offset: Partial<Record<"x" | "y" | "z", n
     await okOrThrow(link, `wset ${parts.join(" ")}`);
 }
 
-/** `wclear`: the work offset's XY back to the config's `work` block; every head's Z unset. */
+/** `wclear`: the work offset's XY back to the work area's min corner; every head's Z unset. */
 export async function wclear(link: Link): Promise<void> {
     await okOrThrow(link, "wclear");
 }

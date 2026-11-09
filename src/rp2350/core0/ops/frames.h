@@ -9,8 +9,8 @@ struct CfgAxis;
 // Machine coordinates are units (mm, deg) with + physical: steps ÷
 // stepsPerUnit, negated on an `invertDir` axis. The controlled point is the
 // selected tip: the anchor plus the selected head's offset (zero for the
-// anchor). The work offset is a volatile copy of the config's `work` block:
-// XY shared, Z per head. Move targets arrive in work coordinates and leave
+// anchor). The work offset is volatile, XY shared and Z per head; its XY
+// starts at configWorkOrigin. Move targets arrive in work coordinates and leave
 // here as anchor (machine) coordinates.
 //
 // Core-0-only; no bus I/O except the laser switch in framesSelect/framesOnMap.

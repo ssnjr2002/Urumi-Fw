@@ -574,16 +574,6 @@ export interface ProbeSwitch extends BedPoint {
 }
 
 /**
- * The work offset's default, in machine coordinates: XY a point on the
- * material shared by every head. The Pico holds a runtime offset over it;
- * each head's work Z is set only by a Z zero (`wzero z`).
- */
-export interface WorkOffset {
-    readonly x: number;
-    readonly y: number;
-}
-
-/**
  * Anchor positions in machine coordinates. Absent `park`: where homing parks.
  * `mount`: where a job's tool change stops for the operator.
  */
@@ -625,8 +615,8 @@ export interface MachineConfig {
     readonly peripherals: readonly BusNode[];
     /** Optional laser pointer module (alignment reference). */
     readonly laser?: LaserPointer;
-    readonly work: WorkOffset;
     readonly positions: StoredPositions;
+    /** Its min corner is also the Pico's work origin at boot and on `wclear`. */
     readonly workArea?: WorkArea;
     /** Relative jogs allowed before homing, without soft limits (testing). */
     readonly jogUnhomed: boolean;
@@ -664,7 +654,6 @@ export function machineConfig(
 ): MachineConfig {
     return {
         x, y, heads, ...DEFAULTS.machine,
-        work: { x: 0, y: 0 },
         positions: {},
         jogUnhomed: false,
         meshOn: false,

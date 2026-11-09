@@ -19,7 +19,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 15u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 16u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      2u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -201,9 +201,6 @@ struct MachineCfg {
     CfgNode  peripherals[CFG_MAX_PERIPH];
     uint8_t  periphCount;
     CfgLaser laser;
-    // The work offset's config default, XY. Z is per head and set only by a
-    // Z zero.
-    CfgPoint work;
     CfgPositions positions;
     CfgWorkArea workArea;
     bool     jogUnhomed;     // relative jogs before homing, no soft limits (testing)
@@ -266,3 +263,7 @@ float configParkPos(const CfgAxis& a);
 // The anchor's soft range on a homeable linear axis: [park, park ± maxTravel],
 // away from the switch. False for an axis with no linear home.
 bool configAxisRange(const CfgAxis& a, float* lo, float* hi);
+
+// The work offset's XY at boot and on `wclear`: the work area's min corner,
+// else the low end of each axis's soft range, else 0.
+void configWorkOrigin(const MachineCfg& c, float* x, float* y);

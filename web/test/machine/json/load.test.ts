@@ -150,12 +150,12 @@ describe("load: optional defaults", () => {
         expect(r.errors).toContain("machine.rapid: removed — use machine.feed.travelDefault");
     });
 
-    it("machine.work.z is rejected by name", () => {
+    it("machine.work is rejected by name", () => {
         const file = JSON.parse(TEST_MACHINE);
-        const bad = parseConfig(JSON.stringify({ ...file, machine: { ...file.machine, work: { z: [0] } } }));
+        const bad = parseConfig(JSON.stringify({ ...file, machine: { ...file.machine, work: { x: 0, y: 0 } } }));
         expect(bad.ok).toBe(false);
         if (bad.ok) return;
-        expect(bad.errors.join("\n")).toMatch(/machine\.work\.z: removed/);
+        expect(bad.errors.join("\n")).toMatch(/machine\.work: removed/);
     });
 
     it("maxOvercut defaults to 0", () => {
