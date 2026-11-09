@@ -440,7 +440,37 @@ that code (see `AGENTS.md`, Agent Scope).
      `include/common.h`.
    * Replaces `engage_and_axis_map.md`.
 
-   **Status:** not started.
+   **Status:** done, on `refactor/bus` (not `refactor/system-bus`), not yet
+   merged. Unblocks nothing new.
+
+   **Outcome:**
+
+   * The page is ordered from the wire up: Hardware, Data layer, Stream
+     bytes, Command frames, then I/O and Lifecycle, so neither leans on a
+     term introduced later. The settled order puts I/O and Lifecycle second
+     and third; on a page whose parts are protocol layers they read only
+     after the layers.
+   * Stream bytes split into without reply (steppers) and with reply (the
+     probe's vacuum, and the bed-level node when it joins): one reply per
+     byte, lockstep, under half the bandwidth. Pure, pure reply and hybrid
+     mixes, each with the probe leg that uses it.
+   * Commands named on the page give their argument syntax and read-back
+     marks before the text leans on them (`slot_map`, `axes_map`).
+   * `engage_and_axis_map.md` moved to `archive/`, under a new "Replaced by
+     system pages" section. Links in live docs and code comments point at
+     `system/bus.md`; the two that cite its §9 (the type-blind relay verbs,
+     which the page does not cover) point at the archived copy. `cores.md`
+     now links the page.
+   * Left out as no longer true: the `ALARM_*` reasons (now `F_BUS`,
+     `F_UNMAPPED`), the FIFO-word engage, the staging tasklist, and the
+     claim that ingest refuses a step for an unbound axis, which no check in
+     the code makes.
+   * Out of scope, for a later pass:
+     * Plans that name `engage_and_axis_map.md` (`state-handling.md`,
+       `motion-sessions.md`, `pico-config.md`) keep the old name, as records.
+     * The archived doc links `tool_probe.md` relatively; that link is
+       broken, as the archive README allows.
+     * No node build enables `NODE_HAS_SILENCE_TIMEOUT`; the page says so.
 
 6. `refactor/system-planner`: `docs/system/planner.md`, from curve to step.
 
