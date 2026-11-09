@@ -155,6 +155,9 @@ Settled on `system/controller.md` (branch 3).
 * **Reads in order:** no section leans on a term a later one introduces. A
   short overview names the parts before the sections that detail them.
 * **One subject per section;** a section that holds several splits.
+* **Code names by notation:** a value or function is named in words with its
+  code name at first use in each section, by its code name after (README,
+  Notation). Who writes what lists every name, so it doubles as the glossary.
 * **Plain headings:** I/O, not Edges. Each I/O boundary is named by its
   ends: "Host to Core 0", not "Up, to the host".
 
@@ -395,10 +398,12 @@ that code (see `AGENTS.md`, Agent Scope).
      facts, the e-stop sweep, the flash park, which core owns which value.
    * Code: `src/rp2350/ipc/`, `src/rp2350/core1/core1.cpp`,
      `core1/rpc_server.cpp`, `src/rp2350/main.cpp`.
-   * Replaces `node_frame_ownership_migration.md`, `node_state_ingest.md`
-     (proposals, not built: their decisions go in the page's Decisions).
+   * Replaces `node_frame_ownership_migration.md`, `node_state_ingest.md`:
+     proposals, never built, so they move to `plans/` as
+     `node-frame-ownership.md` and `node-state-ingest.md`, each with a line
+     saying why; the page links the first from its Decisions.
 
-   **Status:** not started.
+   **Status:** in progress.
 
 5. `refactor/system-bus`: `docs/system/bus.md`, RS485.
 
