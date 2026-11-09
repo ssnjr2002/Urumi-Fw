@@ -403,7 +403,30 @@ that code (see `AGENTS.md`, Agent Scope).
      `node-frame-ownership.md` and `node-state-ingest.md`, each with a line
      saying why; the page links the first from its Decisions.
 
-   **Status:** in progress.
+   **Status:** ready to merge.
+
+   **Outcome:**
+
+   * The two proposals were never built, so they moved to `plans/`
+     (`node-frame-ownership.md`, `node-state-ingest.md`) rather than
+     `archive/`, each with a line saying why. Their decisions stay in them;
+     the page links only the first.
+   * A new logical-page convention, code names by notation (README, Notation),
+     applied to `cores.md` and retrofitted to `controller.md`. Later pages
+     follow it.
+   * `controller.md` keeps its "Core 0 to Core 1" and links `cores.md`.
+   * `bus` and `planner` are named in plain text, not linked; branches 5 and
+     6 can link them when their pages land.
+   * Out of scope, for a later pass:
+     * Stale comments: `ipc/core1_rpc.h` narrates the old FIFO encoding and
+       cites `control_plane.cpp:405` and "§8.2"; `ipc/shared_state.h` keeps
+       the "split out of shared.h" history, "state_redesign Layer 4", and
+       points `BUS_ADDR_MAX` at `engage_and_axis_map.md` §9;
+       `core1/core1.cpp` has the flash-park comment above `busKeepalive()`
+       instead of `core1FlashPark()`; `core1/emit/emit.h` narrates its split
+       from `shared.h`.
+     * `node-state-ingest.md` §7 still names `alarmReason` and
+       `MSEG_FLAG_ESTOP` as open items; both are gone from the code.
 
 5. `refactor/system-bus`: `docs/system/bus.md`, RS485.
 
