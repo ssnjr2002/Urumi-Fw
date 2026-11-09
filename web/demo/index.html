@@ -6,11 +6,20 @@
   <style>
     pre { height: 20em; overflow-y: auto; border: 1px solid; padding: 4px; margin: 4px 0; }
     #cmd { width: 40em; font-family: monospace; }
-    #layers { height: 6em; width: 30em; overflow-y: auto; border: 1px solid; margin: 4px 0; }
+    #layers { height: 6em; width: 30em; overflow-y: auto; border: 1px solid; }
     #layers > div { height: 1.5em; line-height: 1.5em; }
     #layers > .selected { background: Highlight; color: HighlightText; }
     #layers > .unavailable { opacity: 0.5; }
+    /* label | controls */
+    .form { display: grid; grid-template-columns: max-content auto; gap: 4px 12px; align-items: center; justify-content: start; }
     .corners { display: grid; grid-template-columns: max-content max-content; gap: 2px; }
+    /* x, y, go: a single value spans x and y, so every go lines up */
+    .axis { display: grid; grid-template-columns: 7em 7em max-content; gap: 4px; }
+    .axis input { width: 100%; box-sizing: border-box; }
+    .axis .wide { grid-column: span 2; }
+    /* name | input | unit */
+    .fields { display: grid; grid-template-columns: max-content max-content auto; gap: 4px; align-items: center; }
+    .line { margin-bottom: 4px; }
   </style>
 </head>
 <body>
@@ -21,18 +30,24 @@
 
   <h2>Text</h2>
   <pre id="text-log"></pre>
-  <input id="cmd" placeholder="command, Enter to send, ↑/↓ for history" autocomplete="off" disabled>
-  <span>desyncs: <span id="desyncs">0</span></span>
-  <br>
+  <div class="line">
+    <input id="cmd" placeholder="command, Enter to send, ↑/↓ for history" autocomplete="off" disabled>
+    desyncs: <span id="desyncs">0</span>
+  </div>
   <button id="text-clear">Clear</button>
   <button id="text-copy">Copy</button>
 
   <h2>Binary</h2>
-  <button id="status-get" disabled>Get status</button>
-  <label><input type="checkbox" id="status-poll" disabled> Poll every</label>
-  <input type="number" id="status-ms" min="20" step="10" value="200" style="width: 5em"> ms outside a job
-  <span>last: <span id="status-at">-</span></span>
-  <span id="status-err"></span>
+  <div class="form">
+    <span>status</span>
+    <div>
+      <button id="status-get" disabled>Get status</button>
+      <label><input type="checkbox" id="status-poll" disabled> Poll every</label>
+      <input type="number" id="status-ms" min="20" step="10" value="200" style="width: 5em"> ms outside a job
+    </div>
+    <span></span>
+    <div>last: <span id="status-at">-</span> <span id="status-err"></span></div>
+  </div>
   <table id="status-table"></table>
   <pre id="bin-log"></pre>
   <button id="bin-clear">Clear</button>
@@ -40,117 +55,153 @@
 
   <h2>Control</h2>
   <h3>Jog</h3>
-  <label><input type="checkbox" id="jog-keys" disabled> Key jog (hold: W/S = +Y/−Y, A/D = −X/+X, R/F = +Z/−Z, Q/E = −A/+A)</label>
-  <label>Speed (× jogFeed): <input type="number" id="jog-speed" min="0.02" max="3.98" step="0.25" value="1" style="width: 5em"></label>
-  <span id="jog-dir"></span>
+  <div class="form">
+    <span>keys</span>
+    <label><input type="checkbox" id="jog-keys" disabled> Key jog (hold: W/S = +Y/−Y, A/D = −X/+X, R/F = +Z/−Z, Q/E = −A/+A)</label>
+    <span>speed</span>
+    <div>
+      <input type="number" id="jog-speed" min="0.02" max="3.98" step="0.25" value="1" style="width: 5em"> × jogFeed
+      <span id="jog-dir"></span>
+    </div>
+  </div>
 
   <h3>Machine</h3>
-  <div>home:
-    <button class="text-cmd" value="home" disabled>home</button>
-    <button class="text-cmd" value="home xy" disabled>home xy</button>
-    <button class="text-cmd" value="home head" data-head="home-head" disabled>home head</button>
-    <select id="home-head"></select>
-  </div>
-  <div>tool:
-    <label>head <select id="mount-head"></select></label>
-    <label>tool <select id="mount-tool"></select></label>
-    <button class="text-cmd" value="mount" data-head="mount-head" data-tool="mount-tool" disabled>mount</button>
-    <button class="text-cmd" value="unmount" data-head="mount-head" disabled>unmount</button>
-  </div>
-  <div>goto:
-    <button class="goto" value="park" disabled>park</button>
-    <button class="goto" value="load" disabled>load</button>
-    <button class="goto" value="mount" disabled>mount pos</button>
-    <button class="goto" value="up" data-noscale disabled>up</button>
-    <button class="goto" value="unlock" data-noscale disabled>unlock</button>
-  </div>
-  <div>Go to corner:
+  <div class="form">
+    <span>home</span>
+    <div>
+      <button class="text-cmd" value="home" disabled>home</button>
+      <button class="text-cmd" value="home xy" disabled>home xy</button>
+      <button class="text-cmd" value="home head" data-head="home-head" disabled>home head</button>
+      <select id="home-head"></select>
+    </div>
+    <span>tool</span>
+    <div>
+      <label>head <select id="mount-head"></select></label>
+      <label>tool <select id="mount-tool"></select></label>
+      <button class="text-cmd" value="mount" data-head="mount-head" data-tool="mount-tool" disabled>mount</button>
+      <button class="text-cmd" value="unmount" data-head="mount-head" disabled>unmount</button>
+    </div>
+    <span>goto</span>
+    <div>
+      <button class="goto" value="park" disabled>park</button>
+      <button class="goto" value="load" disabled>load</button>
+      <button class="goto" value="mount" disabled>mount pos</button>
+      <button class="goto" value="up" data-noscale disabled>up</button>
+      <button class="goto" value="unlock" data-noscale disabled>unlock</button>
+    </div>
+    <span>corner</span>
     <div class="corners">
       <button class="goto" value="m xy min max" disabled>↖ xmin ymax</button>
       <button class="goto" value="m xy max max" disabled>xmax ymax ↗</button>
       <button class="goto" value="m xy min min" disabled>↙ xmin ymin</button>
       <button class="goto" value="m xy max min" disabled>xmax ymin ↘</button>
     </div>
-  </div>
-  <div>
-    <span>anchor xy: <input placeholder="x, min, max" style="width: 6em"> <input placeholder="y, min, max" style="width: 6em"> <button class="goto-row" value="m xy" disabled>go</button></span>
-    <span>z: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="m z" disabled>go</button></span>
-    <span>a: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="m a" disabled>go</button></span>
+    <span>xy</span>
+    <div class="axis"><input placeholder="x, min, max"><input placeholder="y, min, max"><button class="goto-row" value="m xy" disabled>go</button></div>
+    <span>z</span>
+    <div class="axis"><input type="number" step="any" class="wide"><button class="goto-row" value="m z" disabled>go</button></div>
+    <span>a</span>
+    <div class="axis"><input type="number" step="any" class="wide"><button class="goto-row" value="m a" disabled>go</button></div>
   </div>
 
   <h3>Work</h3>
-  <div>select:
-    <span id="select-btns">
-      <button class="select" value="anchor" disabled>anchor</button>
-    </span>
-    selected: <span id="selected">none</span>
-  </div>
-  <div>zero:
-    <button class="wzero" value="x y" disabled>wzero x y</button>
-    <button class="wzero" value="z" disabled>wzero z</button>
-    <button class="wzero" value="z_switch" disabled>wzero z_switch</button>
-  </div>
-  <div>goto:
-    <button class="goto" value="w xy 0 0" disabled>0 xy</button>
-    <button class="goto" value="top" disabled>material top</button>
-    <button class="goto" value="w a 0" disabled>0 a</button>
-  </div>
-  <div>
-    <span>xy: <input placeholder="x, min, max" style="width: 6em"> <input placeholder="y, min, max" style="width: 6em"> <button class="goto-row" value="w xy" disabled>go</button></span>
-    <span>z: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="w z" disabled>go</button></span>
-    <span>a: <input type="number" step="any" style="width: 6em"> <button class="goto-row" value="w a" disabled>go</button></span>
+  <div class="form">
+    <span>select</span>
+    <div>
+      <span id="select-btns">
+        <button class="select" value="anchor" disabled>anchor</button>
+      </span>
+      selected: <span id="selected">none</span>
+    </div>
+    <span>zero</span>
+    <div>
+      <button class="wzero" value="x y" disabled>wzero x y</button>
+      <button class="wzero" value="z" disabled>wzero z</button>
+      <button class="wzero" value="z_switch" disabled>wzero z_switch</button>
+    </div>
+    <span>goto</span>
+    <div>
+      <button class="goto" value="w xy 0 0" disabled>0 xy</button>
+      <button class="goto" value="top" disabled>material top</button>
+      <button class="goto" value="w a 0" disabled>0 a</button>
+    </div>
+    <span>xy</span>
+    <div class="axis"><input placeholder="x, min, max"><input placeholder="y, min, max"><button class="goto-row" value="w xy" disabled>go</button></div>
+    <span>z</span>
+    <div class="axis"><input type="number" step="any" class="wide"><button class="goto-row" value="w z" disabled>go</button></div>
+    <span>a</span>
+    <div class="axis"><input type="number" step="any" class="wide"><button class="goto-row" value="w a" disabled>go</button></div>
   </div>
 
   <h2>Config</h2>
-  <input type="file" id="cfg-file" accept=".json,.jsonc">
-  <button id="cfg-push" disabled>push</button>
-  <button id="cfg-pull" disabled>pull</button>
-  <button id="cfg-save" disabled>download</button>
-  <span id="cfg-info"></span>
+  <div class="form">
+    <span>file</span>
+    <div><input type="file" id="cfg-file" accept=".json,.jsonc"> <span id="cfg-info"></span></div>
+    <span>machine</span>
+    <div>
+      <button id="cfg-push" disabled>push</button>
+      <button id="cfg-pull" disabled>pull</button>
+      <button id="cfg-save" disabled>download</button>
+    </div>
+  </div>
 
   <h2>Job</h2>
-  <input type="file" id="svg-file" accept=".svg">
-  <pre id="svg-warnings" style="height: auto; max-height: 6em"></pre>
-  <div>
-    <button id="layers-all" disabled>All</button>
-    <button id="layers-none" disabled>None</button>
-    ↑/↓ moves the selected layer, Space ticks it
-  </div>
-  <div id="layers" tabindex="0" role="listbox" aria-label="Layers"></div>
-  <div>Selected layer:
-    <label>feed (mm/s, 0 = tool's): <input type="number" id="job-feed" min="0" step="any" value="0" style="width: 5em"></label>
-    <label>p (mm, empty = t): <input type="number" id="job-p" min="0" step="0.1" style="width: 5em"></label>
-    <label>head: <select id="job-head"></select></label>
-  </div>
-  <canvas id="preview" width="480" height="320" style="border: 1px solid"></canvas>
-  <div>Job options:
-    <label>t (mm): <input type="number" id="job-t" min="0" step="0.1" value="0" style="width: 5em"></label>
-    <label><input type="checkbox" id="job-manual"> Stop after each layer</label>
-  </div>
-  <div>Session: <span id="job-session">none</span> <button id="job-start" disabled>Start session</button></div>
-  <div>
-    <button class="text-cmd" value="place set" disabled>place set</button>
-    <button class="text-cmd" value="place reset" disabled>place reset</button>
-    <button class="text-cmd" value="place frame" disabled>place frame</button>
-  </div>
-  <div>Go to corner:
+  <div class="form">
+    <span>svg</span>
+    <input type="file" id="svg-file" accept=".svg">
+    <span></span>
+    <pre id="svg-warnings" style="height: auto; max-height: 6em"></pre>
+    <span>layers</span>
+    <div>
+      <button id="layers-all" disabled>All</button>
+      <button id="layers-none" disabled>None</button>
+      ↑/↓ moves the selected layer, Space ticks it
+    </div>
+    <span></span>
+    <div id="layers" tabindex="0" role="listbox" aria-label="Layers"></div>
+    <span>layer</span>
+    <div class="fields">
+      <label for="job-feed">feed</label><input type="number" id="job-feed" min="0" step="any" value="0" style="width: 5em"><span>mm/s (0 = tool's)</span>
+      <label for="job-p">p</label><input type="number" id="job-p" min="0" step="0.1" style="width: 5em"><span>mm (empty = t)</span>
+      <label for="job-head">head</label><select id="job-head"></select><span></span>
+    </div>
+    <span></span>
+    <canvas id="preview" width="480" height="320" style="border: 1px solid"></canvas>
+    <span>options</span>
+    <div>
+      <label>t <input type="number" id="job-t" min="0" step="0.1" value="0" style="width: 5em"> mm</label>
+      <label><input type="checkbox" id="job-manual"> Stop after each layer</label>
+    </div>
+    <span>session</span>
+    <div><span id="job-session">none</span> <button id="job-start" disabled>Start session</button></div>
+    <span>place</span>
+    <div>
+      <button class="text-cmd" value="place set" disabled>place set</button>
+      <button class="text-cmd" value="place reset" disabled>place reset</button>
+      <button class="text-cmd" value="place frame" disabled>place frame</button>
+    </div>
+    <span>corner</span>
     <div class="corners">
       <button class="text-cmd" value="place go xmin ymax" disabled>↖ xmin ymax</button>
       <button class="text-cmd" value="place go xmax ymax" disabled>xmax ymax ↗</button>
       <button class="text-cmd" value="place go xmin ymin" disabled>↙ xmin ymin</button>
       <button class="text-cmd" value="place go xmax ymin" disabled>xmax ymin ↘</button>
     </div>
-  </div>
-  <div>Layer: <span id="job-layer">none</span></div>
-  <div id="job-info"></div>
-  <div>
-    <button id="job-run" disabled>Execute</button>
-    <button id="job-pause" disabled>Pause</button>
-    <button id="job-resume" disabled>Resume</button>
-  </div>
-  <div>
-    <button id="job-cancel" disabled>Cancel</button>
-    <button id="job-abort" disabled>Abort</button>
+    <span>running</span>
+    <span id="job-layer">none</span>
+    <span>progress</span>
+    <div id="job-info"></div>
+    <span>run</span>
+    <div>
+      <button id="job-run" disabled>Execute</button>
+      <button id="job-pause" disabled>Pause</button>
+      <button id="job-resume" disabled>Resume</button>
+    </div>
+    <span>stop</span>
+    <div>
+      <button id="job-cancel" disabled>Cancel</button>
+      <button id="job-abort" disabled>Abort</button>
+    </div>
   </div>
 
   <script type="module" src="./index.js"></script>
