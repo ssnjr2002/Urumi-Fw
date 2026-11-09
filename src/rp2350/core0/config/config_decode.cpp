@@ -113,6 +113,8 @@ static CfgDecodeError readAxis(JsonObjectConst j, uint8_t defaultCycle, CfgAxis*
         !readBool(j["softLimits"],    &out->softLimits) ||
         !readBool(j["invertDir"],     &out->invertDir) ||
         !readBool(j["rotary"],        &out->rotary)) return CFG_DEC_MISSING;
+    out->hasUnlockRange = false;   // read for a head's A only
+    out->unlockRange    = 0.0f;
     out->homing = CfgHoming{};
     JsonObjectConst h = j["homing"];
     if (h.isNull()) return CFG_DEC_OK;
@@ -314,9 +316,8 @@ static uint8_t allAxes(const MachineCfg& c, const CfgAxis** axes) {
 
 static CfgDecodeError checkUnlockRanges(const MachineCfg& c) {
     for (uint8_t h = 0; h < c.headCount; h++) {
-        const CfgHead& hd = c.heads[h];
-        if (!(isfinite(hd.unlockRange) && hd.unlockRange >= 0) ||
-            (hd.unlockRange > 0 && !hd.a.node.present)) return CFG_DEC_HEADS;
+        const float r = c.heads[h].a.unlockRange;
+        if (!(isfinite(r) && r >= 0)) return CFG_DEC_HEADS;
     }
     return CFG_DEC_OK;
 }
@@ -408,11 +409,12 @@ CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out) {
     filterAxis(fm["y"].to<JsonObject>());
     JsonObject fh = fm["heads"].to<JsonArray>().add<JsonObject>();
     filterAxis(fh["z"].to<JsonObject>());
-    filterAxis(fh["a"].to<JsonObject>());
+    JsonObject fa = fh["a"].to<JsonObject>();
+    filterAxis(fa);
+    fa["unlockRange"] = true;   // A only; the host refuses it on any other axis
     fh["xOffset"]     = true;
     fh["yOffset"]     = true;
     fh["probeSwitch"] = true;
-    fh["unlockRange"] = true;
     fm["defaultHead"] = true;
     fm["laser"]       = true;
     fm["positions"]   = true;
@@ -454,7 +456,7 @@ CfgDecodeError configParse(const uint8_t* blob, size_t len, MachineCfg* out) {
         if ((e = readAxis(heads[h]["a"], 2, &hd.a)) != CFG_DEC_OK) return e;
         if (!readFloat(heads[h]["xOffset"], &hd.xOffset) ||
             !readFloat(heads[h]["yOffset"], &hd.yOffset) ||
-            !readOptFloat(heads[h]["unlockRange"], &hd.hasUnlockRange, &hd.unlockRange))
+            !readOptFloat(heads[h]["a"]["unlockRange"], &hd.a.hasUnlockRange, &hd.a.unlockRange))
             return CFG_DEC_MISSING;
         JsonVariantConst ps = heads[h]["probeSwitch"];
         hd.hasProbeSwitch = !ps.isNull();
@@ -563,6 +565,10 @@ bool configAxisRange(const CfgAxis& a, float* lo, float* hi) {
     *lo = a.homing.seekPositive ? park - a.maxTravel : park;
     *hi = a.homing.seekPositive ? park : park + a.maxTravel;
     return true;
+}
+
+float configUnlockRange(const CfgHead& h) {
+    return h.a.node.present ? h.a.unlockRange : 0.0f;
 }
 
 void configWorkOrigin(const MachineCfg& c, float* x, float* y) {

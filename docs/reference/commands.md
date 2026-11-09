@@ -238,7 +238,7 @@ says. Replies `ok`, `err usage`, `err busy`, `err bad_state`,
 
 | Command | Forms | Replies | Runs | Does |
 | --- | --- | --- | --- | --- |
-| `mount` | `mount <head> <tool id>` | `ok`, `err usage`, `err no_head`, `err no_tool`, `err mounted`, `err not_homed`, `err a_not_homed`, `err busy`, `err bad_state`, `err node <id> excluded\|mute\|<result>` | `sequence`, `tool wait`, `needs config` | The head takes the tool. On a head with `unlockRange`, its Z parks and its A turns past the range, locking the holder. Clears the head's work Z. |
+| `mount` | `mount <head> <tool id>` | `ok`, `err usage`, `err no_head`, `err no_tool`, `err mounted`, `err not_homed`, `err a_not_homed`, `err busy`, `err bad_state`, `err node <id> excluded\|mute\|<result>` | `sequence`, `tool wait`, `needs config` | The head takes the tool. On a head whose A has an `unlockRange` (`heads[].a.unlockRange`, ignored while that A node is not `present`), its Z parks and its A turns past the range, locking the holder. Clears the head's work Z. |
 | `unmount` | `unmount <head>` | as `mount`, without `no_tool` and `mounted` | `sequence`, `tool wait`, `needs config` | The head has no tool; its Z parks and, with `unlockRange`, its A turns to machine 0, unlocking the holder. |
 
 ## Jobs

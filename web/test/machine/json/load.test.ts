@@ -158,6 +158,32 @@ describe("load: optional defaults", () => {
         expect(bad.errors.join("\n")).toMatch(/machine\.work: removed/);
     });
 
+    it("unlockRange is read on A, moved from the head, refused elsewhere", () => {
+        const json = JSON.parse(TEST_MACHINE);
+        json.machine.heads[0].a.unlockRange = 0.5;
+        const ok = loadConfig(JSON.stringify(json));
+        expect(ok.ok && ok.config.machine.heads[0]!.a.unlockRange).toBe(0.5);
+
+        json.machine.heads[0].a.node.present = false;
+        expect(loadConfig(JSON.stringify(json)).ok).toBe(true);
+
+        const head = JSON.parse(TEST_MACHINE);
+        head.machine.heads[0].unlockRange = 0.5;
+        const moved = loadConfig(JSON.stringify(head));
+        expect(!moved.ok && moved.errors).toContain(
+            "machine.heads[0].unlockRange: moved — use machine.heads[0].a.unlockRange",
+        );
+
+        const z = JSON.parse(TEST_MACHINE);
+        z.machine.heads[0].z.unlockRange = 0.5;
+        z.machine.x.unlockRange = 0.5;
+        const off = loadConfig(JSON.stringify(z));
+        expect(!off.ok && off.errors).toEqual(expect.arrayContaining([
+            "machine.heads[0].z.unlockRange: only on A",
+            "machine.x.unlockRange: only on A",
+        ]));
+    });
+
     it("maxOvercut defaults to 0", () => {
         const ok = parseConfig(TEST_MACHINE);
         if (!ok.ok) throw new Error("expected ok");

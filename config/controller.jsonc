@@ -72,7 +72,6 @@
         "accepts": ["knife", "crease", "pen", "revolver_pen"],
         "xOffset": -70,              // rough eyeball: tip − laser dot
         "yOffset": -30,
-        "unlockRange": 0.5,          // ±0.5°: the holder releases within about 1° in all
         "probeSwitch": { "x": 13, "y": 26 }, // laser on the switch
         "z": {
           "node": { "id": 3, "present": true },
@@ -98,6 +97,7 @@
         },
         "a": {
           "node": { "id": 4, "present": true },
+          "unlockRange": 0.5,      // ±0.5°: the holder releases within about 1° in all
           "stepsPerUnit": 45.93,   // 16535 steps/rev at the index
           "maxFeed": 100,
           "maxAccel": 500,
@@ -120,8 +120,6 @@
         "accepts": ["pen", "revolver_pen"],
         "xOffset": 80,
         "yOffset": -30,
-        // "unlockRange": 0.5,
-        "unlockRange": 0,            // head 1 off the bus: no A to unlock with
         "probeSwitch": { "x": 1173, "y": 23.5 },
         "z": {
           // "node": { "id": 6, "present": true },
@@ -149,6 +147,7 @@
         "a": {
           // "node": { "id": 5, "present": true },
           "node": { "id": 5, "present": false },   // off the bus with head 1
+          "unlockRange": 0.5,
           "stepsPerUnit": 2.8694,  // 1033 steps/rev at the index, full step
           "maxFeed": 100,
           "maxAccel": 500,

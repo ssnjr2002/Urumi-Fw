@@ -46,7 +46,7 @@ bool cmdMount(const char* args) {
     if (!configTool(c, id)) return reply("no_tool");
     if (toolsMounted(head)) return reply("mounted");   // the holder takes one: unmount first
 
-    const float range = c.heads[head].unlockRange;
+    const float range = configUnlockRange(c.heads[head]);
     float at;
     if (range > 0 && !(aDeg(head, &at) && fabsf(at) > range))
         if (const char* why = gotoHead(head, true, true, range + LOCK_MARGIN_DEG))
@@ -60,7 +60,7 @@ bool cmdUnmount(const char* args) {
     const uint8_t head = (uint8_t)v[0];
     const MachineCfg& c = machineCfg();
     if (head >= c.headCount) return reply("no_head");
-    if (const char* why = gotoHead(head, true, c.heads[head].unlockRange > 0, 0))
+    if (const char* why = gotoHead(head, true, configUnlockRange(c.heads[head]) > 0, 0))
         return reply(why);
     return reply(toolsMount(head, 0));
 }

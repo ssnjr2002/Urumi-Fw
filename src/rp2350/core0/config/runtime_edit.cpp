@@ -48,14 +48,15 @@ struct RtRow {
     float       min, max;    // NAN: none
     bool        minExclusive;
     RtHoming    homing;
+    unsigned    axes;        // RtAxes
     unsigned    effects;
 };
 
 #define RT_OFFSET(scope, member) ((int)offsetof(RtStruct<scope>::type, member))
-#define RT_ROW_REQUIRED(scope, path, member, ty, min, max, ex, homing, effects) \
-    {scope, path, (uint16_t)RT_OFFSET(scope, member), -1, ty, min, max, ex, homing, effects},
-#define RT_ROW_OPTIONAL(scope, path, member, has, ty, min, max, ex, homing, effects) \
-    {scope, path, (uint16_t)RT_OFFSET(scope, member), (int16_t)RT_OFFSET(scope, has), ty, min, max, ex, homing, effects},
+#define RT_ROW_REQUIRED(scope, path, member, ty, min, max, ex, homing, axes, effects) \
+    {scope, path, (uint16_t)RT_OFFSET(scope, member), -1, ty, min, max, ex, homing, axes, effects},
+#define RT_ROW_OPTIONAL(scope, path, member, has, ty, min, max, ex, homing, axes, effects) \
+    {scope, path, (uint16_t)RT_OFFSET(scope, member), (int16_t)RT_OFFSET(scope, has), ty, min, max, ex, homing, axes, effects},
 static const RtRow kRows[] = {RUNTIME_FIELDS(RT_ROW_REQUIRED, RT_ROW_OPTIONAL)};
 
 static size_t valueSize(RtType t) {
@@ -72,6 +73,11 @@ static bool homingHas(const RtRow& r, const CfgAxis& a) {
     if (r.homing == RT_HOMING_NONE) return true;
     if (!a.homing.present) return false;
     return r.homing == RT_HOMING_BOTH || (r.homing == RT_HOMING_ROTARY) == a.rotary;
+}
+
+// RT_AXIS_X..RT_AXIS_A are RtAxes bits 0..3.
+static bool axesHave(const RtRow& r, RtAxis a) {
+    return a == RT_AXIS_NONE || (r.axes & (1u << (a - RT_AXIS_X)));
 }
 
 // ─── Floats ───────────────────────────────────────────────────────────────────
@@ -153,7 +159,7 @@ static bool resolve(MachineCfg& c, const char* path, size_t len, RtTarget* t) {
     const size_t rest = end - p;
     for (const RtRow& r : kRows) {
         if (r.scope != scope || strlen(r.path) != rest || strncmp(r.path, p, rest) != 0) continue;
-        if (axis && !homingHas(r, *axis)) return false;
+        if (axis && (!homingHas(r, *axis) || !axesHave(r, t->axis))) return false;
         t->row = &r;
         return true;
     }
@@ -307,7 +313,7 @@ bool runtimeGet(const MachineCfg& c, const char* path, size_t len, char* out, si
 // ─── Encode ───────────────────────────────────────────────────────────────────
 
 // Every field of `c`, with the index of its axis (x, y, then each head's z, a),
-// head or tool. Rows an axis's homing lacks are left out.
+// head or tool. Rows an axis's homing or the row's axes exclude are left out.
 template <class F>
 static void eachField(const MachineCfg& c, F fn) {
     for (const RtRow& r : kRows) {
@@ -320,7 +326,9 @@ static void eachField(const MachineCfg& c, F fn) {
                 for (uint8_t i = 0; i < axes; i++) {
                     const CfgAxis& a = i == 0 ? c.x : i == 1 ? c.y
                                      : i % 2 == 0 ? c.heads[i / 2 - 1].z : c.heads[i / 2 - 1].a;
-                    if (homingHas(r, a)) fn(r, (const uint8_t*)&a, i);
+                    const RtAxis which = i == 0 ? RT_AXIS_X : i == 1 ? RT_AXIS_Y
+                                       : i % 2 == 0 ? RT_AXIS_Z : RT_AXIS_A;
+                    if (homingHas(r, a) && axesHave(r, which)) fn(r, (const uint8_t*)&a, i);
                 }
                 break;
             }

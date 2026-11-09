@@ -67,15 +67,20 @@ export function resolvedAxesDefault(machine: MachineConfig): ResolvedAxes {
 }
 
 /**
- * Head indices whose fixture accepts `tool`, in machine order.
+ * Head indices whose fixture accepts `tool` and whose Z and A nodes the tool
+ * needs are present, in machine order. A head off the bus takes nothing.
  *
  * Empty means no head can hold it — a config-level impossibility worth naming
  * at the boundary, not a scheduling failure to work around.
  */
 export function headsAccepting(machine: MachineConfig, tool: ToolType): number[] {
+    const profile = Object.values(TOOL_PROFILES).find((p) => p.toolType === tool);
+    const req = profile ? requiredAxes(profile) : { z: true, a: false };
     const out: number[] = [];
     machine.heads.forEach((h, i) => {
-        if (h.accepts.includes(tool)) out.push(i);
+        if (!h.accepts.includes(tool)) return;
+        if ((req.z && !h.z.node.present) || (req.a && !h.a.node.present)) return;
+        out.push(i);
     });
     return out;
 }

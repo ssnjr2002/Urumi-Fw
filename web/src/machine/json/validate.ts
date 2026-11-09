@@ -25,7 +25,7 @@ import type {
 import { NodeType } from "../schema.js";
 import { TOOL_PROFILES_BY_TYPE } from "../tools.js";
 import { requiredAxes, resolveTargets } from "../resolve.js";
-import { runtimeFieldError, runtimeValues } from "../runtime.js";
+import { runtimeFieldError, runtimeMisplaced, runtimeValues } from "../runtime.js";
 
 
 export interface ValidationResult {
@@ -181,21 +181,13 @@ const defaultHeadInRange: Rule = ({ machine }) => {
         : [error(`machine.defaultHead: ${i} is out of range (machine has ${n} head(s))`)];
 };
 
-/** An interlock needs an A to turn. */
-const unlockRangeValid: Rule = ({ machine }) =>
-    machine.heads.flatMap((h, i) =>
-        !h.unlockRange || h.a.node.present
-            ? []
-            : [error(`machine.heads[${i}].unlockRange: the head has no A node to unlock with`)],
-    );
+/** A table field set on an axis its row excludes (unlockRange off A). */
+const runtimeFieldsPlaced: Rule = (config) => runtimeMisplaced(config).map((m) => error(m));
 
 /**
- * A head cannot accept a tool it has no axes for.
- *
- * `accepts` is a physical claim, and the scheduler treats it as one: a head
- * listing the knife WILL be given knife blocks, and Z/A come from that head. A
- * tangential tool on a head with no A node is a job that bakes cleanly and then
- * cannot steer, so the claim has to be refused at load, not discovered later.
+ * A head accepting a tool whose Z or A node is absent: the head is off the bus,
+ * or wired without that axis. A warning: headsAccepting leaves such a head out,
+ * so no work is planned onto it until the node is present again.
  */
 const headsHaveAxesForAccepted: Rule = ({ machine }) =>
     machine.heads.flatMap((h, i) =>
@@ -205,12 +197,12 @@ const headsHaveAxesForAccepted: Rule = ({ machine }) =>
             const req = requiredAxes(p);
             return [
                 ...(req.a && !h.a.node.present
-                    ? [error(`machine.heads[${i}]: accepts '${p.name}', which steers A, ` +
-                             "but that head's A node is not present")]
+                    ? [warn(`machine.heads[${i}]: accepts '${p.name}', which steers A, ` +
+                            "but that head's A node is not present; it takes none until it is")]
                     : []),
                 ...(req.z && !h.z.node.present
-                    ? [error(`machine.heads[${i}]: accepts '${p.name}', which needs Z, ` +
-                             "but that head's Z node is not present")]
+                    ? [warn(`machine.heads[${i}]: accepts '${p.name}', which needs Z, ` +
+                            "but that head's Z node is not present; it takes none until it is")]
                     : []),
             ];
         }),
@@ -430,7 +422,7 @@ const RULES: readonly Rule[] = [
     uniqueNodeIds,
     headCountSupported,
     defaultHeadInRange,
-    unlockRangeValid,
+    runtimeFieldsPlaced,
     toolIdsUnique,
     toolAFields,
     headsHaveAxesForAccepted,

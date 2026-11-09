@@ -2,7 +2,7 @@
  * runtimeHeader.ts — RUNTIME_FIELDS as the Pico's X-macro header.
  */
 
-import { RUNTIME_EFFECTS, RUNTIME_FIELDS, type RuntimeField } from "./runtime.js";
+import { RUNTIME_AXES, RUNTIME_EFFECTS, RUNTIME_FIELDS, type RuntimeField } from "./runtime.js";
 
 function limit(v: number | undefined): string {
     if (v === undefined) return "RT_NO_LIMIT";
@@ -21,6 +21,7 @@ function line(f: RuntimeField): string {
         limit(f.max),
         f.minExclusive ? "true" : "false",
         `RT_HOMING_${(f.homing ?? "none").toUpperCase()}`,
+        f.axes === undefined ? "RT_AXES_ALL" : f.axes.map((a) => `RT_AXES_${a.toUpperCase()}`).join(" | "),
         effects,
     ].join(", ");
 }
@@ -30,6 +31,7 @@ export function renderRuntimeHeader(): string {
         (f) => `    ${f.has !== undefined ? "OPTIONAL" : "REQUIRED"}(${line(f)}) \\`,
     );
     const effects = RUNTIME_EFFECTS.map((e, i) => `    RT_FX_${e} = 1u << ${i},`);
+    const axes = RUNTIME_AXES.map((a, i) => `    RT_AXES_${a.toUpperCase()} = 1u << ${i},`);
     return [
         "// Generated from web/src/machine/runtime.ts by `pnpm gen:runtime`. Do not edit.",
         "#pragma once",
@@ -41,11 +43,16 @@ export function renderRuntimeHeader(): string {
         "enum RtEffect : unsigned {",
         ...effects,
         "};",
+        "// An axis row's axes; other scopes take RT_AXES_ALL.",
+        "enum RtAxes : unsigned {",
+        ...axes,
+        `    RT_AXES_ALL = ${(1 << RUNTIME_AXES.length) - 1}u,`,
+        "};",
         "",
         "#define RT_NO_LIMIT NAN",
         "",
-        "// REQUIRED(scope, path, member, type, min, max, minExclusive, homing, effects)",
-        "// OPTIONAL(scope, path, member, has, type, min, max, minExclusive, homing, effects)",
+        "// REQUIRED(scope, path, member, type, min, max, minExclusive, homing, axes, effects)",
+        "// OPTIONAL(scope, path, member, has, type, min, max, minExclusive, homing, axes, effects)",
         "#define RUNTIME_FIELDS(REQUIRED, OPTIONAL) \\",
         ...rows,
         "",

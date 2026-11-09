@@ -117,6 +117,27 @@ TEST_CASE("a homing row needs that homing kind") {
     CHECK(set(c, "machine.x.homing.startFeed", "5") == RT_NO_FIELD);
 }
 
+TEST_CASE("an axis row is only on its axes: unlockRange on A") {
+    MachineCfg c = goodCfg();
+    CHECK(set(c, "machine.heads.0.a.unlockRange", "0.5") == RT_OK);
+    CHECK(c.heads[0].a.hasUnlockRange);
+    CHECK(c.heads[0].a.unlockRange == 0.5f);
+    CHECK(get(c, "machine.heads.0.a.unlockRange") == "0.5");
+    CHECK(set(c, "machine.heads.0.z.unlockRange", "0.5") == RT_NO_FIELD);
+    CHECK(set(c, "machine.x.unlockRange", "0.5") == RT_NO_FIELD);
+    CHECK(set(c, "machine.heads.0.unlockRange", "0.5") == RT_NO_FIELD);
+
+    std::vector<uint8_t> out;
+    MachineCfg check;
+    REQUIRE(encode(c, out, &check) == RT_ENC_OK);
+    CHECK(check.heads[0].a.unlockRange == 0.5f);
+    JsonDocument doc;
+    REQUIRE_FALSE(deserializeMsgPack(doc, out.data(), out.size(), DeserializationOption::NestingLimit(16)));
+    CHECK(doc["machine"]["heads"][0]["a"]["unlockRange"].as<float>() == 0.5f);
+    CHECK(doc["machine"]["heads"][0]["z"]["unlockRange"].isNull());
+    CHECK(doc["machine"]["x"]["unlockRange"].isNull());
+}
+
 TEST_CASE("bad values leave the config as it was") {
     MachineCfg c = goodCfg();
     const float feed = c.x.maxFeed;

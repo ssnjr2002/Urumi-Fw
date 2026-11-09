@@ -96,7 +96,7 @@ void takeSnap(Snap& s) {
     s.interlock = false;
     for (uint8_t h = 0; h < s.headCount; h++) {
         s.tools[h] = toolsMounted(h);
-        if (machineCfg().heads[h].unlockRange > 0) s.interlock = true;
+        if (configUnlockRange(machineCfg().heads[h]) > 0) s.interlock = true;
     }
     s.unlocked = toolsUnlocked();
     s.laserNode = machineCfgValid() ? machineCfg().laser.node : 0;

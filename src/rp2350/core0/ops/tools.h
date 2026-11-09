@@ -16,5 +16,5 @@ void toolsReset(void);
 
 // The holders that can release now, bit h = head h (get unlocked=): IDLE or
 // JOB.TOOL_WAIT, nothing moving, and the head's A homed with |machine A| within
-// its unlockRange. A head without unlockRange is never set.
+// its unlockRange (configUnlockRange). A head without one is never set.
 uint8_t toolsUnlocked(void);

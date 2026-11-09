@@ -46,7 +46,7 @@ static bool advance(void) {
                 why = parkZs();
                 break;
             case 1:
-                if (!(hd.unlockRange > 0) || aAt(wantHead, 0)) continue;
+                if (!(configUnlockRange(hd) > 0) || aAt(wantHead, 0)) continue;
                 why = turnA(wantHead, 0);
                 break;
             default: {
@@ -86,7 +86,7 @@ static void start(void) {
     feed = fminf(c.x.jogFeed, c.y.jogFeed);
     if (!(feed > 0)) { fail("no_feed"); return; }
     if (const char* why = zsReady()) { fail(why); return; }
-    if (machineCfg().heads[wantHead].unlockRange > 0)
+    if (configUnlockRange(c.heads[wantHead]) > 0)
         if (const char* why = aReady(wantHead)) { fail(why); return; }
     toolsMount(wantHead, 0);
 

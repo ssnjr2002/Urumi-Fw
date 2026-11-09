@@ -336,6 +336,13 @@ export interface AxisConfig {
      * default. Only a head's Z axis is ever expected to carry one.
      */
     readonly probe?: ProbeConfig;
+
+    /**
+     * A head's A only: the holder interlock. |machine A| within this many
+     * degrees releases the tool; `mount` turns A past it to lock. Absent or 0,
+     * or the A node absent: no interlock.
+     */
+    readonly unlockRange?: number;
 }
 
 export function axisConfig(
@@ -527,11 +534,6 @@ export interface ToolHead extends ReferencePoint {
      * Each head reaches only its own (docs/plans/coordinate-system.md).
      */
     readonly probeSwitch?: ProbeSwitch;
-    /**
-     * The holder interlock: |machine A| within this many degrees releases the
-     * tool; `mount` turns A past it to lock. Absent or 0: no interlock.
-     */
-    readonly unlockRange?: number;
 }
 
 /**

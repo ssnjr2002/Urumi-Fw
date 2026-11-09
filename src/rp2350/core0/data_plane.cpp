@@ -287,7 +287,7 @@ static void preflightTool(uint8_t id, uint8_t head, const float* box) {
     // A tool change turns an `unlockRange` head's A to 0; these tools cut with A.
     const CfgHead& hd = c.heads[head];
     if (hd.a.node.present && !originValid(hd.a.node.id) &&
-        (hd.unlockRange > 0 || t->tangential || t->chamberCount > 0)) {
+        (configUnlockRange(hd) > 0 || t->tangential || t->chamberCount > 0)) {
         preflightFail(MSEG_NACK_NOT_HOMED);
         return;
     }

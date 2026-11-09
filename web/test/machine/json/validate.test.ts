@@ -24,6 +24,7 @@ import {
 } from "../../../src/machine/schema.js";
 import { KNIFE } from "../../../src/machine/tools.js";
 import { validateConfig } from "../../../src/machine/json/validate.js";
+import { headsAccepting } from "../../../src/machine/resolve.js";
 import { loadConfig, parseConfig } from "../../../src/machine/json/load.js";
 
 /** A sane baseline: capped X/Y, distinct node ids, one head. */
@@ -240,7 +241,7 @@ describe("rule: defaultHeadInRange", () => {
 });
 
 describe("rule: headsHaveAxesForAccepted", () => {
-    it("errors when an accepted tangential tool sits on a head with no A node", () => {
+    it("warns, and the head takes no such tool, when its A node is absent", () => {
         const m = machineConfig(
             axisConfig(busNode(1), 160, { maxFeed: 80, maxAccel: 1000 }),
             axisConfig(busNode(2), 160, { maxFeed: 80, maxAccel: 1000 }),
@@ -252,8 +253,10 @@ describe("rule: headsHaveAxesForAccepted", () => {
                 ),
             ],
         );
-        const e = errors({ machine: m, quality: qualityConfig(), toolProfiles: {} });
-        expect(e.some((x) => x.includes("steers A"))).toBe(true);
+        const c = { machine: m, quality: qualityConfig(), toolProfiles: {} };
+        expect(errors(c).some((x) => x.includes("steers A"))).toBe(false);
+        expect(warnings(c).some((x) => x.includes("steers A"))).toBe(true);
+        expect(headsAccepting(m, ToolType.KNIFE)).toEqual([]);
     });
 
     it("says nothing when the head has the axes its accepted tools need", () => {

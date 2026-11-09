@@ -35,9 +35,10 @@ uint8_t toolsUnlocked(void) {
     uint8_t mask = 0;
     for (uint8_t h = 0; h < c.headCount; h++) {
         const CfgAxis& a = c.heads[h].a;
+        const float range = configUnlockRange(c.heads[h]);
         int32_t at;
-        if (!(c.heads[h].unlockRange > 0) || !nodeMachineSteps(a.node.id, &at)) continue;
-        if (fabs(at / (double)a.stepsPerUnit) <= c.heads[h].unlockRange) mask |= 1u << h;
+        if (!(range > 0) || !nodeMachineSteps(a.node.id, &at)) continue;
+        if (fabs(at / (double)a.stepsPerUnit) <= range) mask |= 1u << h;
     }
     return mask;
 }

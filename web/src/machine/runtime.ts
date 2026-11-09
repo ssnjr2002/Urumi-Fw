@@ -34,6 +34,8 @@ export const RUNTIME_EFFECTS = [
 
 export type RuntimeEffect = (typeof RUNTIME_EFFECTS)[number];
 export type RuntimeScope = "machine" | "axis" | "head" | "tool";
+export type RuntimeAxis = "x" | "y" | "z" | "a";
+export const RUNTIME_AXES: readonly RuntimeAxis[] = ["x", "y", "z", "a"];
 export type RuntimeType = "f32" | "bool" | "u16" | "point";
 
 export interface RuntimeField {
@@ -51,6 +53,8 @@ export interface RuntimeField {
     readonly max?: number;
     /** A homing row: the homing kinds that have this field. */
     readonly homing?: "linear" | "rotary" | "both";
+    /** An axis row: the axes that have this field. Absent: every axis. */
+    readonly axes?: readonly RuntimeAxis[];
     readonly effects: readonly RuntimeEffect[];
 }
 
@@ -106,12 +110,12 @@ export const RUNTIME_FIELDS: readonly RuntimeField[] = [
     axis("homing.budgetRevs", { min: 3.2, homing: "rotary" }),
     axis("homing.toleranceDeg", { ...POSITIVE, homing: "rotary" }),
     axis("homing.indexPos", { homing: "rotary", effects: ["voidDatum"] }),
+    axis("unlockRange", { ...NON_NEGATIVE, has: "hasUnlockRange", axes: ["a"] }),
 
     head("xOffset"),
     head("yOffset"),
     head("probeSwitch", { type: "point", has: "hasProbeSwitch" }),
     head("probeSwitch.z", { ...NON_NEGATIVE, has: "probeSwitch.hasZ" }),
-    head("unlockRange", { ...NON_NEGATIVE, has: "hasUnlockRange" }),
 
     tool("cutFeed", { ...NON_NEGATIVE, has: "hasCutFeed" }),
     tool("plungeFeed", { ...NON_NEGATIVE, has: "hasPlungeFeed" }),
@@ -142,17 +146,24 @@ function read(root: object, path: string): unknown {
     return at;
 }
 
-/** Every concrete field of `config`, without the homing rows its axes lack. */
-export function runtimeValues(config: ControllerConfig): RuntimeValue[] {
+type AxisEntry = [path: string, label: string, ax: AxisConfig, which: RuntimeAxis];
+
+function axisEntries(config: ControllerConfig): AxisEntry[] {
     const m = config.machine;
-    const axes: [string, string, AxisConfig][] = [
-        ["machine.x", "machine.x", m.x],
-        ["machine.y", "machine.y", m.y],
-        ...m.heads.flatMap((h, i): [string, string, AxisConfig][] => [
-            [`machine.heads.${i}.z`, `machine.heads[${i}].z`, h.z],
-            [`machine.heads.${i}.a`, `machine.heads[${i}].a`, h.a],
+    return [
+        ["machine.x", "machine.x", m.x, "x"],
+        ["machine.y", "machine.y", m.y, "y"],
+        ...m.heads.flatMap((h, i): AxisEntry[] => [
+            [`machine.heads.${i}.z`, `machine.heads[${i}].z`, h.z, "z"],
+            [`machine.heads.${i}.a`, `machine.heads[${i}].a`, h.a, "a"],
         ]),
     ];
+}
+
+/** Every concrete field of `config`, without the rows its axes lack. */
+export function runtimeValues(config: ControllerConfig): RuntimeValue[] {
+    const m = config.machine;
+    const axes = axisEntries(config);
     return RUNTIME_FIELDS.flatMap((field): RuntimeValue[] => {
         const at = (prefix: string, label: string, root: object): RuntimeValue => ({
             field,
@@ -165,7 +176,7 @@ export function runtimeValues(config: ControllerConfig): RuntimeValue[] {
                 return [at("machine", "machine", m)];
             case "axis":
                 return axes
-                    .filter(([, , ax]) => homingHas(field, ax))
+                    .filter(([, , ax, which]) => homingHas(field, ax) && axesHave(field, which))
                     .map(([path, label, ax]) => at(path, label, ax));
             case "head":
                 return m.heads.map((h, i) => at(`machine.heads.${i}`, `machine.heads[${i}]`, h));
@@ -175,6 +186,18 @@ export function runtimeValues(config: ControllerConfig): RuntimeValue[] {
                 );
         }
     });
+}
+
+function axesHave(field: RuntimeField, which: RuntimeAxis): boolean {
+    return field.axes === undefined || field.axes.includes(which);
+}
+
+/** Axis fields set on an axis whose row excludes it, as `label: only on …`. */
+export function runtimeMisplaced(config: ControllerConfig): string[] {
+    return axisEntries(config).flatMap(([, label, ax, which]) =>
+        RUNTIME_FIELDS.filter((f) => f.scope === "axis" && !axesHave(f, which) && read(ax, f.path) !== undefined)
+            .map((f) => `${label}.${f.path}: only on ${f.axes!.map((a) => a.toUpperCase()).join(", ")}`),
+    );
 }
 
 function homingHas(field: RuntimeField, ax: AxisConfig): boolean {

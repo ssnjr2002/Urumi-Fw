@@ -674,7 +674,7 @@ wpos=<x>,<y>,<z>,<a> work position: selected tip (the blade tip with an `offsetM
 head=<n|anchor>      the controlled point: head index, `anchor` (the laser)  (`-` with none)
 laser=<on|off>       the laser as its node last acked a `CMD_LASER`, not the pin  (`?` before the first command or after a failed one, `-` with no laser)
 tools=<id>,…         the tool id each head has mounted (`mount`), head order, `-` for none  (`-` without a config)
-unlocked=<hex>       bit h = head h's holder can release now: IDLE or JOB.TOOL_WAIT, nothing running, its A homed and within `unlockRange`  (`-` with no head having one)
+unlocked=<hex>       bit h = head h's holder can release now: IDLE or JOB.TOOL_WAIT, nothing running, its A homed and within `heads[].a.unlockRange`  (`-` with no head having one; an A node that is not `present` has none)
 mesh=<m>             the bed mesh: <nx>x<ny> followed, `off` (loaded, not followed), `flat` (no /mesh.bin), `bad` (unreadable)
 meshslope=<s>        its steepest slope between neighbouring points, mm/mm  (`-` without a loaded mesh)
 late=<n>             planner blocks Core 1 found late, since boot; a job lands PAUSED, a jog holds and runs on

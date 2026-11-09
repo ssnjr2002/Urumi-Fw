@@ -102,6 +102,12 @@ describe("runtimeValues", () => {
         expect(paths()).not.toContain("machine.x.homing.sweepFeed");
         expect(paths()).not.toContain("machine.y.homing.startFeed");
     });
+
+    it("offers an axis row only on its axes", () => {
+        expect(paths()).toContain("machine.heads.0.a.unlockRange");
+        expect(paths()).not.toContain("machine.heads.0.z.unlockRange");
+        expect(paths()).not.toContain("machine.x.unlockRange");
+    });
 });
 
 describe("runtimeFieldError", () => {

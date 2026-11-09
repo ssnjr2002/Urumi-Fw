@@ -97,6 +97,7 @@ interface JsonAxis {
     readonly rotary?: boolean;
     readonly homing?: JsonHoming;
     readonly probe?: JsonProbe;
+    readonly unlockRange?: number;
 }
 
 interface JsonProbe {
@@ -145,7 +146,8 @@ interface JsonHead {
     readonly xOffset?: number;
     readonly yOffset?: number;
     readonly probeSwitch?: JsonPoint & { readonly z?: number };
-    readonly unlockRange?: number;
+    /** Moved to `a`. Typed so the check can see it. */
+    readonly unlockRange?: unknown;
     readonly z: JsonAxis;
     readonly a: JsonAxis;
 }
@@ -373,12 +375,14 @@ export function parseConfig(jsonText: string): ConfigResult {
         const z = buildAxis(jh.z, errors, `machine.heads[${i}].z`);
         const a = buildAxis(jh.a, errors, `machine.heads[${i}].a`);
         const probeSwitch = buildSwitch(jh.probeSwitch, errors, `machine.heads[${i}].probeSwitch`);
+        if (jh.unlockRange !== undefined) {
+            errors.push(`machine.heads[${i}].unlockRange: moved — use machine.heads[${i}].a.unlockRange`);
+        }
         heads.push(toolHead(z, a, {
             accepts: resolveAccepts(jh.accepts, errors, `machine.heads[${i}].accepts`),
             xOffset: jh.xOffset ?? 0,
             yOffset: jh.yOffset ?? 0,
             ...(probeSwitch ? { probeSwitch } : {}),
-            ...(jh.unlockRange !== undefined ? { unlockRange: jh.unlockRange } : {}),
         }));
     }
 
@@ -629,7 +633,8 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
         maxFeed: ja.maxFeed ?? 0,
         maxAccel: ja.maxAccel ?? 0,
         maxTravel: ja.maxTravel ?? 0,
-        ...present(ja, ["invertDir", "softLimits"]),
+        // unlockRange is read on every axis so validate can refuse it off A.
+        ...present(ja, ["invertDir", "softLimits", "unlockRange"]),
         jogFeed: ja.jogFeed ?? ja.maxFeed ?? 0,
         jogFeedUnhomed: ja.jogFeedUnhomed ?? ja.jogFeed ?? ja.maxFeed ?? 0,
         rotary: ja.rotary ?? false,

@@ -19,7 +19,7 @@
 // validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define CFG_SCHEMA_VERSION 16u  // payload version the decoder understands (blob `v`)
+#define CFG_SCHEMA_VERSION 17u  // payload version the decoder understands (blob `v`)
 #define CFG_MAX_HEADS      2u
 #define CFG_MAX_PERIPH     8u
 #define CFG_MAX_TOOLS      8u
@@ -69,6 +69,10 @@ struct CfgAxis {
     bool      invertDir;  // wiring fix so + is physical
     bool      rotary;
     CfgHoming homing;
+    // A head's A only (0 elsewhere): |machine A| that releases the holder,
+    // degrees; 0: no interlock. Read through configUnlockRange.
+    bool      hasUnlockRange;
+    float     unlockRange;
 };
 
 // A bed point, machine coordinates (docs/plans/coordinate-system.md).
@@ -92,8 +96,6 @@ struct CfgHead {
     float    yOffset;
     bool     hasProbeSwitch;
     CfgProbeSwitch probeSwitch;  // valid if hasProbeSwitch
-    bool     hasUnlockRange;
-    float    unlockRange;    // |machine A| that releases the holder, degrees; 0: no interlock
 };
 
 struct CfgPowerNode {
@@ -263,6 +265,10 @@ float configParkPos(const CfgAxis& a);
 // The anchor's soft range on a homeable linear axis: [park, park ± maxTravel],
 // away from the switch. False for an axis with no linear home.
 bool configAxisRange(const CfgAxis& a, float* lo, float* hi);
+
+// A head's holder interlock, degrees: its A's unlockRange, 0 while the A node
+// is absent. 0: no interlock.
+float configUnlockRange(const CfgHead& h);
 
 // The work offset's XY at boot and on `wclear`: the work area's min corner,
 // else the low end of each axis's soft range, else 0.

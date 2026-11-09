@@ -192,6 +192,22 @@ TEST_CASE("configValidate judges a parsed config, and an edit to it") {
     CHECK(configValidate(c) == CFG_DEC_BUFFER);
 }
 
+TEST_CASE("an A off the bus takes its unlockRange with it") {
+    std::vector<uint8_t> b = readBlob("good.msgpack");
+    MachineCfg c;
+    REQUIRE(configDecode(b.data(), b.size(), &c) == CFG_DEC_OK);
+    c.heads[0].a.hasUnlockRange = true;
+    c.heads[0].a.unlockRange = 0.5f;
+    CHECK(configUnlockRange(c.heads[0]) == doctest::Approx(0.5));
+
+    c.heads[0].a.node.present = false;
+    CHECK(configValidate(c) == CFG_DEC_OK);
+    CHECK(configUnlockRange(c.heads[0]) == 0);
+
+    c.heads[0].a.unlockRange = -1;
+    CHECK(configValidate(c) == CFG_DEC_HEADS);
+}
+
 TEST_CASE("frame fields decode with their defaults") {
     std::vector<uint8_t> b = readBlob("good.msgpack");
     MachineCfg c;
