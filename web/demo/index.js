@@ -475,13 +475,20 @@ cfgSaveBtn.addEventListener('click', () => {
 
 // ── goto ──────────────────────────────────────────────────────────────────────
 // `goto m|w …` and the named targets, text commands; the jog speed is the scale.
-// A row's go button reads the inputs beside it. Material top is work Z t, from
-// the Job panel: work Z 0 is the bed.
+// A row's go button reads the inputs beside it; an xy value may be min or max,
+// that end of the soft range. Material top is work Z t, from the Job panel:
+// work Z 0 is the bed.
+
+const XY_VALUE = /^(min|max|[-+]?(\d+\.?\d*|\.\d+))$/;
 
 function gotoTarget(b) {
     if (b.classList.contains('goto-row')) {
-        const vals = [...b.parentElement.querySelectorAll('input')].map((i) => i.value);
+        const vals = [...b.parentElement.querySelectorAll('input')].map((i) => i.value.trim());
         if (vals.includes('')) { textOut(`goto ${b.value}: value needed`); return null; }
+        if (b.value.endsWith('xy') && !vals.every((v) => XY_VALUE.test(v))) {
+            textOut(`goto ${b.value}: number, min or max`);
+            return null;
+        }
         return `${b.value} ${vals.join(' ')}`;
     }
     if (b.value !== 'top') return b.value;
