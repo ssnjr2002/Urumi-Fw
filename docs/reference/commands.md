@@ -223,7 +223,7 @@ says. Replies `ok`, `err usage`, `err busy`, `err bad_state`,
 
 | Form | Also replies | Runs | Does |
 | --- | --- | --- | --- |
-| `goto m xy <x> <y> [scale]` | `err not_homed`, `err no_feed`, `err soft_limit <axis> <mm>`, `line`'s queue refusals | | Parks every head's Z, then a straight line to the anchor's machine mm. X, Y and every Z must be homed. |
+| `goto m xy <x> <y> [scale]` | `err not_homed`, `err no_feed`, `err no_range`, `err soft_limit <axis> <mm>`, `line`'s queue refusals | | Parks every head's Z, then a straight line to the anchor's machine mm. X, Y and every Z must be homed. `<x>` or `<y>` may be `min` or `max`: that end of the soft range, the same point in `m` and `w`. |
 | `goto w xy <x> <y> [scale]` | as `m xy`, and `err no_head` | | As `m xy`, to work mm for the selected tip. |
 | `goto m z\|a <pos> [scale]` | `err no_head`, `err not_homed`, `err no_feed`, `err soft_limit <axis> <mm>` | | The selected head's Z or A to machine mm or degrees, no park. |
 | `goto w z <pos> [scale]` | as `m z`, and `err no_work` | | Z to work mm, with the bed mesh at the tip; needs `wzero z`. |

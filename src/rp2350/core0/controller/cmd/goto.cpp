@@ -4,7 +4,9 @@
 // m targets are machine units (X and Y the anchor's, as mpos), w targets work
 // units (XY the selected tip, framesToMachine; Z and A framesWorkToMachine). A
 // name is a stored position, or `probe` the selected head's switch under its
-// mounted tool's tip (framesNamed). XY forms park the Zs first. Feeds are
+// mounted tool's tip (framesNamed). An xy value may be `min` or `max`: that end
+// of the soft range (framesTipRange), the same point in m and w. XY forms park
+// the Zs first. Feeds are
 // jogFeed × scale, capped at maxFeed. `ok` once it starts.
 
 #include <Arduino.h>
@@ -39,6 +41,22 @@ static bool parseArgs(const char* p, float* v, int n, float* scale) {
     p = end;
     while (*p == ' ') p++;
     return *p == 0;
+}
+
+// Two XY values, each a number or `min`/`max` (`lim` −1/+1, else 0), then an
+// optional scale as parseArgs.
+static bool parseXY(const char* p, float* v, int8_t* lim, float* scale) {
+    for (int i = 0; i < 2; i++) {
+        while (*p == ' ') p++;
+        lim[i] = strncmp(p, "min", 3) == 0 ? -1 : strncmp(p, "max", 3) == 0 ? 1 : 0;
+        if (lim[i] && (p[3] == ' ' || p[3] == 0)) { v[i] = 0; p += 3; continue; }
+        lim[i] = 0;
+        char* end;
+        v[i] = strtof(p, &end);
+        if (end == p || !isfinite(v[i])) return false;
+        p = end;
+    }
+    return parseArgs(p, v, 0, scale);
 }
 
 // The next word of `*p` into `w`, advancing past it. False when it is empty
@@ -83,9 +101,16 @@ static const char* run(const char* args) {
     const bool work = w[0] == 'w';
     if (!word(&p, w, sizeof w)) return "usage";
     if (strcmp(w, "xy") == 0) {
-        if (!parseArgs(p, v, 2, &scale)) return "usage";
+        int8_t lim[2];
+        if (!parseXY(p, v, lim, &scale)) return "usage";
         float m[2] = {v[0], v[1]};
         if (work) if (const char* why = framesToMachine(v[0], v[1], &m[0], &m[1])) return why;
+        for (uint8_t k = SLOT_X; k <= SLOT_Y; k++) {
+            float lo, hi;
+            if (!lim[k]) continue;
+            if (!framesTipRange(k, &lo, &hi)) return "no_range";
+            m[k] = lim[k] < 0 ? lo : hi;
+        }
         return gotoXY(m[0], m[1], scale);
     }
     const uint8_t k = strcmp(w, "z") == 0 ? SLOT_Z : strcmp(w, "a") == 0 ? SLOT_A : 0xFF;

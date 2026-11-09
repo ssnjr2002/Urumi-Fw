@@ -193,7 +193,7 @@ unhomed jog running into the end of an axis. A `goto` always needs homing.
 | `wclear` | puts the work zero back to the work area's min corner | §4 |
 | `jog <x\|y\|z\|a> <d> [scale]` | moves one axis by `<d>` | §5 |
 | `jog xy <dx> <dy> [scale]` | moves X and Y together, in one straight line | §5 |
-| `goto <m\|w> xy <x> <y> [scale]` | every Z lifts, then the tip goes to (x, y) | §5 |
+| `goto <m\|w> xy <x> <y> [scale]` | every Z lifts, then the tip goes to (x, y); `min`/`max` for an end of the soft range | §5 |
 | `goto <m\|w> z <pos> [scale]`, `goto <m\|w> a <pos> [scale]` | the selected head's Z or A goes to `<pos>` | §5 |
 | `goto park\|load\|mount [scale]` | every Z lifts, then the gantry goes to a named position | §5 |
 | `goto probe [scale]` | every Z lifts, then the tip goes over the selected head's bed switch | §5 |
