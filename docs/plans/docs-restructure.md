@@ -440,8 +440,8 @@ that code (see `AGENTS.md`, Agent Scope).
      `include/common.h`.
    * Replaces `engage_and_axis_map.md`.
 
-   **Status:** done, on `refactor/bus` (not `refactor/system-bus`), not yet
-   merged. Unblocks nothing new.
+   **Status:** merged at `7d81bf0`, from `refactor/bus` (not `refactor/system-bus`).
+   Unblocks nothing new.
 
    **Outcome:**
 
