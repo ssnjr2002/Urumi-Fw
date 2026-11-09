@@ -1225,9 +1225,9 @@ without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
   (`core1/core1.cpp`) and `ALARM_SOFT_LIMIT` (`core1/emit/microsegment.cpp`);
   Core 0 writes the rest (`ops/`, and the wipe in `core0.cpp`). Safe only
   because the writes never overlap in time. "Only ops write state" covers Core
-  0's side; worth a header note (docs/node_state_ingest.md §7).
+  0's side; worth a header note (docs/plans/node-state-ingest.md §7).
 * Keying datum invalidation on the alarm reason: `originKillGen`
-  (docs/node_state_ingest.md §7) becomes worth building when soft limits give
+  (docs/plans/node-state-ingest.md §7) becomes worth building when soft limits give
   Core 1 a second path that ends motion abruptly. Not needed here: the estop
   keeps `ALARM_ESTOP`.
 * The homing recipe on the Pico: moved to docs/plans/controller-homing.md.
@@ -1236,8 +1236,8 @@ without. Not run: `CFG_SET` clearing the alarm, soft `reset` after `uncfg`.
 ## Follow-ups
 
 * Path references outside `src/` from core0-layers: `docs/` (`homing.md`,
-  `tool_probe.md`, `node_state_ingest.md`,
-  `node_frame_ownership_migration.md`, `PLAN_rp2350_refactor.md`),
+  `tool_probe.md`, `node-state-ingest.md`,
+  `node-frame-ownership.md`, `PLAN_rp2350_refactor.md`),
   `include/common.h`, web comments (`sim.ts`, `status.ts`, `blob.ts`,
   `controller.test.ts`).
 * The Sim still models the old boot gate and has no `CFG_SET`/`CFG_GET`

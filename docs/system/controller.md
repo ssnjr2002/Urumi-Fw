@@ -6,7 +6,7 @@
 git diff 45350e2 -- src/rp2350/core0/ops/machine.h src/rp2350/core0/ops/machine.cpp src/rp2350/core0/ops/sequence.h src/rp2350/core0/ops/sequence.cpp src/rp2350/core0/ops/runner.h src/rp2350/core0/ops/runner.cpp src/rp2350/core0/control_plane.cpp src/rp2350/core0/core0.cpp src/rp2350/ipc/shared_state.h
 ```
 
-Commands, replies and status keys are written as the
+Commands, replies, status keys and code names are written as the
 [notation](../README.md#notation) says.
 
 The controller is the program on Core 0 of the RP2350. It takes the host's
@@ -38,15 +38,16 @@ nodes each have their own page; how the firmware is built is
 
 **Host to Core 0,** over USB, in two planes:
 
-* **Text commands** (`control_plane.cpp`): one line in, exactly one line out.
+* **Text commands** (`core0/control_plane.cpp`): one line in, exactly one line out.
   The word is looked up in the primitive table, then the controller table; a
   controller command without a valid config answers `err unconfigured`; an
   unknown word answers `err unknown`. Each row is admitted before its handler
   runs (§5, Admission).
-* **Binary records** (`data_plane.cpp`): job, tool and layer headers, BEZIER
+* **Binary records** (`core0/data_plane.cpp`): job, tool and layer headers, BEZIER
   records, continuous jog and config transfer, answered by ACK or NACK. A
   record is admitted by the published state, not by a row.
-* `STATUS_REQ` is answered at once, outside both planes.
+* **The status request** (`STATUS_REQ`) is answered at once, outside both
+  planes.
 
 Every command and every record ends by publishing the state (§4), so the next
 one reads what this one left.
@@ -55,12 +56,15 @@ one reads what this one left.
 
 * a synchronous RPC for node commands: the handler waits for the node's
   reply;
-* shared flags: `estopRequested`, `abortRequested`, `pauseRequested`, the
-  context and the job's reason;
+* shared flags: the e-stop, abort and pause requests (`estopRequested`,
+  `abortRequested`, `pauseRequested`), the context (`machineContext`) and the
+  job's reason (`jobReason`);
 * the planner ring: motion, which Core 1 turns into step bytes.
 
 Core 1 reports back with facts (e-stop swept, ring drained, held, a tool's
 power failed, duty held), which the controller reads first in every loop pass.
+How the channels work, and how the two cores start and park together, is in
+[cores](cores.md).
 
 **Core 1 to nodes,** over RS485. Core 0 never touches the bus. Its node
 commands go out as RPC packets; motion goes out as stream bytes, one
@@ -70,7 +74,7 @@ for 1 s makes itself safe: it de-energises, drops its slot and forgets its
 datum (§3, Faults).
 
 **Flash to Core 0:** the stored config, loaded at boot and on `reset`. The
-controller table needs a valid one; `F_CONFIG` is held while there is none.
+controller table needs a valid one; the no-config fault (`F_CONFIG`) is held while there is none.
 
 ## 3. Lifecycle
 
@@ -82,7 +86,7 @@ Power-on and `reset` run the same sequence:
 2. The state is wiped: no faults, no e-stop, nothing running, position zero,
    nothing homed. The stored config is reloaded, dropping unsaved edits.
 3. Core 1 is released.
-4. The bus sweep makes every node safe and records which nodes are mute.
+4. The bus sweep (`busSweep()`) makes every node safe and records which nodes are mute.
 5. With no mute node, the default head's axis map is applied.
 6. `ready`.
 
@@ -115,7 +119,7 @@ Each is in §5. Three rules hold them together:
 
 ### Faults and the e-stop latch
 
-`machineFaults()` is a 16-bit mask; its values are the wire's (`STATUS_RSP`,
+The faults (`machineFaults()`) are a 16-bit mask; its values are the wire's (`STATUS_RSP`,
 `get faults=`).
 
 | Bit | Name | Kind | Set when | Clears |
@@ -136,9 +140,9 @@ Each is in §5. Three rules hold them together:
   goes.
 * **Event bits** tear down whatever runs as they are set (Teardown, below)
   and reset the tool's duty. They stay until `unalarm`.
-* **The e-stop latch** is not a fault. `stop` latches it, raises
-  `estopRequested` and tears down; Core 1 drops the ring, sweeps the bus safe
-  and sets `estopSwept`. Every node's datum is lost. The machine shows ESTOP
+* **The e-stop latch** is not a fault. `stop` latches it, raises the
+  e-stop request (`estopRequested`) and tears down; Core 1 drops the ring,
+  sweeps the bus safe and sets the e-stop swept (`estopSwept`). Every node's datum is lost. The machine shows ESTOP
   until the sweep and ALARM after, so ALARM always means the bus is parked.
   `unstop` makes safe every touched, unexcluded node and clears the latch only
   when all of them confirm.
@@ -168,10 +172,10 @@ e-stop it answers `err estop`: the latch's way out is `unstop`.
 
 ### Teardown
 
-`machineTeardown` runs on `stop` and on every event fault, top to bottom:
+The teardown (`machineTeardown()`) runs on `stop` and on every event fault, top to bottom:
 
 1. **Legs:** dropped on an e-stop (Core 1 is sweeping), aborted otherwise.
-2. **The sequence:** aborted, so its `abort()` cleans up.
+2. **The sequence:** aborted, so its cleanup (`Sequence::abort()`) runs.
 3. **The context:**
    * PROBE restores its binding and closes; on an e-stop it drops the binding
      without the bus.
@@ -192,7 +196,7 @@ it on in later passes. A node command's RPC is the one wait inside a handler.
 
 Each pass, in order:
 
-1. **`observeTick`: Core 1's facts**, before the host is served, so a command
+1. **Core 1's facts** (`observeTick()`), before the host is served, so a command
    reads what Core 1 last did:
 
    | Fact | What the controller does |
@@ -205,30 +209,30 @@ Each pass, in order:
    | facts lost | sets `F_FACTS` |
 
    Then it updates which axes are energised from the nodes' replies.
-2. **`processSerial`: the host's input.** Every waiting USB byte: a binary
-   record goes to the data plane, `STATUS_REQ` is answered, anything else
+2. **The host's input** (`processSerial()`). Every waiting USB byte: a binary
+   record goes to the data plane, the status request is answered, anything else
    builds a text line, run when it ends. Each command and record is
    published as it ends.
-3. **`dataPlaneTick`: the data plane's upkeep,** once the input has drained:
+3. **The data plane's upkeep** (`dataPlaneTick()`), once the input has drained:
    * sends the ACKs it held back to batch them;
    * continuous jog: stops a jog whose packets stopped for 150 ms (the
      deadman), and starts one that waited for the ring to empty;
    * drops a record half-received for 50 ms; the host resends it;
    * answers a config transfer stalled for 2 s with a NACK.
-4. **`runnerTick`: one leg's poll** (§5, Step).
-5. **`sequenceTick`: the live sequence's next move** (§5, Sequence).
-6. **`toolChangeTick`: starts the `tool change` sequence** once the job has
+4. **One leg's poll** (`runnerTick()`, §5, Step).
+5. **The live sequence's next move** (`sequenceTick()`, §5, Sequence).
+6. **Starting the `tool change` sequence** (`toolChangeTick()`) once the job has
    reached its tool change (§5, Sequence), and forgets it when the job closes.
-7. **`placeTick`: starts the `place` sequence** once the job has reached
+7. **Starting the `place` sequence** (`placeTick()`) once the job has reached
    placement. When placement ends it turns off the dot's window, and once the
    job closes it selects again the head that was selected before.
-8. **`probeTick`: the probe leg's supervisor** (§5, Step).
-9. **`machinePublish`**: what the pass left.
+8. **The probe leg's supervisor** (`probeTick()`, §5, Step).
+9. **Publishing** (`machinePublish()`) what the pass left.
 
 ### Publishing state
 
-`machinePublish` is the only writer of `machineState`, the state the host
-reads in `STATUS_RSP` and `get state=`. No logic reads it back: the controller
+Publishing (`machinePublish()`) is the only writer of the published state
+(`machineState`), the state the host reads in `STATUS_RSP` and `get state=`. No logic reads it back: the controller
 asks the levels instead. The first rule that matches wins:
 
 | Rule | State |
@@ -249,11 +253,12 @@ asks the levels instead. The first rule that matches wins:
 A sequence is named whatever its context; a manual context keeps its name over
 its raw legs; a step outranks the job context, so a jog in a paused job is
 JOGGING. Beside the state the host reads the reason that refines it: the job's
-reason, the homing and probing reasons, and the ring's owner.
+reason (`jobReason`), the homing and probing reasons (`homingReason`,
+`probingReason`), and the ring's owner (`ringOwner`).
 
 ## 5. Context
 
-A context is held between commands; IDLE is the absence of the others.
+A context (`machineContext`) is held between commands; IDLE is the absence of the others.
 
 | Context | Opens | Closes |
 | --- | --- | --- |
@@ -262,7 +267,7 @@ A context is held between commands; IDLE is the absence of the others.
 | PROBE | `probe_map` | `probe_end`; an e-stop; an event fault |
 | HOMING | the first raw seek, retract or sweep `leg` | `setorigin`; `home_end`; an e-stop; an event fault |
 
-Inside JOB, the job's reason says where the job is: preflight, placement
+Inside JOB, the job's reason (`jobReason`) says where the job is: preflight, placement
 (`JOB.PLACE`), buffering, running, holding, paused, dwelling before a plunge,
 aborting, changing tools, or waiting for the operator to mount and zero one
 (`JOB.TOOL_WAIT`).
@@ -282,7 +287,8 @@ Core 1 running it; the sequence's wait).
 **How a LEGS step runs.** A leg is one move a node runs by itself, ended by
 its switch, its index or its target (see [homing](../machine/homing.md) §3).
 The runner holds up to eight, one thread of legs per node; a node's next leg
-may be armed when its last one ends. `runnerTick` polls one leg per pass, each
+may be armed when its last one ends. The runner's tick (`runnerTick()`)
+polls one leg per pass, each
 node at most every 25 ms, with a status request:
 
 * the node still stepping: running, unless the controller's own deadline for
@@ -291,20 +297,21 @@ node at most every 25 ms, with a status request:
   it, the index found, the target reached with the datum witness intact;
 * four polls unanswered: a failure.
 
-Each end has its effect on the machine applied (`leg_effects`: a position, an
-unhomed axis) and is posted to the runner's mailbox; the runner never calls
+Each end has its effect on the machine applied (`core0/ops/leg_effects.h`: a
+position, an unhomed axis) and is posted to the runner's mailbox; the runner never calls
 back. When no leg runs and no thread is open, it posts the step's end.
 
 **How a RING step runs.** The controller queues the motion in the planner
 ring and Core 1 runs it. The step ends when Core 1 reports the ring drained,
-read by `observeTick`.
+read by the facts tick (`observeTick()`).
 
-**How a WAIT step runs.** `sequenceTick` ends it at its timeout.
+**How a WAIT step runs.** The sequence tick (`sequenceTick()`) ends it at
+its timeout.
 
 **A probe leg** is not the runner's. It is one RPC that Core 1 runs to its
-end, stepping Z and polling the vacuum's bed switch. `probeTick` waits for its
-reply: a failed cause, an unreadable reply, or a retract that left the switch
-open sets `F_PROBE`; past its deadline the RPC is abandoned, with the same
+end, stepping Z and polling the vacuum's bed switch. The probe tick (`probeTick()`) waits
+for its reply: a failed cause, an unreadable reply, or a retract that left
+the switch open sets the probe fault (`F_PROBE`); past its deadline the RPC is abandoned, with the same
 fault.
 
 ### Sequence
@@ -320,34 +327,36 @@ fault.
 | `place` | every job, once its last tool header is in | JOB | JOB |
 
 **How a sequence runs.** Its command, or its tick, arms the first step, then
-starts it. Each pass, `sequenceTick` pops the runner's mailbox:
+starts it. Each pass, the sequence tick (`sequenceTick()`) pops the runner's mailbox:
 
-* a failed leg fails the sequence (`F_HOMING`);
-* a leg that succeeded goes to the sequence's `leg()`, which may arm that
+* a failed leg fails the sequence with the homing fault (`F_HOMING`);
+* a leg that succeeded goes to the sequence's leg handler (`Sequence::leg()`), which may arm that
   node's next leg in the same step;
-* the end of a step, or of a wait, goes to `next()`, which runs any instant
+* the end of a step, or of a wait, goes to its next-step handler
+  (`Sequence::next()`), which runs any instant
   work (reads, datum commits) and arms the next step, waits, or ends the
   sequence.
 
-A RING step's end comes from `observeTick` and a wait's from `sequenceTick`'s
-clock; both go to `next()` the same way. An abort cuts the step and calls the
-sequence's `abort()` to clean up.
+A RING step's end comes from `observeTick()` and a wait's from
+`sequenceTick()`'s clock; both go to `Sequence::next()` the same way. An
+abort cuts the step and calls the sequence's cleanup (`Sequence::abort()`).
 
 **How a job reaches its sequences.** `tool change` and `place` are not
 started by a command:
 
 * **`place`:** the last tool header moves the job from preflight to
-  placement; `placeTick` starts the sequence on the next pass.
+  placement; the place tick (`placeTick()`) starts the sequence on the next
+  pass.
 * **`tool change`:** a header whose tool isn't ready asks the planner to hold
   for it. A job at rest moves to its tool change at once; a moving job
   finishes the motion already queued, and Core 1 moves it there when the ring
-  drains. `toolChangeTick` then starts the sequence, which parks the Zs,
+  drains. The tool-change tick (`toolChangeTick()`) then starts the sequence, which parks the Zs,
   unlocks the head's A and takes the head to `mount`, and leaves the job in `JOB.TOOL_WAIT`.
 
 ### Admission
 
-Each row of the command tables has a kind. `machineAdmit` checks it before the
-handler runs, and answers `busy` when something running is the reason,
+Each row of the command tables has a kind (`CmdKind`). Admission
+(`machineAdmit()`) checks it before the handler runs, and answers `busy` when something running is the reason,
 `bad_state` otherwise. "Something running" is a live step (a paused job's
 parked ring excepted) or a live sequence.
 
@@ -371,25 +380,25 @@ Flags on a row widen its kind:
   and no e-stop is latched, whatever their kind; in `JOB.PLACE`, rows flagged
   `place`.
 * A row flagged `bare read` skips the check when it has no arguments.
-* `F_LATCHED` does not refuse a sequence: getting off the switch is the cure.
+* The on-its-switch fault (`F_LATCHED`) does not refuse a sequence: getting off the switch is the cure.
 
 What a handler checks beyond its kind (its arguments, the bus, the context) is
 in [commands](../reference/commands.md).
 
 ## 6. Who writes what
 
-| Value | Written by | Read by |
-| --- | --- | --- |
-| The context | the module that owns it: the planner queue opens JOB and `cancel` or an abort closes it, under `plannerLock`; `ops/probe` opens and closes PROBE; `ops/homing` opens HOMING on the first raw leg, `setorigin` and `home_end` close it; the teardown closes any | admission, the published state, Core 1 (it runs the job's ring only while JOB is open) |
-| The job's reason (`jobReason`) | Core 0 for what it decides at rest (preflight, tool change, placement, the landing in PAUSED); Core 1 for what it decides from the ring (running, holding, aborting) | admission, the published state, the data plane |
-| The live sequence | its command starts it (`sequenceStart`); it ends itself, or the teardown aborts it | the loop (`sequenceTick`), admission, the published state |
-| The live step | not stored: read from its owners (§5, Step) | admission, the published state |
-| The ring's owner (`ringOwner`) | Core 0, when it restarts an empty, idle ring | the published state, the wire's JOGGING reason |
-| Event faults | whatever detects them (§3, Faults) | `machineFaults`; `unalarm` clears them |
-| Held faults | never stored: recomputed on every read from their causes | `machineFaults` |
-| The e-stop latch | `stop` sets it; `unstop` and the soft reset clear it | everything |
-| `estopRequested`, `estopSwept` | Core 0 sets the request with the latch; Core 1 sets `swept` when the bus is safe | Core 1 (every emitter stops on the request), the published state |
-| `machineState` | `machinePublish` only | the host. No logic reads it |
+| Value | In code | Written by | Read by |
+| --- | --- | --- | --- |
+| The context | `machineContext` | the module that owns it: the planner queue opens JOB and `cancel` or an abort closes it, under `plannerLock`; the probe module opens and closes PROBE; the homing module opens HOMING on the first raw leg, `setorigin` and `home_end` close it; the teardown closes any | admission, the published state, Core 1 (it runs the job's ring only while JOB is open) |
+| The job's reason | `jobReason` | Core 0 for what it decides at rest (preflight, tool change, placement, the landing in PAUSED); Core 1 for what it decides from the ring (running, holding, aborting) | admission, the published state, the data plane |
+| The live sequence | `sequenceStart()` | its command starts it; it ends itself, or the teardown aborts it | the loop (`sequenceTick()`), admission, the published state |
+| The live step | | not stored: read from its owners (§5, Step) | admission, the published state |
+| The ring's owner | `ringOwner` | Core 0, when it restarts an empty, idle ring | the published state, the wire's JOGGING reason |
+| Event faults | `faultSet()` | whatever detects them (§3, Faults) | `machineFaults()`; `unalarm` clears them |
+| Held faults | `machineFaults()` | never stored: recomputed on every read from their causes | admission, the published state |
+| The e-stop latch | `estopLatched()` | `stop` sets it; `unstop` and the soft reset clear it | everything |
+| The e-stop request, the e-stop swept | `estopRequested`, `estopSwept` | Core 0 sets the request with the latch; Core 1 sets the swept flag when the bus is safe | Core 1 (every emitter stops on the request), the published state |
+| The published state | `machineState` | `machinePublish()` only | the host. No logic reads it |
 
 ## 7. Decisions
 

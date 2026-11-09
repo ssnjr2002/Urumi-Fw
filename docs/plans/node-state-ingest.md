@@ -1,7 +1,11 @@
 # Proposal (not scheduled): one ingest funnel per core for node-reported state
 
+Moved here from `docs/` when the docs restructure wrote `system/cores.md`: it
+proposes a change that was never built, so it is a plan, not a description of
+the code.
+
 Status: **design settled, nothing built.** Companion to
-`node_frame_ownership_migration.md`, which asked whether `nodeOrigin`/`nodeHomed`
+`node-frame-ownership.md`, which asked whether `nodeOrigin`/`nodeHomed`
 should move to Core 1 and answered no. This doc came from re-asking that question
 from the other end — *who folds a node's reply into machine state* — and reaches
 a different, smaller change that does not move any ownership at all.
@@ -100,7 +104,7 @@ and single bytes, every one of which is a naturally-aligned atomic access.
 The funnels write **node-frame** facts only. `nodeOrigin[n] = nodePos -
 machineSteps` fuses a wire fact with an operator argument that never travels on
 the bus, so `setorigin` keeps its handler-level write. Unchanged from
-`node_frame_ownership_migration.md`, and for the same reason.
+`node-frame-ownership.md`, and for the same reason.
 
 ## 4. The projection stops being periodic
 
@@ -328,7 +332,7 @@ Weakest part of the case, stated honestly: on day one `ingestReply` is
 other fields yet. What it buys is a named place for the next one to go, and the
 removal of a per-tick recompute.
 
-Unlike the migration in `node_frame_ownership_migration.md` it moves no
+Unlike the migration in `node-frame-ownership.md` it moves no
 ownership, widens no RPC struct, and adds no cross-core machinery — it is a
 refactor of an existing function plus one hook in `rpcCall`. It can land empty
 and grow a field at a time.

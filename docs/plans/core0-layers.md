@@ -63,7 +63,7 @@ takes over.
    `ALARM_CONFIG`, where `unalarm` already answers `err unconfigured`, so the
    gate changes nothing.
 5. Path references in comments and docs (`docs/homing.md`, `tool_probe.md`,
-   `node_state_ingest.md`, `node_frame_ownership_migration.md`,
+   `node-state-ingest.md`, `node-frame-ownership.md`,
    `PLAN_rp2350_refactor.md`, `include/common.h`, `ipc/shared_state.h`, web
    comments in `sim.ts`, `status.ts`, `blob.ts`, `controller.test.ts`).
 
@@ -100,8 +100,8 @@ no web code changed, so the web checks were not run.
 * `unalarm` keeps its inline `ALARM_CONFIG` check; the gate makes it
   redundant with a valid config. Drop it in the feature branch.
 * Path references were updated only inside `src/`. Follow-up: `docs/`
-  (`homing.md`, `tool_probe.md`, `node_state_ingest.md`,
-  `node_frame_ownership_migration.md`, `PLAN_rp2350_refactor.md`),
+  (`homing.md`, `tool_probe.md`, `node-state-ingest.md`,
+  `node-frame-ownership.md`, `PLAN_rp2350_refactor.md`),
   `include/common.h`, and web comments (`sim.ts`, `status.ts`, `blob.ts`,
   `controller.test.ts`).
 

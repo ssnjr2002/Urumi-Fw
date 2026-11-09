@@ -1,5 +1,9 @@
 # Proposal (not scheduled): move `nodeOrigin`/`nodeHomed`/`parkPos` ownership to Core 1
 
+Moved here from `docs/` when the docs restructure wrote `system/cores.md`: it
+proposes a change that was never built, so it is a plan, not a description of
+the code.
+
 Status: **deferred, no known gap justifies it today**. Written down so the
 reasoning isn't re-derived from scratch next time it comes up.
 
@@ -60,7 +64,7 @@ already there," it requires widening the RPC request shape for this one call.
 
 ## A different cut at the same question
 
-`node_state_ingest.md` re-asks this from the other end -- not *who owns the
+`node-state-ingest.md` re-asks this from the other end -- not *who owns the
 field* but *who folds a reply into it* -- and lands on a smaller change that
 moves no ownership: one ingest funnel per core, split by whether Core 0 asked
 for the transaction. It reaches the same verdict about the fields below (they
