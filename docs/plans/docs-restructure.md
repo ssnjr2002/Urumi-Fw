@@ -403,7 +403,7 @@ that code (see `AGENTS.md`, Agent Scope).
      `node-frame-ownership.md` and `node-state-ingest.md`, each with a line
      saying why; the page links the first from its Decisions.
 
-   **Status:** ready to merge.
+   **Status:** merged at `da3d1cb`. Unblocks nothing new: branches 5–11, 13 and 14 already wait only on branch 3.
 
    **Outcome:**
 
