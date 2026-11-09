@@ -20,6 +20,7 @@
     /* name | input | unit */
     .fields { display: grid; grid-template-columns: max-content max-content auto; gap: 4px; align-items: center; }
     .line { margin-bottom: 4px; }
+    #select-btns { display: inline-flex; gap: 4px; }
   </style>
 </head>
 <body>
@@ -45,10 +46,11 @@
       <label><input type="checkbox" id="status-poll" disabled> Poll every</label>
       <input type="number" id="status-ms" min="20" step="10" value="200" style="width: 5em"> ms outside a job
     </div>
+    <span>last</span>
+    <div><span id="status-at">-</span> <span id="status-err"></span> <button id="status-copy">Copy</button></div>
     <span></span>
-    <div>last: <span id="status-at">-</span> <span id="status-err"></span></div>
+    <table style="justify-self: start"><tbody id="status-table"></tbody></table>
   </div>
-  <table id="status-table"></table>
   <pre id="bin-log"></pre>
   <button id="bin-clear">Clear</button>
   <button id="bin-copy">Copy</button>

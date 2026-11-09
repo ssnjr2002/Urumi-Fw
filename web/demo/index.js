@@ -222,6 +222,13 @@ function showStatus(st) {
     }));
 }
 
+/** The shown status as text, one key and value per line, as of its last sample. */
+document.getElementById('status-copy').addEventListener('click', () => {
+    const rows = [...statusTable.rows].map((tr) => [...tr.cells].map((td) => td.textContent).join('\t'));
+    const err = statusErrOut.textContent ? ` ${statusErrOut.textContent}` : '';
+    navigator.clipboard.writeText([`last\t${statusAtOut.textContent}${err}`, ...rows].join('\n'));
+});
+
 statusGetBtn.addEventListener('click', async () => {
     binOut('→ STATUS_REQ');
     try {
