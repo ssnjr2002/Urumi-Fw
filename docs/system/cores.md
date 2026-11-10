@@ -114,7 +114,7 @@ Each pass of Core 1's loop (`processBus()`), in order:
 
 1. **The e-stop**, once per latch (above). The pass ends there.
 2. **Planner motion** (`processPlanner()`), while the ring holds blocks or a
-   job is open (the `planner` page).
+   job is open ([planner](planner.md)).
 3. **An abort with nothing moving:** drops the ring and clears the abort
    request (`abortRequested`); if there was motion to drop, posts the ring
    drained fact (`FACT_RING_DRAINED`).
@@ -188,8 +188,8 @@ change to the ring holds `plannerLock`. Core 0 resets the ring only while
 Core 1 is not running it (`plannerActive` clear), and sets with it the
 ring's owner (`ringOwner`) and what the ring runs with: steps per mm
 (`plannerSpm`), the bed mesh (`plannerMesh`), the blade offset
-(`plannerBlade`). What a block is and how it becomes steps is the `planner`
-page's.
+(`plannerBlade`). What a block is and how it becomes steps is the
+[planner](planner.md) page's.
 
 ### Facts
 

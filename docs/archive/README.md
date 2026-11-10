@@ -64,3 +64,4 @@ describes it.
 | Doc | Was | Replaced by |
 | --- | --- | --- |
 | `engage_and_axis_map.md` | run-time stream slots, `CMD_ENGAGE`, the slot and axes maps, the fence | `docs/system/bus.md` |
+| `generic_planner_firmware_design.md` | the seed design: Bézier blocks, look-ahead, the 1 kHz tick, position followers, the mesh | `docs/system/planner.md` |

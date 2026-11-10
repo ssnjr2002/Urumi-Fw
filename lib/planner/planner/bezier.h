@@ -2,13 +2,13 @@
  * bezier.h — a cubic Bézier XY move: its analysis, evaluation and speed limits.
  *
  * Position along the curve is `B(t(s))`, with `t(s) = c1·s + c2·s² + c3·s³`
- * fitted to the arc length (seed §2). A fit error only shifts position along
+ * fitted to the arc length (docs/archive/generic_planner_firmware_design.md §2). A fit error only shifts position along
  * the exact curve (speed ripple), never off it. c1 is chosen so t(length) = 1.
  *
  * Limits use the direction-independent inscribed circle of the per-axis box:
  * a = min(max_accel), v ≤ min(max_feed). Tangential and centripetal
  * acceleration each get a/√2, so their vector sum never exceeds a, a hold
- * included: accel = a/√2 and v_max² ≤ (a/√2) / κ_max (seed §7, XY only).
+ * included: accel = a/√2 and v_max² ≤ (a/√2) / κ_max (docs/archive/generic_planner_firmware_design.md §7, XY only).
  */
 
 #ifndef PLANNER_BEZIER_H

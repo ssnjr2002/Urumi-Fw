@@ -1,5 +1,7 @@
 # Z and A in the planner
 
+**Closed.** Current behaviour: [system/planner.md](../system/planner.md); this plan records how it was built.
+
 Z and A on the Pico planner (`lib/planner`, Core 1's follower), so that jogs,
 lifts, plunges, tangential cutting and mesh levelling run on the planner and
 the MicroSegment path can be retired. Follows docs/plans/pico-planner.md

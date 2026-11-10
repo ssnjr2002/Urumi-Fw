@@ -8,7 +8,7 @@
  * reads only block paths, which the consumer never writes, and a claim or
  * release during it makes the following commit() refuse.
  *
- * Look-ahead is two calls so the lock can stay short (seed §15). replan()
+ * Look-ahead is two calls so the lock can stay short (docs/archive/generic_planner_firmware_design.md §15). replan()
  * computes the speeds into scratch and touches nothing the consumer reads.
  * commit() copies them into the ring, and refuses if the ring changed since
  * replan(): after a claim the plan starts from a block that is no longer the

@@ -4,7 +4,7 @@
  * Speeds are passed squared, as the look-ahead produces them. A block too short
  * to reach its cruise speed becomes a triangle whose peak is where the accel
  * and decel ramps meet. Distance along the block is closed-form in time
- * (seed §12), so evaluation never accumulates error.
+ * (docs/archive/generic_planner_firmware_design.md §12), so evaluation never accumulates error.
  */
 
 #ifndef PLANNER_TRAPEZOID_H

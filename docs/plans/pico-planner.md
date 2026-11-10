@@ -1,5 +1,7 @@
 # Pico motion planner
 
+**Open:** branch 3 is deferred. Current behaviour: [system/planner.md](../system/planner.md); this plan records how it was built.
+
 First steps of moving motion planning from `web/src/toolpath` onto the Pico,
 following `docs/generic_planner_firmware_design.md` (the seed). This plan covers
 X and Y: straight lines, then Béziers, then the Bézier wire record. Z, A, tool

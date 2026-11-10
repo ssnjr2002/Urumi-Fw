@@ -1,7 +1,7 @@
 // follower.cpp — planner motion on Core 1.
 //
 // A 20 µs slot loop. Every slot, the X, Y, Z and A position followers (Q32.32 step
-// accumulators, seed §13) advance by their increment and one stream byte goes
+// accumulators, docs/archive/generic_planner_firmware_design.md §13) advance by their increment and one stream byte goes
 // out, steps or not. Every 50 slots the executor ticks 1 ms ahead, and each
 // follower's increment is set to reach that position by the next tick; what a
 // follower falls short by is corrected on the tick after.
