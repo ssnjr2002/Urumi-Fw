@@ -482,7 +482,39 @@ that code (see `AGENTS.md`, Agent Scope).
      `src/rp2350/core1/emit/`, `src/rp2350/core0/ops/mesh.*`.
    * Replaces `generic_planner_firmware_design.md`.
 
-   **Status:** not started.
+   **Status:** done, ready to merge.
+
+   **Outcome:**
+
+   * The page covers more than the plan named: Z and A lines, A following
+     a tangent curve, the blade offset, events and front pushes, and duty
+     limits (tool events, Core 0's planned stop, Core 1's deadline). These
+     were built under `planner-za.md` and `job-a.md`.
+   * Ordered as a pipeline, from a move coming in to the stream byte going
+     out, as the bus page is ordered from the wire up: I/O and Lifecycle
+     come after the pipeline's sections. The intro names the mesh and duty
+     limits, so earlier sections can point forward to them.
+   * Added a Codebase section after Hardware: the three layers (the
+     platform-free library, Core 0's side, Core 1's side) and the tests.
+     Code at the end is only a file table naming each file's sections.
+     Proposed for other code-heavy layers, not made a convention.
+   * Decisions are grouped into the library, the cores and motion.
+   * Job framing (records, layers, swivel choice, lifts, buffering, pause
+     and resume) is left to branch 8's page. This page names only the
+     hooks jobs use: events, tags, front pushes, the job states the
+     follower sets.
+   * `generic_planner_firmware_design.md` moved to `archive/`. The five
+     "seed §N" comments (`follower.cpp`, `bezier.h`, `planner.h`,
+     `trapezoid.h`) name the archived copy. `pico-planner.md` is open
+     (branch 3 deferred), `planner-za.md` closed, and `job-a.md` closed,
+     its line pointing here only for A's following and limits.
+   * Checks: `pio run -e pico`, `pio test -e native` (207 cases) pass.
+   * Out of scope, for a later pass:
+     * `job-a.md` needs the jobs page for its job side (branch 8).
+     * Tool config paths are named by code name (`maxOnS`), since the
+       config's tool section isn't settled in the page's notation.
+     * `pico-planner.md` branch 5c still says "awaiting merge"; its code
+       is on `main`.
 
 7. `refactor/system-nodes`: `docs/system/nodes.md`, the node firmware.
 
