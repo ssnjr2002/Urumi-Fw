@@ -20,6 +20,7 @@ static bool        leaving;           // left PLACE: the laser is off, the selec
 static uint8_t     prevHead;          // the selection before the job
 static OriginRange rangeX, rangeY;
 static float       bbox[4];           // xmin, xmax, ymin, ymax
+static float       lastOff[2];        // the last set job's (xmin, ymin); zero from boot
 static bool        parking;           // the next step parks the Zs
 static float       route[5][2];       // machine XY, the lines still to run from routeAt
 static uint8_t     routeLen, routeAt;
@@ -110,9 +111,10 @@ static void start(void) {
     if (!selectPointer()) { fail("no_pointer"); return; }
     if (const char* why = zsReady()) { fail(why); return; }
     // The zero is written only by `place set`, so the handoff is carried by the dot.
+    // The dot starts where the last set job's corner was: the work zero itself from boot.
     const bool low = machineCfg().workArea.present;
-    route[0][0] = layerHandoff(framesWork(SLOT_X), rangeX, low) + bbox[0];
-    route[0][1] = layerHandoff(framesWork(SLOT_Y), rangeY, low) + bbox[2];
+    route[0][0] = layerHandoff(framesWork(SLOT_X) + lastOff[0] - bbox[0], rangeX, low) + bbox[0];
+    route[0][1] = layerHandoff(framesWork(SLOT_Y) + lastOff[1] - bbox[2], rangeY, low) + bbox[2];
     openWindow();
     if (const char* why = runRoute(1, true)) fail(why);
 }
@@ -168,6 +170,8 @@ const char* placeSet(void) {
     framesSetWork(SLOT_X, fminf(fmaxf(x - bbox[0], rangeX.lo), rangeX.hi));
     framesSetWork(SLOT_Y, fminf(fmaxf(y - bbox[2], rangeY.lo), rangeY.hi));
     framesDotWindowOff();
+    lastOff[0] = bbox[0];
+    lastOff[1] = bbox[2];
     isSet = true;
     return nullptr;
 }
