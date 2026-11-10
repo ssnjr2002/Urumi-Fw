@@ -482,7 +482,7 @@ that code (see `AGENTS.md`, Agent Scope).
      `src/rp2350/core1/emit/`, `src/rp2350/core0/ops/mesh.*`.
    * Replaces `generic_planner_firmware_design.md`.
 
-   **Status:** done, ready to merge.
+   **Status:** merged at `6903b18`. Unblocks nothing new.
 
    **Outcome:**
 
