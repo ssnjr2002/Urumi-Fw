@@ -541,6 +541,32 @@ that code (see `AGENTS.md`, Agent Scope).
 
    **Status:** in progress.
 
+   **Outcome:**
+
+   * The stepper part splits in four: the shared counter, DIR and pulse
+     (§6), stream motion (§7), node-driven motion (§8), the Hall index (§9).
+   * The page links `bus.md` for frames, slots and the status rather than
+     restating them. "Two dispatch paths" covers both pairs: commands in
+     `loop()` against stream bytes in the ISR, and the bus against the
+     console, which share `routeCommand()`.
+   * `src/node/README.md` is now two links; the old one is
+     `archive/node_readme.md`. The archive renames landed in the
+     `refactor(node)` commit, not the `docs:` one.
+   * `include/common.h` was pruned too, to the wire layouts and one line per
+     value (364 lines to 163). Only comments changed in any code file.
+   * Checks: every node env and `pico` build without warnings;
+     `pio test -e native` passed 207/207.
+   * Out of scope, for a later pass:
+     * The DB32 vacuum board sets the probe switch pin as a plain input, with
+       no pull-up from the chip. Whether a cut wire reads open there, which
+       the probe's fail-safe needs, is not known.
+     * The vacuum and knife opcodes (0x10–0x14) sit in the range the old
+       comments called generic (0x01–0x1F).
+     * `web/src/machine/schema.ts` still names `node_type_architecture.md`
+       twice.
+     * The "adding a node type" steps went to the archive with the old
+       README; no live page has them.
+
 8. `refactor/system-jobs`: `docs/system/jobs.md`, a job from host to cut.
 
    Depends on 3.
