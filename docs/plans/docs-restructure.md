@@ -83,6 +83,11 @@ Each string is written the way you meet it:
   machine goes in `measurements/` or a plan's Outcome.
 * Codes, replies and command forms are checked against the source before they
   are written down.
+* **Write for a reader new to the subject,** not as a terse densely packed
+  summary for one who already knows it. Settled in branch 8.
+* **Write a page for the pages that exist.** A page doesn't take on
+  material because the page planned to hold it isn't written yet; it links
+  or leaves it out. Settled in branch 8.
 
 ## Conventions: physical pages
 
@@ -540,13 +545,55 @@ that code (see `AGENTS.md`, Agent Scope).
    * Covers: the job stream and its headers, layers, placement, tool
      change, pause, cancel and abort. How the records are made from an SVG
      is branch 11's; this page starts at the stream.
-   * Code: `src/rp2350/core0/data_plane.cpp`,
-     `src/rp2350/core0/controller/seq/place.*`, `toolchange.*`,
-     `web/src/toolpath/job.ts`.
+   * Code: `src/rp2350/core0/data_plane.cpp` (its job half),
+     `src/rp2350/core0/ops/layer.*`, `src/rp2350/core0/planner/queue.cpp`
+     (its job half), `src/rp2350/core0/controller/seq/place.*`,
+     `toolchange.*`, `src/rp2350/core0/cmd/lifecycle.cpp`,
+     `web/src/wire/link/session.ts`, `web/src/wire/format/layer.ts`.
+     (Was `web/src/toolpath/job.ts`, which is branch 11's.)
    * Replaces the `job-*` plans' decisions; which plans get the line from
      "Conventions: plans" is settled in the branch's Read.
 
-   **Status:** not started.
+   **Status:** ready to merge.
+
+   **Outcome:**
+
+   * The Code list was corrected in Read (above). The job plan with most of
+     the decisions is `motion-sessions.md`, which also holds jogs and
+     status; its line points here for jobs only, and it stays open (S2
+     planned). `job-z.md` and `job-session-web.md` are closed with the line;
+     `job-a.md`'s line now points here for A in a job.
+   * Stream flow control (seq, ACK, Go-Back-N, `seqreset`, the abort
+     barrier's mechanism) is left to the host page (branch 10). This page
+     covers why a job sends each packet, the job-only NACKs and the holds
+     they cause.
+   * Ordered as the job's stages first (preflight through the host's
+     session), then the reference sections (glossary, hardware and code,
+     stream, states, I/O, who writes what, decisions, code). Proposed for
+     pipeline or sequence layers, with the planner page; not made a
+     convention.
+   * Two rules settled here, added to "Conventions: all pages": write for a
+     reader new to the subject, and write for the pages that exist.
+   * The code differs from `motion-sessions.md`, and the page follows the
+     code: a job doesn't end on its last record (the host sends `cancel`);
+     `JOB_HDR`'s job id and record count are unread; a dry ring doesn't lift
+     (`LIFT_DRY` reserved); there is no `hostTimeoutMin` and no vacuum in
+     jobs; `cancel` goes straight to IDLE; a tool change turns A to 0 only
+     on a head whose holder locks.
+   * Out of scope, for a later pass:
+     * Nothing tests the firmware's job path (data plane, `plannerQueueRecord()`);
+       the web job tests run against the Sim's reimplementation.
+     * A lost host leaves the tool down and on mid-contour, with no timeout.
+       Deferred, not dropped: `job-z.md` (What lifts: "lost host … later";
+       ZB Out), `hostTimeoutMin` unbuilt (`motion-sessions.md`, JH2
+       Outcome), `LIFT_DRY` reserved for it. The controller can't tell a
+       slow host from a lost one without the timeout.
+     * A job ending on its last record was planned but never built: how the
+       record count bounds a job is open (`motion-sessions.md`, Job records),
+       and JH1 left it out of scope, so a job ends by `cancel`.
+     * Comments in `place.h`, `controller/cmd/place.cpp`, `toolchange.h`,
+       `tools.h`, `follower.cpp`, `shared_state.h` and `schema.ts` still cite
+       the plans; the plans stay in place, so the links hold.
 
 9. `refactor/system-config`: `docs/system/config.md`, the config path.
 
