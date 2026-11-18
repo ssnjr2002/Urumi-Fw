@@ -1,5 +1,7 @@
 # Z in jobs
 
+**Closed.** Current behaviour: [system/jobs.md](../system/jobs.md); this plan records how it was built.
+
 Lifts, plunges, tool on/off and duty in a job. Follows
 docs/plans/motion-sessions.md (states, records, the layer header, JX's
 feeds); the decisions it holds on Z are restated here, and this doc is the

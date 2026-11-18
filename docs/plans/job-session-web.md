@@ -1,5 +1,7 @@
 # Job session web
 
+**Closed.** Current behaviour: [system/jobs.md](../system/jobs.md); this plan records how it was built.
+
 The job `Session` (`web/src/wire/link/session.ts`) and what the wire library
 reads of the machine around it.
 

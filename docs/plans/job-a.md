@@ -1,6 +1,6 @@
 # A in jobs
 
-**Closed.** Current behaviour of A following the path and its limits: [system/planner.md](../system/planner.md); the job side waits for the jobs page. This plan records how it was built.
+**Closed.** Current behaviour of A following the path and its limits: [system/planner.md](../system/planner.md); of A in a job, [system/jobs.md](../system/jobs.md). This plan records how it was built.
 
 A in a job: tangential tools steer along the path, corners lift and swivel,
 travel turns A to the next start, the cable range holds, and a revolver

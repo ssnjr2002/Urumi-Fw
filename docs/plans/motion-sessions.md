@@ -1,5 +1,7 @@
 # Motion sessions on the Pico
 
+**Open:** S2 is planned. Current behaviour of jobs: [system/jobs.md](../system/jobs.md); jogs and status wait for their own pages. This plan records how it was built.
+
 How the Pico runs jobs and jogs: their states, how a job starts, pauses,
 resumes and ends, and how jogs and offsets work. Follows
 docs/plans/state-handling.md (sessions, alarm exits) and
