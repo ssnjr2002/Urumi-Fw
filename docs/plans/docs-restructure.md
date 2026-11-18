@@ -661,8 +661,36 @@ that code (see `AGENTS.md`, Agent Scope).
     * Replaces the `platformio.ini` half of `src/node/README.md` (its env
       table is out of date: no vacuum or knife envs). `AGENTS.md` keeps its
       flag lists.
+    * Also prunes `platformio.ini`'s comments, added in Write.
 
-    **Status:** not started.
+    **Status:** ready to merge.
+
+    **Outcome:**
+
+    * Ordered as the stack, bottom up: a short history of the build file,
+      then silicon and boards, Arduino cores, SDK and libraries, our source,
+      and PlatformIO (upload folded in). Not the stages-first order of the
+      jobs page: a build isn't a pipeline. Board history and pinouts are left
+      to a physical page; only the build's own history is told.
+    * Scope widened: `platformio.ini`'s comments were pruned to one-line
+      board facts, with the rest on the page, and each section was
+      reformatted. Every env resolves as before (`pio project config`
+      compared against `dd2cc69`). `board_build.pio` was removed: the
+      platform never read it, and assembles every `.pio` under `src/` by
+      itself.
+    * `src/node/README.md` lost its `platformio.ini` section for a link to
+      the page; the rest stays for branch 7.
+    * Checks: `pio run` for `pico`, `node1`, `vac_node7`, `db_node1`,
+      `knife_node8`, `vac_db_node7_dbg`, `hello_serial1`; `pio test -e
+      native` (207 cases) pass.
+    * Out of scope, for a later pass:
+      * `AGENTS.md` calls `PICO_ALLOW_UNCONFIGURED` off by default; the
+        `pico` env sets it.
+      * The ATtiny envs (`node1`–`node4`, `vac_node7`) and their templates
+        remain though the nodes have moved to the DB32.
+      * Envs hardcode COM ports from one machine.
+      * `uart_9bit.pio.h` is committed and rewritten by any build after the
+        `.pio` changes.
 
 13. `refactor/system-host-build`: `docs/system/host-build.md`, how the host
     is built.
