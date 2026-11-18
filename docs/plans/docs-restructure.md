@@ -663,7 +663,7 @@ that code (see `AGENTS.md`, Agent Scope).
       flag lists.
     * Also prunes `platformio.ini`'s comments, added in Write.
 
-    **Status:** ready to merge.
+    **Status:** merged at `37f160b`. Unblocks branch 7.
 
     **Outcome:**
 
