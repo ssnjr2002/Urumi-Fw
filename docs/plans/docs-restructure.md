@@ -554,7 +554,7 @@ that code (see `AGENTS.md`, Agent Scope).
    * Replaces the `job-*` plans' decisions; which plans get the line from
      "Conventions: plans" is settled in the branch's Read.
 
-   **Status:** ready to merge.
+   **Status:** merged at `5227523`. Unblocks nothing new.
 
    **Outcome:**
 
