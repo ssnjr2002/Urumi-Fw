@@ -535,8 +535,11 @@ that code (see `AGENTS.md`, Agent Scope).
      to `archive/node_readme.md`.
    * Overlap: the shelved `feature/park-speed` edits `docs/homing.md`.
      Archiving it conflicts with that branch when it is picked up.
+   * Added in Write: `docs/homing.md` stays, with §1 cut to a pointer to the
+     page, since §2 and §3 are still live; the node source's comments are
+     pruned, and their `homing.md` §1 references point to the page.
 
-   **Status:** not started.
+   **Status:** in progress.
 
 8. `refactor/system-jobs`: `docs/system/jobs.md`, a job from host to cut.
 

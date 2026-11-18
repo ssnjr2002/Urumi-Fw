@@ -65,3 +65,5 @@ describes it.
 | --- | --- | --- |
 | `engage_and_axis_map.md` | run-time stream slots, `CMD_ENGAGE`, the slot and axes maps, the fence | `docs/system/bus.md` |
 | `generic_planner_firmware_design.md` | the seed design: Bézier blocks, look-ahead, the 1 kHz tick, position followers, the mesh | `docs/system/planner.md` |
+| `node_type_architecture.md` | the node core and type split, the hooks, the two dispatch paths, the node build | `docs/system/nodes.md` |
+| `node_readme.md` | `src/node/README.md`: the node's directory layout, entry points, hooks, board headers, adding a type | `docs/system/nodes.md`, `docs/system/firmware-build.md` |
