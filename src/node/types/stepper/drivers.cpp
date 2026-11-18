@@ -1,9 +1,5 @@
-// drivers.cpp — stepper driver-chip initialisation (board-agnostic, driver-chip-selected).
-//
-// Compiled for every stepper build via type_stepper. The active board's
-// stepper.h is pulled in by -I; the driver chip is selected by build flags
-// (TMC_2660 / DRV8825 / DM542). ATtiny/DM542 builds hit the #else no-op branch
-// and never see the SPI/TMCStepper includes.
+// drivers.cpp — driver chip set-up, chosen by flag (TMC_2660 / DRV8825 /
+// DM542). Compiled for every stepper build; the board's stepper.h comes by -I.
 #include <Arduino.h>
 #include "stepper/stepper.h"
 

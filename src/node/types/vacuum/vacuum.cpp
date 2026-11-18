@@ -1,14 +1,6 @@
-// vacuum.cpp — vacuum node type (6 servos + a soft-started AC pump on an SSR).
-// Ported from the standalone servo_ssr_node.ino sketch. Everything the sketch
-// re-implemented itself — the 9-bit RX ISR, TX/DE handling, CRC, command
-// framing, PING — is provided by the type-agnostic node core, so this file keeps
-// only the vacuum-specific logic and wires it to the four core↔type hooks.
-//
-// The RX ISR comes from rs485/isr_generic.cpp (compiled for every non-stepper
-// type); board pins come from the HAL binding (board/<mcu>/vacuum/vacuum.h via
-// vacuum/vacuum.h). CMD_SERVO_SET / CMD_SSR_SET dispatch through
-// node_handle_command; the SSR burst-fire / soft-start machine is ticked from
-// node_loop.
+// vacuum.cpp — vacuum node type: six servos, a soft-started AC pump on an SSR,
+// and the probe switch (docs/system/nodes.md §10). The RX ISR is
+// rs485/isr_generic.cpp; pins come from board/<chip>/vacuum/vacuum.h.
 #include <Arduino.h>
 #include <Servo.h>
 #include "board.h"
@@ -103,10 +95,7 @@ static int           bresErr      = 0;
 static void ssrUpdate() {
     if (ssrState == SSR_OFF) return;
 
-    // TODO(zcd): this slot clock is free-running on millis(), not locked to
-    // mains. With the reserved HAL_VACUUM_ZCD_PIN wired to a zero-cross detector,
-    // advance a slot on each zero-cross edge instead of on the CYCLE_MS timer so
-    // firing aligns to real half-cycles. Everything below stays the same.
+    // The slot clock runs on millis(), not locked to mains.
     unsigned long now = millis();
     if ((now - lastSlotTime) < CYCLE_MS) return;
     lastSlotTime = now;

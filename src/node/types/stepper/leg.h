@@ -1,10 +1,9 @@
 #pragma once
-// leg.h — the node's own step pulser, which runs ONE leg (CMD_HOME_LEG,
-// CMD_PARK_LEG; docs/homing.md §1.4).
+// leg.h — the node's own step pulser, which runs one leg (CMD_HOME_LEG,
+// CMD_PARK_LEG; docs/system/nodes.md §8).
 //
-// A leg is the base: ramp, budget, span and stop. The mode decides only what
-// ends it and what its finish records. The node measures and reports; it does
-// not know that legs come in pairs or what a datum is.
+// Every leg has a ramp, a budget, a span and a stop; the mode decides what ends
+// it and what its finish records.
 #include <stdint.h>
 #include "stepper_state.h"
 

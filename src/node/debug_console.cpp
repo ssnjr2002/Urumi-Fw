@@ -1,35 +1,22 @@
-// debug_console.cpp — bench command console on USART0 (megaTinyCore `Serial`).
+// debug_console.cpp — bench command console on the board's free USART
+// (HAL_DEBUG_SERIAL), built only with -DNODE_DEBUG_CONSOLE (the *_dbg envs).
+// A PC talks to the node over plain serial, with no controller and no bus.
 //
-// OPT-IN, DEBUG ONLY: compiled + wired only when -DNODE_DEBUG_CONSOLE is set
-// (see the vac_node5_dbg env in platformio.ini). It lets a PC talk to the node
-// DIRECTLY over a plain 8-bit serial link — no Pico, no RS485 bus, no 9-bit
-// framing — which is the fastest way to bench-test a node type's own logic.
-//
-// Wiring: RS485 lives on USART1 (board.h), so USART0 is free. On the 20-pin
-// tinyAVR-2 megaTinyCore maps `Serial` to USART0 on PB2 (TX) / PB3 (RX) — both
-// unused by the vacuum pinout. Connect a USB-serial adapter there (this is a
-// SEPARATE connection from the UPDI programming link).
-//
-// Protocol (line-based ASCII, 115200 8N1): send the command frame WITHOUT its
-// CRC as space/comma-separated hex bytes — [id] [cmd] [len] [payload…] — exactly
-// the bytes the Pico's sendPacket() would frame. The console appends the CRC and
-// pushes it through routeCommand() (the same handler the RS485 path uses), then
-// prints the reply as "OK <hex…>" (payload bytes, CRC omitted) or "NAK" /
-// "ERR …". The host side is node_console.py.
+// Line-based ASCII at 115200 8N1: a command frame without its CRC, as hex
+// bytes separated by spaces or commas, [id] [cmd] [len] [payload…]. The console
+// adds the CRC, runs it through routeCommand(), and prints "OK <hex…>" (the
+// reply without its CRC), "NAK unhandled" or "ERR …". The PC side is
+// node_console.py.
 #ifdef NODE_DEBUG_CONSOLE
 #include <Arduino.h>
-#include "board.h"      // provides HAL_DEBUG_SERIAL — WITHOUT this the fallback
-                        // below silently picks Serial (USART0), the wrong USART.
+#include "board.h"      // HAL_DEBUG_SERIAL
 #include "common.h"
 #include "protocol.h"
 
 // Shared router defined in dispatch.cpp.
 uint8_t routeCommand(const uint8_t* pkt, uint8_t len, uint8_t* reply);
 
-// Which Arduino serial the board's USB-serial adapter is wired to. It MUST NOT
-// be the USART carrying RS485. Each board.h picks the free one:
-//   AVR128DB32: RS485 = USART2 → console on Serial1 (USART1, PC0/PC1)
-//   ATtiny3226: RS485 = USART1 → console on Serial  (USART0, PB2/PB3)
+// The serial port wired to the board's USB adapter, never the bus USART.
 #ifndef HAL_DEBUG_SERIAL
 #error "board.h must define HAL_DEBUG_SERIAL (the free USART wired to the USB-serial adapter) to use the debug console"
 #endif
@@ -72,8 +59,7 @@ static void processLine() {
 
     if (n < 2) { DBG.println(F("ERR need >= [id][cmd]")); return; }
 
-    // Append CRC over the frame — identical to the Pico's sendPacket(), so the
-    // handlers see a byte-for-byte real command frame (their `len` checks pass).
+    // Add the CRC, so the handlers see a whole frame and their `len` checks pass.
     buf[n] = crc8(buf, n);
     uint8_t total = n + 1;
 
@@ -81,8 +67,7 @@ static void processLine() {
     uint8_t replyLen = routeCommand(buf, total, reply);
     if (replyLen == 0) { DBG.println(F("NAK unhandled")); return; }
 
-    // reply[] = [id][cmd][payloadLen][payload…][crc-slot]; the CRC slot is only
-    // filled by sendCommandPacket on the wire, so drop it here.
+    // The CRC slot is filled only on the bus, so it is left out.
     DBG.print(F("OK"));
     for (uint8_t i = 0; i + 1 < replyLen; i++) { DBG.print(' '); printHexByte(reply[i]); }
     DBG.println();

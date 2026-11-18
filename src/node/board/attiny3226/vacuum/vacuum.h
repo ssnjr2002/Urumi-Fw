@@ -1,10 +1,6 @@
 // vacuum.h — ATtiny3226 vacuum hardware binding (the attiny3226 × vacuum cell).
 // The pin bindings the portable vacuum logic (types/vacuum/) needs. Board-level
 // bus/LED config is in ../board.h.
-//
-// Ported from the standalone servo_ssr_node.ino sketch. DE is on PA4 (see
-// ../board.h), matching the physical board — which leaves PA3 free for the NC
-// switch input below.
 #pragma once
 #include <Arduino.h>
 
@@ -31,6 +27,6 @@ static const uint8_t HAL_VACUUM_SERVO_PINS[HAL_VACUUM_SERVO_COUNT + 1] = {
 #define HAL_VACUUM_LED_GREEN PIN_PA7
 
 // ─── NC switch input ────────────────────────────────────────────────────────
-// Normally-closed switch on PA3 (free because DE is on PA4). Wired switch→GND
-// with the internal pull-up, so: closed/rest = LOW, opened/actuated = HIGH.
+// Normally closed, to ground against the internal pull-up: closed reads LOW,
+// open HIGH.
 #define HAL_VACUUM_SWITCH_PIN   PIN_PA3

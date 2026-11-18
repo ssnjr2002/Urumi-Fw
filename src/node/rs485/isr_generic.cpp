@@ -1,18 +1,14 @@
-// isr_generic.cpp — generic RX ISR for non-motion node types (vacuum, oscillator, etc...).
+// isr_generic.cpp — the RX ISR for every type but the stepper.
 //
-// Frames command bytes into cmdQueue and ignores stream bytes (these types are
-// not motion participants). Compiled for every type EXCEPT stepper, which owns
-// its own RX ISR (types/stepper/stepper.cpp) so the stream path inlines with no
-// register-spill. Including this in the stepper build would doubly define the
-// USART_RXC vector — a deliberate link-time guardrail.
+// Frames command bytes into cmdQueue and ignores stream bytes. The stepper has
+// its own ISR (types/stepper/stepper.cpp); a build with both defines the vector
+// twice and fails to link.
 #include <Arduino.h>
 #include "board.h"
 #include "rs485/frame.h"
 
-// Non-motion types ignore stream bytes -- except a vacuum carrying the probe
-// switch, which answers them (docs/tool_probe.md §4.2). The reply must run here
-// and not in loop(), because loop() runs the SSR burst-fire machine and would
-// put a variable-duration task directly in the reply path.
+// A vacuum built for probing answers stream bytes, here rather than in loop(),
+// where the SSR state machine would sit in the reply's path.
 #ifdef NODE_HAS_PROBE_REPLY
 #include "types/vacuum/probe_slot.h"
 #endif

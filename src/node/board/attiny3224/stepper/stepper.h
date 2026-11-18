@@ -1,9 +1,6 @@
 // stepper.h — ATtiny3224 stepper hardware binding (the attiny3224 × stepper cell).
-// The pin/timer/driver values the portable stepper logic (types/stepper/) needs;
-// see board/hal/hal_stepper.h for the contract. Board-level config is in ../board.h.
-//
-// Defines the HAL_ symbols contracted by hal_stepper.h, then #includes it
-// at the end for self-checking completeness.
+// The pin, timer and driver values the stepper type needs. Board-level config
+// is in ../board.h.
 #pragma once
 #include <Arduino.h>
 
@@ -35,9 +32,5 @@
 
 // ─── Driver init ────────────────────────────────────────────────────────────
 // Defined in types/stepper/drivers.cpp (compiled for every stepper build).
-// ATtiny/DM542: no-op body. DB32/TMC: SPI init.
+// DM542: nothing to do.
 void drivers_init(void);
-
-// ─── HAL self-check ─────────────────────────────────────────────────────────
-// (contract headers removed — stepper.h is a direct provider; consumers
-//  #include "stepper/stepper.h" and use the HAL_ symbols directly)

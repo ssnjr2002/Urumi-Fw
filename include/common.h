@@ -2,319 +2,121 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+// The bus contract shared by the nodes and the controller. See
+// docs/system/bus.md and docs/system/nodes.md.
+
 // ─── Bus ───────────────────────────────────────────────────────────────────────
 #define RS485_BAUD          921600
 #define RESPONSE_TIMEOUT_MS    20
 
-// ─── Broadcast address ────────────────────────────────────────────────────────
-// A command frame addressed here is acted on by EVERY node and answered by NONE.
-// The no-reply part is structural, not per-command: N nodes replying at once is a
-// bus collision, so the node suppresses TX whenever it was addressed by wildcard.
-//
-// 0xFF rather than 0x00 because a broadcast must be asked for, never arrived at.
-// Zero is what a memset, a zeroed packet buffer or an uninitialised node variable
-// produces, so a software bug would broadcast by accident; all-ones has to be
-// written deliberately. (Idle RS485 floats high, so line noise reads as 0xFF —
-// but a stray address byte still needs a valid cmd, length and CRC8 behind it.)
-// It also matches the house sentinel already in use: slot 0xFF = disengaged.
+// Never answered. 0xFF, so a zeroed buffer cannot broadcast.
 #define BUS_ADDR_BROADCAST 0xFF
-// ─── Node Commands ────────────────────────────────────────────────────────────────
-// Generic (0x01–0x1F): every node type honours these; handled by the node core.
+
+// ─── Generic commands, handled by the node core ──────────────────────────────
 #define CMD_PING     0x01
 #define CMD_PONG     0x02
 #define CMD_ENABLE   0x04   // effect delegated per type (motor energize / pump on …)
 #define CMD_DISABLE  0x05
 #define CMD_GET_TYPE 0x06   // reply payload: [NODE_TYPE_*]
 
-// ─── CMD_NAK — the node refused ──────────────────────────────────────────────
-// REPLY-ONLY: the master never sends this opcode, and a node that receives it
-// treats it as unaddressed rather than answering (dispatch.cpp).
-//
-//     reply: [ID][CMD_NAK][len=2][orig_cmd][NAK_*][crc]
-//
-// `orig_cmd` is carried because the reply opcode is no longer the request's, so
-// it is the only thing tying the refusal back to what was asked.
-//
-// Why it exists: an unhandled command used to be dropped exactly like a bad-CRC
-// frame, so the master timed out. "Refused" and "absent" then produced the same
-// observation, which is why control_plane could only ever print nak_or_timeout.
-// One RESPONSE_TIMEOUT_MS is also spent per refusal, waiting for an answer that
-// was never coming.
-//
-// A NAK costs a node nothing to send and the master nothing to ignore, so an
-// OLD node — one flashed before this opcode existed — still simply times out.
-// That is the intended migration: the two firmwares are distinguishable on the
-// wire by exactly this, and neither confuses the other.
+// Reply-only: [ID][CMD_NAK][len=2][orig_cmd][NAK_*][crc]
 #define CMD_NAK      0x07
 
-// CMD_BUS_STATS — the node's receive-error counters. No payload; not
-// broadcastable.
-//     reply: [ID][CMD_BUS_STATS][len=6][ferr u16 BE][ovf u16 BE][crc u16 BE][crc8]
-// ferr: bytes with a framing error, dropped unless built with NODE_IGNORE_FERR.
-// ovf:  receive buffer overflows (bytes lost before the ISR read them).
-// crc:  frames addressed to this node that failed their CRC.
-// Each wraps at 16 bits and is never cleared; take differences between reads.
+// Reply payload: [framing errors][overflows][bad CRCs], u16 BE each, wrapping,
+// never cleared.
 #define CMD_BUS_STATS 0x08
 #define CMD_BUS_STATS_REPLY_LEN 6
 
-// CMD_MAKE_SAFE — de-energise and disengage. No payload; not broadcastable.
-//     reply: the status payload, sampled after the release.
-// Clears NODE_FLAG_ENABLED and NODE_FLAG_DATUM as CMD_DISABLE does, then drops
-// the node's stream slot (stepper, probe vacuum) and closes the vacuum's servos.
-// Released = no slot in the status tail, or slot 0xFF.
-//
-// A node built with NODE_HAS_SILENCE_TIMEOUT that hears no byte for
-// BUS_SILENCE_MS runs the same routine by itself and stays up to answer the
-// next frame. The Pico keeps an idle bus alive with a zero stream byte after
-// BUS_KEEPALIVE_MS without sending.
+// Disable, then drop the slot and park the outputs; replies status. Also run
+// by a node after BUS_SILENCE_MS without a byte (NODE_HAS_SILENCE_TIMEOUT).
 #define CMD_MAKE_SAFE 0x09
 #define BUS_SILENCE_MS   1000
 #define BUS_KEEPALIVE_MS (BUS_SILENCE_MS / 3)
+
+// ─── NAK reasons ─────────────────────────────────────────────────────────────
 #define NAK_UNSUPPORTED 0x01  // this node does not implement that opcode
-#define NAK_BAD_TOKEN   0x02  // session token mismatch (plan section 8.2)
+#define NAK_BAD_TOKEN   0x02  // session token mismatch; no node sends it
 #define NAK_BAD_ARG     0x03  // opcode known, payload rejected
-#define NAK_INTENT_MISMATCH 0x04  // CMD_HOME_LEG only: declared intent disagreed
-                                  // with the node's own pin read — see below.
-#define NAK_BUSY        0x05  // opcode known, payload fine, node already doing
-                              // it. Distinct from BAD_ARG because retrying the
-                              // IDENTICAL frame later is the correct response;
-                              // a BAD_ARG frame is wrong however long you wait.
-#define NAK_NO_DATUM    0x06  // CMD_PARK_LEG only: NODE_FLAG_DATUM is clear, so
-                              // the counter is not a position to park by.
-// Type-specific (0x20+): only one type is compiled per node, so values may
-// overlap between types. Stepper:
-// Node status flags (the [flags] byte of the status payload below).
-#define NODE_FLAG_ENABLED 0x01  // energised now (CMD_ENABLE / CMD_DISABLE)
-#define NODE_FLAG_DATUM   0x02  // CONTINUITY WITNESS — see CMD_DATUM_SET
-// The witness answers one question the master cannot answer for itself: "has this
-// node been energised and counting, without interruption, since I datumed it?"
-// Dead reckoning is only sound while that holds. It is deliberately NOT the same
-// thing as NODE_FLAG_ENABLED: a node that was disabled and re-enabled is enabled
-// again but its datum is gone, because a de-energised motor can be back-driven
-// with no change to its step counter.
-//
-// Only CMD_DATUM_SET sets it. The node NEVER sets it on its own — in particular
-// CMD_ENABLE must not, or a reset followed by a re-enable would silently re-arm
-// a witness for a datum that no longer exists. The node only ever CLEARS it: at
-// boot (RAM init) and on CMD_DISABLE. So a brownout, a watchdog reset or a local
-// de-energise all invalidate it without the master needing to observe the event.
+#define NAK_INTENT_MISMATCH 0x04  // CMD_HOME_LEG: intent disagrees with the pin;
+                                  // CMD_PARK_LEG: on the switch
+#define NAK_BUSY        0x05  // a leg is already running
+#define NAK_NO_DATUM    0x06  // CMD_PARK_LEG: NODE_FLAG_DATUM is clear
+
+// ─── Status flags ────────────────────────────────────────────────────────────
+// The status payload is [node_type][flags][type's tail…] (docs/system/nodes.md).
+#define NODE_FLAG_ENABLED 0x01  // energised
+#define NODE_FLAG_DATUM   0x02  // counting without a break since CMD_DATUM_SET
 #define CMD_DATUM_SET 0x23  // no payload; sets NODE_FLAG_DATUM, replies status payload
+#define NODE_FLAG_LIMIT   0x04  // refusing stream steps: switch pressed or latched
+#define NODE_FLAG_LEG     0x08  // a leg is running or its answer is not ready
 
-// NODE_FLAG_LIMIT — this node is refusing stream steps because its limit switch
-// is asserted, or was asserted long enough to latch (see docs/homing.md §1.1).
-// Reserved for EVERY node type and board, not only the ones with a switch wired:
-// the flags byte has one meaning across the bus, so the master can decode a
-// status reply without first knowing which board answered. A node with no switch
-// simply never sets it — same contract as NODE_FLAG_DATUM on a vacuum node.
-#define NODE_FLAG_LIMIT   0x04
-
-// NODE_FLAG_LEG — the local step pulser is running (CMD_HOME_LEG). Set when the
-// command is accepted, cleared when the pulser stops for any reason. The master
-// learns a leg finished by polling this off; a node never announces it.
-//
-// LIMIT and LEG together are the whole terminal-state report, and they read
-// OPPOSITELY for the two kinds of move — after a seek, LIMIT set means found and
-// clear means the budget ran out; after a retract it is the other way round. The
-// node does not know which kind it ran (see docs/homing.md 1.2) and does not need
-// to: the master sent the move, so the master does the interpreting.
-#define NODE_FLAG_LEG     0x08
-
-// Status payload — ONE shape, from one serializer on the node (buildNodeStatus):
-//     [node_type][flags][type-specific tail…]        flags: NODE_FLAG_*
-//     stepper tail: [pos int32 BE][slot]             slot 0xFF = disengaged
-//     vacuum tail:  [servo bits][ssr state][slot]    slot only with
-//                                                    NODE_HAS_PROBE_REPLY
-// CMD_NODE_STATUS, CMD_GET_POS and the CMD_ENGAGE ack all reply with it, so the
-// host has one parser and there is one place to extend. Notably the ENGAGE ack
-// makes a bind a single atomic observation of (bound, position, enabled): a
-// follow-up read could straddle a node reboot and describe a slot the node no
-// longer holds. See docs/node_session_and_datum.md.
+// ─── Stepper commands ────────────────────────────────────────────────────────
 #define CMD_GET_POS  0x03   // stepper: reply = status payload (above)
 #define CMD_ENGAGE   0x20   // stepper: payload [slot] 0..3, 0xFF = disengage; ack = status payload
 #define CMD_LASER    0x21   // stepper (-DNODE_HAS_LASER only): payload [state 0/1]; NAK elsewhere
 #define CMD_NODE_STATUS 0x22 // any type; no payload; reply = status payload (above)
 
-// CMD_HOME_LEG — run the node's own step pulser for ONE leg. Only nodes that
-// declare a terminator (HOMING_KIND_LIMIT or HOMING_KIND_INDEX) accept it; every
-// other stepper NAKs. See docs/homing.md 1.4.
-//
-// ONE LEG, NOT A HOME. The node measures and reports; it does not know that legs
-// come in pairs, what a datum is, or that post-roll is a concept. Sequencing
-// legs into a home, and turning the result into an origin, is the HOST's job.
-//
-//   payload (11 bytes, big-endian, matching the status tail's convention):
-//     [0]    dir/intent     bit0 = wire dir bit: which way THIS move goes
-//                           bit1 = intent: 0 = host expects a seek,
-//                                          1 = host expects a retract
+// ─── Legs (docs/system/nodes.md §8) ──────────────────────────────────────────
+// CMD_HOME_LEG: one seek, retract or sweep.
+//   payload (11 bytes, big-endian):
+//     [0]    dir/intent     bit0 = wire dir bit: which way this leg goes
+//                           bit1 = intent: 0 = seek expected, 1 = retract
 //     [1..2] start_interval microseconds, pull-in rate
 //     [3..4] floor_interval microseconds, cruise rate
 //     [5..6] ramp_steps     steps from start to floor; 0 = no ramp
 //     [7..10] max_steps     runaway budget
-//   ack: the status payload, sampled after arming (same shape as CMD_ENGAGE).
-//
-// There is NO SEPARATE seek/retract command or node-retained mode. The node
-// still samples its limit pin when the command is accepted, and that single
-// read is still what actually PICKS the mode: pin clear runs a seek (until the
-// switch asserts), pin asserted runs a retract (switch ignored, budget run out
-// in full). Deciding from the pin rather than from retained state is what lets
-// a node that booted with its axis already parked on the switch retract
-// correctly on the FIRST command — that property is unchanged.
-//
-// The intent bit does not steer that decision. It is a second, independent
-// opinion the host attaches to let the node CATCH a disagreement it would
-// otherwise execute silently. Without it, a host that thinks it is arming a
-// seek (large runaway budget, meant to be cut short by the switch) but finds
-// the pin already asserted -- stale prior state, a bounced or mis-wired
-// switch, a leg that did not clear it as expected -- gets a retract instead:
-// same huge budget, but a retract IGNORES the switch and runs it to
-// completion. That is not a wrong-direction nudge, it is the full seek-sized
-// runaway distance with nothing left to stop it. Comparing pin-derived mode
-// against declared intent and NAKing on mismatch closes that hole for the cost
-// of one bit and one comparison; nothing is stored past the single command.
-//
-// Intervals are MICROSECONDS, not timer ticks: the node converts on receipt, so
-// the 20MHz/24MHz difference between board families never reaches the master or
-// the config schema.
-//
-// ROTARY (-DHAS_HALL_INDEX) reuses this command unchanged. A rotary axis has no
-// limit pin, so there is no mode to pick and the intent bit is IGNORED rather
-// than repurposed: there is nothing for the node to disagree with, and giving
-// the bit a second meaning on some boards is how a payload stops being one
-// payload. Everything else — direction, both intervals, ramp, budget — means
-// exactly what it means for a linear leg.
-//
-// What differs is the REPLY, not the request. A switch edge IS the position, so
-// a linear seek reports its answer as the position it stopped at, already in the
-// tail. A dip's centre is only knowable after passing it, so a rotary sweep runs
-// THROUGH the feature and reports a separate index position that is not where
-// the axis stopped. See the status tail below.
+//   ack: the status payload. A Hall build ignores the intent bit.
 #define CMD_HOME_LEG 0x24
 #define CMD_HOME_LEG_PAYLOAD_LEN 11
 
-// CMD_PARK_LEG — run the pulser to an absolute counter value, ramping up and
-// down. A homed node's way to its park position (docs/homing.md 1.4).
-//
+// CMD_PARK_LEG: to a counter value, ramping up and down.
 //   payload (10 bytes, big-endian):
 //     [0..3] target         signed node counter to stop at
 //     [4..5] start_interval microseconds, at both ends of the move
 //     [6..7] floor_interval microseconds, cruise rate
 //     [8..9] ramp_steps     steps from start to floor, and back; 0 = no ramp
-//   ack: the status payload, sampled after arming.
-//
-// Direction and length come from target − counter; the distance is the budget.
-// Refused with NAK_NO_DATUM unless NODE_FLAG_DATUM is set, and with
-// NAK_INTENT_MISMATCH if the limit switch is asserted at the arm (a park starts
-// clear of it). A switch asserting on the way stops the leg and latches, as a
-// seek. Target == counter arms nothing: the ack has NODE_FLAG_LEG clear.
+//   ack: the status payload.
 #define CMD_PARK_LEG 0x25
 #define CMD_PARK_LEG_PAYLOAD_LEN 10
 
-// CMD_LEG_ABORT — stop the pulser. No payload. The motor stays energised, so
-// the counter and NODE_FLAG_DATUM stay good (unlike CMD_DISABLE / MAKE_SAFE).
-// Acks with the status payload whether or not a leg was running.
-#define CMD_LEG_ABORT 0x26
+#define CMD_LEG_ABORT 0x26  // no payload; stops the pulser, stays energised
 
-// ─── ROTARY_IDX_* — how a rotary index sweep ended ──────────────────────────
-// Named for the operation, not for homing in general: these describe one
-// technique (run through the magnet, buffer it, reduce it) and say nothing about
-// a limit-switch leg. The supervisor's own verdict on any leg, by whatever
-// technique, is LEGFAIL_* in rp2350/core0/ops/leg.h — do not confuse the two.
-//
-// Reported in the stepper status tail on HAS_HALL_INDEX builds. `index` is
-// meaningful ONLY for ROTARY_IDX_OK; every other value says why there is no
-// answer, which a bare "did not work" could not.
-//
-// ONLY ROTARY_IDX_OK IS A PASS. Everything below it is a refusal, because a
-// datum is either trustworthy or it is not — there is no degraded mode where
-// a wrong index is better than none. They differ in what an operator should DO, not in
-// whether the home succeeded, and that is why they stay distinct rather than
-// collapsing to one failure code.
-#define ROTARY_IDX_NONE       0  // no sweep has completed since reset. Seen AFTER a
-                                 // home, it means resolve never ran — a fault in the
-                                 // node, not in the mechanism.
+// How a Hall sweep ended. Only OK is a pass.
+#define ROTARY_IDX_NONE       0  // no sweep has resolved since boot
 #define ROTARY_IDX_OK         1  // index found, and proven periodic by the crossings
-#define ROTARY_IDX_NOTFOUND   2  // budget ran out before the required number of
-                                 // COMPLETE crossings. `crossings` disambiguates: 0
-                                 // means the magnet was never seen at all (no sensor,
-                                 // no magnet, or no rotation), and a short count means
-                                 // the budget was simply too small.
-#define ROTARY_IDX_DEGENERATE 3  // autoconvolution peak <= 0: the window held no
-                                 // usable feature (sensor dead, magnet missing)
-#define ROTARY_IDX_OVERFLOW   4  // dip wider than the capture buffer even at the
-                                 // derived decimation — a real shape change, not a
-                                 // near miss
-#define ROTARY_IDX_SLIP       5  // the index was found, but the intervals between
-                                 // consecutive crossings disagree by more than a
-                                 // fraction of themselves: the axis slipped, stalled,
-                                 // or the sensor caught something that is not
-                                 // once-per-revolution. A datum measured across a slip
-                                 // is wrong BY the slip. Only detectable because the
-                                 // sweep crosses the index more than twice.
+#define ROTARY_IDX_NOTFOUND   2  // budget ran out before enough crossings
+#define ROTARY_IDX_DEGENERATE 3  // no usable dip in the window
+#define ROTARY_IDX_OVERFLOW   4  // dip wider than the capture buffer
+#define ROTARY_IDX_SLIP       5  // the laps disagree
 
-// ─── HOMING_KIND_* — which terminator this stepper actually has ──────────────
-// Sent in the stepper status tail by EVERY stepper node, including ones with no
-// homing at all. It exists because capability was previously inferred from the
-// PAYLOAD LENGTH, which conflates two different things: what the board can do,
-// and how old its firmware is. Length-inference also breaks silently the first
-// time a field is appended to the linear tail — the lengths collide and a linear
-// node decodes as rotary. Declaring the kind removes the guess.
+// Which terminator a stepper has, in its status tail.
 #define HOMING_KIND_NONE  0  // no switch, no index: this node NAKs CMD_HOME_LEG
 #define HOMING_KIND_LIMIT 1  // limit switch on the terminator pin (linear)
 #define HOMING_KIND_INDEX 2  // Hall index, analog dip (rotary)
-// Vacuum:
+
+// ─── Vacuum commands ─────────────────────────────────────────────────────────
 #define CMD_SERVO_SET 0x10  // payload: [idx(0=all,1..N)][angle(0..180)]; ACK echoes cmd
-// Host-side on/off shorthand: the Pico expands "on" to this angle before it hits
-// the RS485 wire (see core1.cpp); "off" is 0. The node itself takes a raw angle.
-#define SERVO_ON_ANGLE  180
+#define SERVO_ON_ANGLE  180  // the controller's "on"
 #define CMD_SSR_SET   0x11  // payload: [state(0=off, 1=on w/ soft-start)]; ACK echoes cmd
-// no payload; reply payload: [level] — a raw read of the vacuum board's probe
-// switch pin (HAL_VACUUM_SWITCH_PIN: PA3 on the ATtiny3226 board, PA2 on the
-// AVR128DB32 one). Both wire NC→GND against the internal pull-up, so the byte
-// means the same on either: 0 = closed/at rest, 1 = open/actuated.
-#define CMD_SWITCH_GET 0x14
-// Knife (oscillating drag knife):
+#define CMD_SWITCH_GET 0x14  // no payload; reply payload [level]: 0 closed, 1 open
+
+// ─── Knife commands ──────────────────────────────────────────────────────────
 #define CMD_KNIFE_OSC    0x12  // payload: [state(0=off, 1=on)]; ACK echoes cmd
 #define CMD_KNIFE_BLOWER 0x13  // payload: [duty(0..100 %)]; ACK echoes cmd
 
-// ─── Broadcast allowlist ──────────────────────────────────────────────────────
-// Deny by default: a command is broadcastable only if it is named here. A command
-// that becomes broadcastable because nobody thought about it is exactly the
-// failure worth designing out, so the opt-in is explicit and lives in one place
-// shared by both sides — the master refuses to send it, the node refuses to act.
-//
-// To qualify, a command must be (a) idempotent, since it cannot be retried
-// per-node, and (b) useful without an answer, since none comes back.
-//
-// Only generic commands (0x01–0x1F) are eligible. Type-specific opcodes (0x20+)
-// deliberately overlap between node types, so one broadcast value would mean
-// different things to different nodes — unaddressable by construction.
+// The only commands either side broadcasts. Each must be idempotent and useful
+// with no answer.
 static inline bool cmdAllowsBroadcast(uint8_t cmd) {
-    // CMD_DISABLE = "park yourself", each type's own safe state. The estop path
-    // broadcasts it so every node starts stopping in parallel, then confirms
-    // serially per node. See src/rp2350/core1/core1.cpp.
-    //
-    // CMD_ENABLE is the symmetric arm-everything verb. Note the asymmetry in what
-    // the master may CONCLUDE from each: an unacknowledged disable can only leave
-    // it believing less is energised than really is (safe), while an unacknow-
-    // ledged enable must never be taken as proof anything armed. Core 0 encodes
-    // that — see bus_enable in control_plane.cpp.
     return cmd == CMD_DISABLE || cmd == CMD_ENABLE;
 }
 
 // ─── Node types (CMD_GET_TYPE) ───────────────────────────────────────────────
-// Canonical registry, mirrored on the host (web/src/config NodeType).
+// Mirrored on the host (web/src/machine/schema.ts).
 #define NODE_TYPE_STEPPER  0x01
 #define NODE_TYPE_VACUUM   0x02
 #define NODE_TYPE_KNIFE_OSC 0x03  // oscillating (drag/tangential) knife controller
 
-// CRC-8, reflected, poly 0x8C (industrial variant). Precomputed 256-entry
-// lookup table — one byte-indexed step per input byte instead of 8 bit-shifts.
-// Table generated from the bitwise algorithm and verified equivalent for all
-// inputs. init = 0x00, no final xor.
-//
-// On AVR nodes the table lives in flash via PROGMEM to save
-// 256 B of the 3 KB SRAM; read with pgm_read_byte. On the RP2350 it's a plain
-// const array read directly.
+// CRC-8, reflected, poly 0x8C, init 0x00, no final xor. Table in flash on AVR.
 #ifdef __AVR__
 #include <avr/pgmspace.h>
 static const uint8_t crc8_table[256] PROGMEM = {
@@ -347,10 +149,7 @@ static inline uint8_t crc8(const uint8_t *data, uint8_t len) {
     return crc;
 }
 
-// CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320) — stronger collision
-// resistance for the config-blob correctness gate. Same value is stored in the
-// flash header, returned by CMD_GET_CONFIG, and compared in the Phase 2 MCFG
-// handshake (docs/wire_protocol.md). Bitwise (no table) — config writes are rare.
+// CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320), bitwise.
 static inline uint32_t crc32(const uint8_t *data, uint32_t len) {
     uint32_t crc = 0xFFFFFFFFu;
     while (len--) {

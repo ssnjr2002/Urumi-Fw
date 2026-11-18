@@ -1,10 +1,7 @@
 // stepper.h — AVR128DB32 stepper hardware binding (the avr128db32 × stepper cell).
 // Pins/timer plus the driver-chip selection (DM542 / DRV8825 / TMC2660) chosen
-// per env by build flags. The TMC SPI impl is in this dir's drivers.cpp.
-// Board-level config is in ../board.h.
-//
-// Defines the HAL_ symbols contracted by board/hal/hal_stepper.h, then
-// #includes it at the end for self-checking completeness.
+// per env by build flags, set up in types/stepper/drivers.cpp. Board-level
+// config is in ../board.h.
 #pragma once
 #include <Arduino.h>
 
@@ -69,11 +66,10 @@ void drivers_disable();
 #endif
 
 // ─── Optional peripherals ───────────────────────────────────────────────────
-// Limit switch. Direct port symbols as well as the pin: the step path reads it
-// inside the RX ISR on every step, so it must compile to a single IN, not a
-// digitalRead(). Wired switch-to-ground against the internal pull-up, so the
-// asserted level is LOW — which also makes a severed wire read as asserted
-// (fail-safe) rather than as clear. See docs/homing.md §1.1.
+// Limit switch. Port symbols as well as the pin: the stream path reads it in
+// the RX ISR on every step, so it must be one IN, not a digitalRead(). Wired to
+// ground against the internal pull-up, so pressed reads LOW and a cut wire
+// reads pressed. See docs/system/nodes.md §7.
 
 #ifdef HAS_LIMIT_SWITCH
     #define HAL_LIMIT_SWITCH_PIN PIN_PD1
@@ -81,13 +77,8 @@ void drivers_disable();
     #define HAL_LIMIT_BM         PIN1_bm
     #define HAL_LIMIT_PINCTRL    PORTD.PIN1CTRL
 
-    // Polarity is a per-node build flag (-DLIMIT_ACTIVE_HIGH), not something the
-    // pin read hardcodes, because it depends on how THAT node's switch is wired —
-    // normally-closed to ground (asserted = LOW, the default) vs normally-open to
-    // the pull-up (asserted = HIGH). Getting this wrong doesn't fail loudly: the
-    // gate still runs, just backwards, refusing the safe direction and permitting
-    // the one that runs into the stop. See docs/homing.md 6 for the bench symptom
-    // that flags it (limit reads 1 released, 0 triggered).
+    // Polarity depends on how this node's switch is wired. Wrong, the gate runs
+    // backwards, and the limit reads 1 released and 0 pressed.
     #ifdef LIMIT_ACTIVE_HIGH
     #define HAL_LIMIT_ASSERTED() ((HAL_LIMIT_PORT.IN & HAL_LIMIT_BM) != 0)
     #else
@@ -95,15 +86,12 @@ void drivers_disable();
     #endif
 #endif
 
-// Hall index (rotary axes). A magnet on the OUTPUT side of the reduction passes
-// a fixed A1324 whose analog output dips once per output revolution; that dip's
-// centre is the index. See docs/rotary_a_axis.md.
+// Hall index (rotary axes). A magnet on the output side passes a fixed A1324
+// whose analog output dips once per output revolution; the dip's centre is the
+// index. See docs/rotary_a_axis.md.
 //
-// PD1 AGAIN, and that is not a collision to fix -- it is the same pin doing the
-// same job for the two kinds of axis, and an axis is exactly one of them. A
-// linear axis has a switch, a rotary axis has a magnet, and neither board wires
-// both. The build flags are mutually exclusive for the same reason (asserted
-// below), so the pin is only ever configured one way in one binary.
+// PD1 again: the same pin ends either kind of axis's leg, and an axis is one
+// kind.
 #ifdef HAS_HALL_INDEX
     #if defined(HAS_LIMIT_SWITCH)
     #error "HAS_HALL_INDEX and HAS_LIMIT_SWITCH both claim PD1 — an axis is one or the other"
@@ -112,19 +100,14 @@ void drivers_disable();
     #define HAL_HALL_MUXPOS  ADC_MUXPOS_AIN1_gc    // PD1 = AIN1 on AVR128DB32
 #endif
 
-// Either flavour of home runs the SAME step pulser, budget, ramp and leg span;
-// only the thing that ENDS the move differs (a debounced switch edge vs a
-// completed dip). This is what the shared machinery in stepper.cpp guards on, so
-// that adding rotary did not fork the pulser.
+// Either terminator runs the same leg pulser; only what ends the leg differs.
 #if defined(HAS_LIMIT_SWITCH) || defined(HAS_HALL_INDEX)
 #define HAS_HOMING 1
 #endif
 
 
-// PD2 is the thermistor ADC input by default, OR — on the single stepper node
-// that carries a laser (-DNODE_HAS_LASER) — a digital on/off gate for the laser.
-// Mutually exclusive; the laser build reclaims the pin. See CMD_LASER in the
-// stepper type.
+// PD2 is the thermistor input, or the laser's on/off gate on the laser build
+// (-DNODE_HAS_LASER, CMD_LASER).
 #ifdef NODE_HAS_LASER
 #define HAL_LASER_PIN        PIN_PD2
 #else
@@ -133,10 +116,5 @@ void drivers_disable();
 #endif
 
 // ─── Driver init ────────────────────────────────────────────────────────────
-// Defined in types/stepper/drivers.cpp (compiled for every stepper build).
-// DB32/TMC: SPI init. DB32/DRV: microstep pins. DB32/DM542: no-op.
+// Defined in types/stepper/drivers.cpp.
 void drivers_init(void);
-
-// ─── HAL self-check ─────────────────────────────────────────────────────────
-// (contract headers removed — stepper.h is a direct provider; consumers
-//  #include "stepper/stepper.h" and use the HAL_ symbols directly)

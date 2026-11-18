@@ -3,12 +3,8 @@
 //   • the knife oscillator — a digital on/off enable, and
 //   • the blower — a variable-speed fan on a PWM duty of 0..100 %.
 //
-// Everything a node needs off the wire — the 9-bit RX ISR, TX/DE handling, CRC,
-// command framing, PING/GET_TYPE/ENABLE — comes from the type-agnostic node
-// core; this file keeps only the knife-specific logic and wires it to the four
-// core↔type hooks. The RX ISR is the shared rs485/isr_generic.cpp (this is a
-// non-motion type); board pins come from the HAL binding
-// (board/<mcu>/knife/knife.h via knife/knife.h).
+// The RX ISR is rs485/isr_generic.cpp; pins come from
+// board/<chip>/knife/knife.h. See docs/system/nodes.md §11.
 #include <Arduino.h>
 #include "board.h"
 #include "knife/knife.h"

@@ -1,6 +1,5 @@
-// frame.h — RX command framing, written once, inlined into whichever RX ISR is
-// compiled (the generic ISR for non-motion types, or the stepper's own ISR).
-// Header-inline so there is no cross-TU call cost inside the ISR.
+// frame.h — command framing, inlined into whichever RX ISR the build has (the
+// generic one, or the stepper's own), so the ISR makes no call.
 #pragma once
 #include <stdint.h>
 #include "rs485/rs485.h"         // cmdQueue + framing state + MAX_* (via protocol.h)
@@ -8,8 +7,8 @@
 
 // Accumulate one command byte (9th bit already known to be 1) into cmdQueue.
 // Every frame is counted to its end, `3 + len + 1` bytes, including one that is
-// foreign, too long to store, or arrives with the ring full; those are dropped
-// at the end, so the next frame still parses (docs/plans/bus-frame.md).
+// for another node, too long to store, or arrives with the queue full; those are
+// dropped at the end, so the next frame still parses.
 static inline void frame_command_byte(uint8_t b) {
     if (!inCommand) {
         inCommand  = true;

@@ -1,79 +1,57 @@
-// node_hooks.h — the core↔type contract, single source of truth.
+// node_hooks.h — the contract between the node core and a node type.
 //
-// The node core (main.cpp, dispatch.cpp, rs485/) is type-agnostic; each node
-// type (types/<x>/) defines these hooks. build_src_filter compiles exactly one
-// type per binary, so exactly one definition of each is linked. The hooks are
-// mandatory (non-weak): a build with no type selected fails at link, which is
-// the desired guardrail.
+// The core (main.cpp, dispatch.cpp, rs485/) knows no type. Each type
+// (types/<x>/) defines these hooks, and build_src_filter compiles one type per
+// binary. The hooks have no weak defaults, so a build with no type fails at
+// link. See docs/system/nodes.md §5.
 #pragma once
 #include <stdint.h>
 
-// Identity — returns a NODE_TYPE_* constant (common.h). Answered by CMD_GET_TYPE.
+// A NODE_TYPE_* constant (common.h), for CMD_GET_TYPE and the status.
 uint8_t node_type(void);
 
-// Type-specific init, called from setup() after the bus is up but before sei().
+// Type init, from setup() before the USART starts and before sei().
 void    node_setup(void);
 
-// Type-specific per-iteration work, called from loop() on every pass (after the
-// command ring is drained). Must be non-blocking — it shares the loop with
-// command dispatch. Stepper does everything in its RX ISR and leaves this empty;
-// vacuum uses it to advance the SSR burst-fire / soft-start state machine.
+// Every loop() pass, before the command queue is drained. Must not block.
 void    node_loop(void);
 
-// The effect of the generic CMD_ENABLE / CMD_DISABLE. The core frames the ACK;
-// the type decides what "enabled" means (stepper: energize motor + accept
-// stream; vacuum: run pump; …).
+// The effect of CMD_ENABLE / CMD_DISABLE. The core sends the ACK.
 void    node_set_enabled(bool on);
 
-// The type's half of CMD_MAKE_SAFE, called after node_set_enabled(false): drop
-// the stream slot and park whatever disable leaves in place (vacuum servos).
+// The type's half of CMD_MAKE_SAFE, after node_set_enabled(false): drop the
+// stream slot and park whatever disable leaves in place.
 void    node_release(void);
 
-// Type-specific command dispatch. Called by the core only after a command is
-// NOT recognised as generic. Returns true if handled (reply staged in `reply`,
-// `replyLen` set through the trailing CRC slot); false → unknown, silently
-// dropped by the core.
+// A command the core did not handle. Returns true with the reply staged in
+// `reply` and `replyLen` set through the trailing CRC slot; false makes the
+// core NAK it as unsupported.
 bool    node_handle_command(const uint8_t* pkt, uint8_t len,
                             uint8_t* reply, uint8_t* replyLen);
 
-// Type-specific status tail for the generic CMD_NODE_STATUS. Writes this type's
-// state bytes into buf and returns the count. The core prepends a generic head
-// ([node_type][flags]); this hook adds only the type's own bytes:
-//   stepper: [pos int32 BE][slot]   vacuum: [servo-active bits][ssr state]
-//   knife:   [osc on][blower duty]  a type with no extra state returns 0.
-// buf has room for at least MAX_PACKET_LEN-5 bytes.
+// The type's tail of the status payload; returns its length. buf has room for
+// at least MAX_PACKET_LEN-5 bytes.
 uint8_t node_status(uint8_t* buf);
 
-// ─── Provided BY the core, FOR the types (opposite direction to the hooks) ────
-// The one serializer for "everything this node knows about itself":
-//   [node_type][flags][node_status() tail…]
-// Writes it into buf and returns the length. Used by the generic CMD_NODE_STATUS
-// and by any type that wants to answer a command with full state instead of a
-// bare ACK — the stepper's CMD_ENGAGE and CMD_GET_POS both do, which is what
-// makes an engage a single atomic observation of (bound, position, enabled)
-// rather than a bind followed by a separate read that could straddle a reboot.
-// One place to extend when new generic state (e.g. a session token) arrives.
+// ─── Provided by the core, for the types ─────────────────────────────────────
+
+// The status payload, [node_type][flags][node_status() tail…]; returns its
+// length. For a type that answers a command with full state.
 uint8_t buildNodeStatus(uint8_t* buf);
 
 // CMD_MAKE_SAFE without the reply: disable, clear ENABLED | DATUM, then
 // node_release(). Also run by the bus-silence timeout. Loop context only.
 void    node_make_safe(void);
 
-// Set or clear one bit of the generic flags byte from a type. LOOP CONTEXT ONLY
-// — it read-modify-writes a byte the core also touches, so an ISR caller could
-// drop a bit written underneath it. A type whose flag is produced in an ISR must
-// therefore latch it in a volatile of its own and mirror it here from
-// node_loop(); the stepper does that with NODE_FLAG_LIMIT.
+// Set or clear one bit of the flags byte. Loop context only: it
+// read-modify-writes a byte the core also writes. A flag produced in an ISR is
+// latched in the type's own volatile and mirrored here from node_loop().
 void    node_set_flag(uint8_t bit, bool on);
 
-// True if that bit of the generic flags byte is set.
+// True if that bit of the flags byte is set.
 bool    node_flag(uint8_t bit);
 
-// Stage a reasoned refusal instead of a bare ACK/data reply: [ID][CMD_NAK]
-// [len=2][cmd][reason][crc-slot]. For a type that wants the master to see WHY a
-// command was rejected rather than the generic NAK_UNSUPPORTED every plain
-// `return false` produces — CMD_HOME_LEG's intent check (docs/homing.md §1.4) is
-// the first caller. Sets `replyLen`; the handler still returns true (a reply
-// WAS staged) rather than false (nothing was staged, core NAKs generically).
+// Stage a refusal with a reason, [ID][CMD_NAK][2][cmd][reason][crc-slot], and
+// set `replyLen`. The handler then returns true, since a reply was staged.
 void    node_reply_nak(uint8_t cmd, uint8_t reason, uint8_t* reply,
                        uint8_t* replyLen);

@@ -1,20 +1,8 @@
 // hall_index.cpp — rotary index finding.
 //
-// See hall_index.h for the contract. What follows is the rule that shapes every
-// constant in this file, learned the hard way across three bench runs:
-//
-//   A constant in ADC COUNTS describes the sensor and the magnet. That is the
-//   same A1324 at a similar airgap on every head, so it transfers.
-//
-//   A constant in STEPS describes the gearing. Gearing is NOT shared between
-//   heads -- node 4 and node 5 are mechanically unrelated -- so a step-domain
-//   constant measured on one head is a guess on any other.
-//
-// The first version of this file carried node 4's step-domain numbers (window
-// span, decimation, minimum width, settle distance) to node 5 on faith. Each
-// was wrong there by a different factor, and each produced a different and
-// misleading failure. So there are no step-domain constants here any more. The
-// sweep MEASURES them, on whatever head it happens to be running on.
+// See hall_index.h. A constant in ADC counts describes the sensor and magnet,
+// the same on every head. A constant in steps would describe the gearing, which
+// differs between heads, so there are none: the sweep measures them.
 #include <Arduino.h>
 #include <math.h>
 #include "hall_index.h"
@@ -23,11 +11,8 @@
 #ifdef HAS_HALL_INDEX
 
 // ─── Count-domain: properties of the sensor, shared across heads ─────────────
-#define HOME_ENTER    400   // counts below baseline to call it a dip. Noise is
-                            // ~23 counts and the dip measured 2069 deep on node
-                            // 4 and 2732 on node 5, so this sits ~17 sigma clear
-                            // of the noise and far inside both dips. The margin
-                            // is ~60x, which is why this one is not delicate.
+#define HOME_ENTER    400   // counts below baseline to call it a dip: far above
+                            // the noise, far inside the dip (rotary_a_axis.md).
 #define HOME_EXIT     300   // hysteresis, so noise on a flank cannot re-trigger
                             // the exit test.
 
@@ -38,36 +23,25 @@
 #define CLEAR_MIN  HOME_PRE // consecutive clear samples required before a dip
                             // may be declared.
 
-// How many times the sweep must cross the index before it will answer.
-//
-// Two is the minimum that can prove anything: a single excursion is
-// unfalsifiable -- it could be the magnet, a transient, a stall, or the driver
-// switching, and nothing in a sub-lap sweep distinguishes them. Two crossings at
-// a consistent separation is a PERIODIC feature, and a periodic feature on a
-// rotary axis is the index. That inference needs no knowledge of gearing.
-//
-// Three is the minimum that can prove it TWICE, which is what makes slip
-// detectable: two intervals that disagree mean the axis did not travel what it
-// was told. Raise this for more confidence -- laps are cheap on an axis with no
-// hard stop, and everything here is written against the count, not against 3.
+// Crossings before the sweep answers. Two prove the dip repeats, so it is the
+// index and not a transient; three prove it twice, so two laps that disagree
+// show a slip.
 #define HALL_CROSSINGS  3
 #if HALL_CROSSINGS < 2
 #error "HALL_CROSSINGS < 2 cannot establish periodicity -- see the note above"
 #endif
 
 // Intervals may disagree by this fraction of their mean before the sweep is
-// called a slip. Dimensionless, so it is not a mechanical constant: belt
-// compliance moves the index by a fraction of a degree, well under a percent of
-// a revolution, while a skipped step or a stall moves it by far more.
+// called a slip: belt compliance is well under it, a skipped step or stall far
+// over.
 #define LAP_SPREAD_SHIFT  3   // tolerance = mean >> 3, i.e. 12.5%
 
-// ONE buffer, not the scratch rig's two. The resolve's first pass reads win[i]
-// and writes at the same index with no cross-talk, so it transforms in place.
+// One buffer: the resolve's first pass transforms it in place.
 static int16_t g_win[HOME_WIN];
 
 // ─── Sweep state ─────────────────────────────────────────────────────────────
 // Written at the arm in loop context, then owned by the ISR until it reports
-// done — same handshake as HomingState next door.
+// done, as LegState in leg.cpp.
 static volatile bool     s_seeded;
 static volatile int32_t  s_baseline;
 static volatile uint16_t s_clearRun;    // consecutive samples clear of a dip
@@ -79,9 +53,8 @@ static volatile int16_t  s_minVal;
 static volatile int8_t   s_sign;
 static volatile int16_t  s_lastRaw;
 
-// Capture — only the FINAL crossing is buffered. The earlier ones are surveyed:
-// their entry, exit and argmin are recorded, which costs 12 bytes each and is
-// everything needed to derive the decimation, the lap length and the slip check.
+// Only the last crossing is buffered. The earlier ones record their entry, exit
+// and minimum: enough for the decimation, the lap length and the slip check.
 static volatile bool     s_capturing;
 static volatile uint16_t s_decim, s_dcnt;
 static volatile uint16_t s_nwin, s_preN, s_post;
@@ -110,22 +83,12 @@ static int32_t  s_best, s_ba, s_bb, s_bc;
 static uint16_t s_bk;
 
 // ─── ADC ─────────────────────────────────────────────────────────────────────
-// FREE-RUNNING, and read rather than triggered. The scratch rig called
-// analogReadEnh() inline in its step loop, which blocks for the whole
-// conversion; that is affordable in a dedicated loop and is not affordable in
-// the pulser ISR, whose whole budget is a few microseconds. Free-running makes
-// the per-step cost a register read of the most recent completed conversion.
+// Free-running and read, not triggered, so a sample in the pulser ISR is one
+// register read. A conversion completes about every 36 us at 24 MHz.
 //
-// At DIV16 on a 24 MHz part a 4x-accumulated conversion completes about every
-// 36 us, so even a 400 us step has roughly eleven conversions available and the
-// ADC is nowhere near being the limit on samples per dip. Decimation is, which
-// is why decimation is now derived rather than chosen.
-//
-// The cost is that the sample is up to one conversion old rather than taken
-// exactly at the step. That lag is CONSTANT, so it displaces the measured centre
-// by a fixed amount — a datum offset, not scatter, and homing against that datum
-// absorbs it. It does NOT absorb if the axis is homed in both directions,
-// because the lag flips sign with travel.
+// The sample is up to one conversion old. The lag is constant, so it offsets
+// the centre by a fixed amount, which homing absorbs; it flips sign with the
+// direction of travel.
 //
 // SAMPNUM_ACC4 + >>1 reproduces analogReadEnh(pin, 13) exactly: four 12-bit
 // conversions accumulate to a 14-bit sum, and the shift rescales to 13 bits.
@@ -133,14 +96,8 @@ static uint16_t s_bk;
 void hallIndexSetup(void) {
     pinMode(HAL_HALL_PIN, INPUT);
 
-    // VDD as the reference, not the internal one. The A1324 is RATIOMETRIC: its
-    // quiescent output is 50% of ITS supply and its sensitivity scales with
-    // supply too, so the output is a fixed fraction of VDD rather than a fixed
-    // voltage. Referenced to VDD that fraction is what gets measured and supply
-    // variation cancels; against a fixed internal reference every supply wobble
-    // lands directly in the reading — on a rail shared with stepper drivers.
-    // On AVR-Dx the reference is VREF.ADC0REF, not a field of ADC0.CTRLC as it
-    // was on the tinyAVR parts — go through the core's own setter.
+    // VDD as the reference: the A1324's output is a fraction of its supply, so
+    // supply variation cancels. Set through the core's setter (VREF.ADC0REF).
     analogReference(VDD);
 
     ADC0.CTRLC  = ADC_PRESC_DIV16_gc;
@@ -149,11 +106,8 @@ void hallIndexSetup(void) {
     ADC0.CTRLA  = ADC_ENABLE_bm | ADC_RESSEL_12BIT_gc | ADC_FREERUN_bm;
     ADC0.COMMAND = ADC_STCONV_bm;      // kick it once; it re-triggers itself
 
-    // Throw away the first conversions. The first read after a reference change
-    // is taken before the reference has settled and comes back low — on the
-    // scratch rig that showed up as a single sample ~90 counts BELOW the true
-    // minimum of a real dip, exactly the sort of outlier that poisons a baseline
-    // and every threshold derived from it.
+    // Discard the first conversions: the first after a reference change reads
+    // low and would poison the baseline.
     for (uint8_t i = 0; i < 8; i++) {
         while (!(ADC0.INTFLAGS & ADC_RESRDY_bm)) { }
         (void)ADC0.RES;
@@ -183,20 +137,13 @@ void hallIndexArm(int8_t sign, int32_t posNow) {
 
     s_index = 0; s_stepsPerRev = 0; s_lapSpread = 0;
     s_cause = ROTARY_IDX_NONE;
-    // Abandon any resolve still slicing. A new arm makes the old window
-    // meaningless, and leaving the state machine in RS_RUN would let it keep
-    // correlating a buffer this sweep is about to overwrite.
+    // Abandon any resolve still slicing: this sweep overwrites its buffer.
     s_rs    = RS_IDLE;
 }
 
-// Size the capture from the crossing just surveyed. THIS is the number that was
-// a magic constant three attempts running: the buffer holds HOME_WIN samples and
-// must fit the dip plus a head and a tail of HOME_PRE each, so one sample has to
-// cover at least width/(HOME_WIN - 2*HOME_PRE) steps. Measured width in,
-// decimation out — no assumption about how many steps a revolution holds.
-//
-// The 32-bit divide is slow on this part (~200 cycles, ~8 us at 24 MHz) but runs
-// exactly once per sweep, at a crossing, not per step.
+// Size the capture from the crossing just surveyed: the buffer must fit the dip
+// plus a head and a tail of HOME_PRE, so one sample covers at least
+// width/(HOME_WIN - 2*HOME_PRE) steps. The 32-bit divide runs once per sweep.
 static void armCapture(void) {
     const uint8_t last = (uint8_t)(s_nCross - 1);
     int32_t w = s_cross[last].exitPos - s_cross[last].enterPos;
@@ -220,22 +167,16 @@ bool hallIndexSample(int32_t posNow) {
     const int16_t v = hallRead();
     s_lastRaw = v;
 
-    // Baseline is a running MAXIMUM, SEEDED FROM THE FIRST SAMPLE. The feature
-    // is a dip, so the largest field seen is the away-from-magnet level. Seeded
-    // at zero instead, the max has to climb through every real value on the way
-    // up, and during that climb `baseline - v` is large for every sample — the
-    // detector then finds a dip wherever it happens to be looking. Seeding costs
-    // nothing: worst case the seed is taken ON the magnet, and the max corrects
-    // itself the moment the axis leaves it. The CLEAR_MIN gate below is what
-    // stops that first partial dip from being counted.
+    // The baseline is the highest reading, seeded from the first sample: the
+    // feature is a dip. A seed taken on the magnet corrects itself, and
+    // CLEAR_MIN keeps that partial dip from counting.
     if (!s_seeded) { s_baseline = v; s_seeded = true; }
     else if (v > s_baseline) s_baseline = v;
 
     const int32_t below = s_baseline - v;
 
-    // Post-roll: the final crossing has ended and we are buffering as much tail
-    // as we buffered head, so the window is symmetric about the feature — which
-    // is what the mirror estimator assumes.
+    // Post-roll: as much tail as head, so the window is symmetric about the dip,
+    // as the mirror estimator assumes.
     if (s_exiting) {
         if (++s_dcnt >= s_decim) {
             s_dcnt = 0;
@@ -280,12 +221,9 @@ bool hallIndexSample(int32_t posNow) {
         if (s_rn < HOME_PRE) s_rn++;
     }
 
-    // A dip may only be DECLARED after a run of clear samples. Two jobs: it
-    // discards a sweep that starts sitting on the magnet (there is no clear run
-    // until the axis leaves it, so that truncated dip is never counted and never
-    // corrupts the lap length), and it guarantees the pre-trigger ring is full
-    // at the entry — the exit test compares the tail length against preN, so
-    // entering with a short ring completes the window almost immediately.
+    // A dip counts only after a run of clear samples: a sweep that starts on
+    // the magnet does not count that dip, and the pre-trigger ring is full at
+    // the entry.
     if (below > HOME_ENTER && s_clearRun >= CLEAR_MIN) {
         s_inDip    = true;
         s_enterPos = posNow;
@@ -307,58 +245,33 @@ bool hallIndexSample(int32_t posNow) {
 
 // ─── Resolve: symmetry axis of the buffered dip, SLICED ─────────────────────
 //
-// est_mirror: correlate the dip against its own reverse, since the
-// autoconvolution of a bump centred at c peaks at 2c. It assumes symmetry and
-// nothing else -- no template, no shape model, no depth calibration -- which is
-// why it beat the matched filter on real data, where the dip width wanders lap
-// to lap and no single template fits every lap. argmin and a parabolic fit were
-// ~10x worse, because the dip bottom is flat for about +/-100 steps. That is
-// also why argmin is used only for the LAP LENGTH here, where a coarse position
-// is plenty, and never for the datum.
+// est_mirror: correlate the dip against its own reverse; the autoconvolution of
+// a bump centred at c peaks at 2c. It assumes only symmetry (docs/rotary_a_axis.md
+// compares it with the others). The dip's flat bottom makes the minimum good
+// only for the lap length, never for the datum. Fixed point except the final
+// vertex interpolation.
 //
-// Fixed point throughout except the final vertex interpolation. Node vs PC float
-// over the very same window agreed to 0.03-0.04 steps (docs/rotary_a_axis.md).
-//
-// WHY THIS IS SLICED, and it is not an optimisation. The correlation is O(n^2):
-// at HOME_WIN it is ~160k multiply-accumulates, which is ~170 ms on a 24 MHz
-// AVR. A node dispatches RS485 commands from loop() -- the RX ISR only fills the
-// queue -- so a resolve that ran to completion in one pass answered NOTHING for
-// those 170 ms. The supervisor polls every 25 ms and fails a home after 4
-// unanswered polls, so every successful rotary home was reported as
-// LEGFAIL_POLL: the sweep worked, the arithmetic worked, and the node went
-// silent while doing it.
-//
-// Slicing fixes the cause rather than the symptom. Raising the miss count would
-// have tuned a bus-health threshold to the runtime of an O(n^2) loop whose n
-// varies with the dip -- and would have blinded the supervisor to a genuinely
-// dead node for as long as it took.
+// Sliced: the correlation is O(n^2), ~170 ms at HOME_WIN, and commands are
+// dispatched from loop(), so in one pass the node would miss the controller's
+// polls.
 
-// Multiply-accumulates per hallIndexResolveStep() call. ~2000 MACs is ~2 ms
-// here, comfortably inside one 25 ms poll interval with the rest of loop() to
-// spare. Whole lags are always finished, so a pass may overshoot by up to n.
+// Multiply-accumulates per hallIndexResolveStep() call, ~2 ms, well inside a
+// poll interval. Whole lags are finished, so a pass may overshoot by up to n.
 #define RESOLVE_MACS 2048
 
-// Everything cheap and every refusal that can be decided without the
-// correlation. Leaves s_rs at RS_DONE for those, so the caller's first
-// hallIndexResolveStep() returns true immediately and no home waits on an
-// answer that already exists.
+// Everything cheap, and every answer that needs no correlation; those leave
+// s_rs at RS_DONE, so the first hallIndexResolveStep() returns true.
 void hallIndexResolveBegin(void) {
     s_rs = RS_DONE;
 
     if (s_overflow) { s_cause = ROTARY_IDX_OVERFLOW; return; }
 
-    // NOTFOUND is the honest verdict for every way of arriving here without a
-    // complete set of crossings, and hallIndexCrossings() is what distinguishes
-    // them: 0 means the sensor never saw the magnet (or the axis never moved, or
-    // there is nothing on the pin), and 1..K-1 means the budget ran out before
-    // the sweep could prove periodicity. Those used to be indistinguishable.
+    // Short of crossings: NOTFOUND, told apart by hallIndexCrossings().
     if (s_nCross < HALL_CROSSINGS || !s_exiting || s_post < s_preN) {
         s_cause = ROTARY_IDX_NOTFOUND; return;
     }
 
-    // Lap length, straight off the crossings. This is the number the whole
-    // exercise exists to produce: it is not knowable in advance on an unknown
-    // head, and every step-domain quantity anyone else needs derives from it.
+    // Lap length, from the crossings.
     int32_t sum = 0, dmin = INT32_MAX, dmax = INT32_MIN;
     for (uint8_t i = 1; i < HALL_CROSSINGS; i++) {
         int32_t d = s_cross[i].minPos - s_cross[i - 1].minPos;

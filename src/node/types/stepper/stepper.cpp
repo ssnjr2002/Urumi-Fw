@@ -1,12 +1,7 @@
-// stepper.cpp — stepper node type.
-// Owns the RX ISR (so the time-critical stream path inlines with no register
-// spill), the step-pulse one-shot timer, position tracking, and the core↔type
-// hooks (node_type / node_setup / node_set_enabled / node_handle_command).
-//
-// All board-specific symbols (USART instance, step/dir ports, timer peripheral,
-// motor enable polarity) come from the HAL contract via board.h +
-// stepper/stepper.h → board/hal/. After preprocessing these are direct register
-// accesses — zero indirection, safe inside ISRs.
+// stepper.cpp — stepper node type: its own RX ISR (so the stream path inlines
+// with no call), the step-pulse one-shot, the position counter, the limit gate
+// and the hooks. Board symbols come from board.h and stepper/stepper.h and
+// expand to register accesses. See docs/system/nodes.md §6–7.
 #include <Arduino.h>
 #include "board.h"
 #include "stepper/stepper.h"
@@ -17,17 +12,10 @@
 #include "stepper_state.h"
 #include "leg.h"
 
-// drivers_init() is declared by hal_stepper.h (via motor.h). A weak no-op
-// default lives in board/hal/motor.cpp (always compiled); a board with real
-// driver init (AVR128DB32 TMC/DRV) provides a strong override in its
-// drivers.cpp. Call unconditionally — no null check needed.
-
-// ─── Stream slot (runtime-assigned via CMD_ENGAGE) ──────────────────────────
-// The stream byte is four 2-bit slots (bit(2n)=step, bit(2n+1)=dir). Which slot
-// this node reads is NO LONGER derived from NODE_ID — it is assigned at runtime
-// by the Pico's axis map (docs/system/bus.md §5). The node boots
-// DISENGAGED (slot == SLOT_NONE): masks are 0, so it ignores every stream byte
-// and its position freezes until an ENGAGE binds it to a slot.
+// ─── Stream slot (CMD_ENGAGE) ───────────────────────────────────────────────
+// The stream byte is four 2-bit slots (bit(2n)=step, bit(2n+1)=dir), bound at
+// run time by the controller (docs/system/bus.md §3). The node boots with no
+// slot: masks 0, every stream byte ignored, position frozen.
 enum Slot : uint8_t {
     SLOT_X = 0,
     SLOT_Y,
@@ -47,43 +35,20 @@ static volatile uint8_t dirBitMask       = 0;
 bool                    currentDir       = false;
 
 #ifdef HAS_LIMIT_SWITCH
-// ─── Limit gate ──────────────────────────────────────────────────
-// Compiled only on boards that actually have a switch wired. The gate is
-// unconditional and stateless with respect to direction: while the switch reads
-// asserted, this node refuses EVERY stream step, both ways. It is not a homing
-// feature and does not care whether a homing move is in progress — a machine
-// that has run onto a hard stop must stop, whatever put it there.
+// ─── Limit gate (docs/system/nodes.md §7) ───────────────────────────────────
+// While the switch reads pressed, every stream step is refused, both ways;
+// driving off the switch is a retract leg. A press that lasts LIMIT_LATCH_MS
+// latches the gate shut until a retract ends clear of the switch.
 //
-// Refusing both directions means the stream can never drive off the switch
-// again. That is deliberate: recovery is a homing RETRACT (docs/homing.md §1),
-// which is supervised and step-budgeted, rather than a stream the Pico is
-// emitting open-loop with no idea the axis is pinned.
-//
-// The coupling with the pulser runs one way only. The pulser NEVER reads these
-// — it samples the pin directly when a CMD_HOME_LEG arrives, and that one read
-// picks its mode: clear → seek (stop when the level asserts), asserted →
-// retract (ignore the switch, run the step budget out). Deciding from the pin
-// rather than from the latch is what makes a boot with the axis already parked
-// on its switch retract correctly on the FIRST command, with no sentinel and no
-// wasted move. The pulser only ever WRITES here, and only in one case: clearing
-// limitLatched after a retract that both ran its budget and left the pin clear.
-//
-// TIME BASE. The accumulator counts stream BYTES, not steps, because the byte
-// rate is fixed by the baud rate and the step rate is not: a stream byte is 11
-// bit-times (start + 9 data + stop) at RS485_BAUD, so each one is a known,
-// constant tick with no timer read inside the ISR. Steps would have measured
-// distance, not time, and a slow axis would take minutes to reach a threshold a
-// fast one crossed in half a second.
+// The time base is stream bytes, not steps: a byte is 11 bit times at
+// RS485_BAUD, a fixed tick with no timer read in the ISR.
 #define LIMIT_STREAM_BYTES_PER_SEC ((uint32_t)RS485_BAUD / 11u)
 #define LIMIT_LATCH_MS             500u
 #define LIMIT_LATCH_BYTES          (LIMIT_STREAM_BYTES_PER_SEC * LIMIT_LATCH_MS / 1000u)
 
-// Monotonic — counts every stream byte ever seen while asserted, and is NEVER
-// reset. It is the lifetime diagnostic: a switch that keeps chattering racks up
-// a total even though no single run ever latched, which is exactly the
-// intermittent fault that is otherwise invisible from the bus. The current run
-// is (total − base), with base snapshotted each time the switch releases, so
-// the run comparison costs the diagnostic nothing.
+// Bytes seen while pressed since boot, never reset, so a chattering switch
+// shows even when no press latched. The current press is (total − base), with
+// base taken at each release.
 volatile uint32_t limitBytesAsserted = 0;
 volatile uint32_t limitRunBase       = 0;
 volatile bool     limitLatched       = false;
@@ -104,18 +69,15 @@ void node_setup(void) {
     pinMode(HAL_EN_PIN,   OUTPUT);
 
 #ifdef HAS_LIMIT_SWITCH
-    // Input with pull-up: the switch pulls to ground, so asserted reads LOW and
-    // a broken wire reads asserted too — the safe way round.
+    // The switch pulls to ground, so a cut wire reads pressed.
     pinMode(HAL_LIMIT_SWITCH_PIN, INPUT_PULLUP);
 #endif
 #ifdef HAS_HALL_INDEX
-    // Same pin, other kind of axis. No pull-up: this one is an analog input
-    // driven by the Hall sensor, and a pull-up would fight it.
+    // Same pin, analog, no pull-up.
     hallIndexSetup();
 #endif
 
-    // Init driver (brings up SPI for TMC2660) BEFORE the first HAL_MOTOR_DISABLE,
-    // which for TMC issues a toff() over SPI.
+    // Before the first disable, which on a TMC2660 is an SPI write.
     drivers_init();
     HAL_MOTOR_DISABLE();
 
@@ -124,28 +86,21 @@ void node_setup(void) {
     HAL_STEP_TIMER_INST.CTRLB   = HAL_STEP_TIMER_CNTMODE;
     HAL_STEP_TIMER_INST.INTCTRL = HAL_STEP_TIMER_CAPT_bm;
 
-    // No NODE_ID-derived slot — the node boots disengaged and ignores the stream
-    // until CMD_ENGAGE binds it (slot/masks stay at their SLOT_NONE/0 defaults).
-
 #ifdef NODE_HAS_LASER
-    // Laser gate (only the one stepper node wired to a laser): boot OFF.
+    // Laser gate: boots off.
     pinMode(HAL_LASER_PIN, OUTPUT); digitalWrite(HAL_LASER_PIN, LOW);
 #endif
 }
 
-// CMD_ENABLE / CMD_DISABLE effect: ENERGIZE ONLY — no stream role.
-// The stream gate is the slot (ENGAGE), decoupled from holding torque (ENABLE):
-// a parked dual-head axis is ENABLED (holds Z height) but DISENGAGED (ignores
-// the stream). See docs/system/bus.md §5.
+// Energise only. Whether the node steps is the slot: a parked head is energised
+// to hold its height but bound to no slot.
 void node_set_enabled(bool on) {
     if (on) {
         HAL_MOTOR_ENABLE();
     } else {
 #ifdef HAS_HOMING
-        // De-energising mid-home must kill the pulser, or TCA0 would keep
-        // counting steps into a position the motor is no longer holding. This is
-        // what makes the existing broadcast estop stop a home too, with no new
-        // mechanism: CMD_DISABLE is already on the broadcast allowlist.
+        // Stop any leg, or it would count steps the motor no longer takes. So
+        // the broadcast e-stop stops a leg too.
         legHalt();
 #endif
         HAL_MOTOR_DISABLE();
@@ -160,19 +115,14 @@ void node_release(void) {
     dirBitMask  = 0;
 }
 
-// Stepper does all its work in the RX ISR. The one thing left for loop context
-// is publishing the limit state into the shared flags byte: node_set_flag()
-// read-modify-writes a byte the core also owns, so it must not be called from
-// the ISR that produces the state. The ISR latches into its own volatiles and
-// this mirrors them out.
+// The stream works in the RX ISR; loop context finishes legs and publishes the
+// flags, which node_set_flag() may only write from here.
 void node_loop(void) {
 #ifdef HAS_HOMING
     legLoop();
 #endif
 #ifdef HAS_LIMIT_SWITCH
-    // Live pin OR latch — the master needs to see the flag while the axis is
-    // sitting on the switch AND after a latch that a bounce-free release has
-    // since cleared from the pin but not from the gate.
+    // The pin or the latch.
     node_set_flag(NODE_FLAG_LIMIT, HAL_LIMIT_ASSERTED() || limitLatched);
 #endif
 }
@@ -185,15 +135,9 @@ static int32_t readPositionAtomic() {
     return pos;
 }
 
-// Type-specific status tail: [pos int32 BE][slot], plus [span int32 BE] on a
-// board with a switch. Lets a host see what the node counted, which stream slot
-// it is ENGAGE-bound to (0xFF = disengaged), and how far its last homing leg ran.
-//
-// The span is APPENDED, and only on HAS_LIMIT_SWITCH builds, so the tail is
-// legitimately two different lengths across the bus. That is safe in both
-// directions because the master decodes on `len >= NS_STEP_LEN` rather than
-// equality: an old master ignores the extra four bytes, and a new one reading a
-// switchless node simply finds no span rather than mis-parsing.
+// Status tail: [pos int32 BE][slot][homing kind], then [span int32 BE] on a
+// build with legs, then the Hall answer on a Hall build. The controller decodes
+// on a minimum length, so the longer tails parse everywhere.
 uint8_t node_status(uint8_t* buf) {
     int32_t pos = readPositionAtomic();
     buf[0] = (pos >> 24) & 0xFF;
@@ -201,9 +145,7 @@ uint8_t node_status(uint8_t* buf) {
     buf[2] = (pos >> 8)  & 0xFF;
     buf[3] =  pos        & 0xFF;
     buf[4] = slot;
-    // Which terminator this board has, DECLARED rather than inferred from how
-    // long the rest of this tail turns out to be. Sent by every stepper,
-    // including ones with neither -- see HOMING_KIND_* in common.h.
+    // Which terminator this board has (HOMING_KIND_*, common.h).
 #if defined(HAS_HALL_INDEX)
     buf[5] = HOMING_KIND_INDEX;
 #elif defined(HAS_LIMIT_SWITCH)
@@ -218,31 +160,23 @@ uint8_t node_status(uint8_t* buf) {
     buf[8] = (span >> 8)  & 0xFF;
     buf[9] =  span        & 0xFF;
 #ifdef HAS_HALL_INDEX
-    // Appended again, by the same rule that appended the span: a longer tail on
-    // the boards that have more to say. The index is NOT buf[0..3] — a rotary
-    // sweep runs THROUGH its feature, so where the axis stopped and where the
-    // index is are two different numbers and both are wanted.
+    // The index, not where the sweep stopped: a sweep runs through it.
     const int32_t idx = hallIndexPos();
     buf[10] = (idx >> 24) & 0xFF;
     buf[11] = (idx >> 16) & 0xFF;
     buf[12] = (idx >> 8)  & 0xFF;
     buf[13] =  idx        & 0xFF;
     buf[14] = hallIndexCause();
-    // Live sensor value and the last sweep's baseline. Diagnostics, not part of
-    // the homing answer -- but a NOTFOUND cannot otherwise be told apart from a
-    // sensor that is not wired to this pin at all, and on a new board that is
-    // the FIRST thing worth ruling out.
+    // Live reading and the last sweep's baseline, to tell NOTFOUND from a
+    // sensor that is not wired.
     const int16_t raw  = hallIndexRaw();
     const int16_t base = hallIndexBaseline();
     buf[15] = (raw  >> 8) & 0xFF;
     buf[16] =  raw        & 0xFF;
     buf[17] = (base >> 8) & 0xFF;
     buf[18] =  base       & 0xFF;
-    // Lap length, measured by the sweep itself, and the count of index crossings
-    // it managed. The lap length is what makes the answer portable: no host can
-    // know it in advance on an unknown head. The crossing count is what makes a
-    // FAILURE legible -- 0 means the magnet was never seen, and a short count
-    // means the budget ran out before periodicity could be proven.
+    // Measured steps per revolution, and the crossings completed: 0 means the
+    // magnet was never seen, fewer than HALL_CROSSINGS that the budget ran out.
     const int32_t spr = hallIndexStepsPerRev();
     buf[19] = (spr >> 24) & 0xFF;
     buf[20] = (spr >> 16) & 0xFF;
@@ -275,12 +209,9 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
                 return false;              // out-of-range slot → NAK, keep state
             }
             slot = s;
-            // ACK carries slot, pos and energised state which currently happens 
-            // to be exactly the same as the full state: [type][flags][pos][slot],
-            // sampled after the bind. That makes an engage one atomic observation
-            // of (bound, position, enabled) — a separate follow-up read could
-            // straddle a node reboot and report a position for a slot the node no
-            // longer holds. The echoed slot also self-verifies the bind.
+            // The ack is the status, taken after the bind: slot, position and
+            // energised in one reply, which a separate read could not promise
+            // across a reboot.
             reply[0] = NODE_ID;
             reply[1] = CMD_ENGAGE;
             uint8_t n = buildNodeStatus(&reply[3]);
@@ -290,8 +221,7 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
         }
 #ifdef NODE_HAS_LASER
         case CMD_LASER: {
-            // payload [state]: 1 = laser on, 0 = off. Compiled only on the laser
-            // node; every other stepper NAKs this (falls through to return false).
+            // payload [state]: 1 = laser on, 0 = off.
             if (len < 5) return false;             // [id][cmd][1][state][crc]
             digitalWrite(HAL_LASER_PIN, pkt[3] ? HIGH : LOW);
             reply[0] = NODE_ID;
@@ -303,14 +233,8 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
 #endif
 #ifdef HAS_HOMING
         case CMD_HOME_LEG: {
-            // [id][cmd][len][11 payload][crc]. Compiled only where the node has
-            // something that can END a move — a switch or a Hall index. Without
-            // one there is no terminator at all, so such a node NAKs rather than
-            // running open-loop into the stop.
-            // BAD_ARG, not the dispatcher's UNSUPPORTED: the opcode IS
-            // supported and the frame is simply the wrong length. Answering
-            // "unsupported" here points the host at its firmware version when
-            // the fault is in the bytes it just sent.
+            // [id][cmd][len][11 payload][crc]. Too short is BAD_ARG: the opcode
+            // is supported, the bytes are wrong.
             if (len < 3 + CMD_HOME_LEG_PAYLOAD_LEN + 1) {
                 node_reply_nak(CMD_HOME_LEG, NAK_BAD_ARG, reply, replyLen);
                 return true;
@@ -329,35 +253,18 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
 #ifdef HAS_LIMIT_SWITCH
             const bool intendedRetract = (p[0] & 0x02) != 0;
 
-            // THE mode decision, and the only place it is made: one pin read,
-            // now. Sitting on the switch means the only useful move is off it.
+            // The mode: one pin read, now. On the switch, the move is off it.
             const bool    retract = HAL_LIMIT_ASSERTED();
             const LegMode mode    = retract ? LEG_RETRACT : LEG_SEEK;
 
-            // The intent bit does not feed the decision above -- it is checked
-            // AGAINST it. A mismatch means the host's model of the switch state
-            // has diverged from reality, and arming anyway would run the
-            // declared budget under the WRONG semantics: a host expecting a
-            // seek sized its budget as a runaway cap for a move the switch was
-            // meant to cut short, and a retract ignores the switch and runs
-            // that same budget to completion (include/common.h, CMD_HOME_LEG). NAK
-            // here, before anything moves, rather than silently execute a move
-            // the host did not intend.
-            //
-            // A reasoned NAK, not the generic `return false`: NAK_UNSUPPORTED
-            // would read as "this node does not do CMD_HOME_LEG", which is false —
-            // it does, just not with THIS command's premise. NAK_INTENT_MISMATCH
-            // tells the host to re-read the switch before retrying rather than
-            // to suspect its wiring or payload framing.
+            // The intent bit is checked against the read, not used for it. A
+            // seek's budget is a runaway cap; a retract would run all of it.
             if (retract != intendedRetract) {
                 node_reply_nak(CMD_HOME_LEG, NAK_INTENT_MISMATCH, reply, replyLen);
                 return true;
             }
 #else
-            // Rotary: no pin, so no mode and nothing to disagree about. The
-            // intent bit is IGNORED rather than given a second meaning here
-            // (include/common.h, CMD_HOME_LEG) — there is exactly one kind of
-            // rotary leg, a sweep.
+            // Rotary: one kind of leg, and the intent bit is ignored.
             const LegMode mode = LEG_SWEEP;
 #endif
 
@@ -368,10 +275,7 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
                 return true;
             }
 
-            // Ack with full status, like CMD_ENGAGE: one atomic observation of
-            // (homing, limit, position) taken after the arm, so the supervisor
-            // never has to infer the starting point from a separate read that
-            // could straddle the first steps.
+            // The ack is the status, taken after the arm.
             reply[0] = NODE_ID;
             reply[1] = CMD_HOME_LEG;
             uint8_t n = buildNodeStatus(&reply[3]);
@@ -428,11 +332,9 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
             return true;
         }
         case CMD_LEG_ABORT: {
-            // Stops the pulser and nothing else: the motor stays energised, so
-            // the counter and the datum witness stay good. legLoop() closes the
-            // span and publishes NODE_FLAG_LEG clear on its next pass. Guarded:
-            // halting an idle pulser would re-run the LAST leg's finish (its
-            // span, and a retract's latch clear) against today's state.
+            // Stops the pulser only; the motor stays energised, so the counter
+            // and the datum stay good. Guarded: halting an idle pulser would
+            // re-run the last leg's finish.
             if (legActive) legHalt();
             reply[0] = NODE_ID;
             reply[1] = CMD_LEG_ABORT;
@@ -443,10 +345,7 @@ bool node_handle_command(const uint8_t* pkt, uint8_t len,
         }
 #endif
         case CMD_GET_POS: {
-            // Same payload as CMD_NODE_STATUS / the ENGAGE ack — position never
-            // travels in a shape of its own, so there is one parser on the host
-            // side and one place to extend. Kept as a distinct verb only because
-            // the direct UPDI debug console asks for it by name.
+            // The status, as CMD_NODE_STATUS.
             reply[0] = NODE_ID;
             reply[1] = CMD_GET_POS;
             uint8_t n = buildNodeStatus(&reply[3]);
@@ -474,66 +373,25 @@ ISR(HAL_USART_RXC_vect) {
     if (slot == SLOT_NONE) return;  // disengaged → ignore stream, freeze position
 
 #ifdef HAS_HOMING
-    // A home owns the axis outright, and this path must not touch it. The
-    // collision is not hypothetical or rare: busQuiesce() prefaces EVERY command
-    // frame with a NOP stream byte, and a zero byte has dirBitMask clear, so it
-    // reads as "direction 0" here and drives DIR low. The supervisor polls the
-    // leg node every LEG_POLL_MS, so the first poll after the arm would
-    // yank DIR out from under the pulser and every step after it ran the wrong
-    // way -- while absolutePosition, which the pulser derives from its own dir,
-    // kept counting the direction that was ASKED for. The counter and the shaft
-    // disagreed, and only the counter was visible over the bus.
-    //
-    // Returning before the limit accumulator as well: during a home the pulser's
-    // own pin read is the authority on the switch, and letting NOP bytes advance
-    // limitBytesAsserted would move the baseline legFinish() judges a retract
-    // against. The DIR hazard is identical on a rotary build — the pulser owns
-    // DIR there too — so this guard is NOT limit-specific and must not be
-    // folded back under the switch's #ifdef.
-    //
-    // The DIR half of this is now also covered generally, further down: a
-    // non-stepping byte no longer touches DIR at all. This guard still earns its
-    // place for the limit accumulator, and for returning before ANY of the
-    // stream path runs while the pulser owns the axis. Do not delete it as
-    // redundant.
+    // A leg owns the axis. The bus's empty preamble bytes must not move DIR or
+    // feed the limit count while it runs.
     if (legActive) return;
 #endif
 
 #ifdef HAS_LIMIT_SWITCH
-    // One port read, no debounce, no branch on direction. Refusal is IMMEDIATE:
-    // a real trip stops on the very next step, because waiting out the latch
-    // window before refusing would let the axis run ~500 ms further into the
-    // hard stop — thousands of steps. The accumulator below decides only whether
-    // the refusal becomes STICKY, not whether it happens.
+    // Refused at once; the count decides only whether the refusal latches.
     const bool limAsserted = HAL_LIMIT_ASSERTED();
     if (limAsserted) {
         if (++limitBytesAsserted - limitRunBase >= LIMIT_LATCH_BYTES)
-            limitLatched = true;    // sustained → a genuine trip, hold the gate
+            limitLatched = true;
     } else {
-        limitRunBase = limitBytesAsserted;   // released → start a new run
+        limitRunBase = limitBytesAsserted;
     }
-    // A run that ends under the threshold was a glitch: the gate opens again by
-    // itself on release, the job carries on having lost a few steps, and the
-    // lifetime total records that it happened. A run that latched stays shut
-    // until a successful RETRACT clears it — nothing in the stream path can, and
-    // neither can a seek, which by definition ends sitting ON the switch.
-    if (limAsserted || limitLatched) return;   // refuse the step
+    if (limAsserted || limitLatched) return;
 #endif
 
-    // A byte that does not step THIS axis must not touch its DIR pin.
-    //
-    // Every stream byte carries a dir bit for every slot, because
-    // microsegment.cpp computes dirBits once per segment and ORs it into all of
-    // them. So a byte stepping some other axis still carries a bit in this
-    // axis's dir position, and latching it means moving DIR on a byte that asked
-    // this axis for nothing. That is exactly how busQuiesce()'s NOP preamble
-    // drove DIR low mid-home; the legActive guard above fixed that one caller,
-    // this makes the invariant general -- DIR moves only on a byte that steps.
-    //
-    // Behaviour-preserving for motion: any byte that steps axis i already carries
-    // axis i's correct dir bit, and no emitter has ever sent direction in a
-    // separate leading byte. The only change is that a reversal pays the 5 us
-    // DM542 setup guard on the stepping byte rather than one byte earlier.
+    // DIR moves only on a byte that steps this axis: every byte carries a dir
+    // bit for every slot.
     if ((b & stepBitMask) == 0) return;
 
     bool newDir = (b & dirBitMask) != 0;

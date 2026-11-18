@@ -8,39 +8,20 @@
 #ifdef HAS_HOMING
 
 #ifdef HAS_LIMIT_SWITCH
-// Consecutive ASSERTED pulser samples before a seek believes its switch.
-//
-// The stream path rejects glitches and the pulser once did not: it halted on a
-// single port read, so one transient assert -- a motor cable coupling into the
-// switch line, a drag chain flexing -- stopped a seek dead with its budget
-// barely touched. Worse, it stopped SILENTLY: nothing latched, so by the time
-// the supervisor polled 25 ms later the pin had released and the leg was
-// indistinguishable from one that never found its switch at all. It reported
-// "switch never reached within 211200 steps" for an axis that had stopped at
-// 26241 and was nowhere near anything.
-//
-// Three samples, not the stream path's 500 ms: this is a distance, and it is
-// paid on every genuine trip. At the floor interval that is three steps -- tens
-// of microns -- against a seek whose whole purpose is to arrive at this switch.
-// The stream path can afford to be slow because it is deciding whether a
-// refusal becomes STICKY, not whether to refuse.
+// Pressed samples in a row, one per step, before a seek or park believes its
+// switch, so one transient does not stop it. Samples, not time: each one is a
+// step paid on every real press.
 #define LEG_LIMIT_SAMPLES 3
 #endif
 
-// TCA0 ticks per microsecond, from the board's own F_CPU with the div8
-// prescaler: 3 on the 24MHz DB32, 2 (truncated from 2.5) on a 20MHz ATtiny.
-// This is why CMD_HOME_LEG carries microseconds — the difference dies here and
-// never reaches the master or the config schema.
+// TCA0 ticks per microsecond with the div8 prescaler: 3 at 24 MHz, 2 at 20 MHz
+// (truncated). Legs arrive in microseconds, so the controller never needs the
+// node's clock.
 #define LEG_TICKS_PER_US ((F_CPU / 1000000UL) / 8UL)
 
 // ─── Pulser state ───────────────────────────────────────────────────────────
-// Written once at arm time in loop context, then owned by the pulser ISR until
-// it stops. `legActive` is the handshake between the two: loop context must not
-// touch the rest while it is set.
-//
-// A seek or retract is decided by ONE read of the limit pin at arm time and
-// never revisited (docs/homing.md 1.2); a rotary build has no pin and only
-// sweeps.
+// Written at arm time in loop context, then owned by the pulser ISR until it
+// stops; loop context must not touch it while `legActive` is set.
 struct LegState {
     uint16_t interval;    // current step interval, TCA0 ticks
     uint16_t floorTicks;  // fastest interval this move is allowed to reach
@@ -55,19 +36,12 @@ struct LegState {
 static volatile LegState leg = {0, 0, 0, 0, 0, 0, false, LEG_SEEK, 0};
 volatile bool legActive = false;
 
-// Set by the pulser ISR when a SEEK stopped because its switch genuinely
-// asserted (debounced), as opposed to running its budget out. legFinish()
-// turns it into limitLatched.
-//
-// Without this a seek's success was inferred from the pin still reading
-// asserted whenever the supervisor happened to poll, which makes a real trip
-// that bounces look like a leg that found nothing.
+// Set by the pulser when a seek or park stopped on its switch (debounced), not
+// its budget. legFinish() turns it into limitLatched.
 static volatile bool legHitLimit = false;
 
-// Set by the pulser ISR when it stops, consumed once by legLoop(). The ISR
-// cannot do the finishing itself: clearing the latch and publishing the flags
-// both go through node_set_flag(), which read-modify-writes a byte the core also
-// owns and is therefore loop-context only.
+// Set by the pulser when it stops, consumed once by legLoop(): the finish writes
+// the flags, which only loop context may do.
 static volatile bool legFinished = false;
 #ifdef HAS_HALL_INDEX
 // True from the moment the pulser stops until the sliced correlation has an
@@ -76,19 +50,8 @@ static bool legResolving = false;
 #endif
 
 // ─── Leg span ────────────────────────────────────────────────────────────────
-// How far the last COMPLETED leg actually moved: the counter at the arm, and
-// the difference once it stops. Reported in the status tail, so every leg is
-// self-describing.
-//
-// One leg, not a sequence: the node sees individual legs and has no sequence
-// context, so composing legs into "distance from the far stop to the datum" is
-// the master's job. It lives here rather than on the master because the BENCH
-// path has no master sequencer -- every value in docs/homing.md §7 was found by
-// driving one node directly.
-//
-// Signed and in raw steps -- the sign catches a leg that ran the wrong way.
-// Both directions of the subtraction survive a failed leg on purpose: where a
-// leg stopped IS the diagnostic when it stopped somewhere unexpected.
+// How far the last finished leg moved, in signed steps, failed or not, from
+// the counter at the arm. Reported in the status tail.
 static int32_t legSpanFrom  = 0;
 static int32_t legSpan      = 0;
 
@@ -101,15 +64,12 @@ static int32_t readPositionAtomic(void) {
     return pos;
 }
 
-// ─── Arming a leg (§1.4) ────────────────────────────────────────────────────
-// Rejecting rather than clamping is deliberate. Every refusal below is a config
-// or arithmetic mistake on the host side, and a clamped leg would run at a rate
-// nobody asked for, into a hard stop, while reporting success.
+// ─── Arming a leg ───────────────────────────────────────────────────────────
+// Refuses rather than clamps: each refusal is a mistake on the controller's
+// side, and a clamped leg would run at a rate nobody asked for.
 uint8_t legArm(LegMode mode, bool dir, uint16_t startUs, uint16_t floorUs,
                uint16_t rampSteps, uint32_t maxSteps) {
-    // The one refusal that is not the host's fault and not permanent: the same
-    // frame is correct, just early.
-    if (legActive)                    return NAK_BUSY;   // one move at a time
+    if (legActive)                    return NAK_BUSY;   // one leg at a time
     if (startUs == 0 || floorUs == 0) return NAK_BAD_ARG;
     if (floorUs > startUs)            return NAK_BAD_ARG;  // floor is the FASTER rate
     if (maxSteps == 0)                return NAK_BAD_ARG;  // no budget = no runaway guard
@@ -127,8 +87,7 @@ uint8_t legArm(LegMode mode, bool dir, uint16_t startUs, uint16_t floorUs,
     h.upSteps    = 0;
     h.remaining  = maxSteps;
     h.limitRun   = 0;
-    // ramp_steps == 0 means no ramp: start at the cruise rate rather than
-    // ramping over zero steps, which would be a divide by zero.
+    // rampSteps == 0: no ramp, start at the floor.
     h.interval   = rampSteps ? (uint16_t)startTicks : (uint16_t)floorTicks;
     h.rampStep   = rampSteps ? (uint16_t)((startTicks - floorTicks) / rampSteps) : 0;
 
@@ -136,22 +95,16 @@ uint8_t legArm(LegMode mode, bool dir, uint16_t startUs, uint16_t floorUs,
     leg         = h;
     legActive   = true;
     legHitLimit = false;
-    // Span start. Captured inside the same cli() as the arm so it cannot be
-    // taken a step late -- the stream path can still be advancing the counter
-    // right up to here.
+    // Span start, in the same cli() as the arm so it is not a step late.
     legSpanFrom = absolutePosition;
 #ifdef HAS_HALL_INDEX
-    // Same cli() for the same reason. `sign` is what one pulser step adds to
-    // the counter (see the ISR), and the dip window is mapped back to absolute
-    // steps through it — get it backwards and the index lands mirrored about
-    // the start, which is a plausible-looking wrong answer rather than a
-    // failure.
+    // `sign` is what one pulser step adds to the counter; backwards, the index
+    // lands mirrored about the start.
     if (mode == LEG_SWEEP) hallIndexArm(dir ? 1 : -1, absolutePosition);
 #endif
     sei();
 
-    // DIR is set here, once, in loop context — so the pulser ISR never pays the
-    // DM542 setup guard the stream path pays with delayMicroseconds(5).
+    // DIR once, here, so the pulser never waits for its setup time.
     if (dir) HAL_DIR_PORT.OUTSET = HAL_DIR_BM;
     else     HAL_DIR_PORT.OUTCLR = HAL_DIR_BM;
     currentDir = dir;
@@ -159,25 +112,13 @@ uint8_t legArm(LegMode mode, bool dir, uint16_t startUs, uint16_t floorUs,
 
     node_set_flag(NODE_FLAG_LEG, true);
 
-    // Start TCA0. Normal mode, 16-bit, overflow interrupt only: PER is the step
-    // interval and the ISR rewrites it as the ramp decays. TCB0 stays the
-    // pulse-width one-shot for both this path and the stream path, so a step is
-    // shaped identically however it was requested.
+    // Start TCA0: normal 16-bit mode, overflow interrupt only, PER the step
+    // interval. TCB0 still shapes the pulse. No stepper build uses PWM, and
+    // millis() is on a TCB, so TCA0 is free.
     //
-    // TCA0 is otherwise unused on a stepper node. It backs analogWrite() PWM in
-    // the core, which nothing here calls; millis() is on a TCB (DxCore default),
-    // so taking TCA0 does not disturb timekeeping.
-    //
-    // CTRLD.SPLITM must be cleared to leave split mode. DxCore's init_TCA0()
-    // runs before setup() and leaves TCA0 in SPLIT mode, RUNNING, for
-    // analogWrite(). In split mode PER is two independent 8-bit registers at the
-    // same addresses, so a 16-bit interval written through the SINGLE view
-    // silently splits into two ~30-tick periods and every leg runs at roughly
-    // 250x the requested rate.
-    //
-    // CTRLD IS ENABLE-LOCKED (datasheet; Microchip's DxCore takeover guide,
-    // linked from docs/homing.md): a write to CTRLD while CTRLA.ENABLE is set is
-    // silently DROPPED. So CTRLA is cleared FIRST.
+    // The core leaves TCA0 running in split mode for analogWrite(), where PER
+    // is two 8-bit registers, so split mode must be cleared (CTRLD). CTRLD
+    // ignores writes while the timer is enabled, so CTRLA is cleared first.
     TCA0.SINGLE.CTRLA   = 0;                       // disable — unlocks CTRLD
     TCA0.SPLIT.CTRLD    = 0;                       // now this actually lands: exit split mode
     TCA0.SINGLE.CTRLB   = 0;                       // NORMAL (single 16-bit)
@@ -189,10 +130,8 @@ uint8_t legArm(LegMode mode, bool dir, uint16_t startUs, uint16_t floorUs,
     return 0;                                      // armed and pulsing
 }
 
-// Safe from either context. Deliberately leaves TCA0 in SINGLE mode rather than
-// restoring DxCore's SPLIT startup state: nothing on a stepper build calls
-// analogWrite() (build_src_filter compiles one type per binary), so there is
-// nothing to hand the timer back to.
+// Safe from either context. TCA0 stays in single mode: no stepper build uses
+// PWM.
 void legHalt(void) {
     TCA0.SINGLE.CTRLA   = 0;
     TCA0.SINGLE.INTCTRL = 0;
@@ -203,53 +142,38 @@ void legHalt(void) {
 // The loop-context half of stopping, run once per completed leg.
 static void legFinish(void) {
     legFinished = false;
-    // Close the span. Unconditional: a leg that failed still went somewhere, and
-    // that distance is exactly what a failure needs to be diagnosed
-    // (docs/homing.md §7.2).
+    // Close the span, failed or not: where a failed leg stopped is the
+    // diagnostic.
     legSpan = readPositionAtomic() - legSpanFrom;
 #ifdef HAS_HALL_INDEX
-    // Reduce the window the ISR buffered. A dip's centre is only knowable after
-    // passing it, so there was never an ISR-sized answer to compute. Begin()
-    // only; the correlation is sliced across legLoop passes so the bus keeps
-    // being served.
+    // Resolve the window, sliced across legLoop() passes so the bus is served.
     if (leg.mode == LEG_SWEEP) {
         hallIndexResolveBegin();
         legResolving = true;
     }
 #endif
 #ifdef HAS_LIMIT_SWITCH
-    // Clearing the latch is the retract's ONLY write to the gate, and only when
-    // it verifiably got clear of the switch: a retract that spent its whole
-    // budget and is still asserted did not escape (under-budgeted, wrong
-    // direction, or a stuck switch), and the latch must survive that.
+    // A retract clears the latch only if it ended clear of the switch.
     if (leg.mode == LEG_RETRACT && !HAL_LIMIT_ASSERTED()) {
         limitLatched   = false;
         limitRunBase   = limitBytesAsserted;   // the next run starts from here
     }
-    // A seek that stopped ON its switch latches, so the fact survives the pin
-    // bouncing before the supervisor's next poll. §1.5's "after a seek, LIMIT
-    // set means found" rests on this.
-    // A park stopped by its switch latches the same way.
+    // A seek or park that stopped on its switch latches, so the fact survives
+    // the pin bouncing before the controller's next poll.
     if ((leg.mode == LEG_SEEK || leg.mode == LEG_PARK) && legHitLimit)
         limitLatched = true;
 #endif
 }
 
 void legLoop(void) {
-    // Finish before publishing: legFinish() can clear the latch, and the flags
-    // must describe the state the master will act on.
+    // Finish before publishing: legFinish() can change the latch.
     if (legFinished) legFinish();
 #ifdef HAS_HALL_INDEX
-    // The rotary correlation runs HERE, one bounded slice per pass, because a
-    // node dispatches RS485 commands from loop() -- the RX ISR only queues them.
-    // Run to completion in one go it took ~170 ms, during which this node
-    // answered nothing and the supervisor failed the leg on 4 missed polls.
+    // One bounded slice per pass: commands are dispatched from loop(), and the
+    // whole correlation (~170 ms) would miss the controller's polls.
     if (legResolving && hallIndexResolveStep()) legResolving = false;
 #endif
-    // NODE_FLAG_LEG means "no answer yet", not "the motor is still turning".
-    // The resolve is part of the sweep: publishing clear before the index exists
-    // would hand the master the PREVIOUS sweep's cause. Core 0's own deadline
-    // still bounds the whole thing.
+    // NODE_FLAG_LEG means no answer yet, so it covers the resolve too.
     node_set_flag(NODE_FLAG_LEG, legActive
 #ifdef HAS_HALL_INDEX
                                  || legResolving
@@ -257,30 +181,18 @@ void legLoop(void) {
                   );
 }
 
-// ─── The pulser (§1.3) ──────────────────────────────────────────────────────
-// One step per overflow. Deliberately lean: no floating point, no
-// delayMicroseconds, no bus work. DIR was set once at arm time, so unlike the
-// stream path there is no setup guard to spin on here.
+// ─── The pulser ─────────────────────────────────────────────────────────────
+// One step per overflow. No floating point, no delays, no bus work.
 ISR(TCA0_OVF_vect) {
     TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm;
     if (!legActive) return;
 
-    // Stop conditions are checked BEFORE the step, so the move never takes one
-    // more step past the thing that ended it. On a seek that matters
-    // physically: the switch is the target, and overshooting it is travel into
-    // the hard stop.
-    //
-    // A retract ignores the switch entirely — it starts on an asserted one, so
-    // testing the level would stop it before it ever moved. Its only terminator
-    // is the budget, which is therefore a distance, not a guard.
+    // Stop conditions come before the step, so a leg never steps past what
+    // ended it. A retract starts on its switch and ignores it; only its budget
+    // ends it.
 #ifdef HAS_LIMIT_SWITCH
-    // A park starts clear of the switch (the arm refuses otherwise), so meeting
-    // it on the way is a fault to stop at, exactly as a seek's target.
+    // A park starts clear of the switch, so meeting it is a fault to stop at.
     if (leg.mode == LEG_SEEK || leg.mode == LEG_PARK) {
-        // Debounced. A run that breaks before LEG_LIMIT_SAMPLES was a glitch
-        // and the seek carries on; one that reaches it is the switch, and is
-        // RECORDED as such rather than left for the supervisor to re-read off a
-        // pin that may have released by the time it looks.
         if (HAL_LIMIT_ASSERTED()) {
             if (++leg.limitRun >= LEG_LIMIT_SAMPLES) {
                 legHitLimit = true;
@@ -295,7 +207,7 @@ ISR(TCA0_OVF_vect) {
     if (leg.remaining == 0)                      { legHalt(); return; }
 
     HAL_STEP_PORT.OUTSET = HAL_STEP_BM;
-    absolutePosition += (leg.dir ? 1 : -1);      // one counter, one meaning (§4)
+    absolutePosition += (leg.dir ? 1 : -1);
     HAL_STEP_TIMER_INST.CCMP  = HAL_STEP_PULSE_CCMP;
     HAL_STEP_TIMER_INST.CNT   = 0;
     HAL_STEP_TIMER_INST.CTRLA = HAL_STEP_TIMER_CLKSEL | HAL_STEP_TIMER_ENABLE_bm;
@@ -303,21 +215,13 @@ ISR(TCA0_OVF_vect) {
     leg.remaining--;
 
 #ifdef HAS_HALL_INDEX
-    // Sampled AFTER the step, so the sample belongs to the position just
-    // reached — which is what makes the window's step tags exact rather than
-    // off by one. The opposite order from the limit check above, and
-    // necessarily so: a switch is a reason NOT to take the next step, while a
-    // dip sample is a measurement OF the step just taken.
+    // After the step, so the sample belongs to the position just reached.
     if (leg.mode == LEG_SWEEP && hallIndexSample(absolutePosition)) { legHalt(); return; }
 #endif
 
-    // Linear decay of the interval toward the floor. Not constant acceleration
-    // (that falls as ~1/sqrt(n)), but gentler early, which is the direction that
-    // matters for not stalling on pull-in.
-    //
-    // A park mirrors it at the end: once the steps left are no more than the
-    // steps it climbed, it ramps back up to the start interval. A move too short
-    // to reach the floor stops climbing halfway, so the profile is a triangle.
+    // The interval decays linearly toward the floor, gentler than constant
+    // acceleration at the start, where a motor stalls. A park ramps back down
+    // over the steps it took to ramp up, so a short park is a triangle.
     if (leg.mode == LEG_PARK && leg.remaining <= leg.upSteps) {
         if (leg.rampStep) {
             uint16_t next = leg.interval + leg.rampStep;

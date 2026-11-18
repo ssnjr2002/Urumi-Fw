@@ -1,7 +1,6 @@
-// main.cpp — node core skeleton (type-agnostic).
-// Brings up the bus and LED, hands type-specific init to node_setup(), then
-// drains the command ring into dispatchCommand(). All motor/stream/position
-// logic lives in the selected node type (types/<x>/); see node_hooks.h.
+// main.cpp — the node core's setup() and loop(), type-agnostic.
+// Brings up the bus and LED, calls node_setup(), then drains the command queue
+// into dispatchCommand(). See docs/system/nodes.md §3.
 #include <Arduino.h>
 #include "board.h"
 #include "common.h"
@@ -13,24 +12,24 @@
 void dispatchCommand(const uint8_t* pkt, uint8_t len, bool broadcast);
 
 #ifdef NODE_DEBUG_CONSOLE
-// Optional USART0 bench console (debug_console.cpp) — bypasses RS485 entirely.
+// Bench console on the board's free USART (debug_console.cpp).
 void debugConsoleBegin(void);
 void debugConsolePoll(void);
 #endif
 
 void setup() {
     #ifdef NODE_DEBUG_CONSOLE
-        debugConsoleBegin();   // USART0 (PB2/PB3) — after sei(), independent of USART1
+        debugConsoleBegin();
     #endif
     pinMode(HAL_RS485_DE_PIN, OUTPUT); digitalWrite(HAL_RS485_DE_PIN, LOW);
     HAL_USART_TX_IDLE_INIT();
     pinMode(HAL_LED_PIN, OUTPUT); digitalWrite(HAL_LED_PIN, LOW);
 
-    node_setup();          // type-specific: pins, drivers, timers, slot masks
+    node_setup();
     HAL_USART_INIT();
     sei();
 
-    // Blink NODE_ID times — visual address confirmation.
+    // Blink NODE_ID times, to show the address.
     uint8_t blinks = (NODE_ID < 8) ? (uint8_t)NODE_ID : 0;
     for (uint8_t i = 0; i < blinks; i++) {
         digitalWrite(HAL_LED_PIN, HIGH); delay(150);
@@ -56,14 +55,14 @@ static void busSilenceCheck(void) {
 #endif
 
 void loop() {
-    node_loop();               // type-specific per-iteration work (non-blocking)
+    node_loop();
 
 #ifdef NODE_HAS_SILENCE_TIMEOUT
     busSilenceCheck();
 #endif
 
 #ifdef NODE_DEBUG_CONSOLE
-    debugConsolePoll();        // drain any bench-console command line
+    debugConsolePoll();
 #endif
 
     if (cmdHead == cmdTail) return;

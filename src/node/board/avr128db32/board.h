@@ -1,9 +1,6 @@
 // board.h — AVR128DB32 board-level config (type-agnostic).
 // RS485 / USART / LED / clock — needed by every node type on this board.
 // Stepper-specific pins/drivers live in board/avr128db32/stepper/.
-//
-// Defines the HAL_ symbols contracted by board/hal/hal.h, then #includes it
-// at the end for self-checking completeness.
 #pragma once
 #include <Arduino.h>
 
@@ -53,11 +50,9 @@
 #define HAL_DEBUG_SERIAL   Serial1
 
 // ─── LED ────────────────────────────────────────────────────────────────────
-// Not uniform across the DB32 boards, so it is selected by board flag rather
-// than assumed. -DBOARD_DB32_VACUUM marks the vacuum revision, which carries a
-// single debug LED on PA3; every other DB32 board carries the RGB triple on
-// PF2/PF4/PF5. The flag has to live here (not in the vacuum type's cell header)
-// because the core's address blink in main.cpp sees only board.h.
+// The DB32 vacuum board (-DBOARD_DB32_VACUUM) has one LED on PA3; the others
+// have an RGB LED on PF2/PF4/PF5. Here, not in the vacuum header, because the
+// core's address blink sees only board.h.
 #ifdef BOARD_DB32_VACUUM
 #define HAL_LED_PIN       PIN_PA3
 #else
@@ -68,7 +63,3 @@
 #define HAL_LED_BLUE_PIN  PIN_PF5
 #define HAL_HAS_RGB_LED   // expose RGB channel symbols
 #endif
-
-// ─── HAL self-check ─────────────────────────────────────────────────────────
-// (contract headers removed — board.h is a direct provider; consumers
-//  #include "board.h" and use the HAL_ symbols directly)

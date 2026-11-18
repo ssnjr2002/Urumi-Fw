@@ -1,9 +1,6 @@
 // board.h — ATtiny3224 board-level config (type-agnostic).
 // RS485 / USART / LED / clock — needed by every node type on this board.
 // Stepper-specific pins live in board/attiny3224/stepper/stepper.h.
-//
-// Defines the HAL_ symbols contracted by board/hal/hal.h, then #includes it
-// at the end for self-checking completeness.
 #pragma once
 #include <Arduino.h>
 
@@ -36,7 +33,3 @@
 #define HAL_LED_PORT  PORTA
 #define HAL_LED_BM    PIN5_bm
 #define HAL_LED_DIRECT_PORT   // expose direct-port fast-toggle symbols
-
-// ─── HAL self-check ─────────────────────────────────────────────────────────
-// (contract headers removed — board.h is a direct provider; consumers
-//  #include "board.h" and use the HAL_ symbols directly)
