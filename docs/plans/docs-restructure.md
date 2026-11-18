@@ -539,7 +539,7 @@ that code (see `AGENTS.md`, Agent Scope).
      page, since §2 and §3 are still live; the node source's comments are
      pruned, and their `homing.md` §1 references point to the page.
 
-   **Status:** in progress.
+   **Status:** merged at `23d41af`. Unblocks no branch.
 
    **Outcome:**
 
