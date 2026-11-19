@@ -889,7 +889,7 @@ that code (see `AGENTS.md`, Agent Scope).
     * Comments that disagree with the code may be fixed; then
       `pio run -e pico`.
 
-    **Status:** ready to merge.
+    **Status:** merged at `a74bf8a`. Unblocks no branch.
 
     **Outcome:**
 
