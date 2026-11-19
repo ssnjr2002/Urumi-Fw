@@ -156,6 +156,10 @@ Settled on `system/controller.md` (branch 3).
 * **Code named by file**, never by line.
 * **Decisions** at the end of the page: each one with the alternatives it
   rejected. Settles decision records for logical pages.
+* **Decisions read as a chain:** each follows from the one before, in
+  threads with no headings; a new thread starts where the chain breaks.
+  The order carries the reasoning, with no "so" linking them. Settled in
+  branch 9.
 
 * **Reads in order:** no section leans on a term a later one introduces. A
   short overview names the parts before the sections that detail them.
@@ -634,8 +638,36 @@ that code (see `AGENTS.md`, Agent Scope).
    * Code: `src/rp2350/core0/config/`, `web/src/machine/`,
      `scripts/pio/config_image.py`.
    * Replaces `config_storage.md`.
+   * Added in Write: the comments in `web/src/machine/` and
+     `src/rp2350/core0/config/` are pruned, and references to
+     `config_storage.md` point to the page.
 
-   **Status:** not started.
+   **Status:** ready to merge.
+
+   **Outcome:**
+
+   * The page is ordered by the config's forms: Design, JSONC, the blob on
+     the host, the wire, the blob on the controller, the runtime struct. The
+     design section is a chain of decisions, now a logical-page convention.
+   * The wire section names the steps and NACK reasons; byte layouts stay in
+     `wire_protocol.md`. The old page's state table (IDLE or ALARM) was stale:
+     a push needs at rest in the idle context, faults allowed.
+   * `config_storage.md` moved to `archive/`. `pico-config.md` is closed and
+     `runtime-config.md` open (branch 4, the web panel, not started); both
+     have the "Current behaviour" line.
+   * Comments pruned (about 610 lines to 230); only comments changed.
+   * Checks: `pnpm typecheck`, `pnpm test` (664 passed), `pio run -e pico`
+     without warnings, `pio test -e native` (207/207).
+   * Out of scope, for a later pass:
+     * `AGENTS.md` (Controller Config) should point to
+       `docs/system/config.md` instead of `docs/config_storage.md`.
+     * `uploadfs` runs `parseConfig`, not `loadConfig`
+       (`web/src/machine/json/image.ts`): a file that breaks a host rule is
+       flashed, caught only by the controller's decode at boot.
+     * The web Sim has no config store (`pico-config.md`, deferred).
+     * The host's `probe.seekFeed` rule compares with the editable `maxFeed`
+       and may be dead (`runtime-config.md`).
+     * `save` with nothing dirty still writes flash and moves `seq`.
 
 10. `refactor/system-host`: `docs/system/host.md`, the web host.
 
