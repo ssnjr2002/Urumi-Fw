@@ -213,7 +213,7 @@ export class Link {
         void this.writer.writeFrame(new Uint8Array([MAGIC_CJOG_STOP]));
     }
 
-    // -- config blob (docs/config_storage.md §5) -------------------------------
+    // -- config blob (docs/system/config.md) ---------------------------------
 
     /**
      * Store `blob` as the Pico's config. Two-phase: the header goes first and

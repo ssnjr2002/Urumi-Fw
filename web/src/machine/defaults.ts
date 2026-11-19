@@ -1,28 +1,11 @@
 /**
- * defaults.ts — every default value that is NOT machine calibration.
+ * defaults.ts — every default value that is not machine calibration
+ * (stepsPerUnit and node ids have none and are required).
  *
- * The single home for policy numbers. Before this file the cut-feed default
- * (80) existed in four places: machineConfig(), the loader's fallback, and
- * trailing `?? 80` guards in compileBlock/discretize/walk. Changing it meant
- * grepping. Now: change it here, once.
- *
- * What belongs here: operation targets, axis field defaults, quality tuning,
- * fCpu. What does NOT: stepsPerUnit, node ids — those are per-machine
- * calibration and must come from config.json (see load.ts's header on why
- * there is no silent fallback for them).
- *
- * Interaction with optional config.json fields — fill-at-load, one exception:
- *
- *   machine.*  targets are FILLED at load. An absent `machine.feed` becomes
- *              DEFAULTS.machine.feed, so MachineConfig is always fully
- *              populated and consumers never write `??`.
- *
- *   tool.*     overrides are LEFT UNDEFINED when absent, because `undefined`
- *              there means "inherit from machine" — real information that
- *              filling would destroy.
- *
- * The chain (tool → machine → default) is spelled out in exactly one place:
- * resolveTargets() in resolve.ts. Stages call that, never `??`.
+ * Machine targets are filled at load, so MachineConfig is always complete.
+ * Tool overrides stay undefined when absent, meaning "inherit from the
+ * machine"; resolveTargets() in resolve.ts is the one place that chain is
+ * spelled out.
  */
 
 export const DEFAULTS = {

@@ -1,17 +1,15 @@
 /**
- * blob.ts — ControllerConfig ↔ the msgpack blob stored on the Pico.
+ * blob.ts — ControllerConfig ↔ the msgpack blob stored on the controller.
  *
- * The blob is the RESOLVED config (every default already filled in by
- * loadConfig) plus a payload schema version `v`. The Pico has no defaults
- * table: a field it consumes and does not find is a rejection
- * (src/rp2350/config/config_decode.cpp). Bytes and framing are the wire
- * layer's (wire/format/cfg.ts); this module only says what the bytes mean.
+ * The blob is the resolved config plus a schema version `v`. The controller
+ * has no defaults: a field it reads and does not find is a rejection
+ * (src/rp2350/core0/config/config_decode.cpp). Framing is wire/format/cfg.ts.
  */
 
 import { decode, encode } from "@msgpack/msgpack";
 import type { ControllerConfig } from "../schema.js";
 
-/** Payload schema version. Bump when a field the Pico decodes changes shape. */
+/** Payload schema version. Bump when a field the controller decodes changes shape; equals CFG_SCHEMA_VERSION. */
 export const CONFIG_BLOB_VERSION = 17;
 
 export function encodeConfigBlob(config: ControllerConfig): Uint8Array {
@@ -19,9 +17,9 @@ export function encodeConfigBlob(config: ControllerConfig): Uint8Array {
 }
 
 /**
- * Decode a blob pulled from the Pico. Shape is trusted, not re-validated: the
- * blob was a ControllerConfig when it was pushed, and the Pico stores it
- * verbatim. Throws on a blob that is not a map or carries an unknown `v`.
+ * Decode a blob pulled from the controller. Shape is trusted, since the
+ * controller stores what was pushed. Throws on a blob that is not a map or
+ * carries an unknown `v`.
  */
 export function decodeConfigBlob(bytes: Uint8Array): ControllerConfig {
     const obj = decode(bytes);

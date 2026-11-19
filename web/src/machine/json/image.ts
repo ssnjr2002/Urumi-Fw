@@ -1,5 +1,5 @@
 /**
- * image.ts — a config file → the Pico's /config.bin, for flashing with
+ * image.ts — a config file → the controller's /config.bin, for flashing with
  * `pio run -e pico -t uploadfs` (scripts/pio/config_image.py).
  *
  * The file is the 16-byte header of config_store.h (`ConfigBlobHeader`) and

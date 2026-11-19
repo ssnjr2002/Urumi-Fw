@@ -1,5 +1,5 @@
 /**
- * mesh.ts — a bed mesh file → the Pico's /mesh.bin, for flashing with
+ * mesh.ts — a bed mesh file → the controller's /mesh.bin, for flashing with
  * `pio run -e pico -t uploadfs` (scripts/pio/config_image.py).
  *
  * Source (JSON or JSONC), tip machine coordinates, mm:

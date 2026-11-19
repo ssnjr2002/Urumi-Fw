@@ -173,11 +173,10 @@
 // Stop a continuous jog: one byte, no reply. Ignored without one.
 #define CJOG_STOP_MAGIC   0xB3
 
-// ─── Config Blob Store (docs/config_storage.md) ───────────────────────────────
-// USB opcodes for the opaque msgpack config blob. Host→Pico magics have bit 7
-// set, disjoint from lowercase-ASCII control-plane text. CFG_SET is a two-phase
-// transfer: host sends the header, Pico replies CFG_RDY (or CFG_NACK), then host
-// streams the payload; see docs/config_storage.md §5 for the full framing.
+// ─── Config Blob Store (docs/system/config.md) ───────────────────────────────
+// USB opcodes for the msgpack config blob. CFG_SET is two-phase: the host sends
+// the header, the controller replies CFG_RDY (or CFG_NACK), then the host
+// streams the payload. Byte layouts: docs/wire_protocol.md.
 #define CFG_SET_MAGIC     0xB0  // Host→Pico: config write — header, then (on RDY) payload
 #define CFG_GET_MAGIC     0xB1  // Host→Pico: request the active blob
 #define CFG_RDY           0xB2  // Pico→Host: header accepted — send payload
@@ -190,7 +189,7 @@
 
 #define CFG_NACK_CRC       0x01 // CRC32 mismatch on the staged blob
 #define CFG_NACK_TOO_BIG   0x02 // length 0 or > CFG_MAX_BYTES
-#define CFG_NACK_BAD_STATE 0x03 // write rejected — machine not IDLE/ALARM
+#define CFG_NACK_BAD_STATE 0x03 // not at rest in the idle context
 #define CFG_NACK_FLASH     0x04 // filesystem unmounted, write failed, or readback verify failed
 #define CFG_NACK_TIMEOUT   0x05 // transfer stalled — no byte within CFG_RX_TIMEOUT_MS
 #define CFG_NACK_SCHEMA    0x06 // blob did not decode or failed validation (config_decode.h)

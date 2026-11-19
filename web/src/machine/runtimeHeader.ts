@@ -1,5 +1,5 @@
 /**
- * runtimeHeader.ts — RUNTIME_FIELDS as the Pico's X-macro header.
+ * runtimeHeader.ts — RUNTIME_FIELDS as the controller's X-macro header.
  */
 
 import { RUNTIME_AXES, RUNTIME_EFFECTS, RUNTIME_FIELDS, type RuntimeField } from "./runtime.js";

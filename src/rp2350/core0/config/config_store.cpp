@@ -1,5 +1,5 @@
 // Config blob store — /config.bin in LittleFS.
-// See config_store.h and docs/config_storage.md for the scheme and rationale.
+// See config_store.h and docs/system/config.md.
 
 #include <Arduino.h>
 #include <LittleFS.h>

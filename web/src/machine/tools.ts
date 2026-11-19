@@ -1,13 +1,7 @@
 /**
- * tools.ts — the tool preset catalogue.
- *
- * DATA, not schema. These change when you buy or build a tool; the shapes they
- * fill live in schema.ts. Split out so schema.ts is types + factories only —
- * adding a tool should never touch the schema file.
- *
- * A preset is the BASE for a tool: config.json's `tools.<name>` block patches
- * it (see load.ts), it is never redefined from scratch. Keys of TOOL_PROFILES
- * are the names a config.json and an SVG layer may reference.
+ * tools.ts — the tool presets: data, not schema. A config's `tools.<name>`
+ * patches the preset of that name (load.ts). The keys are the names a config
+ * and an SVG layer use.
  */
 
 import { ToolType, toolProfile, type ToolProfile } from "./schema.js";
@@ -37,17 +31,9 @@ export const CREASE: ToolProfile = toolProfile("crease", {
 });
 
 /**
- * Revolver pen: a rotating module with 7 slots for pens. The A axis
- * selects which slot is active (lowered). Each slot has a defined A
- * offset angle (360/7 ≈ 51.43° intervals). The active pen tip is at a
- * fixed XY offset from the head center regardless of which slot is
- * active — set via toolOffset.
- *
- * Not tangential — the A axis is used for slot selection, not tangent
- * tracking. The orchestrator jogs A to chamberOffsets[i] before cutting
- * with slot i.
- *
- * chamberOffsets: 7 angles at 360/7 intervals, starting at 0°.
+ * Revolver pen: a rotating module with 7 pens, selected by turning A to
+ * chamberOffsets[i] (every 360/7°, from 0°). Not tangential. The active pen
+ * tip sits at a fixed offset from the head centre (toolOffset).
  */
 const REVOLVER_SLOT_COUNT = 7;
 const REVOLVER_SLOT_INTERVAL = 360 / REVOLVER_SLOT_COUNT;

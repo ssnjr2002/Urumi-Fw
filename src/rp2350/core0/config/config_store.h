@@ -4,15 +4,11 @@
 #include "../usb_protocol.h"  // CFG_MAX_BYTES, CFG_NACK_*
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Config blob store — one opaque msgpack blob kept in LittleFS as /config.bin.
-//
-// Ownership: this module owns the filesystem and the RAM staging buffer. It
-// knows nothing about USB — the data-plane receiver fills configStageBuf() and
+// Config blob store — one msgpack blob kept in LittleFS as /config.bin
+// (docs/system/config.md). Owns the filesystem and the RAM staging buffer;
+// knows nothing about USB. The data-plane receiver fills configStageBuf() and
 // calls configStoreCommit(); readers stream the file via configStoreRead().
-// Design and the power-safety scheme: docs/config_storage.md.
-//
-// The filesystem occupies the linker-reserved span set by board_build.
-// filesystem_size in platformio.ini.
+// The filesystem is the span board_build.filesystem_size reserves.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #define CFG_VERSION 1u            // file header format version (not the payload's)
@@ -26,9 +22,9 @@ struct ConfigBlobHeader {
     uint32_t crc32;     // CRC32 over the payload
 };
 
-// RAM copy of the active blob's header. Set once by configStoreInit(), updated
-// only by a successful configStoreCommit(). Intentionally NOT wiped by soft reset
-// (it mirrors flash, which soft reset does not touch).
+// RAM copy of the active blob's header. Set by configStoreInit() and a
+// successful configStoreCommit() only; a soft reset keeps it, as flash is
+// unchanged.
 struct ConfigCache {
     bool     mounted;  // LittleFS mounted
     bool     valid;    // a verified /config.bin exists
@@ -57,12 +53,11 @@ void configStoreInit();
 uint8_t* configStageBuf();
 
 // Commit the first `len` bytes of the staging buffer as the new active blob.
-// `crc` is the caller's CRC32 of those bytes — the caller MUST have verified it
-// against the staged bytes (the receiver does this incrementally); it is stored
-// in the header and used for the readback verify, not recomputed here.
-// Parks Core 1, writes /config.tmp, readback-verifies, then renames it over
-// /config.bin and updates g_cfg. Returns false and sets *nack (CFG_NACK_*) on
-// bad state / size / flash failure — leaving the previous config active.
+// `crc` is the caller's CRC32 of those bytes, already checked against them; it
+// is stored and used for the readback, not recomputed. Parks Core 1, writes
+// /config.tmp, reads it back, renames it over /config.bin and updates g_cfg.
+// False with *nack (CFG_NACK_*) on bad state, size or flash; the previous
+// config stays active.
 bool configStoreCommit(uint32_t len, uint32_t crc, uint8_t* nack);
 
 // The CRC32 a commit wants, of `len` bytes at `p`.

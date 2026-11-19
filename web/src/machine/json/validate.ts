@@ -1,19 +1,12 @@
 /**
- * validate.ts — semantic validation. The second of the two passes.
+ * validate.ts — the second pass: do a well-formed config's values make sense?
  *
- * load.ts already proved the config is well-FORMED; this pass asks whether the
- * values make SENSE. It assumes a structurally valid ControllerConfig and never
- * inspects raw JSON.
- *
- * Adding a rule = write a function, append it to RULES. Nothing else. Each rule
- * is independent and sees the whole config, so rules stay individually testable
- * (one describe() per rule in validate.test.ts) and the pass has no ordering
- * subtleties.
+ * A rule is a function over the whole config, listed in RULES; each is
+ * independent and tested on its own (validate.test.ts).
  *
  * error   — the config is wrong; loadConfig refuses it.
- * warning — legal but probably not what the operator meant; surfaced, never
- *           enforced. A target above its axis ceiling is the canonical case:
- *           harmless (it gets clamped) but almost always a misunderstanding.
+ * warning — legal but probably not meant; shown, never enforced (a target
+ *           above its axis's ceiling, which is clamped).
  */
 
 import type {
@@ -57,7 +50,7 @@ function namedAxes(machine: MachineConfig): readonly [string, AxisConfig][] {
     ];
 }
 
-/** The Pico can edit these fields; the table holds their ranges for both sides. */
+/** The controller can edit these fields; the table holds their ranges for both sides. */
 const runtimeFieldsInRange: Rule = (config) =>
     runtimeValues(config).flatMap(({ field, label, value }) => {
         if (value === undefined) return [];
@@ -98,11 +91,8 @@ const targetsUnderCeilings: Rule = (config) => {
         issues.push(...feedOver(`tools.${name}.cutFeed`, resolveTargets(machine, t).cutFeed, xyFeed));
     }
 
-    // Z/A ceilings live on the DEFAULT HEAD, which may not exist — every rule
-    // runs on the same config, so a rule must never assume another rule passed.
-    // resolvedAxes() asserts heads[defaultHead] is present; calling it here
-    // would throw on the very config defaultHeadInRange is about to reject,
-    // turning a reported error into a crash inside loadConfig.
+    // Z/A ceilings come from the default head, which may not exist: rules don't
+    // assume others passed, and resolvedAxes() would throw on it.
     const head = machine.heads[machine.defaultHead];
     if (head === undefined) return issues;
 
@@ -114,9 +104,8 @@ const targetsUnderCeilings: Rule = (config) => {
 };
 
 /**
- * An RS485 address identifies exactly one node. Two axes sharing an id means
- * both step together — a wiring-level fault no downstream stage can detect,
- * so it has to be caught here or not at all.
+ * An RS485 address names one node: two axes on one id step together, and
+ * nothing downstream can tell.
  */
 const uniqueNodeIds: Rule = ({ machine }) => {
     const owners = new Map<number, string[]>();
@@ -209,11 +198,8 @@ const headsHaveAxesForAccepted: Rule = ({ machine }) =>
     );
 
 /**
- * A tool no head accepts can never be scheduled — every job using it fails at
- * the bake. A warning, not an error: a machine legitimately need not be able to
- * hold every preset the code ships, and only the presets a job actually uses
- * matter. Naming it here is what turns "why does this SVG refuse to bake" into
- * one line at load.
+ * A tool no head accepts can never be scheduled. A warning: a machine need not
+ * hold every preset, and this names the tool at load rather than at the bake.
  */
 const everyToolHasAHead: Rule = ({ machine, toolProfiles }) => {
     const accepted = new Set(machine.heads.flatMap((h) => [...h.accepts]));
@@ -232,10 +218,9 @@ const headsAcceptSomething: Rule = ({ machine }) =>
 
 /**
  * A power block names a node that can switch the tool: a present KNIFE_OSC
- * peripheral, or the laser's STEPPER node (a bench stand-in; only a Pico built with
- * ACCEPT_LASER_AS_POWER_TOOL accepts it). Duty limits are only meaningful as a
- * complete set; load.ts fills a missing number with 0 rather than inventing
- * one, so a partial block arrives here as a zero and is named precisely.
+ * peripheral, or the laser's STEPPER node (a bench stand-in; only a controller
+ * built with ACCEPT_LASER_AS_POWER_TOOL accepts it). Duty limits come as a
+ * set; load.ts fills a missing number with 0, so a partial block is named here.
  *
  * minOnS >= maxOnS would leave no on-time before a reset is due.
  */
@@ -272,9 +257,8 @@ const powerCoherent: Rule = (config) =>
 /**
  * Homing recipes that would misbehave on the machine rather than in the parser.
  *
- * These are semantic checks, so they live here and not in load.ts: every one of
- * them parses fine and only goes wrong when a motor turns. Only the fields the
- * host types are checked; the Pico's decoder checks the rest.
+ * Only the fields the host types are checked; the controller's decoder checks
+ * the rest.
  */
 const homingCoherent: Rule = ({ machine }) =>
     namedAxes(machine).flatMap(([path, ax]) => {
@@ -287,9 +271,8 @@ const homingCoherent: Rule = ({ machine }) =>
             if (ax.maxFeed > 0 && h.sweepFeed > ax.maxFeed) {
                 issues.push(error(`${p}.sweepFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
             }
-            // A rotary axis has no ends, so a soft-limit envelope on one is
-            // either unbounded (0) or a deliberate restriction. Homing spins
-            // freely regardless, which is worth saying once here.
+            // A rotary axis has no ends: its soft limit is unbounded (0) or a deliberate
+            // restriction, and homing spins freely either way.
             if (!ax.rotary) {
                 issues.push(error(
                     `${p}: rotary homing on ${path}, which is not marked rotary`,
@@ -298,9 +281,7 @@ const homingCoherent: Rule = ({ machine }) =>
             return issues;
         }
 
-        // The slow leg is what sets repeatability; if it is not slower than the
-        // fast one, leg 3 is not a re-approach and the whole two-pass structure
-        // buys nothing.
+        // The slow leg sets repeatability; not slower, it is no re-approach.
         if (h.latchFeed >= h.seekFeed) {
             issues.push(error(`${p}.latchFeed: must be < seekFeed (${h.seekFeed})`));
         }
@@ -337,9 +318,7 @@ const probeCoherent: Rule = ({ machine }) =>
         if (ax.maxFeed > 0 && pr.seekFeed > ax.maxFeed) {
             issues.push(error(`${p}.seekFeed: exceeds ${path}.maxFeed (${ax.maxFeed})`));
         }
-        // The latch is the leg that measures, so a latch faster than the seek is
-        // not a small mistake -- it means the two legs were swapped, and the
-        // number reported as a measurement came from the fast one.
+        // The latch measures: faster than the seek means the legs were swapped.
         if (pr.latchFeed > pr.seekFeed) {
             issues.push(error(
                 `${p}.latchFeed (${pr.latchFeed}) > seekFeed (${pr.seekFeed}) — ` +
@@ -347,21 +326,15 @@ const probeCoherent: Rule = ({ machine }) =>
             ));
         }
 
-        // A backoff shorter than the switch's release hysteresis never leaves the
-        // switch, and the latch that follows then starts already tripped. Same
-        // failure homing's backoffMm has; the hysteresis is not knowable here, so
-        // only the degenerate case is caught.
+        // A backoff inside the switch's hysteresis never leaves it; only the
+        // degenerate case is knowable here.
         if (pr.backoffMm <= 0) issues.push(error(`${p}.backoffMm: must be > 0`));
 
-        // Parking ON the switch leaves the next probe's arm check reading open,
-        // which is refused as ALREADY_OPEN -- a healthy machine that cannot probe
-        // twice in a row.
+        // Parking on the switch makes the next probe refuse with ALREADY_OPEN.
         if (pr.parkMm <= 0) issues.push(error(`${p}.parkMm: must be > 0`));
 
-        // Overtravel converts to a poll divisor of `floor(mm x stepsPerUnit)`,
-        // which is 0 below one step -- harmless (it clamps to 1, polling every
-        // step) but it means the seek silently runs at latch cadence, so say so
-        // rather than let someone wonder why the seek is slow.
+        // Under one step, the poll divisor clamps to 1 and the seek runs at latch
+        // cadence; say why it is slow.
         if (pr.seekOvertravelMm < 0) {
             issues.push(error(`${p}.seekOvertravelMm: must be >= 0`));
         } else if (pr.seekOvertravelMm * ax.stepsPerUnit < 1) {
@@ -372,17 +345,14 @@ const probeCoherent: Rule = ({ machine }) =>
             ));
         }
 
-        // The budget is a search window below the start, not a frame dimension,
-        // so it is NOT compared against maxTravel the way hardTravel is. It is
-        // compared against nothing: how far a tool may protrude is not something
-        // config knows.
+        // The budget is a search window below the start, compared against nothing.
         return issues;
     });
 
 /**
  * Something must sit at (0, 0): the laser when defined, else a head. The laser
  * is switched through its node, so that must be a configured node. Reach of
- * the probe switches and stored positions is the Pico's check.
+ * the probe switches and stored positions is the controller's check.
  */
 const hasAnchor: Rule = ({ machine }) => {
     const issues: Issue[] = [];

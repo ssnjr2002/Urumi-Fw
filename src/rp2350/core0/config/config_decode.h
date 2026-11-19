@@ -3,20 +3,21 @@
 #include <stdint.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Config decode — the msgpack blob (web/src/machine/json/blob.ts) → MachineCfg.
+// Config decode — the msgpack blob (web/src/machine/json/blob.ts) → MachineCfg
+// (docs/system/config.md).
 //
-// Only the fields the Pico consumes are decoded; the rest of the host's
-// config is skipped by an ArduinoJson filter. The blob is the host's RESOLVED
-// config, so every field decoded here must be present: there is no defaults
-// table on this side. Exceptions: the homing block (absent: not homeable),
-// and inside it `cycle` and `parkPos`; `laser`, a head's `probeSwitch` and its `z`, and
-// `positions.park` / `positions.load`; a tool's `cutFeed`, `plungeFeed` and
-// `chamberOffsets`. An optional scalar's `has` flag says whether the blob held
-// it; the member holds the resolved value either way.
+// Only the fields the controller reads are decoded, through an ArduinoJson
+// filter. The blob is the host's resolved config, so every decoded field must
+// be present: there is no defaults table here. Exceptions: the homing block
+// (absent: not homeable) and inside it `cycle` and `parkPos`; `laser`, a
+// head's `probeSwitch` and its `z`; `positions.park`, `.load` and `.mount`; a
+// tool's `cutFeed`, `plungeFeed` and `chamberOffsets`. An optional scalar's
+// `has` flag says whether the blob held it; the member holds the resolved
+// value either way.
 //
-// Validation is consumer-scoped: it checks what would make the Pico's own use
-// of a field wrong, and leaves every other judgement to the host's
-// validate.ts. Free of Arduino I/O so it builds under `pio test -e native`.
+// Validation checks what would make the controller's own use of a field
+// wrong; everything else is validate.ts's. Free of Arduino I/O so it builds
+// under `pio test -e native`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #define CFG_SCHEMA_VERSION 17u  // payload version the decoder understands (blob `v`)
@@ -34,7 +35,7 @@ struct CfgNode {
     bool    present;
 };
 
-// The homing block (docs/plans/controller-homing.md). Feeds are mm/s or deg/s.
+// The homing block. Feeds are mm/s or deg/s.
 struct CfgHoming {
     bool     present;      // false: no switch or index, the axis cannot be homed
     bool     hasCycle;
@@ -75,7 +76,7 @@ struct CfgAxis {
     float     unlockRange;
 };
 
-// A bed point, machine coordinates (docs/plans/coordinate-system.md).
+// A bed point, machine coordinates.
 struct CfgPoint {
     float x;
     float y;

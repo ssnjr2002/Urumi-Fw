@@ -8,9 +8,7 @@
  *   - toolForLayer  — SVG layer name → tool
  *   - requiredAxes / canRunTool — bake-time feasibility
  *
- * Kept out of schema.ts so that file stays types + factories. Stages import
- * from here rather than reimplementing any of these rules inline — the `?? 80`
- * duplication that motivated defaults.ts was exactly that failure.
+ * Stages import these rather than restating a rule inline.
  */
 
 import type {
@@ -42,10 +40,8 @@ export interface ResolvedAxes {
  * means, because stepsPerUnit/maxFeed/maxAccel are all per-head and a
  * trajectory is shaped by all four.
  *
- * Throws on a head the machine does not have rather than clamping — a caller
- * asking for head 2 of a two-head machine has a bug, and silently handing it
- * head 1's calibration is exactly the wrong-cut-no-exception failure this
- * function exists to prevent.
+ * Throws on a head the machine does not have rather than clamping: a wrong
+ * head's calibration would cut wrong with no error.
  */
 export function axesForHead(machine: MachineConfig, head: number): ResolvedAxes {
     const h = machine.heads[head];
@@ -56,11 +52,9 @@ export function axesForHead(machine: MachineConfig, head: number): ResolvedAxes 
 /**
  * The 4 axes resolved against `defaultHead`.
  *
- * Named for what it does, because what it does is usually not what a caller
- * wants: on a dual-head machine it answers with one head's calibration no
- * matter which head the work is destined for. Legitimate uses are the ones
- * genuinely indifferent to the head (fCpu, X/Y) or genuinely about the initial
- * binding. Anything per-block wants `axesForHead`.
+ * On a dual-head machine this is one head's calibration whatever the work's
+ * head: for head-indifferent uses (fCpu, X/Y) and the initial binding only.
+ * Per-block code wants `axesForHead`.
  */
 export function resolvedAxesDefault(machine: MachineConfig): ResolvedAxes {
     return axesForHead(machine, machine.defaultHead);
@@ -87,9 +81,8 @@ export function headsAccepting(machine: MachineConfig, tool: ToolType): number[]
 
 /**
  * The four operation targets, with the tool→machine override chain already
- * applied. THE one place that chain is spelled out — stages read these fields
- * directly and must never write their own `??` fallback (that is how the
- * default cut feed ended up duplicated in four modules).
+ * applied: the one place that chain is spelled out, so stages never write
+ * their own `??` fallback.
  *
  * `machine.*` is always populated (filled at load from DEFAULTS), so every
  * field here is defined except where the model itself says "unset":

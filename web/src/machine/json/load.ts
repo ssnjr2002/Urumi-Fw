@@ -1,44 +1,16 @@
 /**
- * load.ts — JSON → ControllerConfig. STRUCTURE ONLY.
+ * load.ts — a config file's JSON → ControllerConfig (docs/system/config.md).
  *
- * The production config source: a config.json file carries all
- * machine-specific calibration (stepsPerUnit, fCpu, node bindings,
- * head layout, laser pointer). The code provides universal defaults —
- * tool presets (PEN/KNIFE/CREASE/REVOLVER_PEN) and quality algorithm
- * tuning — which the JSON can override but does not redefine from scratch.
- *
- * Required vs optional:
- *   Required: machine.x, machine.y, machine.meshOn, machine.heads[], each axis's node.id +
- *   stepsPerUnit, each head's accepts. Missing → error. Note the rule: a field is
- *   required IFF it has no entry in DEFAULTS. Requiring a field that also has a
- *   default is a contradiction — the default could never be reached.
- *
- *   Optional: machine.fCpu (a property of the master board, not per-machine
- *   calibration — constant at 150 MHz across RP2350 boards, so defaulting it
- *   beats making every config.json restate it), machine targets
- *   (path/rapid/z/slew), axis ceilings
- *   (maxFeed/maxAccel), maxTravel, jogFeed/jogFeedUnhomed (default
- *   maxFeed), jogUnhomed (false), buffer (1 s / 0.5 s), laser, machine.peripherals (the ARRAY is
- *   optional, but each entry needs id + type), tools.*,
- *   quality. Absent → documented code default. See feed_accel_value_model.md.
- *
- * Lenient migration: unknown keys (old maxRate/accel/feedMax/zFeed/
- * nodeId names) are silently ignored, not rejected.
- *
- * No silent fallback to hardcoded machine calibration (the old
- * defaultMachine() with 160/1200/51.667 is a TEST FIXTURE only, not
- * the production path). The production path is loadConfig(json).
- *
- * Parse, then validate — two passes, never interleaved:
+ * A field is required exactly when it has no entry in DEFAULTS; anything else
+ * absent takes its default. Tools patch the presets in tools.ts. Unknown keys
+ * are ignored, except retired names that would change meaning silently, which
+ * are refused by name.
  *
  *   parseConfig(json)      shape + required fields  → ControllerConfig | errors
  *   validateConfig(cfg)    semantics (ranges, ids)  → errors + warnings
  *   loadConfig(json)       parse ⨟ validate — the entry point callers want
  *
- * This module answers only "is this a well-formed config?" — it must not judge
- * whether the VALUES make sense. A feed of 10^9 parses fine here and is
- * validate.ts's problem. Keeping the split honest is what lets each pass be
- * read, tested, and extended on its own.
+ * This pass judges shape only: a feed of 10^9 parses, and validate.ts refuses it.
  */
 
 import {
@@ -127,7 +99,7 @@ interface JsonHoming {
     readonly toleranceDeg?: number;
     // both
     readonly rampSteps?: number;
-    // the Pico's fields, carried through unchecked
+    // the controller's fields, carried through unchecked
     readonly cycle?: number;
     readonly startFeed?: number;
     readonly seekPositive?: boolean;
@@ -267,11 +239,8 @@ export type ConfigResult =
 // ── parser ────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a config.json string into a ControllerConfig.
- *
- * Returns { ok: true, config } on success, or { ok: false, errors } with
- * a list of every problem found (not just the first). The caller decides
- * how to surface errors to the operator.
+ * Parse a config file's JSON into a ControllerConfig. Lists every problem
+ * found, not only the first.
  */
 export function parseConfig(jsonText: string): ConfigResult {
     let raw: unknown;
@@ -325,11 +294,8 @@ export function parseConfig(jsonText: string): ConfigResult {
                 errors.push(`machine.heads[${i}]: must be an object`);
                 continue;
             }
-            // `tool` named the ONE seed tool a socket booted with, which could
-            // not say what else fitted. Rejecting it by name beats ignoring it
-            // under the lenient-unknown-keys rule: a config still carrying it
-            // means a head whose capability nobody has declared, and that head
-            // would then accept nothing and quietly never be scheduled.
+            // `tool` named one seed tool and could not say what else fitted; refused by
+            // name, since ignoring it would leave a head that accepts nothing.
             if (h.tool !== undefined) {
                 errors.push(
                     `machine.heads[${i}].tool: removed — replace with 'accepts', the list of tool ` +
@@ -391,13 +357,9 @@ export function parseConfig(jsonText: string): ConfigResult {
     }
 
     // ── build machine ─────────────────────────────────────────────────────
-    // A peripheral's `type` is REQUIRED and has no default. Defaulting it to
-    // STEPPER was actively wrong: a peripheral is by definition the non-axis
-    // case, so the one value it can never sensibly be is the one it defaulted
-    // to. Type is also the whole reason the entry exists — canRunTool matches a
-    // tool's requiredPeripheralTypes against it, so a wrong type silently makes
-    // an unrunnable tool look runnable. `present` still defaults to true: a
-    // declared peripheral is fitted unless stated otherwise.
+    // A peripheral's `type` is required: canRunTool matches tools against it, so
+    // a default would make an unrunnable tool look runnable. `present` defaults
+    // to true.
     const peripherals = (machine.peripherals ?? []).map((p, i) => {
         if (typeof p.id !== "number") {
             errors.push(`machine.peripherals[${i}].id: required (number)`);
@@ -647,13 +609,9 @@ function buildAxis(ja: JsonAxis, errors: string[], path: string): AxisConfig {
 }
 
 /**
- * A probe block is all-or-nothing, on buildHoming's terms and for its reason:
- * every number is a measurement of this machine, and a filled-in guess would be
- * acted on by driving a tool at the bed. A block missing a field is an ERROR.
- *
- * `node` is the VACUUM's id and is required even though both heads name the same
- * one. Defaulting it would mean a config that probes the wrong node whenever the
- * bus is renumbered, and the failure looks like a dead switch.
+ * A probe block is all-or-nothing, as a homing block is: a missing field is an
+ * error. `node`, the vacuum's id, is required too: a default would probe the
+ * wrong node after the bus is renumbered.
  */
 function buildProbe(
     jp: JsonProbe | undefined,
@@ -681,10 +639,7 @@ function buildProbe(
     };
     return {
         node: busNode(jp.node.id, {
-            // The switch lives on the vacuum. Named rather than defaulted to
-            // STEPPER, because probe_map type-checks this out of the ENGAGE ack
-            // and a config that said "stepper" would fail there with a message
-            // about the wrong thing.
+            // The switch is on the vacuum; probe_map checks the type in the ENGAGE ack.
             type: (jp.node.type ?? NodeType.VACUUM) as NodeType,
             present: jp.node.present ?? true,
         }),
@@ -705,10 +660,8 @@ function buildProbe(
 
 /**
  * A homing block is all-or-nothing: absent means no terminator, present means
- * every field of ITS kind, and no field of the other. There is no partial form and no defaulting, because each number is a
- * measurement of this specific machine and a filled-in guess would be acted on
- * at seek speed against a hard stop. A block missing a field is an ERROR, not a
- * block to complete.
+ * every field of its kind and none of the other. Each number is a measurement
+ * of this machine, so a missing one is an error, never defaulted.
  */
 function buildHoming(
     jh: JsonHoming | undefined,
@@ -735,9 +688,8 @@ function buildHoming(
         return v;
     };
     if (kind === "rotary") {
-        // Rejected by NAME rather than ignored: a linear field in a rotary block
-        // means whoever wrote it believed this axis has ends, and silently
-        // dropping the field would leave that belief untested.
+        // Refused by name: a linear field in a rotary block means its writer thought
+        // the axis has ends.
         for (const k of ["seekFeed", "latchFeed"] as const) {
             if (jh[k] !== undefined) {
                 errors.push(`${p}.${k}: not a rotary field — a rotary axis has no ends`);
@@ -768,9 +720,8 @@ function buildHoming(
 }
 
 /**
- * The fields of `o` named in `keys` that are present. The Pico's config fields
- * pass through this way: the Pico's decoder checks them, and the host, whose
- * homing path is being removed, does not read them.
+ * The fields of `o` named in `keys` that are present. The controller's fields
+ * pass through this way, checked by its decoder rather than the host.
  */
 function present<T extends object, K extends keyof T>(
     o: T,
@@ -786,16 +737,9 @@ function present<T extends object, K extends keyof T>(
 /**
  * Tool preset names → ToolTypes, preserving order.
  *
- * Assumes the names are known (the structural pass rejected the rest) and
- * re-checks the property everything downstream depends on: that a preset name
- * and a ToolType identify each other. Today they do by construction — the
- * loader only ever patches one of four fixed presets and `toolType` is not a
- * patchable key — so this check cannot fire. It is here so that loosening the
- * loader to accept a user-defined profile trips a named error rather than
- * quietly giving two profiles one type, which every consumer keyed on
- * ToolType (the scheduler above all) would read as one tool. The revolver pen
- * is why that matters: its blocks legitimately share a type across slots, so a
- * collision is indistinguishable from a revolver slot.
+ * Re-checks that a preset name and a ToolType identify each other. It cannot
+ * fire today; it trips if user-defined profiles are ever allowed, since two
+ * profiles sharing a type would read as one tool (or as revolver chambers).
  */
 function resolveAccepts(
     names: readonly string[],
@@ -830,11 +774,7 @@ function patchToolProfile(
     if (!tools || !(name in tools)) return base;
     const o = tools[name]!;
 
-    // Spread, don't hand-list. The previous version enumerated every field of
-    // ToolProfile by name, which silently dropped any field added later —
-    // an override of one key would reset the new key to its generic default,
-    // with no error. Spreading `base` makes the merge field-count-agnostic;
-    // load.test.ts's key-driven no-op test locks that property in.
+    // Spread, so a field added to ToolProfile later is kept (load.test.ts checks).
     const merged: Record<string, unknown> = { ...base };
     delete merged.name; // supplied by toolProfile()
 
@@ -878,14 +818,8 @@ export type LoadResult =
     | { readonly ok: false; readonly errors: readonly string[] };
 
 /**
- * Parse AND validate a config.json. This is the entry point production callers
- * want: `ok: true` means the config is well-formed *and* semantically sane.
- *
- * parseConfig alone proves only the former, which is why it should not be
- * called directly outside tests — a config with a negative feed or duplicate
- * node ids parses perfectly and then misbehaves on the machine.
- *
- * Warnings never block: they are surfaced to the operator, not enforced.
+ * Parse and validate a config file's JSON: the entry point outside tests.
+ * `ok: true` means well-formed and sane; warnings are returned, never enforced.
  */
 export function loadConfig(jsonText: string): LoadResult {
     const parsed = parseConfig(jsonText);

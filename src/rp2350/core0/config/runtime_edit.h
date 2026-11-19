@@ -4,7 +4,7 @@
 #include "config_decode.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Editing a decoded config by field path (docs/plans/runtime-config.md), from
+// Editing a decoded config by field path (docs/system/config.md), from
 // the generated table in runtime_fields.h. A path is the blob's own, as
 // `machine.heads.0.z.maxFeed` or `toolProfiles.knife.cutFeed`. Free of Arduino
 // I/O so it builds under `pio test -e native`; the caller checks the machine

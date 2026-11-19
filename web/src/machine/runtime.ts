@@ -1,11 +1,11 @@
 /**
- * runtime.ts — the config fields the Pico can edit while it runs.
+ * runtime.ts — the config fields the controller can edit while it runs.
  *
  * A row is a template over its scope: an axis row covers every axis, a tool row
  * every tool. Its path is relative to the scope's type, which types it; a
  * concrete field's blob path adds the scope's prefix (`machine.heads.0.z.`,
- * `toolProfiles.knife.`). `pnpm gen:runtime` writes the Pico's copy, see
- * runtimeHeader.ts and docs/plans/runtime-config.md.
+ * `toolProfiles.knife.`). `pnpm gen:runtime` writes the controller's copy
+ * (runtimeHeader.ts); see docs/system/config.md.
  */
 
 import { fitsF32 } from "./f32.js";

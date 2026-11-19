@@ -4,7 +4,7 @@
  * demux routes on, plus the one length-prefixed frame helper the format layer
  * owns — the CFG_DATA 9-byte header.
  *
- * Config transfer (docs/config_storage.md §5): the host pushes a msgpack
+ * Config transfer (docs/system/config.md): the host pushes a msgpack
  * config blob with CFG_SET (header, then payload on RDY), or pulls it with
  * CFG_GET (replied with CFG_DATA). The magics live in constants.ts (single
  * source for the demux's magic table); this file owns the CFG_SET and CFG_DATA

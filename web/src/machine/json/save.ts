@@ -1,6 +1,6 @@
 /**
  * save.ts — ControllerConfig → a config file that loadConfig reads back to the
- * same model. Used to download a config pulled from the Pico.
+ * same model. Used to download a config pulled from the controller.
  *
  * Filled-in defaults stay in the file. Three reshapes undo what load.ts does:
  *   - toolProfiles → tools
