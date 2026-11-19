@@ -819,14 +819,44 @@ that code (see `AGENTS.md`, Agent Scope).
     * Grouped by exchange: framing (dispatch, CRC, seq and the cumulative
       ACK), the job stream, the continuous jog, status, config. Each with its
       layouts, replies and NACK reasons.
-    * The `get` keys: with status or a page of their own, settled in Read.
+    * The page: `reference/packets.md`. The `get` keys are not in it: they
+      wait for a revamp of `reference/commands.md`, settled in Read.
     * `wire_protocol.md` today: Phase 1 era. MSEG, MCFG, `TOOL_MAGIC`, the
       `0xAE` jog and the Phase 2 config commands are gone from the code;
       `ABORT_MAGIC`, the `CFG_*` records and three NACK codes are missing.
       About half its text is job, jog, planner and mesh behaviour that
       `jobs.md`, `planner.md` and `machine/positioning.md` own; each section
-      is mapped to its page before the doc is archived.
+      is mapped to its page, then cut. The doc keeps only the `get` keys
+      until the commands revamp.
+    * Added in Write: comments in `usb_protocol.h`, `core0.cpp`, `cfg.ts`
+      and `session.ts` that disagree with the code are fixed.
     * Its Outcome says what the reference could not hold; that decides
       branch 10.
 
-    **Status:** not started.
+    **Status:** in Write.
+
+    **Outcome:**
+
+    * The `get` keys are not in `packets.md`: `wire_protocol.md` keeps only
+      them until `reference/commands.md` is revised, which then takes them
+      and archives what is left. That revision is the next reference work.
+    * The reconciliation found the controller and host agree on every
+      layout. Framing (dispatch, CRC, seq, the coalesced cumulative ACK, the
+      order of checks) fit in one section of the page.
+    * For branch 10: no wire page is needed. What is left for a logical page
+      is the host's link: sessions, holds, the backends and the Sim.
+      `session.ts` has two senders: `run()`, the plain stream behind
+      `link.stream()`, now called only by `sim.test.ts`, and `_runJob()`,
+      the job session every real job uses. Whether the plain stream goes is
+      branch 10's call.
+    * Out of scope, for a later pass:
+      * `NACK_BAD_MAGIC` is never sent (an unknown byte is read as text), yet
+        both senders treat it as fatal.
+      * `jobs.md` says the planner page has a revolver's chamber details; no
+        page has them (`chamberOffsets`).
+      * How a continuous jog runs (to the end of travel, A one turn per hold,
+        a diagonal stopping at the nearer end) is on no page;
+        `machine/positioning.md` has one line on held jogs.
+      * Live docs still name `wire_protocol.md` for what it no longer holds:
+        `comms_architecture.md`, `homing.md`, `node_session_and_datum.md`,
+        `PLAN_rp2350_refactor.md`.
