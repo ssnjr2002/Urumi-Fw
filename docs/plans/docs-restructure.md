@@ -134,15 +134,19 @@ kinds differ.
 Settled on `reference/commands.md` (branch 2).
 
 * **Subject:** one kind of exact string (commands, status keys, packets,
-  config fields), every one of them, one row each, grouped by use.
+  config fields), every one of them, grouped by use.
 * **Checked against a commit.** The page names the commit whose code it was
   checked against, and the `git diff` that shows what changed since. Updating
   the page means re-checking the diff and moving the commit. No test.
-* **Second words get their own table:** a command whose second word picks a
-  form (`home`, `leg`, `goto`, `place`) leaves its group's table for a
-  section after it: what every form shares, then one row per form.
-* **Shared answers once:** what many rows share (reply shapes, node results,
-  when a kind is admitted) is a table at the top; rows name it.
+* **Entries, as man pages** (settled on `commands.md` in branch 16): an
+  index up front, then one entry per command: a synopsis block with one line
+  per form, a description, a Replies list, a Runs line. A command whose
+  second word picks a form (`home`, `leg`, `goto`, `place`) adds a small
+  table of its forms; each reply is listed once, with the forms it applies
+  to.
+* **Shared answers once:** what many entries share (reply shapes, node
+  results, refusal reasons, when a kind is admitted) is a table at the top;
+  an entry explains a reason again only where it means something narrower.
 * **Links to the physical page** for an activity, not a copy of it.
 
 ## Conventions: logical pages
