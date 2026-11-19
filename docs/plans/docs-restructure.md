@@ -48,7 +48,7 @@ Proposed; only `machine/` has been tried.
 docs/
   README.md      start here: the machine, a map of these folders, how to read them
   machine/       physical: one page per part or capability you can see
-  system/        logical: one page per layer (bus, nodes, controller, planner, jobs, config, host)
+  system/        logical: one page per layer (bus, nodes, controller, planner, jobs, config, wire)
   reference/     exact commands, replies, status keys, packets, config fields
   howto/         step-by-step tasks
   measurements/  dated bench results, each with date, firmware commit and hardware
@@ -678,14 +678,17 @@ that code (see `AGENTS.md`, Agent Scope).
        and may be dead (`runtime-config.md`).
      * `save` with nothing dirty still writes flash and moves `seq`.
 
-10. `refactor/system-host`: `docs/system/host.md`, the web host.
+10. `refactor/system-wire`: `docs/system/wire.md`, the USB wire between
+    host and controller, both ends.
 
-    Depends on 3 and 15. Its page (a host link page, `system/wire.md`, or
-    none) is settled by branch 15's Outcome.
+    Depends on 3 and 15.
 
-    * Covers: the link (reader, writer, sessions, demux), the backends
-      (WebSerial, node, the Sim), the machine model.
-    * Code: `web/src/wire/link/`, `web/src/index.ts`.
+    * Covers: how an exchange runs over time, where `reference/packets.md`
+      has only the layouts. The controller's receive path (dispatch, holds,
+      barriers, the coalesced ACK) and the host's link (reader, writer,
+      demux, sessions, resends and holds, the backends and the Sim).
+    * No host page: config is `system/config.md`, the toolpath branch 11.
+    * Code: `src/rp2350/core0/data_plane.cpp`, `core0.cpp`, `web/src/wire/`.
     * Replaces `comms_architecture.md`.
 
     **Status:** not started.
