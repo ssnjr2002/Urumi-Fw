@@ -833,7 +833,7 @@ that code (see `AGENTS.md`, Agent Scope).
     * Its Outcome says what the reference could not hold; that decides
       branch 10.
 
-    **Status:** in Write.
+    **Status:** merged at `ef93f23`. Unblocks branch 10.
 
     **Outcome:**
 
