@@ -2,7 +2,7 @@
 #include <stdint.h>
 
 // Core 0 data plane — binary BEZIER, jog and config packet ingest.
-// Framing and duplicate-guard semantics: docs/wire_protocol.md.
+// Framing and duplicate-guard semantics: docs/reference/packets.md.
 
 // Try to consume one USB byte as data-plane (binary) input. Returns true if the
 // byte was taken — either we are mid-packet, or the byte is a data-plane magic

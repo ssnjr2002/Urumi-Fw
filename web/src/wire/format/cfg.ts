@@ -1,6 +1,5 @@
 /**
- * format/cfg.ts — the config-blob transfer frame (Phase-2 surface).
- * Ported from host/protocol/{packets,reader}.py: the CFG_* magics that the
+ * format/cfg.ts — the config-blob transfer frame: the CFG_* magics that the
  * demux routes on, plus the one length-prefixed frame helper the format layer
  * owns — the CFG_DATA 9-byte header.
  *
@@ -59,7 +58,6 @@ export const CFG_DATA_HDR_SIZE = 9;
 // Cap on a single CFG_DATA payload. The firmware bounds this by CFG_MAX_BYTES;
 // we bound it independently so a corrupted length field cannot make the demux
 // sit in the payload state forever, swallowing every other plane's traffic.
-// Mirrors host.protocol.reader.MAX_CFG_PAYLOAD.
 export const MAX_CFG_PAYLOAD = 64 * 1024;
 
 // ── CFG command NACK reasons (byte[1] of a CFG_NACK frame) ────────────────────
@@ -67,8 +65,8 @@ export const MAX_CFG_PAYLOAD = 64 * 1024;
 // same byte values, different command class, so they live here next to the
 // frame they belong to.
 export const CFG_NACK_CRC = 0x01; // CRC32 mismatch — struct corrupt in transit
-export const CFG_NACK_TOO_BIG = 0x02; // payload exceeds CFG_MAX_BYTES
-export const CFG_NACK_BAD_STATE = 0x03; // push rejected — machine not IDLE or ALARM
+export const CFG_NACK_TOO_BIG = 0x02; // length 0 or over CFG_MAX_BYTES
+export const CFG_NACK_BAD_STATE = 0x03; // push rejected — not at rest in the idle context
 export const CFG_NACK_FLASH = 0x04; // flash write failed
 export const CFG_NACK_TIMEOUT = 0x05; // payload did not arrive within the transfer window
 export const CFG_NACK_SCHEMA = 0x06; // blob did not decode or failed the Pico's validation

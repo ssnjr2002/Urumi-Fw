@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-// Core 0 control plane — text command dispatch (docs/wire_protocol.md).
+// Core 0 control plane — text command dispatch (docs/reference/commands.md).
 // The handlers themselves live in cmd/; see cmd/table.h.
 
 // Handle one control-plane text line. Replies with exactly one line per the wire

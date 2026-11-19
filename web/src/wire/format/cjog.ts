@@ -1,6 +1,5 @@
 /**
- * format/cjog.ts — the continuous-jog deadman packet (docs/wire_protocol.md
- * "Continuous Jog").
+ * format/cjog.ts — the continuous-jog deadman packet (docs/reference/packets.md).
  *
  * The host repeats the packet faster than CJOG_DEADMAN_MS while the operator
  * holds a direction; the Pico stops the jog when the packets stop, on all-zero

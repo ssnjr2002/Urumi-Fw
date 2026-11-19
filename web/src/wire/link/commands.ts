@@ -3,7 +3,7 @@
  * Ported from host/protocol/commands.py, extended proactively with the
  * firmware verbs that landed since the Python snapshot.
  *
- * One function per text command from docs/wire_protocol.md "Control Plane",
+ * One function per text command from docs/reference/commands.md,
  * plus the newer host verbs the firmware can answer today. Each sends the
  * command string and parses the reply so callers work with typed results
  * instead of raw text.

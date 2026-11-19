@@ -2,7 +2,7 @@
  * link/backends/sim.ts — in-process fake Pico (a Transport).
  * Ported from host/protocol/link.py SimBackend.
  *
- * Answers text commands per the wire_protocol.md allowed-state matrix AND
+ * Answers text commands per the admission in docs/reference/commands.md AND
  * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (its tool
  * checked against the mounts only with `tools`): JOB.BUFFERING until enough is
  * queued, then RUNNING, each record taking `recordMs` and landing the head on

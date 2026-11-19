@@ -6,7 +6,7 @@
 // Planner blocks queued — shared by the binary STATUS_RSP and `get buf`.
 uint16_t getBufCount();
 
-// Binary mirror of the `get` state keys (docs/wire_protocol.md STATUS_REQ/STATUS_RSP).
+// Binary mirror of the `get` state keys (docs/reference/packets.md).
 // Accepted in every machine state; handled inline (no ring-buffer / Core 1
 // interaction) so it never delays step timing.
 void sendStatusRsp();

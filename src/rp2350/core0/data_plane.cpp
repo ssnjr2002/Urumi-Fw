@@ -1,7 +1,7 @@
 // Core 0 data plane: binary ingest for the USB CDC stream.
 //
 // One byte-dispatcher (dataPlaneConsume) serves two receivers, selected by the
-// leading magic byte and tracked in rxKind (docs/wire_protocol.md):
+// leading magic byte and tracked in rxKind (docs/reference/packets.md):
 //   RX_PACKET  — BEZIER (0xAD), 62 bytes; LAYER_HDR (0xA1), 20 bytes; JOB_HDR
 //                (0xB8), 17 bytes; TOOL_HDR (0xB9), 21 bytes; continuous jog
 //                (0xAF), 7 bytes
@@ -165,7 +165,7 @@ static void feedPacket(uint8_t b) {
     // accepted; executing them again would duplicate motion — a permanent
     // position offset. A seq we are not expecting is a stale retransmit: ACK it
     // (so the host's window advances) but do not execute. The host resets this
-    // counter with the "seqreset" text command before each stream.
+    // counter with SEQRESET before each stream.
     if (pktBuf[BEZIER_SEQ_OFFSET] != expectedSeq) {
         flushAck();     // immediate: this duplicate ACK is the host's resync signal
         return;

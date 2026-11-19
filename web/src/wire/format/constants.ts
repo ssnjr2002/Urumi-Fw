@@ -2,7 +2,7 @@
  * format/constants.ts — wire-magic bytes and fixed packet sizes.
  *
  * The single source of truth for the magic-byte dispatch table the firmware
- * uses (docs/wire_protocol.md). Each data-plane frame is keyed by its first
+ * uses (docs/reference/packets.md). Each data-plane frame is keyed by its first
  * byte, so the magic constants here are imported by every per-format module
  * (packet, bezier, status, cfg) and by the link-layer demux.
  *
@@ -36,7 +36,7 @@ export const MAGIC_JOG_ACK = 0xb6; // Pico → host: one byte, a jog started
 export const MAGIC_JOG_NACK = 0xb7; // Pico → host: [magic, reason], reason a NACK_* code
 
 // ── Status plane — binary mirror of `get` (state, pos, queued time) ───────────
-// docs/wire_protocol.md "STATUS_RSP". Each layout has its own magic; the
+// Each layout has its own magic; the
 // retired ones are reserved, never emitted, and rejected by name rather than
 // mis-parsed — see format/status.ts parseStatusRsp for the message.
 export const MAGIC_STATUS_REQ = 0xa5; // host → Pico: one-byte request, no payload/CRC
@@ -50,7 +50,7 @@ export const STATUS_RSP_SIZE = 38;
 export const STATUS_HEADS = 2;
 
 // ── Stream control replies (Pico → host) — fixed 3-byte frames ────────────────
-// docs/wire_protocol.md "ACK" / "NACK". Cumulative ACK: byte[1] = the next wire
+// Cumulative ACK: byte[1] = the next wire
 // seq the Pico wants (i.e. every packet below was accepted), so a lost or stale
 // ACK self-heals on the next one and a duplicate is idempotent. The sender
 // decodes the advance in 8-bit rolling space, clamped to the in-flight window.
@@ -71,7 +71,7 @@ export const MAGIC_ABORT = 0xa9;
 // reasons live in cfg.ts (a different namespace, same byte values).
 export const NACK_CRC = 0x01; // CRC8 mismatch — packet corrupt
 export const NACK_FULL = 0x02; // ring buffer full — backpressure, sender retries
-export const NACK_BAD_MAGIC = 0x03; // unrecognised magic byte — fatal
+export const NACK_BAD_MAGIC = 0x03; // reserved: never sent, an unknown byte is read as text
 export const NACK_PAUSED = 0x04; // record rejected — the job is paused or pausing
 export const NACK_BAD_STATE = 0x06; // command rejected — wrong machine state
 // Barrier, not an error: stream rejected because the machine is mid-abort-ramp.
@@ -107,8 +107,8 @@ export const NACK_DETAIL_AXIS_Y = 0x01;
 export const NACK_DETAIL_SIDE_HI = 0x02;
 export const NACK_DETAIL_NO_LIMITS = 0x04;
 
-// ── Config plane magics (Phase-2) — CFG blob push/pull over the data plane ──────
-// docs/wire_protocol.md "CRC Algorithms" + packets.py. CFG_SET/GET are host→Pico
+// ── Config plane magics — CFG blob push/pull over the data plane ────────────────
+// CFG_SET/GET are host→Pico
 // requests; the Pico replies with CFG_RDY (header accepted, send payload),
 // CFG_ACK (committed), CFG_NACK (rejected — next byte is the reason), or
 // CFG_DATA (the GET response: 9-byte header + opaque payload). The header

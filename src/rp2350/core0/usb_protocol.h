@@ -3,10 +3,8 @@
 #include <stdint.h>
 #include "../ipc/shared_state.h"   // BUS_ADDR_MAX
 
-// usb_protocol.h — the USB CDC wire contract between the host PC and Core 0.
-//
-// Split out of shared.h: Core 1 never sees a USB packet. Its only appearance in
-// core1.cpp was a comment.
+// usb_protocol.h — the USB CDC wire contract between the host PC and Core 0
+// (docs/reference/packets.md). Core 1 never sees a USB packet.
 //
 // THIS FILE IS MIRRORED BY web/src/wire/format/constants.ts.
 // The two must agree byte for byte. Change one, change the other.
@@ -16,7 +14,7 @@
 // LAYER_HDR with a plunge scale k) are retired;
 // the data plane drops them as unknown bytes.
 
-// BEZIER record (62 bytes, little-endian, floats in machine mm):
+// BEZIER record (62 bytes, little-endian, floats in work mm at the tip):
 //   [0]      magic = 0xAD
 //   [1]      flags  BEZIER_FLAG_*
 //   [2]      seq
@@ -96,7 +94,7 @@
 //   NACK: [0xBB] [reason] [detail]   detail: NACK_DETAIL_* on OUT_OF_RANGE, else 0
 //     reason 0x01 = CRC error
 //     reason 0x02 = buffer full (backpressure)
-//     reason 0x03 = bad magic
+//     reason 0x03 = bad magic: reserved, never sent (an unknown byte is text)
 
 #define MSEG_ACK         0xAA
 #define MSEG_NACK        0xBB
@@ -104,11 +102,10 @@
 // ACKs are coalesced: because the ACK is cumulative, one frame can confirm a
 // run of packets, and USB CDC charges per transaction rather than per byte.
 // Pending ACKs are flushed when the input drains, when this many accumulate,
-// and always before a NACK or a duplicate ACK. See docs/comms_architecture.md §4.1.
+// and always before a NACK or a duplicate ACK.
 #define ACK_COALESCE_MAX 8      // ≈ half a typical host window
 
 // Binary status request/response (mirrors the text `get` state keys).
-// docs/comms_architecture.md §4.2 + §4.6.
 //
 //   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
 //   STATUS_RSP:  [0xA0]                                    (38 bytes)
@@ -133,9 +130,9 @@
 // One frame, one coherent sample, in the node frame: the host is told nodes
 // and the selection, never slots.
 //
-// Each layout has its own magic. The reader consumes fixed-length frames blind
-// (D2), so a host expecting another layout must fail on an unknown byte (D5)
-// rather than mis-parse it and desync.
+// Each layout has its own magic. The reader consumes fixed-length frames blind,
+// so a host expecting another layout must fail on an unknown byte rather than
+// mis-parse it and desync.
 #define STATUS_REQ       0xA5
 #define STATUS_RSP_V1    0xA6   // retired frames — never emit; reserved so the
 #define STATUS_RSP_V2    0xA7   // values are not reused for something else
@@ -144,7 +141,7 @@
 #define STATUS_RSP       0xA0
 #define STATUS_RSP_SIZE  38
 
-// Binary `seqreset` (§4.3): one byte, zeroes expectedSeq, replies ACK(0).
+// Binary `seqreset`: one byte, zeroes expectedSeq, replies ACK(0).
 // The text command sits on the critical path of every stream start — the one
 // text round-trip a session cannot avoid — dragging a pure data-plane session
 // through the one-outstanding text plane. Replying with an ACK is exact ("I
@@ -152,7 +149,7 @@
 // stays for bring-up.
 #define SEQRESET_MAGIC   0xA8
 
-// Soft abort (§4.5): one byte, no reply. Core 1 ramps to rest, flushes the ring
+// Soft abort: one byte, no reply. Core 1 ramps to rest, flushes the ring
 // and lands IDLE with position intact. Confirmation arrives on the status sink
 // as the state settles — like `stop`, it correlates nothing, so it needs no ACK.
 #define ABORT_MAGIC      0xA9
@@ -176,7 +173,8 @@
 // ─── Config Blob Store (docs/system/config.md) ───────────────────────────────
 // USB opcodes for the msgpack config blob. CFG_SET is two-phase: the host sends
 // the header, the controller replies CFG_RDY (or CFG_NACK), then the host
-// streams the payload. Byte layouts: docs/wire_protocol.md.
+// streams the payload.
+// CFG_ACK shares 0xB3 with CJOG_STOP_MAGIC: each is read in one direction only.
 #define CFG_SET_MAGIC     0xB0  // Host→Pico: config write — header, then (on RDY) payload
 #define CFG_GET_MAGIC     0xB1  // Host→Pico: request the active blob
 #define CFG_RDY           0xB2  // Pico→Host: header accepted — send payload

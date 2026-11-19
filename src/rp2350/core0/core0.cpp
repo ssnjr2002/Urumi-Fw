@@ -1,7 +1,7 @@
 // Core 0: USB serial dispatch + lifecycle.
 //
 // Owns the USB CDC ingest loop and the soft-reset sequence. The two planes that
-// share the pipe live in their own translation units (docs/wire_protocol.md):
+// share the pipe live in their own translation units (docs/reference/packets.md):
 //   data_plane.*    — binary records, jog and config packets (magic-dispatched)
 //   control_plane.* — text command lines
 //   status.*        — binary STATUS_RSP + buffer telemetry
@@ -37,8 +37,9 @@ static uint16_t serialRxLen = 0;
 
 // ─── Serial Processing ────────────────────────────────────────────────────────
 // Text lines and binary packets share the same USB CDC stream.
-// Data-plane magics (MSEG/JOG 0xAB/0xAE, STATUS_REQ 0xA5) have bit 7 set and
-// are dispatched here; any other byte is treated as the start of a text line.
+// The data plane takes its magics and the bytes of a record under way;
+// STATUS_REQ is answered here. Any other byte, an unknown one with bit 7 set
+// included, is text.
 
 void processSerial() {
     while (Serial.available() && !soft_reset_requested) {

@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 
-// cjog.h — the continuous jog (docs/wire_protocol.md, CJOG): a held direction
+// cjog.h — the continuous jog (docs/reference/packets.md): a held direction
 // is one line to the end of travel, stopped when the packets stop. The data
 // plane receives the packets and writes the replies these return.
 
