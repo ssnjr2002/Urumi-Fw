@@ -860,3 +860,29 @@ that code (see `AGENTS.md`, Agent Scope).
       * Live docs still name `wire_protocol.md` for what it no longer holds:
         `comms_architecture.md`, `homing.md`, `node_session_and_datum.md`,
         `PLAN_rp2350_refactor.md`.
+
+16. `refactor/commands-reference`: `reference/commands.md` rewritten in the
+    man-page layout, re-checked against source, with the `get` keys.
+
+    Depends on 2 and 15.
+
+    * Layout: a draft (`docs/reference/commands-man.md`, made from today's
+      page) settles it. Shared tables and an index up front, then one entry
+      per command: synopsis lines, a description, a Replies list, a Runs
+      line. Subcommands keep a small table of forms; replies are listed once
+      with the forms they apply to.
+    * Every reply gets a meaning, read from its handler, and the page is
+      re-checked against current source; the checked-against commit moves
+      from `ecd2b3c`.
+    * The `get` entry takes the status keys from `wire_protocol.md`, checked
+      against the snapshot encoder. `wire_protocol.md` then moves to
+      `archive/`, with a line in `archive/README.md`; links to it point at
+      the commands page or `packets.md`.
+    * Code: `src/rp2350/core0/control_plane.cpp`,
+      `src/rp2350/core0/cmd/`, `src/rp2350/core0/controller/cmd/`, the
+      `get` key table.
+    * This doc: the reference page conventions change to the new layout.
+    * Comments that disagree with the code may be fixed; then
+      `pio run -e pico`.
+
+    **Status:** not started.
