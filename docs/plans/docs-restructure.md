@@ -676,7 +676,8 @@ that code (see `AGENTS.md`, Agent Scope).
 
 10. `refactor/system-host`: `docs/system/host.md`, the web host.
 
-    Depends on 3.
+    Depends on 3 and 15. Its page (a host link page, `system/wire.md`, or
+    none) is settled by branch 15's Outcome.
 
     * Covers: the link (reader, writer, sessions, demux), the backends
       (WebSerial, node, the Sim), the machine model.
@@ -801,5 +802,31 @@ that code (see `AGENTS.md`, Agent Scope).
       * What neither covers: the Human Scope list in `AGENTS.md`.
     * Code: `test/`, `web/test/`, `web/vitest.config.ts`.
     * Replaces `test/README`.
+
+    **Status:** not started.
+
+15. `refactor/wire-reference`: `reference/` pages for the USB wire, the
+    records and replies between host and controller.
+
+    Depends on 2.
+
+    * Reconciled from source, not from `wire_protocol.md` or the plans: the
+      controller's side (`src/rp2350/core0/usb_protocol.h`, `data_plane.cpp`,
+      `ops/cjog.cpp`, the STATUS_RSP encoder) against the host's
+      (`web/src/wire/format/`, `wire/link/` for who sends when). Where the
+      two agree is the wire; where they differ is a finding. Plans are read
+      last, only for why a record is as it is.
+    * Grouped by exchange: framing (dispatch, CRC, seq and the cumulative
+      ACK), the job stream, the continuous jog, status, config. Each with its
+      layouts, replies and NACK reasons.
+    * The `get` keys: with status or a page of their own, settled in Read.
+    * `wire_protocol.md` today: Phase 1 era. MSEG, MCFG, `TOOL_MAGIC`, the
+      `0xAE` jog and the Phase 2 config commands are gone from the code;
+      `ABORT_MAGIC`, the `CFG_*` records and three NACK codes are missing.
+      About half its text is job, jog, planner and mesh behaviour that
+      `jobs.md`, `planner.md` and `machine/positioning.md` own; each section
+      is mapped to its page before the doc is archived.
+    * Its Outcome says what the reference could not hold; that decides
+      branch 10.
 
     **Status:** not started.
