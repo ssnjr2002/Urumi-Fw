@@ -167,7 +167,7 @@ gone.
 ## 4. Wire
 
 Two packets on the USB serial, each opened by a magic byte. Their byte
-layouts are in [wire_protocol.md](../wire_protocol.md); the host's side is
+layouts are in [reference/packets.md](../reference/packets.md#config); the host's side is
 `Link.pushConfig` and `Link.pullConfig` (`web/src/wire/link/link.ts`).
 
 ### Push

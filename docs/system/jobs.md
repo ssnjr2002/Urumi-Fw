@@ -49,7 +49,7 @@ This page follows a job through those stages, then gathers the reference
 material: the terms, the code, the full stream and the state table. It
 doesn't cover how the host makes curves from an SVG (the toolpath page), how
 the packets travel over USB (the host page; their bytes are in
-[wire_protocol.md](../wire_protocol.md)), or how a curve becomes motor steps
+[reference/packets.md](../reference/packets.md)), or how a curve becomes motor steps
 (the [planner](planner.md) page).
 
 ## 1. Preflight
