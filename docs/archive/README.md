@@ -63,6 +63,7 @@ describes it.
 
 | Doc | Was | Replaced by |
 | --- | --- | --- |
+| `config_storage.md` | the config store: `/config.bin` and `/mesh.bin`, the commit, the Core 1 park, `CFG_SET`/`CFG_GET` framing, `cfg`, runtime edits | `docs/system/config.md` |
 | `engage_and_axis_map.md` | run-time stream slots, `CMD_ENGAGE`, the slot and axes maps, the fence | `docs/system/bus.md` |
 | `generic_planner_firmware_design.md` | the seed design: Bézier blocks, look-ahead, the 1 kHz tick, position followers, the mesh | `docs/system/planner.md` |
 | `node_type_architecture.md` | the node core and type split, the hooks, the two dispatch paths, the node build | `docs/system/nodes.md` |

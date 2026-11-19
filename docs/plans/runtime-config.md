@@ -1,5 +1,7 @@
 # Runtime config edits
 
+**Open** (branch 4, the web panel, not started). Current behaviour: [system/config.md](../system/config.md); this plan records how it was built.
+
 The operator changes config values the Pico uses while it runs (positions
 first), sees them take effect at once, and saves them to `/config.bin` when
 satisfied. The next boot loads the saved values.

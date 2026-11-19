@@ -1,5 +1,7 @@
 # Pico reads the machine config
 
+**Closed.** Current behaviour: [system/config.md](../system/config.md); this plan records how it was built.
+
 First step of moving the controller layer from `web/src` onto the Pico: the
 Pico decodes the config blob it already stores, and uses it for its first
 consumer, the axis map.
