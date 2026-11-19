@@ -889,4 +889,29 @@ that code (see `AGENTS.md`, Agent Scope).
     * Comments that disagree with the code may be fixed; then
       `pio run -e pico`.
 
-    **Status:** not started.
+    **Status:** ready to merge.
+
+    **Outcome:**
+
+    * Reply meanings live in one Refusals table at the top, not per entry:
+      about 50 reasons, nearly all meaning the same everywhere. An entry
+      explains a reason only where it narrows there.
+    * Checked against `d12bc73`. The old page was wrong or short in about a
+      dozen places, now fixed: bus reads answer `err bad_state` when the bus
+      isn't free; `unalarm` with no fault answers `err bad_state`; `leg` and
+      `probe_map` had unlisted refusals (`node <id> busy`, `kind_mismatch`,
+      `no_start`, `not_vacuum`, `engage`, `no_switch`; `leg probe`'s
+      `already_open` and `intent switch=`); `goto unlock` answers
+      `a_not_homed`; `select <n>` with no such head is `usage`.
+    * From `wire_protocol.md`: `seq=` gained 7 PLACE; the DEBUG_TIMING keys
+      (`texp`, `tmeas`, `twall`) are gone from the code and the page. The
+      255-character line limit moved to Lines and replies, with `\r` also
+      ending a line.
+    * No firmware comment needed fixing, so no `pio run`. Two comments in
+      `web/src/wire/format/status.ts` were repointed; `pnpm typecheck` and
+      `pnpm test` (664 passed) pass.
+    * Out of scope, for a later pass:
+      * Plans still name `wire_protocol.md`, as records.
+      * `comms_architecture.md`'s historical mentions of it stay for
+        branch 10, which replaces that doc.
+      * A line over 255 characters runs cut rather than being refused.
