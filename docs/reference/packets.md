@@ -306,7 +306,7 @@ holds a direction. What a jog does is in
 | `STATUS_RSP` `0xA0` | 38 | below, controller to host |
 
 `STATUS_RSP` is one sample, read at one instant. Each field mirrors a `get`
-key ([wire_protocol.md](../wire_protocol.md#get-keys)).
+key ([commands.md](commands.md#get)).
 
 | Bytes | Field | Type | Means | Key |
 | --- | --- | --- | --- | --- |

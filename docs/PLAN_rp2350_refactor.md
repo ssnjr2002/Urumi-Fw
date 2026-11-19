@@ -5,7 +5,7 @@
 designed-but-unbuilt features.
 **Cross-links:** [node_session_and_datum.md](node_session_and_datum.md) (sessions,
 NAK, fw id), [bus_alarm.md](bus_alarm.md) (node-initiated stop),
-[system/bus.md](system/bus.md) (slots), [wire_protocol.md](wire_protocol.md).
+[system/bus.md](system/bus.md) (slots), [reference/packets.md](reference/packets.md).
 
 > **How to read this.** Steps are imperative and ordered. Each stage lands its
 > subject in **final form** — no shims, no interim protocols, no signatures

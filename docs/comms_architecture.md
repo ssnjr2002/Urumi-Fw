@@ -10,7 +10,7 @@
 Supersedes `state_redesign.md` on one point: resume is position-based, not
 seqnum-based (§4.1, §4.5).
 
-How the host↔Pico link is structured, and why. `wire_protocol.md` remains the
+How the host↔Pico link is structured, and why. `reference/packets.md` is the
 source of truth for framing and constants; this doc covers architecture only.
 
 ---
@@ -669,7 +669,7 @@ intervals rather than merely consume them.
 
 ### 4.6 Queued motion time in STATUS_RSP
 
-> STATUS_RSP v3 (`0xA4`, docs/wire_protocol.md) dropped `queued_us`, `pos` and
+> STATUS_RSP v3 (`0xA4`, docs/archive/wire_protocol.md) dropped `queued_us`, `pos` and
 > `expectedSeq`; pacing went with MicroSegment. They are `get queued`,
 > `get pos` and `get expectedseq` now.
 

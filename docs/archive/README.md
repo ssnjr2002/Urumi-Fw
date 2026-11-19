@@ -58,8 +58,8 @@ built, a store since rewritten, and a checklist from before the Pico ran jobs.
 
 ## Replaced by system pages
 
-Design docs for code that is built, replaced by the `system/` page that now
-describes it.
+Design docs for code that is built, replaced by the `system/` or `reference/`
+page that now describes it.
 
 | Doc | Was | Replaced by |
 | --- | --- | --- |
@@ -68,3 +68,4 @@ describes it.
 | `generic_planner_firmware_design.md` | the seed design: Bézier blocks, look-ahead, the 1 kHz tick, position followers, the mesh | `docs/system/planner.md` |
 | `node_type_architecture.md` | the node core and type split, the hooks, the two dispatch paths, the node build | `docs/system/nodes.md` |
 | `node_readme.md` | `src/node/README.md`: the node's directory layout, entry points, hooks, board headers, adding a type | `docs/system/nodes.md`, `docs/system/firmware-build.md` |
+| `wire_protocol.md` | the USB wire: text commands, binary records, the `get` keys; at the end, only the keys | `docs/reference/commands.md`, `docs/reference/packets.md` |

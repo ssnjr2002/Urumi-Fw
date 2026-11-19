@@ -1,7 +1,7 @@
 # Node Sessions & the Position Datum
 
 **Status:** design, not implemented
-**Companion to:** `system/bus.md` (slots), `wire_protocol.md` (`nodestat`)
+**Companion to:** `system/bus.md` (slots), `reference/commands.md` (`nodestat`)
 
 Two changes that share one reply and one question — *when may the Pico trust a
 position?*

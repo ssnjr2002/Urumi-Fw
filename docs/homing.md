@@ -12,7 +12,7 @@ panel) are likewise implemented and exercised end to end against the Sim —
 drives the axis into a hard stop at seek speed.
 **Cross-links:** [node_session_and_datum.md](node_session_and_datum.md) (`nodeOrigin`,
 `NODE_FLAG_DATUM`), [coordinate_frames_and_limits.md](coordinate_frames_and_limits.md)
-(the *home* frame), [wire_protocol.md](wire_protocol.md) (host↔Pico framing),
+(the *home* frame), [reference/packets.md](reference/packets.md) (host↔Pico framing),
 [system/bus.md](system/bus.md) (slots — homing deliberately does
 not use them), [../web/src/machine/schema.ts](../web/src/machine/schema.ts) (config).
 
