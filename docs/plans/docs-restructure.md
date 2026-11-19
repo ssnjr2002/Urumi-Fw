@@ -154,8 +154,7 @@ Settled on `system/controller.md` (branch 3).
 * **Checked against a commit**, as reference pages are, with a `git diff`
   over the layer's files.
 * **Code named by file**, never by line.
-* **Decisions** at the end of the page: each one with the alternatives it
-  rejected. Settles decision records for logical pages.
+* **Decisions:** each one with the alternatives it rejected. Settles decision records for logical pages.
 * **Decisions read as a chain:** each follows from the one before, in
   threads with no headings; a new thread starts where the chain breaks.
   The order carries the reasoning, with no "so" linking them. Settled in
@@ -170,18 +169,24 @@ Settled on `system/controller.md` (branch 3).
 * **Plain headings:** I/O, not Edges. Each I/O boundary is named by its
   ends: "Host to Core 0", not "Up, to the host".
 
-Section order:
+Common sections, in no fixed order; reads-in-order sets it per page:
 
-1. **Intro**, under the title: what the layer is, in a few sentences.
-2. **Hardware:** what the layer runs on and touches.
-3. **I/O:** what crosses each boundary, and over which channel.
-4. **Lifecycle:** boot, the overview of the parts, failures and how the
-   layer recovers, teardown. Failures sit with the faults that report them,
-   not in a section of their own.
-5. **The layer's own sections**, each a part the overview named.
-6. **Who writes what:** a table of value, writer, readers.
-7. **Decisions.**
-8. **Code:** the files.
+* **Intro**, under the title: what the layer is, in a few sentences.
+* **Hardware:** what the layer runs on and touches.
+* **I/O:** what crosses each boundary, and over which channel.
+* **Lifecycle:** boot, the overview of the parts, failures and how the
+  layer recovers, teardown. Failures sit with the faults that report them,
+  not in a section of their own.
+* **The layer's own sections**, each a part the overview named.
+* **Glossary**, when the page has more terms than it can introduce inline.
+* **Who writes what:** a table of value, writer, readers.
+* **Decisions.**
+* **Code:** the files.
+
+A page uses the sections that apply to its layer. Settled in branch 9, after
+eight pages: three (controller, cores, nodes) opened with Hardware, I/O and
+Lifecycle; five (bus, planner, jobs, firmware-build, config) followed a path
+through the layer first, and only then could I/O and Lifecycle be read.
 
 ## Conventions: plans
 
