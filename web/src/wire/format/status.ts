@@ -23,7 +23,7 @@ import {
     STATUS_RSP_SIZE,
 } from "./constants.js";
 
-// ── operational enums (mirror firmware values; docs/wire_protocol.md) ──────────
+// ── operational enums (mirror firmware values; docs/reference/commands.md) ───────
 
 export const MachineState = {
     IDLE: 0,
@@ -340,7 +340,7 @@ export class MachineStatus {
 
 // ── text-plane parser — `get <key> …` reply ───────────────────────────────────
 
-/** `get` markers in place of a value (docs/wire_protocol.md "`get` keys"). */
+/** `get` markers in place of a value (docs/reference/commands.md, `get`). */
 export const GetMarker = {
     /** The read failed. */
     FAILED: "?",
