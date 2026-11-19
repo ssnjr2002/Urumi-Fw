@@ -642,7 +642,7 @@ that code (see `AGENTS.md`, Agent Scope).
      `src/rp2350/core0/config/` are pruned, and references to
      `config_storage.md` point to the page.
 
-   **Status:** ready to merge.
+   **Status:** merged at `656278e`. Unblocks no branch.
 
    **Outcome:**
 
