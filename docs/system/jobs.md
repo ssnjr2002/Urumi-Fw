@@ -47,8 +47,9 @@ from where the cut stopped.
 
 This page follows a job through those stages, then gathers the reference
 material: the terms, the code, the full stream and the state table. It
-doesn't cover how the host makes curves from an SVG (the toolpath page), how
-the packets travel over USB (the host page; their bytes are in
+doesn't cover how the host makes curves from an SVG (the
+[toolpath](toolpath.md) page), how the packets travel over USB (the
+[wire](wire.md) page; their bytes are in
 [reference/packets.md](../reference/packets.md)), or how a curve becomes motor steps
 (the [planner](planner.md) page).
 
