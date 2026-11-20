@@ -1,7 +1,7 @@
 /**
  * Tests for geometry.ts — vector algebra, endpoint tangents, and
- * Bezier math (point evaluation, derivatives, arc length, curvature).
- * Fresh (no Python test_bezier.py to port).
+ * Bezier math (point evaluation, derivatives, curvature, splitting, affine
+ * maps, arcs).
  */
 
 import { describe, it, expect } from "vitest";

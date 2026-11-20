@@ -1,18 +1,8 @@
 /**
- * geometry.ts — cubic Bezier curve primitives, 2D vector algebra, and
- * Bezier geometry math.
- *
- * Four concerns, all geometric (not SVG concepts):
- *   - Curve types + construction helpers (Pt, CubicBezier, cubic,
- *     lineToCubic, quadToCubic, KAPPA). ../svg/load.ts
- *     produces these curves; clean and annotate consume them.
- *   - 2D vector algebra on Pt (sub, add, scale, length, normalize,
- *     angleBetweenDeg). Shared by every downstream stage.
- *   - Bezier endpoint tangents + Bezier math (point evaluation,
- *     first/second derivatives, arc length via 5-point Gauss-Legendre
- *     quadrature, curvature). Ported from pipeline/stages/bezier.py.
- *   - Affine transforms on points and cubics, and SVG elliptical arcs as
- *     cubics.
+ * geometry.ts — cubic Béziers and the math on them: construction, 2D
+ * vectors, end tangents, evaluation and derivatives, curvature, splitting,
+ * affine maps, and SVG elliptical arcs as cubics. ../svg/load.ts makes the
+ * curves; clean and annotate consume them.
  */
 
 export interface Pt {
@@ -111,7 +101,6 @@ export function angleDelta(a: number, b: number): number {
 }
 
 // ── Bezier point evaluation + derivatives ─────────────────────────────────────
-// Ported from pipeline/stages/bezier.py.
 
 /** B(t) — De Casteljau evaluation of the cubic at parameter t in [0,1]. */
 export function bezierPoint(c: CubicBezier, t: number): Pt {
@@ -139,13 +128,6 @@ export function bezierDeriv2(c: CubicBezier, t: number): Pt {
         y: 6 * (mt * (c.p2.y - 2 * c.p1.y + c.p0.y) + t * (c.p3.y - 2 * c.p2.y + c.p1.y)),
     };
 }
-
-// Arc length: there is deliberately no arcLength() here. A 5-point
-// Gauss-Legendre quadrature of |B'(t)| used to live at this spot with no
-// production caller (audit F6) — flatten measures length by summing the
-// samples it actually emits, which is both what the timeline needs and
-// accurate on the near-cusp curves where GL5 is worst. Removed rather than
-// ported: dead numerics are the most expensive kind of code to carry into C++.
 
 /** κ(t) = |B'×B''| / |B'|³  (2D cross product = scalar). Returns 0 for near-zero speed. */
 export function curvature(c: CubicBezier, t: number): number {

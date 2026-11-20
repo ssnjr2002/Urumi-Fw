@@ -7,7 +7,7 @@
  * t(s) fit. Every piece comes from an exact de Casteljau split, except the
  * handles at a stop, which move to give the piece a defined end tangent.
  *
- * Pure stage: options default here; callers pass the machine's values.
+ * Pure stage: options default here, and prepareBezierJob uses the defaults.
  */
 
 import { bezierDeriv1, bezierDeriv2, bezierPoint, cubic, splitAt, type CubicBezier, type Pt } from "./geometry.js";

@@ -5,7 +5,8 @@
  * snap the closure, then classify each join as smooth or corner. Nothing is
  * invented: a curve only moves by a handle fix or a snap under `gapTol`.
  *
- * Pure stage: options default here; callers pass the machine's values.
+ * Pure stage: options default here; prepareBezierJob passes the config's
+ * angleTol and gapTol.
  */
 
 import {
