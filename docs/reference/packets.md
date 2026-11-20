@@ -8,11 +8,11 @@ two share one serial stream with the text commands of
 **Checked against `f1f4c59`.** To see what may have drifted since:
 
 ```bash
-git diff f1f4c59 -- src/rp2350/core0/usb_protocol.h src/rp2350/core0/data_plane.cpp src/rp2350/core0/core0.cpp src/rp2350/core0/status.cpp src/rp2350/core0/ops/cjog.cpp web/src/wire/format web/src/wire/link/demux.ts
+git diff f1f4c59 -- src/rp2350/core0/usb_protocol.h src/rp2350/core0/data_plane.cpp src/rp2350/core0/core0.cpp src/rp2350/core0/status.cpp src/rp2350/core0/ops/cjog.cpp web/src/packets web/src/link/demux.ts
 ```
 
 The controller's side is `src/rp2350/core0/usb_protocol.h`; the host's,
-`web/src/wire/format/constants.ts`. The two are kept equal byte for byte.
+`web/src/packets/constants.ts`. The two are kept equal byte for byte.
 Strings are written as the [notation](../README.md#notation) says.
 
 ## Framing

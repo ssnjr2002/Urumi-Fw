@@ -218,7 +218,7 @@ reference pages") with MDN's anatomy, settled on the `link` draft:
   `Transport`).
 
 In this plan the drafts keep their old, deeper levels; each branch lifts
-its page to these. Only `link` and `transport` are in the new style yet.
+its page to these. Only `link`, `transport` and `packets` are in the new style yet.
 
 ### Index
 
@@ -1194,7 +1194,24 @@ reworks.
    `NodeSerialTransport.openWith()` is public only for the tests' fake
    `serialport`; the page doesn't list it.
 3. `refactor/web-packets`: `JobLayer` moves in; internals go private. No
-   items. Depends on 1. **Status:** not started.
+   items. Depends on 1. **Status:** in review.
+
+   **Outcome.** As planned, plus:
+   * `packets` no longer imports `toolpath`: `packBezier()` takes a
+     `BezierRecord`, the record's nine fields, defined in `packets`.
+     `toolpath`'s `AnnotatedBezier` extends it, and `BezierAnalysis` takes
+     its four shared fields from it, so each field is declared once.
+   * The subpath now exports every `MAGIC_*`, `*_SIZE`, `NACK_*` and
+     `NACK_DETAIL_*` the page's patterns name; four `NACK_*` codes and the
+     header magics were missing. The retired `MAGIC_STATUS_RSP_V1`–`V4` went
+     private.
+   * The page differs from the draft where the code did: `stampSeq()`
+     returns a copy, `packStatusRsp()` takes `PackStatusRspOptions`, and
+     `MachineStatus` has `unlocked` and `hasFault()`. It says "record" for
+     packet and frame alike, as `reference/packets.md` does.
+   * `JogDir` stays exported; branch 6 decides it with `Link.cjog()`.
+   * The `git diff` line atop `reference/packets.md` names the new paths
+     (branch 1's miss).
 4. `feature/web-config`: `loadConfig()` reads JSONC (11); `encodeConfig`,
    `decodeConfig`, `configToFile`, `configImage`, `meshImage`; the resolve
    helpers go private. Depends on 1. **Status:** not started.

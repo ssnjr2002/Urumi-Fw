@@ -13,10 +13,10 @@ does.
 import { packLayerHdr, crc8, MachineState, NACK_FULL } from "urumi-host/packets";
 ```
 
-**Checked against `TBD`.** To see what may have changed since:
+**Checked against `dc9f304`.** To see what may have changed since:
 
 ```bash
-git diff TBD -- web/src/packets/
+git diff dc9f304 -- web/src/packets/
 ```
 
 Every encoder returns one whole record, ending in its CRC8. A record that
