@@ -109,7 +109,7 @@ function setConnected(on) {
 connectBtn.addEventListener('click', async () => {
     connectBtn.disabled = true;
     try {
-        link = new Link(await WebSerialTransport.requestAndOpen(BAUD_RATE));
+        link = new Link(await WebSerialTransport.request(BAUD_RATE));
         textOut(`connected @ ${BAUD_RATE}`);
         setConnected(true);
         statusPollBox.checked = true;

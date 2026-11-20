@@ -7,7 +7,7 @@
  * the native module.
  *
  * Usage:
- *   const link = new Link(await NodeTransport.open("/dev/ttyACM0"));
+ *   const link = new Link(await NodeSerialTransport.open("/dev/ttyACM0"));
  */
 
 import type { Transport } from "./index.js";
@@ -23,7 +23,7 @@ interface NodeSerialPort {
     close(): Promise<void>;
 }
 
-export class NodeTransport implements Transport {
+export class NodeSerialTransport implements Transport {
     private readonly _port: NodeSerialPort;
     private _closed = false;
 
@@ -38,7 +38,7 @@ export class NodeTransport implements Transport {
      * Open a serial port. The `serialport` native package is dynamically
      * loaded — a browser build never resolves it.
      */
-    static async open(path: string, baudRate: number = 115200): Promise<NodeTransport> {
+    static async open(path: string, baudRate: number = 115200): Promise<NodeSerialTransport> {
         // @ts-expect-error — serialport is an optional peer dep; this file lives
         // at a separate package subpath consumers opt into. The TS error is
         // expected when the dep isn't installed (CI, browsers, Node without it).
@@ -46,7 +46,7 @@ export class NodeTransport implements Transport {
             SerialPort: new (opts: { path: string; baudRate: number }) => NodeSerialPort;
         };
         const port = new mod.SerialPort({ path, baudRate });
-        return new NodeTransport(port);
+        return new NodeSerialTransport(port);
     }
 
     // -- Transport surface ----------------------------------------------------

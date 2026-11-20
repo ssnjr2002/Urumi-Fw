@@ -71,8 +71,8 @@ Core 0's loop is in [controller.md](controller.md).
 
 ### Host
 
-The `Link` (`link.ts`) owns one `Transport`, the byte pipe a backend
-provides. It starts a **read loop** that passes every chunk to the
+The `Link` (`link.ts`) owns one `Transport`, the byte pipe to the
+controller. It starts a **read loop** that passes every chunk to the
 **demux** (`demux.ts`), which splits the bytes into frames and puts each on
 a **sink** (`sink.ts`), one per kind of frame. Callers wait on a sink for
 their reply. Everything sent goes through one **writer** (`writer.ts`).
@@ -279,19 +279,20 @@ and waits for `CFG_ACK` (5 s, for the flash write). `pullConfig()` sends
 `CFG_GET` and checks the blob's CRC32. Both take one lock, so one transfer
 runs at a time, and throw `ConfigTransferError` on a NACK or no reply.
 
-## 10. Backends
+## 10. Transports
 
-Host only. A backend implements `Transport` (`transport.ts`): `write()`,
+Host only. A transport implements `Transport` (`transport/index.ts`): `write()`,
 `read()` as an async stream of chunks, and `close()`.
 
-| Backend | Runs in | How to get it |
+| Transport | Runs in | How to get it |
 | --- | --- | --- |
-| WebSerial | a browser | `WebSerialTransport.requestAndOpen()`, from `urumi-host/transport/webserial` |
-| Node | Node.js, through the optional `serialport` package | `new Link(await NodeTransport.open(path))`, from `urumi-host/transport/node` |
-| Sim | anywhere | `new SimTransport(options)`, from the package root |
+| WebSerial | a browser | `WebSerialTransport.request()` or `fromPort(port)`, from `urumi-host/transport/webserial` |
+| Node | Node.js, through the `serialport` package, which the program installs | `new Link(await NodeSerialTransport.open(path))`, from `urumi-host/transport/node` |
+| Sim | anywhere | `new SimTransport(options)`, from `urumi-host/transport/sim` |
 
-The real ports live on their own package subpaths, so a Node program never
-loads browser code and a browser never loads `serialport`.
+Each transport is its own subpath, so a Node program never
+loads browser code and a browser never loads `serialport`. The full
+interface is on [transport](../reference/host-api/transport.md).
 
 **The Sim** (`transport/sim.ts`) is a fake controller for tests and the demo.
 It answers its replies straight into the demux, which the `Link` hands it
@@ -374,7 +375,7 @@ nothing unasked.
 | `web/src/link/sink.ts` | `Sink`, `LatestSink` |
 | `web/src/link/writer.ts` | `Writer` |
 | `web/src/link/session.ts` | the job session and its window |
-| `web/src/transport/index.ts` | `Transport`, `AbortFlag` |
+| `web/src/transport/index.ts` | `Transport` |
 | `web/src/link/commands.ts` | one function per text command |
 | `web/src/link/settled.ts` | `settle()`, `waitAtRest()` |
 | `web/src/transport/` | WebSerial, Node, the Sim |

@@ -48,9 +48,9 @@ transport has its own, so a Node program never pulls browser globals:
 ```ts
 import { Link } from "urumi-host/link";
 import { WebSerialTransport } from "urumi-host/transport/webserial";
-import { NodeTransport }      from "urumi-host/transport/node";
+import { NodeSerialTransport }      from "urumi-host/transport/node";
 
-const link = new Link(await NodeTransport.open("/dev/ttyACM0"));
+const link = new Link(await NodeSerialTransport.open("/dev/ttyACM0"));
 ```
 
 ## SVG input

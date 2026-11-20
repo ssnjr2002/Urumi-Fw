@@ -19,7 +19,8 @@
  * other, because they cannot interleave on one event loop.
  */
 
-import type { ByteSink, Transport } from "./index.js";
+import type { Transport } from "./index.js";
+import type { ByteSink } from "./attach.js";
 import {
     MAGIC_ACK,
     MAGIC_NACK,
@@ -62,11 +63,11 @@ import {
 } from "../packets/status.js";
 import { crc8 } from "../packets/crc.js";
 
-interface SimOptions {
+/** `new SimTransport(options)`; docs/reference/host-api/transport.md lists them. */
+export interface SimOptions {
     ringSize?: number;
     ackCoalesceMax?: number;
     frameMs?: number;
-    fCpu?: number;
     /**
      * Bus ids that answer a relay. An id outside this set relays and times out,
      * exactly like a missing node on real RS485 — which is what makes
@@ -131,7 +132,6 @@ export class SimTransport implements Transport {
     readonly ringSize: number;
     readonly ackCoalesceMax: number;
     readonly frameMs: number;
-    readonly fCpu: number;
 
     /** Ids that answer a relay (everything else times out). */
     readonly busNodes: ReadonlySet<number>;
@@ -281,7 +281,6 @@ export class SimTransport implements Transport {
         this.ringSize = opts.ringSize ?? 64;
         this.ackCoalesceMax = opts.ackCoalesceMax ?? 8;
         this.frameMs = opts.frameMs ?? 40;
-        this.fCpu = opts.fCpu ?? 150_000_000;
         this.busNodes = new Set(opts.busNodes ?? [1, 2, 3, 4]);
         this.cjogStepsPerS = opts.cjogStepsPerS ?? 2000;
         this.cjogTravel = opts.cjogTravel;

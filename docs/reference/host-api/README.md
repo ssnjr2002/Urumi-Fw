@@ -8,16 +8,16 @@ what it does is on [toolpath](../../system/toolpath.md),
 The library has six subpaths and no root import: every import names its
 subpath. Each subpath gets its own page here as it is reworked
 ([plan](../../plans/host-api.md)); until then, its `index.ts` lists what it
-exports.
+exports. Done: [transport](transport.md).
 
 ## Index
 
 | Subpath | Holds | Depends on |
 |---|---|---|
-| `urumi-host/transport` | the `Transport` interface | — |
-| `urumi-host/transport/webserial` | `WebSerialTransport` | `urumi-host/transport` |
-| `urumi-host/transport/node` | `NodeTransport` | `urumi-host/transport` |
-| `urumi-host/transport/sim` | `SimTransport` | `urumi-host/transport`, `urumi-host/packets` |
+| [`urumi-host/transport`](transport.md#transport) | the `Transport` interface | — |
+| [`urumi-host/transport/webserial`](transport.md#webserialtransport) | `WebSerialTransport` | `urumi-host/transport` |
+| [`urumi-host/transport/node`](transport.md#nodeserialtransport) | `NodeSerialTransport` | `urumi-host/transport` |
+| [`urumi-host/transport/sim`](transport.md#simtransport) | `SimTransport` | `urumi-host/transport`, `urumi-host/packets` |
 | `urumi-host/packets` | packet layouts, encoders and decoders, the CRCs, `MachineStatus` and its enums | — |
 | `urumi-host/config` | the controller config: load, validate, save, encode | `urumi-host/packets` |
 | `urumi-host/toolpath` | an SVG layer to a job's packets | `urumi-host/packets`, `urumi-host/config` |
@@ -32,7 +32,7 @@ import { loadConfig } from "urumi-host/config";
 import { prepareBezierJob } from "urumi-host/toolpath";
 import { Link, JobSource } from "urumi-host/link";
 
-const link = new Link(await WebSerialTransport.requestAndOpen());
+const link = new Link(await WebSerialTransport.request());
 ```
 
 ## Units

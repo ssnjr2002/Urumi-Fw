@@ -21,7 +21,7 @@
 
 import { JobReason, MachineState, type MachineStatus } from "../packets/status.js";
 import { stateName } from "./names.js";
-import type { AbortToken } from "../transport/index.js";
+import type { AbortToken } from "./abort.js";
 
 /** The slice of Link that settle() needs. */
 export interface StatusSource {

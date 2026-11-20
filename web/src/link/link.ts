@@ -12,7 +12,9 @@
  * — only the backend knows what kind of pipe it is.
  */
 
-import type { Attachable, Transport, Writable } from "../transport/index.js";
+import type { Transport } from "../transport/index.js";
+import type { Attachable } from "../transport/attach.js";
+import type { Writable } from "./abort.js";
 import { Writer } from "./writer.js";
 import { Demux, makeSinks, type DemuxSinks } from "./demux.js";
 import type { Sink, LatestSink } from "./sink.js";

@@ -16,7 +16,7 @@
  * frames it wrote, so a caller rewinds its window precisely.
  */
 
-import type { AbortToken, Writable } from "../transport/index.js";
+import type { AbortToken, Writable } from "./abort.js";
 
 export interface WriterStats {
     readonly frames: number;

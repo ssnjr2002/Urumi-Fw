@@ -1,11 +1,11 @@
 /**
- * transport/index.ts (urumi-host/transport) — the environment-agnostic I/O contract a backend implements.
+ * transport/index.ts (urumi-host/transport) — the environment-agnostic I/O contract a transport implements.
  *
  * The link layer (sink, demux, writer, session, link) speaks ONLY this
- * interface; a backend — the in-process Sim, a browser WebSerial port, or a
+ * interface; a transport — the in-process Sim, a browser WebSerial port, or a
  * Node serialport — adapts its environment to it. That is what makes the
  * comms layer usable from a browser UI OR a Node CLI: everything above `Link`
- * is environment-blind, and the three backends are thin.
+ * is environment-blind, and the three transports are thin.
  *
  * `write` returns once the bytes are accepted by the underlying stream
  * (there is no separate `flush` — the browser/Node serial impl owns buffering,
@@ -15,59 +15,16 @@
  * not align with chunk boundaries, which is the normal case at the 64-byte
  * USB packet quantum — the Demux consumes them blind.
  *
- * `AbortToken`: the Writer checks it before committing a
- * batch (bounded to never hold the write lock for a whole session), and a
- * Session's `truncate()` sets it so an urgent abort waits at most one frame
- * rather than a whole batch.
+ * This file is the subpath's whole public surface: the interface alone.
+ * attach.ts holds the sim's private hook into the link.
  */
 
-/** Bytes-out surface — the Writer needs only this. */
-export interface Writable {
+/** A byte link to the controller, which a `Link` owns for a connection. */
+export interface Transport {
+    /** Send bytes; resolves once the port has accepted them. */
     write(bytes: Uint8Array): Promise<void>;
-}
-
-/** Bytes-in surface — a backend pumps chunks into the Demux via this. */
-export interface Readable {
+    /** Chunks from the controller, in arrival order; ends when the port closes. */
     read(): AsyncIterable<Uint8Array>;
-}
-
-/** A backend: bidirectional byte pipe that the Link owns for a connection. */
-export interface Transport extends Writable, Readable {
+    /** Close the port; resolves once closed. */
     close(): Promise<void>;
-}
-
-/** Flag the Writer polls before committing a batch. */
-export interface AbortToken {
-    isSet(): boolean;
-}
-
-/**
- * Default AbortToken: a boolean flag. A Session constructs one and `truncate()`
- * sets it; the Writer's `writeBatch` sees it and returns 0 without writing,
- * so the in-flight batch never goes out and the caller rewinds to `base`.
- */
-export class AbortFlag implements AbortToken {
-    private _set = false;
-    set(): void {
-        this._set = true;
-    }
-    clear(): void {
-        this._set = false;
-    }
-    isSet(): boolean {
-        return this._set;
-    }
-}
-/** What a transport that answers in-process (the sim) feeds its replies into. */
-export interface ByteSink {
-    feed(data: Uint8Array): void;
-}
-
-/**
- * Optional transport hook: a transport may expose `attach(sink)` so it can
- * feed replies straight into the link's demultiplexer. Real ports ignore it;
- * the link drains their `read()` instead.
- */
-export interface Attachable {
-    attach(sink: ByteSink): void;
 }

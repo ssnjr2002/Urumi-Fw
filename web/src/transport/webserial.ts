@@ -7,8 +7,8 @@
  * sees it.
  *
  * Usage:
- *   const t = await WebSerialTransport.requestAndOpen();
- *   const link = new Link(t);
+ *   const link = new Link(await WebSerialTransport.request());
+ *   const link = new Link(WebSerialTransport.fromPort(openPort));
  */
 
 import type { Transport } from "./index.js";
@@ -36,12 +36,12 @@ export class WebSerialTransport implements Transport {
     private _writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
     private _reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
-    constructor(port: SerialPort) {
+    private constructor(port: SerialPort) {
         this._port = port;
     }
 
-    /** Show the browser's port picker and open at `baudRate`. */
-    static async requestAndOpen(baudRate: number = 115200): Promise<WebSerialTransport> {
+    /** Show the browser's port picker and open the chosen port at `baudRate`. */
+    static async request(baudRate: number = 115200): Promise<WebSerialTransport> {
         const port = await (globalThis.navigator as Navigator & {
             serial: {
                 requestPort: (opts?: SerialPortRequestOptions) => Promise<SerialPort>;
@@ -51,13 +51,9 @@ export class WebSerialTransport implements Transport {
         return new WebSerialTransport(port);
     }
 
-    /** Wrap an already-opened port (e.g. from a stored user preference). */
-    static fromOpen(port: SerialPort): WebSerialTransport {
+    /** Wrap a port the caller has opened. */
+    static fromPort(port: SerialPort): WebSerialTransport {
         return new WebSerialTransport(port);
-    }
-
-    get port(): SerialPort {
-        return this._port;
     }
 
     // -- Transport surface ----------------------------------------------------

@@ -21,7 +21,7 @@ import {
     MachineStatus,
     JobReason,
 } from "../../../src/packets/status.js";
-import { AbortFlag } from "../../../src/transport/index.js";
+import { AbortFlag } from "../../../src/link/abort.js";
 
 /** A status sample; only state, reason and bufCount matter to these conditions. */
 function st(state: MachineState, bufCount = 0, reason = 0): MachineStatus {
