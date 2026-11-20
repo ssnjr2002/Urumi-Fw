@@ -115,9 +115,9 @@ bundler drop what a page doesn't import. `files` ships only `dist/`, the
 README and the licence.
 
 The Node transport loads `serialport` with a dynamic `import()` when it opens
-a port, so nothing else needs it. Its comment calls it an optional peer
-dependency, but `package.json` doesn't declare it: a Node program must
-install it itself.
+a port, so nothing else needs it. `package.json` doesn't declare it: a Node
+program installs it itself, and `open()` throws an error naming it when it
+is missing.
 
 The package is not published. `prepublishOnly` would build it first, and
 `pnpm build` builds it by hand, for the demo's `dist` mode.

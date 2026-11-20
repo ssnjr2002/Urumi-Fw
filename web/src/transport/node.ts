@@ -1,8 +1,9 @@
 /**
  * transport/node.ts — Node.js Transport over the `serialport` package.
  *
- * `serialport` is an OPTIONAL peer dependency — the Link core + every other
- * backend never imports it, so a browser build stays dependency-free. This
+ * `serialport` is not a dependency of this package: a program that uses this
+ * transport installs it. The Link core and every other transport never import
+ * it, so a browser build stays dependency-free. This
  * file lives at a separate package subpath and is the ONLY place that touches
  * the native module.
  *
@@ -20,7 +21,26 @@ interface NodeSerialPort {
     on(event: "data", cb: (data: Buffer) => void): void;
     on(event: "error" | "close", cb: (err?: Error) => void): void;
     write(data: Buffer): boolean;
+    open(cb: (err: Error | null) => void): void;
     close(): Promise<void>;
+}
+
+/** The `serialport` constructor, as this transport calls it. */
+export type SerialPortCtor = new (opts: { path: string; baudRate: number; autoOpen: false }) => NodeSerialPort;
+
+/** Load `serialport`, or throw an error that names it. */
+async function loadSerialPort(): Promise<SerialPortCtor> {
+    let mod: { SerialPort: SerialPortCtor };
+    try {
+        // @ts-expect-error — serialport is not a dependency; the caller installs it.
+        mod = (await import("serialport")) as { SerialPort: SerialPortCtor };
+    } catch (err) {
+        throw new Error(
+            'NodeSerialTransport needs the "serialport" package: install it in your program (npm install serialport)',
+            { cause: err },
+        );
+    }
+    return mod.SerialPort;
 }
 
 export class NodeSerialTransport implements Transport {
@@ -35,17 +55,19 @@ export class NodeSerialTransport implements Transport {
     }
 
     /**
-     * Open a serial port. The `serialport` native package is dynamically
-     * loaded — a browser build never resolves it.
+     * Open a serial port; resolves once it is open. `serialport` is loaded
+     * here, so nothing else in the package needs it.
      */
     static async open(path: string, baudRate: number = 115200): Promise<NodeSerialTransport> {
-        // @ts-expect-error — serialport is an optional peer dep; this file lives
-        // at a separate package subpath consumers opt into. The TS error is
-        // expected when the dep isn't installed (CI, browsers, Node without it).
-        const mod = (await import("serialport")) as {
-            SerialPort: new (opts: { path: string; baudRate: number }) => NodeSerialPort;
-        };
-        const port = new mod.SerialPort({ path, baudRate });
+        return NodeSerialTransport.openWith(await loadSerialPort(), path, baudRate);
+    }
+
+    /** `open()` with the constructor given; tests pass a fake. Not public API. */
+    static async openWith(SerialPort: SerialPortCtor, path: string, baudRate: number): Promise<NodeSerialTransport> {
+        const port = new SerialPort({ path, baudRate, autoOpen: false });
+        await new Promise<void>((resolve, reject) => {
+            port.open((err) => (err ? reject(err) : resolve()));
+        });
         return new NodeSerialTransport(port);
     }
 
