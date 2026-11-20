@@ -844,7 +844,7 @@ that code (see `AGENTS.md`, Agent Scope).
     * Replaces the Development section of `web/README.md`, which stays as
       the package's README and links here.
 
-    **Status:** in review.
+    **Status:** merged at `a4f5154`. Unblocks no branch.
 
     **Outcome:**
 
