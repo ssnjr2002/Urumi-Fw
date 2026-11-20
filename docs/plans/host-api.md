@@ -1182,7 +1182,7 @@ reworks.
 
 2. `refactor/web-transport`: `request()`, `fromPort()`,
    `NodeSerialTransport`. No items. Depends on 1.
-   **Status:** done at `5219bb2`, not merged.
+   **Status:** merged at `fdd9248`.
 
    **Outcome.** The refactor as planned, plus two features asked for in
    the branch, each its own commit: `fromPort()` throws on a closed port,
