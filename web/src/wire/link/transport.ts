@@ -15,7 +15,7 @@
  * not align with chunk boundaries, which is the normal case at the 64-byte
  * USB packet quantum — the Demux consumes them blind.
  *
- * `AbortToken` is the D13 hook: the Writer checks it before committing a
+ * `AbortToken`: the Writer checks it before committing a
  * batch (bounded to never hold the write lock for a whole session), and a
  * Session's `truncate()` sets it so an urgent abort waits at most one frame
  * rather than a whole batch.
@@ -36,7 +36,7 @@ export interface Transport extends Writable, Readable {
     close(): Promise<void>;
 }
 
-/** Flag the Writer polls before committing a batch (D13). */
+/** Flag the Writer polls before committing a batch. */
 export interface AbortToken {
     isSet(): boolean;
 }

@@ -1,10 +1,7 @@
 /**
  * link/commands.ts — control-plane command helpers over a Link.
- * Ported from host/protocol/commands.py, extended proactively with the
- * firmware verbs that landed since the Python snapshot.
  *
- * One function per text command from docs/reference/commands.md,
- * plus the newer host verbs the firmware can answer today. Each sends the
+ * One function per text command from docs/reference/commands.md. Each sends the
  * command string and parses the reply so callers work with typed results
  * instead of raw text.
  *
@@ -34,8 +31,7 @@ export async function ping(link: Link): Promise<boolean> {
  * text-plane reply ends with "ok"; for "all", true ONLY if every node answered.
  *
  * `all` answers on ONE line (`nodes 1=ok 2=timeout …`) — the text plane's
- * one-outstanding contract (D11). The Python port (`commands.py`) added the
- * per-node path; this retains it.
+ * one-outstanding contract.
  */
 export async function pingNode(link: Link, nodeId: number | "all"): Promise<boolean> {
     const reply = await link.command(`pingnode ${nodeId}`);
@@ -215,7 +211,7 @@ async function okOrThrow(link: Link, cmd: string): Promise<void> {
     if (r !== "ok") throw new Error(`${cmd}: ${r}`);
 }
 
-// ── node verbs (proactive — firmware additions since the Python snapshot) ────
+// ── node verbs ───────────────────────────────────────────────────────────────
 
 /**
  * Query a single node's own step counter via `nodepos <id>`. The Pico relays

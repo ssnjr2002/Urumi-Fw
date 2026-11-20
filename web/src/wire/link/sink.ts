@@ -1,10 +1,10 @@
 /**
- * link/sink.ts — typed awaitable queues + latest-wins slots.
- * Ported from host/protocol/reader.py (Sink, LatestSink, make_sinks).
+ * link/sink.ts — typed awaitable queues + latest-wins slots
+ * (docs/system/wire.md).
  *
  * The Demux fans every inbound frame out to a typed sink, one per frame
  * class. Routing on magic is what removes the need to flush the port before
- * a request (D10): a stale status reply lands in the status sink, never in
+ * a request: a stale status reply lands in the status sink, never in
  * the text sink, so it cannot be mistaken for a command's reply.
  *
  * Two kinds, deliberately different:
@@ -18,16 +18,14 @@
  *   LatestSink<T>  — latest-wins, no accumulation. Status is a state
  *                    sample, not a transaction result: a slightly-late reply
  *                    is still a genuine, slightly-older sample that the next
- *                    poll corrects (D9). So an old one is worthless rather
+ *                    poll corrects. So an old one is worthless rather
  *                    than merely late, and the sink overwrites instead of
  *                    queuing. `waitUpdate(since, timeout)` wakes on a sample
  *                    newer than `since` — pass the previously-returned stamp
  *                    to avoid missing an update that landed between calls.
  *
- * The browser's single-threaded async model is what sets the shape (D12):
- * sinks are awaitable promises, not blocking queues. Python mirrors the
- * interface with `queue.Queue` + a `threading.Condition`; the API is designed
- * for the async model, threads implement it, not the reverse.
+ * The browser's single-threaded async model sets the shape: sinks are
+ * awaitable promises, not blocking queues.
  */
 
 /** Sink<T> — ordered, never drops, awaitable. The ack and text sinks. */
@@ -76,7 +74,7 @@ export class Sink<T> {
 
     /**
      * Drop everything queued; return how many were dropped. Used by the text
-     * plane's one-outstanding rule (D11) — `command()` clears orphans before
+     * plane's one-outstanding rule — `command()` clears orphans before
      * issuing so a previous command's multi-line tail cannot desync the next.
      * Does not touch outstanding get() waiters (their awaiter is the current
      * command, which has not yet been issued).
@@ -172,9 +170,7 @@ export class LatestSink<T> {
                     if (i >= 0) this._waiters.splice(i, 1);
                     // Latest-wins: a stale sample is still a valid
                     // state read, so return the current value on
-                    // timeout (D9). Python's wait_update returns
-                    // (self._value, self._stamp) on timeout — value
-                    // is None only if nothing ever arrived.
+                    // timeout; it is null only if nothing ever arrived.
                     const v = this._value;
                     if (v !== null) {
                         resolve([v, this._stamp] as const);

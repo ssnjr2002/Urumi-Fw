@@ -61,7 +61,7 @@ export const CFG_DATA_HDR_SIZE = 9;
 export const MAX_CFG_PAYLOAD = 64 * 1024;
 
 // ── CFG command NACK reasons (byte[1] of a CFG_NACK frame) ────────────────────
-// A SEPARATE namespace from the MSEG stream NACK reasons in constants.ts — the
+// A SEPARATE namespace from the stream NACK reasons in constants.ts — the
 // same byte values, different command class, so they live here next to the
 // frame they belong to.
 export const CFG_NACK_CRC = 0x01; // CRC32 mismatch — struct corrupt in transit

@@ -486,7 +486,7 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
     if (data[0] === MAGIC_STATUS_RSP_V1) {
         throw new Error(
             "Pico is sending the retired 9-byte STATUS_RSP (0xA6) — firmware " +
-            "predates docs/comms_architecture.md §4.2. Reflash it.",
+            "predates the extended status frame. Reflash it.",
         );
     }
     if (data[0] === MAGIC_STATUS_RSP_V2) {

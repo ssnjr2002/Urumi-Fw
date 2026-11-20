@@ -2,8 +2,8 @@
  * format/crc.ts — checksums the firmware uses.
  *
  * CRC-8, polynomial 0x8C, init 0x00, reflected — the "Dallas/Maxim" 1-Wire
- * variant the RP2350 firmware and the Python host both use (host/protocol/
- * packets.py `_crc8`). Every wire packet ends in this CRC over its body.
+ * variant the RP2350 firmware uses. Every wire packet ends in this CRC over
+ * its body.
  *
  * CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320) guards the config blob,
  * matching crc32() in include/common.h.

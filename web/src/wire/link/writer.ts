@@ -1,34 +1,19 @@
 /**
- * link/writer.ts — frame-granular exclusive writer.
- * Ported from host/protocol/writer.py.
+ * link/writer.ts — frame-granular exclusive writer (docs/system/wire.md).
  *
- * Demultiplexing is hard; multiplexing is easy. The writer knows what it is
- * sending and needs none of the reader's machinery. It has exactly one job:
- * ATOMICITY — never let two concerns interleave bytes within a frame (D6).
+ * Its one job: never let two callers interleave bytes within a frame. A
+ * STATUS_REQ byte written inside a record would be taken by the controller as
+ * part of the record, which then fails its CRC. The lock is held per write,
+ * released between, so a poll can slip in between two records.
  *
- * The hazard is concrete: if a status poll writes 0xA5 midway through a 26-byte
- * MSEG, the firmware is in RX_FIXED26 and takes it UNCONDITIONALLY as packet
- * payload. The MSEG then fails CRC and the status request is silently eaten.
- * So ownership granularity mirrors the reader's: the reader owns the port
- * always, the writer owns it PER FRAME, released between. That is what lets a
- * poll slot between two MSEGs without seizing anything.
+ * A write may be a whole number of frames: a window of up to 16 records goes
+ * out as one transfer, since USB costs per transfer, not per byte. Batches stay
+ * bounded so a stream never holds the lock for long.
  *
- * Batching is compatible with atomicity (D6/D7): the atomic unit is not one
- * packet but a WHOLE NUMBER of frames. A 16-packet window write is one
- * acquisition, one write — 416 bytes, still atomic, and per the transport
- * substrate (docs/comms_architecture.md §1: cost is per-transaction, not
- * per-byte) that is where the throughput win lives. Batches stay bounded so a
- * writer holding the lock for a session does not reintroduce seizure.
+ * The writer does not read; a caller awaits its reply on a sink.
  *
- * The writer does not read (D8). A caller writing a text command awaits the
- * text sink for its reply rather than reading inline; that decoupling is what
- * allows a poll to be in flight while a stream is writing.
- *
- * `writeBatch(frames, abort)` is the D13 surface: `abort` is checked before
- * the batch commits, so an urgent truncate waits at most one frame, never a
- * whole batch. Returning the count (rather than throwing) lets a caller
- * rewind its window precisely — unwritten frames were never sent, so they
- * need no retransmission logic, just a smaller send cursor.
+ * `writeBatch(frames, abort)` checks `abort` before writing and returns how many
+ * frames it wrote, so a caller rewinds its window precisely.
  */
 
 import type { AbortToken, Writable } from "./transport.js";
@@ -75,7 +60,7 @@ export class Writer {
      * Write up to `maxBatchFrames` frames as one transfer, and return how many
      * were actually written.
      *
-     * `abort` is checked BEFORE the write (D13): truncation happens before the
+     * `abort` is checked BEFORE the write: truncation happens before the
      * commit, so the batch that goes out is the batch that lands whole, and an
      * abort costs at most the in-flight write — never a partial frame on the
      * normal path. Returning the count lets a session rewind its window

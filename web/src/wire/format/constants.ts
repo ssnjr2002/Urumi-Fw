@@ -59,9 +59,9 @@ export const MAGIC_NACK = 0xbb;
 
 // ── Binary stream control (host → Pico) — single-byte, no payload/CRC ──────────
 // SEQRESET zeroes expectedSeq and replies ACK(0) — keeps stream start on the
-// data plane instead of dragging it through the one-outstanding text plane
-// (§4.3). ABORT is a soft stop: ramps to rest, flushes the ring, lands IDLE
-// with position intact (§4.5). Fire-and-forget; confirmation arrives on the
+// data plane instead of dragging it through the one-outstanding text plane.
+// ABORT is a soft stop: ramps to rest, flushes the ring, lands IDLE with
+// position intact. Fire-and-forget; confirmation arrives on the
 // status sink as the state settles.
 export const MAGIC_SEQRESET = 0xa8;
 export const MAGIC_ABORT = 0xa9;
@@ -75,7 +75,7 @@ export const NACK_BAD_MAGIC = 0x03; // reserved: never sent, an unknown byte is 
 export const NACK_PAUSED = 0x04; // record rejected — the job is paused or pausing
 export const NACK_BAD_STATE = 0x06; // command rejected — wrong machine state
 // Barrier, not an error: stream rejected because the machine is mid-abort-ramp.
-// The host waits for IDLE and reopens rather than surfacing a failure (§4.5).
+// The host waits and resends rather than surfacing a failure.
 export const NACK_ABORTING = 0x07;
 // A BEZIER record failed the Pico's checks, or broke contour framing or the chain.
 export const NACK_BAD_CURVE = 0x08;

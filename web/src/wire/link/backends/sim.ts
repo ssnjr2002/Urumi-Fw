@@ -1,6 +1,5 @@
 /**
- * link/backends/sim.ts — in-process fake Pico (a Transport).
- * Ported from host/protocol/link.py SimBackend.
+ * link/backends/sim.ts — in-process fake Pico (a Transport; docs/system/wire.md).
  *
  * Answers text commands per the admission in docs/reference/commands.md AND
  * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (its tool
@@ -15,11 +14,9 @@
  * without hardware. The SimTransport implements the Transport interface, so a
  * Link constructed over it works identically to one over a real port.
  *
- * Threading-vs-async: Python's SimBackend runs the executor on a daemon thread
- * under an RLock. The browser/Node are single-threaded, so the executor is a
- * setInterval timer and "the lock" is simply JS's run-to-completion: every
- * write() and every executor tick runs atomically with respect to each other,
- * because they cannot interleave on one event loop.
+ * The executor is a setInterval timer, and JS's run-to-completion is its lock:
+ * every write() and every executor tick runs atomically with respect to each
+ * other, because they cannot interleave on one event loop.
  */
 
 import type { Demux } from "../demux.js";
@@ -434,7 +431,7 @@ export class SimTransport implements Transport {
         this._readWaiters = [];
     }
 
-    // ── coalesced ACKs (mirrors data_plane.cpp §4.1) ───────────────────────────
+    // ── coalesced ACKs (mirrors data_plane.cpp) ────────────────────────────────
     // The ACK is cumulative: one frame confirms every packet accepted since the
     // last flush. Deferring them is what the firmware does; the sim does it too
     // so the host suites actually exercise the multi-packet advance rather than
@@ -779,10 +776,8 @@ export class SimTransport implements Transport {
         const parts = line.split(/\s+/);
         const cmd = parts[0]!;
         const args = parts.slice(1);
-        // `S` mirrors the Python `S = self`. eslint's no-this-alias rule wants
-        // an arrow rather than a `this` alias; the handler has no nested
-        // callbacks that would lose `this`, so the alias is stylistic parity
-        // with the Python, not a binding hazard.
+        // `S` is a short alias for `this`; the handler has no nested callbacks
+        // that would lose `this`, so it is stylistic, not a binding hazard.
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         const S = this;
         const jobPaused = (): boolean => S.state === MachineState.JOB && S.job === JobReason.PAUSED;

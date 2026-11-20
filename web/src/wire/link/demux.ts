@@ -1,6 +1,5 @@
 /**
- * link/demux.ts — the demultiplexing state machine (D1–D5).
- * Ported from host/protocol/reader.py (Demux, Ack, Nack, CfgReply, make_sinks).
+ * link/demux.ts — the demultiplexing state machine (docs/system/wire.md).
  *
  * One reader owns the port for the connection's lifetime, classifies every
  * inbound byte, and fans whole frames out to typed sinks. Nothing else reads
@@ -37,7 +36,7 @@ import { CFG_DATA_HDR_SIZE, MAX_CFG_PAYLOAD, unpackCfgDataHeader } from "../form
 
 // ── frame types: routing objects, not parsed payloads ─────────────────────────
 // The demux's job is routing, not interpretation. Status parsing stays in
-// format/status.ts; the demux hands the raw 30 bytes to the status sink.
+// format/status.ts; the demux hands the raw frame to the status sink.
 
 /** Cumulative ACK — `expectedSeq` is the Pico's next-wanted wire seq. */
 export class Ack {
@@ -133,7 +132,7 @@ export class Demux {
 
     // Diagnostics. `unknownBytes` is the one to watch: a nonzero count means a
     // firmware/host version mismatch or a genuine desync — the only way either
-    // becomes visible (D5).
+    // becomes visible.
     unknownBytes = 0;
     frames = 0;
     textLines = 0;
@@ -246,7 +245,7 @@ export class Demux {
 
         // Bit 7 set but not a magic we know: discard exactly one byte and stay
         // idle, so the next byte gets a fresh classification. Discarding more
-        // would risk eating the start of a valid frame (D5).
+        // would risk eating the start of a valid frame.
         this.unknownBytes++;
     }
 

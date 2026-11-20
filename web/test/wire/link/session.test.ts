@@ -1,7 +1,6 @@
 /**
  * Tests for wire/link/session — the Go-Back-N windowed stream over a
- * PacketSource. Pins the architectural properties from docs/comms_architecture.md
- * §2.3 that the Python session.test pins (host/diagnostics/test_session.py):
+ * PacketSource. Pins these properties:
  *
  *   - pull() called AT MOST ONCE PER PACKET, EVER. A go-back replays from the
  *     retained window, never from the source — so under forced backpressure

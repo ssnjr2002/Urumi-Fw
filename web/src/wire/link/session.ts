@@ -1,26 +1,21 @@
 /**
- * link/session.ts — windowed stream sessions over the demux (D14 / §2.3).
- * Ported from host/protocol/session.py.
+ * link/session.ts — windowed stream sessions over the demux
+ * (docs/system/wire.md; the job session in docs/system/jobs.md).
  *
  * A Session subscribes to the ack sink for its span instead of seizing the
- * port and spawning its own reader. Status polling and text commands stay live
- * throughout — the architectural change from the old Sender, not the Go-Back-N
- * logic (that is carried over intact).
+ * port. Status polling and text commands stay live throughout.
  *
- * CLOSED vs OPEN sessions fall out of one signature once the retransmit buffer
- * is separated from the packet source:
+ * A source may be closed or open, since the retransmit buffer is kept apart
+ * from it:
  *
- *   closed (job)  — pull() returns slices, then null. The whole sequence is
- *                   known before the first byte goes out.
- *   open  (jog)   — pull() may return [] indefinitely (operator not pressing,
- *                   buffer full) and null only when winding down. The total
- *                   is not known up front; it depends on input that has not
- *                   happened yet.
+ *   closed — pull() returns slices, then null. The whole sequence is known
+ *            before the first byte goes out.
+ *   open   — pull() may return [] for as long as it has nothing, and null
+ *            only when winding down.
  *
- * The property that makes open sessions tractable: pull() is called AT MOST
- * ONCE PER PACKET, EVER. A go-back replays from the retained window, never
- * from the source — so a source needs no idempotency and no memory of what it
- * already produced, which is exactly what a jog source cannot provide.
+ * pull() is called AT MOST ONCE PER PACKET. A go-back replays from the retained
+ * window, never from the source, so a source needs no memory of what it
+ * already produced.
  *
  *   pull() → null    : finished (closed: exhausted; open: winding down)
  *   pull() → []      : nothing right now, still open
@@ -66,12 +61,10 @@ const STATUS_POLL_MS = 100; // a job session's STATUS_REQ period
 const STATUS_WAIT_MS = 200; // a held job session's wait for its STATUS_RSP
 const SEQRESET_WAIT_MS = 1000;
 
-// ── fatal reason codes (D17) ────────────────────────────────────────────────────
+// ── fatal reason codes ──────────────────────────────────────────────────────────
 // run() returns false on any fatal NACK OR on a self-inflicted failure (total
-// silence past STALL_TIMEOUT_MS, too many CRC retries). Before D17 those paths
-// returned a bare `false` and the caller had no way to tell them apart — a
-// machine that NACKed BAD_STATE vs one that simply went silent looked the same.
-// `fatalReason` is set at each fatal exit and `fatalReasonName()` renders it.
+// silence past STALL_TIMEOUT_MS, too many CRC retries). `fatalReason` is set at
+// each fatal exit and `fatalReasonName()` renders it.
 //
 // NACK reasons (0x01..0x08) are passed through unchanged; self-inflicted ones
 // use the 0xE0.. range so they never collide with a future wire NACK.
@@ -92,10 +85,8 @@ function delay(ms: number): Promise<void> {
  * Handed to PacketSource.pull(). Everything a source needs to decide what to
  * emit next, without owning the port or issuing a round trip.
  *
- * `status` is the key one: the live sample from the global status sink, which
- * keeps updating DURING transmission because the reader never stopped reading.
- * Under the old seizure model a jog's blend-vs-decel decision was made on a
- * sample stale by the whole duration of the send just completed.
+ * `status` is the live sample from the global status sink, which keeps
+ * updating DURING transmission because the reader never stops reading.
  */
 export class StreamContext {
     private readonly _session: Session;
@@ -126,7 +117,7 @@ export class StreamContext {
         }
     }
 
-    /** MicroSegments queued on the Pico, or null. A jog source watches this to pace. */
+    /** Records queued on the Pico, or undefined. An open source watches this to pace. */
     get bufCount(): number | undefined {
         return this.status?.bufCount;
     }
@@ -136,11 +127,8 @@ export class StreamContext {
      * after `timeoutMs` or when the session is truncated (so an abort / jog
      * reversal wakes a waiting source immediately).
      *
-     * THE PYTHON/TS DIVERGENCE (§2.3): Python blocks on a `threading.Event`
-     * that a click can wake. A source with its own intent queue should supply
-     * its own wait target — `Promise.race([intentPromise, this._session._abortPromise])`
-     * — so jogging does not gain a latency floor equal to a poll interval.
-     * This default is the fallback, racing the bare timeout against truncate.
+     * A source with its own input should race that against `abortPromise`
+     * instead, so it doesn't gain a latency floor equal to the timeout.
      */
     wait(timeoutMs: number = IDLE_WAIT_MS): Promise<void> {
         return Promise.race([delay(timeoutMs), this._session.abortPromise]);
@@ -352,7 +340,7 @@ export class Session {
     private readonly _job: ReplayableSource | undefined;
     private readonly _command: ((line: string) => Promise<string>) | undefined;
     readonly window: number;
-    /** When set, run() emits per-event console.debug lines (D17): ACK seq+delta,
+    /** When set, run() emits per-event console.debug lines: ACK seq+delta,
      *  NACK + reason name, go-back to base, stall, fatal. Idle by default so a
      *  normal stream makes no noise; flip on to trace a silent failure. */
     verbose = false;
@@ -387,7 +375,7 @@ export class Session {
     retries = 0;
     nacks = 0;
     truncated = false;
-    /** Why run() returned false (D17). Unset on a successful/truncated run.
+    /** Why run() returned false. Unset on a successful/truncated run.
      *  For a NACK it is the NACK reason byte; FATAL_STALL / FATAL_CRC_LIMIT
      *  are self-inflicted. Read via `fatalReasonName()` for a human label. */
     fatalReason: number | undefined;
@@ -510,7 +498,7 @@ export class Session {
 
     /**
      * Drive the stream to completion. Returns true on success or truncation,
-     * false on fatal — in which case `fatalReason` (D17) names the cause.
+     * false on fatal — in which case `fatalReason` names the cause.
      * A job session returns only on cancel(), end(), truncate(), a fatal NACK or a
      * lost job; it holds (`held`) while the machine takes no records.
      */
@@ -606,11 +594,10 @@ export class Session {
                 }
                 await this._goBack(r, 0);
             } else {
-                // NACK_FULL (backpressure), NACK_BUSY or NACK_ABORTING (§4.5
-                // barrier):
-                // wait for the ring to drain / the abort ramp to finish, then
-                // resend from base. NACK_ABORTING is a barrier, not an error —
-                // the Pico ramps to rest and lands IDLE; retry until it accepts.
+                // NACK_FULL (backpressure), NACK_BUSY or NACK_ABORTING (the
+                // abort barrier): wait for the ring to drain / the abort to
+                // finish, then resend from base. NACK_ABORTING is a barrier,
+                // not an error; retry until the Pico accepts.
                 await this._goBack(r, BACKPRESSURE_MS);
             }
             lastProgress = monotonicNow();
@@ -877,7 +864,7 @@ export class Session {
         };
     }
 
-    /** Stream outcome (D17) — `ok` plus the fatal reason and the stats tally. */
+    /** Stream outcome — `ok` plus the fatal reason and the stats tally. */
     result(): StreamResult {
         return {
             ok: this.fatalReason === undefined,
@@ -982,16 +969,15 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [FATAL_JOB_LOST]: "FATAL_JOB_LOST",
 };
 
-/** Human-readable name for a `Session.fatalReason` value (D17). */
+/** Human-readable name for a `Session.fatalReason` value. */
 export function fatalReasonName(r: number): string {
     return NACK_REASON_NAMES[r] ?? `FATAL(0x${r.toString(16)})`;
 }
 
 /**
- * Stream outcome (D17) — `link.stream()` and `Session.run()` both surface WHY
- * a stream died, not just THAT it died. `ok` mirrors the boolean callers that
- * ignore the reason relied on (`if (await sess.run()) …`); `fatalReason` is set
- * only when `ok === false`. Stats are the running tally at exit, so a failed
+ * Stream outcome — `link.stream()` and `Session.run()` both surface WHY a
+ * stream died, not just THAT it died. `fatalReason` is set only when
+ * `ok === false`. Stats are the running tally at exit, so a failed
  * stream shows how far it got (emitted/acked) before the failure.
  */
 export interface StreamResult {

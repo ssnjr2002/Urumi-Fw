@@ -1,12 +1,11 @@
 /**
- * link/link.ts — owns a Transport, one Demux, one Writer, and the sink set.
- * Ported from host/protocol/link.py `Link` (minus the in-tree backends, which
- * live in link/backends/).
+ * link/link.ts — owns a Transport, one Demux, one Writer, and the sink set
+ * (docs/system/wire.md).
  *
- * Concerns SUBSCRIBE rather than seize (D1/D3): command(), getStatus() and
- * session() can all be in flight at once, because each awaits its own sink
- * while the single read loop keeps draining the Transport into the Demux.
- * Nothing else reads the Transport; the read loop is the reader (D1).
+ * Callers subscribe rather than seize: command(), getStatus() and session()
+ * can all be in flight at once, because each awaits its own sink while the
+ * single read loop keeps draining the Transport into the Demux. Nothing else
+ * reads the Transport.
  *
  * Construct `new Link(transport)` over any Transport (the in-process Sim, a
  * browser WebSerial port, or a Node serialport). The Link is environment-blind
@@ -77,9 +76,8 @@ export class Link {
     private _closed = false;
     /**
      * When true, sessions created via stream()/session() log each ACK, NACK,
-     * go-back and fatal at console.debug level (D17). Default off — flip on at
-     * connect time to trace a silent stream failure (the bare-`false` return
-     * problem the orchestrate demo hit before this fix).
+     * go-back and fatal at console.debug level. Default off — flip on at
+     * connect time to trace a silent stream failure.
      */
     verbose = false;
 
@@ -131,8 +129,8 @@ export class Link {
     /**
      * Send one control-plane line and return the reply line (stripped), or ""
      * on timeout. No flush of the PORT beforehand: routing on magic means a
-     * stale status reply or a stream ACK cannot land in the text sink (D10).
-     * Text stays strictly one-outstanding (D11): the next line in the sink is
+     * stale status reply or a stream ACK cannot land in the text sink.
+     * Text stays strictly one-outstanding: the next line in the sink is
      * ours.
      *
      * The text sink itself is drained first — under the one-outstanding lock,
@@ -187,7 +185,7 @@ export class Link {
     }
 
     /**
-     * Soft abort (§4.5): ramp to rest, flush the ring, land IDLE with position
+     * Soft abort: ramp to rest, flush the ring, land IDLE with position
      * intact. Fire-and-forget like `stop` — it correlates nothing, so it takes
      * the writer lock but no reply slot and can never queue behind a pending
      * text command. Confirmation arrives on the status sink as the state
@@ -289,7 +287,7 @@ export class Link {
 
     /**
      * Align the Pico's expectedSeq with a session's fresh seq counter. Every
-     * session stamps from 0, so this must precede one. Binary (§4.3): one byte
+     * session stamps from 0, so this must precede one. Binary: one byte
      * out, ACK(0) back on the ack sink. The ACK is drained HERE rather than
      * left for the session — a session opening on a stale ACK would advance
      * its window against a packet it never sent.
@@ -303,9 +301,8 @@ export class Link {
 
     /**
      * Stream a closed sequence (a job) with Go-Back-N. Resets the seq first.
-     * Returns the Stream outcome (D17): `ok` is the boolean legacy callers
-     * tested (`if (await link.stream(pkts)) …` still works — `ok` is truthy),
-     * and on failure `fatalReason` names the cause. Stats are the tally at exit
+     * Returns the stream outcome: `ok`, and on failure `fatalReason` naming
+     * the cause. Stats are the tally at exit
      * so a failed stream shows how far it got.
      */
     async stream(packets: Iterable<Uint8Array>, window: number = DEFAULT_WINDOW): Promise<StreamResult> {
@@ -320,7 +317,7 @@ export class Link {
      * session (manual jogging), where packets are produced in response to
      * operator input and the session ends by truncation rather than exhaustion.
      * Caller must resetSeq() first; stream() does it for you. The session
-     * inherits `verbose` from this Link (D17). A ReplayableSource makes a job
+     * inherits `verbose` from this Link. A ReplayableSource makes a job
      * session: it holds through pauses and tool changes and ends on cancel() or end().
      */
     session(source: PacketSource | ReplayableSource, window: number = DEFAULT_WINDOW): Session {
