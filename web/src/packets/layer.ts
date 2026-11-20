@@ -66,6 +66,15 @@ export interface LayerHdr {
     readonly thickness?: number;
 }
 
+/** A layer in memory: its header's fields, tool and bbox, and its BEZIER packets, record n = packets[n - hdr.record]. */
+export interface JobLayer {
+    readonly hdr: LayerHdr;
+    readonly tool: number;
+    readonly head: number;
+    readonly bbox: ToolBox;
+    readonly packets: readonly Uint8Array[];
+}
+
 export function packJobHdr(j: JobHdr, seq = 0): Uint8Array {
     const u8 = new Uint8Array(JOB_HDR_SIZE);
     const dv = new DataView(u8.buffer);

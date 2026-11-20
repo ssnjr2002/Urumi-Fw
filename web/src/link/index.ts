@@ -32,7 +32,6 @@ export {
     FATAL_CRC_LIMIT,
     FATAL_JOB_LOST,
     type Hold,
-    type JobLayer,
     type PacketSource,
     type ReplayableSource,
     type SessionStats,

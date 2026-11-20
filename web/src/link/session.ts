@@ -46,7 +46,7 @@ import {
     MAGIC_STATUS_REQ,
 } from "../packets/constants.js";
 import { stampSeq } from "../packets/packet.js";
-import { packJobHdr, packLayerHdr, packToolHdr, type LayerHdr, type ToolBox, type ToolHdr } from "../packets/layer.js";
+import { packJobHdr, packLayerHdr, packToolHdr, type JobLayer, type ToolBox, type ToolHdr } from "../packets/layer.js";
 import { Ack, Nack } from "./demux.js";
 import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../packets/status.js";
 
@@ -176,15 +176,6 @@ export interface ReplayableSource {
     hasLayer(layer: number): boolean;
     /** How many frames open the job. The session sends no more until placement signs off. */
     readonly preflightFrames: number;
-}
-
-/** A layer in memory: its header's fields, tool and bbox, and its BEZIER packets, record n = packets[n - hdr.record]. */
-export interface JobLayer {
-    readonly hdr: LayerHdr;
-    readonly tool: number;
-    readonly head: number;
-    readonly bbox: ToolBox;
-    readonly packets: readonly Uint8Array[];
 }
 
 function unionBox(a: ToolBox, b: ToolBox): ToolBox {
