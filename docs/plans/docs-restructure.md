@@ -346,8 +346,8 @@ page.
 | 7 | `nodes` | node firmware: the core and type split, the hooks, the stepper, vacuum and knife types, legs on the node, the hall index | `src/node/` | `node_type_architecture.md`, `homing.md` §1, the architecture half of `src/node/README.md` |
 | 8 | `jobs` | the job stream and its headers, layers, placement, tool change, pause, cancel and abort | `data_plane.cpp`, `controller/seq/place.*`, `toolchange.*`, `web/src/toolpath/job.ts` | the job sections of `wire_protocol.md` and the `job-*` plans |
 | 9 | `config` | jsonc, validation, the msgpack blob, the store, the decode to `MachineCfg`; `set` and `save` | `core0/config/`, `web/src/machine/` | `config_storage.md` |
-| 10 | `host` | the link (reader, writer, sessions, demux), the backends and the Sim, the machine model | `web/src/wire/link/`, `web/src/index.ts` | `comms_architecture.md` |
-| 11 | `toolpath` | an SVG to BEZIER records: load, layers and tools, clean, annotate, the job's packets | `web/src/svg/`, `web/src/toolpath/`, `web/src/wire/format/bezier.ts`, `layer.ts` | nothing live |
+| 10 | `wire` | the USB wire at both ends: the controller's receive path (routing, holds, barriers, the coalesced ACK); the host's link (reader, writer, demux, sessions), the backends and the Sim | `core0/data_plane.cpp`, `core0.cpp`, `web/src/wire/` | `comms_architecture.md` |
+| 11 | `toolpath` | an SVG to BEZIER records: load, layers and tools, clean, annotate, the layer's records | `web/src/svg/`, `web/src/toolpath/`, `web/src/wire/format/bezier.ts` | nothing live |
 | 12 | `firmware-build` | `platformio.ini`, the Arduino cores and libraries, the Pico SDK, upload | `platformio.ini`, `scripts/pio/`, `src/rp2350/main.cpp`, `uart_9bit.pio` | the `platformio.ini` half of `src/node/README.md` |
 | 13 | `host-build` | the `web/` package: pnpm, TypeScript and its two configs, ESM exports, eslint, vitest, the vite demo, the generator scripts | `web/package.json`, `tsconfig*.json`, `vitest.config.ts`, `eslint.config.js`, `web/scripts/`, `web/demo/` | the Development section of `web/README.md` |
 | 14 | `tests` | the firmware suites (`native`, doctest, stubs) and the host suites (vitest), and the fixtures that cross between them | `test/`, `web/test/` | `test/README` |
@@ -734,7 +734,34 @@ that code (see `AGENTS.md`, Agent Scope).
     * Replaces nothing live: the earlier designs are already in `archive/`
       (`PLAN_svg_tile_motion.md`, `planner_spaces.md`).
 
-    **Status:** not started.
+    **Status:** ready to merge.
+
+    **Outcome:**
+
+    * `layer.ts` dropped from the code: the demo calls `prepareBezierJob()`
+      for one layer's records only, and `JobSource` builds the headers, which
+      are `jobs.md` §7's.
+    * History sits near the bottom, before Code: the MicroSegment path
+      (`ingest`, `repair`, `flatten`), why branch 6 of `pico-planner.md`
+      forked it, how the record grew to 62 bytes, the float32 cross-check
+      and tool layers. Each decision names what it rejected in one clause.
+    * Scope widened, as in branches 10 and 15: stale comments in
+      `geometry.ts` and `geometry.test.ts` pruned, and `annotate.ts` and
+      `clean.ts` now say what `prepareBezierJob()` passes them. `jobs.md`'s
+      scope line links the toolpath and wire pages.
+    * Checks: `pnpm typecheck`, `pnpm test` (664 passed, 1 skipped).
+    * Out of scope, for a later pass:
+      * Ten of `QualityConfig`'s twelve fields (`chordTol`, `dvMax`, `vMin`,
+        `dtMax`, `dtMin`, `nKappa`, `junctionDeviation`, `dsMax`,
+        `dthetaMax`, `maxRefine`) are read from the config and used by
+        nothing, left from the MicroSegment path. `QualityConfig` could hold
+        the toolpath's tolerances instead: `angleTol`, `gapTol` and
+        annotate's five; not `handleTol` or annotate's copies of the
+        controller's constants.
+      * `prepareBezierJob()` returns `contours`, used only by tests.
+      * `prepareBezierJob()` returns `{ error }` for a missing or empty
+        layer but throws for a malformed SVG or a refused piece.
+      * `%` sizes and a `viewBox` with commas are refused, not read.
 
 12. `refactor/system-firmware-build`: `docs/system/firmware-build.md`, how
     the firmware is built.
