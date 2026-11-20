@@ -693,6 +693,33 @@ that code (see `AGENTS.md`, Agent Scope).
 
     **Status:** not started.
 
+    **Outcome:**
+
+    * One page, not a controller page and a host page: the controller's side
+      is mostly on `controller.md`, `jobs.md` and `config.md` already. Where
+      both ends act, a section has a Controller and a Host part. Decisions
+      come right after the routing section, before the planes. The job
+      session's holds stay in `jobs.md`, linked.
+    * `comms_architecture.md` moved to `archive/`. Its USB facts (§1, checked
+      online) and the lasting reasons from §2 are on the page; open-session
+      jogging, the firmware-change history and the ledger stay in the
+      archive.
+    * Scope widened, as in branch 15: comments in `web/src/wire/` lost the
+      "Ported from" lines, Python references, and the D-numbers and §s into
+      the archived doc; one error string in `status.ts` changed with them.
+    * The plain stream (`Session.run()`, `ListSource`, `link.stream()`) is not
+      described. Whether it goes is open; removing it would be its own branch,
+      since it changes the library's interface and rewrites the tests that use
+      it.
+    * Out of scope, for a later pass:
+      * `axisMap()` and `readAxisMap()` in `commands.ts` send `axis_map`, which
+        the firmware no longer has (it has `slot_map`, `axes_map` and
+        `select`); only the Sim answers it. Both are exported from the root.
+      * Four bare §s in `sim.ts` (§8, §6.2, §9, §3.4) name no doc; other
+        comments cite §s of live docs (`homing.md`, `tool_probe.md`,
+        `system/bus.md`) that may have moved.
+      * The page no longer says `RS485_BAUD` is the system's real rate.
+
 11. `refactor/system-toolpath`: `docs/system/toolpath.md`, an SVG to BEZIER
     records.
 
