@@ -63,6 +63,7 @@ page that now describes it.
 
 | Doc | Was | Replaced by |
 | --- | --- | --- |
+| `comms_architecture.md` | the host's link: one reader and sinks, the frame writer, open and closed sessions, the firmware changes it asked for | `docs/system/wire.md` |
 | `config_storage.md` | the config store: `/config.bin` and `/mesh.bin`, the commit, the Core 1 park, `CFG_SET`/`CFG_GET` framing, `cfg`, runtime edits | `docs/system/config.md` |
 | `engage_and_axis_map.md` | run-time stream slots, `CMD_ENGAGE`, the slot and axes maps, the fence | `docs/system/bus.md` |
 | `generic_planner_firmware_design.md` | the seed design: Bézier blocks, look-ahead, the 1 kHz tick, position followers, the mesh | `docs/system/planner.md` |
