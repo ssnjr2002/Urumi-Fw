@@ -30,8 +30,12 @@ function testMachine(): ControllerConfig {
     return r.config;
 }
 
+// Mutations below break the schema on purpose, so the config is untyped.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Loose = Record<string, any>;
+
 /** A plain mutable copy with undefined fields dropped, as msgpack sees it. */
-function plain(config: ControllerConfig): Record<string, any> {
+function plain(config: ControllerConfig): Loose {
     return JSON.parse(JSON.stringify(config));
 }
 
@@ -53,7 +57,7 @@ describe("config blob", () => {
 
 // ── shared fixtures ───────────────────────────────────────────────────────────
 
-type Mutate = (c: Record<string, any>) => void;
+type Mutate = (c: Loose) => void;
 
 /**
  * Bad blobs, one per Pico rejection. The name is what the firmware test
@@ -107,7 +111,7 @@ const BAD: readonly { name: string; host: boolean; mutate: Mutate; v?: number }[
 const DIR = join(FIXTURES, "config");
 const GEN = process.env.GEN_CFG_FIXTURES === "1";
 
-function badBlob(b: (typeof BAD)[number]): { config: Record<string, any>; bytes: Uint8Array } {
+function badBlob(b: (typeof BAD)[number]): { config: Loose; bytes: Uint8Array } {
     const config = plain(testMachine());
     b.mutate(config);
     return { config, bytes: encode({ v: b.v ?? CONFIG_BLOB_VERSION, ...config }) };

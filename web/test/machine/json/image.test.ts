@@ -53,7 +53,7 @@ describe("configFileImage", () => {
 describe("configImageFromText", () => {
     it("carries the encoded config", () => {
         const img = configImageFromText(readFixture("test-machine.json"));
-        const config = decodeConfigBlob(img.subarray(CFG_HEADER_BYTES)) as any;
+        const config = decodeConfigBlob(img.subarray(CFG_HEADER_BYTES));
         expect(config.machine.x.invertDir).toBe(true);
     });
 

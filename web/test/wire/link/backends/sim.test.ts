@@ -30,7 +30,6 @@ import {
 import { stampSeq } from "../../../../src/wire/format/packet.js";
 import { packBezier } from "../../../../src/wire/format/bezier.js";
 import { packJobHdr, packLayerHdr, packToolHdr } from "../../../../src/wire/format/layer.js";
-import { BezierFlag } from "../../../../src/toolpath/annotate.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
 import { packCjog, type JogDir } from "../../../../src/wire/format/cjog.js";
 import { CJOG_DEADMAN_MS, MAGIC_CJOG_STOP } from "../../../../src/wire/format/constants.js";

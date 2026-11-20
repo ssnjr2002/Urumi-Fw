@@ -25,7 +25,6 @@ import {
     toolHead,
     type MachineConfig,
     type ControllerConfig,
-    type ToolProfile,
 } from "../src/machine/schema.js";
 import { ToolType } from "../src/machine/schema.js";
 import { TOOL_PROFILES } from "../src/machine/tools.js";

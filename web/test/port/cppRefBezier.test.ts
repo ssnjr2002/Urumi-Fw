@@ -48,6 +48,5 @@ it("generates the C++ BEZIER records", (ctx) => {
         "# fish.svg as BEZIER packets, 62 bytes each.\n" +
         lines.join("\n") + "\n",
     );
-    // eslint-disable-next-line no-console
     console.log(`wrote ${lines.length} records`);
 });

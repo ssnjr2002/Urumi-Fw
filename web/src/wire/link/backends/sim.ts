@@ -1024,7 +1024,6 @@ export class SimTransport implements Transport {
                 if (!isIdlePausedAlarm(S.state)) return "err bad_state";
                 const axes = args[0] ?? "xyza";
                 const m = axisMask(axes);
-                const axisChars = "xyza";
                 for (let i = 0; i < 4; i++) {
                     if (!(m & (1 << i))) continue;
                     // Recorded against the NODE in the slot, not the slot — an

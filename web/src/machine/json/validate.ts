@@ -82,7 +82,6 @@ const xyMustBeCapped: Rule = ({ machine }) =>
 const targetsUnderCeilings: Rule = (config) => {
     const { machine } = config;
     const xyFeed = minPositive(machine.x.maxFeed, machine.y.maxFeed);
-    const xyAccel = minPositive(machine.x.maxAccel, machine.y.maxAccel);
 
     const issues: Issue[] = [
         ...feedOver("machine.feed.travelDefault", machine.feed.travelDefault, xyFeed),

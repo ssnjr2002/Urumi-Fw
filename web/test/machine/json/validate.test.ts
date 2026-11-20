@@ -19,6 +19,7 @@ import {
     toolHead,
     toolProfile,
     type MachineConfig,
+    type ToolProfile,
     type ControllerConfig,
     ToolType,
 } from "../../../src/machine/schema.js";
@@ -56,7 +57,7 @@ describe("baseline", () => {
 describe("rule: powerCoherent", () => {
     const knife = (power: object, machine?: Partial<MachineConfig>): ControllerConfig => {
         const c = cfg(machine);
-        return { ...c, toolProfiles: { knife: toolProfile("knife", { ...KNIFE, id: 1, power } as any) } };
+        return { ...c, toolProfiles: { knife: toolProfile("knife", { ...KNIFE, id: 1, power: power as ToolProfile["power"] }) } };
     };
     const periph = { peripherals: [busNode(8, { type: NodeType.KNIFE_OSC })] };
 
@@ -65,7 +66,7 @@ describe("rule: powerCoherent", () => {
     });
 
     it("accepts the laser's node (a bench stand-in)", () => {
-        expect(errors(knife({ node: { id: 3, type: 1 }, settleS: 0 }, { laser: { node: 3 } } as any))).toEqual([]);
+        expect(errors(knife({ node: { id: 3, type: 1 }, settleS: 0 }, { laser: { node: 3 } } as Partial<MachineConfig>))).toEqual([]);
     });
 
     it("errors on a node that is absent or not a knife oscillator", () => {
@@ -74,7 +75,7 @@ describe("rule: powerCoherent", () => {
             "peripheral or the laser's STEPPER node";
         expect(errors(knife({ node: { id: 8, type: 3 }, settleS: 0 }, absent))).toContain(msg);
         expect(errors(knife({ node: { id: 8, type: 3 }, settleS: 0 }))).toContain(msg);
-        expect(errors(knife({ node: { id: 3, type: 3 }, settleS: 0 }, { laser: { node: 3 } } as any)))
+        expect(errors(knife({ node: { id: 3, type: 3 }, settleS: 0 }, { laser: { node: 3 } } as Partial<MachineConfig>)))
             .not.toEqual([]);
     });
 
