@@ -3,10 +3,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { crc8 } from "../../../src/wire/format/crc.js";
-import { MAGIC_JOB_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR } from "../../../src/wire/format/constants.js";
-import { packJobHdr, packLayerHdr, packToolHdr } from "../../../src/wire/format/layer.js";
-import { stampSeq } from "../../../src/wire/format/packet.js";
+import { crc8 } from "../../../src/packets/crc.js";
+import { MAGIC_JOB_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR } from "../../../src/packets/constants.js";
+import { packJobHdr, packLayerHdr, packToolHdr } from "../../../src/packets/layer.js";
+import { stampSeq } from "../../../src/packets/packet.js";
 
 describe("wire/format/layer: packLayerHdr", () => {
     it("lays out magic, chamber, seq, layer, record, feed, p, t and a trailing CRC", () => {

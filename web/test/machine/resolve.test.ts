@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { toolForLayer, canRunTool, requiredAxes } from "../../src/machine/resolve.js";
+import { toolForLayer, canRunTool, requiredAxes } from "../../src/config/resolve.js";
 import {
     PEN,
     KNIFE,
@@ -18,7 +18,7 @@ import {
     ToolType,
     NodeType,
     type MachineConfig,
-} from "../../src/machine/index.js";
+} from "../../src/config/index.js";
 
 // A machine with every axis node wired; per-test we knock out nodes.
 function machine(opts?: {

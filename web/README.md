@@ -1,8 +1,7 @@
 # urumi-host
 
 Host library for the Urumi cutter: turns an SVG layer into BEZIER packets,
-encodes the machine config image, and talks to the Pico over USB
-(`wire/link`). Works in modern browsers and in Node 22.12+. TypeScript, ESM.
+encodes the machine config image, and talks to the Pico over USB. Works in modern browsers and in Node 22.12+. TypeScript, ESM.
 
 The Pico plans and runs motion, homing, probing, parking and tool change; this
 library prepares the job and streams it. Packet layouts are in
@@ -23,18 +22,19 @@ The build, its scripts and the demo: [docs/system/host-build.md](../docs/system/
 
 | Path | What |
 |---|---|
-| `src/svg/load.ts` | SVG text → subpaths in mm (Y up), per layer |
-| `src/toolpath/` | clean, annotate, and `prepareBezierJob`: one layer → BEZIER packets |
-| `src/wire/format/` | packet encoders and decoders (BEZIER, LAYER_HDR, CJOG, STATUS, CFG) |
-| `src/wire/link/` | transports (sim, WebSerial, Node serialport), session, control commands |
-| `src/machine/` | the config document: schema, tool presets, validation, binary image |
+| `src/transport/` | `urumi-host/transport`: the interface; `/webserial`, `/node` and `/sim` the transports |
+| `src/packets/` | `urumi-host/packets`: packet encoders and decoders (BEZIER, LAYER_HDR, CJOG, STATUS, CFG) |
+| `src/config/` | `urumi-host/config`: the config document: schema, tool presets, validation, binary image |
+| `src/toolpath/` | `urumi-host/toolpath`: SVG load, clean, annotate, and `prepareBezierJob`: one layer → BEZIER packets |
+| `src/link/` | `urumi-host/link`: the link, job session, control commands |
 | `scripts/config-image.ts` | `config/*.jsonc` → `data/config.bin`, run by `pio run -e pico -t uploadfs` |
 | `demo/` | the machine console, a plain page over this library (`pnpm demo`) |
 
 ## A job
 
 ```ts
-import { prepareBezierJob, JobSource } from "urumi-host";
+import { prepareBezierJob } from "urumi-host/toolpath";
+import { JobSource } from "urumi-host/link";
 
 const job = prepareBezierJob(svgText, "knife", { offset: { x: 100, y: 50 } });
 if ("error" in job) throw new Error(job.error);
@@ -42,12 +42,15 @@ if ("error" in job) throw new Error(job.error);
 // It holds as `place` after preflight; layers go once the operator sends `place set` and `place ok`.
 ```
 
-The real-port transports have their own subpaths, so a Node consumer never
-pulls browser globals:
+Every import names its subpath; there is no root `urumi-host`. Each
+transport has its own, so a Node program never pulls browser globals:
 
 ```ts
-import { WebSerialTransport } from "urumi-host/wire/link/backends/webserial";
-import { openNodeLink }       from "urumi-host/wire/link/backends/node";
+import { Link } from "urumi-host/link";
+import { WebSerialTransport } from "urumi-host/transport/webserial";
+import { NodeTransport }      from "urumi-host/transport/node";
+
+const link = new Link(await NodeTransport.open("/dev/ttyACM0"));
 ```
 
 ## SVG input

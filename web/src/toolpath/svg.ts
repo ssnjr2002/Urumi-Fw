@@ -25,7 +25,7 @@ import {
     type Affine,
     type CubicBezier,
     type Pt,
-} from "../toolpath/geometry.js";
+} from "./geometry.js";
 
 export interface Subpath {
     readonly curves: CubicBezier[];

@@ -31,8 +31,8 @@ import {
     MAGIC_CFG_DATA,
     MAGIC_JOG_ACK,
     MAGIC_JOG_NACK,
-} from "../format/constants.js";
-import { CFG_DATA_HDR_SIZE, MAX_CFG_PAYLOAD, unpackCfgDataHeader } from "../format/cfg.js";
+} from "../packets/constants.js";
+import { CFG_DATA_HDR_SIZE, MAX_CFG_PAYLOAD, unpackCfgDataHeader } from "../packets/cfg.js";
 
 // ── frame types: routing objects, not parsed payloads ─────────────────────────
 // The demux's job is routing, not interpretation. Status parsing stays in

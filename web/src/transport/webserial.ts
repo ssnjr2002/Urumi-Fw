@@ -1,5 +1,5 @@
 /**
- * link/backends/webserial.ts — browser-only Transport over navigator.serial.
+ * transport/webserial.ts — browser-only Transport over navigator.serial.
  *
  * Wraps the Web Serial API (the browser equivalent of a PySerial port) behind
  * the same Transport interface the Link speaks. Importing this module pulls in
@@ -11,7 +11,7 @@
  *   const link = new Link(t);
  */
 
-import type { Transport } from "../transport.js";
+import type { Transport } from "./index.js";
 
 /** Minimal declaration — the full DOM type normally lives in `lib.dom.d.ts`
  *  (TS 5.5+), but the deployed lib may not include it. The fields the backend

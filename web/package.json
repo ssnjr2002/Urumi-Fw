@@ -5,22 +5,40 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+    "./transport": {
+      "types": "./dist/transport/index.d.ts",
+      "import": "./dist/transport/index.js"
     },
-    "./wire/link/backends/webserial": {
-      "types": "./dist/wire/link/backends/webserial.d.ts",
-      "import": "./dist/wire/link/backends/webserial.js"
+    "./transport/webserial": {
+      "types": "./dist/transport/webserial.d.ts",
+      "import": "./dist/transport/webserial.js"
     },
-    "./wire/link/backends/node": {
-      "types": "./dist/wire/link/backends/node.d.ts",
-      "import": "./dist/wire/link/backends/node.js"
+    "./transport/node": {
+      "types": "./dist/transport/node.d.ts",
+      "import": "./dist/transport/node.js"
+    },
+    "./transport/sim": {
+      "types": "./dist/transport/sim.d.ts",
+      "import": "./dist/transport/sim.js"
+    },
+    "./packets": {
+      "types": "./dist/packets/index.d.ts",
+      "import": "./dist/packets/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "import": "./dist/config/index.js"
+    },
+    "./toolpath": {
+      "types": "./dist/toolpath/index.d.ts",
+      "import": "./dist/toolpath/index.js"
+    },
+    "./link": {
+      "types": "./dist/link/index.d.ts",
+      "import": "./dist/link/index.js"
     },
     "./package.json": "./package.json"
   },
-  "types": "./dist/index.d.ts",
-  "module": "./dist/index.js",
   "license": "MIT",
   "files": [
     "dist",

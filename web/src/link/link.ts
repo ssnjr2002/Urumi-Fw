@@ -12,7 +12,7 @@
  * — only the backend knows what kind of pipe it is.
  */
 
-import type { Transport, Writable } from "./transport.js";
+import type { Attachable, Transport, Writable } from "../transport/index.js";
 import { Writer } from "./writer.js";
 import { Demux, makeSinks, type DemuxSinks } from "./demux.js";
 import type { Sink, LatestSink } from "./sink.js";
@@ -20,15 +20,6 @@ import { Ack, Nack } from "./demux.js";
 import { ListSource, DEFAULT_WINDOW, Session, fatalReasonName, type StreamResult } from "./session.js";
 import type { PacketSource, ReplayableSource, StreamContext } from "./session.js";
 
-/**
- * Optional backend hook: a Transport may expose `attach(demux)` so the Sim
- * (which feeds replies straight into the demux via `write`) can reference it.
- * Real-port backends (WebSerial, Node) ignore this — they pump bytes through
- * `read()`, which the Link's own read loop drains into the demux.
- */
-export interface Attachable {
-    attach(demux: Demux): void;
-}
 import {
     MAGIC_ABORT, MAGIC_CJOG_STOP,
     MAGIC_CFG_ACK,
@@ -38,11 +29,11 @@ import {
     MAGIC_CFG_RDY,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
-} from "../format/constants.js";
-import { packCjog, type JogDir } from "../format/cjog.js";
-import { CFG_MAX_BYTES, packCfgSetHeader } from "../format/cfg.js";
-import { crc32 } from "../format/crc.js";
-import { parseStatusRsp, type MachineStatus } from "../format/status.js";
+} from "../packets/constants.js";
+import { packCjog, type JogDir } from "../packets/cjog.js";
+import { CFG_MAX_BYTES, packCfgSetHeader } from "../packets/cfg.js";
+import { crc32 } from "../packets/crc.js";
+import { parseStatusRsp, type MachineStatus } from "../packets/status.js";
 
 /**
  * A config transfer the Pico refused. `reason` is a CFG_NACK_* code, or null

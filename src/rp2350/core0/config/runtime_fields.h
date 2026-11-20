@@ -1,4 +1,4 @@
-// Generated from web/src/machine/runtime.ts by `pnpm gen:runtime`. Do not edit.
+// Generated from web/src/config/runtime.ts by `pnpm gen:runtime`. Do not edit.
 #pragma once
 #include <math.h>
 

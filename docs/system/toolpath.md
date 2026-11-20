@@ -3,7 +3,7 @@
 **Checked against `e088f31`.** To see what may have changed since:
 
 ```bash
-git diff e088f31 -- web/src/svg/load.ts web/src/toolpath/ web/src/wire/format/bezier.ts
+git diff e088f31 -- web/src/toolpath/svg.ts web/src/toolpath/ web/src/packets/bezier.ts
 ```
 
 Commands, replies, status keys and code names are written as the
@@ -24,7 +24,7 @@ them into motion in the [planner](planner.md).
 
 ```text
 SVG text
-  │ load       svg/load.ts           one walk of the document
+  │ load       toolpath/svg.ts       one walk of the document
   ▼
 layers of Subpaths: cubics in mm, Y up, each open or closed
   │ clean      toolpath/clean.ts     one subpath at a time
@@ -33,7 +33,7 @@ CleanSubpath: curves with defined end tangents, a join kind between each two
   │ annotate   toolpath/annotate.ts  one subpath at a time
   ▼
 AnnotatedBezier[]: pieces the controller accepts, measured, flagged
-  │ pack       wire/format/bezier.ts one piece at a time
+  │ pack       packets/bezier.ts     one piece at a time
   ▼
 62-byte BEZIER records
 ```
@@ -100,7 +100,7 @@ AnnotatedBezier[]: pieces the controller accepts, measured, flagged
 
 ## 3. Loading
 
-`loadSvgPaths()` (`svg/load.ts`) parses the text with the platform's
+`loadSvgPaths()` (`toolpath/svg.ts`) parses the text with the platform's
 `DOMParser` and walks the document once, in document order. Under Node, the
 caller supplies a `DOMParser` (the tests use `@xmldom/xmldom`).
 
@@ -435,13 +435,13 @@ tool-named groups, with exporters' escapes and suffixes undone.
 
 | File | Holds |
 | --- | --- |
-| `web/src/svg/load.ts` | the walk, path data, shapes, transforms, viewport, tool layers |
+| `web/src/toolpath/svg.ts` | the walk, path data, shapes, transforms, viewport, tool layers |
 | `web/src/toolpath/geometry.ts` | points, cubics, derivatives, `splitAt()`, affine maps, arcs |
 | `web/src/toolpath/clean.ts` | cleaning |
 | `web/src/toolpath/annotate.ts` | `analyzeBezier()`, splits, flags, the stretch numbers |
 | `web/src/toolpath/heading.ts` | heading and unwrapped turn |
 | `web/src/toolpath/job.ts` | `prepareBezierJob()` |
-| `web/src/wire/format/bezier.ts` | `packBezier()` |
+| `web/src/packets/bezier.ts` | `packBezier()` |
 
 ### Tests
 

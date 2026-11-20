@@ -13,11 +13,11 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadSvgPaths } from "../../src/svg/load.js";
+import { loadSvgPaths } from "../../src/toolpath/svg.js";
 import { cleanSubpath } from "../../src/toolpath/clean.js";
 import { annotate } from "../../src/toolpath/annotate.js";
-import { packBezier } from "../../src/wire/format/bezier.js";
-import { qualityConfig } from "../../src/machine/index.js";
+import { packBezier } from "../../src/packets/bezier.js";
+import { qualityConfig } from "../../src/config/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SVG = join(HERE, "../production/data/fish.svg");

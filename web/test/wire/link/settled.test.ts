@@ -15,13 +15,13 @@ import {
     inAnyState,
     SettleError,
     type StatusSource,
-} from "../../../src/wire/link/settled.js";
+} from "../../../src/link/settled.js";
 import {
     MachineState,
     MachineStatus,
     JobReason,
-} from "../../../src/wire/format/status.js";
-import { AbortFlag } from "../../../src/wire/link/transport.js";
+} from "../../../src/packets/status.js";
+import { AbortFlag } from "../../../src/transport/index.js";
 
 /** A status sample; only state, reason and bufCount matter to these conditions. */
 function st(state: MachineState, bufCount = 0, reason = 0): MachineStatus {

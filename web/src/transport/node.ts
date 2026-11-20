@@ -1,5 +1,5 @@
 /**
- * link/backends/node.ts — Node.js Transport over the `serialport` package.
+ * transport/node.ts — Node.js Transport over the `serialport` package.
  *
  * `serialport` is an OPTIONAL peer dependency — the Link core + every other
  * backend never imports it, so a browser build stays dependency-free. This
@@ -7,10 +7,10 @@
  * the native module.
  *
  * Usage:
- *   const link = await openNodeLink("/dev/ttyACM0");
+ *   const link = new Link(await NodeTransport.open("/dev/ttyACM0"));
  */
 
-import type { Transport } from "../transport.js";
+import type { Transport } from "./index.js";
 
 /** The subset of the SerialPort API this backend actually uses. */
 interface NodeSerialPort {
@@ -119,13 +119,4 @@ export class NodeTransport implements Transport {
         this._closed = true;
         await this._port.close();
     }
-}
-
-/**
- * One-liner: open a Node serial port and return a Link ready to use.
- * Dynamically imports `serialport`, so a browser build never loads native bindings.
- */
-export async function openNodeLink(path: string, baudRate?: number): Promise<import("../link.js").Link> {
-    const { Link } = await import("../link.js");
-    return new Link(await NodeTransport.open(path, baudRate));
 }

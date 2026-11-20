@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { prepareBezierJob, type BezierJob } from "../../src/toolpath/job.js";
 import { BezierFlag } from "../../src/toolpath/annotate.js";
-import { packBezier } from "../../src/wire/format/bezier.js";
+import { packBezier } from "../../src/packets/bezier.js";
 
 const svg = (body: string) =>
     `<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">${body}</svg>`;

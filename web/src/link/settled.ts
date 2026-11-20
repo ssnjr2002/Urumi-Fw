@@ -19,9 +19,9 @@
  * usable against a recorded status log.
  */
 
-import { JobReason, MachineState, type MachineStatus } from "../format/status.js";
-import { stateName } from "../format/names.js";
-import type { AbortToken } from "./transport.js";
+import { JobReason, MachineState, type MachineStatus } from "../packets/status.js";
+import { stateName } from "./names.js";
+import type { AbortToken } from "../transport/index.js";
 
 /** The slice of Link that settle() needs. */
 export interface StatusSource {

@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Link } from "../../../src/wire/link/link.js";
-import { SimTransport } from "../../../src/wire/link/backends/sim.js";
+import { Link } from "../../../src/link/link.js";
+import { SimTransport } from "../../../src/transport/sim.js";
 import {
     ping,
     pingNode,
@@ -46,8 +46,8 @@ import {
     wclear,
     mount,
     unmount,
-} from "../../../src/wire/link/commands.js";
-import { MachineState, Fault, JobReason } from "../../../src/wire/format/status.js";
+} from "../../../src/link/commands.js";
+import { MachineState, Fault, JobReason } from "../../../src/packets/status.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 

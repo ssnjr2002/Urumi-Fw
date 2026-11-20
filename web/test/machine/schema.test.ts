@@ -20,13 +20,13 @@ import {
     toolHead,
     machineConfig,
     qualityConfig,
-} from "../../src/machine/index.js";
+} from "../../src/config/index.js";
 import {
     uniformMachine,
     defaultConfig,
     controllerConfig,
 } from "../machines.js";
-import { toolLayer } from "../../src/svg/load.js";
+import { toolLayer } from "../../src/toolpath/svg.js";
 
 describe("config: BusNode", () => {
     it("defaults type=STEPPER, present=true", () => {
@@ -149,7 +149,7 @@ describe("config: TOOL_PROFILES registries", () => {
     });
 });
 
-// SVG layers are matched to these names (svg/load.ts toolLayer), so each must
+// SVG layers are matched to these names (toolpath/svg.ts toolLayer), so each must
 // survive an exporter's dedup suffix and a chamber split, and never be a name
 // a drawing app gives its own groups.
 describe("config: tool preset names", () => {

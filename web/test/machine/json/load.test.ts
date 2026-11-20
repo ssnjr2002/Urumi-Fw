@@ -7,18 +7,18 @@
 import { describe, it, expect } from "vitest";
 import { readFixture } from "../../helpers.js";
 
-import { parseConfig, loadConfig } from "../../../src/machine/json/load.js";
+import { parseConfig, loadConfig } from "../../../src/config/load.js";
 import {
     KNIFE,
     PEN,
     REVOLVER_PEN,
     ToolType,
     qualityConfig,
-} from "../../../src/machine/index.js";
+} from "../../../src/config/index.js";
 import {
     defaultConfig,
 } from "../../machines.js";
-import { DEFAULTS } from "../../../src/machine/defaults.js";
+import { DEFAULTS } from "../../../src/config/defaults.js";
 
 
 function readJson(name: string): string {

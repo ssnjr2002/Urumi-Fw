@@ -6,11 +6,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readFixture, readFixtureBytes } from "../../helpers.js";
-import { loadConfig } from "../../../src/machine/json/load.js";
-import { stripJsonComments } from "../../../src/machine/json/image.js";
-import { decodeConfigBlob } from "../../../src/machine/json/blob.js";
-import { modelToFile } from "../../../src/machine/json/save.js";
-import type { ControllerConfig } from "../../../src/machine/schema.js";
+import { loadConfig } from "../../../src/config/load.js";
+import { stripJsonComments } from "../../../src/config/image.js";
+import { decodeConfigBlob } from "../../../src/config/blob.js";
+import { modelToFile } from "../../../src/config/save.js";
+import type { ControllerConfig } from "../../../src/config/schema.js";
 
 function load(text: string): ControllerConfig {
     const r = loadConfig(text);

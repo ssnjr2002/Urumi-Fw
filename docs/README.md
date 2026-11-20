@@ -11,7 +11,7 @@ it jobs and commands over USB.
 | Folder | Holds |
 | --- | --- |
 | `machine/` | what you see the machine do and what to expect: one page per thing you start, watch and end: [homing](machine/homing.md) and [positioning](machine/positioning.md) |
-| `reference/` | exact strings, each page marked with the commit it was checked against: [commands](reference/commands.md), [packets](reference/packets.md) |
+| `reference/` | exact strings, each page marked with the commit it was checked against: [commands](reference/commands.md), [packets](reference/packets.md), [host API](reference/host-api/README.md) |
 | `system/` | what happens underneath, one page per layer, each marked with the commit it was checked against: [controller](system/controller.md), [cores](system/cores.md), [bus](system/bus.md), [planner](system/planner.md), [jobs](system/jobs.md), [config](system/config.md), [wire](system/wire.md), [toolpath](system/toolpath.md), [nodes](system/nodes.md), [firmware build](system/firmware-build.md), [host build](system/host-build.md) |
 | `plans/` | one plan per change, with a section per branch; it stays here, open or closed, and records how its change was built |
 | `archive/` | docs from hosts and designs the project has left; its README names what replaced each |

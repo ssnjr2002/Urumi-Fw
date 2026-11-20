@@ -15,7 +15,7 @@
  *   [61]     CRC8 over bytes [0..60]
  */
 
-import type { AnnotatedBezier } from "../../toolpath/annotate.js";
+import type { AnnotatedBezier } from "../toolpath/annotate.js";
 import { BEZIER_SEQ_OFFSET, BEZIER_SIZE, MAGIC_BEZIER } from "./constants.js";
 import { crc8 } from "./crc.js";
 

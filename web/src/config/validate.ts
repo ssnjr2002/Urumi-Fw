@@ -14,11 +14,11 @@ import type {
     MachineConfig,
     OpTarget,
     ControllerConfig,
-} from "../schema.js";
-import { NodeType } from "../schema.js";
-import { TOOL_PROFILES_BY_TYPE } from "../tools.js";
-import { requiredAxes, resolveTargets } from "../resolve.js";
-import { runtimeFieldError, runtimeMisplaced, runtimeValues } from "../runtime.js";
+} from "./schema.js";
+import { NodeType } from "./schema.js";
+import { TOOL_PROFILES_BY_TYPE } from "./tools.js";
+import { requiredAxes, resolveTargets } from "./resolve.js";
+import { runtimeFieldError, runtimeMisplaced, runtimeValues } from "./runtime.js";
 
 
 export interface ValidationResult {

@@ -1,5 +1,5 @@
 /**
- * link/transport.ts — the environment-agnostic I/O contract a backend implements.
+ * transport/index.ts (urumi-host/transport) — the environment-agnostic I/O contract a backend implements.
  *
  * The link layer (sink, demux, writer, session, link) speaks ONLY this
  * interface; a backend — the in-process Sim, a browser WebSerial port, or a
@@ -57,4 +57,17 @@ export class AbortFlag implements AbortToken {
     isSet(): boolean {
         return this._set;
     }
+}
+/** What a transport that answers in-process (the sim) feeds its replies into. */
+export interface ByteSink {
+    feed(data: Uint8Array): void;
+}
+
+/**
+ * Optional transport hook: a transport may expose `attach(sink)` so it can
+ * feed replies straight into the link's demultiplexer. Real ports ignore it;
+ * the link drains their `read()` instead.
+ */
+export interface Attachable {
+    attach(sink: ByteSink): void;
 }

@@ -1,5 +1,5 @@
 /**
- * link/backends/sim.ts — in-process fake Pico (a Transport; docs/system/wire.md).
+ * transport/sim.ts — in-process fake Pico (a Transport; docs/system/wire.md).
  *
  * Answers text commands per the admission in docs/reference/commands.md AND
  * "runs" streamed BEZIER records as a job, opened by a LAYER_HDR (its tool
@@ -19,8 +19,7 @@
  * other, because they cannot interleave on one event loop.
  */
 
-import type { Demux } from "../demux.js";
-import type { Transport } from "../transport.js";
+import type { ByteSink, Transport } from "./index.js";
 import {
     MAGIC_ACK,
     MAGIC_NACK,
@@ -51,7 +50,7 @@ import {
     CJOG_SIZE,
     CJOG_SPEED_ONE,
     CJOG_DEADMAN_MS,
-} from "../../format/constants.js";
+} from "../packets/constants.js";
 import {
     MachineState,
     MachineContext,
@@ -60,8 +59,8 @@ import {
     NO_LAYER,
     axisMask,
     packStatusRsp,
-} from "../../format/status.js";
-import { crc8 } from "../../format/crc.js";
+} from "../packets/status.js";
+import { crc8 } from "../packets/crc.js";
 
 interface SimOptions {
     ringSize?: number;
@@ -207,7 +206,7 @@ export class SimTransport implements Transport {
     /** Diagnostic: how many reply frames the sim has fed into the demux. */
     framesReplied = 0;
 
-    private demux: Demux | null = null;
+    private demux: ByteSink | null = null;
     private expectedSeq = 0; // mirrors the firmware's expectedSeq
     private pendingAcks = 0; // accepted but not yet flushed
     private aborting = false; // abort barrier (see MAGIC_ABORT)
@@ -309,7 +308,7 @@ export class SimTransport implements Transport {
     }
 
     /** Attach the demux the Sim feeds replies into (Link calls this on open). */
-    attach(demux: Demux): void {
+    attach(demux: ByteSink): void {
         this.demux = demux;
     }
 

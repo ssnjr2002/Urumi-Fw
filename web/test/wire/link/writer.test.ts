@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Writer } from "../../../src/wire/link/writer.js";
-import { AbortFlag, type Writable } from "../../../src/wire/link/transport.js";
+import { Writer } from "../../../src/link/writer.js";
+import { AbortFlag, type Writable } from "../../../src/transport/index.js";
 
 class RecordingWritable implements Writable {
     writes: Uint8Array[] = [];

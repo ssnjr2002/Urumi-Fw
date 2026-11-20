@@ -5,8 +5,8 @@
 import { describe, it, expect } from "vitest";
 import {
     encodeMesh, meshImageFromText, MESH_HEADER_BYTES, MESH_MAGIC, type MeshSource,
-} from "../../../src/machine/json/mesh.js";
-import { crc32 } from "../../../src/wire/format/crc.js";
+} from "../../../src/config/mesh.js";
+import { crc32 } from "../../../src/packets/crc.js";
 
 const good = (): MeshSource => ({ x0: -5, y0: 10, dx: 600, dy: 400, z: [[0, -1, 2.5], [0.0004, -0.0006, 32.767]] });
 

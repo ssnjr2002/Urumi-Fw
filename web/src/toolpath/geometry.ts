@@ -1,7 +1,7 @@
 /**
  * geometry.ts — cubic Béziers and the math on them: construction, 2D
  * vectors, end tangents, evaluation and derivatives, curvature, splitting,
- * affine maps, and SVG elliptical arcs as cubics. ../svg/load.ts makes the
+ * affine maps, and SVG elliptical arcs as cubics. svg.ts makes the
  * curves; clean and annotate consume them.
  */
 

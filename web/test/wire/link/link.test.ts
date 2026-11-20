@@ -8,21 +8,21 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { ConfigTransferError, Link } from "../../../src/wire/link/link.js";
+import { ConfigTransferError, Link } from "../../../src/link/link.js";
 import {
     CFG_MAX_BYTES,
     CFG_NACK_BAD_STATE,
     CFG_NACK_SCHEMA,
     packCfgDataHeader,
     packCfgSetHeader,
-} from "../../../src/wire/format/cfg.js";
-import { crc32 } from "../../../src/wire/format/crc.js";
-import type { Transport } from "../../../src/wire/link/transport.js";
+} from "../../../src/packets/cfg.js";
+import { crc32 } from "../../../src/packets/crc.js";
+import type { Transport } from "../../../src/transport/index.js";
 import {
     packStatusRsp,
     MachineState,
     JobReason,
-} from "../../../src/wire/format/status.js";
+} from "../../../src/packets/status.js";
 import {
     MAGIC_ACK,
     MAGIC_ABORT,
@@ -32,7 +32,7 @@ import {
     MAGIC_CFG_RDY,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
-} from "../../../src/wire/format/constants.js";
+} from "../../../src/packets/constants.js";
 
 /** A Transport test double: records writes and lets the test inject reply
  *  bytes that the Link's read loop pumps into the demux. */

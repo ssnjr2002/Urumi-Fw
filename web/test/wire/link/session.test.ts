@@ -20,14 +20,14 @@ import {
     ListSource,
     StreamContext,
     type PacketSource,
-} from "../../../src/wire/link/session.js";
-import { Writer } from "../../../src/wire/link/writer.js";
-import { Sink } from "../../../src/wire/link/sink.js";
-import { Ack, Nack } from "../../../src/wire/link/demux.js";
+} from "../../../src/link/session.js";
+import { Writer } from "../../../src/link/writer.js";
+import { Sink } from "../../../src/link/sink.js";
+import { Ack, Nack } from "../../../src/link/demux.js";
 import {
     NACK_FULL, NACK_BAD_MAGIC, NACK_BAD_STATE, NACK_TOOL_CHANGE, BEZIER_SIZE, BEZIER_SEQ_OFFSET, MAGIC_BEZIER,
-} from "../../../src/wire/format/constants.js";
-import { stampSeq } from "../../../src/wire/format/packet.js";
+} from "../../../src/packets/constants.js";
+import { stampSeq } from "../../../src/packets/packet.js";
 
 type AckOrNack = Ack | Nack;
 

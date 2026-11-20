@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { crc8 } from "../../../src/wire/format/crc.js";
+import { crc8 } from "../../../src/packets/crc.js";
 
 // A 25-byte payload whose CRC-8 the Python _crc8 gave as 0xD3.
 const PAYLOAD = [

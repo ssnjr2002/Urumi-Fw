@@ -5,19 +5,19 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Link } from "../../../src/wire/link/link.js";
-import { SimTransport } from "../../../src/wire/link/backends/sim.js";
-import { JobSource, ListSource, FATAL_JOB_LOST, type Session } from "../../../src/wire/link/session.js";
-import { MachineState, JobReason } from "../../../src/wire/format/status.js";
-import { packBezier } from "../../../src/wire/format/bezier.js";
+import { Link } from "../../../src/link/link.js";
+import { SimTransport } from "../../../src/transport/sim.js";
+import { JobSource, ListSource, FATAL_JOB_LOST, type Session } from "../../../src/link/session.js";
+import { MachineState, JobReason } from "../../../src/packets/status.js";
+import { packBezier } from "../../../src/packets/bezier.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
-import { packCjog } from "../../../src/wire/format/cjog.js";
+import { packCjog } from "../../../src/packets/cjog.js";
 import {
     CJOG_DEADMAN_MS, MAGIC_BEZIER, MAGIC_JOB_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR,
     NACK_DETAIL_AXIS_Y, NACK_DETAIL_SIDE_HI, NACK_JOB, NACK_NOT_HOMED, NACK_OUT_OF_RANGE,
-} from "../../../src/wire/format/constants.js";
-import { packJobHdr, packLayerHdr, packToolHdr } from "../../../src/wire/format/layer.js";
-import { stampSeq } from "../../../src/wire/format/packet.js";
+} from "../../../src/packets/constants.js";
+import { packJobHdr, packLayerHdr, packToolHdr } from "../../../src/packets/layer.js";
+import { stampSeq } from "../../../src/packets/packet.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 

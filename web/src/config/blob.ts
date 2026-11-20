@@ -3,11 +3,11 @@
  *
  * The blob is the resolved config plus a schema version `v`. The controller
  * has no defaults: a field it reads and does not find is a rejection
- * (src/rp2350/core0/config/config_decode.cpp). Framing is wire/format/cfg.ts.
+ * (src/rp2350/core0/config/config_decode.cpp). Framing is packets/cfg.ts.
  */
 
 import { decode, encode } from "@msgpack/msgpack";
-import type { ControllerConfig } from "../schema.js";
+import type { ControllerConfig } from "./schema.js";
 
 /** Payload schema version. Bump when a field the controller decodes changes shape; equals CFG_SCHEMA_VERSION. */
 export const CONFIG_BLOB_VERSION = 17;

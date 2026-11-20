@@ -3,7 +3,7 @@
  *
  * Everything here bakes in calibration (stepsPerUnit, node ids) that a
  * real machine must state in its config.json. Loading a real machine goes
- * through machine/json/load.ts; if production code imports this file, a
+ * through config/load.ts; if production code imports this file, a
  * miscalibrated machine will run silently and cut wrong.
  *
  * That is exactly why these moved out of schema.ts: `controllerConfig()` used to
@@ -25,10 +25,10 @@ import {
     toolHead,
     type MachineConfig,
     type ControllerConfig,
-} from "../src/machine/schema.js";
-import { ToolType } from "../src/machine/schema.js";
-import { TOOL_PROFILES } from "../src/machine/tools.js";
-import { DEFAULTS } from "../src/machine/defaults.js";
+} from "../src/config/schema.js";
+import { ToolType } from "../src/config/schema.js";
+import { TOOL_PROFILES } from "../src/config/tools.js";
+import { DEFAULTS } from "../src/config/defaults.js";
 
 /** Every preset — for a test head that should never be the reason a case fails. */
 const ALL_TOOLS: readonly ToolType[] = Object.values(TOOL_PROFILES).map((p) => p.toolType);

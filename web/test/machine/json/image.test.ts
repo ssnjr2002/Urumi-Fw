@@ -2,15 +2,15 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readFixture } from "../../helpers.js";
-import { crc32 } from "../../../src/wire/format/crc.js";
-import { CFG_MAX_BYTES } from "../../../src/wire/format/cfg.js";
-import { decodeConfigBlob } from "../../../src/machine/json/blob.js";
+import { crc32 } from "../../../src/packets/crc.js";
+import { CFG_MAX_BYTES } from "../../../src/packets/cfg.js";
+import { decodeConfigBlob } from "../../../src/config/blob.js";
 import {
     CFG_HEADER_BYTES,
     configFileImage,
     configImageFromText,
     stripJsonComments,
-} from "../../../src/machine/json/image.js";
+} from "../../../src/config/image.js";
 
 describe("stripJsonComments", () => {
     it("drops line and block comments", () => {

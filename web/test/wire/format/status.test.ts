@@ -21,8 +21,8 @@ import {
     packStatusRsp,
     Selection,
     NO_LAYER,
-} from "../../../src/wire/format/status.js";
-import { MAGIC_STATUS_RSP, STATUS_RSP_SIZE } from "../../../src/wire/format/constants.js";
+} from "../../../src/packets/status.js";
+import { MAGIC_STATUS_RSP, STATUS_RSP_SIZE } from "../../../src/packets/constants.js";
 
 // ── reference vectors ──────────────────────────────────────────────────────────
 // Packed independently (Python struct, Maxim CRC8): state=JOB, reason=RUNNING,

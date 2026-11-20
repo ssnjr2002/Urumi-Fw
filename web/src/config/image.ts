@@ -7,8 +7,8 @@
  * are byte-identical past the header.
  */
 
-import { crc32 } from "../../wire/format/crc.js";
-import { CFG_MAX_BYTES } from "../../wire/format/cfg.js";
+import { crc32 } from "../packets/crc.js";
+import { CFG_MAX_BYTES } from "../packets/cfg.js";
 import { encodeConfigBlob } from "./blob.js";
 import { parseConfig } from "./load.js";
 

@@ -1,16 +1,16 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { DEFAULTS } from "../../src/machine/defaults.js";
-import { f32, fitsF32 } from "../../src/machine/f32.js";
-import { loadConfig } from "../../src/machine/json/load.js";
+import { DEFAULTS } from "../../src/config/defaults.js";
+import { f32, fitsF32 } from "../../src/config/f32.js";
+import { loadConfig } from "../../src/config/load.js";
 import {
     RUNTIME_FIELDS,
     runtimeFieldError,
     runtimeValues,
     type RuntimeField,
-} from "../../src/machine/runtime.js";
-import { renderRuntimeHeader } from "../../src/machine/runtimeHeader.js";
-import { TOOL_PROFILES } from "../../src/machine/tools.js";
+} from "../../src/config/runtime.js";
+import { renderRuntimeHeader } from "../../src/config/runtimeHeader.js";
+import { TOOL_PROFILES } from "../../src/config/tools.js";
 
 const field = (path: string): RuntimeField => {
     const f = RUNTIME_FIELDS.find((r) => r.path === path);

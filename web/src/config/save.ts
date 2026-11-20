@@ -9,8 +9,8 @@
  *   - heads[].accepts goes from ToolType back to preset names
  */
 
-import type { ControllerConfig } from "../schema.js";
-import { TOOL_PROFILES_BY_TYPE } from "../tools.js";
+import type { ControllerConfig } from "./schema.js";
+import { TOOL_PROFILES_BY_TYPE } from "./tools.js";
 
 export function modelToFile(config: ControllerConfig): string {
     const tools: Record<string, object> = {};

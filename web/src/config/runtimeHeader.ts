@@ -33,7 +33,7 @@ export function renderRuntimeHeader(): string {
     const effects = RUNTIME_EFFECTS.map((e, i) => `    RT_FX_${e} = 1u << ${i},`);
     const axes = RUNTIME_AXES.map((a, i) => `    RT_AXES_${a.toUpperCase()} = 1u << ${i},`);
     return [
-        "// Generated from web/src/machine/runtime.ts by `pnpm gen:runtime`. Do not edit.",
+        "// Generated from web/src/config/runtime.ts by `pnpm gen:runtime`. Do not edit.",
         "#pragma once",
         "#include <math.h>",
         "",

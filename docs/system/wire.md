@@ -3,7 +3,7 @@
 **Checked against `0d5cf2b`.** To see what may have changed since:
 
 ```bash
-git diff 0d5cf2b -- src/rp2350/core0/core0.cpp src/rp2350/core0/data_plane.cpp src/rp2350/core0/usb_protocol.h web/src/wire/link/
+git diff 0d5cf2b -- src/rp2350/core0/core0.cpp src/rp2350/core0/data_plane.cpp src/rp2350/core0/usb_protocol.h web/src/link/
 ```
 
 Commands, replies, status keys and code names are written as the
@@ -13,7 +13,7 @@ The wire is the USB link between the host and the controller. One serial
 stream carries five kinds of traffic: text commands and their replies, a
 binary status reply, the job stream, continuous jog, and config transfers.
 The controller's end is Core 0's byte routing and its data plane; the host's
-end is the link library in `web/src/wire/link/`.
+end is the link library in `web/src/link/`.
 
 This page is how an exchange runs at each end. The byte layouts, reply codes
 and the order the controller checks a record in are in
@@ -286,14 +286,14 @@ Host only. A backend implements `Transport` (`transport.ts`): `write()`,
 
 | Backend | Runs in | How to get it |
 | --- | --- | --- |
-| WebSerial | a browser | `WebSerialTransport.requestAndOpen()`, from the `wire/link/backends/webserial` subpath |
-| Node | Node.js, through the optional `serialport` package | `openNodeLink(path)`, from the `wire/link/backends/node` subpath |
+| WebSerial | a browser | `WebSerialTransport.requestAndOpen()`, from `urumi-host/transport/webserial` |
+| Node | Node.js, through the optional `serialport` package | `new Link(await NodeTransport.open(path))`, from `urumi-host/transport/node` |
 | Sim | anywhere | `new SimTransport(options)`, from the package root |
 
 The real ports live on their own package subpaths, so a Node program never
 loads browser code and a browser never loads `serialport`.
 
-**The Sim** (`backends/sim.ts`) is a fake controller for tests and the demo.
+**The Sim** (`transport/sim.ts`) is a fake controller for tests and the demo.
 It answers its replies straight into the demux, which the `Link` hands it
 through `attach()`. It models:
 
@@ -369,13 +369,13 @@ nothing unasked.
 
 | File | Holds |
 | --- | --- |
-| `web/src/wire/link/link.ts` | `Link`: the read loop and a method set per plane |
-| `web/src/wire/link/demux.ts` | the demux and the frame classes |
-| `web/src/wire/link/sink.ts` | `Sink`, `LatestSink` |
-| `web/src/wire/link/writer.ts` | `Writer` |
-| `web/src/wire/link/session.ts` | the job session and its window |
-| `web/src/wire/link/transport.ts` | `Transport`, `AbortFlag` |
-| `web/src/wire/link/commands.ts` | one function per text command |
-| `web/src/wire/link/settled.ts` | `settle()`, `waitAtRest()` |
-| `web/src/wire/link/backends/` | WebSerial, Node, the Sim |
-| `web/src/wire/format/` | the packers and parsers, as in [packets.md](../reference/packets.md) |
+| `web/src/link/link.ts` | `Link`: the read loop and a method set per plane |
+| `web/src/link/demux.ts` | the demux and the frame classes |
+| `web/src/link/sink.ts` | `Sink`, `LatestSink` |
+| `web/src/link/writer.ts` | `Writer` |
+| `web/src/link/session.ts` | the job session and its window |
+| `web/src/transport/index.ts` | `Transport`, `AbortFlag` |
+| `web/src/link/commands.ts` | one function per text command |
+| `web/src/link/settled.ts` | `settle()`, `waitAtRest()` |
+| `web/src/transport/` | WebSerial, Node, the Sim |
+| `web/src/packets/` | the packers and parsers, as in [packets.md](../reference/packets.md) |

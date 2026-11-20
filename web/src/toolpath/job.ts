@@ -4,9 +4,9 @@
  * Pico queues the travel to it.
  */
 
-import { loadSvgPaths } from "../svg/load.js";
-import type { QualityConfig } from "../machine/schema.js";
-import { packBezier } from "../wire/format/bezier.js";
+import { loadSvgPaths } from "./svg.js";
+import type { QualityConfig } from "../config/schema.js";
+import { packBezier } from "../packets/bezier.js";
 import { cleanSubpath } from "./clean.js";
 import { annotate, type AnnotatedBezier } from "./annotate.js";
 import { add, cubic, type CubicBezier, type Pt } from "./geometry.js";

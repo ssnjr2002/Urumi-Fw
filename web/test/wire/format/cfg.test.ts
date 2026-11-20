@@ -22,9 +22,9 @@ import {
     packCfgDataHeader,
     packCfgSetHeader,
     unpackCfgDataHeader,
-} from "../../../src/wire/format/cfg.js";
-import { MAGIC_CFG_DATA, MAGIC_CFG_SET } from "../../../src/wire/format/constants.js";
-import { crc32 } from "../../../src/wire/format/crc.js";
+} from "../../../src/packets/cfg.js";
+import { MAGIC_CFG_DATA, MAGIC_CFG_SET } from "../../../src/packets/constants.js";
+import { crc32 } from "../../../src/packets/crc.js";
 
 // ── reference vector from Python struct.pack("<BII", 0xB5, 12345, 0xDEADBEEF) ──
 const REF_HDR = new Uint8Array([181, 57, 48, 0, 0, 239, 190, 173, 222]);

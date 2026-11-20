@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { crc8 } from "../../../src/wire/format/crc.js";
-import { CJOG_SIZE, MAGIC_CJOG } from "../../../src/wire/format/constants.js";
-import { packCjog } from "../../../src/wire/format/cjog.js";
+import { crc8 } from "../../../src/packets/crc.js";
+import { CJOG_SIZE, MAGIC_CJOG } from "../../../src/packets/constants.js";
+import { packCjog } from "../../../src/packets/cjog.js";
 
 describe("wire/format/cjog", () => {
     it("lays out magic, directions, speed and CRC", () => {

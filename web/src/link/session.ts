@@ -44,11 +44,11 @@ import {
     MAGIC_ABORT,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
-} from "../format/constants.js";
-import { stampSeq } from "../format/packet.js";
-import { packJobHdr, packLayerHdr, packToolHdr, type LayerHdr, type ToolBox, type ToolHdr } from "../format/layer.js";
+} from "../packets/constants.js";
+import { stampSeq } from "../packets/packet.js";
+import { packJobHdr, packLayerHdr, packToolHdr, type LayerHdr, type ToolBox, type ToolHdr } from "../packets/layer.js";
 import { Ack, Nack } from "./demux.js";
-import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../format/status.js";
+import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../packets/status.js";
 
 export const DEFAULT_WINDOW = 16;
 const ACK_TIMEOUT_MS = 200; // per-response wait before assuming loss

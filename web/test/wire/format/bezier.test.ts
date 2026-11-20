@@ -3,10 +3,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { crc8 } from "../../../src/wire/format/crc.js";
-import { MAGIC_BEZIER } from "../../../src/wire/format/constants.js";
-import { packBezier } from "../../../src/wire/format/bezier.js";
-import { stampSeq } from "../../../src/wire/format/packet.js";
+import { crc8 } from "../../../src/packets/crc.js";
+import { MAGIC_BEZIER } from "../../../src/packets/constants.js";
+import { packBezier } from "../../../src/packets/bezier.js";
+import { stampSeq } from "../../../src/packets/packet.js";
 import { BezierFlag, type AnnotatedBezier } from "../../../src/toolpath/annotate.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
 

@@ -22,11 +22,11 @@ import {
     type ToolProfile,
     type ControllerConfig,
     ToolType,
-} from "../../../src/machine/schema.js";
-import { KNIFE } from "../../../src/machine/tools.js";
-import { validateConfig } from "../../../src/machine/json/validate.js";
-import { headsAccepting } from "../../../src/machine/resolve.js";
-import { loadConfig, parseConfig } from "../../../src/machine/json/load.js";
+} from "../../../src/config/schema.js";
+import { KNIFE } from "../../../src/config/tools.js";
+import { validateConfig } from "../../../src/config/validate.js";
+import { headsAccepting } from "../../../src/config/resolve.js";
+import { loadConfig, parseConfig } from "../../../src/config/load.js";
 
 /** A sane baseline: capped X/Y, distinct node ids, one head. */
 function cfg(machine?: Partial<Parameters<typeof machineConfig>[3]>): ControllerConfig {

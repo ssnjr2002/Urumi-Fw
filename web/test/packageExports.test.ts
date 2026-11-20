@@ -5,8 +5,8 @@
  * exercises what a real consumer sees: the `exports` map in package.json. That
  * map is a whitelist — a path missing from it is *unreachable* through the
  * package name, no matter that the file builds and ships. The two real-port
- * backends are documented in src/index.ts as "import them directly from
- * wire/link/backends/", and for a while that instruction was simply wrong.
+ * backends are documented as their own subpaths, and for a while that instruction was
+ * simply wrong.
  *
  * These checks run without a build (they map each export target back to its
  * source file); the dist half only asserts once `npm run build` has run, so a
@@ -25,7 +25,10 @@ const exportsMap = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"
     .exports as Record<string, ExportEntry>;
 
 /** Subpaths a consumer must be able to import. Add a case when you add one. */
-const REQUIRED = [".", "./wire/link/backends/webserial", "./wire/link/backends/node"];
+const REQUIRED = [
+    "./transport", "./transport/webserial", "./transport/node", "./transport/sim",
+    "./packets", "./config", "./toolpath", "./link",
+];
 
 describe("package exports map", () => {
     it("exposes every subpath the docs tell consumers to import", () => {
@@ -54,11 +57,14 @@ describe("package exports map", () => {
         });
     }
 
-    it("does not re-export the real-port backends from the main barrel", () => {
-        // The whole point of the subpaths: a Node consumer importing the barrel
-        // must not pull in navigator.serial, and a browser one must not pull in
-        // the optional `serialport` native module.
-        const barrel = readFileSync(resolve(root, "src/index.ts"), "utf8");
-        expect(barrel).not.toMatch(/backends\/(webserial|node)\.js/);
+    it("has no root entry: every import names its subpath", () => {
+        expect(exportsMap["."]).toBeUndefined();
+    });
+
+    it("keeps the real-port transports out of the transport interface", () => {
+        // A Node consumer of urumi-host/transport must not pull in
+        // navigator.serial, and a browser one must not pull in `serialport`.
+        const iface = readFileSync(resolve(root, "src/transport/index.ts"), "utf8");
+        expect(iface).not.toMatch(/(webserial|node)\.js/);
     });
 });

@@ -9,13 +9,13 @@ import {
     jobName,
     maskStr,
     STATE_NAMES,
-} from "../../../src/wire/format/names.js";
+} from "../../../src/link/names.js";
 import {
     MachineState,
     Fault,
     JobReason,
     axisMask,
-} from "../../../src/wire/format/status.js";
+} from "../../../src/packets/status.js";
 
 describe("enum names", () => {
     it("names every state the enum declares, by its own key", () => {

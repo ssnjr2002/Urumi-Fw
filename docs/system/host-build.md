@@ -93,21 +93,28 @@ checked. Only eslint reads it.
 
 ## The package
 
-`src/index.ts` is the public interface. `package.json` exports three entry
-points:
+The package has no root entry: every import names a subpath, and each
+subpath is a folder in `src/` whose `index.ts` is its public interface.
+`package.json` exports eight:
 
-| Import | File | What |
+| Import | Folder | What |
 |---|---|---|
-| `urumi-host` | `dist/index.js` | everything that runs anywhere |
-| `urumi-host/wire/link/backends/webserial` | `dist/wire/link/backends/webserial.js` | the browser's serial port |
-| `urumi-host/wire/link/backends/node` | `dist/wire/link/backends/node.js` | a serial port in Node, through the `serialport` package |
+| `urumi-host/transport` | `transport/index.ts` | the `Transport` interface |
+| `urumi-host/transport/webserial` | `transport/webserial.ts` | the browser's serial port |
+| `urumi-host/transport/node` | `transport/node.ts` | a serial port in Node, through the `serialport` package |
+| `urumi-host/transport/sim` | `transport/sim.ts` | a fake controller for tests and the demo |
+| `urumi-host/packets` | `packets/` | the packet layouts |
+| `urumi-host/config` | `config/` | the config document |
+| `urumi-host/toolpath` | `toolpath/` | SVG to a job |
+| `urumi-host/link` | `link/` | the connection to the controller |
 
-The backends are subpaths so that a Node program never loads browser globals
-and a page never loads Node's. `sideEffects: false` lets a bundler drop what
-a page doesn't import. `files` ships only `dist/`, the README and the
-licence.
+Each transport is its own subpath so that a Node program never loads browser
+globals and a page never loads Node's. The API reference is
+[host-api](../reference/host-api/README.md). `sideEffects: false` lets a
+bundler drop what a page doesn't import. `files` ships only `dist/`, the
+README and the licence.
 
-The Node backend loads `serialport` with a dynamic `import()` when it opens
+The Node transport loads `serialport` with a dynamic `import()` when it opens
 a port, so nothing else needs it. Its comment calls it an optional peer
 dependency, but `package.json` doesn't declare it: a Node program must
 install it itself.
@@ -129,7 +136,7 @@ For development:
 * `eslint`, `@eslint/js`, `typescript-eslint`, `globals`: lint.
 * `@xmldom/xmldom`: a `DOMParser` for Node. The SVG loader uses the global
   `DOMParser`, which Node lacks; `test/setup.ts` installs this one.
-* `@types/node`: Node's types, for the scripts and the Node backend.
+* `@types/node`: Node's types, for the scripts and the Node transport.
 
 ## Tools
 
@@ -183,7 +190,7 @@ table changes, then build the controller.
 ### The demo
 
 `pnpm demo` serves `web/demo/` with vite and opens it. `demo/vite.config.js`
-points `urumi-host` at `src/`, so a change to the library shows on reload.
+points each `urumi-host/*` subpath at `src/`, so a change to the library shows on reload.
 `pnpm demo:dist` resolves `urumi-host` through the package's `exports`
 instead, as another project would, and needs `pnpm build` first.
 
@@ -207,9 +214,10 @@ README has the steps.
 
 ## Decisions
 
-* **ESM only, with the backends as subpaths.** One module format, and the
-  platform-specific code split by import path. The alternative, one entry
-  with runtime detection, would make every bundle carry both backends.
+* **ESM only, with flat subpaths.** One module format, every import naming
+  its layer, and the platform-specific transports split by import path. The
+  alternative, one entry with runtime detection, would make every bundle
+  carry both real-port transports.
 * **One config to check and one to emit.** The tests and scripts are
   checked with the library but never shipped. A single config would either
   ship the tests or leave them unchecked.
@@ -227,7 +235,7 @@ README has the steps.
 * `web/package.json`, `web/pnpm-lock.yaml`, `web/pnpm-workspace.yaml`
 * `web/tsconfig.json`, `web/tsconfig.build.json`
 * `web/eslint.config.js`, `web/vitest.config.ts`, `web/test/setup.ts`
-* `web/src/index.ts`
+* `web/src/*/index.ts`
 * `web/scripts/config-image.ts`, `mesh-image.ts`, `runtime-fields.ts`
 * `web/demo/vite.config.js`, `web/demo/bridge/`
 * `scripts/pio/config_image.py`

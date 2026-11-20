@@ -17,7 +17,7 @@ import {
     parseGetReply,
     statusFromGet,
     type MachineStatus,
-} from "../format/status.js";
+} from "../packets/status.js";
 
 // ── query / liveness ─────────────────────────────────────────────────────────
 

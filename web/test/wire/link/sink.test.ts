@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Sink, LatestSink } from "../../../src/wire/link/sink.js";
+import { Sink, LatestSink } from "../../../src/link/sink.js";
 
 describe("wire/link/sink: Sink", () => {
     it("put before get: get resolves immediately with the item", async () => {

@@ -1,10 +1,11 @@
-import * as host from 'urumi-host';
+import * as packets from 'urumi-host/packets';
 import {
-    Link, JogAck, MachineState, MachineContext, Selection, NO_LAYER, stateName, faultNames, jobName,
-    loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, modelToFile, crc32,
-    JobReason, JobSource, fatalReasonName, loadSvgPaths, toolLayer, prepareBezierJob,
-} from 'urumi-host';
-import { WebSerialTransport } from 'urumi-host/wire/link/backends/webserial';
+    MachineState, MachineContext, Selection, NO_LAYER, JobReason, crc32,
+} from 'urumi-host/packets';
+import { loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, modelToFile } from 'urumi-host/config';
+import { loadSvgPaths, toolLayer, prepareBezierJob } from 'urumi-host/toolpath';
+import { Link, JogAck, JobSource, fatalReasonName, stateName, faultNames, jobName } from 'urumi-host/link';
+import { WebSerialTransport } from 'urumi-host/transport/webserial';
 
 const BAUD_RATE = 115200;
 
@@ -279,7 +280,7 @@ const JOG_KEYS = {
     r: [0, 0, 1, 0], f: [0, 0, -1, 0], q: [0, 0, 0, -1], e: [0, 0, 0, 1],
 };
 const NACK_NAMES = Object.fromEntries(
-    Object.entries(host).filter(([k]) => k.startsWith('NACK_')).map(([k, v]) => [v, k.slice(5)]),
+    Object.entries(packets).filter(([k]) => k.startsWith('NACK_')).map(([k, v]) => [v, k.slice(5)]),
 );
 const nackName = (r) => NACK_NAMES[r] ?? hex(r, 2);
 
@@ -409,7 +410,7 @@ buildSelectButtons(0);
 // buttons from the stored config's heads.
 
 const CFG_NACK_NAMES = Object.fromEntries(
-    Object.entries(host).filter(([k]) => k.startsWith('CFG_NACK_')).map(([k, v]) => [v, k.slice(9).toLowerCase()]),
+    Object.entries(packets).filter(([k]) => k.startsWith('CFG_NACK_')).map(([k, v]) => [v, k.slice(9).toLowerCase()]),
 );
 
 /** The picked file's encoded blob — null until a file loads cleanly. */

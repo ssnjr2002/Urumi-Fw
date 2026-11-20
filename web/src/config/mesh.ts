@@ -10,7 +10,7 @@
  * (x fastest), CRC32 of everything before it.
  */
 
-import { crc32 } from "../../wire/format/crc.js";
+import { crc32 } from "../packets/crc.js";
 import { stripJsonComments } from "./image.js";
 
 export const MESH_MAGIC = 0x4853454d;   // "MESH"

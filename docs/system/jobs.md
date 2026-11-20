@@ -3,7 +3,7 @@
 **Checked against `821fac6`.** To see what may have changed since:
 
 ```bash
-git diff 821fac6 -- src/rp2350/core0/data_plane.cpp src/rp2350/core0/ops/layer.h src/rp2350/core0/ops/layer.cpp src/rp2350/core0/planner/queue.cpp src/rp2350/core0/controller/seq/place.cpp src/rp2350/core0/controller/cmd/place.cpp src/rp2350/core0/controller/seq/toolchange.cpp src/rp2350/core0/cmd/lifecycle.cpp src/rp2350/core0/ops/machine.cpp src/rp2350/core0/ops/observe.cpp src/rp2350/core0/ops/tools.cpp src/rp2350/core1/emit/follower.cpp src/rp2350/ipc/shared_state.h web/src/wire/link/session.ts web/src/wire/format/layer.ts
+git diff 821fac6 -- src/rp2350/core0/data_plane.cpp src/rp2350/core0/ops/layer.h src/rp2350/core0/ops/layer.cpp src/rp2350/core0/planner/queue.cpp src/rp2350/core0/controller/seq/place.cpp src/rp2350/core0/controller/cmd/place.cpp src/rp2350/core0/controller/seq/toolchange.cpp src/rp2350/core0/cmd/lifecycle.cpp src/rp2350/core0/ops/machine.cpp src/rp2350/core0/ops/observe.cpp src/rp2350/core0/ops/tools.cpp src/rp2350/core1/emit/follower.cpp src/rp2350/ipc/shared_state.h web/src/link/session.ts web/src/packets/layer.ts
 ```
 
 Commands, replies and code names are written as the
@@ -623,8 +623,8 @@ controller would be worse than stopping: it would accept the packets as
 duplicates and quietly do nothing with them.
 
 The code: `JobSource` and the job half of `Session` in
-`web/src/wire/link/session.ts`; the header packing in
-`web/src/wire/format/layer.ts`.
+`web/src/link/session.ts`; the header packing in
+`web/src/packets/layer.ts`.
 
 ## 8. Glossary
 
@@ -672,7 +672,7 @@ Other terms used on this page:
 
 | Part | Files | What it does |
 | --- | --- | --- |
-| The host | `web/src/wire/link/session.ts`, `web/src/wire/format/layer.ts` | builds the stream, sends it, follows the controller's holds |
+| The host | `web/src/link/session.ts`, `web/src/packets/layer.ts` | builds the stream, sends it, follows the controller's holds |
 | Core 0 | `core0/data_plane.cpp` (the job half), `core0/ops/layer.*`, `core0/planner/queue.cpp` (the job half), `core0/controller/seq/place.*`, `core0/controller/seq/toolchange.*`, `core0/cmd/lifecycle.cpp`, `core0/ops/machine.cpp`, `core0/ops/observe.cpp`, `core0/ops/tools.*` | checks the headers, opens layers, turns records into moves, runs placement and tool changes, pauses and ends jobs |
 | Core 1 | `core1/emit/follower.cpp` | the job states it decides while running: running, holding, dwelling, the resume point |
 
@@ -855,8 +855,8 @@ JOGGING, and the job's stage is kept underneath until the jog ends
 
 | File | Sections |
 | --- | --- |
-| `web/src/wire/link/session.ts` | 7, 10 |
-| `web/src/wire/format/layer.ts` | 7, 10 |
+| `web/src/link/session.ts` | 7, 10 |
+| `web/src/packets/layer.ts` | 7, 10 |
 | `src/rp2350/core0/data_plane.cpp` | 1, 3, 4, 5, 6 |
 | `src/rp2350/core0/ops/layer.h`, `layer.cpp` | 1, 2, 3 |
 | `src/rp2350/core0/planner/queue.cpp`, `queue.h` | 3, 4, 5, 11 |

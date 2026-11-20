@@ -11,9 +11,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Demux, makeSinks, Ack, Nack, JogAck, CfgReply } from "../../../src/wire/link/demux.js";
-import { packStatusRsp } from "../../../src/wire/format/status.js";
-import { packCfgDataHeader } from "../../../src/wire/format/cfg.js";
+import { Demux, makeSinks, Ack, Nack, JogAck, CfgReply } from "../../../src/link/demux.js";
+import { packStatusRsp } from "../../../src/packets/status.js";
+import { packCfgDataHeader } from "../../../src/packets/cfg.js";
 import {
     MAGIC_ACK,
     MAGIC_NACK,
@@ -24,7 +24,7 @@ import {
     MAGIC_JOG_ACK,
     MAGIC_JOG_NACK,
     NACK_SOFT_LIMIT,
-} from "../../../src/wire/format/constants.js";
+} from "../../../src/packets/constants.js";
 
 function concat(...parts: Uint8Array[]): Uint8Array {
     const total = parts.reduce((n, p) => n + p.length, 0);

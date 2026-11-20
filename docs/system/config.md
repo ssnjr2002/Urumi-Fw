@@ -3,7 +3,7 @@
 **Checked against `90984f4`.** To see what may have changed since:
 
 ```bash
-git diff 90984f4 -- src/rp2350/core0/config/ src/rp2350/core0/data_plane.cpp src/rp2350/core0/controller/cmd/config.cpp src/rp2350/core0/cmd/query.cpp web/src/machine/ web/scripts/config-image.ts scripts/pio/config_image.py
+git diff 90984f4 -- src/rp2350/core0/config/ src/rp2350/core0/data_plane.cpp src/rp2350/core0/controller/cmd/config.cpp src/rp2350/core0/cmd/query.cpp web/src/config/ web/scripts/config-image.ts scripts/pio/config_image.py
 ```
 
 Commands, replies, status keys and code names are written as the
@@ -72,14 +72,14 @@ unchanged; the host and the controller each wrap it in their own small header.
 one place a machine's numbers are written by hand.
 
 * **Required or defaulted, never both.** A field is required exactly when it
-  has no default in `web/src/machine/defaults.ts` (`DEFAULTS`). The required
+  has no default in `web/src/config/defaults.ts` (`DEFAULTS`). The required
   ones are the machine's own: `machine.x`, `machine.y`, `machine.meshOn`,
   `machine.heads` with each head's `z`, `a` and `accepts`, each axis's
   `node.id` and `stepsPerUnit`, each peripheral's `id` and `type`, each
   tool's `id`, and the numbers inside a homing or probe block that is given.
   Anything else left out takes its default.
 * **Tools start from presets.** Each key under `tools` is the name of a preset
-  in `web/src/machine/tools.ts` (`pen`, `knife`, `crease`, `revolver_pen`),
+  in `web/src/config/tools.ts` (`pen`, `knife`, `crease`, `revolver_pen`),
   and its entry overrides only the fields it gives.
 * **Unknown keys are ignored,** except retired names whose silent loss would
   change what the machine does (a head's `tool`, `machine.work`, the
@@ -110,12 +110,12 @@ checks at boot are all that stand in its way.
 
 ### Loading
 
-`loadConfig` (`web/src/machine/json/load.ts`) runs two passes, never mixed:
+`loadConfig` (`web/src/config/load.ts`) runs two passes, never mixed:
 
 1. **Parse** (`parseConfig`): is the file well formed? Shape, types,
    required fields; defaults filled in; tools merged onto their presets. Every
    problem is listed, not only the first.
-2. **Validate** (`validateConfig`, `web/src/machine/json/validate.ts`): do the
+2. **Validate** (`validateConfig`, `web/src/config/validate.ts`): do the
    values make sense? A list of rules, each a function over the whole config:
    unique node ids, a head for every tool, homing that suits its axis, feeds
    under their ceilings, and so on. A rule returns errors, which refuse the
@@ -130,13 +130,13 @@ place. The file's `tools` become the model's `toolProfiles`.
 The controller holds numbers as float32; the host holds them as float64. A
 field in the runtime table (section 6) must hold a value float32 keeps
 exactly, so that a value the controller saves reads back as the one the host
-wrote. `f32(v)` (`web/src/machine/f32.ts`) is the shortest decimal with the
+wrote. `f32(v)` (`web/src/config/f32.ts`) is the shortest decimal with the
 same float32 as `v`; a value fits when `f32(v) === v`. The validator refuses a
 table field that doesn't fit ("more precision than the controller keeps").
 
 ### The runtime table
 
-`RUNTIME_FIELDS` in `web/src/machine/runtime.ts` lists the fields the
+`RUNTIME_FIELDS` in `web/src/config/runtime.ts` lists the fields the
 controller can edit while running. A row is a template over a scope: a
 machine field, every axis, every head, or every tool. It names the field's
 path, its C++ member, its type, its range, the homing kind it needs, and its
@@ -153,14 +153,14 @@ memory and fails if the committed one differs.
 
 ### Encoding
 
-`encodeConfigBlob` (`web/src/machine/json/blob.ts`) is msgpack of the
+`encodeConfigBlob` (`web/src/config/blob.ts`) is msgpack of the
 resolved config with `v` added (`CONFIG_BLOB_VERSION`). `v` changes when a
 field the controller decodes changes shape, and must equal the controller's
 `CFG_SCHEMA_VERSION`.
 
 The way back: `decodeConfigBlob` turns a pulled blob into a
 `ControllerConfig`, refusing an unknown `v` and trusting the rest, and
-`modelToFile` (`web/src/machine/json/save.ts`) turns that into a config file
+`modelToFile` (`web/src/config/save.ts`) turns that into a config file
 that loads to the same model. Defaults stay filled in and the comments are
 gone.
 
@@ -168,7 +168,7 @@ gone.
 
 Two packets on the USB serial, each opened by a magic byte. Their byte
 layouts are in [reference/packets.md](../reference/packets.md#config); the host's side is
-`Link.pushConfig` and `Link.pullConfig` (`web/src/wire/link/link.ts`).
+`Link.pushConfig` and `Link.pullConfig` (`web/src/link/link.ts`).
 
 ### Push
 
@@ -481,21 +481,21 @@ status keys.
 | File | Holds |
 | --- | --- |
 | `config/controller.jsonc` | the machine's config |
-| `web/src/machine/schema.ts` | `ControllerConfig` and its types |
-| `web/src/machine/defaults.ts` | every default value |
-| `web/src/machine/tools.ts` | the tool presets |
-| `web/src/machine/resolve.ts` | policy over the config: axes per head, feed chains |
-| `web/src/machine/json/load.ts` | parse and `loadConfig` |
-| `web/src/machine/json/validate.ts` | the host's rules |
-| `web/src/machine/json/blob.ts` | the blob and `v` |
-| `web/src/machine/json/save.ts` | `modelToFile` |
-| `web/src/machine/json/image.ts` | `/config.bin` for `uploadfs`, JSONC comments |
-| `web/src/machine/json/mesh.ts` | `/mesh.bin` for `uploadfs` |
-| `web/src/machine/f32.ts` | the float32 fit |
-| `web/src/machine/runtime.ts`, `runtimeHeader.ts` | the runtime table and its header |
+| `web/src/config/schema.ts` | `ControllerConfig` and its types |
+| `web/src/config/defaults.ts` | every default value |
+| `web/src/config/tools.ts` | the tool presets |
+| `web/src/config/resolve.ts` | policy over the config: axes per head, feed chains |
+| `web/src/config/load.ts` | parse and `loadConfig` |
+| `web/src/config/validate.ts` | the host's rules |
+| `web/src/config/blob.ts` | the blob and `v` |
+| `web/src/config/save.ts` | `modelToFile` |
+| `web/src/config/image.ts` | `/config.bin` for `uploadfs`, JSONC comments |
+| `web/src/config/mesh.ts` | `/mesh.bin` for `uploadfs` |
+| `web/src/config/f32.ts` | the float32 fit |
+| `web/src/config/runtime.ts`, `runtimeHeader.ts` | the runtime table and its header |
 | `web/scripts/config-image.ts`, `mesh-image.ts`, `runtime-fields.ts` | the generators |
 | `scripts/pio/config_image.py` | runs the image generators for `uploadfs` |
-| `web/src/wire/link/link.ts`, `web/src/wire/format/cfg.ts` | push and pull on the host |
+| `web/src/link/link.ts`, `web/src/packets/cfg.ts` | push and pull on the host |
 | `src/rp2350/core0/data_plane.cpp` | push and pull on the controller |
 | `src/rp2350/core0/config/config_store.*` | the file, its check, the commit |
 | `src/rp2350/core0/config/config_decode.*` | `MachineCfg`, parse, rules, helpers |

@@ -9,8 +9,8 @@ const src = (p) => fileURLToPath(new URL(`../src/${p}`, import.meta.url));
 export default defineConfig(({ mode }) => ({
     resolve: {
         alias: mode === 'dist' ? [] : [
-            { find: /^urumi-host$/, replacement: src('index.ts') },
-            { find: /^urumi-host\/(.*)$/, replacement: src('$1.ts') },
+            { find: /^urumi-host\/(transport\/\w+)$/, replacement: src('$1.ts') },
+            { find: /^urumi-host\/(\w+)$/, replacement: src('$1/index.ts') },
         ],
     },
 }));

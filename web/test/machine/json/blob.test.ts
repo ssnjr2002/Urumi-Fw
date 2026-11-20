@@ -14,15 +14,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { encode } from "@msgpack/msgpack";
 import { FIXTURES, readFixture, readFixtureBytes } from "../../helpers.js";
-import { loadConfig } from "../../../src/machine/json/load.js";
-import { validateConfig } from "../../../src/machine/json/validate.js";
-import { stripJsonComments } from "../../../src/machine/json/image.js";
+import { loadConfig } from "../../../src/config/load.js";
+import { validateConfig } from "../../../src/config/validate.js";
+import { stripJsonComments } from "../../../src/config/image.js";
 import {
     CONFIG_BLOB_VERSION,
     decodeConfigBlob,
     encodeConfigBlob,
-} from "../../../src/machine/json/blob.js";
-import type { ControllerConfig } from "../../../src/machine/schema.js";
+} from "../../../src/config/blob.js";
+import type { ControllerConfig } from "../../../src/config/schema.js";
 
 function testMachine(): ControllerConfig {
     const r = loadConfig(readFixture("test-machine.json"));

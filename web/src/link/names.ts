@@ -1,5 +1,5 @@
 /**
- * wire/format/names.ts — human-readable names for the wire enums.
+ * link/names.ts — human-readable names for the wire enums.
  *
  * Every UI needs these and every UI wrote its own. Two shapes were in use:
  * `invert(MachineState)` (correct, in comms.js) and a positional literal
@@ -7,7 +7,7 @@
  * orchestrate.js) which is only right for as long as nobody reorders the enum
  * or leaves a gap in it. Both existed in the same folder.
  *
- * Placed beside the enums rather than in machine/, per the placement rule: a
+ * Placed beside the enums rather than in config/, per the placement rule: a
  * name for MachineState depends on MachineState and on nothing else, and a
  * consumer holding only a Link — with no MachineConfig anywhere — still needs
  * to print "ALARM".
@@ -23,7 +23,7 @@ import {
     JobReason,
     AXIS_BITS,
     type AxisLetter,
-} from "./status.js";
+} from "../packets/status.js";
 
 /** value → key, for the const-object "enums" TS gives no reverse mapping. */
 function invert(obj: Record<string, number>): Record<number, string> {

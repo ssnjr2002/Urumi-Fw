@@ -18,22 +18,22 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Link } from "../../../../src/wire/link/link.js";
-import { SimTransport } from "../../../../src/wire/link/backends/sim.js";
+import { Link } from "../../../../src/link/link.js";
+import { SimTransport } from "../../../../src/transport/sim.js";
 import {
     MachineState,
     MachineContext,
     Fault,
     JobReason,
     NO_LAYER,
-} from "../../../../src/wire/format/status.js";
-import { stampSeq } from "../../../../src/wire/format/packet.js";
-import { packBezier } from "../../../../src/wire/format/bezier.js";
-import { packJobHdr, packLayerHdr, packToolHdr } from "../../../../src/wire/format/layer.js";
+} from "../../../../src/packets/status.js";
+import { stampSeq } from "../../../../src/packets/packet.js";
+import { packBezier } from "../../../../src/packets/bezier.js";
+import { packJobHdr, packLayerHdr, packToolHdr } from "../../../../src/packets/layer.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
-import { packCjog, type JogDir } from "../../../../src/wire/format/cjog.js";
-import { CJOG_DEADMAN_MS, MAGIC_CJOG_STOP } from "../../../../src/wire/format/constants.js";
-import { crc8 } from "../../../../src/wire/format/crc.js";
+import { packCjog, type JogDir } from "../../../../src/packets/cjog.js";
+import { CJOG_DEADMAN_MS, MAGIC_CJOG_STOP } from "../../../../src/packets/constants.js";
+import { crc8 } from "../../../../src/packets/crc.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
 

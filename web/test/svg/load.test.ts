@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { bezierPoint, type CubicBezier, type Pt } from "../../src/toolpath/geometry.js";
 import { readFileSync } from "node:fs";
-import { loadSvgPaths, toolLayer, type LoadOptions, type Subpath } from "../../src/svg/load.js";
+import { loadSvgPaths, toolLayer, type LoadOptions, type Subpath } from "../../src/toolpath/svg.js";
 
 function doc(body: string, attrs = 'viewBox="0 0 100 100"'): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" ${attrs}>${body}</svg>`;
