@@ -734,7 +734,7 @@ that code (see `AGENTS.md`, Agent Scope).
     * Replaces nothing live: the earlier designs are already in `archive/`
       (`PLAN_svg_tile_motion.md`, `planner_spaces.md`).
 
-    **Status:** ready to merge.
+    **Status:** merged at `b83e28d`. Unblocks no branch.
 
     **Outcome:**
 
