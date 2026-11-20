@@ -17,8 +17,10 @@ import type { Transport } from "./index.js";
  *  (TS 5.5+), but the deployed lib may not include it. The fields the backend
  *  actually uses are declared here. */
 interface SerialPort {
-    readable: ReadableStream<Uint8Array>;
-    writable: WritableStream<Uint8Array>;
+    /** null while the port is closed. */
+    readable: ReadableStream<Uint8Array> | null;
+    /** null while the port is closed. */
+    writable: WritableStream<Uint8Array> | null;
     open(opts: SerialOptions): Promise<void>;
     close(): Promise<void>;
 }
@@ -51,8 +53,11 @@ export class WebSerialTransport implements Transport {
         return new WebSerialTransport(port);
     }
 
-    /** Wrap a port the caller has opened. */
+    /** Wrap a port the caller has opened. Throws if it is not open. */
     static fromPort(port: SerialPort): WebSerialTransport {
+        if (!port.readable || !port.writable) {
+            throw new Error("WebSerialTransport.fromPort: the port is not open; call port.open() first");
+        }
         return new WebSerialTransport(port);
     }
 
@@ -60,6 +65,7 @@ export class WebSerialTransport implements Transport {
 
     private _ensureWriter(): WritableStreamDefaultWriter<Uint8Array> {
         if (!this._writer) {
+            if (!this._port.writable) throw new Error("WebSerialTransport: the port is closed");
             this._writer = this._port.writable.getWriter();
         }
         return this._writer;
