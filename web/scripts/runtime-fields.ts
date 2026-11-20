@@ -6,7 +6,7 @@
 
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { renderRuntimeHeader } from "../src/machine/runtimeHeader.js";
+import { renderRuntimeHeader } from "../src/config/runtimeHeader.js";
 
 const out = fileURLToPath(
     new URL("../../src/rp2350/core0/config/runtime_fields.h", import.meta.url),

@@ -8,7 +8,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { configImageFromText } from "../src/machine/json/image.js";
+import { configImageFromText } from "../src/config/image.js";
 
 const args = process.argv.slice(2).filter((a) => a !== "--");
 if (args.length !== 2) {

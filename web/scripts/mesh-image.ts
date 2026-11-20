@@ -8,7 +8,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { meshImageFromText } from "../src/machine/json/mesh.js";
+import { meshImageFromText } from "../src/config/mesh.js";
 
 const args = process.argv.slice(2).filter((a) => a !== "--");
 if (args.length !== 2) {
