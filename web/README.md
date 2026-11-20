@@ -2,11 +2,12 @@
 
 Host library for the Urumi cutter: turns an SVG layer into BEZIER packets,
 encodes the machine config image, and talks to the Pico over USB
-(`wire/link`). Works in modern browsers and in Node 18+. TypeScript, ESM.
+(`wire/link`). Works in modern browsers and in Node 22.12+. TypeScript, ESM.
 
 The Pico plans and runs motion, homing, probing, parking and tool change; this
-library prepares the job and streams it. Packet layouts and commands are in
-[docs/wire_protocol.md](../docs/wire_protocol.md).
+library prepares the job and streams it. Packet layouts are in
+[docs/reference/packets.md](../docs/reference/packets.md), commands in
+[docs/reference/commands.md](../docs/reference/commands.md).
 
 ## Development
 
@@ -15,6 +16,8 @@ pnpm install
 pnpm typecheck
 pnpm test
 ```
+
+The build, its scripts and the demo: [docs/system/host-build.md](../docs/system/host-build.md).
 
 ## Contents
 
@@ -49,21 +52,5 @@ import { openNodeLink }       from "urumi-host/wire/link/backends/node";
 
 ## SVG input
 
-A layer is a `<g>` named by its `inkscape:label`, else its `id`. Nested named
-groups join with `/` (`revolver_pen/slot1`). Geometry outside any named group
-is under `''`.
-
-| Element | How it is read |
-|---|---|
-| `<path>` | `M L H V C S Q T A Z`, absolute and relative |
-| `<rect>` | 4 lines, or with arcs if `rx`/`ry` are set |
-| `<circle>`, `<ellipse>` | 4 cubic arcs |
-| `<line>`, `<polyline>`, `<polygon>` | lines (`<polygon>` closed) |
-
-Anything else (`<defs>`, `<clipPath>`, `<mask>`, `<text>`, …) and elements with
-neither fill nor stroke are skipped. Coordinates are converted to mm from the
-SVG's `width`/`height`/`viewBox` (`mm`, `cm`, `in`, `pt`, `pc`, `px`; unitless
-is px at 96 DPI), and Y is flipped to machine Y-up.
-
-Parsing uses the global `DOMParser`. In Node, set `globalThis.DOMParser` first
-(e.g. from `@xmldom/xmldom`, as `test/setup.ts` does).
+A layer is a `<g>` named by its `inkscape:label`, else its `id`. What is read,
+and how: [docs/system/toolpath.md](../docs/system/toolpath.md).

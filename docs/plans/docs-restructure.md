@@ -844,7 +844,36 @@ that code (see `AGENTS.md`, Agent Scope).
     * Replaces the Development section of `web/README.md`, which stays as
       the package's README and links here.
 
-    **Status:** not started.
+    **Status:** in review.
+
+    **Outcome:**
+
+    * Ordered as `firmware-build.md`: an overview with a stack table (library,
+      tests, scripts, demo), a short History, then Node and pnpm, TypeScript,
+      the package, dependencies and tools, with Glossary, Decisions and Code
+      last. History comes from the commits; no plan covers the build.
+    * Read found the package claiming Node 18 while the demo's vite 8 needs
+      22.12, two vites (5 under vitest and vite-node, 8 for the demo), an
+      unused `@vitest/ui`, and `pnpm lint` failing with 92 errors, unrun
+      since nothing asks for it. Fixed first, in its own branch
+      (`fix/web-lint`, `4613119`); this page is checked against it.
+    * Also covered, beyond the plan: `mesh-image.ts`, `demo:dist`, the
+      bridge.
+    * `web/README.md` keeps its three-command Development block and links
+      here; its SVG section is cut to a link to `toolpath.md`. Its Node
+      version is now 22.12, and it links `reference/packets.md` and
+      `reference/commands.md` in place of `wire_protocol.md`.
+    * Checks: `pnpm typecheck`, `pnpm lint`, `pnpm test` (664 passed, 1
+      skipped) at `4613119`.
+    * Out of scope, for a later pass:
+      * `serialport` is called an optional peer dependency in
+        `backends/node.ts` but `package.json` doesn't declare it.
+      * `pnpm-workspace.yaml`'s `allowBuilds: esbuild` does nothing since
+        vite 8.
+      * `prepublishOnly` runs `npm run build`; the package is never
+        published.
+      * The pnpm version isn't pinned (`packageManager`).
+      * `demo/` is plain JS, type checked by nothing.
 
 14. `refactor/system-tests`: `docs/system/tests.md`, the firmware and host
     tests.
