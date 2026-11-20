@@ -27,7 +27,6 @@ function rec(x: number): Uint8Array {
         curve: cubic({ x: x - 1, y: 0 }, { x: x - 2 / 3, y: 0 }, { x: x - 1 / 3, y: 0 }, { x, y: 0 }),
         flags: 0, nextBreakDist: 0, sweepMin: 0, sweepMax: 0,
         length: 1, kappaMax: 0, dkappaMax: 0, ts: [1, 0, 0],
-        kappaStart: 0, kappaEnd: 0, fitError: 0,
     });
 }
 

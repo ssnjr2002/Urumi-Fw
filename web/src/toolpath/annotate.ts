@@ -11,6 +11,7 @@
  */
 
 import { bezierDeriv1, bezierDeriv2, bezierPoint, cubic, splitAt, type CubicBezier, type Pt } from "./geometry.js";
+import type { BezierRecord } from "../packets/bezier.js";
 import type { CleanSubpath } from "./clean.js";
 import { bezierTurn, headingAt, wrapRad } from "./heading.js";
 
@@ -37,12 +38,8 @@ export const DEFAULT_ANNOTATE_OPTIONS: AnnotateOptions = {
 
 export const BezierFlag = { START: 1, BREAK: 2, END: 4 } as const;
 
-export interface BezierAnalysis {
-    readonly length: number;
-    readonly kappaMax: number;
-    readonly dkappaMax: number;
-    /** t(s) = s·(c1 + s·(c2 + s·c3)). */
-    readonly ts: readonly [number, number, number];
+/** analyzeBezier's result: the record's arc-length fields, and the fit data the toolpath keeps. */
+export interface BezierAnalysis extends Pick<BezierRecord, "length" | "kappaMax" | "dkappaMax" | "ts"> {
     /** Signed; positive turns left. */
     readonly kappaStart: number;
     readonly kappaEnd: number;
@@ -50,20 +47,9 @@ export interface BezierAnalysis {
     readonly fitError: number;
 }
 
-export interface AnnotatedBezier extends BezierAnalysis {
+/** One piece of a contour, ready for packBezier: a BEZIER record's fields, and the analysis behind them. */
+export interface AnnotatedBezier extends BezierRecord, BezierAnalysis {
     readonly curve: CubicBezier;
-    readonly flags: number;
-    /**
-     * On a START or BREAK piece: mm from p0 to the next BREAK or the end of
-     * the contour, rounded up, at most 65535 (at least that far). 0 elsewhere.
-     */
-    readonly nextBreakDist: number;
-    /**
-     * The unwrapped heading range from p0 to the next BREAK or the end of the
-     * contour, whole degrees from p0's heading, rounded outward, i16.
-     */
-    readonly sweepMin: number;
-    readonly sweepMax: number;
 }
 
 export type BezierError = "DegenerateHandle" | "Cusp" | "NonMonotonic";
