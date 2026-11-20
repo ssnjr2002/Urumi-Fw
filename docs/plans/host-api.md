@@ -210,12 +210,15 @@ reference pages") with MDN's anatomy, settled on the `link` draft:
   **Exceptions**, **Example**. A one-liner stays a row in its class's
   Methods table.
 * Constants, enums, name helpers and encoders are tables.
-* Three heading levels per page: `#` the subpath, `##` a class or
-  function, `###` a member, Constructor, Properties or Methods. Deeper
-  levels render too small to tell apart.
+* Three heading levels per page, all of them used: `#` the page intro
+  and each class or function, `##` its Constructor, Properties or
+  Methods, `###` a member's entry. Deeper levels render too small to tell
+  apart, and a page title at `#` over everything would waste one. The
+  intro's title must not share a class's anchor (`Transports`, not
+  `Transport`).
 
-In this plan the sections sit one level deeper than on their pages, and
-only `link` is in the new style yet.
+In this plan the drafts keep their old, deeper levels; each branch lifts
+its page to these. Only `link` and `transport` are in the new style yet.
 
 ### Index
 
@@ -1168,6 +1171,9 @@ merge. A `feature/` branch adds tests for its new behaviour.
    `Attachable` moved to `urumi-host/transport`, beside the new `ByteSink`
    the sim feeds. The index page describes today's names; branches 2–7
    update it.
+   Missed: the `git diff` line atop `reference/packets.md` still names
+   `web/src/wire/format` and `web/src/wire/link/demux.ts`; branch 3 fixes
+   it.
 
 Branches 2–7 each write their subpath's page from its draft above, change
 the code to match it, and end with the page checked against their last
@@ -1176,7 +1182,17 @@ reworks.
 
 2. `refactor/web-transport`: `request()`, `fromPort()`,
    `NodeSerialTransport`. No items. Depends on 1.
-   **Status:** not started.
+   **Status:** done at `5219bb2`, not merged.
+
+   **Outcome.** The refactor as planned, plus two features asked for in
+   the branch, each its own commit: `fromPort()` throws on a closed port,
+   and `NodeSerialTransport.open()` names a missing `serialport` and
+   resolves only once the port is open (it used to resolve at once and
+   drop an open failure). The `Writer`'s seams moved to `link/abort.ts`;
+   the sim's hook to `transport/attach.ts`, which the subpath doesn't
+   export. `SimOptions` is exported; its unused `fCpu` went.
+   `NodeSerialTransport.openWith()` is public only for the tests' fake
+   `serialport`; the page doesn't list it.
 3. `refactor/web-packets`: `JobLayer` moves in; internals go private. No
    items. Depends on 1. **Status:** not started.
 4. `feature/web-config`: `loadConfig()` reads JSONC (11); `encodeConfig`,

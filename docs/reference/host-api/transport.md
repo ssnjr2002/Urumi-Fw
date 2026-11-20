@@ -1,4 +1,4 @@
-# Transport
+# Transports
 
 The byte link under a [`Link`](link.md): the `Transport` interface and the
 three transports that implement it. Each transport is its own subpath, so a
@@ -14,6 +14,12 @@ Node program never loads browser code and a page never loads Node's.
 The caller opens the port; `new Link(transport)` takes it from there, the
 same in every environment. One `Link` per transport.
 
+**Checked against `5219bb2`.** To see what may have changed since:
+
+```bash
+git diff 5219bb2 -- web/src/transport/
+```
+
 ```ts
 import { Link } from "urumi-host/link";
 import { WebSerialTransport } from "urumi-host/transport/webserial";
@@ -21,7 +27,7 @@ import { WebSerialTransport } from "urumi-host/transport/webserial";
 const link = new Link(await WebSerialTransport.request());
 ```
 
-## `Transport`
+# `Transport`
 
 ```ts
 import type { Transport } from "urumi-host/transport";
@@ -38,7 +44,7 @@ interface Transport {
 }
 ```
 
-### Methods
+## Methods
 
 | Method | |
 |---|---|
@@ -46,7 +52,7 @@ interface Transport {
 | `read()` | the bytes from the controller, as chunks in arrival order. Chunk edges need not fall on frame edges. Ends when the port closes. The `Link` calls it once. |
 | `close()` | close the port; resolves once closed. `read()` ends. |
 
-## `WebSerialTransport`
+# `WebSerialTransport`
 
 ```ts
 import { WebSerialTransport } from "urumi-host/transport/webserial";
@@ -55,7 +61,7 @@ import { WebSerialTransport } from "urumi-host/transport/webserial";
 The browser's serial port, through the Web Serial API (Chrome, Edge,
 Opera). Made by one of two static methods; there is no public constructor.
 
-### Methods
+## Methods
 
 | Method | |
 |---|---|
@@ -130,7 +136,7 @@ await port.open({ baudRate: 115200 });
 const link = new Link(WebSerialTransport.fromPort(port));
 ```
 
-## `NodeSerialTransport`
+# `NodeSerialTransport`
 
 ```ts
 import { NodeSerialTransport } from "urumi-host/transport/node";
@@ -140,7 +146,7 @@ A serial port in Node, through the `serialport` package. The library
 doesn't depend on `serialport`; a program that uses this transport
 installs it.
 
-### Methods
+## Methods
 
 | Method | |
 |---|---|
@@ -177,7 +183,7 @@ A transport over the open port, once it is open.
 const link = new Link(await NodeSerialTransport.open("/dev/ttyACM0"));
 ```
 
-## `SimTransport`
+# `SimTransport`
 
 ```ts
 import { SimTransport } from "urumi-host/transport/sim";
@@ -189,7 +195,7 @@ does: it holds, buffers, acknowledges in batches and refuses with the
 firmware's codes. It does not plan motion: each record takes a fixed time
 and lands the head on its end point.
 
-### Constructor
+## Constructor
 
 ```ts
 new SimTransport(options?: SimOptions)
