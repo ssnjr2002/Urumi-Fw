@@ -691,7 +691,7 @@ that code (see `AGENTS.md`, Agent Scope).
     * Code: `src/rp2350/core0/data_plane.cpp`, `core0.cpp`, `web/src/wire/`.
     * Replaces `comms_architecture.md`.
 
-    **Status:** not started.
+    **Status:** merged at `9e32cd2`. Unblocks no branch.
 
     **Outcome:**
 
