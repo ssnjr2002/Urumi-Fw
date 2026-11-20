@@ -1194,7 +1194,7 @@ reworks.
    `NodeSerialTransport.openWith()` is public only for the tests' fake
    `serialport`; the page doesn't list it.
 3. `refactor/web-packets`: `JobLayer` moves in; internals go private. No
-   items. Depends on 1. **Status:** in review.
+   items. Depends on 1. **Status:** merged at `e2fda44`.
 
    **Outcome.** As planned, plus:
    * `packets` no longer imports `toolpath`: `packBezier()` takes a
