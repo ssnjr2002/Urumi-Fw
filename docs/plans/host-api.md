@@ -1160,7 +1160,14 @@ merge. A `feature/` branch adds tests for its new behaviour.
    * Write `docs/reference/host-api/README.md`: the index with Holds and
      Depends on, units, errors, waiting.
 
-   Depends on nothing. **Status:** not started.
+   Depends on nothing. **Status:** merged at `29e7621`.
+
+   **Outcome.** As planned, with three differences: `config/index.ts`
+   still re-exports the model with `export *` (branch 4 trims it); the
+   tests stay in `test/wire/` and `test/machine/`, only repointed; and
+   `Attachable` moved to `urumi-host/transport`, beside the new `ByteSink`
+   the sim feeds. The index page describes today's names; branches 2–7
+   update it.
 
 Branches 2–7 each write their subpath's page from its draft above, change
 the code to match it, and end with the page checked against their last
