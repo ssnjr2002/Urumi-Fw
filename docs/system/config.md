@@ -21,7 +21,7 @@ The config takes four forms on its way:
 | Form | Lives in | Made by |
 | --- | --- | --- |
 | JSONC | a file on the host, `config/controller.jsonc` | you |
-| Blob, on the host | host memory | the loader and encoder (`loadConfig`, `encodeConfigBlob`) |
+| Blob, on the host | host memory | the loader and encoder (`loadConfig`, `encodeConfig`) |
 | Blob, on the controller | controller flash, `/config.bin` | a push (`CFG_SET`), `uploadfs`, or `save` |
 | Runtime struct | controller RAM | the decoder (`configDecode`); `set` edits it |
 
@@ -102,9 +102,8 @@ image is built from `data/` and written over the whole span, so it replaces a
 config pushed since. A plain `upload` leaves the filesystem alone. It needs
 pnpm on the PATH and `pnpm install` run in `web/`.
 
-The image script parses the file but does not run the host's validator: a
-file that parses but breaks a rule is flashed, and the controller's own
-checks at boot are all that stand in its way.
+The image script loads the file as `loadConfig` does, validator included: a
+file that breaks a rule stops the build, as it would stop a push.
 
 ## 3. Blob on the host
 
@@ -153,15 +152,15 @@ memory and fails if the committed one differs.
 
 ### Encoding
 
-`encodeConfigBlob` (`web/src/config/blob.ts`) is msgpack of the
+`encodeConfig` (`web/src/config/blob.ts`) is msgpack of the
 resolved config with `v` added (`CONFIG_BLOB_VERSION`). `v` changes when a
 field the controller decodes changes shape, and must equal the controller's
 `CFG_SCHEMA_VERSION`.
 
-The way back: `decodeConfigBlob` turns a pulled blob into a
+The way back: `decodeConfig` turns a pulled blob into a
 `ControllerConfig`, refusing an unknown `v` and trusting the rest, and
-`modelToFile` (`web/src/config/save.ts`) turns that into a config file
-that loads to the same model. Defaults stay filled in and the comments are
+`saveConfig` (`web/src/config/save.ts`) turns that into a config file
+that loads to the same config. Defaults stay filled in and the comments are
 gone.
 
 ## 4. Wire
@@ -466,7 +465,7 @@ status keys.
 | Value | Writer | Readers |
 | --- | --- | --- |
 | `config/controller.jsonc` | you | `loadConfig`, `config-image.ts` |
-| `ControllerConfig` | `loadConfig`, `decodeConfigBlob` | the host |
+| `ControllerConfig` | `loadConfig`, `decodeConfig` | the host |
 | `runtime_fields.h` | `pnpm gen:runtime` | `runtime_edit.cpp` |
 | `/config.bin` | `configStoreCommit` (push, `save`), `uploadfs` | `configStoreInit`, `configStoreRead` |
 | `g_cfg` | `configStoreInit`, `configStoreCommit` | `cfg`, `CFG_GET`, `machineCfgLoad`, `machineCfgSave` |
@@ -485,11 +484,11 @@ status keys.
 | `web/src/config/defaults.ts` | every default value |
 | `web/src/config/tools.ts` | the tool presets |
 | `web/src/config/resolve.ts` | policy over the config: axes per head, feed chains |
-| `web/src/config/load.ts` | parse and `loadConfig` |
+| `web/src/config/load.ts` | parse and `loadConfig`, JSONC comments |
 | `web/src/config/validate.ts` | the host's rules |
 | `web/src/config/blob.ts` | the blob and `v` |
-| `web/src/config/save.ts` | `modelToFile` |
-| `web/src/config/image.ts` | `/config.bin` for `uploadfs`, JSONC comments |
+| `web/src/config/save.ts` | `saveConfig` |
+| `web/src/config/image.ts` | `/config.bin` for `uploadfs` |
 | `web/src/config/mesh.ts` | `/mesh.bin` for `uploadfs` |
 | `web/src/config/f32.ts` | the float32 fit |
 | `web/src/config/runtime.ts`, `runtimeHeader.ts` | the runtime table and its header |

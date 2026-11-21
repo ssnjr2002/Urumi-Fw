@@ -218,7 +218,7 @@ reference pages") with MDN's anatomy, settled on the `link` draft:
   `Transport`).
 
 In this plan the drafts keep their old, deeper levels; each branch lifts
-its page to these. Only `link`, `transport` and `packets` are in the new style yet.
+its page to these. Only `link`, `transport`, `packets` and `config` are in the new style yet.
 
 ### Index
 
@@ -1214,7 +1214,24 @@ reworks.
      (branch 1's miss).
 4. `feature/web-config`: `loadConfig()` reads JSONC (11); `encodeConfig`,
    `decodeConfig`, `configToFile`, `configImage`, `meshImage`; the resolve
-   helpers go private. Depends on 1. **Status:** not started.
+   helpers go private. Depends on 1. **Status:** in review.
+
+   **Outcome.** The page names the config's three forms first (JSON,
+   config, encoded config) and uses only those words; the code's names and
+   comments in `config/` follow. Against the draft:
+   * `configToFile` is `saveConfig`, the pair of `loadConfig`.
+   * `configImage`, `meshImage` and `renderRuntimeHeader` are private, as
+     `configBin`, `meshBin` and `renderRuntimeHeader`: only `web/scripts/`
+     uses them, importing their files.
+   * The factories, `parseConfig`, `CONFIG_BLOB_VERSION`, `MAX_HEADS` and
+     `TOOL_PROFILES_BY_TYPE` are private too; every part type of
+     `ControllerConfig` stays exported.
+   * A second feature, its own commit: the `config.bin` builder runs
+     `loadConfig()`, so `uploadfs` refuses a config the validator refuses.
+     It used to parse only, and flash such a config.
+   * "Blob" stays in `link/` and `packets/` (branch 6) and on
+     `system/config.md`, whose function names alone were repointed.
+
 5. `feature/web-toolpath`: `buildJob()` (1), `loadSvg(svg, config)` (2),
    `prepareBezierJob()`'s result shape; the inner stages go private; the
    README's job example uses `buildJob()` (16, begun). Depends on 3 and 4.

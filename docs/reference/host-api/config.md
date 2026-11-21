@@ -13,10 +13,10 @@ forms, and the functions between them:
 import { loadConfig, saveConfig } from "urumi-host/config";
 ```
 
-**Checked against `TBD`.** To see what may have changed since:
+**Checked against `058616d`.** To see what may have changed since:
 
 ```bash
-git diff TBD -- web/src/config/
+git diff 058616d -- web/src/config/
 ```
 
 # Functions

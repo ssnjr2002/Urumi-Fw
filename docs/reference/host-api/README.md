@@ -8,7 +8,7 @@ what it does is on [toolpath](../../system/toolpath.md),
 The library has six subpaths and no root import: every import names its
 subpath. Each subpath gets its own page here as it is reworked
 ([plan](../../plans/host-api.md)); until then, its `index.ts` lists what it
-exports. Done: [transport](transport.md), [packets](packets.md).
+exports. Done: [transport](transport.md), [packets](packets.md), [config](config.md).
 
 ## Index
 
@@ -19,7 +19,7 @@ exports. Done: [transport](transport.md), [packets](packets.md).
 | [`urumi-host/transport/node`](transport.md#nodeserialtransport) | `NodeSerialTransport` | `urumi-host/transport` |
 | [`urumi-host/transport/sim`](transport.md#simtransport) | `SimTransport` | `urumi-host/transport`, `urumi-host/packets` |
 | [`urumi-host/packets`](packets.md) | the binary records: encoders, `JobLayer`, `MachineStatus` and its enums, the CRCs, the codes | — |
-| `urumi-host/config` | the controller config: load, validate, save, encode | `urumi-host/packets` |
+| [`urumi-host/config`](config.md) | the controller's config: JSON to config and back, the encoded config, the config's types | `urumi-host/packets` |
 | `urumi-host/toolpath` | an SVG layer to a job's records | `urumi-host/packets`, `urumi-host/config` |
 | `urumi-host/link` | `Link`, job sessions, names for codes, text-command helpers, waiting for the machine | `urumi-host/transport`, `urumi-host/packets`, `urumi-host/config` |
 
