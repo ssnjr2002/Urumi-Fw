@@ -10,7 +10,7 @@
 import { crc32 } from "../packets/crc.js";
 import { CFG_MAX_BYTES } from "../packets/cfg.js";
 import { encodeConfig } from "./blob.js";
-import { parseConfig } from "./load.js";
+import { loadConfig } from "./load.js";
 
 /** config_store.h CFG_VERSION: the file header's format, not the payload's. */
 export const CFG_FILE_VERSION = 1;
@@ -31,9 +31,9 @@ export function wrapConfigBin(encoded: Uint8Array, seq = 0): Uint8Array {
     return out;
 }
 
-/** JSON or JSONC → /config.bin. Throws with every load error. */
+/** JSON or JSONC → /config.bin. Throws with every error loadConfig finds; warnings pass. */
 export function configBin(json: string): Uint8Array {
-    const r = parseConfig(json);
+    const r = loadConfig(json);
     if (!r.ok) throw new Error(`config invalid:\n  ${r.errors.join("\n  ")}`);
     return wrapConfigBin(encodeConfig(r.config));
 }

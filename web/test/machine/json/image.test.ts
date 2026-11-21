@@ -10,7 +10,7 @@ import {
     wrapConfigBin,
     configBin,
 } from "../../../src/config/image.js";
-import { stripJsonComments } from "../../../src/config/load.js";
+import { parseConfig, stripJsonComments } from "../../../src/config/load.js";
 
 describe("stripJsonComments", () => {
     it("drops line and block comments", () => {
@@ -59,6 +59,14 @@ describe("configBin", () => {
 
     it("lists the loader's errors", () => {
         expect(() => configBin('{ "machine": {} }')).toThrow(/config invalid/);
+    });
+
+    it("refuses a config that parses but fails validation", () => {
+        const json = JSON.parse(readFixture("test-machine.json")) as { machine: { slew?: object } };
+        json.machine.slew = { feed: -1 };
+        const text = JSON.stringify(json);
+        expect(parseConfig(text).ok).toBe(true);
+        expect(() => configBin(text)).toThrow(/machine\.slew\.feed: must be >= 0/);
     });
 
     it("builds config/controller.jsonc", () => {
