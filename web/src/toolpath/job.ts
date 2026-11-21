@@ -4,9 +4,10 @@
  * Pico queues the travel to it.
  */
 
-import { loadSvgPaths } from "./svg.js";
+import { readSvg } from "./svg.js";
 import type { QualityConfig } from "../config/schema.js";
 import { packBezier } from "../packets/bezier.js";
+import type { ToolBox } from "../packets/layer.js";
 import { cleanSubpath } from "./clean.js";
 import { annotate, type AnnotatedBezier } from "./annotate.js";
 import { add, cubic, type CubicBezier, type Pt } from "./geometry.js";
@@ -15,31 +16,24 @@ export interface BezierJobOptions {
     /** Added to every point (machine mm); the drawing's origin lands here. */
     readonly offset?: Pt;
     readonly quality?: Pick<QualityConfig, "angleTol" | "gapTol">;
-    /** The config's tool names, so `layer` is a tool layer's key (loadSvgPaths). */
+    /** The config's tool names, so `layer` is a tool layer's key (readSvg). */
     readonly tools?: readonly string[];
-}
-
-export interface BBox {
-    readonly minX: number;
-    readonly minY: number;
-    readonly maxX: number;
-    readonly maxY: number;
 }
 
 export interface BezierJob {
     /** One array per contour, in streaming order. */
     readonly contours: AnnotatedBezier[][];
-    /** One packet per piece, seq 0; the session stamps seq. */
-    readonly packets: Uint8Array[];
+    /** One record per piece, seq 0; the session stamps seq. */
+    readonly records: Uint8Array[];
     /** Of the control points, so it contains the cut. */
-    readonly bbox: BBox;
+    readonly bbox: ToolBox;
 }
 
 function shift(c: CubicBezier, d: Pt): CubicBezier {
     return cubic(add(c.p0, d), add(c.p1, d), add(c.p2, d), add(c.p3, d));
 }
 
-function bboxOf(pieces: AnnotatedBezier[]): BBox {
+function bboxOf(pieces: AnnotatedBezier[]): ToolBox {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const { curve } of pieces) {
         for (const p of [curve.p0, curve.p1, curve.p2, curve.p3]) {
@@ -57,7 +51,7 @@ export function prepareBezierJob(
     layer: string,
     options: BezierJobOptions = {},
 ): BezierJob | { error: string } {
-    const subpaths = loadSvgPaths(svgText, { tools: options.tools }).layers.get(layer);
+    const subpaths = readSvg(svgText, { tools: options.tools }).layers.get(layer);
     if (!subpaths) return { error: `no layer "${layer}"` };
     const offset = options.offset ?? { x: 0, y: 0 };
 
@@ -69,5 +63,5 @@ export function prepareBezierJob(
     if (contours.length === 0) return { error: `layer "${layer}" has nothing to cut` };
 
     const pieces = contours.flat();
-    return { contours, packets: pieces.map((b) => packBezier(b)), bbox: bboxOf(pieces) };
+    return { contours, records: pieces.map((b) => packBezier(b)), bbox: bboxOf(pieces) };
 }

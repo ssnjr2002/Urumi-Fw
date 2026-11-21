@@ -6,16 +6,16 @@
 import { describe, it, expect } from "vitest";
 import { bezierPoint, type CubicBezier, type Pt } from "../../src/toolpath/geometry.js";
 import { readFileSync } from "node:fs";
-import { loadSvgPaths, toolLayer, type LoadOptions, type Subpath } from "../../src/toolpath/svg.js";
+import { readSvg, toolLayer, type ReadOptions, type Subpath } from "../../src/toolpath/svg.js";
 
 function doc(body: string, attrs = 'viewBox="0 0 100 100"'): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" ${attrs}>${body}</svg>`;
 }
 
 /** All subpaths of a document, layers flattened, back in SVG coordinates (Y down). */
-function load(body: string, options?: LoadOptions): Subpath[] {
+function load(body: string, options?: ReadOptions): Subpath[] {
     const flip = (p: Pt): Pt => ({ x: p.x, y: 100 - p.y });
-    return [...loadSvgPaths(doc(body), options).layers.values()].flat().map((s) => ({
+    return [...readSvg(doc(body), options).layers.values()].flat().map((s) => ({
         closed: s.closed,
         curves: s.curves.map((c) => ({ p0: flip(c.p0), p1: flip(c.p1), p2: flip(c.p2), p3: flip(c.p3) })),
     }));
@@ -149,7 +149,7 @@ describe("load: viewport", () => {
         { attrs: 'viewBox="0 0 100 60"', pt: { x: 10, y: 0 }, mm: { x: 10, y: 60 } },
     ];
     it.each(cases)("$attrs", (k) => {
-        const { layers } = loadSvgPaths(doc(`<path d="M${k.pt.x} ${k.pt.y} l1 0"/>`, k.attrs));
+        const { layers } = readSvg(doc(`<path d="M${k.pt.x} ${k.pt.y} l1 0"/>`, k.attrs));
         close([...layers.values()][0]![0]!.curves[0]!.p0, k.mm);
     });
 });
@@ -193,7 +193,7 @@ describe("load: walk", () => {
 
 describe("load: layers", () => {
     it("names nested groups with '/', passes unnamed groups through, keeps order", () => {
-        const { layers } = loadSvgPaths(doc(
+        const { layers } = readSvg(doc(
             `<path d="M0 0 L1 0"/>` +
             `<g inkscape:label="knife" id="ignored"><g><path d="M1 0 L2 0"/></g><g id="slot1"><path d="M2 0 L3 0"/></g></g>` +
             `<g id="crease"><path d="M3 0 L4 0"/></g><path d="M4 0 L5 0"/>`,
@@ -208,7 +208,7 @@ describe("load: tool layers", () => {
 
     it("takes the outermost tool-named group as the layer, however each app names it", () => {
         const svg = readFileSync(new URL("../fixtures/svg_tool_layers.svg", import.meta.url), "utf8");
-        const { layers, warnings } = loadSvgPaths(svg, { tools: TOOLS });
+        const { layers, warnings } = readSvg(svg, { tools: TOOLS });
         const xs = (k: string) => layers.get(k)!.map((s) => s.curves[0]!.p0.x);
         expect([...layers.keys()]).toEqual(["", "knife", "pen.2", "pen"]);
         expect(xs("")).toEqual([0, 7, 8]);

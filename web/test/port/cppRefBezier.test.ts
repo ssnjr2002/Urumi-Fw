@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadSvgPaths } from "../../src/toolpath/svg.js";
+import { readSvg } from "../../src/toolpath/svg.js";
 import { cleanSubpath } from "../../src/toolpath/clean.js";
 import { annotate } from "../../src/toolpath/annotate.js";
 import { packBezier } from "../../src/packets/bezier.js";
@@ -34,7 +34,7 @@ it("generates the C++ BEZIER records", (ctx) => {
     const svg = readFileSync(SVG, "utf-8");
     const lines: string[] = [];
     const q = qualityConfig();
-    for (const subpaths of loadSvgPaths(svg).layers.values()) {
+    for (const subpaths of readSvg(svg).layers.values()) {
         for (const sp of subpaths) {
             const clean = cleanSubpath(sp, { angleTol: q.angleTol, gapTol: q.gapTol });
             if (!clean) continue;

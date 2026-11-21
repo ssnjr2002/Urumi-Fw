@@ -3,7 +3,7 @@ import {
     MachineState, MachineContext, Selection, NO_LAYER, JobReason, crc32,
 } from 'urumi-host/packets';
 import { loadConfig, encodeConfig, decodeConfig, saveConfig } from 'urumi-host/config';
-import { loadSvgPaths, toolLayer, prepareBezierJob } from 'urumi-host/toolpath';
+import { readSvg, toolLayer, prepareBezierJob } from 'urumi-host/toolpath';
 import { Link, JogAck, JobSource, fatalReasonName, stateName, faultNames, jobName } from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
 
@@ -581,7 +581,7 @@ function loadLayers() {
     svgWarnOut.textContent = '';
     if (svgText && pulledConfig) {
         try {
-            const loaded = loadSvgPaths(svgText, { tools: toolNames() });
+            const loaded = readSvg(svgText, { tools: toolNames() });
             svgLayers = loaded.layers;
             svgWarnOut.textContent = loaded.warnings.join('\n');
         } catch (e) {
@@ -747,8 +747,8 @@ function buildJob() {
             ...(r.p !== '' && { p }),
             thickness: t,
         };
-        layers.push({ hdr, tool: profile.id, head, bbox: job.bbox, packets: job.packets });
-        names.push({ key: r.key, total: job.packets.length });
+        layers.push({ hdr, tool: profile.id, head, bbox: job.bbox, records: job.records });
+        names.push({ key: r.key, total: job.records.length });
     }
     return { layers, names };
 }

@@ -66,13 +66,13 @@ export interface LayerHdr {
     readonly thickness?: number;
 }
 
-/** A layer in memory: its header's fields, tool and bbox, and its BEZIER packets, record n = packets[n - hdr.record]. */
+/** A layer in memory: its header's fields, tool and bbox, and its BEZIER records, record n = records[n - hdr.record]. */
 export interface JobLayer {
     readonly hdr: LayerHdr;
     readonly tool: number;
     readonly head: number;
     readonly bbox: ToolBox;
-    readonly packets: readonly Uint8Array[];
+    readonly records: readonly Uint8Array[];
 }
 
 export function packJobHdr(j: JobHdr, seq = 0): Uint8Array {

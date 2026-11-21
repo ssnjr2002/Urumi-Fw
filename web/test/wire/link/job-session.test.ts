@@ -32,7 +32,7 @@ function rec(x: number): Uint8Array {
 
 const BOX = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
 const layerOf = (layer: number, tool: number, packets: Uint8Array[], bbox = BOX) =>
-    ({ hdr: { layer }, tool, head: 0, bbox, packets });
+    ({ hdr: { layer }, tool, head: 0, bbox, records: packets });
 const job = (n: number) => new JobSource([layerOf(0, 1, Array.from({ length: n }, (_, i) => rec(i + 1)))]);
 /** JOB_HDR, its TOOL_HDR and the first layer's TOOL_HDR, ahead of LAYER_HDR and records. */
 const HDRS = 3;

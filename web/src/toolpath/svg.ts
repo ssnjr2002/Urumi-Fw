@@ -1,5 +1,5 @@
 /**
- * load.ts — SVG to subpaths in mm (Y up), stages 1-2 of the Bézier path.
+ * svg.ts — SVG to subpaths in mm (Y up), stages 1-2 of the Bézier path.
  *
  * One walk of the document carries the transform matrix (element × parents ×
  * viewBox-to-mm) and the layer name. Each element is parsed to cubics in its
@@ -42,22 +42,22 @@ export interface Viewport {
     readonly heightMm: number;
 }
 
-export interface LoadedSvg {
+export interface SvgPaths {
     readonly layers: Map<string, Subpath[]>;
     readonly viewport: Viewport;
     /** A tool group inside another, merged into the outer one. */
     readonly warnings: string[];
 }
 
-export interface LoadOptions {
+export interface ReadOptions {
     /** A Z closing line shorter than this (mm) is dropped. */
     readonly zTol?: number;
     /** The config's tool names: only groups naming one start a layer. */
     readonly tools?: readonly string[];
 }
 
-/** A tool layer's tool and chamber; chamber 0 = none named. */
-export interface ToolLayer {
+/** The tool and chamber a group name names; chamber 0 = none named. */
+export interface ToolName {
     readonly tool: string;
     readonly chamber: number;
 }
@@ -73,7 +73,7 @@ const CHAMBER_RE = /^(.+)\.(\d+)$/;
  * `<tool>.<n>`, after undoing exporters' escapes and dedup suffixes. A whole
  * name that is a tool wins over a `.<n>` split.
  */
-export function toolLayer(name: string, tools: readonly string[]): ToolLayer | null {
+export function toolLayer(name: string, tools: readonly string[]): ToolName | null {
     const decoded = name.replace(ESCAPE_RE, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
     for (const n of [decoded, decoded.replace(DEDUP_RE, "")]) {
         if (tools.includes(n)) return { tool: n, chamber: 0 };
@@ -84,7 +84,7 @@ export function toolLayer(name: string, tools: readonly string[]): ToolLayer | n
 }
 
 /** The `layers` key of a tool layer: `<tool>`, or `<tool>.<n>`. */
-export function toolLayerKey(tl: ToolLayer): string {
+export function toolLayerKey(tl: ToolName): string {
     return tl.chamber ? `${tl.tool}.${tl.chamber}` : tl.tool;
 }
 
@@ -438,7 +438,7 @@ function rendered(el: Element): Element[] {
 }
 
 /** Parse SVG text to layers of subpaths in mm, Y up. */
-export function loadSvgPaths(svgText: string, options: LoadOptions = {}): LoadedSvg {
+export function readSvg(svgText: string, options: ReadOptions = {}): SvgPaths {
     const zTol = options.zTol ?? DEFAULT_Z_TOL;
     const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
     const root = doc.documentElement;

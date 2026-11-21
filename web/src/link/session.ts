@@ -270,7 +270,7 @@ export class JobSource implements ReplayableSource {
     }
 
     start(): PacketSource {
-        const recordCount = this._layers.reduce((n, l) => n + l.packets.length, 0);
+        const recordCount = this._layers.reduce((n, l) => n + l.records.length, 0);
         const preflight = [
             packJobHdr({ id: this._id, recordCount, thickness: this._layers[0]!.hdr.thickness, toolCount: this._tools.length }),
             ...this._tools.map((t) => packToolHdr(t)),
@@ -286,11 +286,11 @@ export class JobSource implements ReplayableSource {
         const i = this._layers.findIndex((l) => (l.hdr.layer ?? 0) === layer);
         const l = this._layers[i];
         const first = l?.hdr.record ?? 0;
-        if (!l || record < first || record > first + l.packets.length) return new ListSource([]);
+        if (!l || record < first || record > first + l.records.length) return new ListSource([]);
         // The layer the job stopped in has gone already; the ones after wait as before.
         this._released = Math.max(this._released, i + 1);
         return this._open([
-            ...[packLayerHdr({ ...l.hdr, layer, record }), ...l.packets.slice(record - first)].map((packet) => ({ packet, layer: i })),
+            ...[packLayerHdr({ ...l.hdr, layer, record }), ...l.records.slice(record - first)].map((packet) => ({ packet, layer: i })),
             ...this._layers.flatMap((n, k) => (k > i ? this._newLayer(n).map((packet) => ({ packet, layer: k })) : [])),
         ]);
     }
@@ -302,7 +302,7 @@ export class JobSource implements ReplayableSource {
 
     private _newLayer(l: JobLayer): Uint8Array[] {
         const t = this._tools.find((x) => x.tool === l.tool)!;
-        return [packLayerHdr(l.hdr), packToolHdr({ ...t, head: l.head }), ...l.packets];
+        return [packLayerHdr(l.hdr), packToolHdr({ ...t, head: l.head }), ...l.records];
     }
 }
 

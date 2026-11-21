@@ -7,7 +7,7 @@ export {
 
 // ── Bézier path: SVG layer → annotated Béziers → BEZIER packets ─────────────
 export {
-    loadSvgPaths, toolLayer, toolLayerKey, type Subpath, type LoadedSvg, type LoadOptions, type ToolLayer,
+    readSvg, toolLayer, toolLayerKey, type Subpath, type SvgPaths, type ReadOptions, type ToolName,
 } from "./svg.js";
 export { cleanSubpath, DEFAULT_CLEAN_OPTIONS, type CleanSubpath, type CleanOptions, type JoinKind } from "./clean.js";
 export {
@@ -18,4 +18,4 @@ export {
     type AnnotatedBezier,
     type AnnotateOptions,
 } from "./annotate.js";
-export { prepareBezierJob, type BezierJob, type BezierJobOptions, type BBox } from "./job.js";
+export { prepareBezierJob, type BezierJob, type BezierJobOptions } from "./job.js";

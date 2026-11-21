@@ -45,8 +45,8 @@ describe("prepareBezierJob", () => {
         expect(breaks(95)).toBe(0);
     });
 
-    it("packs one packet per piece, in order", () => {
+    it("packs one record per piece, in order", () => {
         const j = job(TWO);
-        expect(j.packets).toEqual(j.contours.flat().map((b) => packBezier(b)));
+        expect(j.records).toEqual(j.contours.flat().map((b) => packBezier(b)));
     });
 });

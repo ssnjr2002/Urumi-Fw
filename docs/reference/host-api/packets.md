@@ -157,13 +157,13 @@ interface JobLayer {
   readonly tool: number;
   readonly head: number;
   readonly bbox: ToolBox;
-  readonly packets: readonly Uint8Array[];
+  readonly records: readonly Uint8Array[];
 }
 ```
 
 One layer of a job, ready to send: its header, the config tool's id and the
 head it runs on, the box its control points fill, and its `BEZIER` records,
-record n being `packets[n - hdr.record]`. The toolpath makes these; a
+record n being `records[n - hdr.record]`. The toolpath makes these; a
 `JobSource` sends them.
 
 # `MachineStatus`
