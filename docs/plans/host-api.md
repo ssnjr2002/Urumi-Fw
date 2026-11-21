@@ -1235,7 +1235,7 @@ reworks.
 5. `feature/web-toolpath`: `buildJob()` (1), `loadSvg(svg, config)` (2),
    `prepareBezierJob()`'s result shape; the inner stages go private; the
    README's job example uses `buildJob()` (16, begun). Depends on 3 and 4.
-   **Status:** done, not merged.
+   **Status:** merged at `b5caa57`.
 
    **Outcome.** The page names three forms first (SVG, tool layer, job
    layer); `loadSvg()` and `buildJob()` are the only exports. Against the
