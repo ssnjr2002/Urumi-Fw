@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { crc8 } from "../../../src/packets/crc.js";
+import { crc8, crc32 } from "../../../src/packets/crc.js";
 
 // A 25-byte payload whose CRC-8 the Python _crc8 gave as 0xD3.
 const PAYLOAD = [
@@ -27,5 +27,17 @@ describe("wire/format/crc: crc8", () => {
     it("over a start/end range matches the same bytes alone", () => {
         const buf = new Uint8Array([0xff, 0xff, ...PAYLOAD, 0xff, 0xff]);
         expect(crc8(buf, 2, 2 + PAYLOAD.length)).toBe(0xd3);
+    });
+});
+
+describe("wire/format/crc: crc32", () => {
+    const check = new TextEncoder().encode("123456789");
+
+    it("matches the standard check value", () => {
+        expect(crc32(check)).toBe(0xcbf43926);
+    });
+
+    it("continues across a split", () => {
+        expect(crc32(check, 4, 9, crc32(check, 0, 4))).toBe(0xcbf43926);
     });
 });

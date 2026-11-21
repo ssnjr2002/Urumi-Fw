@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { Link } from "../../../src/link/link.js";
 import { SimTransport } from "../../../src/transport/sim.js";
-import { JobSource, ListSource, FATAL_JOB_LOST, type Session } from "../../../src/link/session.js";
+import { JobSource, ListSource, FATAL_JOB_LOST, FATAL_JOB_MISMATCH, jobIdOf, type Session } from "../../../src/link/session.js";
 import { MachineState, JobReason } from "../../../src/packets/status.js";
 import { packBezier } from "../../../src/packets/bezier.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
@@ -140,7 +140,85 @@ describe("wire/link/session: job life", () => {
             expect(await link.command("cancel")).toBe("ok");
             expect(await done).toBe(false);
             expect(sess.fatalReason).toBe(FATAL_JOB_LOST);
+            expect(sess.result().lastLayer).toBe(0);
+            expect(sess.result().lastRecord).toBeDefined();
         });
+    });
+});
+
+describe("wire/link/session: attach", () => {
+    /** A job paused mid-stream, its first session gone. */
+    async function pausedAway(link: Link, n: number): Promise<void> {
+        const { sess, done } = await start(link, n);
+        await until(async () => (await link.getStatus()).reason === JobReason.RUNNING);
+        expect(await link.command("pause")).toBe("ok");
+        await until(() => sess.held === "paused");
+        sess.truncate();
+        await done;
+    }
+
+    it("takes over a paused job with the same id and resumes it", async () => {
+        await withLink(async (link) => {
+            await pausedAway(link, 40);
+            expect(await link.command("get jobid")).toBe(`jobid=${job(40).jobId.toString(16).padStart(8, "0")}`);
+            const sess = link.attach(job(40), 4);
+            const done = sess.run();
+            await until(() => sess.held === "paused");
+            expect(sess.resume()).toBe(true);
+            await until(() => atX(link, 40));
+            await sess.cancel();
+            expect(await done).toBe(true);
+        }, { recordMs: 20, ringSize: 8 });
+    });
+
+    it("waits on a job still cutting until it pauses", async () => {
+        await withLink(async (link) => {
+            const first = await start(link, 40);
+            await until(async () => (await link.getStatus()).reason === JobReason.RUNNING);
+            first.sess.truncate();
+            await first.done;
+            const sess = link.attach(job(40), 4);
+            const done = sess.run();
+            await tick(100);
+            expect(sess.held).toBeNull();
+            expect(sess.stats().sent).toBe(0);
+            // The sim has no host watch: pause it by hand, as a dry job would.
+            expect(await link.command("pause")).toBe("ok");
+            await until(() => sess.held === "paused");
+            expect(sess.resume()).toBe(true);
+            await until(() => atX(link, 40));
+            await sess.cancel();
+            expect(await done).toBe(true);
+        }, { recordMs: 20, ringSize: 8 });
+    });
+
+    it("refuses a job with another id, sending nothing", async () => {
+        await withLink(async (link) => {
+            await pausedAway(link, 40);
+            const sess = link.attach(job(41), 4);
+            expect(await sess.run()).toBe(false);
+            expect(sess.fatalReason).toBe(FATAL_JOB_MISMATCH);
+            expect(sess.stats().sent).toBe(0);
+            expect((await link.getStatus()).reason).toBe(JobReason.PAUSED);
+        }, { recordMs: 20, ringSize: 8 });
+    });
+
+    it("refuses when no job is open", async () => {
+        await withLink(async (link) => {
+            const sess = link.attach(job(4), 4);
+            expect(await sess.run()).toBe(false);
+            expect(sess.fatalReason).toBe(FATAL_JOB_MISMATCH);
+        });
+    });
+});
+
+describe("wire/link/session: job id", () => {
+    it("ignores seq and CRC8, and changes with a record", () => {
+        const a = job(3);
+        expect(a.jobId).toBe(job(3).jobId);
+        expect(a.jobId).not.toBe(job(4).jobId);
+        const r = rec(1);
+        expect(jobIdOf([stampSeq(r, 0)])).toBe(jobIdOf([stampSeq(r, 9)]));
     });
 });
 
@@ -318,7 +396,7 @@ describe("wire/link/session: job headers", () => {
 describe("wire/link/session: manual layers", () => {
     const twoLayers = () => new JobSource([
         layerOf(0, 1, [rec(1), rec(2)]), layerOf(1, 1, [rec(3), rec(4)]),
-    ], 0, { manual: true });
+    ], { manual: true });
 
     it("sends each layer only on release()", async () => {
         await withLink(async (link) => {

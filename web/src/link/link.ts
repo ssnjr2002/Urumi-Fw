@@ -320,6 +320,20 @@ export class Link {
         return sess;
     }
 
+    /**
+     * A job session that takes over `source`'s job, already open and PAUSED on
+     * the controller, for example after the host reconnects. run() checks the
+     * controller reports `source.jobId` and holds `paused` (it fails with
+     * FATAL_JOB_MISMATCH otherwise, having sent nothing); resume() carries on
+     * from the controller's resume point.
+     */
+    attach(source: ReplayableSource, window: number = DEFAULT_WINDOW): Session {
+        const sess = new Session(this.writer, this.sinks.ack, source, this.sinks.status, window,
+            (line) => this.command(line), true);
+        sess.verbose = this.verbose;
+        return sess;
+    }
+
     async close(): Promise<void> {
         await this._transport.close();
     }

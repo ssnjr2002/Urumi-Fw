@@ -31,6 +31,8 @@ export {
     FATAL_STALL,
     FATAL_CRC_LIMIT,
     FATAL_JOB_LOST,
+    FATAL_JOB_MISMATCH,
+    jobIdOf,
     type Hold,
     type PacketSource,
     type ReplayableSource,

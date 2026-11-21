@@ -31,14 +31,23 @@ export function crc8(data: ArrayLike<number>, start = 0, end = data.length): num
     return crc & 0xff;
 }
 
-/** CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320) over the whole buffer. */
-export function crc32(data: ArrayLike<number>): number {
-    let crc = 0xffffffff;
-    for (let i = 0; i < data.length; i++) {
-        crc ^= data[i]!;
-        for (let _ = 0; _ < 8; _++) {
-            crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-        }
+const CRC32_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1;
+        t[n] = c >>> 0;
     }
-    return (crc ^ 0xffffffff) >>> 0;
+    return t;
+})();
+
+/**
+ * CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320) over data[start..end]
+ * (exclusive end). Pass a previous result as `crc` to continue it over more
+ * data: crc32(b, 0, b.length, crc32(a)) equals the CRC of a then b.
+ */
+export function crc32(data: ArrayLike<number>, start = 0, end = data.length, crc = 0): number {
+    let c = ~crc >>> 0;
+    for (let i = start; i < end; i++) c = CRC32_TABLE[(c ^ data[i]!) & 0xff]! ^ (c >>> 8);
+    return ~c >>> 0;
 }

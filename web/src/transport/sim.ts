@@ -125,7 +125,7 @@ const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
     "state", "ctx", "enabled", "homed", "faults", "job", "latched",
-    "probed", "pz", "pos", "jogging",
+    "probed", "pz", "pos", "jogging", "jobid",
 ] as const;
 
 export class SimTransport implements Transport {
@@ -147,6 +147,8 @@ export class SimTransport implements Transport {
     context: MachineContext = MachineContext.IDLE;
     /** What the job is doing; meaningful only while the context is JOB. */
     job: JobReason = JobReason.BUFFERING;
+    /** The open job's id, from its JOB_HDR (data_plane.cpp keeps it the same way). */
+    jobId = 0;
     /** In PLACE: `place set` has been given. */
     placeSet = false;
     /** Sign off placement by itself, for a test about what follows it. */
@@ -629,6 +631,7 @@ export class SimTransport implements Transport {
             this.job = JobReason.PREFLIGHT;
             this.timeCredit = 0;
             this.preCount = data[15]!;
+            this.jobId = dv.getUint32(3, true);
             this.preIds = [];
             this.heldLayer = null;
             this.layerOpen = false;
@@ -1249,6 +1252,7 @@ export class SimTransport implements Transport {
             case "faults":    return hex(this.faults, 4);
             case "ctx":       return String(this.context);
             case "job":       return this.context === MachineContext.JOB ? String(this.job) : "-";
+            case "jobid":     return this.context === MachineContext.JOB ? this.jobId.toString(16).padStart(8, "0") : "-";
             case "resume_layer":  return this._resumeAt()?.layer.toString() ?? "-";
             case "resume_record": return this._resumeAt()?.record.toString() ?? "-";
             case "latched": {

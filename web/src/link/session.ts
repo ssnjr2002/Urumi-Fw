@@ -42,10 +42,13 @@ import {
     NACK_BUSY,
     JOB_MAX_TOOLS,
     MAGIC_ABORT,
+    MAGIC_JOB_HDR,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
 } from "../packets/constants.js";
 import { stampSeq } from "../packets/packet.js";
+import { crc32 } from "../packets/crc.js";
+import { delay } from "./clock.js";
 import { packJobHdr, packLayerHdr, packToolHdr, type JobLayer, type ToolBox, type ToolHdr } from "../packets/layer.js";
 import { Ack, Nack } from "./demux.js";
 import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../packets/status.js";
@@ -71,13 +74,11 @@ const SEQRESET_WAIT_MS = 1000;
 export const FATAL_STALL = 0xe0; // no ACK/NACK past STALL_TIMEOUT_MS
 export const FATAL_CRC_LIMIT = 0xe1; // NACK_CRC count exceeded MAX_CRC_ERRORS
 export const FATAL_JOB_LOST = 0xe2; // a job session's job left JOB without its cancel or end
+export const FATAL_JOB_MISMATCH = 0xe3; // attach found no paused job, or one with another id
 
 /** Why a job session sends nothing (see Session.held). */
 export type Hold = "place" | "paused" | "tool" | "refused" | "silent";
 
-function delay(ms: number): Promise<void> {
-    return new Promise((r) => setTimeout(r, ms));
-}
 
 // ── what a source sees ────────────────────────────────────────────────────────
 
@@ -176,6 +177,23 @@ export interface ReplayableSource {
     hasLayer(layer: number): boolean;
     /** How many frames open the job. The session sends no more until placement signs off. */
     readonly preflightFrames: number;
+    /** The job id its header carries; a session attaches only to a job that reports it. */
+    readonly jobId: number;
+}
+
+/**
+ * The job id: a CRC32 over the frames that open and make up the job, in the
+ * order they are sent, leaving out each frame's seq (byte 2) and CRC8 and
+ * the job header's own id field (bytes 3..6).
+ */
+export function jobIdOf(frames: readonly Uint8Array[]): number {
+    let c = 0;
+    for (const f of frames) {
+        const end = f.length - 1;
+        c = crc32(f, 0, 2, c);
+        c = crc32(f, f[0] === MAGIC_JOB_HDR ? 7 : 3, end, c);
+    }
+    return c;
 }
 
 function unionBox(a: ToolBox, b: ToolBox): ToolBox {
@@ -221,7 +239,8 @@ class LayerStream implements PacketSource {
 
 /** A job's layers in memory, each tool's header carrying the bbox over all its layers. */
 export class JobSource implements ReplayableSource {
-    private readonly _id: number;
+    /** See ReplayableSource.jobId. */
+    readonly jobId: number;
     private readonly _layers: readonly JobLayer[];
     private readonly _tools: readonly ToolHdr[];
 
@@ -231,7 +250,7 @@ export class JobSource implements ReplayableSource {
     private _released = 0;
     private _stream: LayerStream | null = null;
 
-    constructor(layers: readonly JobLayer[], id = 0, options: { manual?: boolean } = {}) {
+    constructor(layers: readonly JobLayer[], options: { manual?: boolean } = {}) {
         this.manual = options.manual ?? false;
         const tools = new Map<number, ToolHdr>();
         for (const l of layers) {
@@ -240,9 +259,9 @@ export class JobSource implements ReplayableSource {
             tools.set(l.tool, { tool: l.tool, head: l.head, bbox: t ? unionBox(t.bbox, l.bbox) : l.bbox });
         }
         if (tools.size < 1 || tools.size > JOB_MAX_TOOLS) throw new RangeError(`a job has 1..${JOB_MAX_TOOLS} tools, not ${tools.size}`);
-        this._id = id;
         this._layers = layers;
         this._tools = [...tools.values()];
+        this.jobId = jobIdOf(this._frames(0).map((f) => f.packet));
     }
 
     get preflightFrames(): number {
@@ -270,15 +289,20 @@ export class JobSource implements ReplayableSource {
     }
 
     start(): PacketSource {
+        return this._open(this._frames(this.jobId));
+    }
+
+    /** Every frame of the job from its start, the header carrying `id`. */
+    private _frames(id: number): LayerFrame[] {
         const recordCount = this._layers.reduce((n, l) => n + l.records.length, 0);
         const preflight = [
-            packJobHdr({ id: this._id, recordCount, thickness: this._layers[0]!.hdr.thickness, toolCount: this._tools.length }),
+            packJobHdr({ id, recordCount, thickness: this._layers[0]!.hdr.thickness, toolCount: this._tools.length }),
             ...this._tools.map((t) => packToolHdr(t)),
         ];
-        return this._open([
+        return [
             ...preflight.map((packet) => ({ packet, layer: -1 })),
             ...this._layers.flatMap((l, i) => this._newLayer(l).map((packet) => ({ packet, layer: i }))),
-        ]);
+        ];
     }
 
     /** A resume: this layer's header alone, its records, then the layers after it. */
@@ -358,6 +382,7 @@ export class Session {
     private _lastPoll = -Infinity;
     private _staleStamp = 0; // status samples up to this stamp predate the last ACK or hold
     private _wakeResolve: (() => void) | null = null;
+    private readonly _attach: boolean; // take over a paused job instead of opening one
 
     /** A job session's hold, null while it is sending or done. */
     held: Hold | null = null;
@@ -372,6 +397,9 @@ export class Session {
     fatalReason: number | undefined;
     /** The fatal NACK's detail byte (NACK_DETAIL_*), 0 for most reasons. */
     fatalDetail = 0;
+    /** A job session's last layer and record seen in the status, for a lost job. */
+    lastLayer: number | undefined;
+    lastRecord: number | undefined;
 
     constructor(
         writer: Writer,
@@ -381,17 +409,21 @@ export class Session {
         window: number = DEFAULT_WINDOW,
         /** A job session's text command path, for cancel(). */
         command?: (line: string) => Promise<string>,
+        /** Take over a job already PAUSED on the controller (see Link.attach()). */
+        attach = false,
     ) {
         this._writer = writer;
         this._ackSink = ackSink;
         if (isReplayable(source)) {
             if (!statusSink) throw new Error("a job session needs the status sink");
             this._job = source;
-            this._source = source.start();
+            this._source = attach ? new ListSource([]) : source.start();
         } else {
             this._source = source;
         }
         this._command = command;
+        this._attach = attach;
+        if (attach && !this._job) throw new Error("attach needs a job source");
         this._statusSink = statusSink;
         this.window = window;
         this._ctx = new StreamContext(this, statusSink);
@@ -603,6 +635,16 @@ export class Session {
         let crcErrors = 0;
         const v = this.verbose ? (m: string) => console.debug(`[session] ${m}`) : null;
         v?.(`job run start — window=${this.window}`);
+        if (this._attach) {
+            const ok = await this._attachCheck();
+            if (!ok) {
+                this.fatalReason = FATAL_JOB_MISMATCH;
+                return false;
+            }
+            this._placed = true;
+            const r = await this._hold("paused", v);
+            if (r !== null) return r;
+        }
 
         // Each hold returns null once it is left, else what run() returns.
         const hold = async (h: Hold): Promise<boolean | null> => {
@@ -705,11 +747,51 @@ export class Session {
         }
     }
 
+    /**
+     * Attach: the controller is in this job, on one of its layers, and reports
+     * its id. A job still cutting (BUFFERING, RUNNING) is waited on until it
+     * pauses: the controller pauses a dry job whose host closed the port. Sends
+     * nothing but STATUS_REQ and `get jobid`.
+     */
+    private async _attachCheck(): Promise<boolean> {
+        let idChecked = false;
+        let misses = 0;
+        for (;;) {
+            if (this.truncated) return false;
+            const st = await this._pollStatus();
+            if (!st) {
+                if (++misses >= 5) return false;
+                continue;
+            }
+            misses = 0;
+            if (st.context !== MachineContext.JOB || st.layer === undefined || !this._job!.hasLayer(st.layer)) return false;
+            // Cutting, or on its way to the pause: braking, lifting (a state
+            // other than JOB inside the job), or a dwell.
+            const cutting = st.state !== MachineState.JOB || st.reason === JobReason.BUFFERING ||
+                st.reason === JobReason.RUNNING || st.reason === JobReason.HOLDING || st.reason === JobReason.DWELL;
+            if (!(st.reason === JobReason.PAUSED && st.state === MachineState.JOB) && !cutting) return false;
+            if (!idChecked) {
+                const m = /\bjobid=([0-9a-f]{8})\b/.exec(await this._command!("get jobid"));
+                if (!m || parseInt(m[1]!, 16) !== this._job!.jobId) return false;
+                idChecked = true;
+            }
+            if (st.reason === JobReason.PAUSED) {
+                this._jobSeen = true;
+                return true;
+            }
+            await this._sleep(STATUS_POLL_MS);
+        }
+    }
+
     /** What run() returns once a job session's job context has closed, else undefined. */
     private _ended(st: MachineStatus | null): boolean | undefined {
         if (!st || st.context === undefined) return undefined;
         if (st.context === MachineContext.JOB) {
             this._jobSeen = true;
+            if (st.layer !== undefined && st.layer !== NO_LAYER && this._job?.hasLayer(st.layer)) {
+                this.lastLayer = st.layer;
+                this.lastRecord = st.record;
+            }
             return undefined;
         }
         if (this._ending) return true;
@@ -748,6 +830,16 @@ export class Session {
                         if (st.state !== MachineState.JOB) {
                             await this._sleep(STATUS_POLL_MS);
                             continue;
+                        }
+                        // Paused while the host was away (a lost host, or a pause
+                        // sent elsewhere): resending would only be refused. Hold
+                        // for resume() instead.
+                        if (h === "silent" && st.reason === JobReason.PAUSED) {
+                            h = "paused";
+                            this.held = h;
+                            this._go = false;
+                            v?.("hold silent → paused");
+                            await this._settle();
                         }
                         const left = await this._leave(h, st);
                         if (left) {
@@ -860,6 +952,8 @@ export class Session {
         return {
             ok: this.fatalReason === undefined,
             fatalReason: this.fatalReason,
+            lastLayer: this.lastLayer,
+            lastRecord: this.lastRecord,
             emitted: this._emitted,
             sent: this.sent,
             acked: this.acked,
@@ -958,6 +1052,7 @@ const NACK_REASON_NAMES: Readonly<Record<number, string>> = {
     [FATAL_STALL]: "FATAL_STALL",
     [FATAL_CRC_LIMIT]: "FATAL_CRC_LIMIT",
     [FATAL_JOB_LOST]: "FATAL_JOB_LOST",
+    [FATAL_JOB_MISMATCH]: "FATAL_JOB_MISMATCH",
 };
 
 /** Human-readable name for a `Session.fatalReason` value. */
@@ -974,6 +1069,9 @@ export function fatalReasonName(r: number): string {
 export interface StreamResult {
     readonly ok: boolean;
     readonly fatalReason?: number;
+    /** A job session's last layer and record seen in the status. */
+    readonly lastLayer?: number;
+    readonly lastRecord?: number;
     readonly emitted: number;
     readonly sent: number;
     readonly acked: number;

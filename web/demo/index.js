@@ -799,7 +799,7 @@ jobStartBtn.addEventListener('click', async () => {
     }
     try {
         await link.resetSeq();
-        source = new JobSource(job.layers, 0, { manual: jobManualBox.checked });
+        source = new JobSource(job.layers, { manual: jobManualBox.checked });
         session = link.session(source);
     } catch (e) {
         session = source = null;
