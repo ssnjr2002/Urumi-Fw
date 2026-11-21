@@ -220,6 +220,10 @@ n (or head n, for `unlocked`), whether mapped or not.
 | `seq` | the running sequence, else the one a SEQUENCE, HOMING or PROBE fault ended: 1 LEG, 2 TRAVERSE, 3 HOME, 4 RECOVERY, 5 GOTO, 6 TOOL_CHANGE, 7 PLACE | none |
 | `seqfail` | what refused a sequence after its `ok`, one token (e.g. `soft_limit`) | no SEQUENCE fault |
 | `cfgerr` | why the boot config was refused: `absent`, `fs`, `file`, or a decode error | no CONFIG fault |
+| `host` | 1 heard, 0 lost: DTR down, or nothing from the host for 3 s ([jobs](../system/jobs.md) §6) | not in a job |
+| `pausereason` | why the job last paused: 0 the operator, 1 a lost host | |
+| `jobid` | the open job's id from its `JOB_HDR`, 8 hex digits | not in a job |
+| `dtrdrops` | DTR falls since power-on: the host closed the port or the cable was pulled | |
 | `cfgdirty` | 1 while the active config holds edits `save` hasn't stored | |
 | `homing` | 0 LEG (a leg runs), 1 WAIT (none) | not HOMING |
 | `jogging` | 1 STEP (`jog`, `line`, `bez`), 2 CONT (a continuous jog), 3 GOTO | not JOGGING |

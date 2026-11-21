@@ -1,6 +1,6 @@
 # Host watch: pause a dry job when the host is gone
 
-**Draft.** Fixes the gap recorded in [system/jobs.md](../system/jobs.md) §6
+**Built on `feature/host-watch`.** Fixes the gap recorded in [system/jobs.md](../system/jobs.md) §6
 and §14: when the host goes away mid-job, the queue runs dry and the job
 waits in `BUFFERING` with the tool down in the material, still on.
 
@@ -53,21 +53,19 @@ waits in `BUFFERING` with the tool down in the material, still on.
   tuning. It isn't a config field.
 * **`STATUS_RSP` is unchanged.** Text `get` keys show the watch, for the
   console and for bench checks, in the style of `liftreason`:
-  * `host`: 1 when the host is heard, 0 when lost;
-  * `hostms`: ms since the last byte from the host;
+  * `host`: 1 when the host is heard, 0 when lost (`-` with no job open);
   * `pausereason`: why the job last paused, 0 for the operator and 1 for a
     lost host.
 * **For now a lost host only acts on a dry queue (`BUFFERING`).** The other
   job stages are left as they are; revisit them if one turns out to need it.
 
-## Open
+## Bench
 
-1. **DTR on Windows.** Find out on hardware whether closing a WebSerial port
-   drops DTR, and which call reads it under arduino-pico (`Serial.dtr()` or
-   `tud_cdc_connected()`). USB CDC gives one connection, so the firmware
-   can't be watched while the port is closed. Instead it counts DTR falls in
-   a `get dtrdrops` key: open the port, close it, reopen it, and read the key.
-   If the count doesn't rise, the timeout alone is the watch.
+* **DTR drops on close, on Windows.** `Serial.dtr()` under arduino-pico reads
+  it. Checked with a `dtrdrops` counter: every close of the port counted one
+  fall, from pyserial and from WebSerial in Chrome (Disconnect, then
+  Connect), and from pulling the USB cable with the Pico powered from
+  elsewhere. The count survives `reset`.
 
 ## Branches
 
@@ -76,7 +74,8 @@ waits in `BUFFERING` with the tool down in the material, still on.
    * a host-lost flag that Core 1 reads in `enter()`, so `BUFFERING` plus
      host lost calls `landHeld()`, the same path as `pauseRequested`;
    * the last finished block kept for the dry resume point;
-   * the `get` keys `host`, `hostms`, `pausereason` and `dtrdrops`;
+   * the `get` keys `host`, `pausereason` and `dtrdrops`;
+   * the `JOB_HDR` job id kept and reported as `get jobid`;
    * jobs.md §5, §6 and §14 updated; a sim test if the sim models the dry
      queue.
 2. **Branch 6, `feature/web-link`** (host): a session can attach to a job
@@ -86,4 +85,30 @@ waits in `BUFFERING` with the tool down in the material, still on.
 
 ## Outcome
 
-Not started.
+Built and benched on the machine, with the pen on head 0 and no tool fitted:
+a 400-record zigzag at 40 mm/s, with the host cut off about 5 s in.
+
+* **Port closed (DTR):** the controller cut the ~45 s already queued, ran dry
+  mid-contour, lifted Z by 2 mm, and landed `PAUSED` with `pausereason=1`
+  and the resume point at record 63.
+* **Host frozen with the port open (timeout):** the same, about 3 s after the
+  queue ran dry.
+* `get host` read the host as lost in the same pass as the `get` that asked,
+  because the tick runs before the bytes. Hearing a byte now clears the loss
+  unless DTR is down.
+
+* `hostms` was dropped: asking for it is itself a byte from the host, so it
+  always reads 0.
+* The silence counts from the later of the last byte and the job's opening,
+  so a job opened after a long idle isn't lost at once.
+* The dry resume point: Core 1 keeps the end (`sEnd`) of the last curve it
+  claimed in `jobExec`, and `landHeld()` uses it when the ring is empty.
+* **Job id:** the controller keeps the `JOB_HDR` id and reports it as
+  `get jobid`. The host is to set it to a CRC32 over the job's headers and
+  records, without seq and CRC8 (branch 6), and to resume a paused job only
+  when the ids match.
+* **Power loss:** the job is lost and not recovered; see jobs.md §14.
+* Seen on the bench for branch 6: a session that was frozen through the
+  pause comes back sending into it (88 NACKs and 87 retries before the
+  cancel). Branch 6 should treat a `PAUSED` it didn't ask for as a hold,
+  then resume after reconnecting.

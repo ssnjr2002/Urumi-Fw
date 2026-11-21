@@ -156,7 +156,7 @@ Opens a job from IDLE.
 | 0 | magic | u8 | `0xB8` |
 | 1 | version | u8 | 1 |
 | 2 | seq | u8 | |
-| 3–6 | job id | u32 | unread |
+| 3–6 | job id | u32 | kept for the job and reported as `get jobid`; not checked |
 | 7–10 | record count | u32 | unread |
 | 11–14 | t | f32 | material thickness, mm; unread (`LAYER_HDR` carries it) |
 | 15 | tool count | u8 | 1–4: the `TOOL_HDR`s that follow |

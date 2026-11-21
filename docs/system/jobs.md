@@ -456,7 +456,8 @@ A job buffers at its start, after a resume, after a tool change, and
 whenever the queue runs dry while cutting. When the queue runs dry, the
 machine stops where the records ran out, and stays there, tool down and
 still on, until more arrive. It doesn't lift: lifting and plunging again
-would leave a mark in the cut.
+would leave a mark in the cut. The exception is a lost host (§6): then the
+job pauses.
 
 ### Pause
 
@@ -534,16 +535,25 @@ the abort happened are turned away, rather than slipping in after the brake.
   brake, lift, idle.
 * **An e-stop** ends the job at once. Core 1 drops the queue and the
   machine stops without lifting, since an e-stop means nothing should move.
-* **If the host goes away** (the cable is pulled, the host crashes), the
-  controller doesn't notice. The queue runs dry and the job waits in
-  `BUFFERING`, as it always does. If that happens in the middle of a
-  contour, the tool is left down in the material, and on. Nothing on the
-  controller times it out.
+* **If the host goes away,** the job pauses once the queue runs dry. While
+  a job is open the controller counts the host lost when DTR drops (the
+  port is closed, the tab closed, or the cable pulled) or nothing has
+  arrived from it for 3 s (`HOST_TIMEOUT_MS`, against the host's 100 ms
+  poll), which catches a host that hangs with the port open. What is queued
+  is still cut. Then, in `BUFFERING` with the host lost, the job pauses as
+  an operator pause at rest does: the tool lifts and switches off, and the
+  job lands `PAUSED`. The resume point is the end of the last curve cut, so
+  a resume overlaps it by 2 mm, or the next record if the last block wasn't
+  a curve. `get pausereason` reads 1 for this pause, 0 for an operator's;
+  `get host` reads 0 while the host is lost. The code: `core0/host_watch.cpp`,
+  and `enter()` and `landHeld()` in `core1/emit/follower.cpp`.
 * **If the power goes**, the controller loses the job entirely. It keeps
   nothing in flash, because writing flash stalls both cores and the
   controller never does it during motion. The host is the only record of the
   job. It reads which record is being cut from every status poll, so it
-  knows roughly where to start again.
+  knows roughly where the job stopped. The job can't be continued: the
+  material may have moved, and placement only marks a box's corner, so a
+  restart can't be put back on the cut already made.
 
 ### Starting again
 
@@ -721,8 +731,10 @@ Why each header carries what it does:
 * **Tools are named by their config `id`,** not by their position in the
   config, so reordering the config doesn't change what a job means.
 
-The job header's job id and record count are sent, but the controller
-doesn't read them.
+The controller keeps the job header's job id for the life of the job and
+reports it as `get jobid`, but doesn't check it: the host sets it to a hash
+of the job, so a host that reconnects can tell whether a paused job is its
+own. The record count is sent but not read.
 
 ## 11. States
 
@@ -814,6 +826,13 @@ JOGGING, and the job's stage is kept underneath until the jog ends
 * **A lost job stops the session.** The alternative, resending into
   whatever answers, would have a rebooted controller accept the packets as
   duplicates and do nothing with them.
+* **A job lost to a power cut isn't recovered.** The alternative, a partial
+  job from the last record seen, needs the material realigned to the cut
+  already made, and placement can't do that: it marks a box's corner by eye,
+  and doesn't see rotation. Revisit if placement gets registration marks.
+* **The job id is the host's to check.** The host hashes the job into it; the
+  controller only keeps and reports it. A controller check would stop
+  nothing a host check doesn't: neither can verify the geometry.
 
 ### The controller
 
@@ -846,10 +865,13 @@ JOGGING, and the job's stage is kept underneath until the jog ends
   own restart in place (`restartFrom`).
 * **Resume is a layer header at the resume point,** so a stray record can't
   restart motion. The alternative was a `resume` text command.
-* **A dry queue doesn't lift.** The job waits in place and carries on
-  without a mark in the cut. The cost is a tool left down if the host goes
-  away (§6): the controller can't tell a slow host from a lost one. A lift
-  after a timeout was planned for that case and isn't built.
+* **A dry queue doesn't lift,** unless the host is lost. The job waits in
+  place and carries on without a mark in the cut. A lost host (DTR down, or
+  3 s silent) pauses it instead (§6), so the tool isn't left down in the
+  material. The alternative, lifting on a dry queue after a timeout, would
+  mark the cut for a host that's merely slow.
+* **A lost host only acts on a dry queue,** for now. In every other stage the
+  tool is already up or the operator holds it.
 
 ## 15. Code
 
