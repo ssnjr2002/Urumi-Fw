@@ -86,7 +86,8 @@ static bool __time_critical_func(bufferDone)() {
 
 // A pause at rest: keep where the job stopped (jobResume), drop the ring and
 // stay in JOB.HOLDING; Core 0 lifts and lands PAUSED (FACT_HELD). The host
-// resends from there. Under the lock.
+// resends from there. A dry ring resumes at the end of the last curve cut,
+// else at the next record. Under the lock.
 static void __time_critical_func(landHeld)() {
     const planner::Block* b = plannerExec.current();
     float s = b ? b->s0 + plannerExec.along() : 0;
@@ -96,7 +97,10 @@ static void __time_critical_func(landHeld)() {
         jobResume.layer  = b->layer;
         jobResume.record = b->record;
         jobResume.s      = b->kind == planner::Block::BEZIER ? s : b->resume_s;
+    } else if (jobExec.known && jobExec.sEnd >= 0) {
+        jobResume = {true, jobExec.layer, jobExec.record, jobExec.sEnd};
     }
+    pauseReason = pauseRequested ? PAUSE_OPERATOR : PAUSE_HOST;
     const Pos at = plannerExec.position();
     plannerRing.reset(at);
     plannerExec.reset(at);
@@ -126,7 +130,7 @@ static bool __time_critical_func(enter)() {
             plannerRing.count() > 0) {
             plannerActive = true;
             ok = true;
-        } else if (why == JOB_BUFFERING && pauseRequested) {
+        } else if (why == JOB_BUFFERING && (pauseRequested || hostLost)) {
             landHeld();
         } else if (why == JOB_BUFFERING && bufferDone()) {
             plannerActive = true;
@@ -402,7 +406,8 @@ void __time_critical_func(processPlanner)() {
             pos = plannerExec.tick(plannerRing, pending);
             const planner::Block* b = plannerExec.current();
             if (!jog && b) {
-                jobExec = {true, b->layer, b->record};
+                jobExec = {true, b->layer, b->record,
+                           b->kind == planner::Block::BEZIER ? b->s0 + b->path.length : -1.0f};
                 // A lift begins where the mask changes to one; it stays past it.
                 if (b->lift && b->lift != jobLift.cur) {
                     jobLift.count++;

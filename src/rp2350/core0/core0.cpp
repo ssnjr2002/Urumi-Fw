@@ -26,6 +26,7 @@
 #include "ops/probe.h"
 #include "data_plane.h"
 #include "status.h"
+#include "host_watch.h"
 #include "config/config_store.h"
 #include "config/machine_cfg.h"
 #include "controller/seq/controller.h"
@@ -44,6 +45,7 @@ static uint16_t serialRxLen = 0;
 void processSerial() {
     while (Serial.available() && !soft_reset_requested) {
         uint8_t b = (uint8_t)Serial.read();
+        hostWatchHeard();
 
         // Data plane (binary): consumes mid-packet bytes and packets started by a
         // magic byte. Returns false if the byte belongs to the control plane.
@@ -174,6 +176,7 @@ void loop() {
     while (!soft_reset_requested) {
         // Fold in what Core 1 reported BEFORE serving the host.
         observeTick();
+        hostWatchTick();
         processSerial();
         dataPlaneTick();   // abort a stalled CFG_SET transfer (inter-byte timeout)
         // Poll node-run legs to completion, then let the live sequence judge

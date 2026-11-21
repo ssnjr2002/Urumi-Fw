@@ -29,6 +29,8 @@ volatile uint16_t nodeEnabled   = 0;              // none energised until a node
 
 // Inter-core request flags
 volatile bool    pauseRequested = false;
+volatile bool    hostLost       = false;
+volatile uint8_t pauseReason    = PAUSE_OPERATOR;
 volatile bool    abortRequested = false;
 volatile bool    toolChangePending = false;
 volatile uint8_t ringOwner      = RING_JOB;
@@ -47,7 +49,7 @@ int64_t           plannerTurnQ32  = 0;
 PlannerMesh       plannerMesh     = {nullptr, 0, 0, 0};
 PlannerBlade      plannerBlade    = {0, 0};
 JobResume         jobResume       = {false, 0, 0, 0};
-JobExec           jobExec         = {false, 0, 0};
+JobExec           jobExec         = {false, 0, 0, -1};
 JobLift           jobLift         = {0, 0, 0};
 JobPower          jobPower        = {};
 DutyStop          dutyStop        = {};

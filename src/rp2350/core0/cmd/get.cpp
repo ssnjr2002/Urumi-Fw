@@ -20,6 +20,7 @@
 #include "../ops/bus.h"
 #include "../status.h"
 #include "../data_plane.h"
+#include "../host_watch.h"
 #include "../planner/queue.h"
 #include "../../ipc/shared_state.h"
 #include "../../ipc/core1_rpc.h"
@@ -256,6 +257,13 @@ const Key kKeys[] = {
         if (!(s.faults & F_CONFIG)) return KEY_NA;
         snprintf(o, n, "%s", machineCfgBlockName()); return KEY_OK; } },
     // The active config holds edits `save` has not stored.
+    // The host watch (docs/plans/host-watch.md): 1 heard, 0 lost (a job only);
+    // why the job last paused (0 operator, 1 host lost); DTR falls since
+    // power-on.
+    { "host",      [](const Snap& s, char* o, size_t n) {
+        return s.ctx == CTX_JOB ? fmtU(o, n, hostLost ? 0 : 1) : KEY_NA; } },
+    { "pausereason", [](const Snap&, char* o, size_t n) { return fmtU(o, n, pauseReason); } },
+    { "dtrdrops",  [](const Snap&, char* o, size_t n) { return fmtU(o, n, (unsigned)hostWatchDtrDrops()); } },
     { "cfgdirty",  [](const Snap&, char* o, size_t n) { return fmtU(o, n, machineCfgDirty() ? 1 : 0); } },
     { "homing",    [](const Snap& s, char* o, size_t n) {
         return s.state == STATE_HOMING ? fmtU(o, n, s.homingReason) : KEY_NA; } },

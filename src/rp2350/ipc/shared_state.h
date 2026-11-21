@@ -190,9 +190,17 @@ extern volatile uint16_t nodeEnabled;
 //     ring with position intact, and clears it. Not resumable.
 //   toolChangePending — a layer header wants a tool change once the job's ring
 //     runs dry; Core 1 lands JOB.TOOL_CHANGE instead of BUFFERING there.
+//   hostLost — a job is open and the host is gone: DTR is down, or nothing
+//     has arrived for HOST_TIMEOUT_MS (core0/host_watch.cpp). Core 1 pauses a
+//     job in BUFFERING on it, as it does on pauseRequested.
+//   pauseReason — why the job last held: PAUSE_OPERATOR or PAUSE_HOST. Set by
+//     Core 1 as it holds.
 extern volatile bool    pauseRequested;
 extern volatile bool    abortRequested;
 extern volatile bool    toolChangePending;
+extern volatile bool    hostLost;
+enum PauseReason : uint8_t { PAUSE_OPERATOR = 0, PAUSE_HOST = 1 };
+extern volatile uint8_t pauseReason;
 
 // ─── Planner motion (docs/plans/pico-planner.md) ──────────────────────────────
 // One lib/planner ring and its executor, shared by both cores: Core 0 pushes
@@ -221,7 +229,8 @@ extern volatile bool    toolChangePending;
 //   resumes at the next record Core 0 expects.
 // jobExec — the tag of the job block Core 1 last claimed, set under the lock
 //   by Core 1 as it claims one; Core 0 clears `known` as it opens or resumes
-//   a job.
+//   a job. `sEnd` is a BEZIER's mm into its record at its end, else -1: a
+//   job paused on a dry ring resumes there.
 extern planner::Planner  plannerRing;
 extern planner::Executor plannerExec;
 extern spin_lock_t*      plannerLock;
@@ -256,6 +265,7 @@ struct JobExec {
     bool     known;
     uint16_t layer;
     uint32_t record;
+    float    sEnd;
 };
 extern JobExec           jobExec;
 
