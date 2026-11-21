@@ -115,7 +115,7 @@ a 400-record zigzag at 40 mm/s, with the host cut off about 5 s in.
 
 ## The host side
 
-Branch `feature/host-watch-web`.
+Branch `feature/host-watch-web`, **merged at `8d3acba`.**
 
 ### Decisions
 
