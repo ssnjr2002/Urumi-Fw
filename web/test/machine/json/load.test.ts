@@ -27,6 +27,16 @@ const TEST_MACHINE = readJson("test-machine.json");
 
 // ── valid config ──────────────────────────────────────────────────────────────
 
+describe("load: JSONC", () => {
+    it("reads a config with // and /* */ comments", () => {
+        const json = readFixture("test-machine.json");
+        const jsonc = "// a comment\n/* and\n another */\n" + json.replace("{", "{ /* after the brace */");
+        const b = loadConfig(jsonc);
+        expect(b.ok).toBe(true);
+        expect(b).toEqual(loadConfig(json));
+    });
+});
+
 describe("load: valid config", () => {
     it("parses test-machine.json successfully", () => {
         const result = parseConfig(TEST_MACHINE);

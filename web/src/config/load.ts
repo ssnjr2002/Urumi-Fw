@@ -230,6 +230,34 @@ interface ConfigJson {
     readonly quality?: JsonQuality;
 }
 
+/**
+ * JSONC → JSON: drops `//` and `/* *\/` comments outside strings. Comment
+ * text becomes spaces (newlines kept), so parse errors keep their positions.
+ */
+export function stripJsonComments(text: string): string {
+    let out = "";
+    let i = 0;
+    while (i < text.length) {
+        const c = text[i]!;
+        if (c === '"') {
+            const start = i++;
+            while (i < text.length && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
+            out += text.slice(start, ++i);
+        } else if (c === "/" && text[i + 1] === "/") {
+            while (i < text.length && text[i] !== "\n") { out += " "; i++; }
+        } else if (c === "/" && text[i + 1] === "*") {
+            const end = text.indexOf("*/", i + 2);
+            const stop = end < 0 ? text.length : end + 2;
+            out += text.slice(i, stop).replace(/[^\n]/g, " ");
+            i = stop;
+        } else {
+            out += c;
+            i++;
+        }
+    }
+    return out;
+}
+
 // ── result type ───────────────────────────────────────────────────────────────
 
 export type ConfigResult =
@@ -239,13 +267,13 @@ export type ConfigResult =
 // ── parser ────────────────────────────────────────────────────────────────────
 
 /**
- * Parse JSON into a config. Lists every problem
+ * Parse JSON or JSONC into a config. Lists every problem
  * found, not only the first.
  */
 export function parseConfig(json: string): ConfigResult {
     let raw: unknown;
     try {
-        raw = JSON.parse(json);
+        raw = JSON.parse(stripJsonComments(json));
     } catch (e) {
         return err(`JSON parse error: ${(e as Error).message}`);
     }
@@ -818,7 +846,7 @@ export type LoadResult =
     | { readonly ok: false; readonly errors: readonly string[] };
 
 /**
- * Parse and validate JSON: the entry point outside tests.
+ * Parse and validate JSON or JSONC: the entry point outside tests.
  * `ok: true` means well-formed and sane; warnings are returned, never enforced.
  */
 export function loadConfig(json: string): LoadResult {

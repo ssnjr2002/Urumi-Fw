@@ -9,8 +9,8 @@ import {
     CFG_HEADER_BYTES,
     wrapConfigBin,
     configBin,
-    stripJsonComments,
 } from "../../../src/config/image.js";
+import { stripJsonComments } from "../../../src/config/load.js";
 
 describe("stripJsonComments", () => {
     it("drops line and block comments", () => {

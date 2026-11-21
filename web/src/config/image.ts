@@ -16,34 +16,6 @@ import { parseConfig } from "./load.js";
 export const CFG_FILE_VERSION = 1;
 export const CFG_HEADER_BYTES = 16;
 
-/**
- * JSONC → JSON: drops `//` and `/* *\/` comments outside strings. Comment
- * text becomes spaces (newlines kept), so parse errors keep their positions.
- */
-export function stripJsonComments(text: string): string {
-    let out = "";
-    let i = 0;
-    while (i < text.length) {
-        const c = text[i]!;
-        if (c === '"') {
-            const start = i++;
-            while (i < text.length && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
-            out += text.slice(start, ++i);
-        } else if (c === "/" && text[i + 1] === "/") {
-            while (i < text.length && text[i] !== "\n") { out += " "; i++; }
-        } else if (c === "/" && text[i + 1] === "*") {
-            const end = text.indexOf("*/", i + 2);
-            const stop = end < 0 ? text.length : end + 2;
-            out += text.slice(i, stop).replace(/[^\n]/g, " ");
-            i = stop;
-        } else {
-            out += c;
-            i++;
-        }
-    }
-    return out;
-}
-
 /** /config.bin for an encoded config: header (little-endian), then the encoded config. */
 export function wrapConfigBin(encoded: Uint8Array, seq = 0): Uint8Array {
     if (encoded.length === 0 || encoded.length > CFG_MAX_BYTES) {
@@ -61,7 +33,7 @@ export function wrapConfigBin(encoded: Uint8Array, seq = 0): Uint8Array {
 
 /** JSON or JSONC → /config.bin. Throws with every load error. */
 export function configBin(json: string): Uint8Array {
-    const r = parseConfig(stripJsonComments(json));
+    const r = parseConfig(json);
     if (!r.ok) throw new Error(`config invalid:\n  ${r.errors.join("\n  ")}`);
     return wrapConfigBin(encodeConfig(r.config));
 }

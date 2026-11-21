@@ -16,7 +16,6 @@ import { encode } from "@msgpack/msgpack";
 import { FIXTURES, readFixture, readFixtureBytes } from "../../helpers.js";
 import { loadConfig } from "../../../src/config/load.js";
 import { validateConfig } from "../../../src/config/validate.js";
-import { stripJsonComments } from "../../../src/config/image.js";
 import {
     CONFIG_BLOB_VERSION,
     decodeConfig,
@@ -147,7 +146,7 @@ describe("config fixtures (shared with the Pico decoder test)", () => {
 
     it("controller.msgpack is the encoded config/controller.jsonc", () => {
         const text = readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8");
-        const r = loadConfig(stripJsonComments(text));
+        const r = loadConfig(text);
         if (!r.ok) throw new Error(r.errors.join("; "));
         checkFixture("controller.msgpack", encodeConfig(r.config));
     });

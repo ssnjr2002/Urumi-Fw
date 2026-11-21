@@ -45,5 +45,3 @@ export { loadConfig, type LoadResult } from "./load.js";
 export { validateConfig, type ValidationResult } from "./validate.js";
 export { saveConfig } from "./save.js";
 export { encodeConfig, decodeConfig } from "./blob.js";
-// Until loadConfig reads JSONC itself.
-export { stripJsonComments } from "./image.js";

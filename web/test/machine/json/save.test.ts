@@ -7,7 +7,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readFixture, readFixtureBytes } from "../../helpers.js";
 import { loadConfig } from "../../../src/config/load.js";
-import { stripJsonComments } from "../../../src/config/image.js";
 import { decodeConfig } from "../../../src/config/blob.js";
 import { saveConfig } from "../../../src/config/save.js";
 import type { ControllerConfig } from "../../../src/config/schema.js";
@@ -19,8 +18,8 @@ function load(text: string): ControllerConfig {
 }
 
 const sources: [string, () => ControllerConfig][] = [
-    ["config/controller.jsonc", () => load(stripJsonComments(
-        readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8")))],
+    ["config/controller.jsonc", () => load(
+        readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8"))],
     ["test-machine.json", () => load(readFixture("test-machine.json"))],
     ["a pulled controller.msgpack", () => decodeConfig(readFixtureBytes("config/controller.msgpack"))],
 ];

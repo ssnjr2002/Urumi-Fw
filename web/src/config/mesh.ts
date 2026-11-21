@@ -11,7 +11,7 @@
  */
 
 import { crc32 } from "../packets/crc.js";
-import { stripJsonComments } from "./image.js";
+import { stripJsonComments } from "./load.js";
 
 export const MESH_MAGIC = 0x4853454d;   // "MESH"
 export const MESH_VERSION = 1;

@@ -2,7 +2,7 @@ import * as packets from 'urumi-host/packets';
 import {
     MachineState, MachineContext, Selection, NO_LAYER, JobReason, crc32,
 } from 'urumi-host/packets';
-import { loadConfig, stripJsonComments, encodeConfig, decodeConfig, saveConfig } from 'urumi-host/config';
+import { loadConfig, encodeConfig, decodeConfig, saveConfig } from 'urumi-host/config';
 import { loadSvgPaths, toolLayer, prepareBezierJob } from 'urumi-host/toolpath';
 import { Link, JogAck, JobSource, fatalReasonName, stateName, faultNames, jobName } from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
@@ -430,7 +430,7 @@ cfgFileIn.addEventListener('change', async () => {
     cfgPushBtn.disabled = true;
     const file = cfgFileIn.files[0];
     if (!file) return;
-    const loaded = loadConfig(stripJsonComments(await file.text()));
+    const loaded = loadConfig(await file.text());
     if (!loaded.ok) {
         cfgInfoOut.textContent = `${file.name}: rejected`;
         for (const err of loaded.errors) binOut(`config error: ${err}`);
