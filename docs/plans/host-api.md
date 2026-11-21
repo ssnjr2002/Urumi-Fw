@@ -1214,7 +1214,7 @@ reworks.
      (branch 1's miss).
 4. `feature/web-config`: `loadConfig()` reads JSONC (11); `encodeConfig`,
    `decodeConfig`, `configToFile`, `configImage`, `meshImage`; the resolve
-   helpers go private. Depends on 1. **Status:** in review.
+   helpers go private. Depends on 1. **Status:** merged at `ebf8290`.
 
    **Outcome.** The page names the config's three forms first (JSON,
    config, encoded config) and uses only those words; the code's names and
