@@ -3,6 +3,8 @@
 // While a job is open the host is lost when DTR drops (the port closed or the
 // cable pulled) or nothing has arrived for HOST_TIMEOUT_MS (a host that hangs
 // with the port open). Core 0 sets hostLost; Core 1 pauses a dry job on it.
+// A silence ends when the host is heard again; a DTR loss holds until the job
+// pauses or ends, since a host that reopened the port is a new session.
 #pragma once
 #include <stdint.h>
 
