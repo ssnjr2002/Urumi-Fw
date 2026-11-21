@@ -1,6 +1,6 @@
 # Host watch: pause a dry job when the host is gone
 
-**Built on `feature/host-watch`.** Fixes the gap recorded in [system/jobs.md](../system/jobs.md) §6
+**Merged at `cc01ecd`.** Fixes the gap recorded in [system/jobs.md](../system/jobs.md) §6
 and §14: when the host goes away mid-job, the queue runs dry and the job
 waits in `BUFFERING` with the tool down in the material, still on.
 
