@@ -50,7 +50,7 @@ AnnotatedBezier[]: pieces the controller accepts, measured, flagged
   **contour**: the tool down from `START` to `END`.
 * **Pack** writes each piece as one `BEZIER` record.
 
-`prepareBezierJob()` (`toolpath/job.ts`) runs all four on one layer.
+`buildJob()` (`toolpath/job.ts`) runs all four on each layer of a job.
 
 ## 2. Decisions
 
@@ -100,7 +100,7 @@ AnnotatedBezier[]: pieces the controller accepts, measured, flagged
 
 ## 3. Loading
 
-`loadSvgPaths()` (`toolpath/svg.ts`) parses the text with the platform's
+`readSvg()` (`toolpath/svg.ts`) parses the text with the platform's
 `DOMParser` and walks the document once, in document order. Under Node, the
 caller supplies a `DOMParser` (the tests use `@xmldom/xmldom`).
 
@@ -201,7 +201,9 @@ it:
 * `.0` names no chamber. Whether chamber n exists is checked by the caller,
   against the tool's chambers.
 
-`toolLayerKey()` gives the map key back: `pen`, or `pen.2`.
+`toolLayerKey()` gives the map key back: `pen`, or `pen.2`. `loadSvg()`
+reads with the config's tool names and returns each tool layer's key, tool,
+chamber and subpaths.
 
 ## 5. Cleaning
 
@@ -298,36 +300,42 @@ float rounding; the controller's range check keeps a margin for that.
 
 ## 7. The layer's records
 
-`prepareBezierJob(svgText, layer, options)` (`toolpath/job.ts`) runs the
-four stages on one layer:
+`buildJob(svg, config, spec)` (`toolpath/job.ts`) reads the drawing once,
+with the config's tool names, then runs the stages on each layer the spec
+names:
 
-1. Load the whole drawing, with `tools` if given, and take `layer`.
+1. Take the layer's subpaths.
 2. Add `offset` to every control point (none by default).
 3. Clean each subpath with `quality`'s `angleTol` and `gapTol`, and
    annotate it. A subpath cleaning leaves nothing of is skipped.
 4. Pack every piece, in document order, contour after contour.
 
-It returns:
+Each layer gives:
 
-* **`packets`:** one 62-byte record per piece, with seq 0. The job session
+* **`records`:** one 62-byte record per piece, with seq 0. The job session
   stamps the seq as it sends ([wire](wire.md#7-the-job-stream)).
 * **`bbox`:** the box around every control point. A cubic stays inside its
   control points, so the box holds the whole cut, sometimes with a margin.
-* **`contours`:** the pieces before packing, one array per contour.
+With the spec's head, feed and depth, and the layer's chamber, these make a
+`JobLayer`. The caller hands the layers to the job session's `JobSource`,
+which adds the job's headers and unions each tool's boxes into its
+`TOOL_HDR` ([jobs](jobs.md#building-the-stream)).
 
-A layer that isn't in the drawing, or has nothing left to cut, comes back as
-`{ error }`. A malformed drawing or a refused piece throws.
+Every problem comes back in `{ ok: false, errors }`, each naming its layer:
+a key that isn't a tool layer of the drawing, a layer with nothing left to
+cut, a tool without an id, a chamber the tool lacks, a plunging tool with
+no depth, a tool on two heads, more than 4 tools, a malformed drawing, and
+a piece the controller would refuse.
 
-The demo calls it once per layer of the job, and hands the packets and
-`bbox` to the job session's `JobSource`, which adds the headers and unions
-each tool's boxes into its `TOOL_HDR`
-([jobs](jobs.md#building-the-stream)).
+`prepareBezierJob()`, private, runs the same stages on one layer by name
+without a config, and also returns `contours`, the pieces before packing;
+the tests use it.
 
 ## 8. Tolerances
 
 | Value | Default | Stage | Set by |
 | --- | --- | --- | --- |
-| `zTol` | 1e-6 mm | load | the caller; `prepareBezierJob()` leaves the default |
+| `zTol` | 1e-6 mm | load | default only; `buildJob()` leaves it |
 | `angleTol` | 5° | clean | the config, `quality.angleTol` |
 | `gapTol` | 0.01 mm | clean | the config, `quality.gapTol` |
 | `handleTol` | 1e-4 mm | clean | default only; the controller's handle limit |
@@ -357,17 +365,17 @@ pieces the controller refuses.
 * **To the caller:** the loader's layer names and warnings, which the demo
   shows so the operator can pick each layer's head, feed and depth.
 
-Nothing here talks to the controller. Only the demo calls it.
+Nothing here talks to the controller.
 
 ## 10. Who writes what
 
 | Value | Written by | Read by |
 | --- | --- | --- |
-| `Viewport` | `loadSvgPaths()` | the caller |
-| layer name (`layers` key) | `loadSvgPaths()`, `toolLayerKey()` | `prepareBezierJob()`, the demo |
-| `ToolLayer` (tool, chamber) | `toolLayer()` | the demo |
-| `warnings` | `loadSvgPaths()` | the demo |
-| `Subpath` (`curves`, `closed`) | `loadSvgPaths()` | `cleanSubpath()` |
+| `Viewport` | `readSvg()` | the tests |
+| layer key | `readSvg()`, `toolLayerKey()` | `loadSvg()`, `buildJob()`, the caller |
+| `ToolLayer` (key, tool, chamber, paths) | `loadSvg()` | the caller |
+| `warnings` | `readSvg()`, through `loadSvg()` | the caller |
+| `Subpath` (`curves`, `closed`) | `readSvg()` | `cleanSubpath()`, `loadSvg()`'s `paths` |
 | `CleanSubpath` (`curves`, `joins`, `closed`) | `cleanSubpath()` | `annotate()` |
 | `JoinKind` (`smooth`, `corner`) | `cleanSubpath()` | `annotate()` |
 | `BezierAnalysis` (`length`, `kappaMax`, `dkappaMax`, `ts`, `kappaStart`, `kappaEnd`, `fitError`) | `analyzeBezier()` | `annotate()`, `heading.ts`, `packBezier()` |
@@ -375,8 +383,8 @@ Nothing here talks to the controller. Only the demo calls it.
 | `nextBreakDist` | `annotate()` | `packBezier()`, the controller |
 | `sweepMin`, `sweepMax` | `annotate()`, through `bezierTurn()` | `packBezier()`, the controller |
 | `contours` | `prepareBezierJob()` | the tests |
-| `packets` | `packBezier()`, through `prepareBezierJob()` | `JobSource` |
-| `bbox` | `prepareBezierJob()` | `JobSource`, for `TOOL_HDR` |
+| `records` | `packBezier()`, through `buildJob()` | `JobSource` |
+| `bbox` | `buildJob()` | `JobSource`, for `TOOL_HDR` |
 | seq byte | the job session (`stampSeq()`) | the controller |
 
 ## 11. History
@@ -440,7 +448,7 @@ tool-named groups, with exporters' escapes and suffixes undone.
 | `web/src/toolpath/clean.ts` | cleaning |
 | `web/src/toolpath/annotate.ts` | `analyzeBezier()`, splits, flags, the stretch numbers |
 | `web/src/toolpath/heading.ts` | heading and unwrapped turn |
-| `web/src/toolpath/job.ts` | `prepareBezierJob()` |
+| `web/src/toolpath/job.ts` | `buildJob()`, `prepareBezierJob()` |
 | `web/src/packets/bezier.ts` | `packBezier()` |
 
 ### Tests

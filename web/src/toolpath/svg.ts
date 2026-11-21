@@ -26,6 +26,7 @@ import {
     type CubicBezier,
     type Pt,
 } from "./geometry.js";
+import type { ControllerConfig } from "../config/schema.js";
 
 export interface Subpath {
     readonly curves: CubicBezier[];
@@ -498,4 +499,28 @@ export function readSvg(svgText: string, options: ReadOptions = {}): SvgPaths {
 
     walk(root, viewportMatrix(viewport), "");
     return { layers, viewport, warnings };
+}
+
+/** A tool layer of an SVG: its key, its tool and its chamber. */
+export interface ToolLayer extends ToolName {
+    /** `<tool>`, or `<tool>.<n>`. */
+    readonly key: string;
+    /** Its curves, in mm with Y up, to draw it. */
+    readonly paths: readonly Subpath[];
+}
+
+/** An SVG's tool layers, in document order, and warnings for a person. */
+export interface LoadedSvg {
+    readonly layers: readonly ToolLayer[];
+    readonly warnings: readonly string[];
+}
+
+/** The SVG's tool layers by the config's tool names. Throws on a malformed SVG. */
+export function loadSvg(svg: string, config: ControllerConfig): LoadedSvg {
+    const tools = Object.keys(config.toolProfiles);
+    const read = readSvg(svg, { tools });
+    const layers = [...read.layers]
+        .filter(([key]) => key !== "")
+        .map(([key, paths]) => ({ key, ...toolLayer(key, tools)!, paths }));
+    return { layers, warnings: read.warnings };
 }

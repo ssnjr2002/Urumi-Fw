@@ -25,7 +25,7 @@ The build, its scripts and the demo: [docs/system/host-build.md](../docs/system/
 | `src/transport/` | `urumi-host/transport`: the interface; `/webserial`, `/node` and `/sim` the transports |
 | `src/packets/` | `urumi-host/packets`: packet encoders and decoders (BEZIER, LAYER_HDR, CJOG, STATUS, CFG) |
 | `src/config/` | `urumi-host/config`: the config document: schema, tool presets, validation, binary image |
-| `src/toolpath/` | `urumi-host/toolpath`: SVG load, clean, annotate, and `prepareBezierJob`: one layer → BEZIER packets |
+| `src/toolpath/` | `urumi-host/toolpath`: an SVG's tool layers (`loadSvg`) and a job's layers (`buildJob`) |
 | `src/link/` | `urumi-host/link`: the link, job session, control commands |
 | `scripts/config-image.ts` | `config/*.jsonc` → `data/config.bin`, run by `pio run -e pico -t uploadfs` |
 | `demo/` | the machine console, a plain page over this library (`pnpm demo`) |
@@ -33,12 +33,16 @@ The build, its scripts and the demo: [docs/system/host-build.md](../docs/system/
 ## A job
 
 ```ts
-import { prepareBezierJob } from "urumi-host/toolpath";
+import { buildJob } from "urumi-host/toolpath";
 import { JobSource } from "urumi-host/link";
 
-const job = prepareBezierJob(svgText, "knife", { offset: { x: 100, y: 50 } });
-if ("error" in job) throw new Error(job.error);
-// Run new JobSource([{ hdr, tool, head, bbox: job.bbox, packets: job.packets }]) through a Session.
+const job = buildJob(svg, config, {
+  thickness: 3,
+  layers: [{ key: "knife", head: 0 }, { key: "pen", head: 1, feed: 40 }],
+});
+if (!job.ok) throw new Error(job.errors.join("
+"));
+const session = link.session(new JobSource(job.layers));
 // It holds as `place` after preflight; layers go once the operator sends `place set` and `place ok`.
 ```
 
@@ -55,5 +59,5 @@ const link = new Link(await NodeSerialTransport.open("/dev/ttyACM0"));
 
 ## SVG input
 
-A layer is a `<g>` named by its `inkscape:label`, else its `id`. What is read,
+A tool layer is a `<g>` named after a config tool, by its `inkscape:label`, else its `id`. What is read,
 and how: [docs/system/toolpath.md](../docs/system/toolpath.md).

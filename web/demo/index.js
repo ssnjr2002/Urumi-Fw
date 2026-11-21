@@ -3,7 +3,7 @@ import {
     MachineState, MachineContext, Selection, NO_LAYER, JobReason, crc32,
 } from 'urumi-host/packets';
 import { loadConfig, encodeConfig, decodeConfig, saveConfig } from 'urumi-host/config';
-import { readSvg, toolLayer, prepareBezierJob } from 'urumi-host/toolpath';
+import { loadSvg, buildJob } from 'urumi-host/toolpath';
 import { Link, JogAck, JobSource, fatalReasonName, stateName, faultNames, jobName } from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
 
@@ -558,14 +558,12 @@ let jobLayers = [];
 let placed = false;
 let placeRefusal = '';
 
-const toolNames = () => Object.keys(pulledConfig?.toolProfiles ?? {});
 const visibleRows = () => rows.filter((r) => svgLayers.has(r.key));
 const selectedRow = () => rows.find((r) => r.key === selectedKey && svgLayers.has(r.key)) ?? null;
 
 /** Why a layer can't run, or '' if it can. */
 function layerProblem(key) {
-    if (key === '') return 'no tool';
-    const tl = toolLayer(key, toolNames());
+    const tl = svgLayers.get(key);
     const profile = pulledConfig.toolProfiles[tl.tool];
     if (profile.id == null) return 'tool has no id';
     const chambers = profile.chamberOffsets?.length ?? 0;
@@ -581,8 +579,8 @@ function loadLayers() {
     svgWarnOut.textContent = '';
     if (svgText && pulledConfig) {
         try {
-            const loaded = readSvg(svgText, { tools: toolNames() });
-            svgLayers = loaded.layers;
+            const loaded = loadSvg(svgText, pulledConfig);
+            svgLayers = new Map(loaded.layers.map((l) => [l.key, l]));
             svgWarnOut.textContent = loaded.warnings.join('\n');
         } catch (e) {
             svgWarnOut.textContent = `svg: ${e.message}`;
@@ -679,7 +677,7 @@ for (const [input, field] of [[jobFeedIn, 'feed'], [jobPIn, 'p'], [jobHeadSel, '
 function drawPreview() {
     const ctx = previewCv.getContext('2d');
     ctx.clearRect(0, 0, previewCv.width, previewCv.height);
-    const all = [...svgLayers.values()].flat();
+    const all = [...svgLayers.values()].flatMap((l) => l.paths);
     const pts = all.flatMap((sp) => sp.curves.flatMap((c) => [c.p0, c.p1, c.p2, c.p3]));
     if (pts.length === 0) return;
     const minX = Math.min(...pts.map((p) => p.x)), maxX = Math.max(...pts.map((p) => p.x));
@@ -689,10 +687,10 @@ function drawPreview() {
     const tx = (p) => [pad + (p.x - minX) * s, previewCv.height - pad - (p.y - minY) * s];
     // The selected layer last, so grey never draws over it.
     const order = [...svgLayers].sort(([a], [b]) => (a === selectedKey) - (b === selectedKey));
-    for (const [key, subpaths] of order) {
+    for (const [key, { paths }] of order) {
         ctx.strokeStyle = key === selectedKey ? '#000' : '#ccc';
         ctx.beginPath();
-        for (const sp of subpaths) {
+        for (const sp of paths) {
             ctx.moveTo(...tx(sp.curves[0].p0));
             for (const c of sp.curves) ctx.bezierCurveTo(...tx(c.p1), ...tx(c.p2), ...tx(c.p3));
             if (sp.closed) ctx.closePath();
@@ -722,35 +720,20 @@ function setJobButtons() {
     jobResumeBtn.disabled = !on || !session;
 }
 
-/** The job's layers for JobSource, or why it can't run. */
-function buildJob() {
-    const t = Number(jobTIn.value) || 0;
-    const toolHeads = new Map();
-    const layers = [];
-    const names = [];
-    for (const [i, r] of jobRows().entries()) {
-        const tl = toolLayer(r.key, toolNames());
-        const profile = pulledConfig.toolProfiles[tl.tool];
-        const head = Number(r.head);
-        const p = r.p === '' ? t : Number(r.p);
-        if (profile.plunge && !(p > 0)) return { error: `${r.key}: plunges, so needs p or t above 0` };
-        const other = toolHeads.get(profile.id);
-        if (other && other.head !== head) return { error: `${other.key} and ${r.key}: tool ${tl.tool} on heads ${other.head} and ${head}` };
-        toolHeads.set(profile.id, { key: r.key, head });
-        const job = prepareBezierJob(svgText, r.key, { tools: toolNames(), quality: pulledConfig.quality });
-        if ('error' in job) return { error: `${r.key}: ${job.error}` };
-        const hdr = {
-            layer: i,
-            record: 0,
-            chamber: tl.chamber,
+/** The job's layers for JobSource and their names, or why it can't run. */
+function jobFromRows() {
+    const rs = jobRows();
+    const job = buildJob(svgText, pulledConfig, {
+        thickness: Number(jobTIn.value) || 0,
+        layers: rs.map((r) => ({
+            key: r.key,
+            head: Number(r.head),
             feed: Number(r.feed) || 0,
-            ...(r.p !== '' && { p }),
-            thickness: t,
-        };
-        layers.push({ hdr, tool: profile.id, head, bbox: job.bbox, records: job.records });
-        names.push({ key: r.key, total: job.records.length });
-    }
-    return { layers, names };
+            ...(r.p !== '' && { depth: Number(r.p) }),
+        })),
+    });
+    if (!job.ok) return { error: job.errors.join('; ') };
+    return { layers: job.layers, names: job.layers.map((l, i) => ({ key: rs[i].key, total: l.records.length })) };
 }
 
 /** Follow placement from the replies to `place` commands, from a button or the console. */
@@ -809,7 +792,7 @@ async function watchJob() {
 
 jobStartBtn.addEventListener('click', async () => {
     jobStartBtn.disabled = true;
-    const job = buildJob();
+    const job = jobFromRows();
     if (job.error) {
         binOut(`job: ${job.error}`);
         return setJobButtons();

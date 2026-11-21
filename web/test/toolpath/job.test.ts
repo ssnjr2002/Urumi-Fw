@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { prepareBezierJob, type BezierJob } from "../../src/toolpath/job.js";
+import { buildJob, prepareBezierJob, type BezierJob } from "../../src/toolpath/job.js";
+import { defaultConfig } from "../machines.js";
 import { BezierFlag } from "../../src/toolpath/annotate.js";
 import { packBezier } from "../../src/packets/bezier.js";
 
@@ -48,5 +49,20 @@ describe("prepareBezierJob", () => {
     it("packs one record per piece, in order", () => {
         const j = job(TWO);
         expect(j.records).toEqual(j.contours.flat().map((b) => packBezier(b)));
+    });
+});
+
+describe("buildJob", () => {
+    it("reports every error at once", () => {
+        const body = `<g id="knife">${SQUARE}</g><g id="pen">${SQUARE}</g>`;
+        const r = buildJob(svg(body), defaultConfig(), {
+            thickness: 0,
+            layers: [{ key: "knife", head: 0 }, { key: "pen", head: 0 }, { key: "pen", head: 1 }, { key: "crease", head: 0 }],
+        });
+        expect(r).toEqual({ ok: false, errors: [
+            expect.stringMatching(/^knife: .*depth above 0/),
+            expect.stringMatching(/^pen and pen: .*heads 0 and 1/),
+            expect.stringMatching(/^crease: not a tool layer/),
+        ] });
     });
 });
