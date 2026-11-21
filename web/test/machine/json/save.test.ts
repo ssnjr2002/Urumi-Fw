@@ -1,5 +1,5 @@
 /**
- * Tests for save.ts — modelToFile is the reverse of loadConfig.
+ * Tests for save.ts — saveConfig is the reverse of loadConfig.
  */
 
 import { describe, it, expect } from "vitest";
@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { readFixture, readFixtureBytes } from "../../helpers.js";
 import { loadConfig } from "../../../src/config/load.js";
 import { stripJsonComments } from "../../../src/config/image.js";
-import { decodeConfigBlob } from "../../../src/config/blob.js";
-import { modelToFile } from "../../../src/config/save.js";
+import { decodeConfig } from "../../../src/config/blob.js";
+import { saveConfig } from "../../../src/config/save.js";
 import type { ControllerConfig } from "../../../src/config/schema.js";
 
 function load(text: string): ControllerConfig {
@@ -22,17 +22,17 @@ const sources: [string, () => ControllerConfig][] = [
     ["config/controller.jsonc", () => load(stripJsonComments(
         readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8")))],
     ["test-machine.json", () => load(readFixture("test-machine.json"))],
-    ["a pulled controller.msgpack", () => decodeConfigBlob(readFixtureBytes("config/controller.msgpack"))],
+    ["a pulled controller.msgpack", () => decodeConfig(readFixtureBytes("config/controller.msgpack"))],
 ];
 
-describe("modelToFile", () => {
+describe("saveConfig", () => {
     it.each(sources)("%s loads back to the same model", (_, model) => {
         const m = model();
-        expect(load(modelToFile(m))).toEqual(m);
+        expect(load(saveConfig(m))).toEqual(m);
     });
 
     it("writes tools by preset name, without the derived fields", () => {
-        const file = JSON.parse(modelToFile(load(readFixture("test-machine.json"))));
+        const file = JSON.parse(saveConfig(load(readFixture("test-machine.json"))));
         expect(file.toolProfiles).toBeUndefined();
         for (const tool of Object.values<Record<string, unknown>>(file.tools)) {
             expect(tool).not.toHaveProperty("name");

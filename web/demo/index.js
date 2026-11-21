@@ -2,7 +2,7 @@ import * as packets from 'urumi-host/packets';
 import {
     MachineState, MachineContext, Selection, NO_LAYER, JobReason, crc32,
 } from 'urumi-host/packets';
-import { loadConfig, stripJsonComments, encodeConfigBlob, decodeConfigBlob, modelToFile } from 'urumi-host/config';
+import { loadConfig, stripJsonComments, encodeConfig, decodeConfig, saveConfig } from 'urumi-host/config';
 import { loadSvgPaths, toolLayer, prepareBezierJob } from 'urumi-host/toolpath';
 import { Link, JogAck, JobSource, fatalReasonName, stateName, faultNames, jobName } from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
@@ -437,7 +437,7 @@ cfgFileIn.addEventListener('change', async () => {
         return;
     }
     for (const w of loaded.warnings) binOut(`config warning: ${w}`);
-    pushBlob = encodeConfigBlob(loaded.config);
+    pushBlob = encodeConfig(loaded.config);
     cfgInfoOut.textContent = `${file.name}: ${kB(pushBlob.length)}, ${loaded.config.machine.heads.length} head(s)`;
     cfgPushBtn.disabled = !link;
 });
@@ -459,7 +459,7 @@ async function pullConfig() {
     binOut('→ CFG_GET');
     try {
         const blob = await link.pullConfig();
-        pulledConfig = blob && decodeConfigBlob(blob);
+        pulledConfig = blob && decodeConfig(blob);
         binOut(blob ? `← CFG_DATA ${kB(blob.length)}, ${pulledConfig.machine.heads.length} head(s)` : '← CFG_DATA (none stored)');
     } catch (e) {
         pulledConfig = null;
@@ -475,7 +475,7 @@ async function pullConfig() {
 cfgPullBtn.addEventListener('click', pullConfig);
 
 cfgSaveBtn.addEventListener('click', () => {
-    const url = URL.createObjectURL(new Blob([modelToFile(pulledConfig)], { type: 'application/json' }));
+    const url = URL.createObjectURL(new Blob([saveConfig(pulledConfig)], { type: 'application/json' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: 'config.json' });
     a.click();
     URL.revokeObjectURL(url);

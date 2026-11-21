@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-    encodeMesh, meshImageFromText, MESH_HEADER_BYTES, MESH_MAGIC, type MeshSource,
+    encodeMesh, meshBin, MESH_HEADER_BYTES, MESH_MAGIC, type MeshSource,
 } from "../../../src/config/mesh.js";
 import { crc32 } from "../../../src/packets/crc.js";
 
@@ -25,7 +25,7 @@ describe("mesh: encodeMesh", () => {
 
     it("reads JSONC", () => {
         const text = `// bench\n{ "x0": -5, "y0": 10, "dx": 600, "dy": 400, /* rows */ "z": [[0, -1, 2.5], [0.0004, -0.0006, 32.767]] }`;
-        expect(meshImageFromText(text)).toEqual(encodeMesh(good()));
+        expect(meshBin(text)).toEqual(encodeMesh(good()));
     });
 
     const refusals: Array<{ name: string; edit: (m: MeshSource) => void; error: RegExp }> = [

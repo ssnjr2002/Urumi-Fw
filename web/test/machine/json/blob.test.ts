@@ -19,8 +19,8 @@ import { validateConfig } from "../../../src/config/validate.js";
 import { stripJsonComments } from "../../../src/config/image.js";
 import {
     CONFIG_BLOB_VERSION,
-    decodeConfigBlob,
-    encodeConfigBlob,
+    decodeConfig,
+    encodeConfig,
 } from "../../../src/config/blob.js";
 import type { ControllerConfig } from "../../../src/config/schema.js";
 
@@ -42,16 +42,16 @@ function plain(config: ControllerConfig): Loose {
 describe("config blob", () => {
     it("round-trips a resolved config", () => {
         const config = testMachine();
-        expect(decodeConfigBlob(encodeConfigBlob(config))).toEqual(plain(config));
+        expect(decodeConfig(encodeConfig(config))).toEqual(plain(config));
     });
 
     it("carries the schema version", () => {
         const bytes = encode({ ...plain(testMachine()), v: CONFIG_BLOB_VERSION + 1 });
-        expect(() => decodeConfigBlob(bytes)).toThrow(/unsupported version/);
+        expect(() => decodeConfig(bytes)).toThrow(/unsupported version/);
     });
 
-    it("rejects a blob that is not a map", () => {
-        expect(() => decodeConfigBlob(encode([1, 2, 3]))).toThrow(/not a map/);
+    it("rejects bytes that are not an encoded config", () => {
+        expect(() => decodeConfig(encode([1, 2, 3]))).toThrow(/not a map/);
     });
 });
 
@@ -129,7 +129,7 @@ function checkFixture(file: string, bytes: Uint8Array): void {
 
 describe("config fixtures (shared with the Pico decoder test)", () => {
     it("good.msgpack is the encoded test machine", () => {
-        checkFixture("good.msgpack", encodeConfigBlob(testMachine()));
+        checkFixture("good.msgpack", encodeConfig(testMachine()));
     });
 
     it("work_area.msgpack is the test machine with a work area", () => {
@@ -149,7 +149,7 @@ describe("config fixtures (shared with the Pico decoder test)", () => {
         const text = readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8");
         const r = loadConfig(stripJsonComments(text));
         if (!r.ok) throw new Error(r.errors.join("; "));
-        checkFixture("controller.msgpack", encodeConfigBlob(r.config));
+        checkFixture("controller.msgpack", encodeConfig(r.config));
     });
 
     for (const b of BAD) {

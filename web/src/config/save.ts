@@ -1,8 +1,7 @@
 /**
- * save.ts — ControllerConfig → a config file that loadConfig reads back to the
- * same model. Used to download a config pulled from the controller.
+ * save.ts — a config → JSON that loadConfig reads back to the same config. Used to download a config pulled from the controller.
  *
- * Filled-in defaults stay in the file. Three reshapes undo what load.ts does:
+ * Filled-in defaults stay in the JSON. Three reshapes undo what load.ts does:
  *   - toolProfiles → tools
  *   - each tool loses name, toolType and requiredPeripheralTypes, which
  *     loading rederives from the preset
@@ -12,7 +11,7 @@
 import type { ControllerConfig } from "./schema.js";
 import { TOOL_PROFILES_BY_TYPE } from "./tools.js";
 
-export function modelToFile(config: ControllerConfig): string {
+export function saveConfig(config: ControllerConfig): string {
     const tools: Record<string, object> = {};
     for (const [key, profile] of Object.entries(config.toolProfiles)) {
         const { name: _n, toolType: _t, requiredPeripheralTypes: _r, ...rest } = profile;

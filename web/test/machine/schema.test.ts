@@ -6,12 +6,6 @@
 
 import { describe, it, expect } from "vitest";
 import {
-    PEN,
-    KNIFE,
-    CREASE,
-    REVOLVER_PEN,
-    TOOL_PROFILES,
-    TOOL_PROFILES_BY_TYPE,
     ToolType,
     NodeType,
     busNode,
@@ -20,7 +14,8 @@ import {
     toolHead,
     machineConfig,
     qualityConfig,
-} from "../../src/config/index.js";
+} from "../../src/config/schema.js";
+import { PEN, KNIFE, CREASE, REVOLVER_PEN, TOOL_PROFILES, TOOL_PROFILES_BY_TYPE } from "../../src/config/tools.js";
 import {
     uniformMachine,
     defaultConfig,

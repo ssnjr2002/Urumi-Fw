@@ -1,5 +1,5 @@
 /**
- * mesh.ts — a bed mesh file → the controller's /mesh.bin, for flashing with
+ * mesh.ts — a bed mesh's JSON → the controller's /mesh.bin, for flashing with
  * `pio run -e pico -t uploadfs` (scripts/pio/config_image.py).
  *
  * Source (JSON or JSONC), tip machine coordinates, mm:
@@ -63,7 +63,7 @@ export function encodeMesh(m: MeshSource): Uint8Array {
     return bytes;
 }
 
-/** JSON or JSONC text → the file. */
-export function meshImageFromText(text: string): Uint8Array {
-    return encodeMesh(JSON.parse(stripJsonComments(text)) as MeshSource);
+/** JSON or JSONC → /mesh.bin. */
+export function meshBin(json: string): Uint8Array {
+    return encodeMesh(JSON.parse(stripJsonComments(json)) as MeshSource);
 }

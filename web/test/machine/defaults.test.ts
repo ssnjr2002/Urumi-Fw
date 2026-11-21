@@ -17,7 +17,7 @@ import {
     qualityConfig,
     toolHead,
     toolProfile,
-} from "../../src/config/index.js";
+} from "../../src/config/schema.js";
 import { parseConfig } from "../../src/config/load.js";
 import { resolveTargets } from "../../src/config/resolve.js";
 

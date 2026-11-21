@@ -8,7 +8,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { configImageFromText } from "../src/config/image.js";
+import { configBin } from "../src/config/image.js";
 
 const args = process.argv.slice(2).filter((a) => a !== "--");
 if (args.length !== 2) {
@@ -18,10 +18,10 @@ if (args.length !== 2) {
 const [src, out] = args.map((a) => resolve(a)) as [string, string];
 
 try {
-    const image = configImageFromText(readFileSync(src, "utf8"));
+    const bin = configBin(readFileSync(src, "utf8"));
     mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(out, image);
-    console.log(`${out}: ${image.length} bytes from ${src}`);
+    writeFileSync(out, bin);
+    console.log(`${out}: ${bin.length} bytes from ${src}`);
 } catch (e) {
     console.error(`${src}: ${(e as Error).message}`);
     process.exit(1);

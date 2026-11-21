@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { readFixture } from "../../helpers.js";
 import { crc32 } from "../../../src/packets/crc.js";
 import { CFG_MAX_BYTES } from "../../../src/packets/cfg.js";
-import { decodeConfigBlob } from "../../../src/config/blob.js";
+import { decodeConfig } from "../../../src/config/blob.js";
 import {
     CFG_HEADER_BYTES,
-    configFileImage,
-    configImageFromText,
+    wrapConfigBin,
+    configBin,
     stripJsonComments,
 } from "../../../src/config/image.js";
 
@@ -29,12 +29,12 @@ describe("stripJsonComments", () => {
     });
 });
 
-describe("configFileImage", () => {
+describe("wrapConfigBin", () => {
     // config_store.cpp fileValid: version 1, length 1..CFG_MAX_BYTES,
     // size = header + length, CRC32 over the payload.
     it("writes the header fileValid checks", () => {
         const payload = new Uint8Array([1, 2, 3, 4, 5]);
-        const img = configFileImage(payload, 7);
+        const img = wrapConfigBin(payload, 7);
         const dv = new DataView(img.buffer);
         expect(dv.getUint16(0, true)).toBe(1);
         expect(dv.getUint32(4, true)).toBe(7);
@@ -45,24 +45,24 @@ describe("configFileImage", () => {
     });
 
     it("refuses an empty or oversized payload", () => {
-        expect(() => configFileImage(new Uint8Array(0))).toThrow();
-        expect(() => configFileImage(new Uint8Array(CFG_MAX_BYTES + 1))).toThrow();
+        expect(() => wrapConfigBin(new Uint8Array(0))).toThrow();
+        expect(() => wrapConfigBin(new Uint8Array(CFG_MAX_BYTES + 1))).toThrow();
     });
 });
 
-describe("configImageFromText", () => {
+describe("configBin", () => {
     it("carries the encoded config", () => {
-        const img = configImageFromText(readFixture("test-machine.json"));
-        const config = decodeConfigBlob(img.subarray(CFG_HEADER_BYTES));
+        const img = configBin(readFixture("test-machine.json"));
+        const config = decodeConfig(img.subarray(CFG_HEADER_BYTES));
         expect(config.machine.x.invertDir).toBe(true);
     });
 
     it("lists the loader's errors", () => {
-        expect(() => configImageFromText('{ "machine": {} }')).toThrow(/config invalid/);
+        expect(() => configBin('{ "machine": {} }')).toThrow(/config invalid/);
     });
 
     it("builds config/controller.jsonc", () => {
         const text = readFileSync(join(__dirname, "../../../../config/controller.jsonc"), "utf8");
-        expect(configImageFromText(text).length).toBeGreaterThan(CFG_HEADER_BYTES);
+        expect(configBin(text).length).toBeGreaterThan(CFG_HEADER_BYTES);
     });
 });

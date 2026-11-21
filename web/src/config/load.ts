@@ -1,5 +1,5 @@
 /**
- * load.ts — a config file's JSON → ControllerConfig (docs/system/config.md).
+ * load.ts — JSON → a config (ControllerConfig) (docs/system/config.md).
  *
  * A field is required exactly when it has no entry in DEFAULTS; anything else
  * absent takes its default. Tools patch the presets in tools.ts. Unknown keys
@@ -239,13 +239,13 @@ export type ConfigResult =
 // ── parser ────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a config file's JSON into a ControllerConfig. Lists every problem
+ * Parse JSON into a config. Lists every problem
  * found, not only the first.
  */
-export function parseConfig(jsonText: string): ConfigResult {
+export function parseConfig(json: string): ConfigResult {
     let raw: unknown;
     try {
-        raw = JSON.parse(jsonText);
+        raw = JSON.parse(json);
     } catch (e) {
         return err(`JSON parse error: ${(e as Error).message}`);
     }
@@ -253,14 +253,14 @@ export function parseConfig(jsonText: string): ConfigResult {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
         return err("config root must be an object");
     }
-    const json = raw as ConfigJson;
+    const root = raw as ConfigJson;
     const errors: string[] = [];
 
     // ── machine ───────────────────────────────────────────────────────────
-    if (typeof json.machine !== "object" || json.machine === null) {
+    if (typeof root.machine !== "object" || root.machine === null) {
         errors.push("machine: required (object)");
     } else {
-        const m = json.machine;
+        const m = root.machine;
         if (m.fCpu !== undefined && (typeof m.fCpu !== "number" || m.fCpu <= 0)) {
             errors.push("machine.fCpu: must be a positive number");
         }
@@ -278,13 +278,13 @@ export function parseConfig(jsonText: string): ConfigResult {
     // Rejected by name: under the lenient-unknown-keys rule a top-level `heads`
     // would read as a missing one, and a top-level `peripherals` as none.
     for (const key of ["heads", "defaultHead", "peripherals"] as const) {
-        if (json[key] !== undefined) {
+        if (root[key] !== undefined) {
             errors.push(`${key}: moved — use machine.${key}`);
         }
     }
 
     // ── heads ─────────────────────────────────────────────────────────────
-    const jsonHeads = (json.machine as JsonMachine | null | undefined)?.heads;
+    const jsonHeads = (root.machine as JsonMachine | null | undefined)?.heads;
     if (!Array.isArray(jsonHeads) || jsonHeads.length === 0) {
         errors.push("machine.heads: required (non-empty array)");
     } else {
@@ -331,7 +331,7 @@ export function parseConfig(jsonText: string): ConfigResult {
     }
 
     // ── build axes ────────────────────────────────────────────────────────
-    const machine = json.machine!;
+    const machine = root.machine!;
     const x = buildAxis(machine.x, errors, "machine.x");
     const y = buildAxis(machine.y, errors, "machine.y");
 
@@ -406,37 +406,37 @@ export function parseConfig(jsonText: string): ConfigResult {
     // ── build tool profiles registry ──────────────────────────────────────
     // Only the tools the config lists exist on the machine, each with its id.
     const toolProfiles: Record<string, ToolProfile> = {};
-    if (json.tools) {
-        for (const name of Object.keys(json.tools)) {
+    if (root.tools) {
+        for (const name of Object.keys(root.tools)) {
             if (!(name in TOOL_PROFILES)) {
                 errors.push(`tools.${name}: not a known tool preset`);
                 continue;
             }
             for (const [old, now] of [["path", "cutFeed"], ["z", "plungeFeed"]] as const) {
-                if (json.tools[name]![old] !== undefined) {
+                if (root.tools[name]![old] !== undefined) {
                     errors.push(`tools.${name}.${old}: removed — use tools.${name}.${now}`);
                 }
             }
-            if (json.tools[name]!.dutyLimits !== undefined) {
+            if (root.tools[name]!.dutyLimits !== undefined) {
                 errors.push(
                     `tools.${name}.dutyLimits: moved — use tools.${name}.power.dutyLimits ` +
                     `(settleS goes to tools.${name}.power.settleS)`,
                 );
             }
-            if (json.tools[name]!.liftHeight !== undefined) {
+            if (root.tools[name]!.liftHeight !== undefined) {
                 errors.push(
                     `tools.${name}.liftHeight: removed — set 'plunge'; the lift is ` +
                     "derived from the job's material thickness and machine.zClearance",
                 );
                 continue;
             }
-            const id = json.tools[name]!.id;
+            const id = root.tools[name]!.id;
             if (id === undefined) {
                 errors.push(`tools.${name}.id: required`);
                 continue;
             }
             const base = TOOL_PROFILES[name]!;
-            toolProfiles[name] = patchToolProfile(name, base, json.tools);
+            toolProfiles[name] = patchToolProfile(name, base, root.tools);
         }
     }
 
@@ -446,7 +446,7 @@ export function parseConfig(jsonText: string): ConfigResult {
 
     // ── build quality (code defaults + JSON overrides) ────────────────────
     const quality = qualityConfig(
-        json.quality as Partial<QualityConfig> | undefined,
+        root.quality as Partial<QualityConfig> | undefined,
     );
 
     return { ok: true, config: { machine: builtMachine, quality, toolProfiles } };
@@ -818,11 +818,11 @@ export type LoadResult =
     | { readonly ok: false; readonly errors: readonly string[] };
 
 /**
- * Parse and validate a config file's JSON: the entry point outside tests.
+ * Parse and validate JSON: the entry point outside tests.
  * `ok: true` means well-formed and sane; warnings are returned, never enforced.
  */
-export function loadConfig(jsonText: string): LoadResult {
-    const parsed = parseConfig(jsonText);
+export function loadConfig(json: string): LoadResult {
+    const parsed = parseConfig(json);
     if (!parsed.ok) return parsed;
 
     const { errors, warnings } = validateConfig(parsed.config);

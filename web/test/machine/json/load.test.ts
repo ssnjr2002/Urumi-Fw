@@ -9,12 +9,10 @@ import { readFixture } from "../../helpers.js";
 
 import { parseConfig, loadConfig } from "../../../src/config/load.js";
 import {
-    KNIFE,
-    PEN,
-    REVOLVER_PEN,
     ToolType,
     qualityConfig,
-} from "../../../src/config/index.js";
+} from "../../../src/config/schema.js";
+import { KNIFE, PEN, REVOLVER_PEN } from "../../../src/config/tools.js";
 import {
     defaultConfig,
 } from "../../machines.js";

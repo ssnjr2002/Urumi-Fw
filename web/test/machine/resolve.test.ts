@@ -6,10 +6,6 @@
 import { describe, it, expect } from "vitest";
 import { toolForLayer, canRunTool, requiredAxes } from "../../src/config/resolve.js";
 import {
-    PEN,
-    KNIFE,
-    CREASE,
-    REVOLVER_PEN,
     axisConfig,
     busNode,
     toolHead,
@@ -18,7 +14,8 @@ import {
     ToolType,
     NodeType,
     type MachineConfig,
-} from "../../src/config/index.js";
+} from "../../src/config/schema.js";
+import { PEN, KNIFE, CREASE, REVOLVER_PEN } from "../../src/config/tools.js";
 
 // A machine with every axis node wired; per-test we knock out nodes.
 function machine(opts?: {

@@ -17,7 +17,9 @@ import { loadSvgPaths } from "../../src/toolpath/svg.js";
 import { cleanSubpath } from "../../src/toolpath/clean.js";
 import { annotate } from "../../src/toolpath/annotate.js";
 import { packBezier } from "../../src/packets/bezier.js";
-import { qualityConfig } from "../../src/config/index.js";
+import {
+    qualityConfig,
+} from "../../src/config/schema.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SVG = join(HERE, "../production/data/fish.svg");
