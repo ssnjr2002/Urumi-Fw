@@ -29,12 +29,13 @@
  */
 
 /** Sink<T> — ordered, never drops, awaitable. The ack and text sinks. */
+import { setTimer, clearTimer, type TimerId } from "./clock.js";
 export class Sink<T> {
     readonly name: string;
     private _q: T[] = [];
     private _waiters: Array<{
         resolve: (v: T | null) => void;
-        timer: ReturnType<typeof setTimeout> | null;
+        timer: TimerId | null;
     }> = [];
 
     constructor(name: string) {
@@ -45,7 +46,7 @@ export class Sink<T> {
     put(item: T): void {
         const w = this._waiters.shift();
         if (w) {
-            if (w.timer) clearTimeout(w.timer);
+            if (w.timer) clearTimer(w.timer);
             w.resolve(item);
             return;
         }
@@ -60,10 +61,10 @@ export class Sink<T> {
     get(timeoutMs?: number): Promise<T | null> {
         if (this._q.length > 0) return Promise.resolve(this._q.shift()!) as Promise<T | null>;
         return new Promise<T | null>((resolve) => {
-            const waiter = { resolve, timer: null as ReturnType<typeof setTimeout> | null };
+            const waiter = { resolve, timer: null as TimerId | null };
             this._waiters.push(waiter);
             if (timeoutMs !== undefined && timeoutMs > 0) {
-                waiter.timer = setTimeout(() => {
+                waiter.timer = setTimer(() => {
                     const i = this._waiters.indexOf(waiter);
                     if (i >= 0) this._waiters.splice(i, 1);
                     resolve(null);
@@ -106,7 +107,7 @@ export class LatestSink<T> {
     private _at = 0;
     private _waiters: Array<{
         resolve: (v: readonly [T, number] | readonly [null, number]) => void;
-        timer: ReturnType<typeof setTimeout> | null;
+        timer: TimerId | null;
         start: number;
     }> = [];
 
@@ -124,7 +125,7 @@ export class LatestSink<T> {
         this._waiters = [];
         for (const w of ws) {
             if (this._stamp > w.start) {
-                if (w.timer) clearTimeout(w.timer);
+                if (w.timer) clearTimer(w.timer);
                 w.resolve([item, this._stamp] as const);
             } else {
                 this._waiters.push(w); // not newer than what it asked for
@@ -160,12 +161,12 @@ export class LatestSink<T> {
         return new Promise<readonly [T, number] | readonly [null, number]>((resolve) => {
             const waiter = {
                 resolve,
-                timer: null as ReturnType<typeof setTimeout> | null,
+                timer: null as TimerId | null,
                 start,
             };
             this._waiters.push(waiter);
             if (timeoutMs !== undefined && timeoutMs > 0) {
-                waiter.timer = setTimeout(() => {
+                waiter.timer = setTimer(() => {
                     const i = this._waiters.indexOf(waiter);
                     if (i >= 0) this._waiters.splice(i, 1);
                     // Latest-wins: a stale sample is still a valid
