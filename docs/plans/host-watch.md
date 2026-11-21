@@ -108,7 +108,75 @@ a 400-record zigzag at 40 mm/s, with the host cut off about 5 s in.
   records, without seq and CRC8 (branch 6), and to resume a paused job only
   when the ids match.
 * **Power loss:** the job is lost and not recovered; see jobs.md §14.
-* Seen on the bench for branch 6: a session that was frozen through the
-  pause comes back sending into it (88 NACKs and 87 retries before the
-  cancel). Branch 6 should treat a `PAUSED` it didn't ask for as a hold,
+* Seen on the bench for the host side: a session that was frozen through
+  the pause comes back sending into it (88 NACKs and 87 retries before the
+  cancel). The host should treat a `PAUSED` it didn't ask for as a hold,
   then resume after reconnecting.
+
+## The host side
+
+Branch `feature/host-watch-web`.
+
+### Decisions
+
+* **An unasked pause is a hold.** A `silent` hold that finds the job
+  `PAUSED` holds `paused` instead of resending, until `resume()`.
+* **`JobSource` works out the job id:** a CRC32 over the frames `start()`
+  sends, in order, leaving out each frame's seq (byte 2) and CRC8 and the job
+  header's id field (bytes 3..6). The constructor's `id` argument is gone;
+  `jobId` reads it. `crc32` is table-based and takes a range and a CRC to
+  continue.
+* **`link.attach(source)`** makes a job session that takes over a job
+  already open: the controller must be `PAUSED` on one of the source's
+  layers and report its id in `get jobid`. It then holds `paused`. Anything
+  else fails with `FATAL_JOB_MISMATCH` (0xE3), having sent nothing.
+* **The timers run on a Worker** in a browser (`link/clock.ts`), for the
+  session's waits and the sinks' timeouts, so a background tab keeps the
+  100 ms poll. Node and the tests use `setTimeout`.
+* **A lost job reports where it was:** `lastLayer` and `lastRecord` in the
+  session's result.
+* **Names stay as they are.** Host-api branch 6 takes these over when it
+  renames the session's surface.
+
+### Outcome
+
+* Sim tests: attach with the same id resumes; another id, or no job, fails
+  with nothing sent; the job id ignores seq and CRC8; CRC32's check value
+  and continuation; a lost job's last layer. The sim doesn't model the host
+  watch, so the silent hold into `PAUSED` is checked on the machine only.
+
+Benched on the machine with the same 400-record zigzag:
+
+* **Frozen host (70 s, port open):** on thawing, one `NACK_PAUSED` and the
+  session held `paused`, with `pausereason=1` and the resume point at record
+  63. The ~85 NACKs before the freeze were `NACK_FULL`, ordinary
+  backpressure while the ring is full; the 88 seen on the first bench were
+  the same.
+* **Reconnect:** port closed mid-cut for 70 s; the job paused at record 63.
+  A new link's `attach()` found `get jobid` equal to the source's id
+  (`0d678cde`, the firmware's `get jobid` checked on hardware), held
+  `paused`, and `resume()` carried on cutting from record 63.
+* **A host back before the queue runs dry wasn't lost,** so the job ran dry
+  into `BUFFERING`, not `PAUSED`, and `attach()` refused it. Fixed:
+
+### A quick reconnect
+
+* **A DTR loss holds until the job pauses or ends.** A closed port means the
+  session is gone; whoever reopens it is a new session without the stream,
+  so hearing it doesn't clear the loss. A silence with DTR up still clears
+  when the host is heard: the port stayed open (Windows and WebSerial open a
+  port exclusively), so the speaker is the session that froze. `get host`
+  reads 0 until the pause.
+* **`attach()` waits on a job still cutting** (`BUFFERING`, `RUNNING`,
+  `HOLDING`, `DWELL`, or a lift inside the job) until it lands `PAUSED`,
+  having checked the job id first.
+* Benched: port closed for 2 s, then reopened and attached. `get host` read
+  0 while the new link polled; the queue ran dry and the job paused at
+  record 63; `attach()` held `paused` and `resume()` cut on from 63. The first
+  try gave up as the job braked and lifted (`HOLDING`), which is why those
+  are waited on too.
+* Benched: the host frozen 8 s with the port open, against about 45 s
+  queued, so it thaws before the queue runs dry. The controller counted it
+  lost after 3 s, then heard it again on thawing: `host=1`, the job ran on
+  (`RUNNING`, no lift, `liftcount=0`, `pausereason=0`) and the session went
+  on sending (`held` null, emitted 103 against 87 acked).

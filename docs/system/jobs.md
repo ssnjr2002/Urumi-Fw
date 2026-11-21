@@ -539,7 +539,11 @@ the abort happened are turned away, rather than slipping in after the brake.
   a job is open the controller counts the host lost when DTR drops (the
   port is closed, the tab closed, or the cable pulled) or nothing has
   arrived from it for 3 s (`HOST_TIMEOUT_MS`, against the host's 100 ms
-  poll), which catches a host that hangs with the port open. What is queued
+  poll), which catches a host that hangs with the port open. A silence ends
+  when the host is heard again: with DTR up throughout, the port stayed open
+  and only the same session can speak. A DTR loss holds until the job pauses
+  or ends, even if a host reopens the port meanwhile: that is a new session,
+  without the stream, which waits for the pause to resume. What is queued
   is still cut. Then, in `BUFFERING` with the host lost, the job pauses as
   an operator pause at rest does: the tool lifts and switches off, and the
   job lands `PAUSED`. The resume point is the end of the last curve cut, so
@@ -582,6 +586,11 @@ memory. From them it builds:
 It refuses a job with more than four tools, or one that puts the same tool
 on two heads.
 
+It also works out the **job id** that the job header carries: a CRC32 over
+every frame of the job in the order sent, leaving out each frame's seq byte
+and CRC8 and the header's own id field. The same layers always give the same
+id, and changing any record changes it.
+
 For a resume, it builds a different stream: the layer header for the resume
 point on its own, the records from that point on, and then the layers after
 it, as normal.
@@ -606,7 +615,25 @@ status requests, so it can see when the controller is ready again.
 | `paused` | the controller refused a record with `NACK_PAUSED`, or the host itself paused, or the status shows `PAUSED` | the host calls `resume()`: the session restarts the stream at the resume point the status reports |
 | `refused` | a resume header didn't match the resume point (`NACK_JOB`) | as `paused` |
 | `tool` | `NACK_TOOL_CHANGE` | once the controller is in `TOOL_WAIT`, the host calls `resume()` and the header is sent again |
-| `silent` | no reply for 3 seconds | the session resends straight away |
+| `silent` | no reply for 3 seconds | the session resends straight away; if the status shows `PAUSED` (the controller lost the host meanwhile) it holds `paused` instead |
+
+Its timers run on a dedicated Worker in a browser, so a tab in the
+background keeps polling every 100 ms instead of being slowed to once a
+second or worse, which the controller would take for a lost host.
+
+### Coming back to a paused job
+
+When the host has gone away and come back, for example after the tab
+crashed or the cable was pulled, the controller has paused the job (§6). A
+new session takes it over with `link.attach(source)` instead of opening a
+job: it checks that the controller is in a job on one of the source's
+layers, and that `get jobid` reports the source's job id. A job still
+cutting is waited on until it lands `PAUSED`, which it does once the queue
+runs dry, since the controller holds the loss of a closed port. Then it
+holds `paused`, and `resume()` carries on from the controller's resume point
+as after any pause. If any check fails it stops with `FATAL_JOB_MISMATCH`,
+having sent nothing but status requests and `get jobid`, so a different job
+file can't be resumed onto the cut.
 
 ### Ending
 
@@ -630,7 +657,9 @@ It also stops if it **loses the job**: the controller has left the job
 without the session asking it to, or reports a layer the job doesn't have.
 This usually means the controller rebooted. Resending into a rebooted
 controller would be worse than stopping: it would accept the packets as
-duplicates and quietly do nothing with them.
+duplicates and quietly do nothing with them. The session's result then
+carries the last layer and record it saw (`lastLayer`, `lastRecord`), so the
+operator knows how far the job got.
 
 The code: `JobSource` and the job half of `Session` in
 `web/src/link/session.ts`; the header packing in
@@ -825,7 +854,8 @@ JOGGING, and the job's stage is kept underneath until the jog ends
   the record count.
 * **A lost job stops the session.** The alternative, resending into
   whatever answers, would have a rebooted controller accept the packets as
-  duplicates and do nothing with them.
+  duplicates and do nothing with them. A job paused because the host was
+  lost isn't lost: a new session attaches to it and resumes.
 * **A job lost to a power cut isn't recovered.** The alternative, a partial
   job from the last record seen, needs the material realigned to the cut
   already made, and placement can't do that: it marks a box's corner by eye,
