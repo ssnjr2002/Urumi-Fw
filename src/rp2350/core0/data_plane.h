@@ -25,3 +25,7 @@ void dataPlaneResetSeq();
 // The next wire seq the data plane will execute. Reported in STATUS_RSP (§4.2)
 // as an informational reconciliation field — NOT flow control (D9).
 uint8_t dataPlaneExpectedSeq();
+
+// The open job's id, from its JOB_HDR: the host's hash of the job, so a host
+// that reconnects can tell whether a paused job is its own. Meaningful in CTX_JOB.
+uint32_t dataPlaneJobId();

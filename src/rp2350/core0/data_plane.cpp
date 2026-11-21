@@ -182,6 +182,7 @@ static void feedPacket(uint8_t b) {
 // ─── The job's headers ────────────────────────────────────────────────────────
 
 static uint8_t     preCount, preSeen;          // this job's tool headers: promised, ACKed
+static uint32_t    jobId;                      // the open job's JOB_HDR id
 static uint8_t     preIds[JOB_MAX_TOOLS];
 static OriginRange preX, preY;                 // the valid work origins so far
 static float       preBox[4];                  // xmin, xmax, ymin, ymax over the tools so far
@@ -227,6 +228,7 @@ static void acceptJobHdr() {
         return;
     }
     if (plannerOpenJob() != PQ_OK) { sendNack(MSEG_NACK_BAD_STATE); return; }
+    jobId = (uint32_t)pktBuf[3] | (uint32_t)pktBuf[4] << 8 | (uint32_t)pktBuf[5] << 16 | (uint32_t)pktBuf[6] << 24;
     preCount = count;
     preSeen = 0;
     preX = preY = { -INFINITY, INFINITY };
@@ -704,3 +706,5 @@ void dataPlaneResetSeq() {
 uint8_t dataPlaneExpectedSeq() {
     return expectedSeq;
 }
+
+uint32_t dataPlaneJobId() { return jobId; }

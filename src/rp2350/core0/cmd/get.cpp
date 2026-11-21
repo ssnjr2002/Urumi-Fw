@@ -263,6 +263,10 @@ const Key kKeys[] = {
     { "host",      [](const Snap& s, char* o, size_t n) {
         return s.ctx == CTX_JOB ? fmtU(o, n, hostLost ? 0 : 1) : KEY_NA; } },
     { "pausereason", [](const Snap&, char* o, size_t n) { return fmtU(o, n, pauseReason); } },
+    // The open job's id: the host's hash of it (docs/plans/host-watch.md).
+    { "jobid",     [](const Snap& s, char* o, size_t n) {
+        if (s.ctx != CTX_JOB) return KEY_NA;
+        snprintf(o, n, "%08lx", (unsigned long)dataPlaneJobId()); return KEY_OK; } },
     { "dtrdrops",  [](const Snap&, char* o, size_t n) { return fmtU(o, n, (unsigned)hostWatchDtrDrops()); } },
     { "cfgdirty",  [](const Snap&, char* o, size_t n) { return fmtU(o, n, machineCfgDirty() ? 1 : 0); } },
     { "homing",    [](const Snap& s, char* o, size_t n) {
