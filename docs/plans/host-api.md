@@ -1263,6 +1263,16 @@ reworks.
    `pullConfig()` (10), `nextJogReply()` (12), `stop()` (13), `stats()`
    (14); the sinks, demux, writer, `send()` and `resetSeq()` go private
    (15). Depends on 2–5. **Status:** not started.
+   * From [host-watch](host-watch.md), documented so far only in
+     [jobs.md](../system/jobs.md) §7 and the code comments: the reference
+     page (`link.md`) takes in `Link.attach()`, `JobSource.jobId`,
+     `jobIdOf()`, `FATAL_JOB_MISMATCH` and the result's `lastLayer` and
+     `lastRecord`, under this plan's names (`SessionResult`, `fatalName()`).
+     Branch 7 owns the session's surface, so the session half may land
+     there.
+   * The job examples (host-api README, toolpath.md, `web/README.md`) show
+     only `link.session(new JobSource(...))`: add coming back to a paused
+     job with `link.attach()`.
 7. `feature/web-session`: the job session. `JobSource`'s options (3),
    `run()` resetting the seq (4), `Session.phase` (5), the holds tabled
    (7), `fatalName()` and `SessionResult`; the README's job example

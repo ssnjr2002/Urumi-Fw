@@ -267,11 +267,13 @@ values are the firmware's; [Names](link.md#names) has the words.
 
 ```ts
 crc8(bytes: ArrayLike<number>, start?: number, end?: number): number
-crc32(bytes: ArrayLike<number>): number
+crc32(bytes: ArrayLike<number>, start?: number, end?: number, crc?: number): number
 ```
 
-The controller's checksums. `crc8` over `bytes[start..end)` seals every
-record; `crc32` a config or mesh blob.
+The controller's checksums, each over `bytes[start..end)`, by default the
+whole of `bytes`. `crc8` seals every record. `crc32` guards a config or
+mesh blob, and makes a job's id; pass an earlier result as `crc` to carry
+it on over more bytes.
 
 # Constants
 
