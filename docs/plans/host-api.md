@@ -218,7 +218,7 @@ reference pages") with MDN's anatomy, settled on the `link` draft:
   `Transport`).
 
 In this plan the drafts keep their old, deeper levels; each branch lifts
-its page to these. Only `link`, `transport`, `packets` and `config` are in the new style yet.
+its page to these. Only `link`, `transport`, `packets`, `config` and `toolpath` are in the new style yet.
 
 ### Index
 
@@ -1235,7 +1235,28 @@ reworks.
 5. `feature/web-toolpath`: `buildJob()` (1), `loadSvg(svg, config)` (2),
    `prepareBezierJob()`'s result shape; the inner stages go private; the
    README's job example uses `buildJob()` (16, begun). Depends on 3 and 4.
-   **Status:** not started.
+   **Status:** done, not merged.
+
+   **Outcome.** The page names three forms first (SVG, tool layer, job
+   layer); `loadSvg()` and `buildJob()` are the only exports. Against the
+   draft:
+   * `ToolLayer` also carries `paths`, the layer's curves, so the demo
+     can draw its preview from the public API.
+   * `buildJob()` also checks the tool's `id` and its chamber (the demo's
+     old checks), and returns a malformed SVG or a refused curve as an
+     error naming the layer. `JobResult` has no job-wide `bbox`; each
+     `JobLayer` keeps its own.
+   * `JobLayer.packets` is `records`, the packets page's word.
+   * `offset` is a `Point`; the draft's `Pt`, `BBox`, `AnnotatedBezier`
+     and the inner stages are private. `prepareBezierJob()` is private
+     too and keeps `{ error }`: only the tests call it.
+   * The key example is `revolver_pen.2`, as the code reads it, not
+     `revolver_pen/slot1`.
+   * Follow-up: behind the API the toolpath still uses several words
+     for one thing: `Subpath`, `CleanSubpath` and contour; piece,
+     `AnnotatedBezier` and record; `Pt` against `Point`; `svgText`; `p`,
+     depth and plunge. Not settled here.
+
 6. `feature/web-link`: the `Link` class and the names.
    `nextStatus()` (6), `nackName()` and `cfgNackName()` (8),
    `ConfigTransferError`'s entry (9), `pushConfig(config)` and

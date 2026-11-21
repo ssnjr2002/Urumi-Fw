@@ -12,10 +12,10 @@ A drawing to a job ([toolpath](../../system/toolpath.md)), in three forms:
 import { loadSvg, buildJob } from "urumi-host/toolpath";
 ```
 
-**Checked against `<commit>`.** To see what may have changed since:
+**Checked against `6871077`.** To see what may have changed since:
 
 ```bash
-git diff <commit> -- web/src/toolpath/
+git diff 6871077 -- web/src/toolpath/
 ```
 
 # Functions

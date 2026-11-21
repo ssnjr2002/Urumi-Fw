@@ -8,7 +8,8 @@ what it does is on [toolpath](../../system/toolpath.md),
 The library has six subpaths and no root import: every import names its
 subpath. Each subpath gets its own page here as it is reworked
 ([plan](../../plans/host-api.md)); until then, its `index.ts` lists what it
-exports. Done: [transport](transport.md), [packets](packets.md), [config](config.md).
+exports. Done: [transport](transport.md), [packets](packets.md), [config](config.md),
+[toolpath](toolpath.md).
 
 ## Index
 
