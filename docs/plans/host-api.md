@@ -1257,26 +1257,146 @@ reworks.
      `AnnotatedBezier` and record; `Pt` against `Point`; `svgText`; `p`,
      depth and plunge. Not settled here.
 
-6. `feature/web-link`: the `Link` class and the names.
-   `nextStatus()` (6), `nackName()` and `cfgNackName()` (8),
-   `ConfigTransferError`'s entry (9), `pushConfig(config)` and
-   `pullConfig()` (10), `nextJogReply()` (12), `stop()` (13), `stats()`
-   (14); the sinks, demux, writer, `send()` and `resetSeq()` go private
-   (15). Depends on 2–5. **Status:** not started.
-   * From [host-watch](host-watch.md), documented so far only in
-     [jobs.md](../system/jobs.md) §7 and the code comments: the reference
-     page (`link.md`) takes in `Link.attach()`, `JobSource.jobId`,
-     `jobIdOf()`, `FATAL_JOB_MISMATCH` and the result's `lastLayer` and
-     `lastRecord`, under this plan's names (`SessionResult`, `fatalName()`).
-     Branch 7 owns the session's surface, so the session half may land
-     there.
-   * The job examples (host-api README, toolpath.md, `web/README.md`) show
-     only `link.session(new JobSource(...))`: add coming back to a paused
-     job with `link.attach()`.
+6. `feature/web-link`: the `Link` class and the names. Depends on 2–5.
+   **Status:** in progress. Settled in the read phase, against the draft:
+   * **Status.** The link polls from construction until close, every
+     `statusPollMs` (constructor option; default 100, 10 to 1000 ms, a
+     third of the firmware's `HOST_TIMEOUT_MS`, else `RangeError`; no off
+     switch), on the background-tab clock. `HOST_TIMEOUT_MS` joins the
+     packets constants. Public: `status` (the latest sample, or `null`),
+     `freshStatus()` (a sample from after the call; rejects if the port
+     closes) and `onStatus(cb)` → `off()` (every sample, any number of
+     listeners). This answers 6 instead of the draft's `nextStatus()`.
+     Internal: an iterator that keeps a per-loop counter over the status
+     sink, for `.settled`, the session and `CJog`; `getStatus()` goes
+     `@internal` and is removed in branch 8.
+   * **Stopping.** `estop()` replaces `stop()` and `send("stop")` (13).
+     `abort()` keeps its name; its job is to get the machine to IDLE.
+   * **Continuous jog.** `cjog(dir, { speed })` returns a `CJog`
+     (`started`, `running`, `turn()`, `stop()`), which repeats the packet
+     itself; `CJogDirection`, `CJogReply`. `cjogStop()` and the draft's
+     `nextJogReply()` (12) go. From the firmware (`ops/cjog.cpp`): only a
+     start or a refusal is answered, a change of direction is answered
+     once the machine is at rest, a held jog ignores a new speed, and the
+     end of travel is silent.
+   * **Config.** `pushConfig(config)` → `{ bytes, crc32 }`, `pullConfig()`
+     → the config or `null` (10); timeouts internal; a pulled config that
+     doesn't decode is a `ConfigTransferError` with `reason: null` (9).
+     "Blob" becomes "encoded config", the config page's word.
+   * **Names.** `nackName()` and `cfgNackName()` (8), in the code's style:
+     the constant's name without its prefix, `STATE(7)` for an unknown
+     code, `"NONE"` for no faults. The `*_NAMES` tables and `maskStr` go
+     private.
+   * **Waiting.** `settle()` and `waitAtRest()` stay until branch 8, as
+     they are (`waitAtRest()` resolves to a boolean). `atRest` is fixed to
+     mean the firmware would take a command: outside a job, `IDLE` and
+     nothing queued; today it reads only the planner's queue, so it holds
+     mid-homing.
+   * **Kept.** `command(line)` → the reply, until branch 8. `session()`
+     and `attach()` stay apart (branch 7). `stats()`: `textDesyncs` and
+     the demux's counters (14). `verbose`, `close()`.
+   * **Private** (15): the sinks, demux, writer, `send()`, `resetSeq()`
+     and `stream()` go `@internal` (the tests use them); `Link.open()` and
+     the `transport` getter go; the index drops the demux, sink and writer
+     types. The `stop` and `getStatus` helpers go.
+   * **The page.** `link.md` sorts `Link` by whether a call waits its
+     turn (text commands, one at a time) or goes at once (status, stops,
+     jog, config, jobs), not by plane: `estop()` is a text line that
+     skips the queue.
+   * From [host-watch](host-watch.md): `link.md` takes in `Link.attach()`;
+     the session half (`JobSource.jobId`, `jobIdOf()`,
+     `FATAL_JOB_MISMATCH`, `lastLayer`, `lastRecord`) is branch 7's.
+
+   **Outcome.** As settled above, with these differences:
+   * The status listeners run off one internal loop over the status
+     sink's counter; `settle()`, the session and `CJog` don't share it
+     yet. `settle()` and the session still poll through `getStatus()`, so
+     a job is polled twice until branch 7.
+   * `CJog` treats no answer in time as a refusal (`reason: null`): it
+     stops the jog. `turn()` to the direction already running resolves
+     `{ ok: true }` at once, since the controller doesn't answer a repeat.
+     A second `cjog()` stops the first one repeating.
+   * The push and pull without the encoding stay as `@internal`
+     `_pushEncoded()` and `_pullEncoded()`, for the tests.
+   * `waitAtRest()` waits for `atRest`, `ALARM` or `ESTOP`, since the
+     fixed `atRest` no longer holds in either.
+   * The demo shows the status through `onStatus()` (its own poll and
+     interval box go), jogs through `CJog`, and names refusals with
+     `nackName()` and `cfgNackName()`.
 7. `feature/web-session`: the job session. `JobSource`'s options (3),
    `run()` resetting the seq (4), `Session.phase` (5), the holds tabled
-   (7), `fatalName()` and `SessionResult`; the README's job example
+   (7), the fatal reason split and `SessionResult`; the README's job example
    finished (16). Depends on 5 and 6. **Status:** not started.
+   * `Link.attach()` folds into `Link.session()`: `run()` asks the
+     controller first, sends a new job when it is idle, takes over a
+     paused job with the source's id, and fails with `FATAL_JOB_MISMATCH`
+     on another id. A new job can't land on an open one by accident: the
+     controller refuses a `JOB_HDR` while a job is open.
+   * `JobSource` and `Session` get their own page, `session.md`, still
+     under `urumi-host/link`; `link.md` keeps `Link.session()` and links
+     to it. It takes in host-watch's `JobSource.jobId`, `jobIdOf()`,
+     `FATAL_JOB_MISMATCH`, `lastLayer` and `lastRecord`.
+   * The session reads the link's poll instead of sending its own status
+     requests; its `_pollStatus()` goes. Its request placed after each
+     window fill gives way to the samples' freshness stamps.
+   * The session's ending methods: `cancel()` is how a finished job is
+     closed, which reads like giving up, and `end()` sends ABORT. Rename
+     them as a pair, beside `Link.estop()` and `Link.abort()`.
+   * The job examples (host-api README, toolpath.md, `web/README.md`)
+     add coming back to a paused job.
+   * `FATAL_*` never cross the wire: the session makes them up, numbered
+     from 0xE0 only to share `fatalReason` with the controller's
+     `NACK_*` bytes. Split the field: `{ by: "controller", nack, detail }`
+     or `{ by: "host", why: "stall" | "crc-limit" | "job-lost" |
+     "job-mismatch" }`. The nack is named with `names.nack()` (branch 9);
+     the host's reason is a word already. `fatalReasonName()`, its third
+     copy of the NACK names (with the prefix `nackName()` drops) and the
+     `FATAL_*` constants go.
+8. `feature/web-commands`: the text commands. Depends on 6.
+   **Status:** not started.
+   * `link.commands()` returns the link's one `Commands` (no public
+     constructor). `send(line)` gives the raw reply; each other method
+     sends its command, parses the reply, and throws a `CommandError`
+     (`command`, `reason`, `reply`) on a refusal, in place of today's mix
+     of `false`, `null`, a raw string and a throw.
+   * Each method returns a handle whose `.settled` resolves when the
+     firmware would take the next command, and rejects on `ESTOP` or
+     `ALARM`. The handle's name is decided here.
+   * `link.command()` goes private. The step jog is `cmd.jog()`, apart
+     from `link.cjog()`. The unexported helpers (`goto`, `home`, `mount`,
+     …) become methods; the `axisMap` stub is kept or dropped.
+   * `.settled` replaces `settle()`, `waitAtRest()`, `inState()`,
+     `inAnyState()` and `SettleError`; `atRest` stays inside. `getStatus()`
+     loses its last user and goes.
+   * No chaining; a `run()` for fixed sequences only if they turn out
+     common.
+9. `feature/web-names`: the names move to `urumi-host/packets`, beside
+   the enums they name. Depends on 6.
+   **Status:** not started.
+   * `stateName()`, `jobName()`, `faultNames()`, `nackName()`,
+     `cfgNackName()` and their tables move from `link/names.ts` to
+     `packets`, under one module namespace,
+     `export * as names from "./names.js"`: `names.state()`,
+     `names.job()`, `names.faults()`, `names.nack()`, `names.cfgNack()`.
+     The namespace is the language's grouping, so a bundler still drops
+     what a page doesn't call. `link` stops exporting them.
+   * Only wire codes are named there: the session's fatal reasons stop
+     being codes in branch 7. `MachineContext`, `HomeFail`, `Probing`,
+     `ProbeCause` and `Selection` get names too if a display needs them.
+   * Codes stay numbers. `MachineStatus` gains `stateName`, `reasonName`
+     and `faultNames` getters beside `state`, `reason` and `faults`. An
+     object per code was weighed and dropped: `===`, `switch`,
+     `includes()` and `Set` keys compare it by identity, and JavaScript
+     has no operator to overload. A `text()` returning every field named
+     was dropped too: a parallel copy of the status, mostly the same.
+   * `packets.md` and `link.md` update to match.
+
+Firmware, a branch and plan of its own, apart from these: `abort`'s job
+is to get the machine to IDLE. Today `jobAbort()` is reachable only as the
+`ABORT` frame, and outside a job it only brakes the planner; a homing or
+probe sequence (`sequenceAbort()`) is reachable from neither plane. Add a
+text `abort` command, and have `ABORT` end whatever runs (a job, a
+sequence, planner motion) at IDLE.
 
 Branches 2, 3 and 4 touch separate folders and can run in parallel; each
 edits the demo, so they merge one at a time. The name helpers stay in

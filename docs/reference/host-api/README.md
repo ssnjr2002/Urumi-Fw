@@ -9,7 +9,7 @@ The library has six subpaths and no root import: every import names its
 subpath. Each subpath gets its own page here as it is reworked
 ([plan](../../plans/host-api.md)); until then, its `index.ts` lists what it
 exports. Done: [transport](transport.md), [packets](packets.md), [config](config.md),
-[toolpath](toolpath.md).
+[toolpath](toolpath.md), [link](link.md).
 
 ## Index
 
@@ -22,7 +22,7 @@ exports. Done: [transport](transport.md), [packets](packets.md), [config](config
 | [`urumi-host/packets`](packets.md) | the binary records: encoders, `JobLayer`, `MachineStatus` and its enums, the CRCs, the codes | — |
 | [`urumi-host/config`](config.md) | the controller's config: JSON to config and back, the encoded config, the config's types | `urumi-host/packets` |
 | [`urumi-host/toolpath`](toolpath.md) | an SVG to a job's layers | `urumi-host/packets`, `urumi-host/config` |
-| `urumi-host/link` | `Link`, job sessions, names for codes, text-command helpers, waiting for the machine | `urumi-host/transport`, `urumi-host/packets`, `urumi-host/config` |
+| [`urumi-host/link`](link.md) | `Link`, `CJog`, job sessions, names for codes, text-command helpers, waiting for the machine | `urumi-host/transport`, `urumi-host/packets`, `urumi-host/config` |
 
 No subpath depends on one below it in this table, except the sim on
 `urumi-host/packets`.
