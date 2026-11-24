@@ -32,6 +32,12 @@ import {
     MAGIC_CFG_RDY,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
+    MAGIC_CJOG,
+    MAGIC_CJOG_STOP,
+    MAGIC_JOG_ACK,
+    MAGIC_JOG_NACK,
+    NACK_BUSY,
+    CJOG_DEADMAN_MS,
 } from "../../../src/packets/constants.js";
 
 /** A Transport test double: records writes and lets the test inject reply
@@ -142,13 +148,13 @@ describe("wire/link/link: command (one-outstanding text plane)", () => {
         // multi-line reply tail, the contract breach D11 makes loud.
         t.feedReply(enc.encode("stale\n"));
         await tick(10);
-        expect(link.textDesyncs).toBe(0); // not counted yet — nothing drained
+        expect(link.stats().textDesyncs).toBe(0); // not counted yet — nothing drained
 
         const p = link.command("ping");
         await tick();
         t.feedReply(enc.encode("pong\n"));
         expect(await p).toBe("pong");
-        expect(link.textDesyncs).toBe(1); // the orphan was drained by command()
+        expect(link.stats().textDesyncs).toBe(1); // the orphan was drained by command()
     });
 });
 
@@ -251,7 +257,7 @@ describe("wire/link/link: config push/pull", () => {
     it("pushConfig sends the header, then the payload only after CFG_RDY", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.pushConfig(blob);
+        const p = link._pushEncoded(blob);
         await tick();
         expect(t.writes).toEqual([packCfgSetHeader(blob.length, crc32(blob))]);
 
@@ -260,13 +266,13 @@ describe("wire/link/link: config push/pull", () => {
         expect(t.writes[1]).toEqual(blob);
 
         t.feedReply(new Uint8Array([MAGIC_CFG_ACK]));
-        await expect(p).resolves.toBeUndefined();
+        await expect(p).resolves.toEqual({ bytes: blob.length, crc32: crc32(blob) });
     });
 
     it("pushConfig surfaces a NACK reason and sends no payload", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.pushConfig(blob);
+        const p = link._pushEncoded(blob);
         await tick();
         t.feedReply(new Uint8Array([MAGIC_CFG_NACK, CFG_NACK_BAD_STATE]));
         await expect(p).rejects.toMatchObject({ reason: CFG_NACK_BAD_STATE });
@@ -276,7 +282,7 @@ describe("wire/link/link: config push/pull", () => {
     it("pushConfig surfaces a schema rejection at commit", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.pushConfig(blob);
+        const p = link._pushEncoded(blob);
         await tick();
         t.feedReply(new Uint8Array([MAGIC_CFG_RDY]));
         await tick();
@@ -287,7 +293,7 @@ describe("wire/link/link: config push/pull", () => {
     it("pushConfig refuses an oversize blob without writing", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        await expect(link.pushConfig(new Uint8Array(CFG_MAX_BYTES + 1))).rejects.toThrow(
+        await expect(link._pushEncoded(new Uint8Array(CFG_MAX_BYTES + 1))).rejects.toThrow(
             /bytes/,
         );
         expect(t.writes.length).toBe(0);
@@ -296,7 +302,7 @@ describe("wire/link/link: config push/pull", () => {
     it("pullConfig returns the payload after checking its CRC", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.pullConfig();
+        const p = link._pullEncoded();
         await tick();
         expect(t.writes).toEqual([new Uint8Array([MAGIC_CFG_GET])]);
         t.feedReply(packCfgDataHeader(blob.length, crc32(blob)));
@@ -307,7 +313,7 @@ describe("wire/link/link: config push/pull", () => {
     it("pullConfig returns null when nothing is stored", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.pullConfig();
+        const p = link._pullEncoded();
         await tick();
         t.feedReply(packCfgDataHeader(0, 0));
         expect(await p).toBeNull();
@@ -316,7 +322,7 @@ describe("wire/link/link: config push/pull", () => {
     it("pullConfig rejects a payload that fails its CRC", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.pullConfig();
+        const p = link._pullEncoded();
         await tick();
         t.feedReply(packCfgDataHeader(blob.length, crc32(blob) ^ 1));
         t.feedReply(blob);
@@ -330,5 +336,108 @@ describe("wire/link/link: close", () => {
         const link = new Link(t);
         await link.close();
         expect(link.closed).toBe(true);
+    });
+});
+const idle = () => packStatusRsp({ state: MachineState.IDLE, faults: 0, reason: 0 });
+const isStatusReq = (w: Uint8Array) => w.length === 1 && w[0] === MAGIC_STATUS_REQ;
+
+describe("wire/link/link: status poll", () => {
+    it("refuses a statusPollMs outside 10..1000", () => {
+        const t = new FakeTransport();
+        expect(() => new Link(t, { statusPollMs: 5 })).toThrow(RangeError);
+        expect(() => new Link(t, { statusPollMs: 1500 })).toThrow(RangeError);
+    });
+
+    it("asks for the status every statusPollMs until the port closes", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t, { statusPollMs: 10 });
+        await tick(60);
+        expect(t.writes.filter(isStatusReq).length).toBeGreaterThanOrEqual(3);
+        await link.close();
+        await tick(20);
+        const n = t.writes.length;
+        await tick(40);
+        expect(t.writes.length).toBe(n);
+    });
+
+    it("calls every onStatus listener; off() stops only its own", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const a: number[] = [];
+        const b: number[] = [];
+        const offA = link.onStatus((s) => a.push(s.state));
+        link.onStatus((s) => b.push(s.state));
+        t.feedReply(idle());
+        await tick(15);
+        offA();
+        t.feedReply(idle());
+        await tick(15);
+        expect(a.length).toBe(1);
+        expect(b.length).toBe(2);
+        await link.close();
+    });
+
+    it("freshStatus resolves on the next sample and rejects when the port closes", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.freshStatus();
+        t.feedReply(idle());
+        expect((await p).state).toBe(MachineState.IDLE);
+        const q = link.freshStatus();
+        await link.close();
+        await expect(q).rejects.toThrow(/closed/);
+    });
+});
+
+describe("wire/link/link: cjog", () => {
+    const jogs = (t: FakeTransport) => t.writes.filter((w) => w[0] === MAGIC_CJOG);
+
+    it("refuses more than one axis set", () => {
+        const link = new Link(new FakeTransport());
+        expect(() => link.cjog({ x: 1, z: 1 })).toThrow(RangeError);
+        expect(() => link.cjog({})).toThrow(RangeError);
+    });
+
+    it("repeats the packet while running, and stop() sends CJOG_STOP and stops repeating", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const jog = link.cjog({ x: 1 });
+        t.feedReply(new Uint8Array([MAGIC_JOG_ACK]));
+        expect(await jog.started).toEqual({ ok: true });
+        await tick(CJOG_DEADMAN_MS + 20);
+        expect(jogs(t).length).toBeGreaterThanOrEqual(3);
+        jog.stop();
+        expect(jog.running).toBe(false);
+        await tick();
+        const n = jogs(t).length;
+        expect(t.writes.some((w) => w.length === 1 && w[0] === MAGIC_CJOG_STOP)).toBe(true);
+        await tick(CJOG_DEADMAN_MS);
+        expect(jogs(t).length).toBe(n);
+        await link.close();
+    });
+
+    it("a refusal stops the jog and carries the reason", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const jog = link.cjog({ z: -1 });
+        t.feedReply(new Uint8Array([MAGIC_JOG_NACK, NACK_BUSY]));
+        expect(await jog.started).toEqual({ ok: false, reason: NACK_BUSY });
+        expect(jog.running).toBe(false);
+        expect(() => jog.turn({ z: 1 })).toThrow(/not running/);
+        await link.close();
+    });
+
+    it("turn() answers with the new start's reply; the same direction needs none", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const jog = link.cjog({ x: 1 });
+        t.feedReply(new Uint8Array([MAGIC_JOG_ACK]));
+        await jog.started;
+        expect(await jog.turn({ x: 1 })).toEqual({ ok: true });
+        const p = jog.turn({ x: -1 });
+        t.feedReply(new Uint8Array([MAGIC_JOG_ACK]));
+        expect(await p).toEqual({ ok: true });
+        jog.stop();
+        await link.close();
     });
 });

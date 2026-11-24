@@ -1,10 +1,9 @@
-import * as packets from 'urumi-host/packets';
 import {
-    MachineState, MachineContext, Selection, NO_LAYER, JobReason, crc32,
+    MachineState, MachineContext, Selection, NO_LAYER, JobReason,
 } from 'urumi-host/packets';
-import { loadConfig, encodeConfig, decodeConfig, saveConfig } from 'urumi-host/config';
+import { loadConfig, encodeConfig, saveConfig } from 'urumi-host/config';
 import { loadSvg, buildJob } from 'urumi-host/toolpath';
-import { Link, JogAck, JobSource, fatalReasonName, stateName, faultNames, jobName } from 'urumi-host/link';
+import { Link, JobSource, fatalReasonName, stateName, faultNames, jobName, nackName, cfgNackName } from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
 
 const BAUD_RATE = 115200;
@@ -17,7 +16,6 @@ const textLog       = document.getElementById('text-log');
 const binLog        = document.getElementById('bin-log');
 const statusGetBtn  = document.getElementById('status-get');
 const statusPollBox = document.getElementById('status-poll');
-const statusMsIn    = document.getElementById('status-ms');
 const statusAtOut   = document.getElementById('status-at');
 const statusErrOut  = document.getElementById('status-err');
 const statusTable   = document.getElementById('status-table');
@@ -132,7 +130,7 @@ disconnectBtn.addEventListener('click', async () => {
 });
 
 // ── console ───────────────────────────────────────────────────────────────────
-// One reply per command, as Link.command. `stop` goes through Link.send so it
+// One reply per command, as Link.command. `stop` goes through Link.estop so it
 // never waits behind a pending command; it has no reply.
 
 /** Sent lines, oldest first; kept for the page's lifetime only. */
@@ -149,13 +147,13 @@ async function submit(line) {
     }
     textOut(`→ ${line}`);
     if (line === 'stop') {
-        await link.send(line);
+        link.estop();
         textOut('← (no reply)');
         return '';
     }
     const reply = await link.command(line);
     textOut(reply ? `← ${reply}` : '← (timeout)');
-    desyncsOut.textContent = link.textDesyncs;
+    desyncsOut.textContent = link.stats().textDesyncs;
     notePlace(line, reply);
     return reply;
 }
@@ -233,7 +231,7 @@ document.getElementById('status-copy').addEventListener('click', () => {
 statusGetBtn.addEventListener('click', async () => {
     binOut('→ STATUS_REQ');
     try {
-        const st = await link.getStatus();
+        const st = await link.freshStatus();
         showStatus(st);
         binOut(`← STATUS_RSP ${stateName(st.state)} faults=${faultNames(st.faults)}`);
     } catch (e) {
@@ -241,57 +239,43 @@ statusGetBtn.addEventListener('click', async () => {
     }
 });
 
-/** True while a poll loop runs, so re-ticking within one interval starts no second loop. */
-let polling = false;
+/** Stops the live status view; null while it is off. The link polls on its own. */
+let offStatus = null;
 
-async function poll() {
-    if (polling) return;
-    polling = true;
-    while (statusPollBox.checked && link && !link.closed && !session) {
-        try {
-            showStatus(await link.getStatus());
-            statusErrOut.textContent = '';
-        } catch (e) {
-            statusErrOut.textContent = e.message;
+function poll() {
+    if (offStatus || !link) return;
+    offStatus = link.onStatus((st) => {
+        if (!statusPollBox.checked || session) {
+            offStatus?.();
+            offStatus = null;
+            return;
         }
-        await new Promise((r) => setTimeout(r, Number(statusMsIn.value) || 200));
-    }
-    polling = false;
+        showStatus(st);
+        statusErrOut.textContent = '';
+    });
 }
 
 statusPollBox.addEventListener('change', () => { if (statusPollBox.checked) poll(); });
 
 // ── jog ───────────────────────────────────────────────────────────────────────
-// While the box is ticked, held keys send a continuous-jog packet every
-// JOG_PERIOD_MS (inside the Pico's deadman). Releasing every key, unticking,
-// losing focus or disconnecting sends the stop byte. A packet moves one axis
-// set (XY, Z or A), so the set of the last key pressed wins.
-//
-// The Pico ACKs a start or a change of direction, NACKs every refused packet,
-// and says nothing to a repeat. Its replies land in the jog sink, drained here
-// while jogging.
+// While the box is ticked, held keys run a continuous jog (Link.cjog), which
+// repeats its packet inside the Pico's deadman. Releasing every key, unticking,
+// losing focus or disconnecting stops it. A jog moves one axis set (XY, Z or
+// A), so the set of the last key pressed wins; a new direction turns the jog.
 
-const JOG_PERIOD_MS = 50;
-/** How long the jog sink is read after a stop, for replies still in flight. */
-const JOG_DRAIN_MS = 200;
 // [x, y, z, a] direction per key.
 const JOG_KEYS = {
     w: [0, 1, 0, 0], s: [0, -1, 0, 0], a: [-1, 0, 0, 0], d: [1, 0, 0, 0],
     r: [0, 0, 1, 0], f: [0, 0, -1, 0], q: [0, 0, 0, -1], e: [0, 0, 0, 1],
 };
-const NACK_NAMES = Object.fromEntries(
-    Object.entries(packets).filter(([k]) => k.startsWith('NACK_')).map(([k, v]) => [v, k.slice(5)]),
-);
-const nackName = (r) => NACK_NAMES[r] ?? hex(r, 2);
 
 const setOf = (k) => JOG_KEYS[k][2] ? 'z' : JOG_KEYS[k][3] ? 'a' : 'xy';
 const held = new Set();
 let jogSet = 'xy';
-let jogTimer = null;
-/** The last direction logged, so a repeat packet is not. */
+/** The running jog, or null. */
+let jog = null;
+/** The last direction sent, so a key repeat sends nothing. */
 let jogLogged = '';
-/** Until when the jog sink is read; 0 while no reader runs. */
-let drainUntil = 0;
 
 function jogDir() {
     const d = [0, 0, 0, 0];
@@ -302,55 +286,39 @@ function jogDir() {
     return d.map(Math.sign);
 }
 
-/** Log jog-sink replies; identical NACKs in a row fold into one line. */
-async function drainJog() {
-    let last = null, count = 0, node = null;
-    while (link && Date.now() < drainUntil) {
-        const r = await link.sinks.jog.get(JOG_PERIOD_MS);
-        if (!r) continue;
-        const line = r instanceof JogAck ? '← JOG_ACK' : `← JOG_NACK ${nackName(r.reason)}`;
-        if (line === last && node) {
-            node.data = node.data.replace(/( ×\d+)?\n$/, ` ×${++count}\n`);
-        } else {
-            node = binOut(line);
-            last = line;
-            count = 1;
-        }
-    }
-    drainUntil = 0;
+function logReply(r) {
+    binOut(r.ok ? '← JOG_ACK' : r.reason == null ? '← (no jog reply)' : `← JOG_NACK ${nackName(r.reason)}`);
 }
 
-function keepDraining(ms) {
-    const running = drainUntil !== 0;
-    drainUntil = Math.max(drainUntil, Date.now() + ms);
-    if (!running) drainJog();
-}
-
-function jogSend() {
+async function jogSend() {
     const [x, y, z, a] = jogDir();
     const speed = Number(jogSpeedIn.value) || 1;
     const moving = x || y || z || a;
     jogDirOut.textContent = moving ? `jogging x ${x} y ${y} z ${z} a ${a}` : '';
-    if (!link || !moving) return;
+    if (!link) return;
+    if (!moving) return jogStop();
     const dir = `${x} ${y} ${z} ${a} ×${speed}`;
-    if (dir !== jogLogged) {
-        binOut(`→ CJOG ${dir}`);
-        jogLogged = dir;
-    }
+    if (dir === jogLogged && jog?.running) return;
+    binOut(`→ CJOG ${dir}`);
+    jogLogged = dir;
     try {
-        link.cjog(x, y, speed, z, a);
+        if (jog?.running) {
+            logReply(await jog.turn({ x, y, z, a }));
+        } else {
+            jog = link.cjog({ x, y, z, a }, { speed });
+            logReply(await jog.started);
+        }
     } catch (e) {
         binOut(`cjog: ${e.message}`);
     }
-    keepDraining(JOG_PERIOD_MS + JOG_DRAIN_MS);
 }
 
 function jogStop() {
     held.clear();
-    if (jogTimer) { clearInterval(jogTimer); jogTimer = null; }
     jogDirOut.textContent = '';
-    if (!link || !jogLogged) return;
-    link.cjogStop();
+    if (!jog) return;
+    jog.stop();
+    jog = null;
     binOut('→ CJOG_STOP');
     jogLogged = '';
 }
@@ -364,8 +332,7 @@ document.addEventListener('keydown', (e) => {
     if (e.repeat || held.has(k)) return;
     held.add(k);
     jogSet = setOf(k);
-    jogSend();                                   // a new direction goes out at once
-    jogTimer ??= setInterval(jogSend, JOG_PERIOD_MS);
+    jogSend();
 });
 
 document.addEventListener('keyup', (e) => {
@@ -409,12 +376,10 @@ buildSelectButtons(0);
 // push sends that blob. A pull on connect and after each push sets the select
 // buttons from the stored config's heads.
 
-const CFG_NACK_NAMES = Object.fromEntries(
-    Object.entries(packets).filter(([k]) => k.startsWith('CFG_NACK_')).map(([k, v]) => [v, k.slice(9).toLowerCase()]),
-);
-
-/** The picked file's encoded blob — null until a file loads cleanly. */
+/** The picked file's encoded config, for its size — null until a file loads cleanly. */
 let pushBlob = null;
+/** The picked file's config — null until a file loads cleanly. */
+let pushConfig = null;
 /** The last pulled config, decoded — null when none is stored or pulled. */
 let pulledConfig = null;
 
@@ -422,7 +387,7 @@ const kB = (n) => `${(n / 1024).toFixed(1)} kB`;
 
 function cfgError(e) {
     const reason = e?.reason;
-    return reason != null ? `CFG_NACK ${CFG_NACK_NAMES[reason] ?? hex(reason, 2)}` : e.message;
+    return reason != null ? `CFG_NACK ${cfgNackName(reason)}` : e.message;
 }
 
 cfgFileIn.addEventListener('change', async () => {
@@ -438,15 +403,16 @@ cfgFileIn.addEventListener('change', async () => {
     }
     for (const w of loaded.warnings) binOut(`config warning: ${w}`);
     pushBlob = encodeConfig(loaded.config);
+    pushConfig = loaded.config;
     cfgInfoOut.textContent = `${file.name}: ${kB(pushBlob.length)}, ${loaded.config.machine.heads.length} head(s)`;
     cfgPushBtn.disabled = !link;
 });
 
 cfgPushBtn.addEventListener('click', async () => {
-    binOut(`→ CFG_SET ${kB(pushBlob.length)} crc=${hex(crc32(pushBlob) >>> 0, 8)}`);
+    binOut(`→ CFG_SET ${kB(pushBlob.length)}`);
     try {
-        await link.pushConfig(pushBlob);
-        binOut('← CFG_ACK');
+        const r = await link.pushConfig(pushConfig);
+        binOut(`← CFG_ACK crc=${hex(r.crc32 >>> 0, 8)}`);
     } catch (e) {
         binOut(`← ${cfgError(e)}`);
         return;
@@ -458,9 +424,8 @@ cfgPushBtn.addEventListener('click', async () => {
 async function pullConfig() {
     binOut('→ CFG_GET');
     try {
-        const blob = await link.pullConfig();
-        pulledConfig = blob && decodeConfig(blob);
-        binOut(blob ? `← CFG_DATA ${kB(blob.length)}, ${pulledConfig.machine.heads.length} head(s)` : '← CFG_DATA (none stored)');
+        pulledConfig = await link.pullConfig();
+        binOut(pulledConfig ? `← CFG_DATA ${pulledConfig.machine.heads.length} head(s)` : '← CFG_DATA (none stored)');
     } catch (e) {
         pulledConfig = null;
         binOut(`← ${cfgError(e)}`);
@@ -775,12 +740,9 @@ function showJob() {
 
 /** Redraw the status and the job line on each of the session's samples; log each change of hold. */
 async function watchJob() {
-    let stamp = link.sinks.status.sample[1];
     let held = null;
-    while (session) {
-        const [raw, at] = await link.sinks.status.waitUpdate(500, stamp);
-        stamp = at;
-        if (raw && link?.status) showStatus(link.status);
+    while (session && link && !link.closed) {
+        showStatus(await link.freshStatus().catch(() => link.status));
         showJob();
         setJobButtons();
         if (session && session.held !== held) {
@@ -798,7 +760,6 @@ jobStartBtn.addEventListener('click', async () => {
         return setJobButtons();
     }
     try {
-        await link.resetSeq();
         source = new JobSource(job.layers, { manual: jobManualBox.checked });
         session = link.session(source);
     } catch (e) {
@@ -829,7 +790,7 @@ jobStartBtn.addEventListener('click', async () => {
 /** A failed session leaves the machine as it was: say whether a job is still open there. */
 async function reportAfterFailure() {
     try {
-        const st = await link.getStatus();
+        const st = await link.freshStatus();
         showStatus(st);
         const open = st.context === MachineContext.JOB;
         const line = open

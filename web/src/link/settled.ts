@@ -131,9 +131,11 @@ export async function settle(
 // ── conditions ───────────────────────────────────────────────────────────────
 
 /**
- * Genuinely at rest: no job motion and nothing queued, or a paused job (its
- * ring dropped). A job buffering with records queued may start at
- * any moment, so it is not at rest; a dry one is.
+ * At rest: the controller would take the next command. Outside a job, IDLE
+ * with nothing queued; in a job, paused, or buffering with nothing queued (a
+ * job buffering with records queued may start at any moment). HOMING, JOGGING
+ * and the rest are moving even with the planner's queue empty, and ALARM and
+ * ESTOP take only `unalarm`, so none of them is at rest.
  *
  * Note `bufCount` is `undefined` on a get-parsed status (the text plane
  * cannot carry it), and undefined reads as empty here. That is correct for
@@ -141,10 +143,14 @@ export async function settle(
  * meaningful against a text-derived sample.
  */
 export const atRest: SettleCondition = (s) => {
-    if (s.state !== MachineState.JOB) return !s.bufCount;
+    if (s.state !== MachineState.JOB) return s.state === MachineState.IDLE && !s.bufCount;
     if (s.reason === JobReason.PAUSED) return true;
     return s.reason === JobReason.BUFFERING && !s.bufCount;
 };
+
+/** atRest, or stopped by a fault: what waitAtRest() waits for. */
+const stillOrAtRest: SettleCondition = (s) =>
+    atRest(s) || s.state === MachineState.ALARM || s.state === MachineState.ESTOP;
 
 /** In one specific state, buffer ignored. */
 export function inState(target: MachineState): SettleCondition {
@@ -159,8 +165,8 @@ export function inAnyState(...targets: readonly MachineState[]): SettleCondition
 /**
  * Convenience for the commonest wait, matching the shape callers had before:
  * resolves true if the machine came to rest, false if it did not, and never
- * throws for a fault. ALARM counts as rest — the machine is stationary, and the
- * caller's next move is to report or unalarm, not to keep waiting.
+ * throws for a fault. ALARM and ESTOP count as rest — the machine is stationary,
+ * and the caller's next move is to report or unalarm, not to keep waiting.
  */
 export async function waitAtRest(
     src: StatusSource,
@@ -168,7 +174,7 @@ export async function waitAtRest(
     options: Omit<SettleOptions, "timeoutMs" | "fatal"> = {},
 ): Promise<boolean> {
     try {
-        await settle(src, atRest, { ...options, timeoutMs, fatal: [], pollMs: options.pollMs ?? 50 });
+        await settle(src, stillOrAtRest, { ...options, timeoutMs, fatal: [], pollMs: options.pollMs ?? 50 });
         return true;
     } catch {
         return false;

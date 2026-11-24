@@ -16,7 +16,6 @@ import {
     get,
     getKeys,
     getState,
-    getStatus,
     nodePos,
     vacServo,
     vacPump,
@@ -28,7 +27,6 @@ import {
     setOrigin,
     pause,
     cancel,
-    stop,
     unalarm,
     axisMap,
     readAxisMap,
@@ -95,7 +93,7 @@ describe("wire/link/commands: liveness + state", () => {
 
     it("getStatus (binary) returns parsed MachineStatus with binary-only fields", async () => {
         await withLink(async (link) => {
-            const st = await getStatus(link);
+            const st = await link.getStatus();
             expect(st.state).toBe(MachineState.IDLE);
             expect(st.bufCount).toBe(0);
             expect(st.wpos).not.toBeUndefined();
@@ -141,9 +139,9 @@ describe("wire/link/commands: enable / disable / setorigin / unalarm", () => {
 
     it("stop → state=ALARM with the estop latch; unalarm refuses it", async () => {
         await withLink(async (link) => {
-            await stop(link);
+            link.estop();
             await tick(20);
-            const st = await getStatus(link);
+            const st = await link.getStatus();
             expect(st.state).toBe(MachineState.ALARM);
             expect(st.hasFault(Fault.ESTOP)).toBe(true);
             expect(await unalarm(link)).toBe(null);
@@ -157,7 +155,7 @@ describe("wire/link/commands: pause / cancel", () => {
             expect(await pause(link)).toBe(false); // IDLE
             sim._forceRunning();
             expect(await pause(link)).toBe(true);
-            const st = await getStatus(link);
+            const st = await link.getStatus();
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PAUSED]);
         });
     });
@@ -167,7 +165,7 @@ describe("wire/link/commands: pause / cancel", () => {
             sim._forceRunning();
             await pause(link);
             expect(await cancel(link)).toBe(true);
-            expect((await getStatus(link)).state).toBe(MachineState.IDLE);
+            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
         });
     });
 });
@@ -276,7 +274,7 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
 
     it("boots IDLE with an empty map: unmapped is not an alarm", async () => {
         await withUnconfigured(async (link) => {
-            const st = await getStatus(link);
+            const st = await link.getStatus();
             expect(st.state).toBe(MachineState.IDLE);
             expect(st.faults).toBe(0);
             expect(await readAxisMap(link)).toEqual([null, null, null, null]);
@@ -286,7 +284,7 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
     it("committing a map stays IDLE", async () => {
         await withUnconfigured(async (link) => {
             expect(await axisMap(link, 1, 2, 3, 4)).toBe(true);
-            const st = await getStatus(link);
+            const st = await link.getStatus();
             expect(st.state).toBe(MachineState.IDLE);
             expect(st.faults).toBe(0);
             expect(await readAxisMap(link)).toEqual([1, 2, 3, 4]);
@@ -341,7 +339,7 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
             await axisMap(link, 1, 2, 5, 6);
             expect(await enable(link, 5)).toBe(true);
             expect((await getState(link)).nodeEnabled).toBe(1 << 5);
-            expect((await getStatus(link)).nodeEnabled).toBe(1 << 5);
+            expect((await link.getStatus()).nodeEnabled).toBe(1 << 5);
         });
     });
 
@@ -350,7 +348,7 @@ describe("wire/link/commands: axis_map on an unmapped boot", () => {
             await axisMap(link, 1, 2, 3, 4);
             expect(await enable(link, 6)).toBe(true); // e.g. a vacuum node
             expect((await getState(link)).nodeEnabled).toBe(1 << 6);
-            expect((await getStatus(link)).nodeEnabled).toBe(1 << 6);
+            expect((await link.getStatus()).nodeEnabled).toBe(1 << 6);
         });
     });
 });
@@ -416,7 +414,7 @@ describe("wire/link/commands: mount and unmount", () => {
             await expect(mount(link, 0, 2)).rejects.toThrow(/mounted/);
             await unmount(link, 0);
             await mount(link, 0, 2);
-            expect((await getStatus(link)).tools).toEqual([2, 0]);
+            expect((await link.getStatus()).tools).toEqual([2, 0]);
         } finally {
             await link.close();
         }

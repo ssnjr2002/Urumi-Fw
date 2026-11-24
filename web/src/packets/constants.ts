@@ -30,6 +30,8 @@ export const MAGIC_CJOG = 0xaf; // host → Pico: held jog, repeated while held
 export const CJOG_SIZE = 7;
 export const CJOG_SPEED_ONE = 64; // speed byte for 1× jogFeed
 export const CJOG_DEADMAN_MS = 150; // silence after which the Pico stops the jog
+// Silence after which the controller pauses an open job (host_watch.h).
+export const HOST_TIMEOUT_MS = 3000;
 export const MAGIC_CJOG_STOP = 0xb3; // host → Pico: one byte, no reply
 // A jog's replies have their own magics, so a stream never reads them as its own.
 export const MAGIC_JOG_ACK = 0xb6; // Pico → host: one byte, a jog started

@@ -101,7 +101,7 @@ describe("settle", () => {
 
     it("honours an empty fatal list, so a caller can tolerate ALARM", async () => {
         const src = source([st(MachineState.ALARM, 0)]);
-        const got = await settle(src, atRest, { ...clock(), fatal: [] });
+        const got = await settle(src, inState(MachineState.ALARM), { ...clock(), fatal: [] });
         expect(got.state).toBe(MachineState.ALARM);
     });
 
@@ -155,6 +155,13 @@ describe("settle", () => {
         expect(cond(job())).toBe(true);
         expect(cond(st(MachineState.IDLE))).toBe(true);
         expect(cond(st(MachineState.ALARM))).toBe(false);
+    });
+});
+
+describe("atRest", () => {
+    it("is not at rest while homing, though nothing is queued", () => {
+        expect(atRest(st(MachineState.HOMING, 0))).toBe(false);
+        expect(atRest(st(MachineState.IDLE, 0))).toBe(true);
     });
 });
 

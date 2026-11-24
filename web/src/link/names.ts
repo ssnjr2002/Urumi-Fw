@@ -24,6 +24,14 @@ import {
     AXIS_BITS,
     type AxisLetter,
 } from "../packets/status.js";
+import {
+    NACK_CRC, NACK_FULL, NACK_BAD_MAGIC, NACK_PAUSED, NACK_BAD_STATE, NACK_ABORTING,
+    NACK_BAD_CURVE, NACK_SOFT_LIMIT, NACK_MIXED_AXES, NACK_BUSY, NACK_JOB,
+    NACK_TOOL_UNKNOWN, NACK_TOOL_CHANGE, NACK_TOOL_UNAVAILABLE, NACK_OUT_OF_RANGE, NACK_NOT_HOMED,
+} from "../packets/constants.js";
+import {
+    CFG_NACK_CRC, CFG_NACK_TOO_BIG, CFG_NACK_BAD_STATE, CFG_NACK_FLASH, CFG_NACK_TIMEOUT, CFG_NACK_SCHEMA,
+} from "../packets/cfg.js";
 
 /** value → key, for the const-object "enums" TS gives no reverse mapping. */
 function invert(obj: Record<string, number>): Record<number, string> {
@@ -61,3 +69,36 @@ const LETTERS: readonly AxisLetter[] = ["x", "y", "z", "a"];
 export function maskStr(mask: number): string {
     return LETTERS.filter((l) => mask & AXIS_BITS[l]).join("") || "—";
 }
+
+const NACK_NAMES: Readonly<Record<number, string>> = {
+    [NACK_CRC]: "CRC",
+    [NACK_FULL]: "FULL",
+    [NACK_BAD_MAGIC]: "BAD_MAGIC",
+    [NACK_PAUSED]: "PAUSED",
+    [NACK_BAD_STATE]: "BAD_STATE",
+    [NACK_ABORTING]: "ABORTING",
+    [NACK_BAD_CURVE]: "BAD_CURVE",
+    [NACK_SOFT_LIMIT]: "SOFT_LIMIT",
+    [NACK_MIXED_AXES]: "MIXED_AXES",
+    [NACK_BUSY]: "BUSY",
+    [NACK_JOB]: "JOB",
+    [NACK_TOOL_UNKNOWN]: "TOOL_UNKNOWN",
+    [NACK_TOOL_CHANGE]: "TOOL_CHANGE",
+    [NACK_TOOL_UNAVAILABLE]: "TOOL_UNAVAILABLE",
+    [NACK_OUT_OF_RANGE]: "OUT_OF_RANGE",
+    [NACK_NOT_HOMED]: "NOT_HOMED",
+};
+
+const CFG_NACK_NAMES: Readonly<Record<number, string>> = {
+    [CFG_NACK_CRC]: "CRC",
+    [CFG_NACK_TOO_BIG]: "TOO_BIG",
+    [CFG_NACK_BAD_STATE]: "BAD_STATE",
+    [CFG_NACK_FLASH]: "FLASH",
+    [CFG_NACK_TIMEOUT]: "TIMEOUT",
+    [CFG_NACK_SCHEMA]: "SCHEMA",
+};
+
+/** A NACK_* code (a record or jog refusal) without its prefix, e.g. "FULL". */
+export const nackName = (code: number): string => NACK_NAMES[code] ?? `NACK(${code})`;
+/** A CFG_NACK_* code (a config refusal) without its prefix, e.g. "SCHEMA". */
+export const cfgNackName = (code: number): string => CFG_NACK_NAMES[code] ?? `CFG_NACK(${code})`;

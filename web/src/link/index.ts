@@ -1,26 +1,5 @@
 /** urumi-host/link: a connection to the controller. */
-export {
-    stateName,
-    faultNames,
-    jobName,
-    maskStr,
-    STATE_NAMES,
-    FAULT_NAMES,
-    JOB_NAMES,
-} from "./names.js";
-export { Sink, LatestSink } from "./sink.js";
-export { Writer, type WriterStats } from "./writer.js";
-
-export {
-    Demux,
-    Ack,
-    Nack,
-    JogAck,
-    CfgReply,
-    makeSinks,
-    type DemuxSinks,
-    type DemuxStats,
-} from "./demux.js";
+export { stateName, faultNames, jobName, nackName, cfgNackName } from "./names.js";
 
 export {
     Session,
@@ -43,7 +22,12 @@ export {
 
 export {
     Link,
+    CJog,
     ConfigTransferError,
+    type CJogDirection,
+    type CJogReply,
+    type LinkOptions,
+    type LinkStats,
 } from "./link.js";
 
 // ── waiting for the machine (the host is acked ahead of the Pico) ──
@@ -70,7 +54,6 @@ export {
     GET_MAX_KEYS,
     STATE_KEYS,
     getState,
-    getStatus,
     nodePos,
     nodeStat,
     vacServo,
@@ -94,7 +77,6 @@ export {
     type ProbeReply,
     pause,
     cancel,
-    stop,
     unalarm,
     axisMap,
     readAxisMap,

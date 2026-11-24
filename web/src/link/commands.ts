@@ -83,11 +83,6 @@ export async function getState(link: Link): Promise<MachineStatus> {
     return statusFromGet(await get(link, STATE_KEYS));
 }
 
-/** Binary status snapshot (STATUS_REQ / STATUS_RSP) — the cheaper poll. */
-export function getStatus(link: Link): Promise<MachineStatus> {
-    return link.getStatus();
-}
-
 // ── frames (docs/plans/coordinate-system.md) ──────────────────────────────────
 
 /** x,y,z,a in units; null for a slot the firmware reports as `-`. */
@@ -625,11 +620,6 @@ export function pause(link: Link): Promise<boolean> {
 
 export function cancel(link: Link): Promise<boolean> {
     return _ok(link, "cancel");
-}
-
-/** Emergency stop — always available. Confirmation arrives on the status sink. */
-export function stop(link: Link): Promise<void> {
-    return link.send("stop");
 }
 
 /**
