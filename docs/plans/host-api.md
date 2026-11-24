@@ -1258,7 +1258,7 @@ reworks.
      depth and plunge. Not settled here.
 
 6. `feature/web-link`: the `Link` class and the names. Depends on 2–5.
-   **Status:** in progress. Settled in the read phase, against the draft:
+   **Status:** merged at `df2d3f2`. Settled in the read phase, against the draft:
    * **Status.** The link polls from construction until close, every
      `statusPollMs` (constructor option; default 100, 10 to 1000 ms, a
      third of the firmware's `HOST_TIMEOUT_MS`, else `RangeError`; no off
