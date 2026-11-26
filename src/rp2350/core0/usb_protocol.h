@@ -127,7 +127,9 @@
 //                                   while it is CTX_JOB
 //     [37]     flags               — bit 0 busy: machineMoving(), a step or
 //                                   sequence live; what admission answers
-//                                   `err busy` for
+//                                   `err busy` for; bit 1 placed:
+//                                   placePlaced(), `place set` standing
+//                                   in JOB.PLACE
 //     [38]     CRC8 over [0..37]
 //
 // One frame, one coherent sample, in the node frame: the host is told nodes
@@ -144,7 +146,8 @@
 #define STATUS_RSP_V5    0xA0
 #define STATUS_RSP       0xBA
 #define STATUS_RSP_SIZE  39
-#define STATUS_FLAG_BUSY 0x01
+#define STATUS_FLAG_BUSY   0x01
+#define STATUS_FLAG_PLACED 0x02
 
 // Binary `seqreset`: one byte, zeroes expectedSeq, replies ACK(0).
 // The text command sits on the critical path of every stream start — the one

@@ -22,3 +22,6 @@ const char* placeReset(void);
 const char* placeGo(bool xmax, bool ymax);
 const char* placeFrame(void);
 const char* placeOk(void);
+
+// `place set` stands: in JOB.PLACE, before `place ok` or leaving.
+bool placePlaced(void);

@@ -12,6 +12,7 @@
 #include "ops/tools.h"
 #include "planner/queue.h"
 #include "config/machine_cfg.h"
+#include "controller/seq/place.h"
 
 uint16_t getBufCount() { return (uint16_t)plannerRing.count(); }
 
@@ -42,7 +43,8 @@ void sendStatusRsp() {
     const uint16_t homed    = originMask();
     const uint8_t  sel      = framesSelected();
     const uint16_t bufCount = getBufCount();
-    const uint8_t  flags    = machineMoving() ? STATUS_FLAG_BUSY : 0;
+    const uint8_t  flags    = (machineMoving() ? STATUS_FLAG_BUSY : 0) |
+                              (placePlaced() ? STATUS_FLAG_PLACED : 0);
     const uint8_t heads = machineCfgValid() ? machineCfg().headCount : 0;
     uint8_t tools[CFG_MAX_HEADS];
     for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) tools[h] = h < heads ? toolsMounted(h) : 0;

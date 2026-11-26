@@ -162,6 +162,10 @@ static const char* admit(bool wantSet) {
     return isSet == wantSet ? nullptr : "bad_state";
 }
 
+bool placePlaced(void) {
+    return active && !leaving && isSet;
+}
+
 const char* placeSet(void) {
     if (const char* why = admit(false)) return why;
     float x, y;
