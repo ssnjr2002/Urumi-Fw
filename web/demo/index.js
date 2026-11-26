@@ -1,10 +1,8 @@
-import {
-    MachineState, MachineContext, Selection, NO_LAYER, JobReason,
-} from 'urumi-host/packets';
+import { MachineState, MachineContext, Selection, NO_LAYER, names } from 'urumi-host/packets';
 import { loadConfig, encodeConfig, saveConfig } from 'urumi-host/config';
 import { loadSvg, buildJob } from 'urumi-host/toolpath';
 import {
-    Link, JobSource, CommandError, stateName, faultNames, jobName, nackName, cfgNackName,
+    Link, JobSource, CommandError, ConfigTransferError,
 } from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
 
@@ -204,23 +202,15 @@ stopBtn.addEventListener('click', () => submit('stop'));
 
 const hex = (n, w) => `0x${n.toString(16).padStart(w, '0')}`;
 
-function selectionName(s) {
-    if (s === Selection.ANCHOR) return 'anchor';
-    if (s === Selection.NONE) return 'none';
-    return String(s);
-}
-
-const contextName = (c) => Object.keys(MachineContext).find((k) => MachineContext[k] === c) ?? '-';
-
 function statusRows(st) {
     return [
-        ['state', stateName(st.state)],
-        ['context', contextName(st.context)],
-        ['reason', st.state === MachineState.JOB ? jobName(st.reason) : st.reason],
-        ['faults', `${hex(st.faults, 4)} ${faultNames(st.faults)}`],
+        ['state', st.stateName],
+        ['context', names.context(st.context)],
+        ['reason', st.reasonName || '-'],
+        ['faults', `${hex(st.faults, 4)} ${st.faultNames}`],
         ['nodeEnabled', hex(st.nodeEnabled, 3)],
         ['nodeHomed', hex(st.nodeHomed, 3)],
-        ['selection', selectionName(st.selection)],
+        ['selection', names.selection(st.selection)],
         ['tools', st.tools?.join(', ') ?? '-'],
         ['wpos', st.wpos.map((v) => (Number.isNaN(v) ? '-' : v.toFixed(3))).join(', ')],
         ['bufCount', st.bufCount],
@@ -230,7 +220,7 @@ function statusRows(st) {
 
 function showStatus(st) {
     statusAtOut.textContent = now();
-    selectedOut.textContent = selectionName(st.selection);
+    selectedOut.textContent = names.selection(st.selection);
     statusTable.replaceChildren(...statusRows(st).map(([k, v]) => {
         const tr = document.createElement('tr');
         for (const text of [k, v]) {
@@ -254,7 +244,7 @@ statusGetBtn.addEventListener('click', async () => {
     try {
         const st = await link.freshStatus();
         showStatus(st);
-        binOut(`← STATUS_RSP ${stateName(st.state)} faults=${faultNames(st.faults)}`);
+        binOut(`← STATUS_RSP ${st.stateName} faults=${st.faultNames}`);
     } catch (e) {
         binOut(`← ${e.message}`);
     }
@@ -308,7 +298,7 @@ function jogDir() {
 }
 
 function logReply(r) {
-    binOut(r.ok ? '← JOG_ACK' : r.reason == null ? '← (no jog reply)' : `← JOG_NACK ${nackName(r.reason)}`);
+    binOut(r.ok ? '← JOG_ACK' : r.reason == null ? '← (no jog reply)' : `← JOG_NACK ${names.nack(r.reason)}`);
 }
 
 async function jogSend() {
@@ -382,7 +372,7 @@ function buildSelectButtons(headCount) {
         b.disabled = !link;
         b.addEventListener('click', async () => {
             if (await act(`select ${v}`, (c) => c.select(v === 'anchor' ? 'anchor' : Number(v)))) {
-                selectedOut.textContent = v;
+                selectedOut.textContent = v === 'anchor' ? names.selection(Selection.ANCHOR) : v;
             }
         });
         return b;
@@ -409,8 +399,7 @@ let pulledConfig = null;
 const kB = (n) => `${(n / 1024).toFixed(1)} kB`;
 
 function cfgError(e) {
-    const reason = e?.reason;
-    return reason != null ? `CFG_NACK ${cfgNackName(reason)}` : e.message;
+    return e instanceof ConfigTransferError && e.reason != null ? `CFG_NACK ${names.cfgNack(e.reason)}` : e.message;
 }
 
 cfgFileIn.addEventListener('change', async () => {
@@ -579,17 +568,7 @@ let placeRefusal = '';
 const visibleRows = () => rows.filter((r) => svgLayers.has(r.key));
 const selectedRow = () => rows.find((r) => r.key === selectedKey && svgLayers.has(r.key)) ?? null;
 
-/** Why a layer can't run, or '' if it can. */
-function layerProblem(key) {
-    const tl = svgLayers.get(key);
-    const profile = pulledConfig.toolProfiles[tl.tool];
-    if (profile.id == null) return 'tool has no id';
-    const chambers = profile.chamberOffsets?.length ?? 0;
-    const ok = chambers ? tl.chamber >= 1 && tl.chamber <= chambers : tl.chamber === 0;
-    return ok ? '' : chambers ? `chamber ${tl.chamber} not in 1..${chambers}` : 'tool has no chambers';
-}
-
-const runnable = (r) => layerProblem(r.key) === '';
+const runnable = (r) => svgLayers.get(r.key).problem === '';
 const jobRows = () => visibleRows().filter((r) => r.on && runnable(r));
 
 function loadLayers() {
@@ -627,7 +606,7 @@ const settingsText = (r) =>
 
 function renderLayers() {
     layersDiv.replaceChildren(...visibleRows().map((r) => {
-        const problem = layerProblem(r.key);
+        const { problem } = svgLayers.get(r.key);
         const div = document.createElement('div');
         div.setAttribute('role', 'option');
         div.setAttribute('aria-selected', String(r.key === selectedKey));
@@ -717,13 +696,6 @@ function drawPreview() {
     }
 }
 
-/** The machine is at rest in the job with an empty ring: with the session drained, the job is cut. */
-function atRestInJob() {
-    const st = link?.status;
-    return !!st && st.context === MachineContext.JOB && st.state === MachineState.JOB
-        && st.reason === JobReason.BUFFERING && st.bufCount === 0;
-}
-
 function setJobButtons() {
     const on = !!link && !link.closed;
     const locked = !!session;
@@ -732,7 +704,7 @@ function setJobButtons() {
     for (const el of [jobFeedIn, jobPIn, jobHeadSel]) el.disabled = locked || !selectedRow();
     for (const el of [jobTIn, svgFileIn]) el.disabled = locked;
     jobRunBtn.textContent = jobManualBox.checked ? 'Execute next' : 'Execute';
-    jobRunBtn.disabled = !session || !(session.hold === 'place' || (session.hold === 'release' && atRestInJob()));
+    jobRunBtn.disabled = !session || !(session.hold === 'place' || session.hold === 'release');
     for (const b of [jobPauseBtn, jobCancelBtn, jobAbortBtn]) b.disabled = !on;
     jobResumeBtn.disabled = !on || !session;
 }
@@ -774,7 +746,7 @@ function showJob() {
     const st = link?.status;
     const inJob = st?.context === MachineContext.JOB;
     const layer = inJob && st.layer !== NO_LAYER ? jobLayers[st.layer] : null;
-    const done = session.drained && atRestInJob();
+    const done = session.done;
     jobLayerOut.textContent = (layer ? `${layer.key} (${st.layer + 1} of ${jobLayers.length}), record ${done ? layer.total : Math.min(st.record, layer.total)}/${layer.total}` : 'none')
         + (session.hold ? ` — ${session.hold}: ${holdHint(session.hold)}` : '')
         + (done ? ' — done, Cancel or Abort closes it' : '');
@@ -828,7 +800,7 @@ jobStartBtn.addEventListener('click', async () => {
     }
     const ok = r.ok;
     showJob();
-    const why = r.fatal?.by === 'host' ? r.fatal.why : r.fatal ? `${nackName(r.fatal.nack)}${r.fatal.text ? ` ${r.fatal.text}` : ''}` : '';
+    const why = r.fatal?.by === 'host' ? r.fatal.why : r.fatal ? `${names.nack(r.fatal.nack)}${r.fatal.text ? ` ${r.fatal.text}` : ''}` : '';
     binOut(`job ${ok ? 'ended' : `failed: ${why}`}`
         + ` — sent ${r.sent} acked ${r.acked} nacks ${r.nacks} retries ${r.retries}`);
     session = source = null;
@@ -846,8 +818,8 @@ async function reportAfterFailure() {
         showStatus(st);
         const open = st.context === MachineContext.JOB;
         const line = open
-            ? `machine still in the job (${st.state === MachineState.JOB ? jobName(st.reason) : stateName(st.state)}), Cancel or Abort closes it`
-            : `machine ${stateName(st.state)}, faults ${faultNames(st.faults)}`;
+            ? `machine still in the job (${st.reasonName || st.stateName}), Cancel or Abort closes it`
+            : `machine ${st.stateName}, faults ${st.faultNames}`;
         binOut(line);
         jobInfoOut.textContent = line;
     } catch (e) {
@@ -882,32 +854,14 @@ jobAbortBtn.addEventListener('click', () => {
     binOut('→ ABORT');
 });
 
-const RESUME_WAIT_MS = 2000;
-
-/** Rewrite a resume's log line with what came of it: the first ACK or NACK after it. */
-async function resumeOutcome(node, held, before) {
-    const until = Date.now() + RESUME_WAIT_MS;
-    let outcome = 'no reply yet';
-    while (session && Date.now() < until) {
-        const s = session.stats();
-        if (s.acked > before.acked) { outcome = 'accepted'; break; }
-        if (s.nacks > before.nacks) { outcome = held === 'tool' ? 'refused, still tool change' : 'refused'; break; }
-        await new Promise((r) => setTimeout(r, 50));
-    }
-    node.data = node.data.replace(/\n$/, ` — ${outcome}\n`);
-}
-
-// True only means the session resends; the firmware checks again, and a refusal
-// brings the hold back (logged by watchJob). A tool hold is left only from
-// TOOL_WAIT, not while the change moves.
-jobResumeBtn.addEventListener('click', () => {
+// The firmware checks again, and a refusal brings the hold back (logged by
+// watchJob). A tool hold is left only from TOOL_WAIT, not while the change moves.
+jobResumeBtn.addEventListener('click', async () => {
     if (!session) return;
     const held = session.hold;
-    const before = session.stats();
-    if (!session.resume()) {
-        const st = link?.status;
-        const moving = held && st && st.state !== MachineState.JOB ? `, ${stateName(st.state)}` : '';
-        return binOut(`resume: ${held ? `not yet (${held}${moving})` : 'not held'}`);
-    }
-    resumeOutcome(binOut(held === 'tool' ? 'resume: header resent' : 'resume: restarting from the resume point'), held, before);
+    const st = link?.status;
+    const moving = held && st && st.state !== MachineState.JOB ? `, ${st.stateName}` : '';
+    const node = binOut(`resume: ${held === 'tool' ? 'header resent' : held ? 'restarting from the resume point' : 'not held'}`);
+    const ok = await session.resume();
+    node.data = node.data.replace(/\n$/, ` — ${ok ? 'accepted' : `not taken${session?.hold ? ` (${session.hold}${moving})` : ''}`}\n`);
 });
