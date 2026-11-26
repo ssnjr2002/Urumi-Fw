@@ -1458,24 +1458,39 @@ reworks.
    the Pico.
 9. `feature/web-names`: the names move to `urumi-host/packets`, beside
    the enums they name. Depends on 6, and on the NACK codes (below).
-   **Status:** not started.
-   * `stateName()`, `jobName()`, `faultNames()`, `nackName()`,
-     `cfgNackName()` and their tables move from `link/names.ts` to
-     `packets`, under one module namespace,
-     `export * as names from "./names.js"`: `names.state()`,
-     `names.job()`, `names.faults()`, `names.nack()`, `names.cfgNack()`.
-     The namespace is the language's grouping, so a bundler still drops
-     what a page doesn't call. `link` stops exporting them.
+   **Status:** code at `e511050`.
+   * The namers move from `link/names.ts` to `packets`, under one module
+     namespace, `export * as names from "./names.js"`: `names.state()`,
+     `names.reason()`, `names.context()`, `names.faults()`,
+     `names.nack()`, `names.cfgNack()` and `names.axes()`. The namespace
+     is the language's grouping, so a bundler still drops what a page
+     doesn't call. `link` stops exporting them; the tables stay private.
+   * `names.reason(state, r)` replaces `jobName()`: the reason byte means
+     something different in each state, so it is read against the state.
+     `JoggingReason` and `HomingReason` join `JobReason`, and `Probing`
+     becomes `ProbingReason`, the firmware's names. `names.axes()` is the
+     old `maskStr()`. `names.nack()` covers `JOG_NACK` too: one set of
+     codes.
    * Only wire codes are named there: the session's fatal reasons stop
-     being codes in branch 7. `MachineContext`, `HomeFail`, `Probing`,
-     `ProbeCause` and `Selection` get names too if a display needs them.
+     being codes in branch 7, and a NACK's text is already words.
+     `HomeFail`, `ProbeCause` and `Selection` get names if a display
+     needs them.
    * Codes stay numbers. `MachineStatus` gains `stateName`, `reasonName`
      and `faultNames` getters beside `state`, `reason` and `faults`. An
      object per code was weighed and dropped: `===`, `switch`,
      `includes()` and `Set` keys compare it by identity, and JavaScript
      has no operator to overload. A `text()` returning every field named
      was dropped too: a parallel copy of the status, mostly the same.
-   * `packets.md` and `link.md` update to match.
+   * `packets.md` gains a Names section after Refusals; `link.md` loses
+     its own; `link.md`, `session.md` and `commands.md` examples use the
+     getters and `names`.
+
+   **Outcome.** As above. `status.ts` imports `names` for the getters and
+   `names.ts` reads its enums, so the tables are built on first use. An
+   unknown fault bit prints in hex, other unknowns as `KIND(n)`. The
+   reference stamps move to `e511050`. `web/demo/index.js` still imports
+   the old names from `link` and doesn't load; it is updated in the next
+   pass.
 
 Firmware, before branch 8: the `busy` bit. Admission refuses with
 `err busy` while a step or sequence is live (`machineMoving()`: a paused

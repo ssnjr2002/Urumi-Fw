@@ -20,10 +20,10 @@ exports. Done: [transport](transport.md), [packets](packets.md), [config](config
 | [`urumi-host/transport/webserial`](transport.md#webserialtransport) | `WebSerialTransport` | `urumi-host/transport` |
 | [`urumi-host/transport/node`](transport.md#nodeserialtransport) | `NodeSerialTransport` | `urumi-host/transport` |
 | [`urumi-host/transport/sim`](transport.md#simtransport) | `SimTransport` | `urumi-host/transport`, `urumi-host/packets` |
-| [`urumi-host/packets`](packets.md) | the binary records: encoders, `JobLayer`, `MachineStatus` and its enums, the CRCs, the codes | — |
+| [`urumi-host/packets`](packets.md) | the binary records: encoders, `JobLayer`, `MachineStatus` and its enums, the CRCs, the codes and their names | — |
 | [`urumi-host/config`](config.md) | the controller's config: JSON to config and back, the encoded config, the config's types | `urumi-host/packets` |
 | [`urumi-host/toolpath`](toolpath.md) | an SVG to a job's layers | `urumi-host/packets`, `urumi-host/config` |
-| [`urumi-host/link`](link.md), [session](session.md), [commands](commands.md) | `Link`, `CJog`, job sessions, the text commands, names for codes | `urumi-host/transport`, `urumi-host/packets`, `urumi-host/config` |
+| [`urumi-host/link`](link.md), [session](session.md), [commands](commands.md) | `Link`, `CJog`, job sessions, the text commands | `urumi-host/transport`, `urumi-host/packets`, `urumi-host/config` |
 
 No subpath depends on one below it in this table, except the sim on
 `urumi-host/packets`.

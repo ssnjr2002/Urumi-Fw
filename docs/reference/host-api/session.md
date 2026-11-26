@@ -8,10 +8,10 @@ its frames, a `Session` sends them and follows the job until it closes.
 import { Link, JobSource } from "urumi-host/link";
 ```
 
-**Checked against `b58cd3d`.** To see what may have changed since:
+**Checked against `e511050`.** To see what may have changed since:
 
 ```bash
-git diff b58cd3d -- web/src/link/session.ts
+git diff e511050 -- web/src/link/session.ts
 ```
 
 | Name | Kind |
@@ -154,7 +154,7 @@ A [`SessionResult`](#sessionresult). `ok` is true when the job closed by
 ```ts
 const session = link.session(new JobSource(job.layers));
 const r = await session.run();
-if (!r.ok) show(r.fatal!.by === "host" ? r.fatal!.why : `${nackName(r.fatal!.nack)} ${r.fatal!.text}`);
+if (!r.ok) show(r.fatal!.by === "host" ? r.fatal!.why : `${names.nack(r.fatal!.nack)} ${r.fatal!.text}`);
 ```
 
 Coming back to a paused job after a reload: build the same layers again
@@ -273,7 +273,7 @@ type Fatal =
 
 | `by` | Field | Means |
 |---|---|---|
-| `controller` | `nack` | the [`Nack`](packets.md#nack) code, named by [`nackName()`](link.md#names): any refusal the session neither resends nor holds on, a code this build doesn't know included (`BAD_CURVE`, `OUT_OF_RANGE`, `ORDER`, `BAD_FIELD`, `NOT_HOMED` …) |
+| `controller` | `nack` | the [`Nack`](packets.md#nack) code, named by [`names.nack()`](packets.md#names): any refusal the session neither resends nor holds on, a code this build doesn't know included (`BAD_CURVE`, `OUT_OF_RANGE`, `ORDER`, `BAD_FIELD`, `NOT_HOMED` …) |
 | | `text` | the check that failed, in words, such as `"y high, tool 1"`. For display: match `nack`, never the words. |
 | `host` | `why: "stall"` | no reply for too long, outside a job hold |
 | | `why: "crc-limit"` | too many `Nack.CRC`: the line is bad |

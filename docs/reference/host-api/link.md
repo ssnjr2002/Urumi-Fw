@@ -17,13 +17,13 @@ from construction until the port closes, so [`status`](#properties) is
 never more than one poll old.
 
 ```ts
-import { Link, stateName } from "urumi-host/link";
+import { Link } from "urumi-host/link";
 ```
 
-**Checked against `b58cd3d`.** To see what may have changed since:
+**Checked against `e511050`.** To see what may have changed since:
 
 ```bash
-git diff b58cd3d -- web/src/link/
+git diff e511050 -- web/src/link/
 ```
 
 | Name | Kind |
@@ -31,7 +31,6 @@ git diff b58cd3d -- web/src/link/
 | [`Link`](#link-1) | class |
 | [`CJog`](#cjog) | class |
 | [`ConfigTransferError`](#configtransfererror) | error |
-| [Names](#names) | functions |
 
 The text commands (`Commands`, `CommandError`) have their own page:
 [commands](commands.md); the job session (`JobSource`, `Session`) too:
@@ -177,7 +176,7 @@ missed. To watch the status, use [`onStatus()`](#linkonstatus).
 ```ts
 const link = new Link(transport);
 const s = await link.freshStatus();
-if (s.state === MachineState.ALARM) show(faultNames(s.faults));
+if (s.state === MachineState.ALARM) show(s.faultNames);
 ```
 
 ### `Link.onStatus()`
@@ -203,7 +202,7 @@ onStatus(listener: (s: MachineStatus) => void): () => void
 
 ```ts
 const off = link.onStatus((s) => {
-  stateOut.textContent = stateName(s.state);
+  stateOut.textContent = s.stateName;
   if (s.state === MachineState.ESTOP) jog?.stop();
 });
 ```
@@ -269,7 +268,7 @@ async function steer(dir: CJogDirection | null) {
     jog = link.cjog(dir, { speed: 0.5 });
     reply = await jog.started;
   }
-  if (!reply.ok) show(reply.reason == null ? "no answer" : `jog refused: ${nackName(reply.reason)}`);
+  if (!reply.ok) show(reply.reason == null ? "no answer" : `jog refused: ${names.nack(reply.reason)}`);
 }
 
 onkeychange = () => steer(dirFromHeldKeys());   // {x: 1}, {x: 1, y: -1}, {z: 1}, or null
@@ -411,7 +410,7 @@ type CJogReply = { ok: true } | { ok: false; reason: Nack | null }
 ```
 
 `reason` is a [`Nack`](packets.md#nack) code, named by
-[`nackName()`](#names): `NOT_HOMED`, `NO_CONFIG`, `BUSY` (a command is
+[`names.nack()`](packets.md#names): `NOT_HOMED`, `NO_CONFIG`, `BUSY` (a command is
 running), `OUT_OF_RANGE` (no room that way), `BAD_STATE` (a state that takes
 no continuous jog). `null` means no answer in time. A refusal stops the jog: `running` turns false.
 
@@ -476,22 +475,7 @@ try {
   await link.pushConfig(config);
 } catch (e) {
   if (!(e instanceof ConfigTransferError)) throw e;
-  show(e.reason == null ? e.message : cfgNackName(e.reason));
+  show(e.reason == null ? e.message : names.cfgNack(e.reason));
 }
 ```
 
-# Names
-
-A word for each code, for logs and displays. The word is the code's key,
-the same token the firmware logs and the wire docs use:
-`stateName(MachineState.ALARM)` is `"ALARM"`, `nackName(Nack.FULL)` is
-`"FULL"`. A code this build doesn't know comes back as the kind and the
-number, `STATE(7)`, never as a known word.
-
-| Function | Names |
-|---|---|
-| `stateName(s: number): string` | a `MachineState` |
-| `jobName(r: number): string` | a `JobReason` |
-| `faultNames(mask: number): string` | the set `Fault` bits, joined with `\|`; `"NONE"` for 0 |
-| `nackName(code: number): string` | a `Nack` |
-| `cfgNackName(code: number): string` | a `CfgNack` |

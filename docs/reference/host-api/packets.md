@@ -1,7 +1,8 @@
 # Packets
 
 The bytes of the binary records in [reference/packets.md](../packets.md): encoders,
-the decoder for the status reply, the checksums, and the codes. A `Link`
+the decoder for the status reply, the checksums, the codes, and their
+names. A `Link`
 uses them; a caller needs them only to inspect bytes, build a job by hand,
 or write a simulator.
 
@@ -10,13 +11,13 @@ magic byte first. This page says record, as [reference/packets.md](../packets.md
 does.
 
 ```ts
-import { packLayerHdr, crc8, MachineState, Nack } from "urumi-host/packets";
+import { packLayerHdr, crc8, MachineState, Nack, names } from "urumi-host/packets";
 ```
 
-**Checked against `b58cd3d`.** To see what may have changed since:
+**Checked against `e511050`.** To see what may have changed since:
 
 ```bash
-git diff b58cd3d -- web/src/packets/
+git diff e511050 -- web/src/packets/
 ```
 
 Every encoder returns one whole record, ending in its CRC8. A record that
@@ -177,8 +178,9 @@ source can't carry is `undefined`, never zero.
 |---|---|---|
 | `state` | `MachineState` | the state |
 | `context` | `MachineContext` | what is held between commands |
-| `reason` | `number` | the state's reason; a `JobReason` in a job; 0 for none |
+| `reason` | `number` | the state's reason: a `JobReason`, `JoggingReason`, `HomingReason` or `ProbingReason`; 0 for none |
 | `faults` | `number` | `Fault` bits |
+| `stateName`, `reasonName`, `faultNames` | `string` | `state`, `reason` and `faults` in words, by [`names`](#names) |
 | `wpos` | `[x, y, z, a]` | work position, mm and degrees; `NaN` where unknown |
 | `layer`, `record` | `number` | where a job is, or its resume point; `layer` is `NO_LAYER` without a job. `STATUS_RSP` only. |
 | `bufCount` | `number` | blocks queued |
@@ -251,16 +253,19 @@ The `STATUS_RSP` record.
 ## Enums
 
 As const objects, each with a type of the same name for its values. The
-values are the firmware's; [Names](link.md#names) has the words.
+values are the firmware's; [`names`](#names) has the words.
 
 | Enum | |
 |---|---|
 | `MachineState` | the state |
 | `MachineContext` | what is held between commands |
-| `JobReason` | the reason in a job |
+| `JobReason` | the reason in JOB |
+| `JoggingReason` | the reason in JOGGING: `STEP`, `CONTINUOUS`, `GOTO` |
+| `HomingReason` | the reason in HOMING: `LEG`, `WAIT` between legs |
+| `ProbingReason` | the reason in PROBING: `LEG`, and between legs `CLEAR` or `CONTACT` |
 | `Fault` | fault bits |
 | `HomeFail` | why a home failed |
-| `Probing`, `ProbeCause` | the probe session's phase, and its last leg's outcome |
+| `ProbeCause` | the probe session's last leg's outcome |
 | `Selection` | the controlled point when it isn't a head |
 | [`Nack`](#nack) | why a record or a jog was refused |
 | `CfgNack` | why a config push or pull was refused |
@@ -354,6 +359,35 @@ fix, and a code the session waits out needs none.
 
 `0x03`, `0x05`, `0x09` and `0x0E` are unused. A refused jog doesn't
 start, whatever its code, and a `JOG_NACK` never carries text.
+
+# Names
+
+The codes in words, for a display or a log. A name is the enum key, the
+word the firmware logs and the wire docs use, so a person reading the UI
+and one reading a capture see the same word.
+
+```ts
+import { names } from "urumi-host/packets";
+
+show(`${names.nack(r.code)} ${r.text}`);   // "OUT_OF_RANGE y high, tool 1"
+```
+
+A value this build doesn't know prints as the enum and the number, such
+as `STATE(12)`, never `""` or `undefined`: a newer firmware may send it.
+
+| Function | Names | Unknown |
+|---|---|---|
+| `names.state(s: number): string` | a `MachineState` | `STATE(n)` |
+| `names.reason(state: number, r: number): string` | the reason byte, read against the state: a `JobReason` in JOB, `JoggingReason` in JOGGING, `HomingReason` in HOMING, `ProbingReason` in PROBING; `""` in a state without one | `REASON(n)` |
+| `names.context(c: number): string` | a `MachineContext` | `CONTEXT(n)` |
+| `names.faults(mask: number): string` | the set `Fault` bits, joined with `\|`; `"NONE"` for 0 | the bit in hex, such as `0x200` |
+| `names.nack(code: number): string` | a [`Nack`](#nack), from a `NACK` or a `JOG_NACK` | `NACK(n)` |
+| `names.cfgNack(code: number): string` | a `CfgNack` | `CFG_NACK(n)` |
+| `names.axes(mask: number): string` | an axis mask as letters in `xyza` order, such as `"xz"`; `"—"` for none | ignored |
+
+A `NACK`'s text is already words: show it after the name, as above.
+`MachineStatus` has the first three ready as `stateName`, `reasonName`
+and `faultNames`.
 
 # `crc8()`, `crc32()`
 

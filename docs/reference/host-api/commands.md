@@ -12,10 +12,10 @@ const cmd = link.commands();
 await cmd.home({ form: "xy" });
 ```
 
-**Checked against `e8de999`.** To see what may have changed since:
+**Checked against `e511050`.** To see what may have changed since:
 
 ```bash
-git diff e8de999 -- web/src/link/
+git diff e511050 -- web/src/link/
 ```
 
 | Name | Kind |
@@ -485,7 +485,7 @@ await cmd.home({ form: "xy" });
 const off = link.onStatus((s) => {
   if (s.state === MachineState.HOMING) return;
   off();
-  show(s.state === MachineState.IDLE ? "homed" : faultNames(s.faults));
+  show(s.state === MachineState.IDLE ? "homed" : s.faultNames);
 });
 ```
 
