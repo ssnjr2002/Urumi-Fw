@@ -60,7 +60,7 @@ Two kinds:
   refused the job or the host gave up.
 * **Throws** for a refusal from the controller, a timeout, or a programming
   mistake. A config refusal throws `ConfigTransferError`, whose `reason` is
-  the `CFG_NACK_*` code, or `null` when the controller didn't answer.
+  the `CfgNack` code, or `null` when the controller didn't answer.
 * **A refused command** throws `CommandError`: `reason` is one token (the
   word after `err`, a node's result, or `timeout`), `reply` the line in
   full. `send()` doesn't throw; it gives the reply as it came.

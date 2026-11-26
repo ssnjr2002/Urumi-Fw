@@ -1457,7 +1457,7 @@ reworks.
    `reset` and the leg order are tested against the sim only, not yet on
    the Pico.
 9. `feature/web-names`: the names move to `urumi-host/packets`, beside
-   the enums they name. Depends on 6.
+   the enums they name. Depends on 6, and on the NACK codes (below).
    **Status:** not started.
    * `stateName()`, `jobName()`, `faultNames()`, `nackName()`,
      `cfgNackName()` and their tables move from `link/names.ts` to
@@ -1496,6 +1496,220 @@ frame, the retired list), `commands.md` (`get busy`, and a line under
 or a job's ring holding blocks unless paused. Tested on the Pico with
 `dummy_leg`: `busy` 1 and a second leg `err busy` while it runs, 0 between
 legs in HOMING; the two reference frames are repacked in Python.
+
+Firmware and host, before branch 9: the NACK codes. Two codes cover most
+refusals, so a NACK often says little about what went wrong, and in one
+case the host reacts to the wrong thing. The fix has two parts. The codes
+split, so each one tells the host what to do. And a NACK carries a short
+text saying exactly what failed, for a person to read. Branch 9 then names
+the final set once.
+**Status:** done on the branch, not merged.
+
+**`NACK_JOB` today: 17 send sites** (`data_plane.cpp`).
+
+| Line | Record | Refused because | Cause |
+|---|---|---|---|
+| 227 | `JOB_HDR` | version not 1, or tool count outside 1–4 | bad field |
+| 284 | `TOOL_HDR` | the same tool twice in preflight | preflight |
+| 345 | `LAYER_HDR` | `LAYER_BAD`: head or chamber out of range, a plunge past `maxOvercut`, or a tangential or chamber tool on a head without A | bad field, or the tool can't run there |
+| 371 | `LAYER_HDR` | the planner's `PQ_BAD_CURVE` from `plannerLayerCheck`: a layer inside a contour | order |
+| 372 | `LAYER_HDR` | `PQ_NO_RESUME`: a resume header off the resume point | resume |
+| 383 | `TOOL_HDR` | no layer held | order |
+| 386 | `TOOL_HDR` | its tool wasn't in preflight | preflight |
+| 413 | `TOOL_HDR` | not in a job | order |
+| 413 | `TOOL_HDR` | no valid config | config |
+| 421–422 | `TOOL_HDR` | bbox not finite, or min > max | bad field |
+| 431 | `BEZIER` | during preflight | order |
+| 433 | `BEZIER` | not in a job, a layer held, or no layer open | order |
+| 470 | `BEZIER` | `PQ_NO_JOB` | order |
+| 482 | `LAYER_HDR` | during preflight | order |
+| 484 | `LAYER_HDR` | not in a job, or in PLACE | order |
+| 484 | `LAYER_HDR` | no valid config | config |
+| 499 | `LAYER_HDR` | `layerValid()` fails: chamber, feed, thickness or p | bad field |
+| 507 | `LAYER_HDR` | a layer already held, or inside a contour | order |
+
+**`NACK_BAD_STATE` today: 20 send sites.**
+
+| Where | Refused because | Cause |
+|---|---|---|
+| `data_plane.cpp:161` | any record outside IDLE or a job | state |
+| `data_plane.cpp:205` | `JOB_HDR` not in IDLE | state |
+| `data_plane.cpp:205` | `JOB_HDR` with no valid config | config |
+| `data_plane.cpp:230` | `plannerOpenJob()` fails | state |
+| `data_plane.cpp:322` | `plannerJobSwap()` fails at the end of preflight | shouldn't happen |
+| `data_plane.cpp:361` | a layer needs a tool change and `toolChangeBegin()` refuses | ? |
+| `data_plane.cpp:366` | selecting the layer's head fails | ? |
+| `data_plane.cpp:373` | `plannerLayerCheck`'s other results: `PQ_BAD_STATE`, `PQ_NO_CONFIG`, `PQ_NO_LIMITS`, `PQ_NO_FEED` | four causes |
+| `data_plane.cpp:458` | `framesToMachine()` fails: no head selected | ? |
+| `data_plane.cpp:471` | `plannerQueueRecord`'s other results: the same four | four causes |
+| `cjog.cpp:38` | admission refuses, not `busy` | state |
+| `cjog.cpp:50` | no valid config | config |
+| `cjog.cpp:54` | in PLACE, the dot is off, or Z or A asked | state |
+| `cjog.cpp:56` | `plannerJogFrom()`: another kind of motion owns the ring | busy |
+| `cjog.cpp:67` | the axis isn't configured | config |
+| `cjog.cpp:69` | the axis isn't homed and `jogUnhomed` is off | not homed |
+| `cjog.cpp:81` | the jog feed works out to 0 | config |
+| `cjog.cpp:88` | the planner refuses the line, not `PQ_SOFT_LIMIT` | four causes |
+| `cjog.cpp:97` | a direction outside −1 to 1 | bad field |
+| `cjog.cpp:98` | speed 0 | bad field |
+
+**What this costs today.**
+
+* **A bug in the session.** After preflight, the session reads every
+  `NACK_JOB` as a resume header off the resume point and holds
+  (`session.ts:492`, Hold `"refused"`). A layer with a bad field, or a
+  frame out of order, mid-job holds the session instead of ending it.
+* **The planner knows more than the wire says.** `PlannerQueueResult`
+  already tells `PQ_NO_CONFIG`, `PQ_NO_LIMITS` and `PQ_NO_FEED` apart
+  from `PQ_BAD_STATE`; the wire folds all four into `BAD_STATE`. The
+  text commands already say `no_feed`, `no_limits`, `no_head` and
+  `not_homed`.
+* **No config has three answers.** `BAD_STATE` on `JOB_HDR` and `CJOG`,
+  `NACK_JOB` on `TOOL_HDR` and `LAYER_HDR`.
+* **The sim differs in places.** A `BEZIER` with no job open is
+  `BAD_STATE` in the sim (`sim.ts:699`) and `NACK_JOB` on the Pico.
+
+**The other codes.** Each means one thing to the host, though some cover
+several cases a person would want told apart:
+
+* `SOFT_LIMIT` and `OUT_OF_RANGE` both mean "this would leave the
+  travel". One checks a header's box before motion, the other a curve or
+  jog as it arrives; the refused record already says which.
+* `OUT_OF_RANGE`'s detail bits can't tell "no origin fits this tool" from
+  "off the low side": both leave the side bit clear.
+* `TOOL_UNAVAILABLE` covers the laser's node mute or excluded, a tool that
+  doesn't fit its head, and a missing power node.
+* `NOT_HOMED` covers X or Y, a head's Z, and a head's A, and doesn't say
+  which.
+
+**The frame.** `NACK` gets a new layout and a new magic; `0xBB` joins
+the retired magics. `JOG_NACK` stays `[0xB7] [reason]`: a jog is
+refused while the user holds a direction, so the user already knows the
+axis and side, the code says the rest, and the deadman repeats would send
+the same text again and again.
+
+```
+[magic] [reason] [len] [text: len bytes] [crc8]
+```
+
+* `len` is at most 48. The text is the first failure the check found, in
+  the text plane's words: `OUT_OF_RANGE Y high`, `NOT_HOMED head 1 z`,
+  `TOOL_UNAVAILABLE power 7 mute`, `BAD_FIELD LAYER_HDR byte 13`.
+* The text is for display. A program matches the code, never the words.
+* A `NACK` carries text exactly when the session ends on it. The codes it
+  waits out or holds on carry none (`len` 0): `CRC`, `FULL`, `ABORTING`,
+  `BUSY`, `PAUSED`, `TOOL_CHANGE`, `NO_RESUME` (the status has the resume
+  point). The wait codes can repeat for every record in the window; a
+  refusal with text comes once, because the records behind it fail the
+  seq guard and are ACKed as stale.
+* The detail byte goes, and `NACK_DETAIL_*` with it: the text says which
+  axis, side, head or node.
+* A CRC, which the old 3-byte frame lacked.
+
+**The codes.** Flat: a new code where the cause and its fix differ. New
+values from `0x13`; `0x0C` and `0x11` keep theirs, and `0x09` is retired.
+
+| Code | Means | Takes |
+|---|---|---|
+| `NACK_BAD_STATE` | the machine is in the wrong state, only | 161, 205 (state), 230, `PQ_BAD_STATE`, `cjog` 38 and 54 |
+| `NACK_NO_CONFIG` *(new)* | no valid config, or the config lacks a value this needs: limits, a feed, the axis | 205, 413, 484 (config), `PQ_NO_CONFIG`, `PQ_NO_LIMITS`, `PQ_NO_FEED`, `cjog` 50, 67 and 81 |
+| `NACK_ORDER` *(new)* | a frame out of the job's order | 371, 383, 413, 431, 433, 470, 482, 484, 507 |
+| `NACK_BAD_FIELD` *(new)* | a field out of range or malformed | 227, 421–422, 499, `cjog` 97 and 98 |
+| `NACK_NO_RESUME` *(new)* | a resume header off the resume point: the host holds | 372 |
+| `NACK_JOB` | a tool twice in preflight, or a tool not in it | 284, 386 |
+| `NACK_OUT_OF_RANGE` | as now, plus every `SOFT_LIMIT` case | the `SOFT_LIMIT` sites |
+| `NACK_NOT_HOMED` | as now, plus a jog on an unhomed axis | `cjog` 69 |
+| `NACK_BUSY` | as now, plus another motion owning the ring, on the stream too | `cjog` 56; 230 when `plannerOpenJob()` fails because a jog owns the ring (a `JOB_HDR` during a step jog in IDLE ends the session today); check 361 the same way |
+
+**Firmware.** Each send site writes its words into a fixed buffer. Most
+already hold the axis, head or node. A few helpers return a bare `bool`
+or a lumped result and must return a reason instead, the way
+`machineAdmit()` and `framesToMachine()` return a `const char*` today:
+`layerHeadFits()`, `powerAvailable()`, `layerValid()`, `layerResolve()`'s
+`LAYER_BAD`, `toolOrigins()` and `configAxisRange()`. `PlannerQueueResult`
+maps to a code and words through a small table. Check what `Serial.write`
+does when the USB buffer is full: `sendNack()` writes from core 0's data
+plane, and could stall it.
+
+**Settled cases.**
+
+* `LAYER_BAD` (345) splits in `layerResolve()`: a head beyond
+  `headCount`, or a tool that doesn't fit the head, is `TOOL_UNAVAILABLE`;
+  a missing or too-deep plunge `p`, or a chamber out of range, is
+  `BAD_FIELD`.
+* 361: `toolChangeBegin()` refuses only when the job can't hold for a
+  tool, so `BAD_STATE`; check it against `busy` too. 366: the head's nodes
+  won't map (`axesMapApply()`), so `TOOL_UNAVAILABLE`, with the mapping's
+  reason as the text. 458: no head selected, so `BAD_STATE`, text
+  `no_head`.
+* 322 should be unreachable: the job left PREFLIGHT or the planner moved
+  between records. No code of its own: `BAD_STATE`, with text that names
+  it.
+* `NACK_JOB` keeps two cases, a tool twice in preflight (284) and a tool
+  preflight didn't declare (386, after preflight), so it is renamed
+  `NACK_TOOL_LIST`.
+* The host-api names: the codes become an enum, `Nack`, and `CfgNack` for
+  the config's, in place of the `NACK_*` and `CFG_NACK_*` constants;
+  `parseNack()` returns a `Refusal { code, text }`, beside
+  `parseStatusRsp()`; `packNack()` and `packJogNack()` for the sim.
+  `BAD_MAGIC` goes: it is never sent. Drafted in `host-api/packets.md`.
+
+**Host.** The demuxer and `parse` learn the new frames. The session holds
+on `NO_RESUME` only (not on every `NACK_JOB`), and every new code but
+`NO_RESUME` joins `FATAL_NACKS`. A preflight refusal still ends the job
+whatever its code. `Ended` carries `text` in place of `detail`, from the
+first refusal. The sim sends the same codes and words from the same
+checks.
+
+**Docs.** `usb_protocol.h` and `constants.ts` comments;
+`reference/packets.md` (the frame, the reasons table, each record's
+refusals, the resend rules, the retired magics); `system/wire.md` (the
+demux reads `NACK` by its length now, and "a reason and a detail byte");
+`system/jobs.md` (`SOFT_LIMIT`, the holds table's `refused`, what ends a
+job, the detail byte); `system/planner.md` (the `PQ_*` to NACK table);
+`host-api/packets.md`, `host-api/session.md` (Hold `refused`, `Ended`'s
+`text`, the fatal codes) and `host-api/link.md` (the jog's codes), with
+new stamps; `link/names.ts`, which branch 9 moves.
+
+**Tests.** A sim test per new code and for the text; on the Pico, at
+least `NO_RESUME`, `ORDER`, `BAD_FIELD`, and a `FULL` with no text.
+
+**Considered and dropped.**
+
+* A detail byte with a meaning per code, or a struct of fault fields per
+  code: every reader needs a table per code, and the frame grows to the
+  largest.
+* Asking for the details afterwards, as SCSI's `REQUEST SENSE` does: a
+  `get refusal` text command. It needs a round trip, the firmware must
+  keep the first refusal until read, and the session would call into
+  `Commands`. Carrying the text in the NACK has none of that.
+* The text in a frame of its own after the NACK: the host would have to
+  pair each one with its NACK.
+
+**Flow control, not addressed.** On `NACK_FULL` the host waits a fixed
+50 ms and resends its whole window of 16. The records behind the refused
+one fail the seq guard and are ACKed as stale and dropped, so once the
+ring is full, each round sends about 16 records to land one or two, and
+gets about 15 duplicate ACKs back. It costs little (about 1 KB per round
+over USB, a CRC per wasted record), so it stays as it is. The fix
+considered was credit-based, as TCP's receive window: the ACK's unused
+third byte carries the room left, and the host sends no more than that.
+The room would be approximate, since one `BEZIER` can become several
+blocks, so `FULL` and the resend would stay as the fallback.
+
+**Outcome.** As planned, but for four places. Soft limits off on X or Y is
+`NO_CONFIG`, not `OUT_OF_RANGE`: a config value the job needs. The hold
+keeps the name `refused`, now meaning `NO_RESUME`, so the public API
+doesn't change. The text for no config is `unconfigured`, the text plane's
+word. A `JOB_HDR` during a jog is `BAD_STATE` `not idle`, since the state
+is JOGGING; `BUSY` comes only when the state is back to IDLE while the jog
+still holds the planner. The bench added one: a record in a state other
+than IDLE or a job was `BAD_STATE` with no text, and now carries the
+state's name, such as `HOMING`. Tested on the Pico: `ORDER`, `BAD_FIELD`,
+`NOT_HOMED` and `BAD_STATE` with their text; `CRC`, `FULL`,
+`TOOL_CHANGE`, `PAUSED` and `NO_RESUME` with none, in a job run with the
+pen mounted by command; and every `JOG_NACK` but `NO_CONFIG`. Frames
+from `buildJob` and `JobSource`, sent from Python.
 
 Firmware, a branch and plan of its own, apart from these: `abort`'s job
 is to get the machine to IDLE. Today `jobAbort()` is reachable only as the

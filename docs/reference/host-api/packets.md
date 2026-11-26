@@ -10,13 +10,13 @@ magic byte first. This page says record, as [reference/packets.md](../packets.md
 does.
 
 ```ts
-import { packLayerHdr, crc8, MachineState, NACK_FULL } from "urumi-host/packets";
+import { packLayerHdr, crc8, MachineState, Nack } from "urumi-host/packets";
 ```
 
-**Checked against `e8de999`.** To see what may have changed since:
+**Checked against `b58cd3d`.** To see what may have changed since:
 
 ```bash
-git diff e8de999 -- web/src/packets/
+git diff b58cd3d -- web/src/packets/
 ```
 
 Every encoder returns one whole record, ending in its CRC8. A record that
@@ -262,8 +262,98 @@ values are the firmware's; [Names](link.md#names) has the words.
 | `HomeFail` | why a home failed |
 | `Probing`, `ProbeCause` | the probe session's phase, and its last leg's outcome |
 | `Selection` | the controlled point when it isn't a head |
+| [`Nack`](#nack) | why a record or a jog was refused |
+| `CfgNack` | why a config push or pull was refused |
 
 `NO_LAYER` is the `layer` with no job.
+
+# Refusals
+
+The controller refuses a job record with a `NACK`, and a jog with a
+`JOG_NACK`. Both carry a [`Nack`](#nack) code; a `NACK` also carries a
+short text.
+
+## Functions
+
+### `parseNack()`
+
+**Syntax**
+
+```ts
+parseNack(record: Uint8Array): Refusal
+```
+
+**Parameters**
+
+* `record`: a whole `NACK` or `JOG_NACK`.
+
+**Return value**
+
+A `Refusal`:
+
+| Property | Type | |
+|---|---|---|
+| `code` | `Nack` | why |
+| `text` | `string` | the first check that failed, in words, such as `"y high, tool 1"` or `"chamber 9"`. Empty on a `JOG_NACK` and on the codes that carry none. For display: match `code`, never the words. |
+
+**Exceptions**
+
+* `Error` if `record` is neither, or its CRC8 doesn't match.
+
+### `packNack()`
+
+The inverse, for a simulator or a test.
+
+**Syntax**
+
+```ts
+packNack(code: Nack, text?: string): Uint8Array
+packJogNack(code: Nack): Uint8Array
+```
+
+**Parameters**
+
+* `code`: the reason.
+* `text`: default `""`, at most `NACK_TEXT_MAX` bytes of printable ASCII.
+
+**Return value**
+
+The record.
+
+**Exceptions**
+
+* `RangeError` if `text` is too long or not printable ASCII.
+
+## `Nack`
+
+Which record each refuses, what a job [`Session`](session.md) does with
+it on the stream, and whether a `NACK` carries text. A `NACK` carries text
+exactly when the session ends: the text explains a failure someone must
+fix, and a code the session waits out needs none.
+
+| Code | Value | `NACK` text | Refused because | Sent on | `Session` |
+|---|---|---|---|---|---|
+| `CRC` | `0x01` | no | the CRC8 doesn't match | both | resends |
+| `FULL` | `0x02` | no | the planner queue is full | stream | waits, resends |
+| `PAUSED` | `0x04` | no | the job is paused or pausing | stream | holds |
+| `BAD_STATE` | `0x06` | yes | the machine is in the wrong state | both | ends |
+| `ABORTING` | `0x07` | no | an abort is under way | stream | waits, resends |
+| `BAD_CURVE` | `0x08` | yes | the curve fails its checks or breaks its contour | stream | ends |
+| `MIXED_AXES` | `0x0A` | — | a jog in more than one axis set | jog | — |
+| `BUSY` | `0x0B` | no | a step or sequence holds the machine: `MachineStatus.busy` | both | waits, resends |
+| `TOOL_LIST` | `0x0C` | yes | a tool twice in preflight, or one preflight didn't declare | stream | ends |
+| `TOOL_UNKNOWN` | `0x0D` | yes | a tool id the config doesn't have | stream | ends |
+| `TOOL_CHANGE` | `0x0F` | no | the job holds for a tool change | stream | holds |
+| `TOOL_UNAVAILABLE` | `0x10` | yes | the head, its A, its nodes or the tool's power can't run the tool | stream | ends |
+| `OUT_OF_RANGE` | `0x11` | yes | outside the travel: no origin fits, a box or curve past the soft range, or the mesh takes Z out | both | ends |
+| `NOT_HOMED` | `0x12` | yes | an axis it needs isn't homed | both | ends |
+| `NO_CONFIG` | `0x13` | yes | no valid config, or the config lacks a value this needs | both | ends |
+| `ORDER` | `0x14` | yes | a record out of the job's order | stream | ends |
+| `BAD_FIELD` | `0x15` | yes | a field out of range or malformed | both | ends |
+| `NO_RESUME` | `0x16` | no | a resume header off the resume point; the status has the point | stream | holds |
+
+`0x03`, `0x05`, `0x09` and `0x0E` are unused. A refused jog doesn't
+start, whatever its code, and a `JOG_NACK` never carries text.
 
 # `crc8()`, `crc32()`
 
@@ -285,9 +375,7 @@ The names of [reference/packets.md](../packets.md), with the same values.
 |---|---|
 | `MAGIC_*` | each record's first byte, retired status layouts excepted |
 | `*_SIZE` | each fixed-size record's length in bytes |
-| `NACK_*` | a `NACK`'s reason byte |
-| `NACK_DETAIL_*` | the detail bits on `NACK_OUT_OF_RANGE` |
-| `CFG_NACK_*` | a `CFG_NACK`'s reason byte |
+| `NACK_TEXT_MAX` | the longest text a `NACK` carries, 48 bytes |
 | `CJOG_SPEED_MAX` | the largest `packCjog()` speed |
 | `CJOG_DEADMAN_MS` | how long the controller waits for the next `CJOG` |
 | `CFG_MAX_BYTES` | the largest config blob |

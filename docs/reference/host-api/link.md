@@ -20,10 +20,10 @@ never more than one poll old.
 import { Link, stateName } from "urumi-host/link";
 ```
 
-**Checked against `e8de999`.** To see what may have changed since:
+**Checked against `b58cd3d`.** To see what may have changed since:
 
 ```bash
-git diff e8de999 -- web/src/link/
+git diff b58cd3d -- web/src/link/
 ```
 
 | Name | Kind |
@@ -147,7 +147,7 @@ abort(): void
 **Return value**
 
 None. No reply; the status shows the machine settle. Records sent before
-IDLE are refused with `NACK_ABORTING`.
+IDLE are refused with `Nack.ABORTING`.
 
 ### `Link.freshStatus()`
 
@@ -407,13 +407,13 @@ time in a background tab.
 | `running` | `boolean` | the jog is being kept alive; false after `stop()`, a refusal, or the link closing |
 
 ```ts
-type CJogReply = { ok: true } | { ok: false; reason: number | null }
+type CJogReply = { ok: true } | { ok: false; reason: Nack | null }
 ```
 
-`reason` is a `NACK_*` code, named by [`nackName()`](#names): `BAD_STATE`
-(not homed, no config, or a state that takes no continuous jog), `BUSY`
-(a command is running), `SOFT_LIMIT` (no room that way). `null` means
-no answer in time. A refusal stops the jog: `running` turns false.
+`reason` is a [`Nack`](packets.md#nack) code, named by
+[`nackName()`](#names): `NOT_HOMED`, `NO_CONFIG`, `BUSY` (a command is
+running), `OUT_OF_RANGE` (no room that way), `BAD_STATE` (a state that takes
+no continuous jog). `null` means no answer in time. A refusal stops the jog: `running` turns false.
 
 ## Methods
 
@@ -466,7 +466,7 @@ Thrown by [`pushConfig()`](#linkpushconfig) and
 
 | Property | Type | |
 |---|---|---|
-| `reason` | `number \| null` | a `CFG_NACK_*` code; `null` when the controller didn't answer or the failure is the host's |
+| `reason` | `CfgNack \| null` | why the controller refused; `null` when it didn't answer or the failure is the host's |
 | `message` | `string` | what failed |
 
 **Example**
@@ -482,10 +482,10 @@ try {
 
 # Names
 
-A word for each code, for logs and displays. The word is the constant's
-name without its prefix, the same token the firmware logs and the wire
-docs use: `stateName(MachineState.ALARM)` is `"ALARM"`, `nackName(NACK_FULL)`
-is `"FULL"`. A code this build doesn't know comes back as the kind and the
+A word for each code, for logs and displays. The word is the code's key,
+the same token the firmware logs and the wire docs use:
+`stateName(MachineState.ALARM)` is `"ALARM"`, `nackName(Nack.FULL)` is
+`"FULL"`. A code this build doesn't know comes back as the kind and the
 number, `STATE(7)`, never as a known word.
 
 | Function | Names |
@@ -493,5 +493,5 @@ number, `STATE(7)`, never as a known word.
 | `stateName(s: number): string` | a `MachineState` |
 | `jobName(r: number): string` | a `JobReason` |
 | `faultNames(mask: number): string` | the set `Fault` bits, joined with `\|`; `"NONE"` for 0 |
-| `nackName(code: number): string` | a `NACK_*` code |
-| `cfgNackName(code: number): string` | a `CFG_NACK_*` code |
+| `nackName(code: number): string` | a `Nack` |
+| `cfgNackName(code: number): string` | a `CfgNack` |

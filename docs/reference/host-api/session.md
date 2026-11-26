@@ -8,10 +8,10 @@ its frames, a `Session` sends them and follows the job until it closes.
 import { Link, JobSource } from "urumi-host/link";
 ```
 
-**Checked against `280b897`.** To see what may have changed since:
+**Checked against `b58cd3d`.** To see what may have changed since:
 
 ```bash
-git diff 280b897 -- web/src/link/session.ts
+git diff b58cd3d -- web/src/link/session.ts
 ```
 
 | Name | Kind |
@@ -21,7 +21,7 @@ git diff 280b897 -- web/src/link/session.ts
 | [`SessionResult`](#sessionresult), [`Fatal`](#fatal) | types |
 
 A session sends only inside a job: the controller refuses a record
-(`NACK_JOB`) unless a job is open and its layer header taken.
+(`Nack.ORDER`) unless a job is open and its layer header taken.
 
 # `JobSource`
 
@@ -100,9 +100,9 @@ type Hold = "place" | "tool" | "paused" | "refused" | "silent" | "release"
 | Hold | Starts when | Leave by |
 |---|---|---|
 | `place` | the job's headers are taken; the controller is in `PLACE` | `place set`, then `place ok` ([commands.md](../commands.md)); the session sees `BUFFERING` |
-| `tool` | a layer needs another tool (`NACK_TOOL_CHANGE`) | mount and zero once the controller is in `TOOL_WAIT`, then [`resume()`](#sessionresume) |
-| `paused` | `NACK_PAUSED`, a [`pause()`](#sessionpause), or the status shows `PAUSED` | `resume()` |
-| `refused` | a resume's layer header was refused (`NACK_JOB`) | `resume()` to retry |
+| `tool` | a layer needs another tool (`Nack.TOOL_CHANGE`) | mount and zero once the controller is in `TOOL_WAIT`, then [`resume()`](#sessionresume) |
+| `paused` | `Nack.PAUSED`, a [`pause()`](#sessionpause), or the status shows `PAUSED` | `resume()` |
+| `refused` | a resume's layer header didn't name the resume point (`Nack.NO_RESUME`) | `resume()` to retry |
 | `silent` | no replies for 3 s | nothing: the session resends by itself, and turns to `paused` if the status shows it |
 | `release` | manual mode: the next layer waits | [`source.release()`](#jobsourcerelease) |
 
@@ -154,7 +154,7 @@ A [`SessionResult`](#sessionresult). `ok` is true when the job closed by
 ```ts
 const session = link.session(new JobSource(job.layers));
 const r = await session.run();
-if (!r.ok) show(r.fatal!.by === "host" ? r.fatal!.why : nackName(r.fatal!.nack));
+if (!r.ok) show(r.fatal!.by === "host" ? r.fatal!.why : `${nackName(r.fatal!.nack)} ${r.fatal!.text}`);
 ```
 
 Coming back to a paused job after a reload: build the same layers again
@@ -267,16 +267,16 @@ Why a session failed: the controller refused the job, or the host gave up.
 
 ```ts
 type Fatal =
-    | { by: "controller"; nack: number; detail: number }
+    | { by: "controller"; nack: Nack; text: string }
     | { by: "host"; why: "stall" | "crc-limit" | "job-lost" | "job-mismatch" }
 ```
 
 | `by` | Field | Means |
 |---|---|---|
-| `controller` | `nack` | the `NACK_*` byte, named by [`nackName()`](link.md#names): the job or the machine's state is wrong (`BAD_CURVE`, `SOFT_LIMIT`, `TOOL_UNKNOWN`, `NOT_HOMED`, `BAD_STATE` …) |
-| | `detail` | the NACK's detail byte (`NACK_DETAIL_*`), 0 for most |
+| `controller` | `nack` | the [`Nack`](packets.md#nack) code, named by [`nackName()`](link.md#names): any refusal the session neither resends nor holds on, a code this build doesn't know included (`BAD_CURVE`, `OUT_OF_RANGE`, `ORDER`, `BAD_FIELD`, `NOT_HOMED` …) |
+| | `text` | the check that failed, in words, such as `"y high, tool 1"`. For display: match `nack`, never the words. |
 | `host` | `why: "stall"` | no reply for too long, outside a job hold |
-| | `why: "crc-limit"` | too many `NACK_CRC`: the line is bad |
+| | `why: "crc-limit"` | too many `Nack.CRC`: the line is bad |
 | | `why: "job-lost"` | the job left the controller without `close()` or `abort()`: a reboot, or a `cancel` from elsewhere while sending |
 | | `why: "job-mismatch"` | the controller is in a job with another id |
 
