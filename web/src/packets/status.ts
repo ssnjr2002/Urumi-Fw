@@ -1,5 +1,5 @@
 /**
- * format/status.ts — binary STATUS_RSP (0xA3, 37B) + the operational enums.
+ * format/status.ts — binary STATUS_RSP (0xBA, 39B) + the operational enums.
  * MachineState / Fault / JobReason, MachineStatus, parseStatusRsp,
  * packStatusRsp, axisMask.
  *
@@ -19,6 +19,8 @@ import {
     MAGIC_STATUS_RSP_V2,
     MAGIC_STATUS_RSP_V3,
     MAGIC_STATUS_RSP_V4,
+    MAGIC_STATUS_RSP_V5,
+    STATUS_FLAG_BUSY,
     STATUS_HEADS,
     STATUS_RSP_SIZE,
 } from "./constants.js";
@@ -281,8 +283,7 @@ export class MachineStatus {
         readonly record: number | undefined = undefined,
         /**
          * Bus nodes standing on a latched limit switch, bit n = node n, bound or
-         * not. Text plane only — STATUS_RSP has no spare byte, and adding one
-         * would change a fixed-length frame whose size the demux checks.
+         * not. Text plane only: not in STATUS_RSP.
          *
          * `undefined` on a binary sample, following the same rule as `bufCount`
          * above: a plane that cannot carry a field reports no information, never
@@ -330,6 +331,12 @@ export class MachineStatus {
          * interlock, on the binary plane or older firmware.
          */
         readonly unlocked: number | undefined = undefined,
+        /**
+         * A step or sequence is live: a command that needs nothing running
+         * would get `err busy`. A paused job's parked ring is not busy.
+         * undefined from a `get` reply that didn't ask for `busy`.
+         */
+        readonly busy: boolean | undefined = undefined,
     ) {}
 
     /** True if any of `mask`'s Fault bits is set. */
@@ -429,6 +436,7 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
             ? enumFromStr(MACHINE_CONTEXT_VALUES, fields.ctx, MachineContext.IDLE)
             : undefined,
         fields.unlocked !== undefined ? toInt(fields.unlocked) : undefined,
+        fields.busy !== undefined ? fields.busy === "1" : undefined,
     );
 }
 
@@ -456,9 +464,9 @@ function toolsFromGet(tools: string | undefined): number[] | undefined {
     });
 }
 
-// ── binary STATUS_RSP (0xA3, 37 bytes) ─────────────────────────────────────────
+// ── binary STATUS_RSP (0xBA, 39 bytes) ─────────────────────────────────────────
 //
-// [0]      magic        0xA3
+// [0]      magic        0xBA
 // [1]      state        u8   MachineState
 // [2]      reason       u8   the current state's reason
 // [3..4]   faults       u16 LE — Fault bits
@@ -470,10 +478,12 @@ function toolsFromGet(tools: string | undefined): number[] | undefined {
 // [28..29] bufCount     u16 LE — planner blocks queued
 // [30..31] layer        u16 LE — the job's executing record, NO_LAYER
 // [32..35] record       u32 LE   and 0 with no job
-// [36]     CRC8 over [0..35]
+// [36]     context      u8   MachineContext
+// [37]     flags        u8   — bit 0 busy (STATUS_FLAG_BUSY)
+// [38]     CRC8 over [0..37]
 
 /**
- * Parse a 38-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
+ * Parse a 39-byte STATUS_RSP into a MachineStatus. Throws on bad magic/size/CRC.
  *
  * A retired frame's magic is rejected with a message naming the firmware that
  * emitted it: a host consuming fixed-length frames blind must surface the
@@ -507,6 +517,12 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
             "predates the context byte. Reflash it.",
         );
     }
+    if (data[0] === MAGIC_STATUS_RSP_V5) {
+        throw new Error(
+            "Pico is sending the retired 38-byte STATUS_RSP (0xA0) — firmware " +
+            "predates the busy flag. Reflash it.",
+        );
+    }
     if (data[0] !== MAGIC_STATUS_RSP) {
         throw new Error(`Bad magic: 0x${data[0]!.toString(16).padStart(2, "0")}`);
     }
@@ -536,6 +552,8 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         dv.getUint8(9),
         Array.from(data.subarray(10, 10 + STATUS_HEADS)),
         enumFromInt(MACHINE_CONTEXT_VALUES, dv.getUint8(36), MachineContext.IDLE),
+        undefined, // unlocked: text plane only
+        (dv.getUint8(37) & STATUS_FLAG_BUSY) !== 0,
     );
 }
 
@@ -552,10 +570,11 @@ export interface PackStatusRspOptions {
     layer?: number; // default NO_LAYER
     record?: number;
     context?: number; // default MachineContext.IDLE
+    busy?: boolean;
 }
 
 /**
- * Pack a status snapshot into the 37-byte STATUS_RSP wire format. Mainly used
+ * Pack a status snapshot into the 39-byte STATUS_RSP wire format. Mainly used
  * by the in-process SimTransport (mirrors host.protocol.link.SimBackend) and
  * by tests; the real Pico emits this frame.
  */
@@ -578,7 +597,8 @@ export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
     dv.setUint16(30, (opts.layer ?? NO_LAYER) & 0xffff, true);
     dv.setUint32(32, (opts.record ?? 0) >>> 0, true);
     dv.setUint8(36, (opts.context ?? MachineContext.IDLE) & 0xff);
-    dv.setUint8(37, crc8(u8, 0, STATUS_RSP_SIZE - 1));
+    dv.setUint8(37, opts.busy ? STATUS_FLAG_BUSY : 0);
+    dv.setUint8(38, crc8(u8, 0, STATUS_RSP_SIZE - 1));
 
     return u8;
 }

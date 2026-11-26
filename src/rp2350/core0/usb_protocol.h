@@ -108,8 +108,8 @@
 // Binary status request/response (mirrors the text `get` state keys).
 //
 //   STATUS_REQ:  [0xA5]                                    (1 byte, no CRC)
-//   STATUS_RSP:  [0xA0]                                    (38 bytes)
-//     [0]      magic 0xA0
+//   STATUS_RSP:  [0xBA]                                    (39 bytes)
+//     [0]      magic 0xBA
 //     [1]      machineState
 //     [2]      reason              — the current state's: job, jogging,
 //                                   homing or probing; 0 otherwise
@@ -125,7 +125,10 @@
 //     [32..35] record     u32 LE     (plannerExecPoint); 0xFFFF, 0 with no job
 //     [36]     context             — machineContext; the layer is set exactly
 //                                   while it is CTX_JOB
-//     [37]     CRC8 over [0..36]
+//     [37]     flags               — bit 0 busy: machineMoving(), a step or
+//                                   sequence live; what admission answers
+//                                   `err busy` for
+//     [38]     CRC8 over [0..37]
 //
 // One frame, one coherent sample, in the node frame: the host is told nodes
 // and the selection, never slots.
@@ -138,8 +141,10 @@
 #define STATUS_RSP_V2    0xA7   // values are not reused for something else
 #define STATUS_RSP_V3    0xA4
 #define STATUS_RSP_V4    0xA3
-#define STATUS_RSP       0xA0
-#define STATUS_RSP_SIZE  38
+#define STATUS_RSP_V5    0xA0
+#define STATUS_RSP       0xBA
+#define STATUS_RSP_SIZE  39
+#define STATUS_FLAG_BUSY 0x01
 
 // Binary `seqreset`: one byte, zeroes expectedSeq, replies ACK(0).
 // The text command sits on the critical path of every stream start — the one

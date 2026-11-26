@@ -182,6 +182,7 @@ source can't carry is `undefined`, never zero.
 | `wpos` | `[x, y, z, a]` | work position, mm and degrees; `NaN` where unknown |
 | `layer`, `record` | `number` | where a job is, or its resume point; `layer` is `NO_LAYER` without a job. `STATUS_RSP` only. |
 | `bufCount` | `number` | blocks queued |
+| `busy` | `boolean` | a step or sequence runs: a command that needs nothing running is refused `busy`. `false` in a paused job. |
 | `selection` | `number` | the controlled head, or a `Selection` value |
 | `tools` | `number[]` | the tool id on each head, 0 for none |
 | `nodeHomed`, `nodeEnabled` | `number` | bit n = bus node n |

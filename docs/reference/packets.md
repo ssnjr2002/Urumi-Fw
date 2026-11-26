@@ -303,14 +303,14 @@ holds a direction. What a jog does is in
 | Record | Bytes | Layout |
 | --- | --- | --- |
 | `STATUS_REQ` `0xA5` | 1 | `[0xA5]`, host to controller, answered in every state |
-| `STATUS_RSP` `0xA0` | 38 | below, controller to host |
+| `STATUS_RSP` `0xBA` | 39 | below, controller to host |
 
 `STATUS_RSP` is one sample, read at one instant. Each field mirrors a `get`
 key ([commands.md](commands.md#get)).
 
 | Bytes | Field | Type | Means | Key |
 | --- | --- | --- | --- | --- |
-| 0 | magic | u8 | `0xA0` | |
+| 0 | magic | u8 | `0xBA` | |
 | 1 | state | u8 | 0 IDLE, 2 ESTOP, 3 ALARM, 5 HOMING, 6 PROBING, 7 JOGGING, 8 TRAVERSE, 9 JOB | `state` |
 | 2 | reason | u8 | the state's reason (below); 0 in other states | `job`, `jogging`, `homing`, `probing` |
 | 3–4 | faults | u16 | the fault mask (below) | `faults` |
@@ -323,7 +323,8 @@ key ([commands.md](commands.md#get)).
 | 30–31 | layer | u16 | the layer of the record the job is running; `0xFFFF` with no job | |
 | 32–35 | record | u32 | that record; 0 with no job | |
 | 36 | context | u8 | 0 IDLE, 1 JOB, 2 PROBE, 3 HOMING | `ctx` |
-| 37 | CRC8 | u8 | | |
+| 37 | flags | u8 | bit 0 busy: a step or sequence runs, so a command that needs nothing running answers `err busy`; a paused job's parked ring isn't running | `busy` |
+| 38 | CRC8 | u8 | | |
 
 | State | Reason values |
 | --- | --- |
@@ -351,7 +352,7 @@ plunge or swivel carries the record it leads into); while paused, where the
 job resumes; before any block runs, the oldest queued record or the next one
 expected.
 
-`0xA3`, `0xA4`, `0xA6` and `0xA7` are older status layouts, retired and never
+`0xA0`, `0xA3`, `0xA4`, `0xA6` and `0xA7` are older status layouts, retired and never
 sent. A reader expecting another layout fails on its magic rather than
 misread the frame.
 

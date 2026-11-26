@@ -121,7 +121,8 @@ are described in [system/controller.md](../system/controller.md#admission).
 | `context` | no e-stop latched |
 | `clear` | nothing running and no context open |
 
-"Running" is a leg, a jog or an unpaused job's motion, or a sequence. The
+"Running" is a leg, a jog or an unpaused job's motion, or a sequence; `busy`
+(`get`, `STATUS_RSP`) says whether something is. The
 contexts are a job, a probe session and a homing session; inside a probe or
 homing session only `any`, `read` and the commands flagged for it are admitted.
 
@@ -194,7 +195,7 @@ the key is not recognised (older firmware).
 The one group:
 
 ```
-status = state ctx homed enabled head tools unlocked mpos wpos buf mute excluded touched mesh
+status = state ctx homed enabled head tools unlocked mpos wpos buf busy mute excluded touched mesh
 ```
 
 The keys, in the order bare `get` lists them. A mask is hex, bit n = bus node
@@ -238,6 +239,7 @@ n (or head n, for `unlocked`), whether mapped or not.
 | `excluded` | mask: mute nodes `bus_exclude` named | |
 | `touched` | mask: nodes energised or holding a slot, bound or fenced | |
 | `buf` | planner blocks queued | |
+| `busy` | 1 while a step or sequence runs: a command that needs nothing running answers `err busy`; 0 in a paused job. As `STATUS_RSP` | |
 | `queued` | motion time of the queued blocks not yet started, µs | |
 | `expectedseq` | the next wire seq the data plane executes; not flow control | |
 | `pos` | `<id>:<steps>,…` per config axis node, id order: the machine position the controller believes; `<id>:-` unknown. `nodepos` reads the node's own counter | no config axis node |

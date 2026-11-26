@@ -62,7 +62,7 @@ struct Snap {
     uint32_t resumeRecord;
     uint8_t  liftReason;
     uint16_t liftCount;
-    bool     powered, toolOn;
+    bool     powered, toolOn, busy;
     uint32_t onMs;
 };
 
@@ -83,6 +83,7 @@ uint32_t dutyOnTime() {
 void takeSnap(Snap& s) {
     s.state         = machineState;
     s.ctx           = machineContext;
+    s.busy          = machineMoving();
     s.faults        = machineFaults();
     s.job           = jobReason;
     s.resumeOk      = plannerResumePoint(&s.resumeLayer, &s.resumeRecord);
@@ -295,6 +296,7 @@ const Key kKeys[] = {
     { "touched",   [](const Snap& s, char* o, size_t n) { return fmtHex(o, n, s.touched, 3); } },
     // Planner blocks queued, and the motion time of those not yet started, µs.
     { "buf",       [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.buf); } },
+    { "busy",      [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.busy ? 1 : 0); } },
     { "queued",    [](const Snap& s, char* o, size_t n) { return fmtU(o, n, (unsigned)s.queuedUs); } },
     // The next wire seq the data plane will execute; not flow control.
     { "expectedseq", [](const Snap& s, char* o, size_t n) { return fmtU(o, n, s.expectedSeq); } },
@@ -347,7 +349,7 @@ uint8_t findKey(const char* name, size_t len);
 // A group stands for its keys, in order. Group and key names share one namespace.
 const char* const kStatusKeys[] = {
     "state", "ctx", "homed", "enabled", "head", "tools",
-    "unlocked", "mpos", "wpos", "buf", "mute", "excluded", "touched", "mesh",
+    "unlocked", "mpos", "wpos", "buf", "busy", "mute", "excluded", "touched", "mesh",
 };
 struct Group { const char* name; const char* const* keys; uint8_t count; };
 const Group kGroups[] = {

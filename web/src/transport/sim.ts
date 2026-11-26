@@ -125,7 +125,7 @@ const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
     "state", "ctx", "enabled", "homed", "faults", "job", "latched",
-    "probed", "pz", "pos", "jogging", "jobid",
+    "probed", "pz", "pos", "jogging", "jobid", "busy",
 ] as const;
 
 export class SimTransport implements Transport {
@@ -378,6 +378,7 @@ export class SimTransport implements Transport {
                     layer: this._execPoint()?.layer,
                     record: this._execPoint()?.record,
                     context: this.context,
+                    busy: this._busy(),
                 }),
             );
             return Promise.resolve();
@@ -725,6 +726,20 @@ export class SimTransport implements Transport {
     }
 
     /** STATUS_RSP byte 5: the current state's reason. */
+    /**
+     * machineMoving(): a step or sequence live, what admission answers
+     * `err busy` for. Legs, jogs and gotos; a job's ring unless paused; a
+     * tool change's sequence. Between legs and in a paused job, not busy.
+     */
+    private _busy(): boolean {
+        if (this.homing !== null || this.state === MachineState.JOGGING) return true;
+        if (this.state !== MachineState.JOB || this.job === JobReason.PAUSED) return false;
+        if (this.job === JobReason.TOOL_CHANGE) return true;
+        return this.motion.length > 0 || this.job === JobReason.RUNNING ||
+            this.job === JobReason.HOLDING || this.job === JobReason.ABORTING ||
+            this.job === JobReason.DWELL;
+    }
+
     private _reason(): number {
         if (this.state === MachineState.JOB) return this.job;
         if (this.state === MachineState.JOGGING) {
@@ -1263,6 +1278,7 @@ export class SimTransport implements Transport {
             case "probed":    return this._probeZ() === undefined ? "0" : "1";
             case "pz":        return String(this._probeZ() ?? "-");
             case "buf":         return String(this.motion.length);
+            case "busy":        return this._busy() ? "1" : "0";
             case "pos":         return this._nodePos();
             case "jogging":
                 return this.state !== MachineState.JOGGING ? "-"

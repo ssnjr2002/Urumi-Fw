@@ -1,9 +1,10 @@
 /**
- * Tests for wire/format/status — STATUS_RSP (0xA0, 38B), the operational
+ * Tests for wire/format/status — STATUS_RSP (0xBA, 39B), the operational
  * enums, MachineStatus, the get reply / parseStatusRsp / packStatusRsp.
  *
- * The reference byte sequences below come from outside the TS packer: one
- * captured from the Pico, one packed in Python.
+ * The reference byte sequences below come from outside the TS packer, packed
+ * in Python: one from a frame the Pico emitted in the 38-byte layout, with the
+ * flags byte added.
  */
 
 import { describe, it, expect } from "vitest";
@@ -27,16 +28,17 @@ import { MAGIC_STATUS_RSP, STATUS_RSP_SIZE } from "../../../src/packets/constant
 // ── reference vectors ──────────────────────────────────────────────────────────
 // Packed independently (Python struct, Maxim CRC8): state=JOB, reason=RUNNING,
 //   faults=0, nodeEnabled=0x01e, nodeHomed=0x006, selection=1, tools=[2,3],
-//   wpos=[100.5,-200,12.25,NaN], bufCount=5, layer=2, record=1234567
+//   wpos=[100.5,-200,12.25,NaN], bufCount=5, layer=2, record=1234567,
+//   context=JOB, busy
 const REF_JOB = new Uint8Array([
-    160, 9, 1, 0, 0, 30, 0, 6, 0, 1, 2, 3, 0, 0, 201, 66, 0, 0, 72,
-    195, 0, 0, 68, 65, 0, 0, 192, 127, 5, 0, 2, 0, 135, 214, 18, 0, 1, 94,
+    186, 9, 1, 0, 0, 30, 0, 6, 0, 1, 2, 3, 0, 0, 201, 66, 0, 0, 72,
+    195, 0, 0, 68, 65, 0, 0, 192, 127, 5, 0, 2, 0, 135, 214, 18, 0, 1, 1, 191,
 ]);
-// Emitted by the Pico at rest with no job: IDLE, head 0 selected, no tools,
-//   wpos=[-70,-30,0,0], layer=0xFFFF, record=0
+// The Pico at rest with no job: IDLE, head 0 selected, no tools,
+//   wpos=[-70,-30,0,0], layer=0xFFFF, record=0, not busy
 const REF_IDLE = new Uint8Array([
-    160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 194, 0, 0, 240,
-    193, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 217,
+    186, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 194, 0, 0, 240,
+    193, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 238,
 ]);
 
 describe("wire/format/status: enums", () => {
@@ -86,10 +88,10 @@ describe("wire/format/status: axisMask", () => {
 });
 
 describe("wire/format/status: packStatusRsp", () => {
-    it("produces a 38-byte frame", () => {
+    it("produces a 39-byte frame", () => {
         const pkt = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         expect(pkt.length).toBe(STATUS_RSP_SIZE);
-        expect(STATUS_RSP_SIZE).toBe(38);
+        expect(STATUS_RSP_SIZE).toBe(39);
     });
 
     it("packs the JOB vector byte for byte", () => {
@@ -106,6 +108,7 @@ describe("wire/format/status: packStatusRsp", () => {
             layer: 2,
             record: 1234567,
             context: MachineContext.JOB,
+            busy: true,
         });
         expect([...pkt]).toEqual([...REF_JOB]);
     });
@@ -147,6 +150,7 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(st.layer).toBe(2);
         expect(st.record).toBe(1234567);
         expect(st.context).toBe(MachineContext.JOB);
+        expect(st.busy).toBe(true);
     });
 
     it("round-trips the IDLE vector exactly", () => {
@@ -158,6 +162,7 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(st.layer).toBe(NO_LAYER);
         expect(st.record).toBe(0);
         expect(st.context).toBe(MachineContext.IDLE);
+        expect(st.busy).toBe(false);
     });
 
     it("rejects a v1 (0xA6) frame with the firmware-reflash message", () => {
@@ -185,6 +190,12 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(() => parseStatusRsp(v4)).toThrow(/retired 37-byte STATUS_RSP/);
     });
 
+    it("rejects a v5 (0xA0) frame with the firmware-reflash message", () => {
+        const v5 = new Uint8Array(STATUS_RSP_SIZE);
+        v5[0] = 0xa0;
+        expect(() => parseStatusRsp(v5)).toThrow(/retired 38-byte STATUS_RSP/);
+    });
+
     it("rejects an unknown magic", () => {
         const bad = packStatusRsp({ state: 0, faults: 0, reason: 0 });
         bad[0] = 0xcf;
@@ -194,7 +205,7 @@ describe("wire/format/status: parseStatusRsp", () => {
     it("rejects a wrong-size buffer", () => {
         const short = new Uint8Array(9);
         short[0] = MAGIC_STATUS_RSP;
-        expect(() => parseStatusRsp(short)).toThrow(/Expected 38 bytes, got 9/);
+        expect(() => parseStatusRsp(short)).toThrow(/Expected 39 bytes, got 9/);
     });
 
     it("rejects a CRC mismatch", () => {
@@ -230,6 +241,12 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
         expect(st.nodeLatched).toBe(0x004);
         expect(st.faults).toBe(0);
         expect(st.reason).toBe(JobReason.PAUSED);
+    });
+
+    it("reads busy, undefined when not asked", () => {
+        expect(parse("state=7 homed=0x0f busy=1").busy).toBe(true);
+        expect(parse("state=0 homed=0x0f busy=0").busy).toBe(false);
+        expect(parse("state=0 homed=0x0f").busy).toBeUndefined();
     });
 
     it("leaves binary-only fields undefined (distinguishing text from real zero)", () => {

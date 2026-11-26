@@ -42,6 +42,7 @@ void sendStatusRsp() {
     const uint16_t homed    = originMask();
     const uint8_t  sel      = framesSelected();
     const uint16_t bufCount = getBufCount();
+    const uint8_t  flags    = machineMoving() ? STATUS_FLAG_BUSY : 0;
     const uint8_t heads = machineCfgValid() ? machineCfg().headCount : 0;
     uint8_t tools[CFG_MAX_HEADS];
     for (uint8_t h = 0; h < CFG_MAX_HEADS; h++) tools[h] = h < heads ? toolsMounted(h) : 0;
@@ -68,7 +69,8 @@ void sendStatusRsp() {
     putU16(&buf[30], layer);
     memcpy(&buf[32], &record, 4);
     buf[36] = ctx;
-    buf[37] = crc8(buf, STATUS_RSP_SIZE - 1);
+    buf[37] = flags;
+    buf[38] = crc8(buf, STATUS_RSP_SIZE - 1);
 
     Serial.write(buf, STATUS_RSP_SIZE);     // one write — cost is per-transaction
 }

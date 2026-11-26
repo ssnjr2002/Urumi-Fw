@@ -358,7 +358,9 @@ started by a command:
 Each row of the command tables has a kind (`CmdKind`). Admission
 (`machineAdmit()`) checks it before the handler runs, and answers `busy` when something running is the reason,
 `bad_state` otherwise. "Something running" is a live step (a paused job's
-parked ring excepted) or a live sequence.
+parked ring excepted) or a live sequence (`machineMoving()`), published as
+the `busy` flag in `STATUS_RSP` and `get busy`, so a host can wait for it to
+clear.
 
 The kind also says what the command becomes:
 

@@ -42,12 +42,15 @@ export const MAGIC_JOG_NACK = 0xb7; // Pico → host: [magic, reason], reason a 
 // retired ones are reserved, never emitted, and rejected by name rather than
 // mis-parsed — see format/status.ts parseStatusRsp for the message.
 export const MAGIC_STATUS_REQ = 0xa5; // host → Pico: one-byte request, no payload/CRC
-export const MAGIC_STATUS_RSP = 0xa0; // Pico → host: 38-byte status snapshot
+export const MAGIC_STATUS_RSP = 0xba; // Pico → host: 39-byte status snapshot
 export const MAGIC_STATUS_RSP_V1 = 0xa6; // retired 9-byte frame; reserved, never emitted
 export const MAGIC_STATUS_RSP_V2 = 0xa7; // retired 31-byte frame; reserved, never emitted
 export const MAGIC_STATUS_RSP_V3 = 0xa4; // retired 36-byte frame; reserved, never emitted
 export const MAGIC_STATUS_RSP_V4 = 0xa3; // retired 37-byte frame; reserved, never emitted
-export const STATUS_RSP_SIZE = 38;
+export const MAGIC_STATUS_RSP_V5 = 0xa0; // retired 38-byte frame; reserved, never emitted
+export const STATUS_RSP_SIZE = 39;
+/** STATUS_RSP `flags` bit: a step or sequence is live; admission answers `err busy`. */
+export const STATUS_FLAG_BUSY = 0x01;
 /** Heads STATUS_RSP carries a tool for (CFG_MAX_HEADS). */
 export const STATUS_HEADS = 2;
 

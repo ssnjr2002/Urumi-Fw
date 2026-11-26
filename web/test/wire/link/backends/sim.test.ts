@@ -232,6 +232,23 @@ describe("wire/link/backends/sim: control plane", () => {
         });
     });
 
+    it("busy is set exactly while admission would answer err busy", async () => {
+        await withLink(async (link, sim) => {
+            sim.homingLegMs = 30;
+            expect((await link.getStatus()).busy).toBe(false);
+            expect(await link.command("get busy")).toBe("busy=0");
+            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
+            expect((await link.getStatus()).busy).toBe(true);
+            expect(await link.command("get busy")).toBe("busy=1");
+            expect(await link.command("leg 2 seek 1 2500 500 400 88000")).toBe("err busy");
+            await tick(80);
+            // In ALARM (on the switch), nothing runs: not busy, though a
+            // sequence would be refused as bad_state.
+            const st = await link.getStatus();
+            expect([st.state, st.busy]).toEqual([MachineState.ALARM, false]);
+        });
+    });
+
     it("a leg is node-addressed: it runs with no axis_map committed", async () => {
         // The point of node addressing. Every output of a leg is node-framed, so
         // the firmware does not route it through the map — which means a head
@@ -511,6 +528,7 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
             expect(await link.command("pause")).toBe("ok");
             expect(await link.command("get resume_layer resume_record"))
                 .toBe("resume_layer=2 resume_record=10");
+            expect((await link.getStatus()).busy).toBe(false);   // the parked ring
 
             expect((await stream(link, [hdr(2, 11)], 4)).ok).toBe(false);   // NACK_JOB
             await link.resetSeq();
