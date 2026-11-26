@@ -1492,7 +1492,7 @@ reworks.
    the old names from `link` and doesn't load; it is updated in the next
    pass.
 10. `feature/web-demo`: the demo on the public surface alone. Depends on 9.
-   **Status:** not merged.
+   **Status:** merged at `1a6679b`.
    * The demo worked out three things the library knows. `loadSvg`'s
      `ToolLayer` gains `problem`, `""` when the layer can run: the tool
      has an `id` and the chamber is one it has, the check `buildJob`
