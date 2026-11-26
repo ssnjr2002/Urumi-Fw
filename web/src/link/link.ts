@@ -18,8 +18,7 @@ import { Writer } from "./writer.js";
 import { Demux, makeSinks, JogAck, type DemuxSinks } from "./demux.js";
 import type { Sink, LatestSink } from "./sink.js";
 import { Ack, Nack } from "./demux.js";
-import { ListSource, DEFAULT_WINDOW, Session, fatalReasonName, type StreamResult } from "./session.js";
-import type { PacketSource, ReplayableSource, StreamContext } from "./session.js";
+import { Session, type JobSource } from "./session.js";
 import { setTimer, clearTimer, type TimerId } from "./clock.js";
 
 import {
@@ -356,8 +355,8 @@ export class Link {
     }
 
     /**
-     * @internal Binary status — one byte out, one frame back. settle() and the
-     * session poll through this until later branches replace them.
+     * @internal Binary status — one byte out, one frame back. settle() polls
+     * through this until a later branch replaces it.
      */
     async getStatus(timeoutMs = 1000): Promise<MachineStatus> {
         const before = this.sinks.status.sample[1];
@@ -523,9 +522,9 @@ export class Link {
     // -- jobs ---------------------------------------------------------------------
 
     /**
-     * @internal Align the Pico's expectedSeq with a session's fresh seq
-     * counter. The ACK is drained HERE rather than left for the session — a
-     * session opening on a stale ACK would advance its window against a packet
+     * @internal Align the Pico's expectedSeq with a fresh seq counter (the
+     * tests' raw frame sender; a session resets its own). The ACK is drained here, so a
+     * sender opening on a stale ACK would not advance against a frame
      * it never sent.
      */
     async resetSeq(timeoutMs = 1000): Promise<boolean> {
@@ -535,37 +534,14 @@ export class Link {
         return r !== null;
     }
 
-    /** @internal Stream a closed sequence with Go-Back-N, seq reset first. */
-    async stream(packets: Iterable<Uint8Array>, window: number = DEFAULT_WINDOW): Promise<StreamResult> {
-        await this.resetSeq();
-        const sess = this.session(new ListSource([...packets]), window);
-        await sess.run();
-        return sess.result();
-    }
-
     /**
-     * A job session for a new job. Nothing is sent until its run(). The
-     * session inherits `verbose` from this Link. A ReplayableSource makes a
-     * job session: it holds through pauses and tool changes and ends on
-     * cancel() or end().
+     * A session for `job`. Nothing is sent until its run(), which asks the
+     * controller first: it sends the job to an idle controller, or takes over
+     * the same job paused there (docs/reference/host-api/session.md).
      */
-    session(source: PacketSource | ReplayableSource, window: number = DEFAULT_WINDOW): Session {
-        const sess = new Session(this.writer, this.sinks.ack, source, this.sinks.status, window,
-            (line) => this.command(line));
-        sess.verbose = this.verbose;
-        return sess;
-    }
-
-    /**
-     * A job session that takes over `source`'s job, already open and PAUSED on
-     * the controller, for example after the host reconnects. run() checks the
-     * controller reports `source.jobId` and holds `paused` (it fails with
-     * FATAL_JOB_MISMATCH otherwise, having sent nothing); resume() carries on
-     * from the controller's resume point.
-     */
-    attach(source: ReplayableSource, window: number = DEFAULT_WINDOW): Session {
-        const sess = new Session(this.writer, this.sinks.ack, source, this.sinks.status, window,
-            (line) => this.command(line), true);
+    session(job: JobSource): Session {
+        const sess = new Session(this.writer, this.sinks.ack, this.sinks.status, job,
+            (line) => this.command(line), this._whenClosed);
         sess.verbose = this.verbose;
         return sess;
     }
@@ -580,7 +556,4 @@ export class Link {
     }
 }
 
-// Re-export the sink/frame types a caller of Link commonly needs.
-// `fatalReasonName` is a value (not a type) so it leaves the type-only list.
-export type { Sink, LatestSink, Ack, Nack, PacketSource, Session, StreamContext, StreamResult };
-export { fatalReasonName };
+export type { Sink, LatestSink, Ack, Nack };

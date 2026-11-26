@@ -32,7 +32,10 @@ import { packBezier } from "../../../../src/packets/bezier.js";
 import { packJobHdr, packLayerHdr, packToolHdr } from "../../../../src/packets/layer.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
 import { packCjog, type JogDir } from "../../../../src/packets/cjog.js";
-import { CJOG_DEADMAN_MS, MAGIC_CJOG_STOP } from "../../../../src/packets/constants.js";
+import {
+    CJOG_DEADMAN_MS, MAGIC_CJOG_STOP, NACK_ABORTING, NACK_BUSY, NACK_CRC, NACK_FULL, NACK_TOOL_CHANGE,
+} from "../../../../src/packets/constants.js";
+import { Ack } from "../../../../src/link/demux.js";
 import { crc8 } from "../../../../src/packets/crc.js";
 
 const tick = (ms = 5) => new Promise<void>((r) => setTimeout(r, ms));
@@ -54,6 +57,39 @@ const opening = () => [packJobHdr({ recordCount: 0, toolCount: 1 }), tool(), lay
 
 /** A layer header, then records ending at 1..n mm. */
 const upTo = (n: number) => [...opening(), ...Array.from({ length: n }, (_, i) => rec(i + 1))];
+
+/**
+ * Send raw frames Go-Back-N behind a seq reset, as a session would but with no
+ * job logic: the sim's own rules decide. Resends on backpressure, a CRC error,
+ * a tool change or silence; any other NACK ends it.
+ */
+async function stream(link: Link, packets: readonly Uint8Array[], window = 16): Promise<{ ok: boolean; nacks: number }> {
+    await link.resetSeq();
+    const frames = packets.map((p, i) => stampSeq(p, i & 0xff));
+    let base = 0, next = 0, nacks = 0, last = Date.now();
+    while (base < frames.length) {
+        if (next < frames.length && next - base < window) {
+            next += await link.writer.writeBatch(frames.slice(next, base + window));
+        }
+        const r = await link.sinks.ack.get(200);
+        if (r === null) {
+            if (Date.now() - last > 3000) return { ok: false, nacks };
+            next = base;
+        } else if (r instanceof Ack) {
+            const delta = (r.expectedSeq - base) & 0xff;
+            if (delta > 0 && delta <= next - base) {
+                base += delta;
+                last = Date.now();
+            }
+        } else {
+            nacks++;
+            if (![NACK_FULL, NACK_BUSY, NACK_ABORTING, NACK_CRC, NACK_TOOL_CHANGE].includes(r.reason)) return { ok: false, nacks };
+            await tick(50);
+            next = base;
+        }
+    }
+    return { ok: true, nacks };
+}
 
 /** Poll until `cond` holds or `ms` pass; returns the last status. */
 async function until(link: Link, cond: (st: Awaited<ReturnType<Link["getStatus"]>>) => boolean, ms = 1000) {
@@ -303,7 +339,7 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
     it("streams N records, all ACKed; the job runs them and buffers again", async () => {
         await withLink(async (link) => {
             await link.command("setorigin");
-            expect(await link.stream(upTo(16), 8)).toMatchObject({ ok: true });
+            expect(await stream(link, upTo(16), 8)).toMatchObject({ ok: true });
             const st = await until(link, (s) => s.bufCount === 0 && s.wpos![0] === 16);
             expect(st.wpos![0]).toBe(16);
             // A dry ring does not end the job: only cancel does.
@@ -319,7 +355,7 @@ describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
                 // 16 packets at K=8 → exactly 2 ACK frames flushed by the K counter
                 // (the end-of-batch flush handles the tail). Capture the demux
                 // frames-count to prove coalescing fired.
-                await link.stream(upTo(16), 16);
+                await stream(link, upTo(16), 16);
                 // sim.framesReplied counts every frame the sim emitted;
                 // 2 ACKs for 16 packets means coalescing worked (1:1 would be 16).
                 expect(sim.framesReplied).toBeLessThanOrEqual(4); // 2 K-flushes + maybe 1 batch-flush
@@ -334,10 +370,10 @@ describe("wire/link/backends/sim: buffering", () => {
     it("a layer header opens the job in BUFFERING; it runs once enough is queued", async () => {
         await withLink(
             async (link) => {
-                await link.stream([...opening(), rec(1)], 4);
+                await stream(link, [...opening(), rec(1)], 4);
                 let st = await link.getStatus();
                 expect([st.state, st.reason, st.bufCount]).toEqual([MachineState.JOB, JobReason.BUFFERING, 1]);
-                await link.stream([rec(2)], 4); // 200 ms queued: enough
+                await stream(link, [rec(2)], 4); // 200 ms queued: enough
                 st = await until(link, running);
                 expect(running(st)).toBe(true);
             },
@@ -354,14 +390,14 @@ describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
             // Send seq 0 directly via writeBatch — accepted + executed
             const p0 = stampSeq(rec(5), 0);
             // (use the link's writer through a one-packet session)
-            await link.stream([...opening(), p0], 4);
+            await stream(link, [...opening(), p0], 4);
             await until(link, (s) => s.wpos![0] === 5);
             expect(sim.pos[0]).toBe(5);
 
             // Now reset and send seq 0 again — the sim's expectedSeq is back to
             // 0, so this is a fresh accept and runs.
             await link.resetSeq();
-            await link.stream([layer(), tool(), stampSeq(rec(10), 0)], 4);
+            await stream(link, [layer(), tool(), stampSeq(rec(10), 0)], 4);
             await until(link, (s) => s.wpos![0] === 10);
             expect(sim.pos[0]).toBe(10);
         });
@@ -375,7 +411,7 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
                 // ringSize=2, a record per tick — the ring fills, the
                 // session sees NACK_FULL, retries, and eventually completes.
                 await link.command("setorigin");
-                expect(await link.stream(upTo(10), 8)).toMatchObject({ ok: true });
+                expect(await stream(link, upTo(10), 8)).toMatchObject({ ok: true });
                 const st = await until(link, (s) => s.wpos![0] === 10);
                 expect(st.wpos![0]).toBe(10);
             },
@@ -390,7 +426,7 @@ describe("wire/link/backends/sim: abort", () => {
             await link.command("setorigin");
             await link.resetSeq();
             // 50 records of 5 ms. Start non-awaited so we can abort MID-stream.
-            const runP = link.stream(upTo(50), 16);
+            const runP = stream(link, upTo(50), 16);
 
             // Wait until the job runs with queued motion, then abort.
             const st = await until(link, (s) => running(s) && (s.bufCount ?? 0) > 0);
@@ -423,7 +459,7 @@ describe("wire/link/backends/sim: status during a stream", () => {
             async (link) => {
                 await link.resetSeq();
                 // 20 long records — the job takes many ticks
-                const runP = link.stream(upTo(20), 8);
+                const runP = stream(link, upTo(20), 8);
                 const st = await until(link, running);
                 expect(running(st)).toBe(true);
                 expect(st.bufCount).toBeGreaterThan(0);
@@ -460,7 +496,7 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
     it("a record with no job open is refused", async () => {
         await withLink(async (link, sim) => {
             await link.resetSeq();
-            const r = await link.stream([rec()], 4);
+            const r = await stream(link, [rec()], 4);
             expect(r.ok).toBe(false);
             expect(r.nacks).toBeGreaterThan(0);
             expect(sim.state).toBe(MachineState.IDLE);
@@ -471,14 +507,14 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
         await withLink(async (link) => {
             await link.resetSeq();
             const hdr = (layer: number, record: number) => packLayerHdr({ layer, record });
-            expect((await link.stream([packJobHdr({ recordCount: 0, toolCount: 1 }), tool(), hdr(2, 10), tool(), rec(1), rec(2), rec(3)], 4)).ok).toBe(true);
+            expect((await stream(link, [packJobHdr({ recordCount: 0, toolCount: 1 }), tool(), hdr(2, 10), tool(), rec(1), rec(2), rec(3)], 4)).ok).toBe(true);
             expect(await link.command("pause")).toBe("ok");
             expect(await link.command("get resume_layer resume_record"))
                 .toBe("resume_layer=2 resume_record=10");
 
-            expect((await link.stream([hdr(2, 11)], 4)).ok).toBe(false);   // NACK_JOB
+            expect((await stream(link, [hdr(2, 11)], 4)).ok).toBe(false);   // NACK_JOB
             await link.resetSeq();
-            expect((await link.stream([hdr(2, 10), rec(1)], 4)).ok).toBe(true);
+            expect((await stream(link, [hdr(2, 10), rec(1)], 4)).ok).toBe(true);
             const st = await link.getStatus();
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
             expect(await link.command("get resume_layer")).toBe("resume_layer=-");
@@ -490,7 +526,7 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
             sim._forceRunning();
             expect(await link.command("pause")).toBe("ok");
             await link.resetSeq();
-            const r = await link.stream([rec()], 4);
+            const r = await stream(link, [rec()], 4);
             expect(r.ok).toBe(false);
             expect(r.nacks).toBeGreaterThan(0);
         });

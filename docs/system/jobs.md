@@ -625,21 +625,21 @@ second or worse, which the controller would take for a lost host.
 
 When the host has gone away and come back, for example after the tab
 crashed or the cable was pulled, the controller has paused the job (§6). A
-new session takes it over with `link.attach(source)` instead of opening a
-job: it checks that the controller is in a job on one of the source's
+new session for the same job takes it over: `run()` finds a job open on
+the controller and, instead of opening one, checks that the controller is in a job on one of the source's
 layers, and that `get jobid` reports the source's job id. A job still
 cutting is waited on until it lands `PAUSED`, which it does once the queue
 runs dry, since the controller holds the loss of a closed port. Then it
 holds `paused`, and `resume()` carries on from the controller's resume point
-as after any pause. If any check fails it stops with `FATAL_JOB_MISMATCH`,
+as after any pause. If any check fails it stops with `job-mismatch`,
 having sent nothing but status requests and `get jobid`, so a different job
 file can't be resumed onto the cut.
 
 ### Ending
 
 The session never ends by itself. When everything has been sent and
-acknowledged, it keeps polling the status until the host calls `cancel()`,
-which sends `cancel`, or `end()`, which sends ABORT. Then it waits for the
+acknowledged, it keeps reading the status until the host calls `close()`,
+which sends `cancel`, or `abort()`, which sends ABORT. Then it waits for the
 job to close.
 
 ### When the session gives up
@@ -855,7 +855,7 @@ JOGGING, and the job's stage is kept underneath until the jog ends
 * **A lost job stops the session.** The alternative, resending into
   whatever answers, would have a rebooted controller accept the packets as
   duplicates and do nothing with them. A job paused because the host was
-  lost isn't lost: a new session attaches to it and resumes.
+  lost isn't lost: a new session takes it over and resumes.
 * **A job lost to a power cut isn't recovered.** The alternative, a partial
   job from the last record seen, needs the material realigned to the cut
   already made, and placement can't do that: it marks a box's corner by eye,

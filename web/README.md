@@ -44,6 +44,12 @@ if (!job.ok) throw new Error(job.errors.join("
 "));
 const session = link.session(new JobSource(job.layers));
 // It holds as `place` after preflight; layers go once the operator sends `place set` and `place ok`.
+const result = await session.run();   // resolves once the job closes: session.close() or session.abort()
+
+// After a reload, the same layers make the same job id: a new session takes the paused job over.
+const again = link.session(new JobSource(job.layers));
+const done = again.run();             // holds `paused`
+again.resume();
 ```
 
 Every import names its subpath; there is no root `urumi-host`. Each

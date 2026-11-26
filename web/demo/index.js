@@ -3,7 +3,7 @@ import {
 } from 'urumi-host/packets';
 import { loadConfig, encodeConfig, saveConfig } from 'urumi-host/config';
 import { loadSvg, buildJob } from 'urumi-host/toolpath';
-import { Link, JobSource, fatalReasonName, stateName, faultNames, jobName, nackName, cfgNackName } from 'urumi-host/link';
+import { Link, JobSource, stateName, faultNames, jobName, nackName, cfgNackName } from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
 
 const BAUD_RATE = 115200;
@@ -121,7 +121,6 @@ connectBtn.addEventListener('click', async () => {
 
 disconnectBtn.addEventListener('click', async () => {
     jogStop();
-    session?.truncate();
     const l = link;
     link = null;
     setConnected(false);
@@ -177,9 +176,8 @@ cmdIn.addEventListener('keydown', (e) => {
 stopBtn.addEventListener('click', () => submit('stop'));
 
 // ── status ────────────────────────────────────────────────────────────────────
-// Get status logs to the binary log; the poll only updates the table. A job
-// session polls for itself, so the poll waits out a job and the table follows
-// the session's samples instead.
+// Get status logs to the binary log; the poll only updates the table. During a
+// job the table follows watchJob() instead, which also redraws the job line.
 
 const hex = (n, w) => `0x${n.toString(16).padStart(w, '0')}`;
 
@@ -664,12 +662,11 @@ function drawPreview() {
     }
 }
 
-/** The ring is dry and every frame sent so far is taken. */
-function jobDry() {
-    const s = session?.stats();
+/** The machine is at rest in the job with an empty ring: with the session drained, the job is cut. */
+function atRestInJob() {
     const st = link?.status;
-    return !!s && !!st && st.context === MachineContext.JOB && st.state === MachineState.JOB
-        && st.reason === JobReason.BUFFERING && st.bufCount === 0 && s.acked === s.emitted;
+    return !!st && st.context === MachineContext.JOB && st.state === MachineState.JOB
+        && st.reason === JobReason.BUFFERING && st.bufCount === 0;
 }
 
 function setJobButtons() {
@@ -680,7 +677,7 @@ function setJobButtons() {
     for (const el of [jobFeedIn, jobPIn, jobHeadSel]) el.disabled = locked || !selectedRow();
     for (const el of [jobTIn, svgFileIn]) el.disabled = locked;
     jobRunBtn.textContent = jobManualBox.checked ? 'Execute next' : 'Execute';
-    jobRunBtn.disabled = !session || !(session.held === 'place' || (!session.held && source.waiting && jobDry()));
+    jobRunBtn.disabled = !session || !(session.hold === 'place' || (session.hold === 'release' && atRestInJob()));
     for (const b of [jobPauseBtn, jobCancelBtn, jobAbortBtn]) b.disabled = !on;
     jobResumeBtn.disabled = !on || !session;
 }
@@ -720,21 +717,21 @@ const HOLD_HINTS = {
     paused: 'Resume to go on',
     refused: 'header refused, Resume to retry',
     silent: 'no replies, resending',
+    release: 'Execute next',
 };
 const holdHint = (held) => (held === 'place' ? placeHint() : HOLD_HINTS[held]);
 
-/** The layer and record the machine is on; done once the last layer is dry and all sent. */
+/** The layer and record the machine is on; done once everything is acked and the ring is dry. */
 function showJob() {
     if (!session) return;
     const s = session.stats();
     const st = link?.status;
     const inJob = st?.context === MachineContext.JOB;
     const layer = inJob && st.layer !== NO_LAYER ? jobLayers[st.layer] : null;
-    const done = source.drained && jobDry();
-    const waiting = source.waiting && jobDry();
+    const done = session.drained && atRestInJob();
     jobLayerOut.textContent = (layer ? `${layer.key} (${st.layer + 1} of ${jobLayers.length}), record ${done ? layer.total : Math.min(st.record, layer.total)}/${layer.total}` : 'none')
-        + (session.held ? ` — ${session.held}: ${holdHint(session.held)}` : '')
-        + (done ? ' — done, Cancel or Abort closes it' : waiting ? ' — waiting, Execute next' : '');
+        + (session.hold ? ` — ${session.hold}: ${holdHint(session.hold)}` : '')
+        + (done ? ' — done, Cancel or Abort closes it' : '');
     jobInfoOut.textContent = `sent ${s.sent} acked ${s.acked} nacks ${s.nacks} retries ${s.retries}`;
 }
 
@@ -745,8 +742,8 @@ async function watchJob() {
         showStatus(await link.freshStatus().catch(() => link.status));
         showJob();
         setJobButtons();
-        if (session && session.held !== held) {
-            held = session.held;
+        if (session && session.hold !== held) {
+            held = session.hold;
             binOut(held ? `held: ${held} — ${holdHint(held)}` : 'running');
         }
     }
@@ -774,10 +771,20 @@ jobStartBtn.addEventListener('click', async () => {
     binOut(`→ JOB_HDR ${jobLayers.map((l) => `${l.key}:${l.total}`).join(' ')}`);
     renderLayers();
     watchJob();
-    const ok = await session.run();
-    const r = session.result();
+    let r;
+    try {
+        r = await session.run();
+    } catch (e) {
+        binOut(`job: ${e.message}, the job stays open on the machine`);
+        session = source = null;
+        jobSessionOut.textContent = 'none';
+        jobLayerOut.textContent = 'none';
+        return;
+    }
+    const ok = r.ok;
     showJob();
-    binOut(`job ${ok ? (r.truncated ? 'truncated' : 'ended') : `failed: ${fatalReasonName(r.fatalReason)}`}`
+    const why = r.fatal?.by === 'host' ? r.fatal.why : r.fatal ? `${nackName(r.fatal.nack)} detail ${r.fatal.detail}` : '';
+    binOut(`job ${ok ? 'ended' : `failed: ${why}`}`
         + ` — sent ${r.sent} acked ${r.acked} nacks ${r.nacks} retries ${r.retries}`);
     session = source = null;
     jobSessionOut.textContent = 'none';
@@ -811,21 +818,21 @@ jobManualBox.addEventListener('change', () => {
 jobRunBtn.addEventListener('click', async () => {
     if (!session) return;
     jobRunBtn.disabled = true;
-    if (session.held === 'place' && await submit('place ok') !== 'ok') return setJobButtons();
+    if (session.hold === 'place' && await submit('place ok') !== 'ok') return setJobButtons();
     source?.release();
     setJobButtons();
 });
 
-for (const [btn, name] of [[jobPauseBtn, 'pause'], [jobCancelBtn, 'cancel']]) {
+for (const [btn, name, method] of [[jobPauseBtn, 'pause', 'pause'], [jobCancelBtn, 'cancel', 'close']]) {
     btn.addEventListener('click', async () => {
         if (!session) return submit(name);
         textOut(`→ ${name}`);
-        textOut(`← ${await session[name]()}`);
+        textOut(`← ${await session[method]()}`);
     });
 }
 
 jobAbortBtn.addEventListener('click', () => {
-    if (session) session.end();
+    if (session) session.abort();
     else link?.abort();
     binOut('→ ABORT');
 });
@@ -850,7 +857,7 @@ async function resumeOutcome(node, held, before) {
 // TOOL_WAIT, not while the change moves.
 jobResumeBtn.addEventListener('click', () => {
     if (!session) return;
-    const held = session.held;
+    const held = session.hold;
     const before = session.stats();
     if (!session.resume()) {
         const st = link?.status;

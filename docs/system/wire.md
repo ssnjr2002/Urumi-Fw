@@ -227,10 +227,10 @@ changes, is in [jobs.md](jobs.md). This section is how the records cross.
 
 ### Host
 
-* **`resetSeq()`** sends `SEQRESET` and waits for its `ACK(0)`, which it
-  takes off the sink itself. Every stream starts from seq 0.
-* **The window.** A session keeps up to 16 records in flight
-  (`DEFAULT_WINDOW`). Each record is stamped with the next seq as it enters
+* **A seq reset.** A session sends `SEQRESET` and waits for its `ACK(0)`
+  before a job and before each resume, so every run of frames starts from
+  seq 0.
+* **The window.** A session keeps up to 16 records in flight. Each record is stamped with the next seq as it enters
   the window, and kept until it is ACKed. A resend comes from that copy.
 * **An ACK** moves the window forward by the difference between its seq and
   the oldest record in flight, counted mod 256 and capped at the number in

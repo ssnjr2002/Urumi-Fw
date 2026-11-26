@@ -3,21 +3,11 @@ export { stateName, faultNames, jobName, nackName, cfgNackName } from "./names.j
 
 export {
     Session,
-    ListSource,
     JobSource,
-    StreamContext,
-    fatalReasonName,
-    FATAL_STALL,
-    FATAL_CRC_LIMIT,
-    FATAL_JOB_LOST,
-    FATAL_JOB_MISMATCH,
-    jobIdOf,
     type Hold,
-    type PacketSource,
-    type ReplayableSource,
+    type Fatal,
     type SessionStats,
-    type StreamResult,
-    DEFAULT_WINDOW,
+    type SessionResult,
 } from "./session.js";
 
 export {
