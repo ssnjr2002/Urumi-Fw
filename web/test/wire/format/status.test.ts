@@ -163,6 +163,12 @@ describe("wire/format/status: parseStatusRsp", () => {
         expect(st.record).toBe(0);
         expect(st.context).toBe(MachineContext.IDLE);
         expect(st.busy).toBe(false);
+        expect(st.placed).toBe(false);
+    });
+
+    it("reads placed from flags bit 1, apart from busy", () => {
+        const st = parseStatusRsp(packStatusRsp({ state: 0, faults: 0, reason: 0, placed: true }));
+        expect([st.busy, st.placed]).toEqual([false, true]);
     });
 
     it("rejects a v1 (0xA6) frame with the firmware-reflash message", () => {
@@ -247,6 +253,12 @@ describe("wire/format/status: statusFromGet (text plane)", () => {
         expect(parse("state=7 homed=0x0f busy=1").busy).toBe(true);
         expect(parse("state=0 homed=0x0f busy=0").busy).toBe(false);
         expect(parse("state=0 homed=0x0f").busy).toBeUndefined();
+    });
+
+    it("reads placed, undefined when not asked", () => {
+        expect(parse("state=9 homed=0x0f placed=1").placed).toBe(true);
+        expect(parse("state=9 homed=0x0f placed=0").placed).toBe(false);
+        expect(parse("state=9 homed=0x0f").placed).toBeUndefined();
     });
 
     it("leaves binary-only fields undefined (distinguishing text from real zero)", () => {

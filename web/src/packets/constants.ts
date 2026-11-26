@@ -51,6 +51,8 @@ export const MAGIC_STATUS_RSP_V5 = 0xa0; // retired 38-byte frame; reserved, nev
 export const STATUS_RSP_SIZE = 39;
 /** STATUS_RSP `flags` bit: a step or sequence is live; admission answers `err busy`. */
 export const STATUS_FLAG_BUSY = 0x01;
+/** STATUS_RSP `flags` bit: `place set` stands in JOB.PLACE. */
+export const STATUS_FLAG_PLACED = 0x02;
 /** Heads STATUS_RSP carries a tool for (CFG_MAX_HEADS). */
 export const STATUS_HEADS = 2;
 

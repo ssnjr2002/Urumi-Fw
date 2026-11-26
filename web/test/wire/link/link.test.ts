@@ -1,7 +1,7 @@
 /**
  * Tests for wire/link/link — the Link that owns a transport, demux, writer and
- * sink set. Covers the control-plane surface (command one-outstanding,
- * getStatus binary poll, resetSeq, abort, send, status getter) plus the
+ * sink set. Covers the control-plane surface (commands one-outstanding, the
+ * lines owed to stop and reset, freshStatus, resetSeq, abort, status getter) plus the
  * textDesyncs diagnostic, over a FakeTransport that the test feeds replies
  * into. The real backends (Sim, WebSerial, Node) live in their own commits;
  * this isolates the Link's own behaviour from any specific pipe.
@@ -99,7 +99,7 @@ describe("wire/link/link: command (one-outstanding text plane)", () => {
     it("writes the line and returns the reply, stripped", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.command("ping");
+        const p = link.commands().send("ping");
         await tick();
         expect(writtenStrings(t)).toEqual(["ping\n"]);
         t.feedReply(enc.encode("pong\n"));
@@ -109,7 +109,7 @@ describe("wire/link/link: command (one-outstanding text plane)", () => {
     it("strips trailing \\r from the reply", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.command("ping");
+        const p = link.commands().send("ping");
         await tick();
         t.feedReply(enc.encode("pong\r\n"));
         expect(await p).toBe("pong");
@@ -118,14 +118,14 @@ describe("wire/link/link: command (one-outstanding text plane)", () => {
     it("returns '' on timeout", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        expect(await link.command("ping", 30)).toBe("");
+        expect(await link.commands().send("ping", 30)).toBe("");
     });
 
     it("serializes concurrent commands (one-outstanding)", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p1 = link.command("ping");
-        const p2 = link.command("get pos");
+        const p1 = link.commands().send("ping");
+        const p2 = link.commands().send("get pos");
         await tick();
         // p1 holds the text lock awaiting "pong"; p2 has NOT written yet.
         expect(writtenStrings(t).filter((s) => s === "ping\n").length).toBe(1);
@@ -150,7 +150,7 @@ describe("wire/link/link: command (one-outstanding text plane)", () => {
         await tick(10);
         expect(link.stats().textDesyncs).toBe(0); // not counted yet — nothing drained
 
-        const p = link.command("ping");
+        const p = link.commands().send("ping");
         await tick();
         t.feedReply(enc.encode("pong\n"));
         expect(await p).toBe("pong");
@@ -158,13 +158,12 @@ describe("wire/link/link: command (one-outstanding text plane)", () => {
     });
 });
 
-describe("wire/link/link: getStatus (binary status plane)", () => {
-    it("writes STATUS_REQ and returns a parsed MachineStatus", async () => {
+describe("wire/link/link: freshStatus (binary status plane)", () => {
+    it("resolves to the next sample, parsed", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        const p = link.getStatus();
+        const p = link.freshStatus();
         await tick();
-        expect(t.writes[0]).toEqual(new Uint8Array([MAGIC_STATUS_REQ]));
         t.feedReply(
             packStatusRsp({
                 state: MachineState.JOB,
@@ -185,11 +184,6 @@ describe("wire/link/link: getStatus (binary status plane)", () => {
         expect(st.record).toBe(5);
     });
 
-    it("throws on timeout (no STATUS_RSP within timeout)", async () => {
-        const t = new FakeTransport();
-        const link = new Link(t);
-        await expect(link.getStatus(30)).rejects.toThrow(/no STATUS_RSP/);
-    });
 });
 
 describe("wire/link/link: status getter", () => {
@@ -218,7 +212,7 @@ describe("wire/link/link: status getter", () => {
     });
 });
 
-describe("wire/link/link: resetSeq / abort / send", () => {
+describe("wire/link/link: resetSeq / abort", () => {
     it("resetSeq writes SEQRESET and drains the ACK(0) reply", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
@@ -243,11 +237,62 @@ describe("wire/link/link: resetSeq / abort / send", () => {
         expect(t.writes[0]).toEqual(new Uint8Array([MAGIC_ABORT]));
     });
 
-    it("send() writes a text line without awaiting a reply", async () => {
+});
+
+describe("wire/link/link: lines owed to stop and reset", () => {
+    it("estop() writes stop, and its ok is dropped rather than counted", async () => {
         const t = new FakeTransport();
         const link = new Link(t);
-        await link.send("stop");
+        link.estop();
+        await tick();
         expect(writtenStrings(t)).toEqual(["stop\n"]);
+        t.feedReply(enc.encode("ok\n"));
+        await tick(10);
+        const p = link.commands().send("ping");
+        await tick();
+        t.feedReply(enc.encode("pong\n"));
+        expect(await p).toBe("pong");
+        expect(link.stats().textDesyncs).toBe(0);
+    });
+
+    it("a command sent after an estop skips the estop's ok", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        link.estop();
+        const p = link.commands().send("ping");
+        await tick();
+        t.feedReply(enc.encode("ok\npong\n"));
+        expect(await p).toBe("pong");
+        expect(link.stats().textDesyncs).toBe(0);
+    });
+
+    it("an estop sent while a command waits leaves that command its own reply", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.commands().send("ping");
+        await tick();
+        link.estop();
+        t.feedReply(enc.encode("pong\nok\n"));
+        expect(await p).toBe("pong");
+        const q = link.commands().send("ping");
+        await tick();
+        t.feedReply(enc.encode("pong\n"));
+        expect(await q).toBe("pong");
+        expect(link.stats().textDesyncs).toBe(0);
+    });
+
+    it("reset reads its ok and drops the boot banner through ready", async () => {
+        const t = new FakeTransport();
+        const link = new Link(t);
+        const p = link.commands().send("reset");
+        await tick();
+        t.feedReply(enc.encode("ok\nRS485 controller (115200 baud)\nready\n"));
+        expect(await p).toBe("ok");
+        const q = link.commands().send("ping");
+        await tick();
+        t.feedReply(enc.encode("pong\n"));
+        expect(await q).toBe("pong");
+        expect(link.stats().textDesyncs).toBe(0);
     });
 });
 

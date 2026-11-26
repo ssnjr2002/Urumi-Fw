@@ -21,6 +21,7 @@ import {
     MAGIC_STATUS_RSP_V4,
     MAGIC_STATUS_RSP_V5,
     STATUS_FLAG_BUSY,
+    STATUS_FLAG_PLACED,
     STATUS_HEADS,
     STATUS_RSP_SIZE,
 } from "./constants.js";
@@ -337,6 +338,12 @@ export class MachineStatus {
          * undefined from a `get` reply that didn't ask for `busy`.
          */
         readonly busy: boolean | undefined = undefined,
+        /**
+         * `place set` stands: the job is in PLACE with its corner set, until
+         * `place ok` or the job leaves PLACE. undefined from a `get` reply
+         * that didn't ask for `placed`.
+         */
+        readonly placed: boolean | undefined = undefined,
     ) {}
 
     /** True if any of `mask`'s Fault bits is set. */
@@ -437,6 +444,7 @@ export function statusFromGet(reply: ReadonlyMap<string, string>): MachineStatus
             : undefined,
         fields.unlocked !== undefined ? toInt(fields.unlocked) : undefined,
         fields.busy !== undefined ? fields.busy === "1" : undefined,
+        fields.placed !== undefined ? fields.placed === "1" : undefined,
     );
 }
 
@@ -479,7 +487,8 @@ function toolsFromGet(tools: string | undefined): number[] | undefined {
 // [30..31] layer        u16 LE — the job's executing record, NO_LAYER
 // [32..35] record       u32 LE   and 0 with no job
 // [36]     context      u8   MachineContext
-// [37]     flags        u8   — bit 0 busy (STATUS_FLAG_BUSY)
+// [37]     flags        u8   — bit 0 busy (STATUS_FLAG_BUSY), bit 1 placed
+//                                (STATUS_FLAG_PLACED)
 // [38]     CRC8 over [0..37]
 
 /**
@@ -554,6 +563,7 @@ export function parseStatusRsp(data: Uint8Array): MachineStatus {
         enumFromInt(MACHINE_CONTEXT_VALUES, dv.getUint8(36), MachineContext.IDLE),
         undefined, // unlocked: text plane only
         (dv.getUint8(37) & STATUS_FLAG_BUSY) !== 0,
+        (dv.getUint8(37) & STATUS_FLAG_PLACED) !== 0,
     );
 }
 
@@ -571,6 +581,7 @@ export interface PackStatusRspOptions {
     record?: number;
     context?: number; // default MachineContext.IDLE
     busy?: boolean;
+    placed?: boolean;
 }
 
 /**
@@ -597,7 +608,7 @@ export function packStatusRsp(opts: PackStatusRspOptions): Uint8Array {
     dv.setUint16(30, (opts.layer ?? NO_LAYER) & 0xffff, true);
     dv.setUint32(32, (opts.record ?? 0) >>> 0, true);
     dv.setUint8(36, (opts.context ?? MachineContext.IDLE) & 0xff);
-    dv.setUint8(37, opts.busy ? STATUS_FLAG_BUSY : 0);
+    dv.setUint8(37, (opts.busy ? STATUS_FLAG_BUSY : 0) | (opts.placed ? STATUS_FLAG_PLACED : 0));
     dv.setUint8(38, crc8(u8, 0, STATUS_RSP_SIZE - 1));
 
     return u8;

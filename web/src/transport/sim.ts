@@ -71,7 +71,7 @@ export interface SimOptions {
     /**
      * Bus ids that answer a relay. An id outside this set relays and times out,
      * exactly like a missing node on real RS485 — which is what makes
-     * `axis_map` able to fail partway (`err node <id> timeout`).
+     * `axes_map` able to fail partway (`err node <id> timeout`).
      */
     busNodes?: readonly number[];
     /**
@@ -79,7 +79,7 @@ export interface SimOptions {
      * config's defaultHead map. Without it the sim boots IDLE and unmapped, as
      * the firmware does with no config (core0.cpp).
      */
-    axisMap?: readonly (number | null)[];
+    axesMap?: readonly (number | null)[];
     /** Continuous- and step-jog rate at 1× speed, steps/s on each moving axis. */
     cjogStepsPerS?: number;
     /**
@@ -125,7 +125,7 @@ const MOTION_SLOTS = 4;
 /** The `get` keys the Sim models (Sim._getKey). */
 const SIM_GET_KEYS = [
     "state", "ctx", "enabled", "homed", "faults", "job", "latched",
-    "probed", "pz", "pos", "jogging", "jobid", "busy",
+    "probed", "pz", "pos", "jogging", "jobid", "busy", "placed",
 ] as const;
 
 export class SimTransport implements Transport {
@@ -295,8 +295,8 @@ export class SimTransport implements Transport {
         this.toolChangeMs = opts.toolChangeMs ?? 2 * this.frameMs;
         for (const [h, t] of Object.entries(opts.tools?.mounted ?? {})) this.mounted.set(Number(h), t);
         for (const h of opts.tools?.zeroed ?? []) this.zeroed.add(h);
-        if (opts.axisMap) {
-            for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axisMap[i] ?? null;
+        if (opts.axesMap) {
+            for (let i = 0; i < MOTION_SLOTS; i++) this.slotNode[i] = opts.axesMap[i] ?? null;
             this.state = MachineState.IDLE;
             this.faults = 0;
         }
@@ -379,6 +379,7 @@ export class SimTransport implements Transport {
                     record: this._execPoint()?.record,
                     context: this.context,
                     busy: this._busy(),
+                    placed: this._placed(),
                 }),
             );
             return Promise.resolve();
@@ -740,6 +741,11 @@ export class SimTransport implements Transport {
             this.job === JobReason.DWELL;
     }
 
+    /** placePlaced(): `place set` stands in JOB.PLACE. */
+    private _placed(): boolean {
+        return this.context === MachineContext.JOB && this.job === JobReason.PLACE && this.placeSet;
+    }
+
     private _reason(): number {
         if (this.state === MachineState.JOB) return this.job;
         if (this.state === MachineState.JOGGING) {
@@ -835,11 +841,13 @@ export class SimTransport implements Transport {
                 const slot = S._nodeSlot(node);
                 return `node ${node} pos ${slot === null ? 0 : S.pos[slot]}`;
             }
-            case "axis_map": {
-                // Read-back form (§8): the map is host-authored and absent from
-                // STATUS_RSP, so this is the only way to see what is committed.
+            // `axes_map` checks each id against the config's axis nodes and
+            // `slot_map` doesn't; the sim has no config, so both bind the same.
+            case "slot_map":
+            case "axes_map": {
+                // Bare reads the map: it is absent from STATUS_RSP.
                 if (args.length === 0) {
-                    return "axis_map " + S.slotNode.map((n) => (n === null ? "-" : String(n))).join(" ");
+                    return `${cmd} ` + S.slotNode.map((n) => (n === null ? "-" : String(n))).join(" ");
                 }
                 // Rebinding mid-job would corrupt in-flight motion (§6.2).
                 if (!isIdlePausedAlarm(S.state)) return "err bad_state";
@@ -881,9 +889,9 @@ export class SimTransport implements Transport {
                 S._rederiveLatched();
                 return "ok";
             }
-            // `leg <node> seek|retract <dir> <startUs> <floorUs> <rampSteps> <maxSteps>`
-            // `leg <node> park <target> <startUs> <floorUs> <rampSteps>`
-            // `leg <node> sweep …`
+            // `leg seek|retract <node> <dir> <startUs> <floorUs> <rampSteps> <maxSteps>`
+            // `leg park <node> <target> <startUs> <floorUs> <rampSteps>`
+            // `leg sweep <node> …`
             // — arms ONE leg and returns; the machine sits in HOMING until
             // _tickHoming() finishes it. The numbers are accepted and ignored:
             // this models the protocol, not the motion. seek/retract is not
@@ -899,9 +907,11 @@ export class SimTransport implements Transport {
             case "leg": {
                 if (S.homing !== null) return "err busy";
                 if (!isIdlePausedAlarm(S.state)) return "err bad_state";
-                const node = parseInt(args[0] ?? "", 10);
+                const verb = args[0];
+                const node = parseInt(args[1] ?? "", 10);
                 if (!Number.isInteger(node)) return "err usage";
-                const verb = args[1];
+                // No probe session is modelled.
+                if (verb === "probe") return "err not_probing";
                 // This sim models no index node: no Hall capture, no `index`,
                 // no `steprev`. Answering the way a real Pico answers a
                 // wrong-kind verb is honest; pretending to sweep would let a
@@ -969,6 +979,12 @@ export class SimTransport implements Transport {
             }
             case "jog":
                 return S._jog(args);
+            // The soft reset: `ok`, then the boot banner, as the firmware
+            // prints it. The sim keeps its state; only the lines are modelled.
+            case "reset":
+            case "rst":
+                if (S.context !== MachineContext.IDLE) return "err bad_state";
+                return ["ok", "RS485 controller (115200 baud)", "ready"].join("\n");
             case "stop": // always available; de-energises
                 S.state = MachineState.ALARM;
                 S.context = MachineContext.IDLE;
@@ -1279,6 +1295,7 @@ export class SimTransport implements Transport {
             case "pz":        return String(this._probeZ() ?? "-");
             case "buf":         return String(this.motion.length);
             case "busy":        return this._busy() ? "1" : "0";
+            case "placed":      return this._placed() ? "1" : "0";
             case "pos":         return this._nodePos();
             case "jogging":
                 return this.state !== MachineState.JOGGING ? "-"

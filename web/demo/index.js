@@ -3,7 +3,9 @@ import {
 } from 'urumi-host/packets';
 import { loadConfig, encodeConfig, saveConfig } from 'urumi-host/config';
 import { loadSvg, buildJob } from 'urumi-host/toolpath';
-import { Link, JobSource, stateName, faultNames, jobName, nackName, cfgNackName } from 'urumi-host/link';
+import {
+    Link, JobSource, CommandError, stateName, faultNames, jobName, nackName, cfgNackName,
+} from 'urumi-host/link';
 import { WebSerialTransport } from 'urumi-host/transport/webserial';
 
 const BAUD_RATE = 115200;
@@ -129,8 +131,9 @@ disconnectBtn.addEventListener('click', async () => {
 });
 
 // ── console ───────────────────────────────────────────────────────────────────
-// One reply per command, as Link.command. `stop` goes through Link.estop so it
-// never waits behind a pending command; it has no reply.
+// The console sends lines as typed, through Commands.send(): one reply each.
+// `stop` goes out as Link.estop(), never behind a pending command, and shows no
+// reply. The buttons call the methods, logged the same way through act().
 
 /** Sent lines, oldest first; kept for the page's lifetime only. */
 const history = [];
@@ -145,16 +148,36 @@ async function submit(line) {
         return '';
     }
     textOut(`→ ${line}`);
-    if (line === 'stop') {
-        link.estop();
-        textOut('← (no reply)');
-        return '';
-    }
-    const reply = await link.command(line);
-    textOut(reply ? `← ${reply}` : '← (timeout)');
+    const reply = await link.commands().send(line);
+    textOut(line === 'stop' ? '← (no reply)' : reply ? `← ${reply}` : '← (timeout)');
     desyncsOut.textContent = link.stats().textDesyncs;
-    notePlace(line, reply);
+    if (line.startsWith('place ')) placeRefusal = reply === 'ok' ? '' : `${line}: ${reply || 'no reply'}`;
     return reply;
+}
+
+/**
+ * Run one Commands method for a button, logged as the console logs a line.
+ * True on ok; a refusal is logged, and remembered for the placement hint.
+ */
+async function act(label, fn) {
+    if (!link || link.closed) {
+        textOut('link closed');
+        return false;
+    }
+    textOut(`→ ${label}`);
+    try {
+        const v = await fn(link.commands());
+        textOut(v === undefined ? '← ok' : `← ok ${v}`);
+        if (label.startsWith('place ')) placeRefusal = '';
+        return true;
+    } catch (e) {
+        if (!(e instanceof CommandError)) throw e;
+        textOut(`← ${e.reply || e.reason}`);
+        if (label.startsWith('place ')) placeRefusal = `${label}: ${e.reason}`;
+        return false;
+    } finally {
+        desyncsOut.textContent = link.stats().textDesyncs;
+    }
 }
 
 cmdIn.addEventListener('keydown', (e) => {
@@ -358,7 +381,9 @@ function buildSelectButtons(headCount) {
         b.value = b.textContent = v;
         b.disabled = !link;
         b.addEventListener('click', async () => {
-            if (await submit(`select ${v}`) === 'ok') selectedOut.textContent = v;
+            if (await act(`select ${v}`, (c) => c.select(v === 'anchor' ? 'anchor' : Number(v)))) {
+                selectedOut.textContent = v;
+            }
         });
         return b;
     }));
@@ -445,12 +470,21 @@ cfgSaveBtn.addEventListener('click', () => {
 });
 
 // ── goto ──────────────────────────────────────────────────────────────────────
-// `goto m|w …` and the named targets, text commands; the jog speed is the scale.
-// A row's go button reads the inputs beside it; an xy value may be min or max,
-// that end of the soft range. Material top is work Z t, from the Job panel:
-// work Z 0 is the bed.
+// cmd.goto() with a target from the button; the jog speed is the scale. A
+// button's value is the target as words (`park`, `m xy min max`, `w a 0`); a
+// row's go button reads the inputs beside it, where an xy value may be min or
+// max, that end of the soft range. Material top is work Z t, from the Job
+// panel: work Z 0 is the bed.
 
 const XY_VALUE = /^(min|max|[-+]?(\d+\.?\d*|\.\d+))$/;
+const xyValue = (v) => (v === 'min' || v === 'max' ? v : Number(v));
+
+/** `park`, or `<frame> xy <x> <y>`, or `<frame> z|a <v>`, as a GotoTarget. */
+function gotoFromWords(words) {
+    const [frame, axis, a, b] = words;
+    if (axis === undefined) return { name: frame };
+    return axis === 'xy' ? { frame, x: xyValue(a), y: xyValue(b) } : { frame, [axis]: Number(a) };
+}
 
 function gotoTarget(b) {
     if (b.classList.contains('goto-row')) {
@@ -460,12 +494,12 @@ function gotoTarget(b) {
             textOut(`goto ${b.value}: number, min or max`);
             return null;
         }
-        return `${b.value} ${vals.join(' ')}`;
+        return gotoFromWords([...b.value.split(' '), ...vals]);
     }
-    if (b.value !== 'top') return b.value;
+    if (b.value !== 'top') return gotoFromWords(b.value.split(' '));
     const t = Number(jobTIn.value);
     if (!(t > 0)) { textOut('material top: set t first'); return null; }
-    return `w z ${t}`;
+    return { frame: 'w', z: t };
 }
 
 for (const b of gotoBtns) {
@@ -473,21 +507,43 @@ for (const b of gotoBtns) {
         const to = gotoTarget(b);
         if (!to) return;
         const speed = Number(jogSpeedIn.value) || 1;
-        const scale = 'noscale' in b.dataset || speed === 1 ? '' : ` ${speed}`;
-        submit(`goto ${to}${scale}`);
+        if (!('noscale' in b.dataset) && speed !== 1) to.scale = speed;
+        act(`goto ${b.value === 'top' ? 'material top' : b.value}`, (c) => c.goto(to));
     });
 }
 
-for (const b of wzeroBtns) b.addEventListener('click', () => submit(`wzero ${b.value}`));
+for (const b of wzeroBtns) {
+    const axes = b.value.split(' ').map((a) => (a === 'z_switch' ? 'zSwitch' : a));
+    b.addEventListener('click', () => act(`wzero ${b.value}`, (c) => c.wzero(axes)));
+}
 
-// ── home and tool ─────────────────────────────────────────────────────────────
-// A button's data-head / data-tool name the pickers its arguments come from.
+// ── home, tool and place ──────────────────────────────────────────────────────
+// A button's value names the command and its form; its data-head / data-tool
+// name the pickers its arguments come from.
+
+/** The Commands call for a text-cmd button's value and picker arguments. */
+function textCmd(value, args) {
+    const [verb, form, x, y] = value.split(' ');
+    const n = args.map(Number);
+    switch (verb) {
+        case 'home':
+            if (form === 'xy') return (c) => c.home({ form: 'xy' });
+            if (form === 'head') return (c) => c.home({ head: n[0] });
+            return (c) => c.home();
+        case 'mount': return (c) => c.mount(n[0], n[1]);
+        case 'unmount': return (c) => c.unmount(n[0]);
+        case 'place':
+            if (form === 'go') return (c) => c.place('go', { x: x.slice(1), y: y.slice(1) });
+            return (c) => c.place(form);
+    }
+    throw new Error(`no command for ${value}`);
+}
 
 for (const b of textCmdBtns) {
     b.addEventListener('click', () => {
         const args = [b.dataset.head, b.dataset.tool].filter(Boolean).map((id) => document.getElementById(id).value);
         if (args.includes('')) return textOut(`${b.value}: pull a config first`);
-        submit([b.value, ...args].join(' '));
+        act([b.value, ...args].join(' '), textCmd(b.value, args));
     });
 }
 
@@ -517,8 +573,7 @@ let session = null;
 let source = null;
 /** The running job's layers, by layer number: { key, total }. */
 let jobLayers = [];
-/** This session's `place set` is standing, and the last place command's refusal. */
-let placed = false;
+/** The last place command's refusal; whether `place set` stands is the status's `placed`. */
 let placeRefusal = '';
 
 const visibleRows = () => rows.filter((r) => svgLayers.has(r.key));
@@ -698,17 +753,8 @@ function jobFromRows() {
     return { layers: job.layers, names: job.layers.map((l, i) => ({ key: rs[i].key, total: l.records.length })) };
 }
 
-/** Follow placement from the replies to `place` commands, from a button or the console. */
-function notePlace(line, reply) {
-    if (!line.startsWith('place ')) return;
-    placeRefusal = reply === 'ok' ? '' : `${line}: ${reply || 'no reply'}`;
-    if (reply !== 'ok') return;
-    if (line === 'place set') placed = true;
-    else if (line === 'place reset') placed = false;
-}
-
 function placeHint() {
-    const step = placed ? 'placed, Execute to start' : 'jog the dot to the job\'s xmin ymin, then place set';
+    const step = link?.status?.placed ? 'placed, Execute to start' : 'jog the dot to the job\'s xmin ymin, then place set';
     return placeRefusal ? `${step} (${placeRefusal})` : step;
 }
 
@@ -765,7 +811,6 @@ jobStartBtn.addEventListener('click', async () => {
         return setJobButtons();
     }
     jobLayers = job.names;
-    placed = false;
     placeRefusal = '';
     jobSessionOut.textContent = `${jobLayers.length} layer(s), t ${Number(jobTIn.value) || 0}`;
     binOut(`→ JOB_HDR ${jobLayers.map((l) => `${l.key}:${l.total}`).join(' ')}`);
@@ -818,14 +863,14 @@ jobManualBox.addEventListener('change', () => {
 jobRunBtn.addEventListener('click', async () => {
     if (!session) return;
     jobRunBtn.disabled = true;
-    if (session.hold === 'place' && await submit('place ok') !== 'ok') return setJobButtons();
+    if (session.hold === 'place' && !(await act('place ok', (c) => c.place('ok')))) return setJobButtons();
     source?.release();
     setJobButtons();
 });
 
 for (const [btn, name, method] of [[jobPauseBtn, 'pause', 'pause'], [jobCancelBtn, 'cancel', 'close']]) {
     btn.addEventListener('click', async () => {
-        if (!session) return submit(name);
+        if (!session) return act(name, (c) => c[name]());
         textOut(`→ ${name}`);
         textOut(`← ${await session[method]()}`);
     });

@@ -2,7 +2,7 @@
  * link/link.ts — owns a Transport, one Demux, one Writer, and the sink set
  * (docs/system/wire.md, docs/reference/host-api/link.md).
  *
- * Callers subscribe rather than seize: command(), the status and session()
+ * Callers subscribe rather than seize: commands(), the status and session()
  * can all be in flight at once, because each awaits its own sink while the
  * single read loop keeps draining the Transport into the Demux. Nothing else
  * reads the Transport.
@@ -20,6 +20,7 @@ import type { Sink, LatestSink } from "./sink.js";
 import { Ack, Nack } from "./demux.js";
 import { Session, type JobSource } from "./session.js";
 import { setTimer, clearTimer, type TimerId } from "./clock.js";
+import { Commands } from "./commands.js";
 
 import {
     CJOG_DEADMAN_MS,
@@ -87,6 +88,8 @@ const STATUS_POLL_MIN = 10;
 /** At most a third of HOST_TIMEOUT_MS, so one lost request can't pause a job. */
 const STATUS_POLL_MAX = Math.floor(HOST_TIMEOUT_MS / 3);
 /** Resend the jog packet this often: a third of the deadman, so one lost packet is not a stop. */
+/** How long `reset` waits for the boot banner to end (`ready`) after its `ok`, ms. */
+const RESET_WAIT_MS = 5000;
 const CJOG_REPEAT_MS = Math.floor(CJOG_DEADMAN_MS / 3);
 /** How long to wait for the answer to a start; a turn brakes first, so it waits longer. */
 const CJOG_START_TIMEOUT_MS = 1000;
@@ -204,6 +207,9 @@ export class Link {
     readonly writer: Writer;
     private readonly _transport: Transport;
     private _textLock: Promise<unknown> = Promise.resolve();
+    /** Who each awaited text line belongs to, in write order (_command). */
+    private readonly _owed: { readonly kind: "reply" | "drop" }[] = [];
+    private _commands: Commands | null = null;
     private _cfgLock: Promise<unknown> = Promise.resolve();
     private readonly _readLoop: Promise<void>;
     private readonly _statusPollMs: number;
@@ -313,30 +319,58 @@ export class Link {
 
     /**
      * Send one control-plane line and return the reply line (stripped), or ""
-     * on timeout. No flush of the PORT beforehand: routing on magic means a
-     * stale status reply or a stream ACK cannot land in the text sink.
-     * Text stays strictly one-outstanding: the next line in the sink is
-     * ours.
+     * on timeout. Text stays strictly one-outstanding: the next line in the
+     * sink is ours, once the lines owed to an earlier `stop` are passed.
      *
-     * The text sink itself is drained first — under the one-outstanding lock,
-     * any line already sitting there is orphaned (its awaiter timed out, or
-     * the Pico emitted more lines than the contract allows). Leaving orphans
-     * would make every later command read the previous one's tail, so a single
-     * contract breach desyncs the plane permanently rather than transiently.
-     * A non-zero drain counts in stats().textDesyncs so the breach is loud.
+     * Replies come back in write order, so `_owed` lists, in that order, who
+     * each awaited line belongs to: a command, or an `estop()` whose `ok`
+     * nobody reads. A line already in the sink when this command's turn comes
+     * is either owed to an estop, or orphaned (its awaiter timed out, or the
+     * firmware sent more lines than the contract allows); orphans count in
+     * stats().textDesyncs.
+     *
+     * `tail`: after an `ok`, keep reading and drop lines up to and including
+     * this one (`reset` and its boot banner).
+     *
+     * @internal Through Commands.
      */
-    async command(text: string, timeoutMs = 1000): Promise<string> {
+    async _command(text: string, timeoutMs = 1000, tail?: string): Promise<string> {
         const run = this._textLock.then(async () => {
-            const stale = this.sinks.text.clear();
-            if (stale > 0) this._textDesyncs += stale;
+            this._dropStale();
+            const mine = { kind: "reply" as const };
+            this._owed.push(mine);
             await this.writer.writeText(text);
-            return (await this.sinks.text.get(timeoutMs)) ?? "";
+            let reply: string | null;
+            for (;;) {
+                reply = await this.sinks.text.get(timeoutMs);
+                if (reply === null || this._owed[0] === mine) break;
+                this._owed.shift(); // an estop's `ok`
+            }
+            const at = this._owed.indexOf(mine);
+            if (at >= 0) this._owed.splice(at, 1);
+            if (reply === null) return "";
+            if (tail !== undefined && reply === "ok") {
+                const until = Date.now() + RESET_WAIT_MS;
+                for (;;) {
+                    const line = await this.sinks.text.get(Math.max(1, until - Date.now()));
+                    if (line === null || line === tail) break;
+                }
+            }
+            return reply;
         });
         this._textLock = run.then(
             () => undefined,
             () => undefined,
         );
         return run as Promise<string>;
+    }
+
+    /** Drop the lines waiting in the text sink: an estop's, or orphans. */
+    private _dropStale(): void {
+        for (let n = this.sinks.text.clear(); n > 0; n--) {
+            if (this._owed[0]?.kind === "drop") this._owed.shift();
+            else this._textDesyncs++;
+        }
     }
 
     // -- at once ----------------------------------------------------------------
@@ -346,24 +380,22 @@ export class Link {
      * command. No reply; the status shows it take hold (ESTOP, then ALARM).
      */
     estop(): void {
+        this._owed.push({ kind: "drop" }); // its `ok`, which nobody reads
         void this.writer.writeText("stop").catch(() => undefined);
     }
 
     /** @internal Fire-and-forget text line: the writer, not a reply slot. */
-    send(text: string): Promise<void> {
+    _send(text: string): Promise<void> {
         return this.writer.writeText(text);
     }
 
-    /**
-     * @internal Binary status — one byte out, one frame back. settle() polls
-     * through this until a later branch replaces it.
-     */
-    async getStatus(timeoutMs = 1000): Promise<MachineStatus> {
-        const before = this.sinks.status.sample[1];
-        await this.writer.writeFrame(new Uint8Array([MAGIC_STATUS_REQ]));
-        const [data] = await this.sinks.status.waitUpdate(timeoutMs, before);
-        if (!data) throw new Error("no STATUS_RSP within timeout");
-        return parseStatusRsp(data);
+    /** The link's text commands: the same object on every call. */
+    commands(): Commands {
+        this._commands ??= new Commands(
+            (line, timeoutMs, tail) => this._command(line, timeoutMs, tail),
+            this,
+        );
+        return this._commands;
     }
 
     /** Latest status sample, at most one poll old, or null before the first. */
@@ -541,7 +573,7 @@ export class Link {
      */
     session(job: JobSource): Session {
         const sess = new Session(this.writer, this.sinks.ack, this.sinks.status, job,
-            (line) => this.command(line), this._whenClosed);
+            (line) => this._command(line), this._whenClosed);
         sess.verbose = this.verbose;
         return sess;
     }

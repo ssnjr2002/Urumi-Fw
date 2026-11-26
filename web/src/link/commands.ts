@@ -1,727 +1,526 @@
 /**
- * link/commands.ts — control-plane command helpers over a Link.
+ * link/commands.ts — the text commands as methods (docs/reference/host-api/commands.md).
  *
- * One function per text command from docs/reference/commands.md. Each sends the
- * command string and parses the reply so callers work with typed results
- * instead of raw text.
+ * One method per command in docs/reference/commands.md that a page needs.
+ * Each sends its line through the link's one-outstanding text plane, reads
+ * the reply, and resolves with what an `ok` carries or throws a CommandError.
+ * `send()` is the escape hatch: any line, the reply unparsed.
  *
- * `axisMap` is a designed-for stub — the firmware does not yet accept the
- * command (docs/archive/engage_and_axis_map.md, PROPOSED), but the signature is the
- * one the eventual helper will have, so an orchestrator can code against it
- * now without a later API break.
+ * A reply says whether the controller took the command, never that what it
+ * started has ended; `busy` in the status says whether something runs.
+ * `onReady` waits for `busy` false before sending.
  */
 
-import { Link } from "./link.js";
-import {
-    getValue,
-    parseGetReply,
-    statusFromGet,
-    type MachineStatus,
-} from "../packets/status.js";
+import type { Link } from "./link.js";
+import { Fault, parseGetReply } from "../packets/status.js";
 
-// ── query / liveness ─────────────────────────────────────────────────────────
-
-/** USB link liveness check. */
-export async function ping(link: Link): Promise<boolean> {
-    return (await link.command("ping")) === "pong";
-}
-
-/**
- * Relay an RS485 ping to a bus node (or "all"). For a single node, true if the
- * text-plane reply ends with "ok"; for "all", true ONLY if every node answered.
- *
- * `all` answers on ONE line (`nodes 1=ok 2=timeout …`) — the text plane's
- * one-outstanding contract.
- */
-export async function pingNode(link: Link, nodeId: number | "all"): Promise<boolean> {
-    const reply = await link.command(`pingnode ${nodeId}`);
-    if (reply.startsWith("nodes")) {
-        const all = _parsePingAll(reply);
-        return [...all.values()].every((v) => v);
+/** A refused or failed command: the line, one reason token, the reply. */
+export class CommandError extends Error {
+    constructor(
+        readonly command: string,
+        readonly reason: string,
+        readonly reply: string,
+    ) {
+        super(`${command}: ${reply || reason}`);
+        this.name = "CommandError";
     }
-    return reply.endsWith("ok");
 }
 
-/** Ping every node in one command — one round trip. Returns {[nodeId]: answered}. */
-export async function pingAll(link: Link): Promise<Map<number, boolean>> {
-    return _parsePingAll(await link.command("pingnode all"));
+/** A bus id per axis (X, Y, Z, A) or stream slot; null for none. */
+export type AxisNodes = readonly [x: number | null, y: number | null, z: number | null, a: number | null];
+
+/** `nodestat`: a field the node didn't send is undefined, never a default. */
+export interface NodeStat {
+    readonly id: number;
+    readonly type: number;
+    readonly enabled: boolean;
+    readonly datum: boolean;
+    readonly limit: boolean | undefined;
+    readonly homing: boolean;
+    readonly pos: number | undefined;
+    readonly span: number | undefined;
+    readonly index: number | undefined;
+    readonly indexCause: string | undefined;
+    readonly crossings: number | undefined;
+    readonly stepsPerRev: number | undefined;
 }
 
-// ── state / position ─────────────────────────────────────────────────────────
+export type HomeTarget =
+    | { nodes: readonly number[]; only?: boolean }
+    | { cycle: number }
+    | { head: number }
+    | { form: "unhomed" | "xy" };
 
-/** Most keys one `get` takes (firmware GET_MAX_KEYS). */
-export const GET_MAX_KEYS = 32;
-
-/** The keys {@link getState} reads: everything MachineStatus carries. */
-export const STATE_KEYS = [
-    "state", "ctx", "enabled", "homed", "faults", "job", "latched",
-    "homefail", "homenode", "cfgerr", "homing",
-    "probing", "probe", "retries", "psteps", "probed", "pz",
-    "homecycle", "seqfail", "seq", "busy",
-] as const;
-
-/**
- * Read keys from one firmware snapshot via `get <key> …`. The reply maps each
- * key to its raw value or marker (`?`, `-`, `!`); see format/status.ts.
- */
-export async function get(link: Link, keys: readonly string[]): Promise<Map<string, string>> {
-    if (keys.length === 0) throw new Error("get needs at least one key");
-    if (keys.length > GET_MAX_KEYS) throw new Error(`get takes at most ${GET_MAX_KEYS} keys`);
-    return parseGetReply(await link.command(`get ${keys.join(" ")}`));
-}
-
-/** The keys this firmware knows, via bare `get` (`keys <key> …`). */
-export async function getKeys(link: Link): Promise<string[]> {
-    const r = await link.command("get");
-    const parts = r.trim().split(/\s+/);
-    if (parts[0] !== "keys") throw new Error(`bad get reply: ${JSON.stringify(r)}`);
-    return parts.slice(1);
-}
-
-/** Operational status snapshot via `get` over {@link STATE_KEYS}. */
-export async function getState(link: Link): Promise<MachineStatus> {
-    return statusFromGet(await get(link, STATE_KEYS));
-}
-
-// ── frames (docs/plans/coordinate-system.md) ──────────────────────────────────
-
-/** x,y,z,a in units; null for a slot the firmware reports as `-`. */
-export type Units4 = readonly [number | null, number | null, number | null, number | null];
-
-/** The controlled point: a head index, the laser anchor, or none. */
-export type Selected = number | "anchor" | null;
-
-function parseUnits4(v: string | undefined, key: string): Units4 {
-    const p = (v ?? "").split(",").map((s) => (s === "-" ? null : Number(s)));
-    if (p.length !== 4 || p.some((n) => n !== null && !Number.isFinite(n))) {
-        throw new Error(`bad get ${key} value: ${JSON.stringify(v)}`);
-    }
-    return [p[0]!, p[1]!, p[2]!, p[3]!];
-}
-
-/** Machine and work position and the selected head, from one snapshot. */
-export async function getFrames(link: Link): Promise<{ mpos: Units4; wpos: Units4; head: Selected }> {
-    const r = await get(link, ["mpos", "wpos", "head"]);
-    const head = getValue(r, "head");
-    return {
-        mpos: parseUnits4(getValue(r, "mpos"), "mpos"),
-        wpos: parseUnits4(getValue(r, "wpos"), "wpos"),
-        head: head === undefined || head === "-" ? null : head === "anchor" ? "anchor" : Number(head),
-    };
-}
-
-/** `select <head>|anchor`: the controlled point; a head binds its Z and A. */
-export async function select(link: Link, target: number | "anchor"): Promise<void> {
-    await okOrThrow(link, `select ${target}`);
-}
-
-/**
- * `wzero [axes]`: the work offset becomes the selected tip here (no axes: all).
- * `z` with the tip on the bed, `z_switch` on its head's switch (`probeSwitch.z`).
- */
-export async function wzero(
-    link: Link,
-    axes: readonly ("x" | "y" | "z" | "z_switch")[] = [],
-): Promise<void> {
-    await okOrThrow(link, ["wzero", ...axes].join(" "));
-}
-
-/**
- * `mount <head> <tool>`: the head takes `tool` (id from 1). A head with
- * `unlockRange` parks its Z and turns A out of the range, locking the holder.
- * Refused (`mounted`) while the head has a tool: `unmount` first.
- */
-export async function mount(link: Link, head: number, tool: number): Promise<void> {
-    await okOrThrow(link, `mount ${head} ${tool}`);
-}
-
-/** `unmount <head>`: no tool; that head's Z parks and, with `unlockRange`, its A unlocks. */
-export async function unmount(link: Link, head: number): Promise<void> {
-    await okOrThrow(link, `unmount ${head}`);
-}
-
-/** `wset`: the work offset in machine units, per axis. */
-export async function wset(link: Link, offset: Partial<Record<"x" | "y" | "z", number>>): Promise<void> {
-    const parts = Object.entries(offset).map(([k, v]) => `${k} ${v}`);
-    if (parts.length === 0) throw new Error("wset needs at least one axis");
-    await okOrThrow(link, `wset ${parts.join(" ")}`);
-}
-
-/** `wclear`: the work offset's XY back to the work area's min corner; every head's Z unset. */
-export async function wclear(link: Link): Promise<void> {
-    await okOrThrow(link, "wclear");
-}
-
-export type JogAxis = "x" | "y" | "z" | "a";
-
-/**
- * `jog <axis> <dist> [scale]`: move one axis by `dist` machine units (A:
- * degrees) from where the queued jogs end, at its jogFeed × `scale`. Resolves
- * with the queued block count; throws on `err <reason>`.
- */
-export async function jog(link: Link, axis: JogAxis, dist: number, scale = 1): Promise<number> {
-    const cmd = scale === 1 ? `jog ${axis} ${dist}` : `jog ${axis} ${dist} ${scale}`;
-    const r = (await link.command(cmd)).trim();
-    const m = /^ok (\d+)$/.exec(r);
-    if (!m) throw new Error(`${cmd}: ${r}`);
-    return Number(m[1]);
-}
-
-/** `jog xy <dx> <dy> [scale]`: one XY line by (dx, dy), as `jog`. */
-export async function jogXY(link: Link, dx: number, dy: number, scale = 1): Promise<number> {
-    const cmd = scale === 1 ? `jog xy ${dx} ${dy}` : `jog xy ${dx} ${dy} ${scale}`;
-    const r = (await link.command(cmd)).trim();
-    const m = /^ok (\d+)$/.exec(r);
-    if (!m) throw new Error(`${cmd}: ${r}`);
-    return Number(m[1]);
-}
-
-/** A `goto` frame: machine (`m`, X and Y the anchor's) or work (`w`). */
-export type GotoFrame = "m" | "w";
-
-/** `goto` forms; `scale` multiplies jogFeed. `up` and `unlock` take none. */
-export type GotoTarget =
-    | { frame: GotoFrame; axis: "xy"; x: number; y: number; scale?: number }
-    | { frame: GotoFrame; axis: "z" | "a"; pos: number; scale?: number }
-    | { name: "park" | "load" | "mount" | "probe"; scale?: number }
-    | { name: "up" | "unlock" };
-
-/**
- * `goto …`: an absolute move as a sequence (JOGGING, reason GOTO). XY forms
- * park every Z first. Resolves on `ok` (started); throws on `err <reason>`.
- */
-export async function goto(link: Link, t: GotoTarget): Promise<void> {
-    const scale = "scale" in t && t.scale !== undefined && t.scale !== 1 ? ` ${t.scale}` : "";
-    const body =
-        "name" in t
-            ? t.name
-            : t.axis === "xy"
-              ? `${t.frame} xy ${t.x} ${t.y}`
-              : `${t.frame} ${t.axis} ${t.pos}`;
-    await okOrThrow(link, `goto ${body}${scale}`);
-}
-
-async function okOrThrow(link: Link, cmd: string): Promise<void> {
-    const r = (await link.command(cmd)).trim();
-    if (r !== "ok") throw new Error(`${cmd}: ${r}`);
-}
-
-// ── node verbs ───────────────────────────────────────────────────────────────
-
-/**
- * Query a single node's own step counter via `nodepos <id>`. The Pico relays
- * CMD_GET_POS over RS485 and replies with the node's int32 position — the
- * measurement CAN detect lost steps (unlike `get pos`, which reads what the
- * Pico THINKS it emitted). Reply format: `node <id> pos <steps>`.
- */
-export async function nodePos(link: Link, nodeId: number): Promise<{ nodeId: number; pos: number }> {
-    const r = await link.command(`nodepos ${nodeId}`);
-    const m = /^node\s+(\d+)\s+pos\s+(-?\d+)/.exec(r);
-    if (!m) throw new Error(`bad nodepos reply: ${JSON.stringify(r)}`);
-    return { nodeId: parseInt(m[1]!), pos: parseInt(m[2]!) };
-}
-
-/**
- * A node's full state via `nodestat <id>`, including the homing leg span.
- *
- * `span` is how far that node's last COMPLETED homing leg actually moved, in
- * its own steps, measured by the node itself (src/node/types/stepper/stepper.cpp).
- * It is per LEG and not per home: the node sees individual `home` commands and
- * has no idea they form a sequence, so this is whichever leg finished last. The
- * caller is the one that knows leg 1 was the seek and that its span is the frame.
- *
- * `undefined` when the node did not send it — a board that cannot home has no
- * leg to measure. Never defaulted to 0, which is a real reading meaning "armed
- * and went nowhere".
- *
- * `index` is the ROTARY answer, and it is deliberately NOT `pos`. A limit
- * switch's edge IS the position, so a linear seek stops on its datum; an analog
- * dip's centre is only knowable after passing it, so a rotary sweep runs THROUGH
- * the feature and halts somewhere past it. Both numbers are real and neither
- * substitutes for the other.
- *
- * `indexCause` is present whenever the node has an index at all — including
- * "none" before the first sweep — while `index` appears only when that cause is
- * "ok". A sweep that found nothing has no index, and 0 is a legitimate step
- * coordinate rather than a sentinel. Both `undefined` on a linear node.
- *
- * `limit` is ABSENT on a node whose homing kind is not a limit switch, and that
- * absence is the point: printing `limit 0` for a node with no switch states a
- * fact about a thing that does not exist, and reads as a switch that is fine
- * rather than one that is not there. So it is optional here and surfaces as
- * `undefined`, never as `false` -- a caller that cannot tell "clear" from
- * "absent" is exactly the caller this distinction exists for.
- *
- * `cross` and `steprev` are the rotary sweep's EVIDENCE, not its answer.
- * `cross` is how many times the sweep passed the index; it is reported even on
- * a failure, where `cross 0` against `idxcause notfound` says the magnet was
- * never seen at all rather than that the budget was short. `steprev` is the
- * mean interval between those crossings -- a measured steps-per-revolution,
- * only meaningful once at least two crossings exist.
- *
- * Reply: `node <id> type <t> en <b> datum <b> [limit <b>] homing <b> pos <p> slot <s>
- *         [span <n>] [idxcause <word> [index <n>] hall <n> base <n>]
- *         [cross <n> [steprev <n>]]`
- */
-export async function nodeStat(link: Link, nodeId: number): Promise<{
-    nodeId: number; type: number; enabled: boolean; datum: boolean;
-    limit: boolean | undefined; homing: boolean; pos: number;
-    span: number | undefined;
-    index: number | undefined; indexCause: string | undefined;
-    crossings: number | undefined; stepsPerRev: number | undefined;
-}> {
-    const r = await link.command(`nodestat ${nodeId}`);
-    // `limit` is an optional GROUP rather than a separate probe so the fields
-    // around it stay anchored: `homing` follows it either way, and a loose
-    // /limit\s+(\d)/ searched anywhere in the line would let a genuinely
-    // malformed reply through while happily matching nothing on a rotary node.
-    const m = /^node\s+(\d+)\s+type\s+(\d+)\s+en\s+(\d)\s+datum\s+(\d)\s+(?:limit\s+(\d)\s+)?homing\s+(\d)\s+pos\s+(-?\d+)/.exec(r);
-    if (!m) throw new Error(`bad nodestat reply: ${JSON.stringify(r)}`);
-    const sp = /\bspan\s+(-?\d+)/.exec(r);
-    const ic = /\bidxcause\s+(\S+)/.exec(r);
-    const ix = /\bindex\s+(-?\d+)/.exec(r);
-    const cr = /\bcross\s+(\d+)/.exec(r);
-    const sr = /\bsteprev\s+(-?\d+)/.exec(r);
-    return {
-        nodeId: parseInt(m[1]!), type: parseInt(m[2]!),
-        enabled: m[3] === "1", datum: m[4] === "1",
-        limit: m[5] === undefined ? undefined : m[5] === "1",
-        homing: m[6] === "1",
-        pos: parseInt(m[7]!),
-        span: sp ? parseInt(sp[1]!, 10) : undefined,
-        index: ix ? parseInt(ix[1]!, 10) : undefined,
-        indexCause: ic ? ic[1]! : undefined,
-        crossings: cr ? parseInt(cr[1]!, 10) : undefined,
-        stepsPerRev: sr ? parseInt(sr[1]!, 10) : undefined,
-    };
-}
-
-/**
- * Toggle a vacuum-node servo channel on/off.
- * Syntax: `vac_servo <node> <idx> <on|off>`.
- */
-export async function vacServo(link: Link, nodeId: number, idx: number, on: boolean): Promise<boolean> {
-    return _nodeOk(link, `vac_servo ${nodeId} ${idx} ${on ? "on" : "off"}`);
-}
-
-/**
- * Turn the vacuum-node SSR pump on/off (soft-started on the node).
- * Syntax: `vac_pump <node> <on|off>`.
- */
-export async function vacPump(link: Link, nodeId: number, on: boolean): Promise<boolean> {
-    return _nodeOk(link, `vac_pump ${nodeId} ${on ? "on" : "off"}`);
-}
-
-/**
- * Read the vacuum node's NC switch. Reply: `node <id> switch open|closed (level=N)`.
- * The switch is wired to GND with a pull-up, so closed (level 0) is rest and
- * open (level 1) is actuated. Returns null if the node did not answer.
- */
-export async function vacSwitch(link: Link, nodeId: number): Promise<boolean | null> {
-    const r = await link.command(`vac_switch ${nodeId}`);
-    const m = /^node\s+\d+\s+switch\s+(open|closed)/.exec(r);
-    return m ? m[1] === "open" : null;
-}
-
-// ── knife peripheral (oscillating drag knife) ────────────────────────────────
-
-/**
- * Toggle the knife node's oscillator. Syntax: `knife_osc <node> <on|off>`.
- *
- * Refused during a job unless it is paused — the firmware gates every
- * peripheral relay on IDLE/ALARM/a paused job, because the relay blocks Core 0
- * on a Core 1 round trip that would otherwise interleave with the stream.
- */
-export function knifeOsc(link: Link, nodeId: number, on: boolean): Promise<boolean> {
-    return _nodeOk(link, `knife_osc ${nodeId} ${on ? "on" : "off"}`);
-}
-
-/**
- * Set the knife node's blower PWM duty, 0..100 %.
- * Syntax: `knife_blower <node> <0..100>`. Same gate as knifeOsc.
- */
-export function knifeBlower(link: Link, nodeId: number, dutyPct: number): Promise<boolean> {
-    const duty = Math.max(0, Math.min(100, Math.round(dutyPct)));
-    return _nodeOk(link, `knife_blower ${nodeId} ${duty}`);
-}
-
-// ── enable / disable ──────────────────────────────────────────────────────────
-// Per node (any bus id, type-blind relay) or, with no id, across the axis map.
-// The map form is `axes_enable on|off`: peripherals hold no motion slot, so they
-// are reachable only by an explicit id.
-
-export function enable(link: Link, nodeId?: number): Promise<boolean> {
-    const cmd = nodeId !== undefined ? `enable ${nodeId}` : "axes_enable on";
-    return _ok(link, cmd);
-}
-
-export function disable(link: Link, nodeId?: number): Promise<boolean> {
-    const cmd = nodeId !== undefined ? `disable ${nodeId}` : "axes_enable off";
-    return _ok(link, cmd);
-}
-
-export function axesEnable(link: Link, on: boolean): Promise<boolean> {
-    return _ok(link, `axes_enable ${on ? "on" : "off"}`);
-}
-
-// ── motion control ────────────────────────────────────────────────────────────
-
-/** One `setorigin` pair: bus node `node` is standing at machine position `steps`. */
-export interface OriginPair {
-    readonly node: number;
+export interface Ramp {
+    /** The step interval it starts at, µs. */
+    readonly startUs: number;
+    /** The interval it ramps to: the floor, or a probe leg's ceiling, µs. */
+    readonly endUs: number;
+    /** Steps the ramp takes. */
     readonly steps: number;
 }
 
-/**
- * Record a datum per bus node: each node's current physical position IS its
- * `steps` (`setorigin <node>:<steps> …`).
- *
- * A home's datum is arithmetic, not zero: after leg 4 the axis is parked a
- * known distance clear of a switch whose own machine coordinate is known.
- *
- * Node-addressed, like the legs. False if any node failed (`err node <id> …`);
- * the others still recorded their datum.
- */
-export function setOrigin(link: Link, pairs: readonly OriginPair[]): Promise<boolean> {
-    const args = pairs.map((p) => `${p.node}:${Math.round(p.steps)}`).join(" ");
-    return _ok(link, `setorigin ${args}`);
+export type Leg =
+    | {
+          form: "seek" | "retract" | "sweep" | "span" | "unlatch";
+          id: number;
+          dir: 0 | 1;
+          ramp: Ramp;
+          maxSteps: number;
+      }
+    | { form: "park"; id: number; target: number; ramp: Ramp }
+    | {
+          form: "probe";
+          id: number;
+          dir: 0 | 1;
+          ramp: Ramp;
+          pollDiv: number;
+          maxSteps: number;
+          deadlineUs: number;
+          expectOpen: boolean;
+      };
+
+export type JogDistance = { x?: number; y?: number } | { z: number } | { a: number };
+
+type XY = number | "min" | "max";
+
+export type GotoTarget =
+    | { frame: "m" | "w"; x: XY; y: XY; scale?: number }
+    | { frame: "m" | "w"; z: number; scale?: number }
+    | { frame: "m" | "w"; a: number; scale?: number }
+    | { name: "park" | "load" | "mount" | "probe"; scale?: number }
+    | { name: "up" | "unlock" };
+
+export type PlaceForm = "set" | "reset" | "frame" | "ok";
+export interface PlaceCorner {
+    x: "min" | "max";
+    y: "min" | "max";
 }
 
-// ── homing ────────────────────────────────────────────────────────────────────
+type Line = (line: string, timeoutMs?: number, tail?: string) => Promise<string>;
 
-/**
- * Arm ONE LEG on bus node `node` and return as soon as the Pico has armed it.
- *
- * Deliberately a single leg, not a sequence — and the verb says so. The
- * firmware command is one leg: the node runs the motion and stops itself, Core 0
- * only supervises the waiting. A full linear home is four of these plus a
- * `setorigin` (docs/homing.md §3.4); a rotary home is two plus a `setorigin` and
- * a `moveto`. The sequencing lives in `homing/`, which owns the arithmetic; this
- * stays a thin verb so a bring-up console can drive a single leg by hand.
- *
- * ADDRESSES A BUS ID, not an axis letter. Everything a leg produces is
- * node-framed — the span, the index in the node own counter, the limit latch —
- * so the firmware refuses to route it through the axis map. The practical gain
- * is that a leg runs BEFORE any `axis_map` is committed, which is exactly when
- * a new head is being commissioned.
- *
- * `ok` means ARMED, not finished. The machine is now in HOMING and the caller
- * must poll `get` until it leaves — see homing/sequence.ts.
- *
- * The Pico probes the node kind before arming and answers `err kind_mismatch`
- * if the verb does not match what the node declares, so a `linLeg` aimed at a
- * rotary head refuses without moving anything.
- *
- * @param node      RS485 bus id.
- * @param dir       1 or 0 — the node own direction sense, not a signed axis
- *                  direction.
- * @param startUs   step interval the leg starts at
- * @param floorUs   interval it ramps down to (== startUs for an un-ramped leg)
- * @param rampSteps steps taken to get from startUs to floorUs
- * @param maxSteps  runaway budget.
- */
-/** Result of arming a leg: whether it armed, and — on refusal — why. */
-export interface HomeResult {
-    armed: boolean;
-    /** The raw `err <reason>` text (e.g. "err kind_mismatch node 4 is 2 want 1", "err bad_state"), omitted on success. */
-    reason?: string;
+/** The commands that change something: `Commands` less `send` and the reads. */
+export interface ReadyCommands {
+    unalarm(): Promise<number>;
+    reset(): Promise<void>;
+    enable(id: number): Promise<void>;
+    disable(id: number): Promise<void>;
+    axesEnable(on: boolean): Promise<void>;
+    axesMap(map: AxisNodes): Promise<void>;
+    slotMap(map: AxisNodes): Promise<void>;
+    vacServo(id: number, servo: number, on: boolean): Promise<void>;
+    vacPump(id: number, on: boolean): Promise<void>;
+    knifeOsc(id: number, on: boolean): Promise<void>;
+    knifeBlower(id: number, duty: number): Promise<void>;
+    home(target?: HomeTarget): Promise<void>;
+    leg(leg: Leg): Promise<void>;
+    legAbort(id: number): Promise<void>;
+    setOrigin(pairs: readonly { id: number; steps: number }[]): Promise<void>;
+    probeMap(vac: number): Promise<{ z: number; switchOpen: boolean }>;
+    probeEnd(): Promise<boolean | null>;
+    setProbe(zSteps: number): Promise<void>;
+    unprobe(id?: number): Promise<void>;
+    select(target: number | "anchor"): Promise<void>;
+    wzero(axes?: readonly ("x" | "y" | "z" | "zSwitch")[]): Promise<void>;
+    wset(offset: { x?: number; y?: number; z?: number }): Promise<void>;
+    wclear(): Promise<void>;
+    jog(by: JogDistance, options?: { scale?: number }): Promise<number>;
+    goto(target: GotoTarget): Promise<void>;
+    mount(head: number, tool: number): Promise<void>;
+    unmount(head: number): Promise<void>;
+    pause(): Promise<void>;
+    cancel(): Promise<void>;
+    place(form: PlaceForm): Promise<void>;
+    place(form: "go", corner: PlaceCorner): Promise<void>;
 }
 
-/**
- * One leg of a LINEAR (limit-switch) home.
- *
- * `retract` does not STEER the node — it still picks seek or retract itself
- * from a single read of its own switch pin at arm time, and the host cannot
- * know that pin state ahead of the command (§1.2). What it does is let the
- * node catch a divergence between the plan model and physical reality: this
- * plan leg has an expectation (`HomingLeg.kind`), the node checks it against
- * the pin, and a mismatch is a NAK (NAK_INTENT_MISMATCH) rather than a leg run
- * under the wrong budget semantics — a seek runaway cap executed to completion
- * as a retract, ignoring the switch it was meant to stop at.
- *
- * @param retract   this leg expected mode — true for one planned to start
- *                  already on the switch (§3.4 legs 2 and 4), false for one
- *                  planned to start clear (legs 1 and 3). From `HomingLeg.kind`.
- * @param maxSteps  a seek stops at the switch and this is only a cap; a retract
- *                  IGNORES the switch and travels EXACTLY this many steps, which
- *                  is what makes leg 4 distance knowable.
- */
-export async function linLeg(
-    link: Link,
-    node: number,
-    dir: 0 | 1,
-    retract: boolean,
-    startUs: number,
-    floorUs: number,
-    rampSteps: number,
-    maxSteps: number,
-): Promise<HomeResult> {
-    const verb = retract ? "retract" : "seek";
-    const r = await link.command(
-        `leg ${node} ${verb} ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps}`,
-    );
-    if (r === "ok") return { armed: true };
-    return { armed: false, reason: r };
-}
+const READY_METHODS = [
+    "unalarm", "reset", "enable", "disable", "axesEnable", "axesMap", "slotMap",
+    "vacServo", "vacPump", "knifeOsc", "knifeBlower", "home", "leg", "legAbort",
+    "setOrigin", "probeMap", "probeEnd", "setProbe", "unprobe", "select", "wzero",
+    "wset", "wclear", "jog", "goto", "mount", "unmount", "pause", "cancel", "place",
+] as const satisfies readonly (keyof ReadyCommands)[];
 
-/**
- * One leg of a ROTARY (Hall index) home.
- *
- * No `intent`, because a rotary node has no limit pin: there is nothing for the
- * host to predict and nothing for the node to disagree with. The leg is
- * evidence-terminated — it runs until it has crossed the magnet enough times to
- * prove the period — so `maxSteps` here is a pure runaway ceiling and never a
- * tuning knob. Give it about 4x the expected steps per revolution: a sweep that
- * starts just past the index needs three full laps.
- *
- * The answer is not where the axis stopped. Read `index` and `steprev` out of
- * `nodeStat` once the machine leaves HOMING.
- */
-export async function rotLeg(
-    link: Link,
-    node: number,
-    dir: 0 | 1,
-    startUs: number,
-    floorUs: number,
-    rampSteps: number,
-    maxSteps: number,
-): Promise<HomeResult> {
-    const r = await link.command(
-        `leg ${node} sweep ${dir} ${startUs} ${floorUs} ${rampSteps} ${maxSteps}`,
-    );
-    if (r === "ok") return { armed: true };
-    return { armed: false, reason: r };
-}
+/** Most keys one `get` takes (firmware GET_MAX_KEYS). */
+const GET_MAX_KEYS = 32;
+/** How long `reset` waits for its `ok`, ms. */
+const RESET_REPLY_MS = 2000;
 
-/**
- * A park leg: the node runs to the absolute counter `target` in its own frame,
- * ramping up and down. Refused with `err not_homed` unless the Pico holds the
- * node's origin. A finished park keeps the origin; a failed one drops it
- * (HomeFail.PARK).
- */
-export async function parkLeg(
-    link: Link,
-    node: number,
-    target: number,
-    startUs: number,
-    floorUs: number,
-    rampSteps: number,
-): Promise<HomeResult> {
-    const r = await link.command(
-        `leg ${node} park ${target} ${startUs} ${floorUs} ${rampSteps}`,
-    );
-    if (r === "ok") return { armed: true };
-    return { armed: false, reason: r };
-}
+type AnyMethod = (...a: unknown[]) => Promise<unknown>;
 
-/**
- * Stop `node`'s pulser, motor left energised. If it ran the supervised leg,
- * that leg fails as HomeFail.ABORTED. Resolves to `ok` or the raw `err` line.
- */
-export async function legAbort(link: Link, node: number): Promise<string> {
-    return link.command(`leg_abort ${node}`);
-}
+export class Commands {
+    /** The same commands, each sent once the status shows `busy` false. */
+    readonly onReady: ReadyCommands;
 
-// ── home (docs/homing.md) ────────────────────────────────────────────────────
-
-/**
- * The Pico's `home` and its selectors, run from its homing config. `ok` means
- * STARTED: poll `get` (`homing=`, `homecycle=`) until the machine leaves
- * HOMING; a failure is ALARM_HOMING_FAIL with `homefail=` and `homenode=`.
- * Resolves to `ok` or the raw `err` line.
- *
- * @param nodes bus ids; none homes every homeable node.
- * @param only  home just these, in cycle order, without clearing earlier cycles.
- */
-export async function home(link: Link, nodes: readonly number[] = [], only = false): Promise<string> {
-    const words = [...(only ? ["only"] : []), ...nodes.map(String)];
-    return link.command(words.length ? `home ${words.join(" ")}` : "home");
-}
-
-/** `home` of every homeable node with no origin; `ok` with no motion if none. */
-export async function homeUnhomed(link: Link): Promise<string> {
-    return link.command("home unhomed");
-}
-
-/** `home` of cycle `cycle`'s nodes, earlier cycles cleared first. */
-export async function homeCycle(link: Link, cycle: number): Promise<string> {
-    return link.command(`home cycle ${cycle}`);
-}
-
-/** `home only` of head `head`'s Z and A (`head` indexes the config's heads). */
-export async function homeHead(link: Link, head: number): Promise<string> {
-    return link.command(`home head ${head}`);
-}
-
-/** `home` of X and Y; the Zs, an earlier cycle, park or home first. */
-export async function homeXY(link: Link): Promise<string> {
-    return link.command("home xy");
-}
-
-// ── tool probe (docs/tool_probe.md §5) ───────────────────────────────────────
-
-/** A probe verb's outcome: `ok`, or the raw `err <reason>` line. */
-export interface ProbeReply {
-    ok: boolean;
-    reason?: string;
-}
-
-async function _probeReply(link: Link, cmd: string): Promise<ProbeReply> {
-    const r = await link.command(cmd);
-    return r === "ok" || r.startsWith("ok ") ? { ok: true } : { ok: false, reason: r || "no reply" };
-}
-
-/** Open a probe session against the switch on vacuum node `switchNode`. */
-export function probeMap(link: Link, switchNode: number): Promise<ProbeReply> {
-    return _probeReply(link, `probe_map ${switchNode}`);
-}
-
-/** One probe leg's arguments, in wire units. */
-export interface ProbeLegArgs {
-    readonly dir: 0 | 1;
-    readonly startUs: number;
-    readonly ceilUs: number;
-    readonly rampSteps: number;
-    /** Poll the switch every N steps; 1 = every step. */
-    readonly pollDiv: number;
-    readonly maxSteps: number;
-    readonly deadlineUs: number;
-    /** True if the leg starts on the switch (a retract). */
-    readonly retract: boolean;
-}
-
-/** Arm one probe leg. `ok` means ARMED; poll `get` until `probing=` leaves 0. */
-export function probeLeg(link: Link, leg: ProbeLegArgs): Promise<ProbeReply> {
-    return _probeReply(
-        link,
-        `probe_leg ${leg.dir} ${leg.startUs} ${leg.ceilUs} ${leg.rampSteps} ${leg.pollDiv} ` +
-            `${leg.maxSteps} ${leg.deadlineUs} ${leg.retract ? 1 : 0}`,
-    );
-}
-
-/** Close the probe session and restore the committed axis map. */
-export function probeEnd(link: Link): Promise<ProbeReply> {
-    return _probeReply(link, "probe_end");
-}
-
-/** Store `zSteps` as the contact height of the Z in slot 2. */
-export function setProbe(link: Link, zSteps: number): Promise<ProbeReply> {
-    return _probeReply(link, `setprobe ${Math.round(zSteps)}`);
-}
-
-/** Forget node `node`'s contact height, or the engaged Z's when omitted. */
-export function unprobe(link: Link, node?: number): Promise<ProbeReply> {
-    return _probeReply(link, node === undefined ? "unprobe" : `unprobe ${node}`);
-}
-
-export function pause(link: Link): Promise<boolean> {
-    return _ok(link, "pause");
-}
-
-export function cancel(link: Link): Promise<boolean> {
-    return _ok(link, "cancel");
-}
-
-/**
- * Clear the event faults and fix what can be fixed at once. Resolves to the
- * fault mask left (0 = IDLE), or null on `err`.
- */
-export async function unalarm(link: Link): Promise<number | null> {
-    const r = await link.command("unalarm");
-    const m = /^ok faults=(0x[0-9a-fA-F]+)/.exec(r);
-    return m ? parseInt(m[1]!, 16) : null;
-}
-
-// ── axis_map — bind bus nodes to the four stream slots ───────────────────────
-
-/** A slot binding: a bus id, or null for "leave this slot disengaged". */
-export type SlotBinding = number | null;
-
-/**
- * Declare the four motion-slot bindings (X, Y, Z, A) to the Pico, which
- * disengages every previously-bound node and engages each of these to its slot
- * via per-node CMD_ENGAGE. Not a diff — re-issuing the same map deliberately
- * re-sends every engage, so a node that silently lost its slot (reflash, power
- * blip, fresh Pico) is re-bound rather than skipped.
- *
- * The Pico commits its config's defaultHead map itself at boot; this is how a
- * host switches heads, and how it leaves ALARM_NODE_FAULT once a node that
- * failed to engage answers again (docs/system/bus.md §5).
- *
- * Throws with the firmware's reason on rejection (`err dup`, `err bad_node`,
- * `err unconfigured`, `err node <id> not_in_config`, `err bad_state`,
- * `err node <id> timeout`) — the failure modes are distinct
- * enough that collapsing them to `false` would lose what the operator needs.
- * A partial failure leaves the map incomplete and the machine in
- * ALARM_NODE_FAULT; retrying redoes all of it.
- *
- * Only valid in IDLE/ALARM or a paused job — rebinding slots mid-job would corrupt
- * in-flight motion (§6.2).
- */
-export async function axisMap(
-    link: Link,
-    x: SlotBinding,
-    y: SlotBinding,
-    z: SlotBinding,
-    a: SlotBinding,
-): Promise<boolean> {
-    const tok = (n: SlotBinding): string => (n === null || n === 0 ? "-" : String(n));
-    const reply = await link.command(`axis_map ${tok(x)} ${tok(y)} ${tok(z)} ${tok(a)}`);
-    if (reply === "ok") return true;
-    throw new Error(`axis_map rejected: ${reply || "no reply"}`);
-}
-
-/**
- * Read back the committed map as four slot bindings (null = unbound). The map
- * lives on Core 0 and is absent from STATUS_RSP by design, so this no-arg form
- * is the only way to observe it.
- */
-export async function readAxisMap(link: Link): Promise<readonly [SlotBinding, SlotBinding, SlotBinding, SlotBinding]> {
-    const r = await link.command("axis_map");
-    const parts = r.split(/\s+/);
-    if (parts[0] !== "axis_map" || parts.length < 5) {
-        throw new Error(`bad axis_map reply: ${JSON.stringify(r)}`);
+    /** @internal Use link.commands(). */
+    constructor(
+        private readonly _line: Line,
+        private readonly _link: Link,
+    ) {
+        const ready: Record<string, AnyMethod> = {};
+        for (const name of READY_METHODS) {
+            const m = (this[name] as AnyMethod).bind(this);
+            ready[name] = async (...a: unknown[]) => {
+                await this._untilFree(name);
+                return m(...a);
+            };
+        }
+        this.onReady = Object.freeze(ready) as unknown as ReadyCommands;
     }
-    const one = (t: string): SlotBinding => (t === "-" || t === "0" ? null : parseInt(t, 10));
-    return [one(parts[1]!), one(parts[2]!), one(parts[3]!), one(parts[4]!)];
-}
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+    // ── any line ─────────────────────────────────────────────────────────────
 
-/**
- * Many control commands reply `ok` on success and `err <reason>` on
- * rejection or failure. Parse that into a boolean.
- */
-/**
- * Node relays do NOT reply `ok` — they reply `node <id> ok` or `node <id>
- * timeout`, because the answer is about a node on the RS485 bus and not about
- * the Pico. Parsing these with `_ok` reads every success as a failure.
- */
-async function _nodeOk(link: Link, cmd: string): Promise<boolean> {
-    return /^node\s+\d+\s+ok$/.test(await link.command(cmd));
-}
-
-async function _ok(link: Link, cmd: string): Promise<boolean> {
-    const r = await link.command(cmd);
-    if (r === "ok") return true;
-    if (r.startsWith("err")) return false;
-    return false; // unexpected reply — treated as failure
-}
-
-/**
- * Parse a `pingnode all` reply line: `nodes 1=ok 2=timeout 3=ok 4=timeout`
- * → Map { 1 → true, 2 → false, 3 → true, 4 → false }.
- */
-function _parsePingAll(reply: string): Map<number, boolean> {
-    const out = new Map<number, boolean>();
-    const toks = reply.split(/\s+/);
-    for (let i = 1; i < toks.length; i++) {
-        const tok = toks[i]!;
-        const eq = tok.indexOf("=");
-        if (eq < 0) continue;
-        const n = parseInt(tok.slice(0, eq), 10);
-        const verdict = tok.slice(eq + 1);
-        out.set(n, verdict === "ok");
+    /** Any line; the reply unparsed, "" on a timeout. */
+    async send(line: string, timeoutMs?: number): Promise<string> {
+        const word = line.trim().split(/\s+/)[0];
+        if (word === "stop") {
+            this._link.estop();
+            return "";
+        }
+        if (word === "reset" || word === "rst") return this._line(line, timeoutMs ?? RESET_REPLY_MS, "ready");
+        return this._line(line, timeoutMs);
     }
-    return out;
+
+    // ── reads ────────────────────────────────────────────────────────────────
+
+    async ping(): Promise<void> {
+        const r = await this._raw("ping");
+        if (r !== "pong") throw this._error("ping", r);
+    }
+
+    async pingNode(id: number): Promise<void> {
+        await this._node(`pingnode ${id}`);
+    }
+
+    async pingAll(): Promise<Map<number, string>> {
+        const cmd = "pingnode all";
+        const r = await this._raw(cmd);
+        const toks = r.split(/\s+/);
+        if (toks[0] !== "nodes") throw this._error(cmd, r);
+        const out = new Map<number, string>();
+        for (const tok of toks.slice(1)) {
+            const eq = tok.indexOf("=");
+            if (eq > 0) out.set(Number(tok.slice(0, eq)), tok.slice(eq + 1));
+        }
+        return out;
+    }
+
+    async get(keys: readonly string[]): Promise<Map<string, string>> {
+        if (keys.length === 0) throw new RangeError("get needs at least one key");
+        if (keys.length > GET_MAX_KEYS) throw new RangeError(`get takes at most ${GET_MAX_KEYS} keys`);
+        const cmd = `get ${keys.join(" ")}`;
+        const r = await this._raw(cmd);
+        if (r.startsWith("err")) throw this._error(cmd, r);
+        return parseGetReply(r);
+    }
+
+    async keys(): Promise<string[]> {
+        const r = await this._raw("get");
+        const parts = r.split(/\s+/);
+        if (parts[0] !== "keys") throw this._error("get", r);
+        return parts.slice(1);
+    }
+
+    async nodeStat(id: number): Promise<NodeStat> {
+        const cmd = `nodestat ${id}`;
+        const r = await this._raw(cmd);
+        // `limit` is an optional group so the fields around it stay anchored.
+        const m = /^node\s+(\d+)\s+type\s+(\d+)\s+en\s+(\d)\s+datum\s+(\d)\s+(?:limit\s+(\d)\s+)?homing\s+(\d)/.exec(r);
+        if (!m) throw this._error(cmd, r);
+        const num = (re: RegExp): number | undefined => {
+            const x = re.exec(r);
+            return x ? parseInt(x[1]!, 10) : undefined;
+        };
+        const ic = /\bidxcause\s+(\S+)/.exec(r);
+        return {
+            id: parseInt(m[1]!, 10),
+            type: parseInt(m[2]!, 10),
+            enabled: m[3] === "1",
+            datum: m[4] === "1",
+            limit: m[5] === undefined ? undefined : m[5] === "1",
+            homing: m[6] === "1",
+            pos: num(/\bpos\s+(-?\d+)/),
+            span: num(/\bspan\s+(-?\d+)/),
+            index: num(/\bindex\s+(-?\d+)/),
+            indexCause: ic ? ic[1]! : undefined,
+            crossings: num(/\bcross\s+(\d+)/),
+            stepsPerRev: num(/\bsteprev\s+(-?\d+)/),
+        };
+    }
+
+    async nodePos(id: number): Promise<number> {
+        const cmd = `nodepos ${id}`;
+        const r = await this._raw(cmd);
+        const m = /^node\s+\d+\s+pos\s+(-?\d+)/.exec(r);
+        if (!m) throw this._error(cmd, r);
+        return parseInt(m[1]!, 10);
+    }
+
+    async vacSwitch(id: number): Promise<boolean> {
+        const cmd = `vac_switch ${id}`;
+        const r = await this._raw(cmd);
+        const m = /^node\s+\d+\s+switch\s+(open|closed)/.exec(r);
+        if (!m) throw this._error(cmd, r);
+        return m[1] === "open";
+    }
+
+    // ── lifecycle ────────────────────────────────────────────────────────────
+
+    async unalarm(): Promise<number> {
+        const r = await this._ok("unalarm");
+        const m = /^ok faults=(0x[0-9a-fA-F]+)/.exec(r);
+        if (!m) throw this._error("unalarm", r);
+        return parseInt(m[1]!, 16);
+    }
+
+    async reset(): Promise<void> {
+        const r = await this._line("reset", RESET_REPLY_MS, "ready");
+        if (r === "") throw new CommandError("reset", "timeout", "");
+        if (r !== "ok") throw this._error("reset", r);
+    }
+
+    // ── bus and nodes ────────────────────────────────────────────────────────
+
+    async enable(id: number): Promise<void> {
+        await this._ok(`enable ${id}`);
+    }
+
+    async disable(id: number): Promise<void> {
+        await this._ok(`disable ${id}`);
+    }
+
+    async axesEnable(on: boolean): Promise<void> {
+        await this._ok(`axes_enable ${on ? "on" : "off"}`);
+    }
+
+    axesMap(): Promise<AxisNodes>;
+    axesMap(map: AxisNodes): Promise<void>;
+    axesMap(map?: AxisNodes): Promise<AxisNodes | void> {
+        return this._map("axes_map", map);
+    }
+
+    slotMap(): Promise<AxisNodes>;
+    slotMap(map: AxisNodes): Promise<void>;
+    slotMap(map?: AxisNodes): Promise<AxisNodes | void> {
+        return this._map("slot_map", map);
+    }
+
+    // ── peripherals ──────────────────────────────────────────────────────────
+
+    async vacServo(id: number, servo: number, on: boolean): Promise<void> {
+        await this._node(`vac_servo ${id} ${servo} ${on ? "on" : "off"}`);
+    }
+
+    async vacPump(id: number, on: boolean): Promise<void> {
+        await this._node(`vac_pump ${id} ${on ? "on" : "off"}`);
+    }
+
+    async knifeOsc(id: number, on: boolean): Promise<void> {
+        await this._node(`knife_osc ${id} ${on ? "on" : "off"}`);
+    }
+
+    async knifeBlower(id: number, duty: number): Promise<void> {
+        if (!(duty >= 0 && duty <= 100)) throw new RangeError(`blower duty ${duty} is not 0 to 100`);
+        await this._node(`knife_blower ${id} ${Math.round(duty)}`);
+    }
+
+    // ── homing ───────────────────────────────────────────────────────────────
+
+    async home(target?: HomeTarget): Promise<void> {
+        let words: string[];
+        if (target === undefined) words = [];
+        else if ("nodes" in target) words = [...(target.only ? ["only"] : []), ...target.nodes.map(String)];
+        else if ("cycle" in target) words = ["cycle", String(target.cycle)];
+        else if ("head" in target) words = ["head", String(target.head)];
+        else words = [target.form];
+        await this._ok(["home", ...words].join(" "));
+    }
+
+    async leg(leg: Leg): Promise<void> {
+        const r = leg.ramp;
+        const ramp = `${r.startUs} ${r.endUs} ${r.steps}`;
+        const words =
+            leg.form === "park"
+                ? `${leg.target} ${ramp}`
+                : leg.form === "probe"
+                  ? `${leg.dir} ${ramp} ${leg.pollDiv} ${leg.maxSteps} ${leg.deadlineUs} ${leg.expectOpen ? 1 : 0}`
+                  : `${leg.dir} ${ramp} ${leg.maxSteps}`;
+        await this._ok(`leg ${leg.form} ${leg.id} ${words}`);
+    }
+
+    async legAbort(id: number): Promise<void> {
+        await this._ok(`leg_abort ${id}`);
+    }
+
+    async setOrigin(pairs: readonly { id: number; steps: number }[]): Promise<void> {
+        await this._ok(`setorigin ${pairs.map((p) => `${p.id}:${Math.round(p.steps)}`).join(" ")}`);
+    }
+
+    // ── probe ────────────────────────────────────────────────────────────────
+
+    async probeMap(vac: number): Promise<{ z: number; switchOpen: boolean }> {
+        const cmd = `probe_map ${vac}`;
+        const r = await this._ok(cmd);
+        const m = /\bz=(\d+).*\bswitch=([01])/.exec(r);
+        if (!m) throw this._error(cmd, r);
+        return { z: parseInt(m[1]!, 10), switchOpen: m[2] === "1" };
+    }
+
+    async probeEnd(): Promise<boolean | null> {
+        const r = await this._ok("probe_end");
+        const m = /\bswitch=([01?])/.exec(r);
+        if (!m) throw this._error("probe_end", r);
+        return m[1] === "?" ? null : m[1] === "1";
+    }
+
+    async setProbe(zSteps: number): Promise<void> {
+        await this._ok(`setprobe ${Math.round(zSteps)}`);
+    }
+
+    async unprobe(id?: number): Promise<void> {
+        await this._ok(id === undefined ? "unprobe" : `unprobe ${id}`);
+    }
+
+    // ── positioning ──────────────────────────────────────────────────────────
+
+    async select(target: number | "anchor"): Promise<void> {
+        await this._ok(`select ${target}`);
+    }
+
+    async wzero(axes: readonly ("x" | "y" | "z" | "zSwitch")[] = []): Promise<void> {
+        await this._ok(["wzero", ...axes.map((a) => (a === "zSwitch" ? "z_switch" : a))].join(" "));
+    }
+
+    async wset(offset: { x?: number; y?: number; z?: number }): Promise<void> {
+        const parts = (["x", "y", "z"] as const)
+            .filter((k) => offset[k] !== undefined)
+            .map((k) => `${k} ${offset[k]}`);
+        if (parts.length === 0) throw new RangeError("wset needs at least one axis");
+        await this._ok(`wset ${parts.join(" ")}`);
+    }
+
+    async wclear(): Promise<void> {
+        await this._ok("wclear");
+    }
+
+    async jog(by: JogDistance, options: { scale?: number } = {}): Promise<number> {
+        const b = by as { x?: number; y?: number; z?: number; a?: number };
+        const xy = b.x !== undefined || b.y !== undefined;
+        const sets = (xy ? 1 : 0) + (b.z !== undefined ? 1 : 0) + (b.a !== undefined ? 1 : 0);
+        if (sets !== 1) throw new RangeError("jog moves exactly one axis set: XY, Z or A");
+        const body = xy
+            ? b.x !== undefined && b.y !== undefined
+                ? `xy ${b.x} ${b.y}`
+                : b.x !== undefined ? `x ${b.x}` : `y ${b.y}`
+            : b.z !== undefined ? `z ${b.z}` : `a ${b.a}`;
+        const scale = options.scale !== undefined && options.scale !== 1 ? ` ${options.scale}` : "";
+        const cmd = `jog ${body}${scale}`;
+        const r = await this._ok(cmd);
+        const m = /^ok (\d+)$/.exec(r);
+        if (!m) throw this._error(cmd, r);
+        return Number(m[1]);
+    }
+
+    async goto(t: GotoTarget): Promise<void> {
+        const scale = "scale" in t && t.scale !== undefined && t.scale !== 1 ? ` ${t.scale}` : "";
+        const body =
+            "name" in t
+                ? t.name
+                : "x" in t
+                  ? `${t.frame} xy ${t.x} ${t.y}`
+                  : "z" in t
+                    ? `${t.frame} z ${t.z}`
+                    : `${t.frame} a ${t.a}`;
+        await this._ok(`goto ${body}${scale}`);
+    }
+
+    // ── tools ────────────────────────────────────────────────────────────────
+
+    async mount(head: number, tool: number): Promise<void> {
+        await this._ok(`mount ${head} ${tool}`);
+    }
+
+    async unmount(head: number): Promise<void> {
+        await this._ok(`unmount ${head}`);
+    }
+
+    // ── jobs ─────────────────────────────────────────────────────────────────
+
+    async pause(): Promise<void> {
+        await this._ok("pause");
+    }
+
+    async cancel(): Promise<void> {
+        await this._ok("cancel");
+    }
+
+    place(form: PlaceForm): Promise<void>;
+    place(form: "go", corner: PlaceCorner): Promise<void>;
+    async place(form: PlaceForm | "go", corner?: PlaceCorner): Promise<void> {
+        if (form !== "go") return void (await this._ok(`place ${form}`));
+        if (!corner) throw new RangeError("place go needs a corner");
+        await this._ok(`place go x${corner.x} y${corner.y}`);
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /** The reply, or a CommandError for no reply. */
+    private async _raw(cmd: string): Promise<string> {
+        const r = await this._line(cmd);
+        if (r === "") throw new CommandError(cmd, "timeout", "");
+        return r;
+    }
+
+    /** `ok` or `ok <detail>`, returned whole; anything else throws. */
+    private async _ok(cmd: string): Promise<string> {
+        const r = await this._raw(cmd);
+        if (r === "ok" || r.startsWith("ok ")) return r;
+        throw this._error(cmd, r);
+    }
+
+    /** A relay: `node <id> ok`, else the node's result throws. */
+    private async _node(cmd: string): Promise<void> {
+        const r = await this._raw(cmd);
+        if (/^node\s+\d+\s+ok$/.test(r)) return;
+        throw this._error(cmd, r);
+    }
+
+    /** One reason token from a reply that isn't the success it should be. */
+    private _error(cmd: string, reply: string): CommandError {
+        const t = reply.split(/\s+/);
+        let reason = "bad_reply";
+        if (t[0] === "err") {
+            // `err node <id> <result>`: the node's result is the reason.
+            reason = t[1] === "node" && t[3] !== undefined ? t[3] : (t[1] ?? "bad_reply");
+        } else if (t[0] === "node" && t[2] !== undefined) {
+            reason = t[2];
+        }
+        return new CommandError(cmd, reason, reply);
+    }
+
+    private async _map(word: "axes_map" | "slot_map", map?: AxisNodes): Promise<AxisNodes | void> {
+        if (map !== undefined) {
+            await this._ok(`${word} ${map.map((n) => (n === null ? "-" : String(n))).join(" ")}`);
+            return;
+        }
+        const r = await this._raw(word);
+        const t = r.split(/\s+/);
+        if (t[0] !== word || t.length < 5) throw this._error(word, r);
+        // `?n` pending, `!n` fenced: the node is still the one named.
+        const one = (s: string): number | null => {
+            const n = parseInt(s.replace(/^[?!]/, ""), 10);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        };
+        return [one(t[1]!), one(t[2]!), one(t[3]!), one(t[4]!)];
+    }
+
+    /** Wait for a sample with `busy` false; throw on a latched e-stop. */
+    private async _untilFree(name: string): Promise<void> {
+        let s = this._link.status ?? (await this._link.freshStatus());
+        for (;;) {
+            if (s.hasFault(Fault.ESTOP)) throw new CommandError(name, "estop", "");
+            if (!s.busy) return;
+            s = await this._link.freshStatus();
+        }
+    }
 }

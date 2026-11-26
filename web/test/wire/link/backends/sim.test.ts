@@ -92,12 +92,12 @@ async function stream(link: Link, packets: readonly Uint8Array[], window = 16): 
 }
 
 /** Poll until `cond` holds or `ms` pass; returns the last status. */
-async function until(link: Link, cond: (st: Awaited<ReturnType<Link["getStatus"]>>) => boolean, ms = 1000) {
+async function until(link: Link, cond: (st: Awaited<ReturnType<Link["freshStatus"]>>) => boolean, ms = 1000) {
     const deadline = Date.now() + ms;
-    let st = await link.getStatus();
+    let st = await link.freshStatus();
     while (!cond(st) && Date.now() < deadline) {
         await tick(5);
-        st = await link.getStatus();
+        st = await link.freshStatus();
     }
     return st;
 }
@@ -110,12 +110,12 @@ async function withLink<T>(
     simOpts?: ConstructorParameters<typeof SimTransport>[0],
 ): Promise<T> {
     // Boot into a COMMITTED map by default, as the firmware's controller does
-    // with a config. A test passes `{ axisMap: undefined }` to get the
+    // with a config. A test passes `{ axesMap: undefined }` to get the
     // unconfigured, unmapped boot.
     // Short records and buffer timeout keep a job's tests fast.
-    const sim = new SimTransport({ axisMap: [1, 2, 3, 4], recordMs: 5, bufferIdleMs: 20, ...simOpts });
+    const sim = new SimTransport({ axesMap: [1, 2, 3, 4], recordMs: 5, bufferIdleMs: 20, ...simOpts });
     sim.skipPlace = true;
-    const link = new Link(sim);
+    const link = new Link(sim, { statusPollMs: 10 });
     try {
         return await fn(link, sim);
     } finally {
@@ -129,13 +129,13 @@ const STATE = "get state enabled homed faults job latched probed";
 describe("wire/link/backends/sim: control plane", () => {
     it("ping → pong", async () => {
         await withLink(async (link) => {
-            expect(await link.command("ping")).toBe("pong");
+            expect(await link.commands().send("ping")).toBe("pong");
         });
     });
 
     it("get reports the state + masks", async () => {
         await withLink(async (link) => {
-            expect(await link.command(STATE)).toBe(
+            expect(await link.commands().send(STATE)).toBe(
                 "state=0 enabled=0x000 homed=0x000 faults=0x0000 job=- latched=0x000 probed=0",
             );
         });
@@ -143,61 +143,61 @@ describe("wire/link/backends/sim: control plane", () => {
 
     it("axes_enable energises all axes; setorigin homes + zeros pos + recovers from ALARM", async () => {
         await withLink(async (link) => {
-            expect(await link.command("axes_enable on")).toBe("ok");
-            expect(await link.command(STATE)).toBe(
+            expect(await link.commands().send("axes_enable on")).toBe("ok");
+            expect(await link.commands().send(STATE)).toBe(
                 "state=0 enabled=0x01e homed=0x000 faults=0x0000 job=- latched=0x000 probed=0",
             );
-            expect(await link.command("setorigin")).toBe("ok");
-            expect(await link.command(STATE)).toBe(
+            expect(await link.commands().send("setorigin")).toBe("ok");
+            expect(await link.commands().send(STATE)).toBe(
                 "state=0 enabled=0x01e homed=0x01e faults=0x0000 job=- latched=0x000 probed=0",
             );
 
             // stop → ALARM, then setorigin recovers
-            expect(await link.command("stop")).toBe("ok");
-            const st = await link.getStatus();
+            expect(await link.commands().send("stop")).toBe("");
+            const st = await link.freshStatus();
             expect(st.state).toBe(MachineState.ALARM);
-            expect(await link.command("setorigin")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+            expect(await link.commands().send("setorigin")).toBe("ok");
+            expect((await link.freshStatus()).state).toBe(MachineState.IDLE);
         });
     });
 
     it("axes_enable is rejected while a job runs (bad_state)", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
-            expect(await link.command("axes_enable on")).toBe("err bad_state");
+            expect(await link.commands().send("axes_enable on")).toBe("err bad_state");
         });
     });
 
     it("pause/cancel per the allowed-state matrix", async () => {
         await withLink(async (link, sim) => {
-            expect(await link.command("pause")).toBe("err bad_state"); // IDLE
+            expect(await link.commands().send("pause")).toBe("err bad_state"); // IDLE
             sim._forceRunning();
-            expect(await link.command("pause")).toBe("ok");
-            const st = await link.getStatus();
+            expect(await link.commands().send("pause")).toBe("ok");
+            const st = await link.freshStatus();
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PAUSED]);
-            expect(await link.command("resume")).not.toBe("ok"); // no such command
-            expect(await link.command("cancel")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+            expect(await link.commands().send("resume")).not.toBe("ok"); // no such command
+            expect(await link.commands().send("cancel")).toBe("ok");
+            expect((await link.freshStatus()).state).toBe(MachineState.IDLE);
         });
     });
 
     it("unalarm refuses the estop latch", async () => {
         await withLink(async (link) => {
-            await link.command("stop");
-            expect((await link.getStatus()).hasFault(Fault.ESTOP)).toBe(true);
-            expect(await link.command("unalarm")).toBe("err estop");
-            expect((await link.getStatus()).state).toBe(MachineState.ALARM);
+            await link.commands().send("stop");
+            expect((await link.freshStatus()).hasFault(Fault.ESTOP)).toBe(true);
+            expect(await link.commands().send("unalarm")).toBe("err estop");
+            expect((await link.freshStatus()).state).toBe(MachineState.ALARM);
         });
     });
 
     it("unalarm clears an event fault → IDLE", async () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 1000;
-            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
-            expect(await link.command("leg_abort 1")).toBe("ok");
-            expect((await link.getStatus()).faults).toBe(Fault.HOMING);
-            expect(await link.command("unalarm")).toBe("ok faults=0x0000");
-            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+            expect(await link.commands().send("leg seek 1 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.commands().send("leg_abort 1")).toBe("ok");
+            expect((await link.freshStatus()).faults).toBe(Fault.HOMING);
+            expect(await link.commands().send("unalarm")).toBe("ok faults=0x0000");
+            expect((await link.freshStatus()).state).toBe(MachineState.IDLE);
         });
     });
 
@@ -207,44 +207,44 @@ describe("wire/link/backends/sim: control plane", () => {
         // stopped would freeze get and every abort for the whole seek.
         await withLink(async (link, sim) => {
             sim.homingLegMs = 30;
-            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.HOMING);
-            expect(await link.command("leg 2 seek 1 2500 500 400 88000")).toBe("err busy");
+            expect(await link.commands().send("leg seek 1 1 2500 500 400 88000")).toBe("ok");
+            expect((await link.freshStatus()).state).toBe(MachineState.HOMING);
+            expect(await link.commands().send("leg seek 2 1 2500 500 400 88000")).toBe("err busy");
 
             await tick(80);
             // A seek ends ON the switch, which is an alarm and not a failure.
-            const st = await link.getStatus();
+            const st = await link.freshStatus();
             expect(st.state).toBe(MachineState.ALARM);
             expect(st.faults).toBe(Fault.LATCHED);
-            expect(await link.command(STATE)).toContain("latched=0x002");
+            expect(await link.commands().send(STATE)).toContain("latched=0x002");
 
             // `unalarm` cannot clear it: nothing moved, so the switch is still
             // held. Only a retract gets out.
-            expect(await link.command("unalarm")).toBe("ok faults=0x0008");
-            expect((await link.getStatus()).faults).toBe(Fault.LATCHED);
+            expect(await link.commands().send("unalarm")).toBe("ok faults=0x0008");
+            expect((await link.freshStatus()).faults).toBe(Fault.LATCHED);
 
             // Armed while latched, so the node reads its pin and runs a RETRACT.
-            expect(await link.command("leg 1 retract 0 8013 8013 0 320")).toBe("ok");
+            expect(await link.commands().send("leg retract 1 0 8013 8013 0 320")).toBe("ok");
             await tick(80);
-            const done = await link.getStatus();
+            const done = await link.freshStatus();
             expect(done.state).toBe(MachineState.IDLE);
-            expect(await link.command(STATE)).toContain("latched=0x000");
+            expect(await link.commands().send(STATE)).toContain("latched=0x000");
         });
     });
 
     it("busy is set exactly while admission would answer err busy", async () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 30;
-            expect((await link.getStatus()).busy).toBe(false);
-            expect(await link.command("get busy")).toBe("busy=0");
-            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
-            expect((await link.getStatus()).busy).toBe(true);
-            expect(await link.command("get busy")).toBe("busy=1");
-            expect(await link.command("leg 2 seek 1 2500 500 400 88000")).toBe("err busy");
+            expect((await link.freshStatus()).busy).toBe(false);
+            expect(await link.commands().send("get busy")).toBe("busy=0");
+            expect(await link.commands().send("leg seek 1 1 2500 500 400 88000")).toBe("ok");
+            expect((await link.freshStatus()).busy).toBe(true);
+            expect(await link.commands().send("get busy")).toBe("busy=1");
+            expect(await link.commands().send("leg seek 2 1 2500 500 400 88000")).toBe("err busy");
             await tick(80);
             // In ALARM (on the switch), nothing runs: not busy, though a
             // sequence would be refused as bad_state.
-            const st = await link.getStatus();
+            const st = await link.freshStatus();
             expect([st.state, st.busy]).toEqual([MachineState.ALARM, false]);
         });
     });
@@ -257,47 +257,47 @@ describe("wire/link/backends/sim: control plane", () => {
         // a slot first.
         await withLink(async (link, sim) => {
             sim.homingLegMs = 20;
-            expect(await link.command("axis_map - - - -")).toBe("ok");
-            expect((await link.getStatus()).faults).toBe(0);
+            expect(await link.commands().send("axes_map - - - -")).toBe("ok");
+            expect((await link.freshStatus()).faults).toBe(0);
 
-            expect(await link.command("leg 3 seek 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.commands().send("leg seek 3 1 2500 500 400 88000")).toBe("ok");
             await tick(60);
 
             // Node 3 is standing on its switch, whether or not a slot claims it.
-            expect(await link.command(STATE)).toContain("latched=0x008");
-            expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
-            expect(await link.command(STATE)).toContain("latched=0x008");
+            expect(await link.commands().send(STATE)).toContain("latched=0x008");
+            expect(await link.commands().send("axes_map 1 2 3 4")).toBe("ok");
+            expect(await link.commands().send(STATE)).toContain("latched=0x008");
         }, { busNodes: [1, 2, 3, 4] });
     });
 
     it("a sweep on a limit-switch node is refused before anything moves", async () => {
         await withLink(async (link) => {
-            expect(await link.command("leg 1 sweep 1 2500 500 400 88000"))
+            expect(await link.commands().send("leg sweep 1 1 2500 500 400 88000"))
                 .toContain("kind_mismatch");
-            expect((await link.getStatus()).state).not.toBe(MachineState.HOMING);
+            expect((await link.freshStatus()).state).not.toBe(MachineState.HOMING);
         });
     });
 
     it("a park needs the node homed and keeps its datum", async () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 20;
-            expect(await link.command("leg 1 park 100 2500 500 400")).toBe("err not_homed");
-            expect(await link.command("setorigin")).toBe("ok");
-            expect(await link.command("leg 1 park 100 2500 500 400")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.HOMING);
+            expect(await link.commands().send("leg park 1 100 2500 500 400")).toBe("err not_homed");
+            expect(await link.commands().send("setorigin")).toBe("ok");
+            expect(await link.commands().send("leg park 1 100 2500 500 400")).toBe("ok");
+            expect((await link.freshStatus()).state).toBe(MachineState.HOMING);
             await tick(60);
-            expect(await link.command(STATE)).toContain("homed=0x01e");
+            expect(await link.commands().send(STATE)).toContain("homed=0x01e");
         });
     });
 
     it("leg_abort fails the supervised leg; another node just acks", async () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 1000;
-            expect(await link.command("leg 1 seek 1 2500 500 400 88000")).toBe("ok");
-            expect(await link.command("leg_abort 2")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.HOMING);
-            expect(await link.command("leg_abort 1")).toBe("ok");
-            const st = await link.getStatus();
+            expect(await link.commands().send("leg seek 1 1 2500 500 400 88000")).toBe("ok");
+            expect(await link.commands().send("leg_abort 2")).toBe("ok");
+            expect((await link.freshStatus()).state).toBe(MachineState.HOMING);
+            expect(await link.commands().send("leg_abort 1")).toBe("ok");
+            const st = await link.freshStatus();
             expect(st.state).toBe(MachineState.ALARM);
             expect(st.hasFault(Fault.HOMING)).toBe(true);
         });
@@ -306,16 +306,16 @@ describe("wire/link/backends/sim: control plane", () => {
     it("a latched limit follows the NODE across a rebind, not the slot", async () => {
         await withLink(async (link, sim) => {
             sim.homingLegMs = 20;
-            await link.command("leg 3 seek 1 2500 500 400 88000"); // node 3 = slot 2
+            await link.commands().send("leg seek 3 1 2500 500 400 88000"); // node 3 = slot 2
             await tick(60);
-            expect(await link.command(STATE)).toContain("latched=0x008");
+            expect(await link.commands().send(STATE)).toContain("latched=0x008");
 
             // Slot 2 now holds node 5, which is not on a switch; node 3 still is.
-            expect(await link.command("axis_map 1 2 5 6")).toBe("ok");
-            expect(await link.command(STATE)).toContain("latched=0x008");
+            expect(await link.commands().send("axes_map 1 2 5 6")).toBe("ok");
+            expect(await link.commands().send(STATE)).toContain("latched=0x008");
 
-            expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
-            expect(await link.command(STATE)).toContain("latched=0x008");
+            expect(await link.commands().send("axes_map 1 2 3 4")).toBe("ok");
+            expect(await link.commands().send(STATE)).toContain("latched=0x008");
         }, { busNodes: [1, 2, 3, 4, 5, 6] });
     });
 
@@ -324,10 +324,10 @@ describe("wire/link/backends/sim: control plane", () => {
             // The scan is the whole bus (1..BUS_ADDR_MAX=8), not just the
             // axes — it is the bring-up verb that surfaces peripherals too.
             // Only 1..4 answer in the default sim bus.
-            expect(await link.command("pingnode all")).toBe(
+            expect(await link.commands().send("pingnode all")).toBe(
                 "nodes 1=ok 2=ok 3=ok 4=ok 5=timeout 6=timeout 7=timeout 8=timeout",
             );
-            expect(await link.command("pingnode 3")).toBe("node 3 ok");
+            expect(await link.commands().send("pingnode 3")).toBe("node 3 ok");
         });
     });
 });
@@ -335,8 +335,8 @@ describe("wire/link/backends/sim: control plane", () => {
 describe("wire/link/backends/sim: binary status poll (STATUS_RSP)", () => {
     it("getStatus returns parsed MachineStatus with wpos and no job", async () => {
         await withLink(async (link) => {
-            await link.command("setorigin");
-            const st = await link.getStatus();
+            await link.commands().send("setorigin");
+            const st = await link.freshStatus();
             expect(st.state).toBe(MachineState.IDLE);
             expect(st.bufCount).toBe(0);
             expect(st.wpos).toEqual([0, 0, 0, 0]);
@@ -347,7 +347,7 @@ describe("wire/link/backends/sim: binary status poll (STATUS_RSP)", () => {
 
     it("reports no wpos on an unhomed axis", async () => {
         await withLink(async (link) => {
-            expect((await link.getStatus()).wpos!.every(Number.isNaN)).toBe(true);
+            expect((await link.freshStatus()).wpos!.every(Number.isNaN)).toBe(true);
         });
     });
 });
@@ -355,14 +355,14 @@ describe("wire/link/backends/sim: binary status poll (STATUS_RSP)", () => {
 describe("wire/link/backends/sim: stream + coalesced ACKs", () => {
     it("streams N records, all ACKed; the job runs them and buffers again", async () => {
         await withLink(async (link) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             expect(await stream(link, upTo(16), 8)).toMatchObject({ ok: true });
             const st = await until(link, (s) => s.bufCount === 0 && s.wpos![0] === 16);
             expect(st.wpos![0]).toBe(16);
             // A dry ring does not end the job: only cancel does.
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
-            expect(await link.command("cancel")).toBe("ok");
-            expect((await link.getStatus()).state).toBe(MachineState.IDLE);
+            expect(await link.commands().send("cancel")).toBe("ok");
+            expect((await link.freshStatus()).state).toBe(MachineState.IDLE);
         });
     });
 
@@ -388,7 +388,7 @@ describe("wire/link/backends/sim: buffering", () => {
         await withLink(
             async (link) => {
                 await stream(link, [...opening(), rec(1)], 4);
-                let st = await link.getStatus();
+                let st = await link.freshStatus();
                 expect([st.state, st.reason, st.bufCount]).toEqual([MachineState.JOB, JobReason.BUFFERING, 1]);
                 await stream(link, [rec(2)], 4); // 200 ms queued: enough
                 st = await until(link, running);
@@ -402,7 +402,7 @@ describe("wire/link/backends/sim: buffering", () => {
 describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
     it("a stale retransmit is ACKed but NOT executed (no duplicate motion)", async () => {
         await withLink(async (link, sim) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             await link.resetSeq();
             // Send seq 0 directly via writeBatch — accepted + executed
             const p0 = stampSeq(rec(5), 0);
@@ -427,7 +427,7 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
             async (link) => {
                 // ringSize=2, a record per tick — the ring fills, the
                 // session sees NACK_FULL, retries, and eventually completes.
-                await link.command("setorigin");
+                await link.commands().send("setorigin");
                 expect(await stream(link, upTo(10), 8)).toMatchObject({ ok: true });
                 const st = await until(link, (s) => s.wpos![0] === 10);
                 expect(st.wpos![0]).toBe(10);
@@ -440,7 +440,7 @@ describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
 describe("wire/link/backends/sim: abort", () => {
     it("abort discards the ring, keeps position, lands IDLE", async () => {
         await withLink(async (link) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             await link.resetSeq();
             // 50 records of 5 ms. Start non-awaited so we can abort MID-stream.
             const runP = stream(link, upTo(50), 16);
@@ -458,7 +458,7 @@ describe("wire/link/backends/sim: abort", () => {
             await runP;
             await tick(50);
 
-            const after = await link.getStatus();
+            const after = await link.freshStatus();
             expect(after.state).toBe(MachineState.IDLE);
             expect(after.bufCount).toBe(0);
             // position is whatever had integrated before the abort — NOT the
@@ -493,20 +493,20 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
             async (link, sim) => {
                 expect(sim.state).toBe(MachineState.IDLE);
                 expect(sim.faults).toBe(0);
-                expect(await link.command("axes_enable on")).toBe("err unbound");
+                expect(await link.commands().send("axes_enable on")).toBe("err unbound");
 
-                expect(await link.command("axis_map 1 2 3 4")).toBe("ok");
+                expect(await link.commands().send("axes_map 1 2 3 4")).toBe("ok");
                 expect(sim.state).toBe(MachineState.IDLE);
-                expect(await link.command("axes_enable on")).toBe("ok");
+                expect(await link.commands().send("axes_enable on")).toBe("ok");
             },
-            { axisMap: undefined }, // the unconfigured boot
+            { axesMap: undefined }, // the unconfigured boot
         );
     });
 
-    it("axis_map is rejected while a job runs — rebinding mid-motion corrupts it", async () => {
+    it("axes_map is rejected while a job runs — rebinding mid-motion corrupts it", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
-            expect(await link.command("axis_map 1 2 5 6")).toBe("err bad_state");
+            expect(await link.commands().send("axes_map 1 2 5 6")).toBe("err bad_state");
         });
     });
 
@@ -525,24 +525,24 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
             await link.resetSeq();
             const hdr = (layer: number, record: number) => packLayerHdr({ layer, record });
             expect((await stream(link, [packJobHdr({ recordCount: 0, toolCount: 1 }), tool(), hdr(2, 10), tool(), rec(1), rec(2), rec(3)], 4)).ok).toBe(true);
-            expect(await link.command("pause")).toBe("ok");
-            expect(await link.command("get resume_layer resume_record"))
+            expect(await link.commands().send("pause")).toBe("ok");
+            expect(await link.commands().send("get resume_layer resume_record"))
                 .toBe("resume_layer=2 resume_record=10");
-            expect((await link.getStatus()).busy).toBe(false);   // the parked ring
+            expect((await link.freshStatus()).busy).toBe(false);   // the parked ring
 
             expect((await stream(link, [hdr(2, 11)], 4)).ok).toBe(false);   // NACK_JOB
             await link.resetSeq();
             expect((await stream(link, [hdr(2, 10), rec(1)], 4)).ok).toBe(true);
-            const st = await link.getStatus();
+            const st = await link.freshStatus();
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.BUFFERING]);
-            expect(await link.command("get resume_layer")).toBe("resume_layer=-");
+            expect(await link.commands().send("get resume_layer")).toBe("resume_layer=-");
         });
     });
 
     it("a record against a paused job gets NACK_PAUSED, not BAD_STATE", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
-            expect(await link.command("pause")).toBe("ok");
+            expect(await link.commands().send("pause")).toBe("ok");
             await link.resetSeq();
             const r = await stream(link, [rec()], 4);
             expect(r.ok).toBe(false);
@@ -577,11 +577,11 @@ describe("wire/link/backends/sim: continuous jog", () => {
 
     it("runs while held, ACKs once, and stops on the deadman", async () => {
         await withLink(async (link, sim) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             sim.pos = [100, 100, 0, 0];
             const r = replies(sim);
             await hold(sim, 1, 0, 120);
-            expect(await link.command("get state jogging")).toBe("state=7 jogging=2");
+            expect(await link.commands().send("get state jogging")).toBe("state=7 jogging=2");
             await tick(CJOG_DEADMAN_MS + 60);
             expect(sim.state).toBe(MachineState.IDLE);
             expect(r).toEqual(["b6"]);
@@ -592,7 +592,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
 
     it("stops at the end of travel and stays silent while held", async () => {
         await withLink(async (link, sim) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             sim.pos = [390, 100, 0, 0];
             const r = replies(sim);
             await hold(sim, 1, 0, 150);
@@ -607,7 +607,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
 
     it("the stop byte stops at once; a bad packet is NACKed", async () => {
         await withLink(async (link, sim) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             sim.pos = [100, 100, 0, 0];
             const r = replies(sim);
             await sim.write(packCjog(0, -1));
@@ -631,7 +631,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
     for (const c of sets) {
         it(c.name, async () => {
             await withLink(async (link, sim) => {
-                await link.command("setorigin");
+                await link.commands().send("setorigin");
                 const r = replies(sim);
                 const [x, y, z, a] = c.dir;
                 await sim.write(packCjog(x, y, 1, z, a));
@@ -644,7 +644,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
 
     it("jogs inside TOOL_WAIT, keeping the context and layer", async () => {
         await withLink(async (link, sim) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             await link.resetSeq();
             const hdr = packLayerHdr({ layer: 2, record: 10 });
             await sim.write(stampSeq(packJobHdr({ recordCount: 0, toolCount: 1 }), 0));
@@ -652,14 +652,14 @@ describe("wire/link/backends/sim: continuous jog", () => {
             await sim.write(stampSeq(hdr, 2));
             await sim.write(stampSeq(tool(), 3)); // NACK_TOOL_CHANGE
             await until(link, (st) => st.reason === JobReason.TOOL_WAIT);
-            const layer = (await link.getStatus()).layer;
+            const layer = (await link.freshStatus()).layer;
             const r = replies(sim);
             await hold(sim, 1, 0, 90);
-            let st = await link.getStatus();
+            let st = await link.freshStatus();
             expect([st.state, st.context, st.layer]).toEqual([MachineState.JOGGING, MachineContext.JOB, layer]);
-            expect(await link.command("get ctx job")).toBe("ctx=1 job=6");
+            expect(await link.commands().send("get ctx job")).toBe("ctx=1 job=6");
             await tick(CJOG_DEADMAN_MS + 60);
-            st = await link.getStatus();
+            st = await link.freshStatus();
             expect([st.state, st.context, st.reason]).toEqual([MachineState.JOB, MachineContext.JOB, JobReason.TOOL_WAIT]);
             expect(r).toEqual(["b6"]);
         }, { ...opts, tools: {}, toolChangeMs: 20 });
@@ -667,9 +667,9 @@ describe("wire/link/backends/sim: continuous jog", () => {
 
     it("refuses a jog in a paused job", async () => {
         await withLink(async (link, sim) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             sim._forceRunning();
-            expect(await link.command("pause")).toBe("ok");
+            expect(await link.commands().send("pause")).toBe("ok");
             const r = replies(sim);
             await sim.write(packCjog(1, 0));
             expect(r).toEqual(["b706"]);
@@ -679,7 +679,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
 
     it("refuses a jog in a running job as busy", async () => {
         await withLink(async (link, sim) => {
-            await link.command("setorigin");
+            await link.commands().send("setorigin");
             sim._forceRunning();
             const r = replies(sim);
             await sim.write(packCjog(1, 0));
