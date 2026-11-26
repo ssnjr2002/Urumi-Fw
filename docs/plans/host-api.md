@@ -1503,7 +1503,7 @@ case the host reacts to the wrong thing. The fix has two parts. The codes
 split, so each one tells the host what to do. And a NACK carries a short
 text saying exactly what failed, for a person to read. Branch 9 then names
 the final set once.
-**Status:** done on the branch, not merged.
+**Status:** merged at `cdde579`.
 
 **`NACK_JOB` today: 17 send sites** (`data_plane.cpp`).
 
