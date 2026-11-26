@@ -195,7 +195,7 @@ the key is not recognised (older firmware).
 The one group:
 
 ```
-status = state ctx homed enabled head tools unlocked mpos wpos buf busy mute excluded touched mesh
+status = state ctx homed enabled head tools unlocked mpos wpos buf busy placed mute excluded touched mesh
 ```
 
 The keys, in the order bare `get` lists them. A mask is hex, bit n = bus node
@@ -240,6 +240,7 @@ n (or head n, for `unlocked`), whether mapped or not.
 | `touched` | mask: nodes energised or holding a slot, bound or fenced | |
 | `buf` | planner blocks queued | |
 | `busy` | 1 while a step or sequence runs: a command that needs nothing running answers `err busy`; 0 in a paused job. As `STATUS_RSP` | |
+| `placed` | 1 while the job is in PLACE with `place set` standing, until `place ok` or the job leaves PLACE. As `STATUS_RSP` | |
 | `queued` | motion time of the queued blocks not yet started, µs | |
 | `expectedseq` | the next wire seq the data plane executes; not flow control | |
 | `pos` | `<id>:<steps>,…` per config axis node, id order: the machine position the controller believes; `<id>:-` unknown. `nodepos` reads the node's own counter | no config axis node |
@@ -437,7 +438,9 @@ reset
 rst
 ```
 
-Soft reset of the controller.
+Soft reset of the controller. After the `ok` it restarts and prints its
+start-up lines, `RS485 controller (<baud> baud)` then `ready`: the one
+command that answers with more than one line.
 
 **Replies:** `ok`, `err bad_state` (a context open)
 **Runs:** `write`; no context open
@@ -1220,7 +1223,7 @@ place frame
 place ok
 ```
 
-Places a job on the bed with the laser dot, before it buffers.
+Places a job on the bed with the laser dot, before it buffers. Whether `place set` stands is `placed` (`get`, `STATUS_RSP`).
 
 | Form | Runs | Does |
 | --- | --- | --- |

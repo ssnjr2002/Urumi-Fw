@@ -13,10 +13,10 @@ does.
 import { packLayerHdr, crc8, MachineState, NACK_FULL } from "urumi-host/packets";
 ```
 
-**Checked against `18897ca`.** To see what may have changed since:
+**Checked against `e8de999`.** To see what may have changed since:
 
 ```bash
-git diff 18897ca -- web/src/packets/
+git diff e8de999 -- web/src/packets/
 ```
 
 Every encoder returns one whole record, ending in its CRC8. A record that
@@ -183,6 +183,7 @@ source can't carry is `undefined`, never zero.
 | `layer`, `record` | `number` | where a job is, or its resume point; `layer` is `NO_LAYER` without a job. `STATUS_RSP` only. |
 | `bufCount` | `number` | blocks queued |
 | `busy` | `boolean` | a step or sequence runs: a command that needs nothing running is refused `busy`. `false` in a paused job. |
+| `placed` | `boolean` | the job is in PLACE with `place set` standing, until `place ok` or the job leaves PLACE |
 | `selection` | `number` | the controlled head, or a `Selection` value |
 | `tools` | `number[]` | the tool id on each head, 0 for none |
 | `nodeHomed`, `nodeEnabled` | `number` | bit n = bus node n |

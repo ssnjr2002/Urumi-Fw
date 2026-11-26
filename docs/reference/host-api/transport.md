@@ -14,10 +14,10 @@ Node program never loads browser code and a page never loads Node's.
 The caller opens the port; `new Link(transport)` takes it from there, the
 same in every environment. One `Link` per transport.
 
-**Checked against `5219bb2`.** To see what may have changed since:
+**Checked against `e8de999`.** To see what may have changed since:
 
 ```bash
-git diff 5219bb2 -- web/src/transport/
+git diff e8de999 -- web/src/transport/
 ```
 
 ```ts
@@ -207,7 +207,7 @@ new SimTransport(options?: SimOptions)
 
 | Option | Type | Default | |
 |---|---|---|---|
-| `axisMap` | `(number \| null)[]` | none | the bus node on each motion slot, committed at boot; without it the sim boots unmapped, as the firmware does with no config |
+| `axesMap` | `(number \| null)[]` | none | the bus node on each motion slot, committed at boot; without it the sim boots unmapped, as the firmware does with no config |
 | `busNodes` | `number[]` | `[1, 2, 3, 4]` | the bus nodes that answer; a relay to another times out |
 | `ringSize` | `number` | 64 | records the controller can queue |
 | `ackCoalesceMax` | `number` | 8 | records per ACK at most |
@@ -225,5 +225,5 @@ new SimTransport(options?: SimOptions)
 **Example**
 
 ```ts
-const link = new Link(new SimTransport({ axisMap: [1, 2, 3, null] }));
+const link = new Link(new SimTransport({ axesMap: [1, 2, 3, null] }));
 ```

@@ -9,7 +9,8 @@ The library has six subpaths and no root import: every import names its
 subpath. Each subpath gets its own page here as it is reworked
 ([plan](../../plans/host-api.md)); until then, its `index.ts` lists what it
 exports. Done: [transport](transport.md), [packets](packets.md), [config](config.md),
-[toolpath](toolpath.md), [link](link.md), [session](session.md).
+[toolpath](toolpath.md), [link](link.md), [session](session.md),
+[commands](commands.md).
 
 ## Index
 
@@ -22,7 +23,7 @@ exports. Done: [transport](transport.md), [packets](packets.md), [config](config
 | [`urumi-host/packets`](packets.md) | the binary records: encoders, `JobLayer`, `MachineStatus` and its enums, the CRCs, the codes | — |
 | [`urumi-host/config`](config.md) | the controller's config: JSON to config and back, the encoded config, the config's types | `urumi-host/packets` |
 | [`urumi-host/toolpath`](toolpath.md) | an SVG to a job's layers | `urumi-host/packets`, `urumi-host/config` |
-| [`urumi-host/link`](link.md), [session](session.md) | `Link`, `CJog`, job sessions, names for codes, text-command helpers, waiting for the machine | `urumi-host/transport`, `urumi-host/packets`, `urumi-host/config` |
+| [`urumi-host/link`](link.md), [session](session.md), [commands](commands.md) | `Link`, `CJog`, job sessions, the text commands, names for codes | `urumi-host/transport`, `urumi-host/packets`, `urumi-host/config` |
 
 No subpath depends on one below it in this table, except the sim on
 `urumi-host/packets`.
@@ -60,11 +61,19 @@ Two kinds:
 * **Throws** for a refusal from the controller, a timeout, or a programming
   mistake. A config refusal throws `ConfigTransferError`, whose `reason` is
   the `CFG_NACK_*` code, or `null` when the controller didn't answer.
+* **A refused command** throws `CommandError`: `reason` is one token (the
+  word after `err`, a node's result, or `timeout`), `reply` the line in
+  full. `send()` doesn't throw; it gives the reply as it came.
 
 ## Waiting
 
 A `Link` call that needs a reply returns a promise and takes a timeout in
 ms (`timeoutMs`). A call that needs none, such as `abort()` or `cjog()`,
-returns at once. The controller acknowledges a command before its motion
-ends, so a script that must wait for the machine polls the status with
-`settle()` or `waitAtRest()`.
+returns at once.
+
+The controller acknowledges a command, not its end: `ok` from `home` or
+`goto` means the motion started. Nothing reports that it finished. The
+host sees only the status's `busy`, whether something is running.
+[`cmd.onReady`](commands.md#commandsonready) waits for `busy` to be
+false before sending; to act when a move ends, watch the status with
+[`onStatus()`](link.md#linkonstatus).

@@ -323,7 +323,7 @@ key ([commands.md](commands.md#get)).
 | 30–31 | layer | u16 | the layer of the record the job is running; `0xFFFF` with no job | |
 | 32–35 | record | u32 | that record; 0 with no job | |
 | 36 | context | u8 | 0 IDLE, 1 JOB, 2 PROBE, 3 HOMING | `ctx` |
-| 37 | flags | u8 | bit 0 busy: a step or sequence runs, so a command that needs nothing running answers `err busy`; a paused job's parked ring isn't running | `busy` |
+| 37 | flags | u8 | bit 0 busy: a step or sequence runs, so a command that needs nothing running answers `err busy`; a paused job's parked ring isn't running. Bit 1 placed: the job is in PLACE with `place set` standing | `busy`, `placed` |
 | 38 | CRC8 | u8 | | |
 
 | State | Reason values |

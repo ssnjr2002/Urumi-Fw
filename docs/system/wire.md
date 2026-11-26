@@ -166,23 +166,27 @@ never reads: a caller that wants a reply waits on its sink.
 
 A line is at most 255 characters; longer ones are cut. Every command
 answers with exactly one line, `ok …` or `err …`, and an unknown one with
-`err unknown`. The commands and their replies are in
-[commands.md](../reference/commands.md).
+`err unknown`. One exception: after `reset`'s `ok` the controller restarts
+and prints its start-up lines, ending with `ready`. The commands and their
+replies are in [commands.md](../reference/commands.md).
 
 ### Host
 
-* `command(text)` sends a line and waits for the reply, 1 s by default; on
-  timeout it returns `""`. One command is outstanding at a time. Before
-  sending, it empties the text sink: a line still there is left over from a
-  command that timed out, or a reply of more than one line. Each dropped
-  line is counted in `textDesyncs`, which should stay 0.
-* `send(text)` sends a line without waiting, for `stop`: an e-stop never
-  queues behind a command waiting for its reply. Its effect shows in the
-  status.
-* `commands.ts` wraps each command in a function that parses its reply.
-* `settled.ts` polls the status until a condition holds (`settle()`,
-  `waitAtRest()`), since the last record is acknowledged long before the
-  machine stops moving.
+* `Link._command(text)` sends a line and waits for the reply, 1 s by
+  default; on timeout it returns `""`. One command is outstanding at a
+  time. Replies come back in the order the lines went out, so the link
+  keeps a list, in that order, of who each awaited line belongs to.
+* `estop()` sends `stop` at once, never behind a command waiting for its
+  reply. Its `ok` goes on the list as a line nobody reads, and is dropped
+  when it arrives.
+* `reset` reads its `ok`, then drops lines through `ready`.
+* Before sending, a command empties the text sink. A line still there is
+  an estop's `ok`, dropped, or left over from a command that timed out or a
+  reply of more than one line, counted in `textDesyncs`, which should stay
+  0.
+* `commands.ts` holds `Commands`, from `link.commands()`: one method per
+  command, each parsing its reply and throwing `CommandError` on a refusal.
+  `onReady` waits for the status's `busy` to be false before sending.
 
 ## 6. Status
 
@@ -194,9 +198,9 @@ are in [packets.md](../reference/packets.md#status).
 
 ### Host
 
-* `getStatus()` sends `STATUS_REQ` and waits for a sample newer than the one
-  it had.
-* `status` is the latest sample, with no round trip.
+* The link sends `STATUS_REQ` every `statusPollMs` on its own.
+* `status` is the latest sample, with no round trip; `freshStatus()` waits
+  for the next one.
 
 A job session polls status every 100 ms while it streams, after each batch.
 
@@ -376,7 +380,6 @@ nothing unasked.
 | `web/src/link/writer.ts` | `Writer` |
 | `web/src/link/session.ts` | the job session and its window |
 | `web/src/transport/index.ts` | `Transport` |
-| `web/src/link/commands.ts` | one function per text command |
-| `web/src/link/settled.ts` | `settle()`, `waitAtRest()` |
+| `web/src/link/commands.ts` | `Commands`: one method per text command, `CommandError` |
 | `web/src/transport/` | WebSerial, Node, the Sim |
 | `web/src/packets/` | the packers and parsers, as in [packets.md](../reference/packets.md) |

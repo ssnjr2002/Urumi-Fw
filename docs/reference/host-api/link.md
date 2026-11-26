@@ -5,7 +5,7 @@ come in two kinds, by whether they wait their turn:
 
 | Kind | Is | Through |
 |---|---|---|
-| **in turn** | text commands from [commands.md](../commands.md), one at a time in call order, each answered by one reply line | [`command()`](#linkcommand), the [text-command helpers](#text-command-helpers) |
+| **in turn** | text commands from [commands.md](../commands.md), one at a time in call order, each answered by one reply line | [`commands()`](#linkcommands) |
 | **at once** | requests that never wait behind a command: the stops, the status, a continuous jog, the config, a job's records | [`estop()`](#linkestop), [`abort()`](#linkabort), [`onStatus()`](#linkonstatus), [`cjog()`](#linkcjog), [`pushConfig()`](#linkpushconfig), [`session()`](#linksession), … |
 
 The kinds don't follow the wire's planes: `estop()` is the text line
@@ -20,10 +20,10 @@ never more than one poll old.
 import { Link, stateName } from "urumi-host/link";
 ```
 
-**Checked against `cfb8be9`.** To see what may have changed since:
+**Checked against `e8de999`.** To see what may have changed since:
 
 ```bash
-git diff cfb8be9 -- web/src/link/
+git diff e8de999 -- web/src/link/
 ```
 
 | Name | Kind |
@@ -32,10 +32,9 @@ git diff cfb8be9 -- web/src/link/
 | [`CJog`](#cjog) | class |
 | [`ConfigTransferError`](#configtransfererror) | error |
 | [Names](#names) | functions |
-| [`settle()`](#settle), [`waitAtRest()`](#waitatrest) | functions |
-| [Text-command helpers](#text-command-helpers) | functions |
 
-The job session (`JobSource`, `Session`) has its own page:
+The text commands (`Commands`, `CommandError`) have their own page:
+[commands](commands.md); the job session (`JobSource`, `Session`) too:
 [session](session.md).
 
 # `Link`
@@ -80,7 +79,7 @@ const link = new Link(await WebSerialTransport.request());
 
 | Method | |
 |---|---|
-| [`command()`](#linkcommand) | send a text command, resolve to its reply |
+| [`commands()`](#linkcommands) | the text commands |
 | [`estop()`](#linkestop) | e-stop |
 | [`abort()`](#linkabort) | get the machine to IDLE |
 | [`freshStatus()`](#linkfreshstatus) | wait for a status sample from after the call |
@@ -91,32 +90,26 @@ const link = new Link(await WebSerialTransport.request());
 | [`stats()`](#linkstats) | counters for diagnostics |
 | [`close()`](#linkclose) | close the port |
 
-### `Link.command()`
+### `Link.commands()`
 
-Sends one text command and resolves to its reply. Commands run one at a
-time, in call order.
+The link's text commands, as methods: [commands](commands.md).
 
 **Syntax**
 
 ```ts
-command(line: string, timeoutMs?: number): Promise<string>
+commands(): Commands
 ```
-
-**Parameters**
-
-* `line`: a command from [commands.md](../commands.md), without the
-  newline.
-* `timeoutMs`: how long to wait for the reply. Default 1000.
 
 **Return value**
 
-The reply line, trimmed; `""` on a timeout.
+The link's one [`Commands`](commands.md#commands-1): the same object on
+every call.
 
 **Example**
 
 ```ts
-const reply = await link.command("home xy");
-if (reply !== "ok") show(reply);
+const cmd = link.commands();
+await cmd.home({ form: "xy" });
 ```
 
 ### `Link.estop()`
@@ -132,7 +125,10 @@ estop(): void
 
 **Return value**
 
-None. No reply; the status shows it take hold (`ESTOP`, then `ALARM`).
+None. The controller answers `ok`, which the link drops: a command
+waiting for its own reply doesn't read it, and it isn't counted in
+`textDesyncs`. The status shows the e-stop take hold (`ESTOP`, then
+`ALARM`).
 
 ### `Link.abort()`
 
@@ -379,6 +375,7 @@ Counters since construction, for diagnostics:
 
 * `textDesyncs`: reply lines that arrived with no command waiting for them.
   It should stay 0; anything else means a firmware reply with extra lines.
+  The e-stop's `ok` and `reset`'s start-up lines aren't counted.
 * `frames`, `textLines`: frames and text lines received.
 * `unknownBytes`: bytes that started neither a frame nor a line. Above 0
   means a firmware and host of different versions, or a desync.
@@ -498,108 +495,3 @@ number, `STATE(7)`, never as a known word.
 | `faultNames(mask: number): string` | the set `Fault` bits, joined with `\|`; `"NONE"` for 0 |
 | `nackName(code: number): string` | a `NACK_*` code |
 | `cfgNackName(code: number): string` | a `CFG_NACK_*` code |
-
-# Waiting
-
-The controller answers a command before its motion ends, so a script
-that must wait for the machine polls its status. These ask for the status
-themselves, on top of the link's poll.
-
-## Functions
-
-| Function | |
-|---|---|
-| [`settle()`](#settle) | poll until a condition holds |
-| [`waitAtRest()`](#waitatrest) | poll until the machine is at rest |
-
-### `settle()`
-
-**Syntax**
-
-```ts
-settle(link: Link, until: (s: MachineStatus) => boolean, options?: SettleOptions): Promise<MachineStatus>
-
-interface SettleOptions {
-  pollMs?: number;
-  timeoutMs?: number;
-  fatal?: readonly MachineState[];
-  onPoll?: (s: MachineStatus) => void;
-}
-```
-
-**Parameters**
-
-* `link`: the link to poll.
-* `until`: the condition. Ready ones: `atRest`, `inState(s)` and
-  `inAnyState(...s)`. `atRest` means the controller would take the next
-  command: outside a job, `IDLE` with nothing queued; in a job, paused, or
-  buffering with nothing queued.
-* `options.pollMs`: the gap between polls. Default 150.
-* `options.timeoutMs`: give up after this long; 0 waits forever. Default 0.
-* `options.fatal`: states that end the wait with an error. Default `ESTOP`
-  and `ALARM`; `[]` waits through them.
-* `options.onPoll`: called with every sample, the last included.
-
-**Return value**
-
-The sample that met the condition. The first poll is at once.
-
-**Exceptions**
-
-* `SettleError` on a timeout or a fatal state. Its `reason` is `"timeout"`
-  or `"fatal"`, and `status` the last sample.
-
-**Example**
-
-```ts
-await link.command("goto w xy 100 50");
-await settle(link, atRest, { timeoutMs: 30000 });
-```
-
-### `waitAtRest()`
-
-Waits until the machine is at rest, without throwing.
-
-**Syntax**
-
-```ts
-waitAtRest(link: Link, timeoutMs?: number, options?: SettleOptions): Promise<boolean>
-```
-
-**Parameters**
-
-* `link`: the link to poll.
-* `timeoutMs`: default 5000.
-* `options`: as for `settle()`, without `timeoutMs` and `fatal`; `pollMs`
-  defaults to 50.
-
-**Return value**
-
-`true` once [`atRest`](#settle), `false` on a timeout. `ALARM` and
-`ESTOP` count as rest: the machine isn't moving.
-
-# Text-command helpers
-
-Typed wrappers over [`command()`](#linkcommand), one per command in
-[commands.md](../commands.md). Each takes the link first and parses the
-reply. How a refusal shows varies: some resolve to `false` or `null`,
-some to the reply line, some throw. Their parameters and results are on
-their types.
-
-| Group | Helpers |
-|---|---|
-| reachability | `ping`, `pingNode`, `pingAll` |
-| keys | `get`, `getKeys`, `getState`, `GET_MAX_KEYS`, `STATE_KEYS` |
-| nodes | `nodePos`, `nodeStat`, `enable`, `disable` |
-| machine | `setOrigin`, `axisMap`, `readAxisMap`, `unalarm`, `jog` |
-| legs | `linLeg`, `rotLeg`, `parkLeg`, `legAbort` |
-| probe | `probeMap`, `probeLeg`, `probeEnd`, `setProbe`, `unprobe` |
-| peripherals | `vacServo`, `vacPump`, `vacSwitch`, `knifeOsc`, `knifeBlower` |
-| job | `pause`, `cancel` |
-
-The e-stop and the status are on `Link` itself: [`estop()`](#linkestop),
-[`status`](#properties), [`freshStatus()`](#linkfreshstatus).
-
-```ts
-const faults = await unalarm(link);
-```

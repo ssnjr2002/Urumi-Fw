@@ -1374,7 +1374,7 @@ reworks.
      `@internal`, stands in for a reload in the tests.
 8. `feature/web-commands`: the text commands. Depends on 6 and on the
    firmware's `busy` bit (below, merged).
-   **Status:** not started.
+   **Status:** done on the branch, not merged.
    * `link.commands()` returns the link's one `Commands` (no public
      constructor). `send(line)` gives the raw reply; each other method
      sends its command, parses the reply, resolves on `ok` with the parsed
@@ -1403,12 +1403,59 @@ reworks.
      between legs, where the firmware admits commands. `getStatus()` goes.
    * No chaining; a `run()` for fixed sequences only if they turn out
      common.
+   * The `placed` bit, firmware: STATUS_RSP flags bit 1 is `placed`
+     (the placement's `isSet`: `place set` standing in JOB.PLACE), and
+     `get placed` mirrors it; same layout, same magic. Host:
+     `MachineStatus.placed` beside `busy`; the sim models it. The demo's
+     `notePlace` guess goes: its hint reads `link.status.placed`, and a
+     refusal's text comes from the `CommandError`. Not the session's to
+     track: a `place set` from the console, another tab or before a
+     takeover never passes through it.
+   * The text plane's stray lines: `stop` replies `ok`, which
+     `link.estop()` never reads, and `reset` replies `ok` then the boot
+     banner (`RS485 controller …`, `ready`); both count as desyncs on the
+     next command today. `estop()` drops the one `ok` it causes;
+     `cmd.reset()` resolves on `ok` and drops the banner through `ready`;
+     `send()` takes the same paths. `link.send` becomes `link._send`.
+   * The sim moves from `axis_map` to `axes_map` and `slot_map`, and its
+     tests with it. The tests move from `link.command()` and
+     `link.getStatus()` to `cmd.send()` and `link.freshStatus()`.
    * Docs: a new `commands.md`, stamped. `link.md` loses `settle()`,
      `waitAtRest()` and the helper table, and points to it. The README adds
      commands to Done, a `CommandError` bullet to Errors, and rewrites
      Waiting: the controller acknowledges a command, not its end; the host
      sees only `busy`; `cmd.onReady` waits before sending. `wire.md` drops
-     `settled.ts` and `getStatus()`.
+     `settled.ts` and `getStatus()`. For `placed`: `packets.md` (the flags
+     row), `commands.md` (`get placed`, the `status` group if it joins),
+     `host-api/packets.md` (a `placed` row, a new stamp). `link.md`'s
+     `estop()` says its `ok` is dropped; `commands.md` (host-api) says
+     `reset()` waits out the banner.
+
+   **Outcome.** As planned, in two commits: the firmware's `placed`
+   (`3705312`) and the host (`e8de999`). Settled along the way:
+   * One method per command, its forms in one argument: `leg({ form, id,
+     … })` with the speeds as `ramp: { startUs, endUs, steps }` for the
+     four leg helpers; `home(target?)` for the `home*` variants;
+     `jog({ x?, y? } | { z } | { a })`, the direction shape `cjog()` takes,
+     for `jog` and `jogXY`; `place("go", { x, y })`. `axesMap()` and
+     `slotMap()` read with no argument and set with one.
+   * `CommandError.reason` is one token: the word after `err`, a node's
+     result, `timeout`, `bad_reply`, or `estop` from `onReady`.
+   * `getState`, `getFrames`, `STATE_KEYS` and `GET_MAX_KEYS` go: the
+     status covers them. `unstop`, `bus_exclude`, `laser`, `set`, `save`
+     and the motion primitives stay on `send()`.
+   * `placed` is `place set` standing, false once `place ok` leaves PLACE;
+     it joined the `get status` group after `busy`.
+   * The link keeps, in write order, who each awaited text line belongs
+     to, so an e-stop's `ok` is dropped whether a command was waiting or
+     not. The sim's option is `axesMap`, and its tests poll the status
+     every 10 ms so `freshStatus()` sees a 60 ms leg running.
+
+   Two bugs found and fixed: the leg helpers sent `leg <id> <form>`, the
+   order the firmware doesn't read (the sim accepted it), and `probeLeg`
+   sent `probe_leg`, which the firmware no longer has. The `placed` flag,
+   `reset` and the leg order are tested against the sim only, not yet on
+   the Pico.
 9. `feature/web-names`: the names move to `urumi-host/packets`, beside
    the enums they name. Depends on 6.
    **Status:** not started.
