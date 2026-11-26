@@ -1326,7 +1326,7 @@ reworks.
 7. `feature/web-session`: the job session. `JobSource`'s options (3),
    `run()` resetting the seq (4), `Session.phase` (5), the holds tabled
    (7), the fatal reason split and `SessionResult`; the README's job example
-   finished (16). Depends on 5 and 6. **Status:** done, not merged.
+   finished (16). Depends on 5 and 6. **Status:** merged at `d79c9fa`.
    * `Link.attach()` folds into `Link.session()`: `run()` asks the
      controller first, sends a new job when it is idle, takes over a
      paused job with the source's id, and fails with `FATAL_JOB_MISMATCH`
