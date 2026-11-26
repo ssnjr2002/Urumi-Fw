@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { buildJob, prepareBezierJob, type BezierJob } from "../../src/toolpath/job.js";
+import { loadSvg } from "../../src/toolpath/svg.js";
 import { defaultConfig } from "../machines.js";
 import { BezierFlag } from "../../src/toolpath/annotate.js";
 import { packBezier } from "../../src/packets/bezier.js";
@@ -64,5 +65,16 @@ describe("buildJob", () => {
             expect.stringMatching(/^pen and pen: .*heads 0 and 1/),
             expect.stringMatching(/^crease: not a tool layer/),
         ] });
+    });
+});
+
+describe("loadSvg", () => {
+    it("gives each layer the problem buildJob would report", () => {
+        const body = `<g id="pen">${SQUARE}</g><g id="pen.2">${SQUARE}</g>`;
+        const config = defaultConfig();
+        const problems = loadSvg(svg(body), config).layers.map((l) => [l.key, l.problem]);
+        expect(problems).toEqual([["pen", ""], ["pen.2", "tool pen has no chambers"]]);
+        const r = buildJob(svg(body), config, { thickness: 0, layers: [{ key: "pen.2", head: 0 }] });
+        expect(r).toEqual({ ok: false, errors: ["pen.2: tool pen has no chambers"] });
     });
 });

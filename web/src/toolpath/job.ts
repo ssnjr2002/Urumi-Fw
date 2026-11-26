@@ -4,7 +4,7 @@
  * Pico queues the travel to it.
  */
 
-import { readSvg, toolLayer, type Subpath } from "./svg.js";
+import { readSvg, toolLayer, toolProblem, type Subpath } from "./svg.js";
 import type { ControllerConfig, QualityConfig } from "../config/schema.js";
 import { packBezier, type Point } from "../packets/bezier.js";
 import type { JobLayer, ToolBox } from "../packets/layer.js";
@@ -118,12 +118,9 @@ export function buildJob(svg: string, config: ControllerConfig, spec: JobSpec): 
         const tl = subpaths && toolLayer(l.key, tools);
         if (!subpaths || !tl) return void errors.push(`${l.key}: not a tool layer of the SVG`);
         const profile = config.toolProfiles[tl.tool]!;
-        if (profile.id == null) return void errors.push(`${l.key}: tool ${tl.tool} has no id`);
-
-        const chambers = profile.chamberOffsets?.length ?? 0;
-        if (chambers ? !(tl.chamber >= 1 && tl.chamber <= chambers) : tl.chamber !== 0) {
-            errors.push(chambers ? `${l.key}: chamber ${tl.chamber} not in 1..${chambers}` : `${l.key}: tool ${tl.tool} has no chambers`);
-        }
+        const problem = toolProblem(tl, config);
+        if (problem) errors.push(`${l.key}: ${problem}`);
+        if (profile.id == null) return;
         const depth = l.depth ?? spec.thickness;
         if (profile.plunge && !(depth > 0)) errors.push(`${l.key}: tool ${tl.tool} plunges, so needs a depth above 0`);
         const other = heads.get(profile.id);

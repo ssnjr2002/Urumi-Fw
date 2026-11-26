@@ -23,6 +23,7 @@ import {
     JoggingReason,
     HomingReason,
     ProbingReason,
+    Selection,
     AXIS_BITS,
     type AxisLetter,
 } from "./status.js";
@@ -78,6 +79,9 @@ export const nack = (code: number): string => lookup(Nack, code, `NACK(${code})`
 
 /** A CfgNack code, e.g. "SCHEMA". */
 export const cfgNack = (code: number): string => lookup(CfgNack, code, `CFG_NACK(${code})`);
+
+/** The controlled point: "ANCHOR", "NONE", or a head index such as "0". */
+export const selection = (s: number): string => lookup(Selection, s, String(s));
 
 const LETTERS: readonly AxisLetter[] = ["x", "y", "z", "a"];
 

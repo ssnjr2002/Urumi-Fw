@@ -57,6 +57,12 @@ describe("names", () => {
     });
 });
 
+describe("names.selection", () => {
+    it("names the anchor and none, and a head by its index", () => {
+        expect([names.selection(0xfe), names.selection(0xff), names.selection(1)]).toEqual(["ANCHOR", "NONE", "1"]);
+    });
+});
+
 describe("names.axes", () => {
     it("renders set bits as letters in axis order", () => {
         expect(names.axes(axisMask("xy"))).toBe("xy");

@@ -86,9 +86,11 @@ describe("wire/link/session: job life", () => {
     it("stays open after the last ACK and ends on close()", async () => {
         await withLink(async (link) => {
             const { sess, done } = await start(link, 6);
+            expect(sess.done).toBe(false);
             await until(() => atX(link, 6));
             expect(sess.stats()).toMatchObject({ acked: HDRS + 7 });
             expect(sess.drained).toBe(true);
+            await until(() => sess.done);
             expect(sess.hold).toBeNull();
             let ended = false;
             void done.then(() => { ended = true; }, () => { ended = true; });
@@ -164,7 +166,7 @@ describe("wire/link/session: attach", () => {
             const sess = link.session(job(40));
             const done = sess.run();
             await until(() => sess.hold === "paused");
-            expect(sess.resume()).toBe(true);
+            expect(await sess.resume()).toBe(true);
             await until(() => atX(link, 40));
             await sess.close();
             expect((await done).ok).toBe(true);
@@ -185,7 +187,7 @@ describe("wire/link/session: attach", () => {
             // The sim has no host watch: pause it by hand, as a dry job would.
             expect(await link.commands().send("pause")).toBe("ok");
             await until(() => sess.hold === "paused");
-            expect(sess.resume()).toBe(true);
+            expect(await sess.resume()).toBe(true);
             await until(() => atX(link, 40));
             await sess.close();
             expect((await done).ok).toBe(true);
@@ -221,7 +223,7 @@ describe("wire/link/session: pause", () => {
             expect(await link.commands().send("pause")).toBe("ok");
             await until(() => sess.hold === "paused");
             expect(sess.stats().nacks).toBeGreaterThan(0); // held by NACK_PAUSED, not the status
-            expect(sess.resume()).toBe(true);
+            expect(await sess.resume()).toBe(true);
             await until(() => atX(link, 40));
             expect(sess.hold).toBeNull();
             await sess.close();
@@ -413,7 +415,7 @@ describe("wire/link/session: job headers", () => {
             await until(async () => (await link.freshStatus()).reason === JobReason.RUNNING);
             expect(await link.commands().send("pause")).toBe("ok");
             await until(() => sess.hold === "paused");
-            expect(sess.resume()).toBe(true);
+            expect(await sess.resume()).toBe(true);
             await until(() => atX(link, 40));
             await sess.close();
             expect((await done).ok).toBe(true);
@@ -437,10 +439,13 @@ describe("wire/link/session: manual layers", () => {
             expect(sess.stats().acked).toBe(src.preflightFrames);
 
             src.release();
-            await until(() => atX(link, 2));
-            await tick(60);
-            expect((await link.freshStatus()).wpos?.[0]).toBe(2);
+            // `release` only once the layer is cut: never while blocks are queued.
+            for (let i = 0; i < 100 && sess.hold !== "release"; i++) {
+                await tick(10);
+            }
             expect(sess.hold).toBe("release");
+            expect(link.status?.bufCount).toBe(0);
+            expect((await link.freshStatus()).wpos?.[0]).toBe(2);
             expect(sess.drained).toBe(false);
 
             src.release();
@@ -504,7 +509,7 @@ describe("wire/link/session: placement", () => {
             await tick(150);
             expect(sess.stats()).toMatchObject({ sent: 2, acked: 2, nacks: 0 });
             expect(sess.hold).toBe("place");
-            expect(sess.resume()).toBe(false);
+            expect(await sess.resume()).toBe(false);
             expect(await link.commands().send("place ok")).toBe("err bad_state"); // no zero set
             expect(await link.commands().send("place set")).toBe("ok");
             expect(await link.commands().send("place go xmax ymax")).toBe("ok");
@@ -607,7 +612,7 @@ describe("wire/link/session: tool change", () => {
             await tick(150);
             expect(sess.stats().sent).toBe(sent);
 
-            expect(sess.resume()).toBe(true); // not mounted yet: refused again
+            expect(await sess.resume()).toBe(false); // not mounted yet: refused again
             await until(() => sess.stats().sent > sent);
             await until(() => sess.hold === "tool");
 
@@ -649,7 +654,7 @@ describe("wire/link/session: tool change", () => {
             await until(() => sess.hold === "tool");
             await until(async () => (await link.freshStatus()).reason === JobReason.TOOL_CHANGE);
             await until(() => sess.hold === "tool");
-            expect(sess.resume()).toBe(false);
+            expect(await sess.resume()).toBe(false);
             sess.abort();
             expect((await done).ok).toBe(true);
         }, { tools: {}, toolChangeMs: 2000 });
@@ -663,7 +668,7 @@ describe("wire/link/session: tool change", () => {
             const sent = sess.stats().sent;
             await sim.write(packCjog(1, 0));
             await until(async () => (await link.freshStatus()).state === MachineState.JOGGING);
-            expect(sess.resume()).toBe(false);
+            expect(await sess.resume()).toBe(false);
             for (let t = 0; t < 400; t += 30) { // held past several of the session's polls
                 await sim.write(packCjog(1, 0));
                 await tick(30);
@@ -674,7 +679,7 @@ describe("wire/link/session: tool change", () => {
 
             expect(await link.commands().send("mount 0 1")).toBe("ok");
             expect(await link.commands().send("wzero z")).toBe("ok");
-            expect(sess.resume()).toBe(true);
+            expect(await sess.resume()).toBe(true);
             await until(() => sess.hold === null);
             await sess.close();
             expect((await done).ok).toBe(true);

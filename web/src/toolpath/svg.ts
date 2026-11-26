@@ -505,6 +505,8 @@ export function readSvg(svgText: string, options: ReadOptions = {}): SvgPaths {
 export interface ToolLayer extends ToolName {
     /** `<tool>`, or `<tool>.<n>`. */
     readonly key: string;
+    /** Why it can't run with this config, as buildJob reports it; "" if it can. */
+    readonly problem: string;
     /** Its curves, in mm with Y up, to draw it. */
     readonly paths: readonly Subpath[];
 }
@@ -521,6 +523,21 @@ export function loadSvg(svg: string, config: ControllerConfig): LoadedSvg {
     const read = readSvg(svg, { tools });
     const layers = [...read.layers]
         .filter(([key]) => key !== "")
-        .map(([key, paths]) => ({ key, ...toolLayer(key, tools)!, paths }));
+        .map(([key, paths]) => {
+            const tl = toolLayer(key, tools)!;
+            return { key, ...tl, problem: toolProblem(tl, config), paths };
+        });
     return { layers, warnings: read.warnings };
+}
+
+/**
+ * Why a tool layer can't run with this config, whatever the job: its tool
+ * has no id, or the chamber isn't one the tool has. "" if it can.
+ */
+export function toolProblem(tl: ToolName, config: ControllerConfig): string {
+    const profile = config.toolProfiles[tl.tool]!;
+    if (profile.id == null) return `tool ${tl.tool} has no id`;
+    const chambers = profile.chamberOffsets?.length ?? 0;
+    if (chambers ? tl.chamber >= 1 && tl.chamber <= chambers : tl.chamber === 0) return "";
+    return chambers ? `chamber ${tl.chamber} not in 1..${chambers}` : `tool ${tl.tool} has no chambers`;
 }

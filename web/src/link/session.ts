@@ -221,6 +221,12 @@ export class JobSource {
     }
 }
 
+/** At rest in the job with nothing queued: what was sent is cut. */
+function atRest(st: MachineStatus | null): boolean {
+    return !!st && st.context === MachineContext.JOB && st.state === MachineState.JOB &&
+        st.reason === JobReason.BUFFERING && st.bufCount === 0;
+}
+
 // ── the session ───────────────────────────────────────────────────────────────
 
 /**
@@ -265,6 +271,7 @@ export class Session {
     private _dropped = false; // _drop() asked
     private _linkClosed = false; // the port closed: run() rejects
     private _go = false; // resume() asked
+    private _resumed: ((ok: boolean) => void) | null = null; // resume()'s answer, on the first reply
     private _pauseAsked = false; // pause() got `ok`
     private _staleStamp = 0; // status samples up to this stamp predate the last ACK or hold
     private _wakeResolve: (() => void) | null = null;
@@ -296,15 +303,24 @@ export class Session {
         });
     }
 
-    /** Why the session isn't sending; null while it sends or has sent everything. */
+    /**
+     * Why the session isn't sending; null while it sends or has sent
+     * everything. `release` once the layers before the waiting one are cut.
+     */
     get hold(): Hold | null {
         if (this._held) return this._held;
-        return !this._ending && this._next <= this._base && this._job.waiting ? "release" : null;
+        return !this._ending && this._next <= this._base && this._job.waiting && atRest(this._status())
+            ? "release" : null;
     }
 
     /** Every frame is acknowledged; the machine may still be cutting. */
     get drained(): boolean {
         return this._done && this._base >= this._emitted;
+    }
+
+    /** The job is cut: drained, and the controller at rest in it with an empty buffer. */
+    get done(): boolean {
+        return this.drained && atRest(this._status());
     }
 
     stats(): SessionStats {
@@ -358,20 +374,30 @@ export class Session {
     /**
      * Leave a hold: `paused` or `refused` at the status's resume point, `tool`
      * by resending the refused layer once the operator has mounted and zeroed.
-     * False if not held so, if the machine is not in JOB (a jog or probe inside
-     * the job), or if a tool hold is not yet in TOOL_WAIT.
+     * Resolves on the controller's answer to the first frame resent: true if
+     * taken, false if refused and held again. False at once if not held so, if
+     * the machine is not in JOB (a jog or probe inside the job), or if a tool
+     * hold is not yet in TOOL_WAIT; false if the session ends first.
      */
-    resume(): boolean {
+    resume(): Promise<boolean> {
         const st = this._status();
-        if (st?.state !== MachineState.JOB) return false;
+        if (st?.state !== MachineState.JOB) return Promise.resolve(false);
         if (this._held === "tool") {
-            if (st.reason !== JobReason.TOOL_WAIT) return false;
+            if (st.reason !== JobReason.TOOL_WAIT) return Promise.resolve(false);
         } else if (this._held !== "paused" && this._held !== "refused") {
-            return false;
+            return Promise.resolve(false);
         }
+        this._resumed?.(false);
+        const answer = new Promise<boolean>((r) => { this._resumed = r; });
         this._go = true;
         this._wake();
-        return true;
+        return answer;
+    }
+
+    /** Settle a pending resume() with the controller's answer. */
+    private _answerResume(ok: boolean): void {
+        this._resumed?.(ok);
+        this._resumed = null;
     }
 
     /**
@@ -388,6 +414,7 @@ export class Session {
             fatal = e.fatal;
         }
         this._held = null;
+        this._answerResume(false);
         if (fatal) this._log(`FATAL: ${fatal.by === "host" ? fatal.why : names.nack(fatal.nack)}`);
         return {
             ok: !fatal,
@@ -466,6 +493,7 @@ export class Session {
             }
             if (resp instanceof Ack) {
                 if (this._applyAck(resp.expectedSeq)) {
+                    if (!this._held) this._answerResume(true);
                     lastProgress = monotonicNow();
                     this._staleStamp = this._statusSink.sample[1];
                 }
@@ -564,6 +592,7 @@ export class Session {
      * as stale duplicates without running (a rebooted controller).
      */
     private async _hold(h: Hold): Promise<void> {
+        this._answerResume(false);
         this._held = h;
         this._go = false;
         this._pauseAsked = false;
