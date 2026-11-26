@@ -8,10 +8,10 @@ its frames, a `Session` sends them and follows the job until it closes.
 import { Link, JobSource } from "urumi-host/link";
 ```
 
-**Checked against `e511050`.** To see what may have changed since:
+**Checked against `f5fdc2d`.** To see what may have changed since:
 
 ```bash
-git diff e511050 -- web/src/link/session.ts
+git diff f5fdc2d -- web/src/link/session.ts
 ```
 
 | Name | Kind |
@@ -92,6 +92,7 @@ A job running on the link. Made by
 |---|---|---|
 | `hold` | `Hold \| null` | why the session isn't sending; `null` while it sends or has sent everything |
 | `drained` | `boolean` | every frame is acknowledged; the machine may still be cutting |
+| `done` | `boolean` | the job is cut: `drained`, and the controller at rest in the job with an empty buffer. It stays open until [`close()`](#sessionclose). |
 
 ```ts
 type Hold = "place" | "tool" | "paused" | "refused" | "silent" | "release"
@@ -104,13 +105,11 @@ type Hold = "place" | "tool" | "paused" | "refused" | "silent" | "release"
 | `paused` | `Nack.PAUSED`, a [`pause()`](#sessionpause), or the status shows `PAUSED` | `resume()` |
 | `refused` | a resume's layer header didn't name the resume point (`Nack.NO_RESUME`) | `resume()` to retry |
 | `silent` | no replies for 3 s | nothing: the session resends by itself, and turns to `paused` if the status shows it |
-| `release` | manual mode: the next layer waits | [`source.release()`](#jobsourcerelease) |
+| `release` | manual mode: the next layer waits, and the controller has cut the ones before it | [`source.release()`](#jobsourcerelease) |
 
 Whatever the session isn't holding for, the status says:
 `link.status.reason` is the controller's own view (`RUNNING`, `DWELL`,
-`TOOL_CHANGE` …). The job is cut when the session is `drained` and the
-status is `BUFFERING` with an empty buffer; it stays open until
-[`close()`](#sessionclose).
+`TOOL_CHANGE` …).
 
 ## Methods
 
@@ -162,27 +161,36 @@ and run a new session. The ids match, so it takes the job over.
 
 ```ts
 const session = link.session(new JobSource(job.layers));
-const done = session.run();   // holds "paused"
-session.resume();
-await done;
+const ended = session.run();   // holds "paused"
+await session.resume();
+await ended;
 ```
 
 ### `Session.resume()`
 
 Leaves a hold: `paused` or `refused` from the status's resume point,
-`tool` by resending the refused layer.
+`tool` by resending the refused layer. The controller checks again, and
+may refuse.
 
 **Syntax**
 
 ```ts
-resume(): boolean
+resume(): Promise<boolean>
 ```
 
 **Return value**
 
-False if the session isn't held `paused`, `refused` or `tool`, if the
+Resolves once the controller has answered the first frame resent: true if
+it took it, false if it refused it and the session holds again. Also false
+at once if the session isn't held `paused`, `refused` or `tool`, if the
 controller isn't in `JOB` (a jog or probe inside the job), or if a `tool`
-hold isn't yet in `TOOL_WAIT`.
+hold isn't yet in `TOOL_WAIT`; and false if the session ends first.
+
+**Example**
+
+```ts
+if (!(await session.resume())) show(`still ${session.hold ?? "stopped"}`);
+```
 
 ### `Session.pause()`
 

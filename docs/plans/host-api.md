@@ -1491,6 +1491,30 @@ reworks.
    reference stamps move to `e511050`. `web/demo/index.js` still imports
    the old names from `link` and doesn't load; it is updated in the next
    pass.
+10. `feature/web-demo`: the demo on the public surface alone. Depends on 9.
+   **Status:** not merged.
+   * The demo worked out three things the library knows. `loadSvg`'s
+     `ToolLayer` gains `problem`, `""` when the layer can run: the tool
+     has an `id` and the chamber is one it has, the check `buildJob`
+     reports (`toolProblem()`, one copy).
+   * `Session.done`: drained, and the controller at rest in the job with
+     an empty buffer. The `release` hold starts only once the layers
+     before the waiting one are cut, so "Execute next" needs no status
+     check.
+   * `Session.resume()` returns `Promise<boolean>`, settled by the
+     controller's answer to the first frame resent: true if taken, false
+     if refused and held again, or at once if nothing is held. The demo
+     polled `stats()` to guess this.
+   * `names.selection()`: the demo's display needed it.
+   * The demo uses the getters and `names`, `instanceof
+     ConfigTransferError`, and drops its own copies.
+
+   **Outcome.** As above. Run on the Pico from `vite demo --mode dist`
+   through the bridge: connect, home (`LEG`), a continuous jog
+   (`CONTINUOUS`), a job placed, paused and resumed (`accepted`), `done`,
+   manual mode (`release` only at rest), a tool change refused while not
+   zeroed (`resume()` false) and accepted once zeroed, and a fatal
+   `OUT_OF_RANGE` with its text. No console errors.
 
 Firmware, before branch 8: the `busy` bit. Admission refuses with
 `err busy` while a step or sequence is live (`machineMoving()`: a paused

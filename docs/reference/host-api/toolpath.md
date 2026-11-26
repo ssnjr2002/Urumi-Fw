@@ -12,10 +12,10 @@ A drawing to a job ([toolpath](../../system/toolpath.md)), in three forms:
 import { loadSvg, buildJob } from "urumi-host/toolpath";
 ```
 
-**Checked against `6871077`.** To see what may have changed since:
+**Checked against `f5fdc2d`.** To see what may have changed since:
 
 ```bash
-git diff 6871077 -- web/src/toolpath/
+git diff f5fdc2d -- web/src/toolpath/
 ```
 
 # Functions
@@ -40,6 +40,7 @@ interface ToolLayer {
   readonly key: string;     // "pen", "revolver_pen.2"
   readonly tool: string;    // a toolProfiles name
   readonly chamber: number; // 0 when the name gives none
+  readonly problem: string; // why the layer can't run with this config; "" if it can
   readonly paths: readonly { curves: readonly { p0; p1; p2; p3 }[]; closed: boolean }[];
 }
 ```
@@ -53,7 +54,10 @@ interface ToolLayer {
 
 The tool layers in document order, and warnings for a person to read.
 Each layer's `paths` are its curves, each point a `Point` in mm with Y up,
-for drawing it.
+for drawing it. `problem` is what `buildJob()` would report for the
+layer whatever the job: its tool has no `id`, or the chamber isn't one the
+tool has, such as `"chamber 3 not in 1..2"`. A list can grey it out
+before anyone picks it.
 
 A group is a tool layer when its name is a tool's, or a tool's followed by
 `.` and a chamber number; the outermost such group counts, and one inside

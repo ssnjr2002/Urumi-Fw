@@ -14,10 +14,10 @@ does.
 import { packLayerHdr, crc8, MachineState, Nack, names } from "urumi-host/packets";
 ```
 
-**Checked against `e511050`.** To see what may have changed since:
+**Checked against `f5fdc2d`.** To see what may have changed since:
 
 ```bash
-git diff e511050 -- web/src/packets/
+git diff f5fdc2d -- web/src/packets/
 ```
 
 Every encoder returns one whole record, ending in its CRC8. A record that
@@ -383,6 +383,7 @@ as `STATE(12)`, never `""` or `undefined`: a newer firmware may send it.
 | `names.faults(mask: number): string` | the set `Fault` bits, joined with `\|`; `"NONE"` for 0 | the bit in hex, such as `0x200` |
 | `names.nack(code: number): string` | a [`Nack`](#nack), from a `NACK` or a `JOG_NACK` | `NACK(n)` |
 | `names.cfgNack(code: number): string` | a `CfgNack` | `CFG_NACK(n)` |
+| `names.selection(s: number): string` | the controlled point: `"ANCHOR"`, `"NONE"`, or a head index such as `"0"` | the number |
 | `names.axes(mask: number): string` | an axis mask as letters in `xyza` order, such as `"xz"`; `"—"` for none | ignored |
 
 A `NACK`'s text is already words: show it after the name, as above.
