@@ -4,7 +4,7 @@
  * The host repeats the packet faster than CJOG_DEADMAN_MS while the operator
  * holds a direction; the Pico stops the jog when the packets stop, on all-zero
  * directions, or on MAGIC_CJOG_STOP. A packet moves one axis set — XY, Z or
- * A — or is NACKed NACK_MIXED_AXES.
+ * A — or is refused Nack.MIXED_AXES.
  */
 
 import { crc8 } from "./crc.js";

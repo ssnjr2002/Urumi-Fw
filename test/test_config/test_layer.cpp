@@ -42,7 +42,7 @@ TEST_CASE("layer takes its tool on its head") {
     mo = LayerMotion{};
     CHECK(layerResolve(c, mounted, hdr(1, 0, 0, 25), 10, &mo) == LAYER_NOT_MOUNTED);
     CHECK(mo.cutFeed == 25);                       // filled for the change
-    CHECK(layerResolve(c, mounted, hdr(1, 2), 10, &mo) == LAYER_BAD);   // no head 2
+    CHECK(layerResolve(c, mounted, hdr(1, 2), 10, &mo) == LAYER_NO_HEAD);   // no head 2
 }
 
 TEST_CASE("layer feed falls back to the tool's, then the machine's") {
@@ -71,7 +71,7 @@ TEST_CASE("a tangential tool needs its head's A") {
     CHECK(mo.cornerAngleDeg == doctest::Approx(30));
     CHECK(mo.aMaxDeg == doctest::Approx(540));
     CHECK(mo.aOffsetDeg == doctest::Approx(-90));
-    CHECK(layerResolve(c, mounted, hdr(1, 0), 10, &mo) == LAYER_BAD);   // head 0 has no A
+    CHECK(layerResolve(c, mounted, hdr(1, 0), 10, &mo) == LAYER_NO_A);   // head 0 has no A
 }
 
 TEST_CASE("a chamber layer carries its chamber's angle and needs its head's A") {
@@ -86,7 +86,7 @@ TEST_CASE("a chamber layer carries its chamber's angle and needs its head's A") 
     REQUIRE(layerResolve(c, mounted, hdr(1, 1), 10, &mo) == LAYER_OK);
     CHECK_FALSE(mo.chamber);
     c.heads[0].a.node.present = false;
-    CHECK(layerResolve(c, mounted, hdr(4, 0, 1), 10, &mo) == LAYER_BAD);
+    CHECK(layerResolve(c, mounted, hdr(4, 0, 1), 10, &mo) == LAYER_NO_A);
 }
 
 TEST_CASE("layer refusals") {
@@ -95,17 +95,17 @@ TEST_CASE("layer refusals") {
     LayerMotion mo;
     CHECK(layerResolve(c, mounted, hdr(9, 0), 10, &mo) == LAYER_TOOL_UNKNOWN);
     CHECK(layerResolve(c, mounted, hdr(4, 1, 1), 10, &mo) == LAYER_NOT_MOUNTED);
-    CHECK(layerResolve(c, mounted, hdr(1, 0, 1), 10, &mo) == LAYER_BAD);   // no chambers
-    CHECK_FALSE(layerValid(hdr(1, 0, 0, -1)));
-    CHECK_FALSE(layerValid(hdr(1, 0, 0, NAN)));
-    CHECK_FALSE(layerValid(hdr(1, 0, 0, 0, NAN)));
-    CHECK_FALSE(layerValid(hdr(1, 0, 0, 0, 1, -1)));
-    CHECK_FALSE(layerValid(hdr(1, 0, 0, 0, 1, NAN)));
-    CHECK(layerValid(hdr(1, 0)));
+    CHECK(layerResolve(c, mounted, hdr(1, 0, 1), 10, &mo) == LAYER_BAD_CHAMBER);   // no chambers
+    CHECK(layerBadField(hdr(1, 0, 0, -1)));
+    CHECK(layerBadField(hdr(1, 0, 0, NAN)));
+    CHECK(layerBadField(hdr(1, 0, 0, 0, NAN)));
+    CHECK(layerBadField(hdr(1, 0, 0, 0, 1, -1)));
+    CHECK(layerBadField(hdr(1, 0, 0, 0, 1, NAN)));
+    CHECK(layerBadField(hdr(1, 0)) == nullptr);
 
     const uint8_t pen[2] = { 4, 0 };
-    CHECK(layerResolve(c, pen, hdr(4, 0, 0), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, pen, hdr(4, 0, 4), 10, &mo) == LAYER_BAD);
+    CHECK(layerResolve(c, pen, hdr(4, 0, 0), 10, &mo) == LAYER_BAD_CHAMBER);
+    CHECK(layerResolve(c, pen, hdr(4, 0, 4), 10, &mo) == LAYER_BAD_CHAMBER);
     CHECK(layerResolve(c, pen, hdr(4, 0, 3), 10, &mo) == LAYER_OK);
 }
 
@@ -133,11 +133,11 @@ TEST_CASE("layer plunge: p > 0 and at most maxOvercut past the material on a plu
     const uint8_t mounted[2] = { 4, 1 };
     LayerMotion mo;
     CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 2.5f, 2), 10, &mo) == LAYER_OK);
-    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 2.6f, 2), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 0, 2), 10, &mo) == LAYER_BAD);
-    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, -1, 2), 10, &mo) == LAYER_BAD);
+    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 2.6f, 2), 10, &mo) == LAYER_BAD_P);
+    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, 0, 2), 10, &mo) == LAYER_BAD_P);
+    CHECK(layerResolve(c, mounted, hdr(1, 1, 0, 0, -1, 2), 10, &mo) == LAYER_BAD_P);
     CHECK(layerResolve(c, mounted, hdr(4, 0, 1, 0, 9, 2), 10, &mo) == LAYER_OK);    // pen: p unused
-    CHECK_FALSE(layerValid(hdr(4, 0, 1, 0, NAN, 2)));
+    CHECK(layerBadField(hdr(4, 0, 1, 0, NAN, 2)));
 }
 
 TEST_CASE("the origins a bbox allows: tip offset and blade") {

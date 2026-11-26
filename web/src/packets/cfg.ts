@@ -61,15 +61,17 @@ export const CFG_DATA_HDR_SIZE = 9;
 export const MAX_CFG_PAYLOAD = 64 * 1024;
 
 // ── CFG command NACK reasons (byte[1] of a CFG_NACK frame) ────────────────────
-// A SEPARATE namespace from the stream NACK reasons in constants.ts — the
-// same byte values, different command class, so they live here next to the
-// frame they belong to.
-export const CFG_NACK_CRC = 0x01; // CRC32 mismatch — struct corrupt in transit
-export const CFG_NACK_TOO_BIG = 0x02; // length 0 or over CFG_MAX_BYTES
-export const CFG_NACK_BAD_STATE = 0x03; // push rejected — not at rest in the idle context
-export const CFG_NACK_FLASH = 0x04; // flash write failed
-export const CFG_NACK_TIMEOUT = 0x05; // payload did not arrive within the transfer window
-export const CFG_NACK_SCHEMA = 0x06; // blob did not decode or failed the Pico's validation
+// A SEPARATE namespace from Nack (nack.ts): the same byte values, a different
+// command class, so they live here next to the frame they belong to.
+export const CfgNack = {
+    CRC: 0x01, // CRC32 mismatch — struct corrupt in transit
+    TOO_BIG: 0x02, // length 0 or over CFG_MAX_BYTES
+    BAD_STATE: 0x03, // push rejected — not at rest in the idle context
+    FLASH: 0x04, // flash write failed
+    TIMEOUT: 0x05, // payload did not arrive within the transfer window
+    SCHEMA: 0x06, // blob did not decode or failed the Pico's validation
+} as const;
+export type CfgNack = (typeof CfgNack)[keyof typeof CfgNack];
 
 export interface CfgDataHeader {
     readonly length: number;

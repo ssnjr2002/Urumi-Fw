@@ -23,9 +23,7 @@ import type { Transport } from "./index.js";
 import type { ByteSink } from "./attach.js";
 import {
     MAGIC_ACK,
-    MAGIC_NACK,
     MAGIC_JOG_ACK,
-    MAGIC_JOG_NACK,
     MAGIC_ABORT,
     MAGIC_SEQRESET,
     MAGIC_STATUS_REQ,
@@ -38,20 +36,13 @@ import {
     JOB_HDR_SIZE,
     MAGIC_TOOL_HDR,
     TOOL_HDR_SIZE,
-    NACK_FULL,
-    NACK_JOB,
-    NACK_BAD_STATE,
-    NACK_PAUSED,
-    NACK_TOOL_CHANGE,
-    NACK_SOFT_LIMIT,
-    NACK_MIXED_AXES,
-    NACK_BUSY,
     MAGIC_CJOG,
     MAGIC_CJOG_STOP,
     CJOG_SIZE,
     CJOG_SPEED_ONE,
     CJOG_DEADMAN_MS,
 } from "../packets/constants.js";
+import { Nack, packJogNack, packNack } from "../packets/nack.js";
 import {
     MachineState,
     MachineContext,
@@ -243,7 +234,7 @@ export class SimTransport implements Transport {
     private curTool = 0;
     private toolFromPaused = false;
     /** Refuse this tool's preflight header, as the Pico would for its bbox or head. */
-    refuseTool: { tool: number; reason: number; detail?: number } | null = null;
+    refuseTool: { tool: number; code: Nack; text?: string } | null = null;
     private nextRecord = 0;
     /** Where a paused job resumes. */
     private resumeAt: { layer: number; record: number } | null = null;
@@ -462,9 +453,9 @@ export class SimTransport implements Transport {
         const d = [dv.getInt8(1), dv.getInt8(2), dv.getInt8(3), dv.getInt8(4)];
         const speed = data[5]!;
         const bad = d.some(v => v < -1 || v > 1);
-        if (bad || speed === 0) return this._jogNack(NACK_BAD_STATE);
+        if (bad || speed === 0) return this._jogNack(Nack.BAD_FIELD);
         const sets = Number(d[0] !== 0 || d[1] !== 0) + Number(d[2] !== 0) + Number(d[3] !== 0);
-        if (sets > 1) return this._jogNack(NACK_MIXED_AXES);
+        if (sets > 1) return this._jogNack(Nack.MIXED_AXES);
 
         this.cjogLastMs = Date.now();
         if (sets === 0) return this._cjogStop();
@@ -476,16 +467,16 @@ export class SimTransport implements Transport {
             const moving = this.state === MachineState.JOB && this.job !== JobReason.PAUSED;
             const busy = moving || this.state === MachineState.HOMING ||
                 this.state === MachineState.TRAVERSE;
-            return this._jogNack(busy ? NACK_BUSY : NACK_BAD_STATE);
+            return this._jogNack(busy ? Nack.BUSY : Nack.BAD_STATE);
         }
         for (let k = 0; k < MOTION_SLOTS; k++) {
             if (d[k] !== 0 && !(this.axesHomed & (1 << k)) && !this.jogUnhomed) {
-                return this._jogNack(NACK_BAD_STATE);
+                return this._jogNack(Nack.NOT_HOMED);
             }
         }
         if (!this._cjogRoom(d)) {
             this._cjogStop();
-            return this._jogNack(NACK_SOFT_LIMIT);
+            return this._jogNack(Nack.OUT_OF_RANGE);
         }
         this.jogQueue = [];
         this.cjogDir = d;
@@ -496,12 +487,12 @@ export class SimTransport implements Transport {
         this.reply(new Uint8Array([MAGIC_JOG_ACK]));
     }
 
-    private _nack(reason: number, detail = 0): void {
-        this.reply(new Uint8Array([MAGIC_NACK, reason, detail]));
+    private _nack(code: Nack, text = ""): void {
+        this.reply(packNack(code, text));
     }
 
-    private _jogNack(reason: number): void {
-        this.reply(new Uint8Array([MAGIC_JOG_NACK, reason]));
+    private _jogNack(code: Nack): void {
+        this.reply(packJogNack(code));
     }
 
     /** Some travel left on every moving axis; Z and A have no travel model. */
@@ -622,12 +613,12 @@ export class SimTransport implements Transport {
             this.expectedSeq = (this.expectedSeq + 1) & 0xff;
             this._markAck();
         };
-        const refuse = (reason: number, detail = 0): void => {
+        const refuse = (code: Nack, text = ""): void => {
             this._flushAck(); // ACKs earned before a rewind land first
-            this._nack(reason, detail);
+            this._nack(code, text);
         };
         if (m === MAGIC_JOB_HDR) {
-            if (st !== MachineState.IDLE) return refuse(NACK_BAD_STATE);
+            if (st !== MachineState.IDLE) return refuse(Nack.BAD_STATE, "not idle");
             this.state = MachineState.JOB;
             this.context = MachineContext.JOB;
             this.job = JobReason.PREFLIGHT;
@@ -643,14 +634,15 @@ export class SimTransport implements Transport {
         }
         if (st === MachineState.JOB && this.job === JobReason.PREFLIGHT) {
             // Any preflight refusal ends the session.
-            const end = (reason: number, detail = 0): void => {
+            const end = (code: Nack, text: string): void => {
                 this.state = MachineState.IDLE;
                 this.context = MachineContext.IDLE;
-                refuse(reason, detail);
+                refuse(code, text);
             };
-            if (m !== MAGIC_TOOL_HDR || this.preIds.includes(data[1]!)) return end(NACK_JOB);
+            if (m !== MAGIC_TOOL_HDR) return end(Nack.ORDER, m === MAGIC_LAYER_HDR ? "layer header in preflight" : "record in preflight");
+            if (this.preIds.includes(data[1]!)) return end(Nack.TOOL_LIST, `tool ${data[1]} twice`);
             const refused = this.refuseTool;
-            if (refused && refused.tool === data[1]) return end(refused.reason, refused.detail ?? 0);
+            if (refused && refused.tool === data[1]) return end(refused.code, refused.text ?? "");
             this.preIds.push(data[1]!);
             if (this.preIds.length === this.preCount) {
                 this.job = this.skipPlace ? JobReason.BUFFERING : JobReason.PLACE;
@@ -658,7 +650,9 @@ export class SimTransport implements Transport {
             }
             return accept();
         }
-        if (this.context === MachineContext.JOB && this.job === JobReason.PLACE) return refuse(NACK_JOB);
+        if (this.context === MachineContext.JOB && this.job === JobReason.PLACE) {
+            return refuse(Nack.ORDER, m === MAGIC_LAYER_HDR ? "layer header in place" : "no layer open");
+        }
         const stopped = st === MachineState.JOB &&
             (this.job === JobReason.TOOL_CHANGE || this.job === JobReason.TOOL_WAIT);
         if (st === MachineState.JOB && this.job === JobReason.PAUSED) this.heldLayer = null;
@@ -671,7 +665,7 @@ export class SimTransport implements Transport {
             const ready = want !== null && this.mounted.get(want.head) === want.tool && this.zeroed.has(want.head);
             if (stopped) {
                 // Only a resent header leaves, in TOOL_WAIT, with its tool ready.
-                if (!ready || this.job === JobReason.TOOL_CHANGE) return refuse(NACK_TOOL_CHANGE);
+                if (!ready || this.job === JobReason.TOOL_CHANGE) return refuse(Nack.TOOL_CHANGE);
                 this.job = this.toolFromPaused ? JobReason.PAUSED : JobReason.BUFFERING;
             } else if (want && !ready && st === MachineState.JOB && (this.heldLayer || resuming)) {
                 this.toolFromPaused = this.job === JobReason.PAUSED;
@@ -679,31 +673,35 @@ export class SimTransport implements Transport {
                 this.toolHead = want.head;
                 this.toolChangeAt = Date.now();
                 this.motion = [];
-                return refuse(NACK_TOOL_CHANGE);
+                return refuse(Nack.TOOL_CHANGE);
             }
             st = this.state;
         }
         if (st === MachineState.JOB && this.job === JobReason.PAUSED) {
             const at = this.resumeAt;
-            if (m !== MAGIC_LAYER_HDR) return refuse(NACK_PAUSED);
-            if (!at || dv.getUint16(3, true) !== at.layer || dv.getUint32(5, true) !== at.record) return refuse(NACK_JOB);
+            if (m !== MAGIC_LAYER_HDR) return refuse(Nack.PAUSED);
+            if (!at || dv.getUint16(3, true) !== at.layer || dv.getUint32(5, true) !== at.record) return refuse(Nack.NO_RESUME);
             this.job = JobReason.BUFFERING;
             this.resumeAt = null;
             this.curLayer = at.layer;
             this.nextRecord = at.record;
             return accept();
         }
-        if (st === MachineState.IDLE) return refuse(NACK_JOB);
+        if (st === MachineState.IDLE) {
+            return refuse(Nack.ORDER, m === MAGIC_LAYER_HDR ? "layer header outside a job"
+                : m === MAGIC_TOOL_HDR ? "tool header outside a job" : "record outside a job");
+        }
         const jobOpen = st === MachineState.JOB &&
             (this.job === JobReason.BUFFERING || this.job === JobReason.RUNNING);
-        if (!jobOpen) return refuse(NACK_BAD_STATE);
+        if (!jobOpen) return refuse(Nack.BAD_STATE, "planner");
         if (m === MAGIC_LAYER_HDR) {
-            if (this.heldLayer) return refuse(NACK_JOB);
+            if (this.heldLayer) return refuse(Nack.ORDER, "layer header with one held");
             this.heldLayer = { layer: dv.getUint16(3, true), record: dv.getUint32(5, true) };
             return accept();
         }
         if (m === MAGIC_TOOL_HDR) {
-            if (!this.heldLayer || !this.preIds.includes(data[1]!)) return refuse(NACK_JOB);
+            if (!this.heldLayer) return refuse(Nack.ORDER, "tool header with no layer held");
+            if (!this.preIds.includes(data[1]!)) return refuse(Nack.TOOL_LIST, `tool ${data[1]} not declared`);
             this.curLayer = this.heldLayer.layer;
             this.nextRecord = this.heldLayer.record;
             this.curHead = data[3]!;
@@ -712,10 +710,11 @@ export class SimTransport implements Transport {
             this.layerOpen = true;
             return accept();
         }
-        if (this.heldLayer || !this.layerOpen) return refuse(NACK_JOB);
+        if (this.heldLayer) return refuse(Nack.ORDER, "record before its tool header");
+        if (!this.layerOpen) return refuse(Nack.ORDER, "no layer open");
         if (this.motion.length >= this.ringSize) {
             this._flushAck();
-            return this._nack(NACK_FULL); // backpressure — sender retries
+            return this._nack(Nack.FULL); // backpressure — sender retries
         }
         this.motion.push({
             x: dv.getFloat32(3 + 4 * 6, true), y: dv.getFloat32(3 + 4 * 7, true),

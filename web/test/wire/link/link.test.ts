@@ -9,10 +9,10 @@
 
 import { describe, it, expect } from "vitest";
 import { ConfigTransferError, Link } from "../../../src/link/link.js";
+import { Nack } from "../../../src/packets/nack.js";
 import {
     CFG_MAX_BYTES,
-    CFG_NACK_BAD_STATE,
-    CFG_NACK_SCHEMA,
+    CfgNack,
     packCfgDataHeader,
     packCfgSetHeader,
 } from "../../../src/packets/cfg.js";
@@ -36,7 +36,6 @@ import {
     MAGIC_CJOG_STOP,
     MAGIC_JOG_ACK,
     MAGIC_JOG_NACK,
-    NACK_BUSY,
     CJOG_DEADMAN_MS,
 } from "../../../src/packets/constants.js";
 
@@ -319,8 +318,8 @@ describe("wire/link/link: config push/pull", () => {
         const link = new Link(t);
         const p = link._pushEncoded(blob);
         await tick();
-        t.feedReply(new Uint8Array([MAGIC_CFG_NACK, CFG_NACK_BAD_STATE]));
-        await expect(p).rejects.toMatchObject({ reason: CFG_NACK_BAD_STATE });
+        t.feedReply(new Uint8Array([MAGIC_CFG_NACK, CfgNack.BAD_STATE]));
+        await expect(p).rejects.toMatchObject({ reason: CfgNack.BAD_STATE });
         expect(t.writes.length).toBe(1);
     });
 
@@ -331,7 +330,7 @@ describe("wire/link/link: config push/pull", () => {
         await tick();
         t.feedReply(new Uint8Array([MAGIC_CFG_RDY]));
         await tick();
-        t.feedReply(new Uint8Array([MAGIC_CFG_NACK, CFG_NACK_SCHEMA]));
+        t.feedReply(new Uint8Array([MAGIC_CFG_NACK, CfgNack.SCHEMA]));
         await expect(p).rejects.toBeInstanceOf(ConfigTransferError);
     });
 
@@ -465,8 +464,8 @@ describe("wire/link/link: cjog", () => {
         const t = new FakeTransport();
         const link = new Link(t);
         const jog = link.cjog({ z: -1 });
-        t.feedReply(new Uint8Array([MAGIC_JOG_NACK, NACK_BUSY]));
-        expect(await jog.started).toEqual({ ok: false, reason: NACK_BUSY });
+        t.feedReply(new Uint8Array([MAGIC_JOG_NACK, Nack.BUSY]));
+        expect(await jog.started).toEqual({ ok: false, reason: Nack.BUSY });
         expect(jog.running).toBe(false);
         expect(() => jog.turn({ z: 1 })).toThrow(/not running/);
         await link.close();

@@ -47,15 +47,15 @@ void cjogStop(void) {
 // Queue the line for direction `d` (one axis set). Returns a NACK reason, or 0
 // once queued.
 static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
-    if (!machineCfgValid()) return MSEG_NACK_BAD_STATE;
+    if (!machineCfgValid()) return MSEG_NACK_NO_CONFIG;
     const MachineCfg& cfg = machineCfg();
     // In JOB.PLACE only the dot jogs, and only until `place set`.
     if (machineContext == CTX_JOB && jobReason == JOB_PLACE &&
         (!framesDotWindowOn() || d[2] != 0 || d[3] != 0)) return MSEG_NACK_BAD_STATE;
     float at[4];
-    if (!plannerJogFrom(at, RING_JOG_CONT)) return MSEG_NACK_BAD_STATE;
+    if (!plannerJogFrom(at, RING_JOG_CONT)) return MSEG_NACK_BUSY;
     // A swings a blade's axis about the tip: the tip inside its range keeps it in.
-    if (d[3] != 0 && framesCheckXY(at[0], at[1])) return MSEG_NACK_SOFT_LIMIT;
+    if (d[3] != 0 && framesCheckXY(at[0], at[1])) return MSEG_NACK_OUT_OF_RANGE;
 
     // How far each moving axis may go: to its soft end when homed with
     // softLimits, else maxTravel; A one CJOG_A_RUN. A diagonal stops at the
@@ -64,9 +64,9 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
     for (uint8_t k = 0; k < 4; k++) {
         if (d[k] == 0) continue;
         const CfgAxis* a = framesAxis(k);
-        if (!a) return MSEG_NACK_BAD_STATE;
+        if (!a) return MSEG_NACK_NO_CONFIG;
         const bool homed = axes_homed & (1u << k);
-        if (!homed && !cfg.jogUnhomed) return MSEG_NACK_BAD_STATE;
+        if (!homed && !cfg.jogUnhomed) return MSEG_NACK_NOT_HOMED;
         float lo, hi, room = k == SLOT_A ? CJOG_A_RUN : a->maxTravel;
         const float off = k == SLOT_Z ? meshLatchedOffset(at[0], at[1]) : 0;
         if (k != SLOT_A && homed && a->softLimits && framesTipRange(k, &lo, &hi, off))
@@ -77,14 +77,15 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
         feed = fminf(feed, f);
         step = fmaxf(step, 1 / a->stepsPerUnit);
     }
-    if (!(run > step)) return MSEG_NACK_SOFT_LIMIT;
-    if (!(feed > 0)) return MSEG_NACK_BAD_STATE;
+    if (!(run > step)) return MSEG_NACK_OUT_OF_RANGE;
+    if (!(feed > 0)) return MSEG_NACK_NO_CONFIG;
 
     const PlannerQueueResult r =
         d[2] != 0 ? plannerQueueAxis(SLOT_Z, d[2] * run, feed, RING_JOG_CONT)
       : d[3] != 0 ? plannerQueueAxis(SLOT_A, d[3] * run, feed, RING_JOG_CONT)
       : plannerQueueLine(at[0] + d[0] * run, at[1] + d[1] * run, feed, RING_JOG_CONT);
-    if (r == PQ_SOFT_LIMIT) return MSEG_NACK_SOFT_LIMIT;   // the mesh leaves Z no room
+    if (r == PQ_SOFT_LIMIT) return MSEG_NACK_OUT_OF_RANGE;   // the mesh leaves Z no room
+    if (r == PQ_NO_CONFIG || r == PQ_NO_LIMITS || r == PQ_NO_FEED) return MSEG_NACK_NO_CONFIG;
     if (r != PQ_OK) return MSEG_NACK_BAD_STATE;
     for (uint8_t k = 0; k < 4; k++) { cjogDir[k] = d[k]; cjogWant[k] = 0; }
     cjogSpeed = speed;
@@ -94,8 +95,8 @@ static uint8_t cjogStart(const int8_t d[4], uint8_t speed) {
 
 uint8_t cjogPacket(const int8_t d[4], uint8_t speed, uint32_t now) {
     for (uint8_t k = 0; k < 4; k++)
-        if (d[k] < -1 || d[k] > 1) return MSEG_NACK_BAD_STATE;
-    if (speed == 0) return MSEG_NACK_BAD_STATE;
+        if (d[k] < -1 || d[k] > 1) return MSEG_NACK_BAD_FIELD;
+    if (speed == 0) return MSEG_NACK_BAD_FIELD;
     const uint8_t sets = (d[0] != 0 || d[1] != 0) + (d[2] != 0) + (d[3] != 0);
     if (sets > 1) return MSEG_NACK_MIXED_AXES;
 

@@ -11,19 +11,18 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Demux, makeSinks, Ack, Nack, JogAck, CfgReply } from "../../../src/link/demux.js";
+import { Demux, makeSinks, Ack, JogAck, CfgReply } from "../../../src/link/demux.js";
+import { Nack, Refusal, packNack } from "../../../src/packets/nack.js";
 import { packStatusRsp } from "../../../src/packets/status.js";
 import { packCfgDataHeader } from "../../../src/packets/cfg.js";
 import {
     MAGIC_ACK,
-    MAGIC_NACK,
     MAGIC_CFG_RDY,
     MAGIC_CFG_ACK,
     MAGIC_CFG_NACK,
     MAGIC_CFG_DATA,
     MAGIC_JOG_ACK,
     MAGIC_JOG_NACK,
-    NACK_SOFT_LIMIT,
 } from "../../../src/packets/constants.js";
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -48,23 +47,43 @@ describe("wire/link/demux: ACK / NACK routing", () => {
         expect(d.idle).toBe(true);
     });
 
-    it("routes a NACK to the ack sink as Nack(reason)", async () => {
+    it("routes a NACK to the ack sink as a Refusal", async () => {
         const sinks = makeSinks();
         const d = new Demux(sinks);
-        d.feed(new Uint8Array([MAGIC_NACK, 0x02, 0]));
+        d.feed(packNack(Nack.FULL));
         const r = await sinks.ack.get(50);
-        expect(r).toBeInstanceOf(Nack);
-        expect((r as Nack).reason).toBe(0x02);
+        expect(r).toEqual(new Refusal(Nack.FULL));
+    });
+
+    it("reads a NACK's text by its length, split across chunks", async () => {
+        const sinks = makeSinks();
+        const d = new Demux(sinks);
+        const nack = packNack(Nack.BAD_FIELD, "chamber 9");
+        d.feed(nack.subarray(0, 2));
+        d.feed(nack.subarray(2, 7));
+        d.feed(concat(nack.subarray(7), new Uint8Array([MAGIC_ACK, 4, 0])));
+        expect(await sinks.ack.get(50)).toEqual(new Refusal(Nack.BAD_FIELD, "chamber 9"));
+        expect(((await sinks.ack.get(50)) as Ack).expectedSeq).toBe(4);
+        expect(d.idle).toBe(true);
+    });
+
+    it("drops a NACK with a length past NACK_TEXT_MAX or a bad CRC8, and reads on", async () => {
+        const sinks = makeSinks();
+        const d = new Demux(sinks);
+        const bad = packNack(Nack.ORDER, "x");
+        bad[3] = bad[3]! ^ 0xff;
+        d.feed(concat(new Uint8Array([0xbc, Nack.ORDER, 200]), bad, new Uint8Array([MAGIC_ACK, 5, 0])));
+        expect(((await sinks.ack.get(50)) as Ack).expectedSeq).toBe(5);
+        expect(d.stats().overruns).toBe(2);
     });
 
     it("routes a jog's ACK and NACK to the jog sink, never the ack sink", async () => {
         const sinks = makeSinks();
         const d = new Demux(sinks);
-        d.feed(new Uint8Array([MAGIC_JOG_ACK, MAGIC_JOG_NACK, NACK_SOFT_LIMIT, MAGIC_ACK, 3, 0]));
+        d.feed(new Uint8Array([MAGIC_JOG_ACK, MAGIC_JOG_NACK, Nack.OUT_OF_RANGE, MAGIC_ACK, 3, 0]));
         expect(await sinks.jog.get(50)).toBeInstanceOf(JogAck);
         const n = await sinks.jog.get(50);
-        expect(n).toBeInstanceOf(Nack);
-        expect((n as Nack).reason).toBe(NACK_SOFT_LIMIT);
+        expect(n).toEqual(new Refusal(Nack.OUT_OF_RANGE));
         expect(((await sinks.ack.get(50)) as Ack).expectedSeq).toBe(3);
         expect(await sinks.ack.get(20)).toBeNull();
         expect(d.idle).toBe(true);

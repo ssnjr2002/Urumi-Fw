@@ -828,7 +828,7 @@ jobStartBtn.addEventListener('click', async () => {
     }
     const ok = r.ok;
     showJob();
-    const why = r.fatal?.by === 'host' ? r.fatal.why : r.fatal ? `${nackName(r.fatal.nack)} detail ${r.fatal.detail}` : '';
+    const why = r.fatal?.by === 'host' ? r.fatal.why : r.fatal ? `${nackName(r.fatal.nack)}${r.fatal.text ? ` ${r.fatal.text}` : ''}` : '';
     binOut(`job ${ok ? 'ended' : `failed: ${why}`}`
         + ` — sent ${r.sent} acked ${r.acked} nacks ${r.nacks} retries ${r.retries}`);
     session = source = null;

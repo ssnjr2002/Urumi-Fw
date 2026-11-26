@@ -137,13 +137,15 @@ The result is a `PlannerQueueResult`, answered as:
 | Result | Command reply | Record NACK |
 | --- | --- | --- |
 | `PQ_OK` | `→ ok <depth>` | none |
-| `PQ_BAD_STATE` | `→ err bad_state` | |
-| `PQ_NO_CONFIG` | `→ err unconfigured` | |
-| `PQ_NO_LIMITS` | `→ err no_limits` | |
+| `PQ_BAD_STATE` | `→ err bad_state` | `MSEG_NACK_BAD_STATE` |
+| `PQ_NO_CONFIG` | `→ err unconfigured` | `MSEG_NACK_NO_CONFIG` |
+| `PQ_NO_LIMITS` | `→ err no_limits` | `MSEG_NACK_NO_CONFIG` |
 | `PQ_FULL` | `→ err full` | `MSEG_NACK_FULL` |
-| `PQ_BAD_CURVE` | `→ err bad_curve` | `MSEG_NACK_BAD_CURVE` |
-| `PQ_SOFT_LIMIT` | `→ err soft_limit z` | `MSEG_NACK_SOFT_LIMIT` |
-| `PQ_NO_FEED`, `PQ_NO_JOB`, `PQ_NO_RESUME` | | jobs only |
+| `PQ_BAD_CURVE` | `→ err bad_curve` | `MSEG_NACK_BAD_CURVE`; on a `LAYER_HDR`, `MSEG_NACK_ORDER` (inside a contour) |
+| `PQ_SOFT_LIMIT` | `→ err soft_limit z` | `MSEG_NACK_OUT_OF_RANGE` |
+| `PQ_NO_FEED` | jobs only | `MSEG_NACK_NO_CONFIG` |
+| `PQ_NO_JOB` | jobs only | `MSEG_NACK_ORDER` |
+| `PQ_NO_RESUME` | jobs only | `MSEG_NACK_NO_RESUME` |
 
 `<depth>` is the number of blocks queued, the running one included. `goto`
 reports its own refusals ([commands](../reference/commands.md)).

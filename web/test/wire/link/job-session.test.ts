@@ -8,14 +8,13 @@ import { describe, it, expect } from "vitest";
 import { Link } from "../../../src/link/link.js";
 import { SimTransport } from "../../../src/transport/sim.js";
 import { JobSource, jobIdOf, type Session, type SessionResult } from "../../../src/link/session.js";
-import { Nack } from "../../../src/link/demux.js";
+import { Nack, Refusal, packNack } from "../../../src/packets/nack.js";
 import { MachineState, JobReason } from "../../../src/packets/status.js";
 import { packBezier } from "../../../src/packets/bezier.js";
 import { cubic } from "../../../src/toolpath/geometry.js";
 import { packCjog } from "../../../src/packets/cjog.js";
 import {
     CJOG_DEADMAN_MS, MAGIC_BEZIER, MAGIC_JOB_HDR, MAGIC_LAYER_HDR, MAGIC_TOOL_HDR,
-    NACK_DETAIL_AXIS_Y, NACK_DETAIL_SIDE_HI, NACK_JOB, NACK_NOT_HOMED, NACK_OUT_OF_RANGE,
 } from "../../../src/packets/constants.js";
 import { packJobHdr, packLayerHdr, packToolHdr } from "../../../src/packets/layer.js";
 import { stampSeq } from "../../../src/packets/packet.js";
@@ -330,22 +329,63 @@ describe("wire/link/session: job headers", () => {
         expect(() => new JobSource([layerOf(0, 1, []), { ...layerOf(1, 1, []), head: 1 }])).toThrow(RangeError);
     });
 
-    it("a preflight refusal is fatal, with its detail", async () => {
+    it("a preflight refusal is fatal, with its text", async () => {
         await withLink(async (link, sim) => {
-            sim.refuseTool = { tool: 1, reason: NACK_OUT_OF_RANGE, detail: NACK_DETAIL_AXIS_Y | NACK_DETAIL_SIDE_HI };
+            sim.refuseTool = { tool: 1, code: Nack.OUT_OF_RANGE, text: "y high, tool 1" };
             const { done } = await start(link, 2);
             expect((await done).fatal).toEqual({
-                by: "controller", nack: NACK_OUT_OF_RANGE, detail: NACK_DETAIL_AXIS_Y | NACK_DETAIL_SIDE_HI,
+                by: "controller", nack: Nack.OUT_OF_RANGE, text: "y high, tool 1",
             });
             expect((await link.freshStatus()).state).toBe(MachineState.IDLE);
         });
     });
 
-    it("NACK_JOB in preflight is fatal, not a hold", async () => {
+    it("a refusal after preflight other than NO_RESUME ends the session, not a hold", async () => {
         await withLink(async (link, sim) => {
-            sim.refuseTool = { tool: 1, reason: NACK_JOB };
+            // The first batch after placement is refused ORDER, as the Pico
+            // would a record out of order. Batches are whole frames.
+            const s = sim as unknown as { write: (d: Uint8Array) => Promise<void>; reply: (d: Uint8Array) => void };
+            const write = s.write.bind(sim);
+            let refused = false;
+            s.write = async (d) => {
+                if (d[0] === MAGIC_LAYER_HDR && !refused) {
+                    refused = true;
+                    s.reply(packNack(Nack.ORDER, "no layer open"));
+                    return;
+                }
+                await write(d);
+            };
+            const { sess, done } = await start(link, 4);
+            expect((await done).fatal).toEqual({ by: "controller", nack: Nack.ORDER, text: "no layer open" });
+            expect(sess.hold).toBeNull();
+        });
+    });
+
+    it("NO_RESUME holds the session `refused`", async () => {
+        await withLink(async (link, sim) => {
+            const s = sim as unknown as { write: (d: Uint8Array) => Promise<void>; reply: (d: Uint8Array) => void };
+            const write = s.write.bind(sim);
+            let refused = false;
+            s.write = async (d) => {
+                if (d[0] === MAGIC_LAYER_HDR && !refused) {
+                    refused = true;
+                    s.reply(packNack(Nack.NO_RESUME));
+                    return;
+                }
+                await write(d);
+            };
+            const { sess, done } = await start(link, 4);
+            await until(() => sess.hold === "refused");
+            sess.abort();
+            await done;
+        });
+    });
+
+    it("TOOL_LIST in preflight is fatal, not a hold", async () => {
+        await withLink(async (link, sim) => {
+            sim.refuseTool = { tool: 1, code: Nack.TOOL_LIST };
             const { done } = await start(link, 2);
-            expect((await done).fatal).toMatchObject({ by: "controller", nack: NACK_JOB });
+            expect((await done).fatal).toMatchObject({ by: "controller", nack: Nack.TOOL_LIST });
         });
     });
 
@@ -520,7 +560,7 @@ describe("wire/link/session: placement", () => {
             expect(await link.commands().send("place go xmax")).toBe("err usage");
             await link.resetSeq();
             await sim.write(stampSeq(packLayerHdr({ layer: 0 }), 0));
-            expect(await link.sinks.ack.get(500)).toEqual(new Nack(NACK_JOB));
+            expect(await link.sinks.ack.get(500)).toEqual(new Refusal(Nack.ORDER, "layer header in place"));
             const st = await link.freshStatus();
             expect([st.state, st.reason]).toEqual([MachineState.JOB, JobReason.PLACE]);
             expect(await link.commands().send("cancel")).toBe("ok");
@@ -596,9 +636,9 @@ describe("wire/link/session: tool change", () => {
 
     it("an unhomed A refused in preflight is fatal", async () => {
         await withLink(async (link, sim) => {
-            sim.refuseTool = { tool: 1, reason: NACK_NOT_HOMED };
+            sim.refuseTool = { tool: 1, code: Nack.NOT_HOMED };
             const { done } = await start(link, 2);
-            expect((await done).fatal).toMatchObject({ by: "controller", nack: NACK_NOT_HOMED });
+            expect((await done).fatal).toMatchObject({ by: "controller", nack: Nack.NOT_HOMED });
             expect((await link.freshStatus()).state).toBe(MachineState.IDLE);
         });
     });

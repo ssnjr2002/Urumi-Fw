@@ -35,7 +35,7 @@ export const HOST_TIMEOUT_MS = 3000;
 export const MAGIC_CJOG_STOP = 0xb3; // host → Pico: one byte, no reply
 // A jog's replies have their own magics, so a stream never reads them as its own.
 export const MAGIC_JOG_ACK = 0xb6; // Pico → host: one byte, a jog started
-export const MAGIC_JOG_NACK = 0xb7; // Pico → host: [magic, reason], reason a NACK_* code
+export const MAGIC_JOG_NACK = 0xb7; // Pico → host: [magic, code], code a Nack
 
 // ── Status plane — binary mirror of `get` (state, pos, queued time) ───────────
 // Each layout has its own magic; the
@@ -56,13 +56,16 @@ export const STATUS_FLAG_PLACED = 0x02;
 /** Heads STATUS_RSP carries a tool for (CFG_MAX_HEADS). */
 export const STATUS_HEADS = 2;
 
-// ── Stream control replies (Pico → host) — fixed 3-byte frames ────────────────
-// Cumulative ACK: byte[1] = the next wire
+// ── Stream control replies (Pico → host) ────────────────────────────────────────
+// ACK, 3 bytes. Cumulative ACK: byte[1] = the next wire
 // seq the Pico wants (i.e. every packet below was accepted), so a lost or stale
 // ACK self-heals on the next one and a duplicate is idempotent. The sender
 // decodes the advance in 8-bit rolling space, clamped to the in-flight window.
 export const MAGIC_ACK = 0xaa;
-export const MAGIC_NACK = 0xbb;
+// NACK: [magic, code, len, text, crc8] (packets/nack.ts). 0xBB, the 3-byte
+// [magic, code, detail], is retired: reserved, never emitted.
+export const MAGIC_NACK = 0xbc;
+export const MAGIC_NACK_V1 = 0xbb;
 
 // ── Binary stream control (host → Pico) — single-byte, no payload/CRC ──────────
 // SEQRESET zeroes expectedSeq and replies ACK(0) — keeps stream start on the
@@ -72,47 +75,6 @@ export const MAGIC_NACK = 0xbb;
 // status sink as the state settles.
 export const MAGIC_SEQRESET = 0xa8;
 export const MAGIC_ABORT = 0xa9;
-
-// ── Stream NACK reasons (byte[1] of a NACK frame) ──────────────────────────────
-// Two namespaces: these are the record/jog reasons. CFG command NACK
-// reasons live in cfg.ts (a different namespace, same byte values).
-export const NACK_CRC = 0x01; // CRC8 mismatch — packet corrupt
-export const NACK_FULL = 0x02; // ring buffer full — backpressure, sender retries
-export const NACK_BAD_MAGIC = 0x03; // reserved: never sent, an unknown byte is read as text
-export const NACK_PAUSED = 0x04; // record rejected — the job is paused or pausing
-export const NACK_BAD_STATE = 0x06; // command rejected — wrong machine state
-// Barrier, not an error: stream rejected because the machine is mid-abort-ramp.
-// The host waits and resends rather than surfacing a failure.
-export const NACK_ABORTING = 0x07;
-// A BEZIER record failed the Pico's checks, or broke contour framing or the chain.
-export const NACK_BAD_CURVE = 0x08;
-// A BEZIER record lies outside the soft range on a homed axis, after the work offset.
-export const NACK_SOFT_LIMIT = 0x09;
-// A continuous-jog packet moving more than one axis set (XY, Z, A).
-export const NACK_MIXED_AXES = 0x0a;
-// A continuous-jog packet refused while a step or sequence holds the machine.
-export const NACK_BUSY = 0x0b;
-// A frame out of the job's order, a tool not seen in preflight, a LAYER_HDR inside
-// a contour or with a bad chamber, feed, thickness or p, or a bad JOB_HDR.
-export const NACK_JOB = 0x0c;
-// A TOOL_HDR whose tool id is not in the config.
-export const NACK_TOOL_UNKNOWN = 0x0d;
-// A TOOL_HDR or resuming LAYER_HDR whose tool is not mounted on its head, or whose
-// head is not selected: not consumed, and the job holds for a tool change; every
-// header and record meanwhile. The host waits and resends from the header.
-export const NACK_TOOL_CHANGE = 0x0f;
-// A TOOL_HDR whose head does not exist or has no A for its tool, or whose power
-// node is missing or excluded.
-export const NACK_TOOL_UNAVAILABLE = 0x10;
-// A TOOL_HDR with no valid origin or outside the current one, or a JOB_HDR with
-// softLimits off on X or Y; Nack.detail says which.
-export const NACK_OUT_OF_RANGE = 0x11;
-// A JOB_HDR with X or Y not homed.
-export const NACK_NOT_HOMED = 0x12;
-// Nack.detail on OUT_OF_RANGE: Y (else X), the high side (else low), softLimits off.
-export const NACK_DETAIL_AXIS_Y = 0x01;
-export const NACK_DETAIL_SIDE_HI = 0x02;
-export const NACK_DETAIL_NO_LIMITS = 0x04;
 
 // ── Config plane magics — CFG blob push/pull over the data plane ────────────────
 // CFG_SET/GET are host→Pico

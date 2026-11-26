@@ -78,7 +78,7 @@
 //   [17..18] t        u16 material thickness, µm
 //   [19]     CRC8 over bytes [0..18]
 // Work Z 0 is the bed: travel at work Z t + zClearance, the cut at t − p (t
-// for a tool with `plunge: false`). NACK_JOB for a p not finite, or on a
+// for a tool with `plunge: false`). NACK_BAD_FIELD for a p not finite, or on a
 // plunging tool p ≤ 0 or p − t > maxOvercut.
 #define LAYER_HDR_MAGIC       0xA1
 #define LAYER_HDR_PACKET_SIZE 20
@@ -89,15 +89,18 @@
 // CFG_RX_TIMEOUT_MS, which covers a multi-kilobyte transfer.
 #define PACKET_RX_TIMEOUT_MS 50u
 
-// ACK/NACK responses (Pico → Host, 3 bytes each):
+// ACK/NACK responses (Pico → Host):
 //   ACK:  [0xAA] [expectedSeq] [0x00]   cumulative: seqs below expectedSeq accepted
-//   NACK: [0xBB] [reason] [detail]   detail: NACK_DETAIL_* on OUT_OF_RANGE, else 0
-//     reason 0x01 = CRC error
-//     reason 0x02 = buffer full (backpressure)
-//     reason 0x03 = bad magic: reserved, never sent (an unknown byte is text)
+//   NACK: [0xBC] [reason] [len] [text: len bytes] [CRC8 over the bytes before it]
+//     reason: an MSEG_NACK_* code. text: ASCII, at most NACK_TEXT_MAX bytes, the
+//     check that failed, in words; only on a code that ends the job, else len 0.
+//     For display: the host matches the reason, never the words.
+// 0xBB, the 3-byte NACK [0xBB] [reason] [detail], is retired: never emit.
 
 #define MSEG_ACK         0xAA
-#define MSEG_NACK        0xBB
+#define MSEG_NACK        0xBC
+#define MSEG_NACK_V1     0xBB   // retired; reserved so the value is not reused
+#define NACK_TEXT_MAX    48
 
 // ACKs are coalesced: because the ACK is cumulative, one frame can confirm a
 // run of packets, and USB CDC charges per transaction rather than per byte.
@@ -200,9 +203,9 @@
 #define CFG_NACK_TIMEOUT   0x05 // transfer stalled — no byte within CFG_RX_TIMEOUT_MS
 #define CFG_NACK_SCHEMA    0x06 // blob did not decode or failed validation (config_decode.h)
 
+// The NACK and JOG_NACK reasons. 0x03, 0x05, 0x09 and 0x0E are unused.
 #define MSEG_NACK_CRC    0x01
 #define MSEG_NACK_FULL   0x02
-#define MSEG_NACK_MAGIC  0x03
 #define MSEG_NACK_PAUSED 0x04   // record rejected — the job is paused or pausing
 #define MSEG_NACK_BAD_STATE 0x06 // stream/jog rejected — wrong machine state
 // Abort is a BARRIER: everything sent before it is discarded, everything after
@@ -213,20 +216,14 @@
 #define MSEG_NACK_ABORTING  0x07
 // A BEZIER record failed checkBezier, or broke contour framing or the chain.
 #define MSEG_NACK_BAD_CURVE 0x08
-// A BEZIER record's control point lies outside the soft range on a homed axis
-// (ops/frames.h), after the work offset is applied.
-#define MSEG_NACK_SOFT_LIMIT 0x09
 // A CJOG packet moving more than one axis set: XY, Z, A.
 #define MSEG_NACK_MIXED_AXES 0x0A
-// A CJOG packet refused while a step or sequence holds the machine.
+// A step or sequence holds the machine, or another kind of motion owns the
+// ring: STATUS_FLAG_BUSY. The host waits and resends.
 #define MSEG_NACK_BUSY       0x0B
-// A frame out of the job's order (a BEZIER or LAYER_HDR while a layer is held or
-// before preflight ends, a TOOL_HDR with none held or naming a tool not seen in
-// preflight), a LAYER_HDR inside a contour, with a bad chamber, feed, thickness
-// or p, or in a paused job not naming where it stopped; a bad JOB_HDR version or
-// tool count.
-#define MSEG_NACK_JOB          0x0C
-// A TOOL_HDR whose tool id is not in the config.
+// A TOOL_HDR naming a tool preflight declared already, or one it never declared.
+#define MSEG_NACK_TOOL_LIST    0x0C
+// A TOOL_HDR or LAYER_HDR whose tool id is not in the config.
 #define MSEG_NACK_TOOL_UNKNOWN 0x0D
 // A TOOL_HDR, or a resuming LAYER_HDR, whose tool is not mounted on its head or
 // not zeroed, or whose head is not selected: not consumed. The job changes the
@@ -234,15 +231,26 @@
 // meanwhile. The host resends from the header; in TOOL_WAIT only a header with
 // its tool mounted and zeroed is taken.
 #define MSEG_NACK_TOOL_CHANGE  0x0F
-// A TOOL_HDR whose head does not exist or has no A for its tool, or whose power
-// node is missing or excluded.
+// A header whose head does not exist, has no A for its tool, or won't map; whose
+// tool's power node is missing, mute or excluded; or a JOB_HDR whose laser node
+// is mute or excluded.
 #define MSEG_NACK_TOOL_UNAVAILABLE 0x10
-// A TOOL_HDR with no valid origin or outside the current one, or a JOB_HDR with
-// softLimits off on X or Y; see the detail byte.
+// Outside the travel: no work origin keeps a TOOL_HDR's box in range, the current
+// one doesn't, a BEZIER past the work area or the soft range, or the bed mesh
+// taking Z out of its range; a jog with no room that way.
 #define MSEG_NACK_OUT_OF_RANGE 0x11
-// A JOB_HDR with X or Y not homed.
+// An axis the job or jog needs is not homed, or a head's Z or A has no origin.
 #define MSEG_NACK_NOT_HOMED    0x12
-
-#define NACK_DETAIL_AXIS_Y   0x01
-#define NACK_DETAIL_SIDE_HI  0x02
-#define NACK_DETAIL_NO_LIMITS 0x04
+// No valid config, or the config lacks a value this needs: softLimits, maxFeed
+// or maxAccel, a feed, the axis.
+#define MSEG_NACK_NO_CONFIG    0x13
+// A record out of the job's order: a BEZIER or LAYER_HDR before preflight ends
+// or while a layer is held, a TOOL_HDR with none held, a header outside a job,
+// a LAYER_HDR in PLACE or inside a contour.
+#define MSEG_NACK_ORDER        0x14
+// A field out of range or malformed: a JOB_HDR version or tool count, a TOOL_HDR
+// box, a LAYER_HDR chamber, feed, thickness or p, a CJOG direction or speed.
+#define MSEG_NACK_BAD_FIELD    0x15
+// A LAYER_HDR in JOB.PAUSED not naming where the job stopped. The host holds;
+// the status carries the resume point.
+#define MSEG_NACK_NO_RESUME    0x16

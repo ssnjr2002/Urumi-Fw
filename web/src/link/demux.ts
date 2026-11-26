@@ -12,7 +12,9 @@
  * config data, advancing a session's `base` against a packet that was never
  * sent — blob-dependent, intermittent, near-impossible to trace. So
  * fixed-length frames are consumed BLIND by count, length-prefixed payloads are
- * consumed OPAQUELY by count, and nothing is ever scanned for structure.
+ * consumed OPAQUELY by count, and nothing is ever scanned for structure. A
+ * NACK is length-prefixed: its header gives the text's length, then the text
+ * and CRC8 are consumed by count.
  *
  * Pure: no I/O. `feed(bytes) -> dispatch to sinks`. The backend's read loop
  * pumps chunks in; frame boundaries need not align with chunk boundaries. All
@@ -33,6 +35,7 @@ import {
     MAGIC_JOG_NACK,
 } from "../packets/constants.js";
 import { CFG_DATA_HDR_SIZE, MAX_CFG_PAYLOAD, unpackCfgDataHeader } from "../packets/cfg.js";
+import { NACK_HDR_SIZE, NACK_TEXT_MAX, Refusal, parseNack } from "../packets/nack.js";
 
 // ── frame types: routing objects, not parsed payloads ─────────────────────────
 // The demux's job is routing, not interpretation. Status parsing stays in
@@ -43,12 +46,7 @@ export class Ack {
     constructor(readonly expectedSeq: number) {}
 }
 
-/** Stream NACK — `reason` is one of the NACK_* constants. */
-export class Nack {
-    constructor(readonly reason: number, readonly detail: number = 0) {}
-}
-
-/** Continuous jog started. A refused jog arrives as a Nack on the jog sink. */
+/** Continuous jog started. A refused jog arrives as a Refusal on the jog sink. */
 export class JogAck {}
 
 /** Config reply. `reason` is set for CFG_NACK; `payload` and `crc32` for CFG_DATA. */
@@ -65,9 +63,9 @@ export class CfgReply {
 
 export interface DemuxSinks {
     /** ack/nack — ordered, never drops. A Session subscribes for its span. */
-    ack: Sink<Ack | Nack>;
+    ack: Sink<Ack | Refusal>;
     /** jog — continuous-jog replies, ordered. Never the stream's. */
-    jog: Sink<JogAck | Nack>;
+    jog: Sink<JogAck | Refusal>;
     /** status — latest-wins. StatusMonitor + open jog sessions read this. */
     status: LatestSink<Uint8Array>;
     /** text — ordered, never drops. The one-outstanding control plane. */
@@ -78,8 +76,8 @@ export interface DemuxSinks {
 
 export function makeSinks(): DemuxSinks {
     return {
-        ack: new Sink<Ack | Nack>("ack"),
-        jog: new Sink<JogAck | Nack>("jog"),
+        ack: new Sink<Ack | Refusal>("ack"),
+        jog: new Sink<JogAck | Refusal>("jog"),
         status: new LatestSink<Uint8Array>("status"),
         text: new Sink<string>("text"),
         cfg: new Sink<CfgReply>("cfg"),
@@ -93,11 +91,12 @@ const S_FIXED = 1; // accumulating a known-length frame
 const S_CFG_DATA_HDR = 2; // accumulating CFG_DATA's 9-byte header
 const S_CFG_DATA_PAY = 3; // accumulating `length` opaque payload bytes
 const S_TEXT = 4; // accumulating an ASCII line to \n
+const S_NACK_HDR = 5; // accumulating a NACK's magic, code and len
+const S_NACK_BODY = 6; // accumulating a NACK's text and CRC8
 
 // Inbound fixed-length frames: magic -> total frame size including the magic.
 const FIXED_SIZES: Readonly<Record<number, number>> = {
     [MAGIC_ACK]: 3,
-    [MAGIC_NACK]: 3,
     [MAGIC_STATUS_RSP]: STATUS_RSP_SIZE,
     [MAGIC_CFG_RDY]: 1, // complete on its own
     [MAGIC_CFG_ACK]: 1, // complete on its own
@@ -118,8 +117,8 @@ export interface DemuxStats {
 }
 
 export class Demux {
-    readonly ack: Sink<Ack | Nack>;
-    readonly jog: Sink<JogAck | Nack>;
+    readonly ack: Sink<Ack | Refusal>;
+    readonly jog: Sink<JogAck | Refusal>;
     readonly status: LatestSink<Uint8Array>;
     readonly text: Sink<string>;
     readonly cfg: Sink<CfgReply>;
@@ -202,6 +201,8 @@ export class Demux {
         if (this._buf.length < this._need) return;
 
         if (this._state === S_FIXED) this._emitFixed();
+        else if (this._state === S_NACK_HDR) this._nackHeader();
+        else if (this._state === S_NACK_BODY) this._emitNack();
         else if (this._state === S_CFG_DATA_HDR) this._cfgDataHeader();
         else this._emitCfgData();
     }
@@ -222,6 +223,13 @@ export class Demux {
             this._buf = [b];
             this._need = size;
             this._state = S_FIXED;
+            return;
+        }
+
+        if (b === MAGIC_NACK) {
+            this._buf = [b];
+            this._need = NACK_HDR_SIZE;
+            this._state = S_NACK_HDR;
             return;
         }
 
@@ -259,16 +267,43 @@ export class Demux {
 
         if (magic === MAGIC_ACK) {
             this.ack.put(new Ack(buf[1]!));
-        } else if (magic === MAGIC_NACK) {
-            this.ack.put(new Nack(buf[1]!, buf[2]!));
         } else if (magic === MAGIC_JOG_NACK) {
-            this.jog.put(new Nack(buf[1]!));
+            this.jog.put(parseNack(Uint8Array.from(buf)));
         } else if (magic === MAGIC_STATUS_RSP) {
             this.status.put(Uint8Array.from(buf));
         } else if (magic === MAGIC_CFG_NACK) {
             this.cfg.put(new CfgReply(magic, buf[1]!));
         }
         this._buf = [];
+    }
+
+    private _nackHeader(): void {
+        const len = this._buf[2]!;
+        if (len > NACK_TEXT_MAX) {
+            // Not a NACK this build can read: drop it rather than count past it.
+            this.overruns++;
+            this._state = S_IDLE;
+            this._buf = [];
+            return;
+        }
+        this._need = NACK_HDR_SIZE + len + 1;
+        this._state = S_NACK_BODY;
+    }
+
+    private _emitNack(): void {
+        const record = Uint8Array.from(this._buf);
+        this._buf = [];
+        this._state = S_IDLE;
+        let refusal: Refusal;
+        try {
+            refusal = parseNack(record);
+        } catch {
+            // A corrupt NACK: the session's ACK timeout resends, as for a lost one.
+            this.overruns++;
+            return;
+        }
+        this.frames++;
+        this.ack.put(refusal);
     }
 
     private _cfgDataHeader(): void {

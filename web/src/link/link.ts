@@ -17,7 +17,9 @@ import type { Writable } from "./abort.js";
 import { Writer } from "./writer.js";
 import { Demux, makeSinks, JogAck, type DemuxSinks } from "./demux.js";
 import type { Sink, LatestSink } from "./sink.js";
-import { Ack, Nack } from "./demux.js";
+import { Ack } from "./demux.js";
+import { Refusal, type Nack } from "../packets/nack.js";
+import type { CfgNack } from "../packets/cfg.js";
 import { Session, type JobSource } from "./session.js";
 import { setTimer, clearTimer, type TimerId } from "./clock.js";
 import { Commands } from "./commands.js";
@@ -43,7 +45,7 @@ import { encodeConfig, decodeConfig } from "../config/blob.js";
 import type { ControllerConfig } from "../config/schema.js";
 
 /**
- * A config transfer that failed. `reason` is a CFG_NACK_* code, or null when
+ * A config transfer that failed. `reason` is a CfgNack code, or null when
  * the controller did not answer or the failure is the host's.
  */
 export class ConfigTransferError extends Error {
@@ -81,8 +83,8 @@ export interface CJogDirection {
     a?: JogDir;
 }
 
-/** The controller's answer to a jog start: `reason` is a NACK_* code, or null for no answer in time. */
-export type CJogReply = { ok: true } | { ok: false; reason: number | null };
+/** The controller's answer to a jog start: `reason` is a Nack code, or null for no answer in time. */
+export type CJogReply = { ok: true } | { ok: false; reason: Nack | null };
 
 const STATUS_POLL_MIN = 10;
 /** At most a third of HOST_TIMEOUT_MS, so one lost request can't pause a job. */
@@ -182,7 +184,7 @@ export class CJog {
         if (r instanceof JogAck) return { ok: true };
         // A refusal, or no answer in time: either way the jog is over.
         if (this._running) this.stop();
-        return { ok: false, reason: r instanceof Nack ? r.reason : null };
+        return { ok: false, reason: r instanceof Refusal ? r.code : null };
     }
 
     private _schedule(): void {
@@ -540,7 +542,7 @@ export class Link {
         if (r.kind === MAGIC_CFG_NACK) {
             throw new ConfigTransferError(
                 `config ${phase} refused (reason 0x${(r.reason ?? 0).toString(16)})`,
-                r.reason ?? null,
+                (r.reason ?? null) as CfgNack | null,
             );
         }
         if (r.kind !== kind) {
@@ -588,4 +590,4 @@ export class Link {
     }
 }
 
-export type { Sink, LatestSink, Ack, Nack };
+export type { Sink, LatestSink, Ack, Refusal };

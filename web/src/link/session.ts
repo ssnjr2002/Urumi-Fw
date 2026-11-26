@@ -12,18 +12,6 @@
 import type { Sink, LatestSink } from "./sink.js";
 import type { Writer } from "./writer.js";
 import {
-    NACK_BAD_MAGIC,
-    NACK_PAUSED,
-    NACK_BAD_STATE,
-    NACK_CRC,
-    NACK_BAD_CURVE,
-    NACK_SOFT_LIMIT,
-    NACK_JOB,
-    NACK_TOOL_UNKNOWN,
-    NACK_TOOL_CHANGE,
-    NACK_TOOL_UNAVAILABLE,
-    NACK_OUT_OF_RANGE,
-    NACK_NOT_HOMED,
     JOB_MAX_TOOLS,
     MAGIC_ABORT,
     MAGIC_JOB_HDR,
@@ -33,14 +21,15 @@ import { stampSeq } from "../packets/packet.js";
 import { crc32 } from "../packets/crc.js";
 import { delay } from "./clock.js";
 import { packJobHdr, packLayerHdr, packToolHdr, type JobLayer, type ToolBox, type ToolHdr } from "../packets/layer.js";
-import { Ack, type Nack } from "./demux.js";
+import { Ack } from "./demux.js";
+import { Nack, Refusal } from "../packets/nack.js";
 import { nackName } from "./names.js";
 import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../packets/status.js";
 
 const WINDOW = 16; // frames in flight
 const ACK_TIMEOUT_MS = 200; // per-response wait before assuming loss
 const STALL_TIMEOUT_MS = 3000; // silence before the session holds `silent`
-const BACKPRESSURE_MS = 50; // wait for the ring to drain on NACK_FULL
+const BACKPRESSURE_MS = 50; // wait for the ring to drain on Nack.FULL
 const MAX_CRC_ERRORS = 20;
 const IDLE_MS = 100; // a waiting session's nap between looks at the status
 const STATUS_WAIT_MS = 1500; // the wait for the link's next status sample (polls are ≤ 1000 ms apart)
@@ -52,7 +41,7 @@ export type Hold = "place" | "tool" | "paused" | "refused" | "silent" | "release
 
 /** Why a session failed: the controller refused the job, or the host gave up. */
 export type Fatal =
-    | { readonly by: "controller"; readonly nack: number; readonly detail: number }
+    | { readonly by: "controller"; readonly nack: Nack; readonly text: string }
     | { readonly by: "host"; readonly why: "stall" | "crc-limit" | "job-lost" | "job-mismatch" };
 
 export interface SessionStats {
@@ -234,11 +223,16 @@ export class JobSource {
 
 // ── the session ───────────────────────────────────────────────────────────────
 
-/** The NACKs that mean the job, or the machine's state, is wrong. */
-const FATAL_NACKS = new Set<number>([
-    NACK_BAD_MAGIC, NACK_BAD_CURVE, NACK_SOFT_LIMIT, NACK_TOOL_UNKNOWN, NACK_TOOL_UNAVAILABLE,
-    NACK_OUT_OF_RANGE, NACK_NOT_HOMED, NACK_BAD_STATE,
-]);
+/**
+ * The refusals a session waits out or holds on; every other code, one this
+ * build doesn't know included, ends it.
+ */
+const RESEND_NACKS = new Set<number>([Nack.CRC, Nack.FULL, Nack.ABORTING, Nack.BUSY]);
+const HOLD_NACKS: Readonly<Record<number, Hold>> = {
+    [Nack.PAUSED]: "paused",
+    [Nack.NO_RESUME]: "refused",
+    [Nack.TOOL_CHANGE]: "tool",
+};
 
 /** Thrown inside run() to end it; caught there. */
 class Ended {
@@ -247,7 +241,7 @@ class Ended {
 
 export class Session {
     private readonly _writer: Writer;
-    private readonly _ackSink: Sink<Ack | Nack>;
+    private readonly _ackSink: Sink<Ack | Refusal>;
     private readonly _statusSink: LatestSink<Uint8Array>;
     private readonly _job: JobSource;
     private readonly _command: (line: string) => Promise<string>;
@@ -285,7 +279,7 @@ export class Session {
     /** @internal Made by Link.session(). */
     constructor(
         writer: Writer,
-        ackSink: Sink<Ack | Nack>,
+        ackSink: Sink<Ack | Refusal>,
         statusSink: LatestSink<Uint8Array>,
         job: JobSource,
         command: (line: string) => Promise<string>,
@@ -479,28 +473,22 @@ export class Session {
             }
 
             this._nacks++;
-            const r = resp.reason;
-            this._log(`NACK ${nackName(r)} base=${this._base}`);
+            const r = resp.code;
+            this._log(`NACK ${nackName(r)}${resp.text ? ` ${resp.text}` : ""} base=${this._base}`);
             if (this._ending) continue;
-            // A preflight refusal has already ended the job on the controller.
-            const refusedPreflight = r === NACK_JOB && this._base < this._job.preflightFrames;
-            if (FATAL_NACKS.has(r) || refusedPreflight) {
-                throw new Ended({ by: "controller", nack: r, detail: resp.detail });
-            }
-            const held: Hold | null =
-                r === NACK_PAUSED ? "paused" :
-                r === NACK_JOB ? "refused" : // a resume header off the resume point
-                r === NACK_TOOL_CHANGE ? "tool" : null;
+            const held = HOLD_NACKS[r];
             if (held) {
                 await hold(held);
                 continue;
             }
-            if (r === NACK_CRC) {
+            // Any other refusal ends the job; in preflight the controller has already.
+            if (!RESEND_NACKS.has(r)) throw new Ended({ by: "controller", nack: r, text: resp.text });
+            if (r === Nack.CRC) {
                 if (++crcErrors > MAX_CRC_ERRORS) throw new Ended({ by: "host", why: "crc-limit" });
                 this._goBack();
             } else {
-                // NACK_FULL (backpressure), NACK_BUSY or NACK_ABORTING (the
-                // abort barrier): wait, then resend from base.
+                // Nack.FULL (backpressure), BUSY or ABORTING (the abort
+                // barrier): wait, then resend from base.
                 await delay(BACKPRESSURE_MS);
                 this._goBack();
             }

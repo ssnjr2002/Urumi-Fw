@@ -8,7 +8,7 @@
  *     cancel/stop/unalarm per the allowed-state matrix
  *   - binary status poll (STATUS_RSP: wpos, no job, the context)
  *   - coalesced ACKs (K=8: one ACK frame per 8 accepted packets, not 1:1)
- *   - backpressure (NACK_FULL when ring full, resent on drain)
+ *   - backpressure (Nack.FULL when ring full, resent on drain)
  *   - stale-seq duplicate guard (a retransmit is ACKed but NOT executed)
  *   - the job, opened by a layer header: BUFFERING until enough is queued, then RUNNING, each record
  *     landing the head on its end point; a dry ring buffers again
@@ -27,13 +27,14 @@ import {
     JobReason,
     NO_LAYER,
 } from "../../../../src/packets/status.js";
+import { Nack } from "../../../../src/packets/nack.js";
 import { stampSeq } from "../../../../src/packets/packet.js";
 import { packBezier } from "../../../../src/packets/bezier.js";
 import { packJobHdr, packLayerHdr, packToolHdr } from "../../../../src/packets/layer.js";
 import { cubic } from "../../../../src/toolpath/geometry.js";
 import { packCjog, type JogDir } from "../../../../src/packets/cjog.js";
 import {
-    CJOG_DEADMAN_MS, MAGIC_CJOG_STOP, NACK_ABORTING, NACK_BUSY, NACK_CRC, NACK_FULL, NACK_TOOL_CHANGE,
+    CJOG_DEADMAN_MS, MAGIC_CJOG_STOP,
 } from "../../../../src/packets/constants.js";
 import { Ack } from "../../../../src/link/demux.js";
 import { crc8 } from "../../../../src/packets/crc.js";
@@ -83,7 +84,8 @@ async function stream(link: Link, packets: readonly Uint8Array[], window = 16): 
             }
         } else {
             nacks++;
-            if (![NACK_FULL, NACK_BUSY, NACK_ABORTING, NACK_CRC, NACK_TOOL_CHANGE].includes(r.reason)) return { ok: false, nacks };
+            const resend: number[] = [Nack.FULL, Nack.BUSY, Nack.ABORTING, Nack.CRC, Nack.TOOL_CHANGE];
+            if (!resend.includes(r.code)) return { ok: false, nacks };
             await tick(50);
             next = base;
         }
@@ -421,12 +423,12 @@ describe("wire/link/backends/sim: stale-seq duplicate guard", () => {
     });
 });
 
-describe("wire/link/backends/sim: backpressure (NACK_FULL)", () => {
-    it("a stream against a tiny ring retries to completion under NACK_FULL", async () => {
+describe("wire/link/backends/sim: backpressure (Nack.FULL)", () => {
+    it("a stream against a tiny ring retries to completion under Nack.FULL", async () => {
         await withLink(
             async (link) => {
                 // ringSize=2, a record per tick — the ring fills, the
-                // session sees NACK_FULL, retries, and eventually completes.
+                // session sees Nack.FULL, retries, and eventually completes.
                 await link.commands().send("setorigin");
                 expect(await stream(link, upTo(10), 8)).toMatchObject({ ok: true });
                 const st = await until(link, (s) => s.wpos![0] === 10);
@@ -530,7 +532,7 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
                 .toBe("resume_layer=2 resume_record=10");
             expect((await link.freshStatus()).busy).toBe(false);   // the parked ring
 
-            expect((await stream(link, [hdr(2, 11)], 4)).ok).toBe(false);   // NACK_JOB
+            expect((await stream(link, [hdr(2, 11)], 4)).ok).toBe(false);   // Nack.NO_RESUME
             await link.resetSeq();
             expect((await stream(link, [hdr(2, 10), rec(1)], 4)).ok).toBe(true);
             const st = await link.freshStatus();
@@ -539,7 +541,7 @@ describe("wire/link/backends/sim: the unmapped boot", () => {
         });
     });
 
-    it("a record against a paused job gets NACK_PAUSED, not BAD_STATE", async () => {
+    it("a record against a paused job gets Nack.PAUSED, not BAD_STATE", async () => {
         await withLink(async (link, sim) => {
             sim._forceRunning();
             expect(await link.commands().send("pause")).toBe("ok");
@@ -601,7 +603,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
             expect(r).toEqual(["b6"]);
             await tick(CJOG_DEADMAN_MS + 30);
             await sim.write(packCjog(1, 0));          // a fresh press at the end
-            expect(r).toEqual(["b6", "b709"]);
+            expect(r).toEqual(["b6", "b711"]);
         }, opts);
     });
 
@@ -618,7 +620,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
             bad[1] = 2;                                 // not −1, 0 or +1
             bad[6] = crc8(bad, 0, 6);
             await sim.write(bad);
-            expect(r).toEqual(["b6", "b706"]);
+            expect(r).toEqual(["b6", "b715"]);
         }, opts);
     });
 
@@ -650,7 +652,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
             await sim.write(stampSeq(packJobHdr({ recordCount: 0, toolCount: 1 }), 0));
             await sim.write(stampSeq(tool(), 1));
             await sim.write(stampSeq(hdr, 2));
-            await sim.write(stampSeq(tool(), 3)); // NACK_TOOL_CHANGE
+            await sim.write(stampSeq(tool(), 3)); // Nack.TOOL_CHANGE
             await until(link, (st) => st.reason === JobReason.TOOL_WAIT);
             const layer = (await link.freshStatus()).layer;
             const r = replies(sim);
@@ -691,7 +693,7 @@ describe("wire/link/backends/sim: continuous jog", () => {
         await withLink(async (_link, sim) => {
             const r = replies(sim);
             await sim.write(packCjog(1, 0));
-            expect(r).toEqual(["b706"]);
+            expect(r).toEqual(["b712"]);
             expect(sim.state).toBe(MachineState.IDLE);
         }, opts);
     });

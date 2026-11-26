@@ -81,7 +81,8 @@ The demux is a state machine. Between frames it reads one byte:
 
 | Byte | The demux then |
 | --- | --- |
-| `ACK`, `NACK`, `STATUS_RSP`, `CFG_NACK`, `JOG_NACK` | reads the frame's fixed length, by count |
+| `ACK`, `STATUS_RSP`, `CFG_NACK`, `JOG_NACK` | reads the frame's fixed length, by count |
+| `NACK` | reads its header (3 bytes with the magic), then the text and CRC8, `len` + 1 bytes, by count |
 | `CFG_RDY`, `CFG_ACK`, `JOG_ACK` | has a whole frame already |
 | `CFG_DATA` | reads its header (9 bytes with the magic), then `length` payload bytes, by count |
 | ASCII (bit 7 clear) | reads a text line to `\n`, dropping a trailing `\r` |
@@ -91,7 +92,8 @@ A chunk can end mid-frame; the state carries over to the next one. A
 `CFG_DATA` payload is a msgpack blob and can hold any byte, magic bytes
 included. A `length` over 64 KB (`MAX_CFG_PAYLOAD`) isn't read at all,
 since it would swallow everything after it; the demux counts an overrun and
-goes back to reading frames. So does a text line over 512 bytes.
+goes back to reading frames. So does a text line over 512 bytes, and a
+`NACK` whose `len` is over 48 or whose CRC8 doesn't match.
 
 | Sink | Takes | Kind |
 | --- | --- | --- |
@@ -219,8 +221,9 @@ changes, is in [jobs.md](jobs.md). This section is how the records cross.
   before it. Taking a record counts one more ACK owed (`pendingAcks`); the
   ACK goes out when 8 are owed (`ACK_COALESCE_MAX`), when the input is empty
   (`dataPlaneTick()`), or just before a NACK.
-* **A NACK** refuses one record, with a reason and a detail byte. The record
-  isn't taken and `expectedSeq` stays.
+* **A NACK** refuses one record, with a reason and, on a reason that ends
+  the job, a short text naming the check that failed. The record isn't taken
+  and `expectedSeq` stays.
 * **`SEQRESET`** sets `expectedSeq` to 0, drops the ACKs owed, and answers
   `ACK(0)` at once.
 * **`ABORT`** asks Core 1 to stop the job; there is no reply. Until the
@@ -240,7 +243,7 @@ changes, is in [jobs.md](jobs.md). This section is how the records cross.
   the oldest record in flight, counted mod 256 and capped at the number in
   flight, so a repeated or stale ACK moves nothing.
 * **A resend** starts again from the oldest record in flight: after 200 ms
-  without a reply, after `NACK_CRC`, and after `NACK_FULL` or
+  without a reply, after `NACK_CRC`, and after `NACK_FULL`, `NACK_BUSY` or
   `NACK_ABORTING` with a 50 ms wait.
 * **`abort()`** sends `ABORT` without waiting.
 

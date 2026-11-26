@@ -70,10 +70,10 @@ the next seq it will take.
   host sends it before every stream.
 
 The host's job session keeps up to 16 records unconfirmed. After 200 ms with
-no reply, `NACK_CRC`, `NACK_FULL` or `NACK_ABORTING`, it resends from the
-oldest unconfirmed record. On `NACK_PAUSED`, `NACK_TOOL_CHANGE` or a resume
-header's `NACK_JOB` it holds, and resends when the job can take records
-again. Any other NACK ends the session.
+no reply, `NACK_CRC`, `NACK_FULL`, `NACK_BUSY` or `NACK_ABORTING`, it
+resends from the oldest unconfirmed record. On `NACK_PAUSED`,
+`NACK_TOOL_CHANGE` or `NACK_NO_RESUME` it holds, and resends when the job can
+take records again. Any other NACK ends the session.
 
 ### Which check refuses first
 
@@ -85,7 +85,7 @@ A complete record is checked in this order; the first that fails answers.
 4. A job holding for a tool change: `NACK_TOOL_CHANGE`, except a header while
    it waits for the tool.
 5. A paused job: `NACK_PAUSED` for anything but a `LAYER_HDR`. Any state but
-   IDLE or a job: `NACK_BAD_STATE`.
+   IDLE or a job: `NACK_BAD_STATE`, text the state's name, such as `HOMING`.
 6. The seq ([above](#the-job-streams-seq-and-ack)).
 7. The record's own checks, in its section below.
 
@@ -94,45 +94,47 @@ A complete record is checked in this order; the first that fails answers.
 | Record | Bytes | Layout | Sent for |
 | --- | --- | --- | --- |
 | `ACK` `0xAA` | 3 | `[0xAA] [expectedSeq] [0]` | the job stream and `SEQRESET` |
-| `NACK` `0xBB` | 3 | `[0xBB] [reason] [detail]` | the job stream |
+| `NACK` `0xBC` | 4 to 52 | `[0xBC] [reason] [len] [text] [CRC8]` | the job stream |
 | `JOG_ACK` `0xB6` | 1 | `[0xB6]` | a continuous jog started |
 | `JOG_NACK` `0xB7` | 2 | `[0xB7] [reason]` | a continuous jog refused |
 
 `ACK` and `NACK` answer only the job stream, `JOG_ACK` and `JOG_NACK` only
 the continuous jog, so neither reads the other's reply as its own.
 
+A `NACK`'s text is `len` bytes of ASCII, at most 48, naming the check that
+failed: `y high, tool 1`, `head 1 z`, `chamber 9`. It is there only on a
+reason that ends the job; on the others `len` is 0. It is for a person to
+read: a program matches the reason, never the words. The CRC8 covers every
+byte before it. `0xBB`, an older `NACK` of 3 bytes with a detail byte in
+place of the text, is retired and never sent.
+
 ### NACK reasons
 
-`NACK` and `JOG_NACK` share one set of reasons.
+`NACK` and `JOG_NACK` share one set of reasons. Text is the `NACK`'s; a
+`JOG_NACK` never has any.
 
-| Reason | Code | Means | Sent for |
-| --- | --- | --- | --- |
-| `NACK_CRC` | `0x01` | the CRC8 doesn't match | every record with one |
-| `NACK_FULL` | `0x02` | the planner queue is full; resend later | `BEZIER` |
-| `NACK_BAD_MAGIC` | `0x03` | reserved, never sent: an unknown byte is read as text | — |
-| `NACK_PAUSED` | `0x04` | the job is paused or pausing | the job stream |
-| `NACK_BAD_STATE` | `0x06` | the machine is in the wrong state for it | every record |
-| `NACK_ABORTING` | `0x07` | an abort is under way; resend once IDLE | the job stream |
-| `NACK_BAD_CURVE` | `0x08` | the curve fails its checks or breaks its contour | `BEZIER` |
-| `NACK_SOFT_LIMIT` | `0x09` | outside the soft range or the work area, or the bed mesh would take Z out of its range | `BEZIER`, `CJOG` |
-| `NACK_MIXED_AXES` | `0x0A` | directions in more than one axis set | `CJOG` |
-| `NACK_BUSY` | `0x0B` | a step or sequence holds the machine | `CJOG` |
-| `NACK_JOB` | `0x0C` | out of the job's order, or a bad field | the job stream |
-| `NACK_TOOL_UNKNOWN` | `0x0D` | a tool id the config doesn't have | `TOOL_HDR`, `LAYER_HDR` |
-| `NACK_TOOL_CHANGE` | `0x0F` | the job holds for a tool change; the header was not taken | the job stream |
-| `NACK_TOOL_UNAVAILABLE` | `0x10` | the head, its A or the tool's power node can't run the tool, or the laser's node is mute or excluded | `JOB_HDR`, `TOOL_HDR` |
-| `NACK_OUT_OF_RANGE` | `0x11` | no work origin keeps the job in range, or soft limits are off | `JOB_HDR`, `TOOL_HDR` |
-| `NACK_NOT_HOMED` | `0x12` | an axis the job needs isn't homed | `JOB_HDR`, `TOOL_HDR` |
+| Reason | Code | Text | Means | Sent for |
+| --- | --- | --- | --- | --- |
+| `NACK_CRC` | `0x01` | no | the CRC8 doesn't match | every record with one |
+| `NACK_FULL` | `0x02` | no | the planner queue is full; resend later | `BEZIER` |
+| `NACK_PAUSED` | `0x04` | no | the job is paused or pausing | the job stream |
+| `NACK_BAD_STATE` | `0x06` | yes | the machine is in the wrong state for it | every record |
+| `NACK_ABORTING` | `0x07` | no | an abort is under way; resend once IDLE | the job stream |
+| `NACK_BAD_CURVE` | `0x08` | yes | the curve fails its checks | `BEZIER` |
+| `NACK_MIXED_AXES` | `0x0A` | — | directions in more than one axis set | `CJOG` |
+| `NACK_BUSY` | `0x0B` | no | a step or sequence holds the machine, or a jog the ring: `get busy`; resend later | `JOB_HDR`, `CJOG` |
+| `NACK_TOOL_LIST` | `0x0C` | yes | a tool preflight already declared, or one it never declared | `TOOL_HDR` |
+| `NACK_TOOL_UNKNOWN` | `0x0D` | yes | a tool id the config doesn't have | `TOOL_HDR`, `LAYER_HDR` |
+| `NACK_TOOL_CHANGE` | `0x0F` | no | the job holds for a tool change; the header was not taken | the job stream |
+| `NACK_TOOL_UNAVAILABLE` | `0x10` | yes | the head, its A, its nodes or the tool's power node can't run the tool, or the laser's node is mute or excluded | `JOB_HDR`, `TOOL_HDR`, `LAYER_HDR` |
+| `NACK_OUT_OF_RANGE` | `0x11` | yes | outside the travel: no origin fits, past the work area or soft range, or the mesh takes Z out | `TOOL_HDR`, `BEZIER`, `CJOG` |
+| `NACK_NOT_HOMED` | `0x12` | yes | an axis it needs isn't homed, or a head's Z or A has no origin | `JOB_HDR`, `TOOL_HDR`, `CJOG` |
+| `NACK_NO_CONFIG` | `0x13` | yes | no valid config, or the config lacks a value this needs: `softLimits`, limits, a feed, the axis | every record |
+| `NACK_ORDER` | `0x14` | yes | a record out of the job's order | the job stream |
+| `NACK_BAD_FIELD` | `0x15` | yes | a field out of range or malformed | `JOB_HDR`, `TOOL_HDR`, `LAYER_HDR`, `CJOG` |
+| `NACK_NO_RESUME` | `0x16` | no | resuming, the `LAYER_HDR` doesn't name where the job stopped (`get resume_layer resume_record`) | `LAYER_HDR` |
 
-`0x05` and `0x0E` are unused.
-
-A `NACK`'s byte 2 is 0, except on `NACK_OUT_OF_RANGE`:
-
-| Bit | Set means |
-| --- | --- |
-| `0x01` | the Y axis (clear: X) |
-| `0x02` | the high side (clear: low) |
-| `0x04` | soft limits are off on that axis |
+`0x03`, `0x05`, `0x09` and `0x0E` are unused.
 
 ## Job stream
 
@@ -164,11 +166,12 @@ Opens a job from IDLE.
 
 | Refusal | When |
 | --- | --- |
-| `NACK_BAD_STATE` | not IDLE, or no config |
+| `NACK_BAD_STATE` | not IDLE: text `not idle` (a job open), else the state's name |
+| `NACK_NO_CONFIG` | no config, or soft limits off on X or Y |
 | `NACK_NOT_HOMED` | X, Y or a present head's Z not homed |
 | `NACK_TOOL_UNAVAILABLE` | a configured laser's node is mute or excluded |
-| `NACK_OUT_OF_RANGE` | soft limits off on X or Y (detail `0x04`, and the axis) |
-| `NACK_JOB` | a version other than 1, or a tool count outside 1–4 |
+| `NACK_BAD_FIELD` | a version other than 1, or a tool count outside 1–4 |
+| `NACK_BUSY` | IDLE, but a jog still holds the planner |
 
 ### `TOOL_HDR`
 
@@ -186,12 +189,15 @@ One per tool in preflight, then one after each new layer's `LAYER_HDR`.
 | Refusal | When |
 | --- | --- |
 | `NACK_PAUSED` | a pause is under way |
-| `NACK_JOB` | no job open; a box not finite or with min above max; in preflight, a tool already sent; after it, no layer held, or a tool not sent in preflight |
+| `NACK_ORDER` | no job open; after preflight, no layer held |
+| `NACK_NO_CONFIG` | no config |
+| `NACK_BAD_FIELD` | a box not finite or with min above max |
+| `NACK_TOOL_LIST` | in preflight, a tool already sent; after it, a tool not sent in preflight |
 | `NACK_TOOL_UNKNOWN` | a tool id the config doesn't have |
-| `NACK_TOOL_UNAVAILABLE` | the head doesn't exist, or has no A for a tangential or chamber tool, or the tool's power node is mute or excluded |
+| `NACK_TOOL_UNAVAILABLE` | the head doesn't exist, or has no A for a tangential or chamber tool; in preflight, the tool's power node is mute or excluded |
 | `NACK_NOT_HOMED` | in preflight, the head's A not homed where the tool or a tool change needs it |
-| `NACK_OUT_OF_RANGE` | in preflight, no origin keeps this and the earlier tools in range; after it, the current origin doesn't (detail: axis and side) |
-| `NACK_TOOL_CHANGE`, `NACK_BAD_STATE` | after preflight, as `LAYER_HDR`'s layer opening |
+| `NACK_OUT_OF_RANGE` | no origin fits the tool on an axis; in preflight, none keeps this and the earlier tools in range; after it, the current origin doesn't. The text names the axis and side. |
+| `NACK_TOOL_CHANGE`, `NACK_BAD_STATE`, … | after preflight, as `LAYER_HDR`'s layer opening |
 
 A refusal in preflight ends the job.
 
@@ -214,10 +220,14 @@ Starts a layer, held until its `TOOL_HDR`; or, in a paused job, resumes it.
 | Refusal | When |
 | --- | --- |
 | `NACK_PAUSED` | a pause is under way |
-| `NACK_JOB` | no job open, in preflight or placing; a bad chamber, feed, t or p; a layer already held, or inside a contour; resuming, not naming where the job stopped |
+| `NACK_ORDER` | no job open, in preflight or placing; a layer already held, or inside a contour |
+| `NACK_NO_CONFIG` | no config, or the planner lacks limits or a feed |
+| `NACK_BAD_FIELD` | a bad chamber, feed, t or p |
+| `NACK_NO_RESUME` | resuming, not naming where the job stopped |
 | `NACK_TOOL_UNKNOWN` | resuming, the current tool is no longer in the config |
+| `NACK_TOOL_UNAVAILABLE` | the head doesn't exist, has no A for the tool, or its nodes won't map |
 | `NACK_TOOL_CHANGE` | the layer's tool is not mounted and zeroed on its head; the job holds for a change and the header is not taken |
-| `NACK_BAD_STATE` | the head could not be selected |
+| `NACK_BAD_STATE` | the job can't hold for a tool change |
 
 `0xA2`, an older `LAYER_HDR` with a plunge scale in place of `p`, is retired
 and read as a text byte.
@@ -247,9 +257,10 @@ How the planner checks and runs a piece is in
 | Refusal | When |
 | --- | --- |
 | `NACK_PAUSED` | a pause is under way |
-| `NACK_JOB` | no layer open, a layer held, or in preflight |
-| `NACK_SOFT_LIMIT` | a control point outside the work area or the soft range, or the bed mesh would take Z out of its range |
-| `NACK_BAD_STATE` | no head selected, or the planner refuses it for state, config or limits |
+| `NACK_ORDER` | no layer open, a layer held, or in preflight |
+| `NACK_OUT_OF_RANGE` | a control point outside the work area or the soft range, or the bed mesh would take Z out of its range |
+| `NACK_NO_CONFIG` | the planner lacks limits or a feed |
+| `NACK_BAD_STATE` | no head selected, or the planner refuses it for state |
 | `NACK_BAD_CURVE` | the curve fails its checks or breaks its contour's framing |
 | `NACK_FULL` | the planner queue is full |
 
@@ -293,10 +304,13 @@ holds a direction. What a jog does is in
 | Refusal (`JOG_NACK`) | When |
 | --- | --- |
 | `NACK_CRC` | the CRC8 doesn't match |
+| `NACK_BAD_FIELD` | a direction outside −1 to +1, or a speed of 0 |
 | `NACK_MIXED_AXES` | directions in more than one axis set |
-| `NACK_BUSY` | a step or sequence holds the machine |
-| `NACK_SOFT_LIMIT` | no room left in that direction, or the bed mesh would take Z out of its range |
-| `NACK_BAD_STATE` | a direction outside −1 to +1 or a speed of 0; no config; a state that doesn't admit a step; unhomed without `jogUnhomed`; while placing a job, anything but X and Y, or any jog after `place set` |
+| `NACK_BUSY` | a step or sequence holds the machine, or other motion holds the planner |
+| `NACK_NO_CONFIG` | no config; the axis isn't configured, or its jog feed is 0 |
+| `NACK_NOT_HOMED` | unhomed without `jogUnhomed` |
+| `NACK_OUT_OF_RANGE` | no room left in that direction, or the bed mesh would take Z out of its range |
+| `NACK_BAD_STATE` | a state that doesn't admit a step; while placing a job, anything but X and Y, or any jog after `place set` |
 
 ## Status
 

@@ -148,7 +148,7 @@ the controller checks again against where it actually went:
   the job stays open.
 * **At each curve**, the controller checks every point, and the moves around
   it (the lift, the travel, the plunge), against the soft limits and the bed
-  mesh. A curve that fails is refused with `NACK_SOFT_LIMIT` and never
+  mesh. A curve that fails is refused with `NACK_OUT_OF_RANGE` and never
   reaches the motors. The job runs what it already has, then stops and
   waits. This isn't an alarm: nothing actually went out of range, the
   controller just refused to start.
@@ -613,7 +613,7 @@ status requests, so it can see when the controller is ready again.
 | --- | --- | --- |
 | `place` | preflight accepted; the operator is placing | the status shows `BUFFERING`, after `place ok` |
 | `paused` | the controller refused a record with `NACK_PAUSED`, or the host itself paused, or the status shows `PAUSED` | the host calls `resume()`: the session restarts the stream at the resume point the status reports |
-| `refused` | a resume header didn't match the resume point (`NACK_JOB`) | as `paused` |
+| `refused` | a resume header didn't match the resume point (`NACK_NO_RESUME`) | as `paused` |
 | `tool` | `NACK_TOOL_CHANGE` | once the controller is in `TOOL_WAIT`, the host calls `resume()` and the header is sent again |
 | `silent` | no reply for 3 seconds | the session resends straight away; if the status shows `PAUSED` (the controller lost the host meanwhile) it holds `paused` instead |
 
@@ -645,13 +645,13 @@ job to close.
 ### When the session gives up
 
 Some refusals mean the job itself is wrong, and resending won't help. The
-session stops with an error for:
-
-* any refusal during preflight;
-* a curve the controller won't take (`NACK_BAD_CURVE`), or one out of range
-  (`NACK_SOFT_LIMIT`);
-* a tool or range refusal at a layer, or `NACK_BAD_STATE`;
-* too many corrupted packets in a row.
+session stops with an error, the refusal's code and its text, for any
+refusal but the ones it resends (`NACK_CRC`, `NACK_FULL`, `NACK_BUSY`,
+`NACK_ABORTING`) or holds on (`NACK_PAUSED`, `NACK_TOOL_CHANGE`,
+`NACK_NO_RESUME`): a curve the controller won't take (`NACK_BAD_CURVE`), one
+out of range (`NACK_OUT_OF_RANGE`), a tool, field or order refusal, and a
+code it doesn't know. It also stops after too many corrupted packets in a
+row.
 
 It also stops if it **loses the job**: the controller has left the job
 without the session asking it to, or reports a layer the job doesn't have.
@@ -803,7 +803,7 @@ JOGGING, and the job's stage is kept underneath until the jog ends
 
 | What | Channel | Reply |
 | --- | --- | --- |
-| `JOB_HDR`, `TOOL_HDR`, `LAYER_HDR`, `BEZIER` | data plane | ACK, or NACK with a reason and a detail byte |
+| `JOB_HDR`, `TOOL_HDR`, `LAYER_HDR`, `BEZIER` | data plane | ACK, or NACK with a reason and its text |
 | ABORT | data plane, one byte | none; the status shows idle |
 | `pause`, `cancel`, `place …` | text | `ok` or `err <why>` |
 | `mount`, `goto`, `jog`, `wzero` during a hold | text | as outside a job |

@@ -3,9 +3,11 @@
 #include "layer.h"
 #include <math.h>
 
-bool layerValid(const LayerHdr& l) {
-    return isfinite(l.feed) && l.feed >= 0 && isfinite(l.p) &&
-           isfinite(l.thickness) && l.thickness >= 0;
+const char* layerBadField(const LayerHdr& l) {
+    if (!(isfinite(l.feed) && l.feed >= 0)) return "feed";
+    if (!isfinite(l.p)) return "p";
+    if (!(isfinite(l.thickness) && l.thickness >= 0)) return "thickness";
+    return nullptr;
 }
 
 bool layerHeadFits(const MachineCfg& c, const CfgTool& t, uint8_t head) {
@@ -32,14 +34,14 @@ float layerHandoff(float last, const OriginRange& r, bool low) {
 
 LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,
                          const LayerHdr& l, float machineFeed, LayerMotion* out) {
-    if (l.head >= c.headCount) return LAYER_BAD;
+    if (l.head >= c.headCount) return LAYER_NO_HEAD;
     const CfgTool* t = configTool(c, l.tool);
     if (!t) return LAYER_TOOL_UNKNOWN;
-    if (t->plunge && (!(l.p > 0) || l.p - l.thickness > c.maxOvercut)) return LAYER_BAD;
+    if (t->plunge && (!(l.p > 0) || l.p - l.thickness > c.maxOvercut)) return LAYER_BAD_P;
     if (t->chamberCount == 0 ? l.chamber != 0
                              : l.chamber < 1 || l.chamber > t->chamberCount)
-        return LAYER_BAD;
-    if (!layerHeadFits(c, *t, l.head)) return LAYER_BAD;
+        return LAYER_BAD_CHAMBER;
+    if (!layerHeadFits(c, *t, l.head)) return LAYER_NO_A;
 
     out->cutFeed    = l.feed > 0 ? l.feed : t->cutFeed > 0 ? t->cutFeed : machineFeed;
     out->plungeFeed = t->plungeFeed > 0 ? t->plungeFeed : c.feed.plungeFallback;

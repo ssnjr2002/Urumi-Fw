@@ -126,11 +126,11 @@ int  plannerQueueDepth() { return depth; }
 
 // ── packet checks ───────────────────────────────────────────────────────────
 
-TEST_CASE("a bad direction or speed is BAD_STATE, two axis sets MIXED_AXES") {
+TEST_CASE("a bad direction or speed is BAD_FIELD, two axis sets MIXED_AXES") {
     reset();
     const int8_t bad[4] = { 2, 0, 0, 0 };
-    CHECK(cjogPacket(bad, 64, 0) == MSEG_NACK_BAD_STATE);
-    CHECK(cjogPacket(XP, 0, 0) == MSEG_NACK_BAD_STATE);
+    CHECK(cjogPacket(bad, 64, 0) == MSEG_NACK_BAD_FIELD);
+    CHECK(cjogPacket(XP, 0, 0) == MSEG_NACK_BAD_FIELD);
     const int8_t xz[4] = { 1, 0, 1, 0 };
     CHECK(cjogPacket(xz, 64, 0) == MSEG_NACK_MIXED_AXES);
     const int8_t za[4] = { 0, 0, 1, 1 };
@@ -192,7 +192,7 @@ TEST_CASE("the feed is capped at maxFeed") {
 TEST_CASE("unhomed: refused without jogUnhomed, else maxTravel at jogFeedUnhomed") {
     reset();
     axes_homed = 0;
-    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BAD_STATE);
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_NOT_HOMED);
     CHECK(moveCount == 0);
 
     cfg.jogUnhomed = true;
@@ -224,27 +224,27 @@ TEST_CASE("Z and A queue an axis move; A runs one turn") {
     CHECK(moves[0].d == doctest::Approx(360));
 }
 
-TEST_CASE("no room left, or the mesh leaving Z none, is SOFT_LIMIT") {
+TEST_CASE("no room left, or the mesh leaving Z none, is OUT_OF_RANGE") {
     reset();
     at[0] = 100;
-    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_SOFT_LIMIT);
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_OUT_OF_RANGE);
     CHECK(moveCount == 0);
 
     reset();
     queueResult = PQ_SOFT_LIMIT;
-    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_SOFT_LIMIT);
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_OUT_OF_RANGE);
 }
 
-TEST_CASE("no config, no axis, or a ring it cannot join is BAD_STATE") {
+TEST_CASE("no config or no axis is NO_CONFIG; a ring it cannot join is BUSY, a planner refusal BAD_STATE") {
     reset();
     cfgValid = false;
-    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BAD_STATE);
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_NO_CONFIG);
     reset();
     hasAxis[0] = false;
-    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BAD_STATE);
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_NO_CONFIG);
     reset();
     jogFromOk = false;
-    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BAD_STATE);
+    CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BUSY);
     reset();
     queueResult = PQ_FULL;
     CHECK(cjogPacket(XP, 64, 0) == MSEG_NACK_BAD_STATE);
@@ -380,7 +380,7 @@ TEST_CASE("a held start's refusal is its reply") {
     CHECK(cjogPacket(XP, 64, 0) == CJOG_NO_REPLY);
     depth = 0;
     at[0] = 100;                                     // no room by then
-    CHECK(cjogTick(10) == MSEG_NACK_SOFT_LIMIT);
+    CHECK(cjogTick(10) == MSEG_NACK_OUT_OF_RANGE);
     CHECK(cjogTick(20) == CJOG_NO_REPLY);            // asked once
 }
 

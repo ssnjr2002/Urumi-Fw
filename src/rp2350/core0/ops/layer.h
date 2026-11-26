@@ -8,9 +8,10 @@
 
 enum LayerResult : uint8_t {
     LAYER_OK,
-    LAYER_BAD,            // head or chamber out of range, a plunge past
-                          // maxOvercut below the bed, or a tangential or chamber
-                          // tool on a head without A
+    LAYER_NO_HEAD,        // the head is beyond headCount
+    LAYER_NO_A,           // a tangential or chamber tool on a head without A
+    LAYER_BAD_P,          // a plunging tool's p not > 0, or past maxOvercut below the bed
+    LAYER_BAD_CHAMBER,    // the chamber out of range for the tool
     LAYER_TOOL_UNKNOWN,   // the id is not in the config
     LAYER_NOT_MOUNTED,    // the head has another tool mounted, or none
 };
@@ -37,13 +38,14 @@ struct LayerMotion {
     float chamberDeg;     // the chamber's machine A, any equivalent
 };
 
-// What needs no tool: feed, p and thickness finite and in range.
-bool layerValid(const LayerHdr& l);
+// What needs no tool: feed, p and thickness finite and in range. The first
+// field that isn't ("feed", "p", "thickness"), or nullptr.
+const char* layerBadField(const LayerHdr& l);
 
 // The head exists and has the A this tool needs.
 bool layerHeadFits(const MachineCfg& c, const CfgTool& t, uint8_t head);
 
-// `l` passed layerValid. `mounted[h]` is head h's tool id (tools.h).
+// `l` passed layerBadField. `mounted[h]` is head h's tool id (tools.h).
 // `machineFeed` is the cut feed when neither the header nor the tool sets one.
 // Fills *out on LAYER_OK and LAYER_NOT_MOUNTED.
 LayerResult layerResolve(const MachineCfg& c, const uint8_t* mounted,

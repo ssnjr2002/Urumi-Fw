@@ -12,12 +12,7 @@ import { describe, it, expect } from "vitest";
 import {
     CFG_DATA_HDR_SIZE,
     MAX_CFG_PAYLOAD,
-    CFG_NACK_CRC,
-    CFG_NACK_TOO_BIG,
-    CFG_NACK_BAD_STATE,
-    CFG_NACK_FLASH,
-    CFG_NACK_TIMEOUT,
-    CFG_NACK_SCHEMA,
+    CfgNack,
     CFG_SET_HDR_SIZE,
     packCfgDataHeader,
     packCfgSetHeader,
@@ -31,12 +26,12 @@ const REF_HDR = new Uint8Array([181, 57, 48, 0, 0, 239, 190, 173, 222]);
 
 describe("wire/format/cfg: CFG NACK reasons", () => {
     it("mirrors the firmware values (separate namespace from MSEG NACKs)", () => {
-        expect(CFG_NACK_CRC).toBe(0x01);
-        expect(CFG_NACK_TOO_BIG).toBe(0x02);
-        expect(CFG_NACK_BAD_STATE).toBe(0x03);
-        expect(CFG_NACK_FLASH).toBe(0x04);
-        expect(CFG_NACK_TIMEOUT).toBe(0x05);
-        expect(CFG_NACK_SCHEMA).toBe(0x06);
+        expect(CfgNack.CRC).toBe(0x01);
+        expect(CfgNack.TOO_BIG).toBe(0x02);
+        expect(CfgNack.BAD_STATE).toBe(0x03);
+        expect(CfgNack.FLASH).toBe(0x04);
+        expect(CfgNack.TIMEOUT).toBe(0x05);
+        expect(CfgNack.SCHEMA).toBe(0x06);
     });
 });
 
