@@ -1372,24 +1372,43 @@ reworks.
      as open once a status sample arrives after the first ACK, so a
      `cancel` from elsewhere during placement is `job-lost`. `_drop()`,
      `@internal`, stands in for a reload in the tests.
-8. `feature/web-commands`: the text commands. Depends on 6.
+8. `feature/web-commands`: the text commands. Depends on 6 and on the
+   firmware's `busy` bit (below).
    **Status:** not started.
    * `link.commands()` returns the link's one `Commands` (no public
      constructor). `send(line)` gives the raw reply; each other method
-     sends its command, parses the reply, and throws a `CommandError`
-     (`command`, `reason`, `reply`) on a refusal, in place of today's mix
-     of `false`, `null`, a raw string and a throw.
-   * Each method returns a handle whose `.settled` resolves when the
-     firmware would take the next command, and rejects on `ESTOP` or
-     `ALARM`. The handle's name is decided here.
+     sends its command, parses the reply, resolves on `ok` with the parsed
+     value where there is one (`jog`'s depth, `unalarm`'s mask), and
+     throws a `CommandError` (`command`, `reason`, `reply`) on `err` or a
+     node failure, in place of today's mix of `false`, `null`, a raw
+     string and a throw.
+   * Nothing reports that a command finished: the host can know only
+     whether a command was taken and whether the machine is busy. Methods
+     return no handle.
+   * `cmd.onReady` gives the same non-read methods, each waiting for a
+     status sample with `busy` false, then sending once. It throws if the
+     e-stop is latched; no timeout. The methods on `cmd` send at once.
+     Reads (`get`, `ping` …) are on `cmd` only: always admitted.
+   * Scope: what `commands.ts` has, checked against today's firmware,
+     plus `place`. `goto`'s XY takes `"min"`/`"max"`. `axisMap` and
+     `readAxisMap` (`axis_map`, gone from the firmware) are dropped for
+     `axesMap` and `slotMap`. The demo's buttons move onto the methods;
+     its console stays on `send()`.
    * `link.command()` goes private. The step jog is `cmd.jog()`, apart
      from `link.cjog()`. The unexported helpers (`goto`, `home`, `mount`,
-     …) become methods; the `axisMap` stub is kept or dropped.
-   * `.settled` replaces `settle()`, `waitAtRest()`, `inState()`,
-     `inAnyState()` and `SettleError`; `atRest` stays inside. `getStatus()`
-     loses its last user and goes.
+     …) become methods; the free functions go.
+   * `settle()`, `waitAtRest()`, `inState()`, `inAnyState()`,
+     `SettleError` and `atRest` go: `atRest` was a host guess (IDLE or a
+     paused or empty job) that hangs in ALARM, tool wait, placement and
+     between legs, where the firmware admits commands. `getStatus()` goes.
    * No chaining; a `run()` for fixed sequences only if they turn out
      common.
+   * Docs: a new `commands.md`, stamped. `link.md` loses `settle()`,
+     `waitAtRest()` and the helper table, and points to it. The README adds
+     commands to Done, a `CommandError` bullet to Errors, and rewrites
+     Waiting: the controller acknowledges a command, not its end; the host
+     sees only `busy`; `cmd.onReady` waits before sending. `wire.md` drops
+     `settled.ts` and `getStatus()`.
 9. `feature/web-names`: the names move to `urumi-host/packets`, beside
    the enums they name. Depends on 6.
    **Status:** not started.
@@ -1410,6 +1429,26 @@ reworks.
      has no operator to overload. A `text()` returning every field named
      was dropped too: a parallel copy of the status, mostly the same.
    * `packets.md` and `link.md` update to match.
+
+Firmware, before branch 8: the `busy` bit. Admission refuses with
+`err busy` while a step or sequence is live (`machineMoving()`: a paused
+job's parked ring is not); the host can't see that today. `STATUS_RSP`
+gains a `flags` byte before the CRC (39 bytes, a new magic; `0xA0` joins
+the retired layouts), bit 0 `busy = machineMoving()`, and `get busy`
+mirrors it. On the host, `MachineStatus.busy` (flat, as `context` and
+`layer` are). Named for the refusal it predicts: "ready" would overclaim,
+since a machine in ALARM is not busy yet refuses `home`. The sim emits
+the new layout and computes `busy` the same way. Docs: `packets.md` (the
+frame, the retired list), `commands.md` (`get busy`, and a line under
+"When a command runs"), `controller.md` (Admission publishes it),
+`wire.md`; `host-api/packets.md` gains `busy` and a new stamp.
+**Status:** done on `feature/status-busy` at `18897ca`, not merged.
+**Outcome.** As planned, with the magic `0xBA` and the key also in the
+`get status` group, after `buf`. `wire.md` needed no change: it points to
+`packets.md` for the fields. The sim's `busy`: a leg or jog, a tool change,
+or a job's ring holding blocks unless paused. Tested on the Pico with
+`dummy_leg`: `busy` 1 and a second leg `err busy` while it runs, 0 between
+legs in HOMING; the two reference frames are repacked in Python.
 
 Firmware, a branch and plan of its own, apart from these: `abort`'s job
 is to get the machine to IDLE. Today `jobAbort()` is reachable only as the
