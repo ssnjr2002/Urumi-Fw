@@ -18,14 +18,14 @@ node appends it. The node replies "OK <hex...>" / "NAK ..." / "ERR ...".
 
 Usage:
     # one-shot:
-    python node_console.py --port COM7 switch
-    python node_console.py --port COM7 servo 1 90     # servo 1 -> 90 deg
-    python node_console.py --port COM7 servo 0 180     # all servos -> 180 deg
-    python node_console.py --port COM7 ssr 1
-    python node_console.py --port COM7 --id 7 raw 07 14 00  # arbitrary frame (no CRC)
+    python scripts/node_console.py --port COM7 switch
+    python scripts/node_console.py --port COM7 servo 1 90     # servo 1 -> 90 deg
+    python scripts/node_console.py --port COM7 servo 0 180     # all servos -> 180 deg
+    python scripts/node_console.py --port COM7 ssr 1
+    python scripts/node_console.py --port COM7 --id 7 raw 07 14 00  # arbitrary frame (no CRC)
 
     # interactive REPL (no command given):
-    python node_console.py --port COM7 --id 7
+    python scripts/node_console.py --port COM7 --id 7
     node5> ping
     node5> servo 3 45
     node5> switch

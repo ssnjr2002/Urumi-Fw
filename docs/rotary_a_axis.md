@@ -10,7 +10,7 @@ That geometry is the whole story of this document. The sensor reports the true
 output angle, which is what you want, but it reports it in a frame that the
 motor step count only loosely predicts.
 
-Bench tooling lives in `hall_bench/`. Firmware is `src/scratch/hall_capture.cpp`.
+Bench tooling lives in `scripts/hall_bench/`. Firmware is `src/scratch/hall_capture.cpp`.
 
 ---
 

@@ -6,7 +6,7 @@
 // bytes separated by spaces or commas, [id] [cmd] [len] [payload…]. The console
 // adds the CRC, runs it through routeCommand(), and prints "OK <hex…>" (the
 // reply without its CRC), "NAK unhandled" or "ERR …". The PC side is
-// node_console.py.
+// scripts/node_console.py.
 #ifdef NODE_DEBUG_CONSOLE
 #include <Arduino.h>
 #include "board.h"      // HAL_DEBUG_SERIAL

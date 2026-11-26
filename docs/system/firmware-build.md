@@ -314,7 +314,7 @@ What each flag does is listed in `AGENTS.md`.
 ### Debug builds
 
 An env ending in `_dbg` is a node built with a serial console on the console
-USART, so a PC can drive the node through `node_console.py` with no
+USART, so a PC can drive the node through `scripts/node_console.py` with no
 controller or bus. It needs two things, not one: the flag
 `NODE_DEBUG_CONSOLE` and the source `+<node/debug_console.cpp>`. The bus
 still works in a debug build.

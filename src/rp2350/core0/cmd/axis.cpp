@@ -806,7 +806,7 @@ bool cmdFeed(const char* args) {
 }
 
 // ── hallscan <node> <stepPer> <samples> [sps] — field profile vs position ────
-// The bring-up instrument the node port never had. src/scratch/hall_capture.py
+// The bring-up instrument the node port never had. scripts/hall_bench/hall_capture.py
 // could plot the A1324's output against step count before choosing a single
 // threshold; on the bus there was no equivalent, so HOME_ENTER, HOME_WIN and
 // HOME_DECIM were carried over from node 4's captures and applied to node 5 on

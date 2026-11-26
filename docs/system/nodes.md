@@ -78,7 +78,7 @@ A debug build (`NODE_DEBUG_CONSOLE`) listens on the console's serial port at
 115 200 baud. A line of hex bytes, `[id] [cmd] [len] [payload…]`, goes in;
 the console adds the CRC and runs it as if it came off the bus. It prints
 `OK` and the reply without its CRC, `NAK unhandled`, or `ERR …`.
-`node_console.py` is the PC side. The ATtiny3224 board names no console
+`scripts/node_console.py` is the PC side. The ATtiny3224 board names no console
 port (`HAL_DEBUG_SERIAL`), so a console build for it fails.
 
 ### Node to hardware
