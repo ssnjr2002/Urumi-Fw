@@ -1374,7 +1374,7 @@ reworks.
      `@internal`, stands in for a reload in the tests.
 8. `feature/web-commands`: the text commands. Depends on 6 and on the
    firmware's `busy` bit (below, merged).
-   **Status:** done on the branch, not merged.
+   **Status:** merged at `357deec`.
    * `link.commands()` returns the link's one `Commands` (no public
      constructor). `send(line)` gives the raw reply; each other method
      sends its command, parses the reply, resolves on `ok` with the parsed
