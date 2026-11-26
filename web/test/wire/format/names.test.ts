@@ -1,67 +1,81 @@
 /**
- * names.test.ts — enum names, and the reason they are derived not literal.
+ * names.test.ts — the wire codes in words, derived from the enums, not literal.
  */
 
 import { describe, it, expect } from "vitest";
-import {
-    stateName,
-    faultNames,
-    jobName,
-    maskStr,
-    STATE_NAMES,
-} from "../../../src/link/names.js";
+import * as names from "../../../src/packets/names.js";
 import {
     MachineState,
     Fault,
     JobReason,
+    JoggingReason,
+    HomingReason,
+    ProbingReason,
+    MachineStatus,
     axisMask,
 } from "../../../src/packets/status.js";
 
-describe("enum names", () => {
+describe("names", () => {
     it("names every state the enum declares, by its own key", () => {
+        // Keyed by value: the positional array the demos used read ALARM=3 as
+        // "ALARM" only while ALARM was the fourth key written down.
         for (const [key, value] of Object.entries(MachineState)) {
-            expect(stateName(value)).toBe(key);
+            expect(names.state(value)).toBe(key);
         }
     });
 
     it("names each fault bit, and a mask by its set bits", () => {
         for (const [key, value] of Object.entries(Fault)) {
-            expect(faultNames(value)).toBe(key);
+            expect(names.faults(value)).toBe(key);
         }
-        expect(faultNames(0)).toBe("NONE");
-        expect(faultNames(Fault.UNMAPPED | Fault.LATCHED)).toBe("UNMAPPED|LATCHED");
-        for (const [key, value] of Object.entries(JobReason)) {
-            expect(jobName(value)).toBe(key);
-        }
+        expect(names.faults(0)).toBe("NONE");
+        expect(names.faults(Fault.UNMAPPED | Fault.LATCHED)).toBe("UNMAPPED|LATCHED");
     });
 
-    it("is keyed by value, so it survives a reorder of the enum declaration", () => {
-        // The positional-array version the demos used got this wrong: it maps
-        // by *position*, so ALARM=3 only reads "ALARM" while ALARM happens to
-        // be the fourth key written down.
-        expect(STATE_NAMES[MachineState.ALARM]).toBe("ALARM");
-        expect(STATE_NAMES[MachineState.JOB]).toBe("JOB");
+    it("reads the reason against its state", () => {
+        const byState = [
+            [MachineState.JOB, JobReason],
+            [MachineState.JOGGING, JoggingReason],
+            [MachineState.HOMING, HomingReason],
+            [MachineState.PROBING, ProbingReason],
+        ] as const;
+        for (const [st, e] of byState) {
+            for (const [key, value] of Object.entries(e)) {
+                expect(names.reason(st, value)).toBe(key);
+            }
+        }
+        expect(names.reason(MachineState.JOB, 1)).toBe("RUNNING");
+        expect(names.reason(MachineState.JOGGING, 1)).toBe("STEP");
+        expect(names.reason(MachineState.IDLE, 0)).toBe("");
     });
 
     it("keeps an unknown value visible instead of rendering undefined", () => {
-        expect(stateName(99)).toBe("STATE(99)");
-        expect(faultNames(0x0200)).toBe("0x200");
-        expect(jobName(99)).toBe("JOB(99)");
+        expect(names.state(99)).toBe("STATE(99)");
+        expect(names.faults(0x0200)).toBe("0x200");
+        expect(names.reason(MachineState.JOB, 99)).toBe("REASON(99)");
+        expect(names.nack(0x03)).toBe("NACK(3)");
     });
 });
 
-describe("maskStr", () => {
+describe("names.axes", () => {
     it("renders set bits as letters in axis order", () => {
-        expect(maskStr(axisMask("xy"))).toBe("xy");
-        expect(maskStr(axisMask("az"))).toBe("za"); // canonical order, not input order
-        expect(maskStr(axisMask("xyza"))).toBe("xyza");
+        expect(names.axes(axisMask("xy"))).toBe("xy");
+        expect(names.axes(axisMask("az"))).toBe("za"); // canonical order, not input order
+        expect(names.axes(axisMask("xyza"))).toBe("xyza");
     });
 
     it("renders an empty mask as a dash, so it does not look like a render bug", () => {
-        expect(maskStr(0)).toBe("—");
+        expect(names.axes(0)).toBe("—");
     });
 
     it("ignores bits above the four axes", () => {
-        expect(maskStr(0xf0 | axisMask("x"))).toBe("x");
+        expect(names.axes(0xf0 | axisMask("x"))).toBe("x");
+    });
+});
+
+describe("MachineStatus names", () => {
+    it("names its state, reason and faults", () => {
+        const s = new MachineStatus(MachineState.JOGGING, 0, 0, Fault.UNMAPPED, JoggingReason.GOTO);
+        expect([s.stateName, s.reasonName, s.faultNames]).toEqual(["JOGGING", "GOTO", "UNMAPPED"]);
     });
 });

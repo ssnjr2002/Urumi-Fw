@@ -22,6 +22,7 @@ export {
     NACK_TEXT_MAX,
 } from "./nack.js";
 export { crc8, crc32 } from "./crc.js";
+export * as names from "./names.js";
 export {
     MachineStatus,
     parseStatusRsp,
@@ -30,9 +31,11 @@ export {
     MachineState,
     MachineContext,
     JobReason,
+    JoggingReason,
+    HomingReason,
+    ProbingReason,
     Fault,
     HomeFail,
-    Probing,
     ProbeCause,
     Selection,
     NO_LAYER,

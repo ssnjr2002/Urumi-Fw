@@ -26,6 +26,8 @@ import {
     STATUS_RSP_SIZE,
 } from "./constants.js";
 
+import * as names from "./names.js";
+
 // ── operational enums (mirror firmware values; docs/reference/commands.md) ───────
 
 export const MachineState = {
@@ -178,8 +180,28 @@ export const HomeFail = {
 export type HomeFail = (typeof HomeFail)[keyof typeof HomeFail];
 const HOME_FAIL_VALUES = Object.values(HomeFail) as readonly number[];
 
-/** Probe session phase, `probing=` (ProbingReason in ipc/shared_state.h). */
-export const Probing = {
+/** What a jog is, while JOGGING (RingOwner in ipc/shared_state.h). */
+export const JoggingReason = {
+    /** `jog`, `line`, `bez`. */
+    STEP: 1,
+    /** A continuous jog, held by deadman packets. */
+    CONTINUOUS: 2,
+    /** A `goto`, its legs included. */
+    GOTO: 3,
+} as const;
+export type JoggingReason = (typeof JoggingReason)[keyof typeof JoggingReason];
+
+/** The homing session's phase, while HOMING (HomingReason in ipc/shared_state.h). */
+export const HomingReason = {
+    /** A leg is executing. */
+    LEG: 0,
+    /** Between legs: the next leg, `setorigin` or `home_end`. */
+    WAIT: 1,
+} as const;
+export type HomingReason = (typeof HomingReason)[keyof typeof HomingReason];
+
+/** The probe session's phase, while PROBING and as `probing=` (ProbingReason in ipc/shared_state.h). */
+export const ProbingReason = {
     /** A leg is executing. */
     LEG: 0,
     /** Between legs, switch closed: the tool is off the surface. */
@@ -187,7 +209,7 @@ export const Probing = {
     /** Between legs, switch open: the tool is on the surface. */
     CONTACT: 2,
 } as const;
-export type Probing = (typeof Probing)[keyof typeof Probing];
+export type ProbingReason = (typeof ProbingReason)[keyof typeof ProbingReason];
 
 /** Last probe leg's outcome, `probe=` (PROBE_* in ipc/core1_rpc.h). */
 export const ProbeCause = {
@@ -345,6 +367,21 @@ export class MachineStatus {
          */
         readonly placed: boolean | undefined = undefined,
     ) {}
+
+    /** `state` in words, e.g. "ALARM". */
+    get stateName(): string {
+        return names.state(this.state);
+    }
+
+    /** `reason` in words, read against `state`; "" in a state without one. */
+    get reasonName(): string {
+        return names.reason(this.state, this.reason);
+    }
+
+    /** The set `faults` bits in words, e.g. "UNMAPPED|LATCHED"; "NONE" for 0. */
+    get faultNames(): string {
+        return names.faults(this.faults);
+    }
 
     /** True if any of `mask`'s Fault bits is set. */
     hasFault(mask: number): boolean {

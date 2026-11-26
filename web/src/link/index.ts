@@ -1,5 +1,4 @@
 /** urumi-host/link: a connection to the controller. */
-export { stateName, faultNames, jobName, nackName, cfgNackName } from "./names.js";
 
 export {
     Session,

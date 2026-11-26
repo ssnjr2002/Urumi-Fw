@@ -23,7 +23,7 @@ import { delay } from "./clock.js";
 import { packJobHdr, packLayerHdr, packToolHdr, type JobLayer, type ToolBox, type ToolHdr } from "../packets/layer.js";
 import { Ack } from "./demux.js";
 import { Nack, Refusal } from "../packets/nack.js";
-import { nackName } from "./names.js";
+import * as names from "../packets/names.js";
 import { JobReason, MachineContext, MachineState, NO_LAYER, parseStatusRsp, type MachineStatus } from "../packets/status.js";
 
 const WINDOW = 16; // frames in flight
@@ -388,7 +388,7 @@ export class Session {
             fatal = e.fatal;
         }
         this._held = null;
-        if (fatal) this._log(`FATAL: ${fatal.by === "host" ? fatal.why : nackName(fatal.nack)}`);
+        if (fatal) this._log(`FATAL: ${fatal.by === "host" ? fatal.why : names.nack(fatal.nack)}`);
         return {
             ok: !fatal,
             ...(fatal && { fatal }),
@@ -474,7 +474,7 @@ export class Session {
 
             this._nacks++;
             const r = resp.code;
-            this._log(`NACK ${nackName(r)}${resp.text ? ` ${resp.text}` : ""} base=${this._base}`);
+            this._log(`NACK ${names.nack(r)}${resp.text ? ` ${resp.text}` : ""} base=${this._base}`);
             if (this._ending) continue;
             const held = HOLD_NACKS[r];
             if (held) {
