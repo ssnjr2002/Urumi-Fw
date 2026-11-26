@@ -1458,7 +1458,7 @@ reworks.
    the Pico.
 9. `feature/web-names`: the names move to `urumi-host/packets`, beside
    the enums they name. Depends on 6, and on the NACK codes (below).
-   **Status:** code at `e511050`.
+   **Status:** merged at `dfc74f7`.
    * The namers move from `link/names.ts` to `packets`, under one module
      namespace, `export * as names from "./names.js"`: `names.state()`,
      `names.reason()`, `names.context()`, `names.faults()`,
