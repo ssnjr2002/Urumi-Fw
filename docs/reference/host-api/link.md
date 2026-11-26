@@ -35,8 +35,8 @@ git diff cfb8be9 -- web/src/link/
 | [`settle()`](#settle), [`waitAtRest()`](#waitatrest) | functions |
 | [Text-command helpers](#text-command-helpers) | functions |
 
-The job session (`JobSource`, `Session`) is described in
-[jobs](../../system/jobs.md) until it has a page of its own.
+The job session (`JobSource`, `Session`) has its own page:
+[session](session.md).
 
 # `Link`
 
@@ -87,8 +87,7 @@ const link = new Link(await WebSerialTransport.request());
 | [`onStatus()`](#linkonstatus) | call a function on every status sample |
 | [`cjog()`](#linkcjog) | start a continuous jog |
 | [`pushConfig()`](#linkpushconfig), [`pullConfig()`](#linkpullconfig) | store or fetch the config |
-| [`session()`](#linksession) | a job session for a new job |
-| [`attach()`](#linkattach) | a job session for a job already paused on the controller |
+| [`session()`](#linksession) | a session for a job: a new one, or the same one paused on the controller |
 | [`stats()`](#linkstats) | counters for diagnostics |
 | [`close()`](#linkclose) | close the port |
 
@@ -333,57 +332,30 @@ The config, or `null` when none is stored.
 
 ### `Link.session()`
 
-Opens a job session for a new job. Nothing is sent until its `run()`,
-which resets the stream's seq first. A session lives through pauses:
-`resume()` on the same `Session` carries on.
+Makes a session for a job ([session](session.md)). Nothing is sent until
+its [`run()`](session.md#sessionrun), which sends the job to an idle
+controller or takes over the same job paused there.
 
 **Syntax**
 
 ```ts
-session(source: JobSource): Session
+session(job: JobSource): Session
 ```
 
 **Parameters**
 
-* `source`: the job.
+* `job`: the job's frames, a [`JobSource`](session.md#jobsource).
 
 **Return value**
 
-A `Session` ([jobs](../../system/jobs.md)).
+A [`Session`](session.md#session-1).
 
 **Example**
 
 ```ts
 const session = link.session(new JobSource(job.layers));
-const ok = await session.run();
+const result = await session.run();
 ```
-
-### `Link.attach()`
-
-Opens a job session for a job already open and paused on the controller,
-once the old session is gone: after the page reloads or the port is
-replugged ([jobs](../../system/jobs.md) §7).
-
-**Syntax**
-
-```ts
-attach(source: JobSource): Session
-```
-
-**Parameters**
-
-* `source`: the same job, rebuilt from the same layers, so its id matches.
-
-**Return value**
-
-A `Session`. Its `run()` sends nothing but status requests and `get jobid`
-until it has checked the controller is in a job with `source`'s id; it
-fails with `FATAL_JOB_MISMATCH` otherwise. It waits for the job to land
-paused, then holds `paused`, and `resume()` carries on from where the
-controller stopped.
-
-To start a paused job over from the top, `cancel()` it and open a new
-session instead: the controller refuses a new job while one is open.
 
 ### `Link.stats()`
 

@@ -1326,7 +1326,7 @@ reworks.
 7. `feature/web-session`: the job session. `JobSource`'s options (3),
    `run()` resetting the seq (4), `Session.phase` (5), the holds tabled
    (7), the fatal reason split and `SessionResult`; the README's job example
-   finished (16). Depends on 5 and 6. **Status:** not started.
+   finished (16). Depends on 5 and 6. **Status:** done, not merged.
    * `Link.attach()` folds into `Link.session()`: `run()` asks the
      controller first, sends a new job when it is idle, takes over a
      paused job with the source's id, and fails with `FATAL_JOB_MISMATCH`
@@ -1352,6 +1352,26 @@ reworks.
      the host's reason is a word already. `fatalReasonName()`, its third
      copy of the NACK names (with the prefix `nackName()` drops) and the
      `FATAL_*` constants go.
+
+   **Outcome.** As settled above, with these differences:
+   * No `Session.phase`: most of it repeats the controller's
+     `status.reason`. The session shows only what the host knows: `hold`
+     (with `release` for a manual layer waiting) and `drained` (every
+     frame acknowledged). A job is cut when it is drained and the status
+     is at rest.
+   * `cancel()` and `end()` are `close()` and `abort()`. `run()`
+     resolves to the `SessionResult`; `result()` goes.
+   * The plain stream goes: the controller refuses a record outside a job
+     (`NACK_JOB`), so `link.stream()`, `ListSource`, `PacketSource`,
+     `StreamContext`, `truncate()` and the window have no use. The sim
+     tests send raw frames with their own sender.
+   * `JobSource` takes no `id`: its `jobId` is a hash of the frames, so
+     rebuilding the same layers finds the paused job. `jobIdOf()` and the
+     replay methods are `@internal`.
+   * `run()` rejects if the link closes, leaving the job open. A job counts
+     as open once a status sample arrives after the first ACK, so a
+     `cancel` from elsewhere during placement is `job-lost`. `_drop()`,
+     `@internal`, stands in for a reload in the tests.
 8. `feature/web-commands`: the text commands. Depends on 6.
    **Status:** not started.
    * `link.commands()` returns the link's one `Commands` (no public

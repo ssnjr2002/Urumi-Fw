@@ -119,4 +119,5 @@ const job = buildJob(svg, config, {
 });
 if (!job.ok) return show(job.errors);
 const session = link.session(new JobSource(job.layers));
+const result = await session.run();
 ```
