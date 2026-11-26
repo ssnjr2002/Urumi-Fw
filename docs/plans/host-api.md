@@ -1373,7 +1373,7 @@ reworks.
      `cancel` from elsewhere during placement is `job-lost`. `_drop()`,
      `@internal`, stands in for a reload in the tests.
 8. `feature/web-commands`: the text commands. Depends on 6 and on the
-   firmware's `busy` bit (below).
+   firmware's `busy` bit (below, merged).
    **Status:** not started.
    * `link.commands()` returns the link's one `Commands` (no public
      constructor). `send(line)` gives the raw reply; each other method
@@ -1442,7 +1442,7 @@ the new layout and computes `busy` the same way. Docs: `packets.md` (the
 frame, the retired list), `commands.md` (`get busy`, and a line under
 "When a command runs"), `controller.md` (Admission publishes it),
 `wire.md`; `host-api/packets.md` gains `busy` and a new stamp.
-**Status:** done on `feature/status-busy` at `18897ca`, not merged.
+**Status:** merged at `7ae8e22`.
 **Outcome.** As planned, with the magic `0xBA` and the key also in the
 `get status` group, after `buf`. `wire.md` needed no change: it points to
 `packets.md` for the fields. The sim's `busy`: a leg or jog, a tool change,
