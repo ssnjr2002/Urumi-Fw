@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <title>How a move is shaped: speed over a path with a corner</title>
+  <defs>
+    <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#495057"/></marker>
+  </defs>
+  <rect width="960" height="360" fill="#ffffff"/>
+  <text x="20" y="28" font-size="15" font-weight="700" fill="#212529">How the planner shapes a move</text>
+
+  <!-- the path -->
+  <text x="20" y="58" font-weight="600" fill="#495057">the path</text>
+  <path d="M40 140 L 300 140 L 330 90 C 360 40, 430 40, 470 90 L 470 90" fill="none" stroke="#1971c2" stroke-width="3"/>
+  <circle cx="40" cy="140" r="5" fill="#2b8a3e"/><text x="34" y="164" font-size="12" fill="#2b8a3e">start</text>
+  <circle cx="300" cy="140" r="5" fill="#e67700"/><text x="276" y="164" font-size="12" fill="#e67700">corner</text>
+  <text x="380" y="34" font-size="12" fill="#1971c2">a tight curve</text>
+  <circle cx="470" cy="90" r="5" fill="#c92a2a"/><text x="478" y="94" font-size="12" fill="#c92a2a">end</text>
+
+  <!-- the profile -->
+  <line x1="40" y1="320" x2="900" y2="320" stroke="#495057" stroke-width="1.5" marker-end="url(#arg)"/>
+  <line x1="40" y1="320" x2="40" y2="190" stroke="#495057" stroke-width="1.5" marker-end="url(#arg)"/>
+  <text x="900" y="340" text-anchor="end" fill="#495057">distance along the path</text>
+  <text x="48" y="196" fill="#495057">speed</text>
+  <line x1="40" y1="215" x2="900" y2="215" stroke="#ced4da" stroke-dasharray="4 4"/>
+  <text x="896" y="210" text-anchor="end" font-size="12" fill="#868e96">feed: the tool's cutFeed, or the job's</text>
+
+  <!-- segments: accel, cruise, decel to corner, accel, curve cap, decel to stop -->
+  <path d="M40 320 L 160 215 L 380 215 L 470 290 L 540 250 L 640 250 L 760 320" fill="#d0ebff" fill-opacity="0.6" stroke="#1971c2" stroke-width="3"/>
+  <g font-size="12" fill="#1864ab">
+    <text x="96" y="252" text-anchor="end">speed up</text>
+    <text x="230" y="208">hold the feed</text>
+    <text x="330" y="284" text-anchor="end">slow for the corner</text>
+    <text x="520" y="242">capped by the curve</text>
+    <text x="716" y="270">slow to a stop</text>
+  </g>
+  <line x1="470" y1="290" x2="470" y2="320" stroke="#e67700" stroke-dasharray="3 3"/>
+  <text x="474" y="312" font-size="11" fill="#e67700">junction speed</text>
+
+  <!-- notes -->
+  <g font-size="12.5" fill="#495057">
+    <text x="560" y="58">Each piece gets a speed cap from its curvature,</text>
+    <text x="560" y="76">and each corner a junction speed (junction deviation).</text>
+    <text x="560" y="98">Looking ahead, the planner makes sure it can always</text>
+    <text x="560" y="116">brake in time, then gives each block a trapezoid:</text>
+    <text x="560" y="134">speed up, hold, slow down, at the axis's acceleration.</text>
+    <text x="560" y="156">That is why every BEZIER record carries its length</text>
+    <text x="560" y="174">and its curvature: the planner needs them up front.</text>
+  </g>
+</svg>

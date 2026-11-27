@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <title>From an SVG to records: layers named after tools become curves, then records</title>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#868e96"/></marker>
+  </defs>
+  <rect width="960" height="400" fill="#ffffff"/>
+
+  <!-- 1. the SVG -->
+  <text x="20" y="28" font-weight="700" fill="#212529">1 · the drawing</text>
+  <text x="20" y="46" font-size="12" fill="#868e96">an SVG, layers named after tools</text>
+  <rect x="20" y="58" width="230" height="250" rx="6" fill="#f8f9fa" stroke="#ced4da"/>
+  <g font-size="12">
+    <rect x="30" y="68" width="210" height="22" rx="3" fill="#e7f5ff"/><text x="40" y="83">▾ pen</text>
+    <rect x="30" y="94" width="210" height="22" rx="3" fill="#fff4e6"/><text x="40" y="109">▾ revolver_pen.2</text>
+    <rect x="30" y="120" width="210" height="22" rx="3" fill="#f1f3f5"/><text x="40" y="135" fill="#868e96">▾ notes  (no tool: left out)</text>
+  </g>
+  <path d="M50 270 C 70 170, 140 170, 150 230 S 220 290, 230 200" fill="none" stroke="#1971c2" stroke-width="3"/>
+  <rect x="60" y="170" width="60" height="40" fill="none" stroke="#e8590c" stroke-width="3"/>
+
+  <line x1="258" y1="180" x2="300" y2="180" stroke="#868e96" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="279" y="170" text-anchor="middle" font-size="11" fill="#495057" font-family="ui-monospace, Consolas, monospace">loadSvg</text>
+
+  <!-- 2. tool layers -->
+  <text x="306" y="28" font-weight="700" fill="#212529">2 · tool layers</text>
+  <text x="306" y="46" font-size="12" fill="#868e96">a tool, a chamber, and its paths</text>
+  <rect x="306" y="58" width="190" height="110" rx="6" fill="#e7f5ff" stroke="#74c0fc"/>
+  <text x="318" y="80" font-weight="600" fill="#1864ab">pen</text>
+  <text x="318" y="98" font-size="12" fill="#1864ab">tool pen · chamber 0</text>
+  <path d="M320 150 C 335 110, 370 110, 378 135 S 420 160, 430 120" fill="none" stroke="#1971c2" stroke-width="2.5"/>
+  <rect x="306" y="186" width="190" height="122" rx="6" fill="#fff4e6" stroke="#ffc078"/>
+  <text x="318" y="208" font-weight="600" fill="#d9480f">revolver_pen.2</text>
+  <text x="318" y="226" font-size="12" fill="#d9480f">tool revolver_pen · chamber 2</text>
+  <rect x="330" y="244" width="50" height="34" fill="none" stroke="#e8590c" stroke-width="2.5"/>
+  <text x="318" y="298" font-size="11" fill="#868e96">problem: "" when it can run</text>
+
+  <line x1="504" y1="180" x2="546" y2="180" stroke="#868e96" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="525" y="170" text-anchor="middle" font-size="11" fill="#495057" font-family="ui-monospace, Consolas, monospace">buildJob</text>
+
+  <!-- 3. cubic pieces -->
+  <text x="552" y="28" font-weight="700" fill="#212529">3 · cubic pieces</text>
+  <text x="552" y="46" font-size="12" fill="#868e96">offset, cleaned, split, measured</text>
+  <rect x="552" y="58" width="170" height="250" rx="6" fill="#f8f9fa" stroke="#ced4da"/>
+  <g stroke-width="3" fill="none">
+    <path d="M570 150 C 580 115, 600 105, 615 112" stroke="#1971c2"/>
+    <path d="M615 112 C 628 118, 632 135, 640 140" stroke="#4dabf7"/>
+    <path d="M640 140 C 655 150, 680 145, 700 110" stroke="#1971c2"/>
+  </g>
+  <circle cx="570" cy="150" r="4" fill="#2b8a3e"/><text x="566" y="170" font-size="11" fill="#2b8a3e">START</text>
+  <circle cx="700" cy="110" r="4" fill="#c92a2a"/><text x="676" y="98" font-size="11" fill="#c92a2a">END</text>
+  <g stroke-width="3" fill="none" stroke="#e8590c">
+    <path d="M580 230 L 630 230"/><path d="M630 230 L 630 270"/><path d="M630 270 L 580 270"/><path d="M580 270 L 580 230"/>
+  </g>
+  <g fill="#e67700"><circle cx="630" cy="230" r="4"/><circle cx="630" cy="270" r="4"/><circle cx="580" cy="270" r="4"/></g>
+  <text x="640" y="254" font-size="11" fill="#e67700">BREAK: a corner</text>
+  <text x="562" y="298" font-size="11" fill="#868e96">each piece: points, length, curvature</text>
+
+  <line x1="730" y1="180" x2="772" y2="180" stroke="#868e96" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="751" y="170" text-anchor="middle" font-size="11" fill="#495057" font-family="ui-monospace, Consolas, monospace">Session</text>
+
+  <!-- 4. records -->
+  <text x="778" y="28" font-weight="700" fill="#212529">4 · records, in order</text>
+  <text x="778" y="46" font-size="12" fill="#868e96">streamed while the machine cuts</text>
+  <g font-family="ui-monospace, Consolas, monospace" font-size="11" fill="#fff">
+    <rect x="778" y="58" width="164" height="20" rx="3" fill="#343a40"/><text x="786" y="72">JOB_HDR</text>
+    <rect x="778" y="80" width="164" height="20" rx="3" fill="#495057"/><text x="786" y="94">TOOL_HDR pen</text>
+    <rect x="778" y="102" width="164" height="20" rx="3" fill="#495057"/><text x="786" y="116">TOOL_HDR revolver_pen</text>
+    <text x="786" y="136" fill="#868e96" font-family="-apple-system, Segoe UI, sans-serif">preflight ↑ · placement · layers ↓</text>
+    <rect x="778" y="144" width="164" height="20" rx="3" fill="#1864ab"/><text x="786" y="158">LAYER_HDR 0</text>
+    <rect x="778" y="166" width="164" height="20" rx="3" fill="#1c7ed6"/><text x="786" y="180">TOOL_HDR pen</text>
+    <rect x="778" y="188" width="164" height="20" rx="3" fill="#2f9e44"/><text x="786" y="202">BEZIER START</text>
+    <rect x="778" y="210" width="164" height="20" rx="3" fill="#2f9e44"/><text x="786" y="224">BEZIER</text>
+    <rect x="778" y="232" width="164" height="20" rx="3" fill="#2f9e44"/><text x="786" y="246">BEZIER END</text>
+    <rect x="778" y="254" width="164" height="20" rx="3" fill="#d9480f"/><text x="786" y="268">LAYER_HDR 1</text>
+    <rect x="778" y="276" width="164" height="20" rx="3" fill="#e8590c"/><text x="786" y="290">TOOL_HDR revolver_pen</text>
+    <text x="786" y="312" fill="#868e96" font-family="-apple-system, Segoe UI, sans-serif">BEZIER …</text>
+  </g>
+
+  <text x="20" y="350" fill="#495057">A group is a tool layer when its name is a tool's from the config, or a tool's then "." and a chamber number. Everything else is left out.</text>
+  <text x="20" y="370" fill="#495057">The host does the geometry; the controller checks each piece against the travel and the tool, and plans the motion.</text>
+</svg>

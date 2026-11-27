@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 500" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <title>Coordinates: machine and work, the anchor and a head's offset, and Z</title>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="context-stroke"/></marker>
+    <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#1971c2"/></marker>
+    <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#495057"/></marker>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#c92a2a"/></marker>
+    <pattern id="sheet" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="12" height="12" fill="#f8f1e4"/><line x1="0" y1="0" x2="0" y2="12" stroke="#eadcc2" stroke-width="4"/></pattern>
+  </defs>
+  <rect width="960" height="500" fill="#ffffff"/>
+
+  <!-- top view -->
+  <text x="30" y="30" font-size="15" font-weight="700" fill="#212529">From above</text>
+  <rect x="30" y="50" width="520" height="370" rx="6" fill="#eef1f4" stroke="#adb5bd"/>
+  <rect x="150" y="150" width="340" height="230" fill="url(#sheet)" stroke="#d4b98a"/>
+  <text x="410" y="370" fill="#8a6d3b">material</text>
+
+  <!-- machine origin -->
+  <circle cx="60" cy="390" r="6" fill="#495057"/>
+  <line x1="60" y1="390" x2="130" y2="390" stroke="#495057" stroke-width="2" marker-end="url(#arg)"/>
+  <line x1="60" y1="390" x2="60" y2="320" stroke="#495057" stroke-width="2" marker-end="url(#arg)"/>
+  <text x="136" y="394" fill="#495057">X+ right</text>
+  <text x="66" y="316" fill="#495057">Y+ away from you</text>
+  <text x="40" y="412" fill="#495057" font-weight="600">machine 0 (mpos): where homing puts it</text>
+
+  <!-- the job's box, its corner placed on the dot -->
+  <rect x="200" y="190" width="200" height="140" fill="none" stroke="#c92a2a" stroke-width="2" stroke-dasharray="6 4"/>
+  <path d="M220 300 C 250 210, 330 210, 380 280" fill="none" stroke="#c92a2a" stroke-width="2"/>
+  <text x="300" y="184" fill="#c92a2a" text-anchor="middle">the job's box</text>
+  <circle cx="200" cy="330" r="7" fill="#f03e3e" stroke="#fff" stroke-width="2"/>
+  <text x="212" y="350" fill="#c92a2a" font-weight="600">place set: the dot marks the box's xmin, ymin</text>
+
+  <!-- the carriage with the anchor and a head offset -->
+  <g>
+    <circle cx="430" cy="120" r="7" fill="#f03e3e" stroke="#fff" stroke-width="2"/>
+    <text x="442" y="104" fill="#c92a2a" font-weight="600">anchor: the laser dot</text>
+    <circle cx="360" cy="150" r="9" fill="#1971c2"/>
+    <line x1="430" y1="120" x2="368" y2="146" stroke="#1971c2" stroke-width="2" marker-end="url(#arb)"/>
+    <text x="300" y="140" fill="#1971c2" text-anchor="end" font-weight="600">head 0's tip</text>
+    <text x="440" y="142" fill="#1971c2">offset from the dot:</text>
+    <text x="440" y="158" fill="#1971c2" font-family="ui-monospace, Consolas, monospace" font-size="12">xOffset −70, yOffset −30</text>
+  </g>
+  <text x="30" y="456" fill="#495057">The numbers describe one point: the selected head's tip, or the laser dot (select anchor).</text>
+  <text x="30" y="474" fill="#495057">Work X, Y (wpos) count from the work zero you set with wzero x y,</text><text x="30" y="492" fill="#495057">a point on the material shared by every head.</text>
+
+  <!-- side view: Z -->
+  <text x="600" y="30" font-size="15" font-weight="700" fill="#212529">From the side: one head's Z</text>
+  <rect x="600" y="340" width="330" height="40" fill="#adb5bd"/>
+  <text x="900" y="366" fill="#fff" text-anchor="end" font-weight="600">bed</text>
+  <rect x="640" y="316" width="250" height="24" fill="url(#sheet)" stroke="#d4b98a"/>
+  <text x="660" y="333" fill="#8a6d3b">material, t thick</text>
+
+  <!-- head at park -->
+  <rect x="700" y="70" width="40" height="70" rx="5" fill="#1971c2"/>
+  <polygon points="712,140 728,140 720,160" fill="#343a40"/>
+  <text x="720" y="62" text-anchor="middle" fill="#1971c2" font-weight="600">head</text>
+  <!-- Z axis scale -->
+  <line x1="760" y1="340" x2="760" y2="90" stroke="#495057" stroke-width="2" marker-end="url(#arg)"/>
+  <text x="768" y="96" fill="#495057">Z+ up</text>
+  <g font-family="ui-monospace, Consolas, monospace" font-size="12">
+    <line x1="750" y1="160" x2="770" y2="160" stroke="#495057" stroke-width="2"/>
+    <text x="776" y="156" fill="#495057">machine Z 0:</text><text x="776" y="172" fill="#495057">the top, where it parks</text>
+    <line x1="750" y1="316" x2="770" y2="316" stroke="#2b8a3e" stroke-width="2"/>
+    <text x="776" y="282" fill="#2b8a3e">work Z t:</text><text x="776" y="298" fill="#2b8a3e">the material's top</text>
+    <line x1="750" y1="340" x2="770" y2="340" stroke="#c92a2a" stroke-width="2"/>
+    <text x="600" y="402" fill="#c92a2a">work Z 0: where the tip meets the bed</text>
+    <line x1="740" y1="392" x2="756" y2="346" stroke="#c92a2a" stroke-width="1.5" marker-end="url(#arr)"/>
+  </g>
+  <text x="600" y="438" fill="#495057">Going down, machine Z goes negative.</text>
+  <text x="600" y="456" fill="#495057">Work Z is per head: set it with wzero z</text>
+  <text x="600" y="474" fill="#495057">with the tip touching the bed.</text>
+</svg>

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <title>The config, mapped onto the machine</title>
+  <defs>
+    <pattern id="sheet" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="12" height="12" fill="#f8f1e4"/><line x1="0" y1="0" x2="0" y2="12" stroke="#eadcc2" stroke-width="4"/></pattern>
+  </defs>
+  <rect width="960" height="430" fill="#ffffff"/>
+  <text x="20" y="28" font-size="15" font-weight="700" fill="#212529">config/controller.jsonc describes the machine</text>
+
+  <!-- the excerpt -->
+  <rect x="20" y="44" width="470" height="366" rx="6" fill="#f8f9fa" stroke="#ced4da"/>
+  <g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12.5" fill="#212529">
+    <text x="36" y="70">"machine": {</text>
+    <text x="52" y="90">"workArea": { "xMin": 54.6, "xMax": 1124.7,</text>
+    <text x="52" y="108">              "yMin": 5,    "yMax": 715.1 },</text>
+    <text x="52" y="130">"x": { "node": { "id": 1 }, "stepsPerUnit": 160,</text>
+    <text x="52" y="148">       "maxFeed": 80, … },</text>
+    <text x="52" y="170">"laser": { "node": 3 },</text>
+    <text x="52" y="192">"heads": [ {</text>
+    <text x="68" y="212">"accepts": ["knife", "crease", "pen"],</text>
+    <text x="68" y="232">"xOffset": -70, "yOffset": -30,</text>
+    <text x="68" y="252">"z": { "node": { "id": 3 }, "maxTravel": 48, … },</text>
+    <text x="68" y="272">"a": { "node": { "id": 4 }, … }</text>
+    <text x="52" y="292">}, … ]</text>
+    <text x="36" y="312">},</text>
+    <text x="36" y="334">"toolProfiles": {</text>
+    <text x="52" y="354">"pen": { "id": 2, "cutFeed": 80, "tangential": false, … }</text>
+    <text x="36" y="374">}</text>
+  </g>
+  <!-- callout badges on the code -->
+  <g font-size="12" font-weight="700" fill="#fff" text-anchor="middle">
+    <circle cx="474" cy="99" r="10" fill="#c92a2a"/><text x="474" y="103">1</text>
+    <circle cx="474" cy="139" r="10" fill="#e67700"/><text x="474" y="143">2</text>
+    <circle cx="474" cy="166" r="10" fill="#f03e3e"/><text x="474" y="170">3</text>
+    <circle cx="474" cy="228" r="10" fill="#1971c2"/><text x="474" y="232">4</text>
+    <circle cx="474" cy="262" r="10" fill="#2b8a3e"/><text x="474" y="266">5</text>
+    <circle cx="474" cy="350" r="10" fill="#7048e8"/><text x="474" y="354">6</text>
+  </g>
+
+  <!-- the machine -->
+  <rect x="520" y="44" width="420" height="300" rx="6" fill="#eef1f4" stroke="#adb5bd"/>
+  <rect x="560" y="80" width="340" height="230" fill="url(#sheet)" stroke="#c92a2a" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="566" y="300" fill="#c92a2a" font-size="12">work area: where a job's tips may go</text>
+  <rect x="520" y="44" width="420" height="10" fill="#868e96"/>
+  <rect x="700" y="40" width="26" height="310" rx="3" fill="#495057"/>
+  <!-- x node -->
+  <rect x="690" y="352" width="46" height="22" rx="3" fill="#fff3bf" stroke="#e67700"/><text x="713" y="367" text-anchor="middle" font-size="11">node 1</text>
+  <text x="742" y="367" font-size="11" fill="#e67700">drives X</text>
+  <!-- carriage -->
+  <rect x="680" y="150" width="66" height="90" rx="6" fill="#a5d8ff" stroke="#1971c2" stroke-width="2"/>
+  <circle cx="713" cy="200" r="5" fill="#f03e3e"/>
+  <rect x="686" y="158" width="54" height="30" rx="4" fill="#1971c2"/><text x="713" y="178" fill="#fff" text-anchor="middle" font-size="11">head 0</text>
+  <line x1="713" y1="200" x2="660" y2="225" stroke="#1971c2" stroke-width="2"/>
+  <circle cx="660" cy="225" r="6" fill="#1971c2"/>
+  <text x="600" y="262" fill="#1971c2" font-size="11">the tip, offset from the dot</text>
+  <rect x="760" y="160" width="62" height="22" rx="3" fill="#fff3bf" stroke="#2b8a3e"/><text x="791" y="175" text-anchor="middle" font-size="11">Z: node 3</text>
+  <rect x="760" y="186" width="62" height="22" rx="3" fill="#fff3bf" stroke="#2b8a3e"/><text x="791" y="201" text-anchor="middle" font-size="11">A: node 4</text>
+  <text x="760" y="226" fill="#7048e8" font-size="11">tool: pen, id 2</text>
+  <!-- badges on the machine -->
+  <g font-size="12" font-weight="700" fill="#fff" text-anchor="middle">
+    <circle cx="890" cy="90" r="10" fill="#c92a2a"/><text x="890" y="94">1</text>
+    <circle cx="676" cy="363" r="10" fill="#e67700"/><text x="676" y="367">2</text>
+    <circle cx="726" cy="214" r="10" fill="#f03e3e"/><text x="726" y="218">3</text>
+    <circle cx="640" cy="212" r="10" fill="#1971c2"/><text x="640" y="216">4</text>
+    <circle cx="834" cy="184" r="10" fill="#2b8a3e"/><text x="834" y="188">5</text>
+    <circle cx="848" cy="222" r="10" fill="#7048e8"/><text x="848" y="226">6</text>
+  </g>
+  <text x="520" y="396" fill="#495057">Edit the file, then Upload Filesystem Image, or push it from the console.</text>
+  <text x="520" y="414" fill="#495057">Every field: docs/system/config.md.</text>
+</svg>

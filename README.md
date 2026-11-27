@@ -13,6 +13,17 @@ This repository is the machine's software: the firmware on its boards and the
 host library a program uses to drive it. The mechanics and the electronics
 are not here.
 
+The drawings animate on GitHub. Where they don't, such as on some GitLab
+pages, open the `.svg` files in `docs/images/` in a browser.
+
+**Contents:** [How it fits together](#how-it-fits-together) ·
+[Hardware](#hardware) · [Quick start](#quick-start) ·
+[How it talks](#how-it-talks) · [Where things are](#where-things-are) ·
+[From a drawing to a cut](#from-a-drawing-to-a-cut) ·
+[Driving it from code](#driving-it-from-code) ·
+[When it goes wrong](#when-it-goes-wrong) · [Folders](#folders) ·
+[Docs](#docs)
+
 ## How it fits together
 
 ![Urumi from above: the bed, the gantry carrying two heads, the nodes on one RS485 bus, the controller and the host](docs/images/machine.svg)
@@ -163,11 +174,14 @@ The host and the controller share one serial line. Text commands are typed
 lines with one reply each, for a person or a program:
 
 ```text
-→ home
-← ok
-→ get state busy
-← state=5 busy=1
+home
+→ ok
+get state busy
+→ state=5 busy=1
 ```
+
+A line you type is shown plain; `→` marks the controller's reply, as
+everywhere in [the docs](docs/README.md#notation).
 
 Everything that must be fast or exact is binary: the job's curves, the status,
 the replies to a record. Each record starts with a magic byte that names it
@@ -252,6 +266,91 @@ slot.
 ![A stream byte: four slots of a direction and a step bit, each held by one node](docs/images/stream-byte.svg)
 
 How the bus works: [docs/system/bus.md](docs/system/bus.md).
+
+## Where things are
+
+Every position is one point, the selected head's tip or the laser dot, in
+one of two frames. Machine coordinates (`mpos`) are fixed by homing. Work
+coordinates (`wpos`) count from a zero you set on the material, and each
+head's work Z counts from where its tip meets the bed.
+
+![Coordinates from above and from the side: machine 0, the anchor and a head's offset, the job's box placed on the dot, and the heights of Z](docs/images/coordinates.svg)
+
+More: [docs/machine/positioning.md](docs/machine/positioning.md).
+
+### What the config describes
+
+The controller knows the machine from one file, `config/controller.jsonc`:
+which node drives which axis, where each head sits from the laser dot, the
+work area, and the tools.
+
+![An excerpt of the config, each part numbered and pointed at on the machine](docs/images/config-map.svg)
+
+## From a drawing to a cut
+
+Draw in any SVG editor and name each layer after the tool that cuts it. The
+host finds those layers, turns their paths into short cubic pieces with
+their length and curvature measured, and streams them as records.
+
+![From an SVG to records: layers named after tools, tool layers, cubic pieces, then the records in order](docs/images/svg-to-records.svg)
+
+The controller then plans the speed along those pieces, slowing for corners
+and tight curves so the tool never takes one faster than the machine can.
+
+![How the planner shapes a move: speed up, hold the feed, slow for a corner, a cap on a tight curve, slow to a stop](docs/images/speed-profile.svg)
+
+More: [docs/system/jobs.md](docs/system/jobs.md) and
+[docs/system/planner.md](docs/system/planner.md).
+
+## Driving it from code
+
+The console is a page over the host library; a program uses the same calls.
+Home, read the config off the controller, build a job from an SVG and run it:
+
+```ts
+import { WebSerialTransport } from "urumi-host/transport/webserial";
+import { MachineState } from "urumi-host/packets";
+import { buildJob } from "urumi-host/toolpath";
+import { Link, JobSource } from "urumi-host/link";
+
+const link = new Link(await WebSerialTransport.request());
+const cmd = link.commands();
+
+await cmd.home();                      // ok means it started
+while ((await link.freshStatus()).state !== MachineState.IDLE) {
+  await new Promise((r) => setTimeout(r, 500));
+}
+
+const config = await link.pullConfig();
+const job = buildJob(svgText, config, { thickness: 3, layers: [{ key: "pen", head: 0 }] });
+if (!job.ok) throw new Error(job.errors.join("; "));
+
+const session = link.session(new JobSource(job.layers));
+const ended = session.run();           // holds "place": jog the dot to the corner, then
+await cmd.place("set");
+await cmd.place("ok");
+console.log(await ended);              // after cancel: { ok: true, … }
+```
+
+The library's reference: [docs/reference/host-api/README.md](docs/reference/host-api/README.md).
+
+## When it goes wrong
+
+| You see | It means | Do |
+| --- | --- | --- |
+| Connect fails, or the port is busy | another program holds it | close the Serial Monitor or another console |
+| `→ err not_homed x` | that axis has no position yet | `home` |
+| `→ err busy` | something is still moving | wait for `busy=0` in the status |
+| `→ err bad_state` | the command isn't taken in this state, such as `wset` during a tool change | read the state; the command's page says when it runs |
+| `→ err estop` | the e-stop is latched | `unstop` |
+| state ALARM | a fault stopped the machine | read `faults`, fix the cause, `unalarm` |
+| `NACK NOT_HOMED` | a job needs an axis that isn't homed | home, then run the job again |
+| `NACK OUT_OF_RANGE` with text | part of the job leaves the travel, such as `mesh takes z out` | move the job, or zero Z where there's room to plunge |
+| `NACK TOOL_UNAVAILABLE` with text | the head can't run that tool | check `accepts` and the tool's power in the config |
+| a resume says "not taken (tool)" | the tool change isn't finished | mount the tool, `wzero z`, then Resume |
+
+Every refusal and its text: [docs/reference/packets.md](docs/reference/packets.md)
+and [docs/reference/commands.md](docs/reference/commands.md).
 
 ## Folders
 
