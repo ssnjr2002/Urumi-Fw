@@ -1,5 +1,8 @@
 # Docs restructure
 
+**Open:** branch 14 (`system/tests.md`) is not started. Current behaviour:
+[STYLE.md](../STYLE.md); this plan records how it was built.
+
 How the docs are laid out and written. The docs in `docs/` today are design notes,
 plans and audits from three successive hosts (Python, the web planner, the Pico
 controller); nothing in them is reference, and nothing describes the machine as
