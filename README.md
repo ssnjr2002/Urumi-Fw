@@ -9,6 +9,45 @@ Urumi is being developed at Super Fablab Kochi in collaboration with the MIT
 Center for Bits and Atoms, as part of the
 Machines that Make project.
 
+This repository is the machine's software: the firmware on its boards and the
+host library a program uses to drive it. The mechanics and the electronics
+are not here.
+
+## How it fits together
+
+![Urumi from above: the bed, the gantry carrying two heads, the nodes on one RS485 bus, the controller and the host](docs/images/machine.svg)
+
+A sheet lies on the bed, held down by vacuum. A gantry moves over it in X,
+and a carriage on the gantry moves in Y. The carriage holds two heads, and
+each head has a Z that lowers its tool and an A that turns it: a knife, a
+crease wheel or a pen. A laser dot on the carriage marks the anchor, the
+point everything is measured from.
+
+Three programs share the work, one per layer:
+
+![Architecture: the host in TypeScript, the controller's two cores, and the nodes](docs/images/architecture.svg)
+
+* **The host** decides *what* to cut. It reads an SVG, turns each tool's
+  layer into cubic curves, and sends them to the controller while the
+  machine cuts. It runs in a browser or in Node.
+* **The controller** decides *how* to move, and whether it may. Core 0 checks
+  each command and record, plans the motion and publishes one state; Core 1
+  turns the plan into steps on time and drives the bus.
+* **The nodes** turn motors. Each is a small board on the RS485 bus that
+  steps one axis or runs one device, such as the vacuum or the knife.
+
+Words used across this repo:
+
+| Word | Means |
+| --- | --- |
+| head | a Z and an A that carry one tool |
+| node | one board on the bus, for one axis or device |
+| anchor | the laser dot, (0, 0) of the carriage; a head's offset is measured from it |
+| tool, chamber | what a head carries; a revolver tool has numbered chambers |
+| job | one drawing cut from one sheet, sent as records |
+| record | one binary message on the USB wire, magic byte first |
+| placement | jogging the laser dot to the sheet's corner before a job cuts |
+
 ## Hardware
 
 * **Controller:** a Raspberry Pi Pico 2 (RP2350) with a half-duplex RS485
@@ -111,6 +150,108 @@ It opens in your browser. Use Chrome or Edge, which have Web Serial, and press
 program can hold the port.
 
 To use the host library in your own software, see [web/README.md](web/README.md).
+
+**Safety.** This drives a real machine: a knife that oscillates and a gantry
+that moves fast. Keep the e-stop in reach. The console's **Stop** sends
+`stop`, which brakes everything and parks the bus; `unstop` clears it.
+
+## How it talks
+
+### Two languages on one USB wire
+
+The host and the controller share one serial line. Text commands are typed
+lines with one reply each, for a person or a program:
+
+```text
+→ home
+← ok
+→ get state busy
+← state=5 busy=1
+```
+
+Everything that must be fast or exact is binary: the job's curves, the status,
+the replies to a record. Each record starts with a magic byte that names it
+and ends with a CRC8 that checks it.
+
+![Binary records byte by byte: BEZIER, STATUS_RSP, ACK and NACK](docs/images/packets.svg)
+
+Every layout: [docs/reference/packets.md](docs/reference/packets.md).
+
+### A job streaming
+
+The controller never holds the whole drawing: the host sends a few records
+ahead, and each ACK says how far the controller has taken them. A refusal
+says why. Some the host waits out and resends; some hold until the operator
+acts; the rest end the job.
+
+![A job streaming: records go out, ACKs come back, a FULL is waited out, a PAUSED holds until resume](docs/images/job-stream.svg)
+
+### A job from start to finish
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant Host as Host (Session)
+    participant Ctl as Controller
+    Host->>Ctl: JOB_HDR, TOOL_HDR (preflight)
+    Ctl-->>Host: ACK
+    Note over Ctl: PLACE
+    Op->>Ctl: jog the laser dot to the corner, place set, place ok
+    Host->>Ctl: LAYER_HDR, TOOL_HDR
+    Ctl-->>Host: NACK TOOL_CHANGE
+    Note over Ctl: tool change, then TOOL_WAIT
+    Op->>Ctl: mount the tool, wzero z
+    Op->>Host: Resume
+    Host->>Ctl: the layer again
+    loop until the drawing is sent
+        Host->>Ctl: BEZIER
+        Ctl-->>Host: ACK
+    end
+    Note over Ctl: cut, at rest: the session is done
+    Host->>Ctl: cancel
+    Note over Ctl: IDLE
+```
+
+### What the machine is doing
+
+The controller publishes one state, and a reason that refines it. The host
+reads both in every status.
+
+```mermaid
+flowchart LR
+    IDLE((IDLE))
+    IDLE -- home --> HOMING -- homed --> IDLE
+    IDLE -- "jog, goto" --> JOGGING -- the move ends --> IDLE
+    IDLE -- probe_map --> PROBING -- probe_end --> IDLE
+    IDLE -- "a job's header" --> JOB -- "cancel, abort" --> IDLE
+    JOB -- a fault --> ALARM
+    HOMING -- a fault --> ALARM
+    ALARM -- "unalarm, unstop" --> IDLE
+    STOP["stop, from any state"] --> ESTOP -- the bus is parked --> ALARM
+```
+
+Inside a job, the reason says what the job is doing:
+
+```mermaid
+flowchart LR
+    PREFLIGHT -- tools checked --> PLACE -- place ok --> BUFFERING
+    BUFFERING -- enough queued --> RUNNING -- queue dry --> BUFFERING
+    RUNNING -- another tool --> TOOL_CHANGE --> TOOL_WAIT -- resume --> BUFFERING
+    RUNNING -- pause --> HOLDING --> PAUSED -- resume --> BUFFERING
+```
+
+Every state and reason: [docs/system/controller.md](docs/system/controller.md).
+
+### The bus
+
+On RS485 the controller sends two kinds of word. Command frames talk to one
+node and wait for its answer. Stream bytes step the motors: one byte carries
+a step for up to four nodes at once, and each stepper listens to its own
+slot.
+
+![A stream byte: four slots of a direction and a step bit, each held by one node](docs/images/stream-byte.svg)
+
+How the bus works: [docs/system/bus.md](docs/system/bus.md).
 
 ## Folders
 

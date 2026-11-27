@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14">
+  <title>A stream byte on the RS485 bus: four slots, one step each (animated)</title>
+  <rect width="960" height="300" fill="#ffffff"/>
+  <text x="480" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#212529">One stream byte steps up to four motors at once</text>
+  <text x="480" y="52" text-anchor="middle" font-size="12" fill="#868e96">a 9-bit word on the bus, at most one every 13 µs; the 9th bit 0 marks it as a stream byte</text>
+
+  <!-- the word -->
+  <g font-family="ui-monospace, Consolas, monospace" font-size="13" text-anchor="middle">
+    <rect x="150" y="76" width="60" height="44" rx="4" fill="#343a40"/><text x="180" y="103" fill="#fff">9th: 0</text>
+    <!-- slot 3 -->
+    <rect x="220" y="76" width="70" height="44" rx="4" fill="#ffe8cc"/><text x="255" y="103">dir3</text>
+    <rect x="292" y="76" width="70" height="44" rx="4" fill="#e8590c"/><text x="327" y="103" fill="#fff">stp3</text>
+    <!-- slot 2 -->
+    <rect x="372" y="76" width="70" height="44" rx="4" fill="#d0ebff"/><text x="407" y="103">dir2</text>
+    <rect x="444" y="76" width="70" height="44" rx="4" fill="#1c7ed6"/><text x="479" y="103" fill="#fff">stp2</text>
+    <!-- slot 1 -->
+    <rect x="524" y="76" width="70" height="44" rx="4" fill="#d3f9d8"/><text x="559" y="103">dir1</text>
+    <rect x="596" y="76" width="70" height="44" rx="4" fill="#2f9e44"/><text x="631" y="103" fill="#fff">stp1</text>
+    <!-- slot 0 -->
+    <rect x="676" y="76" width="70" height="44" rx="4" fill="#e5dbff"/><text x="711" y="103">dir0</text>
+    <rect x="748" y="76" width="70" height="44" rx="4" fill="#7048e8"/><text x="783" y="103" fill="#fff">stp0</text>
+  </g>
+  <g font-size="12" fill="#495057" text-anchor="middle">
+    <text x="291" y="138">slot 3</text><text x="443" y="138">slot 2</text><text x="595" y="138">slot 1</text><text x="747" y="138">slot 0</text>
+  </g>
+
+  <!-- the nodes that hold each slot -->
+  <g font-size="13" text-anchor="middle">
+    <line x1="291" y1="146" x2="291" y2="196" stroke="#e8590c" stroke-width="2"/>
+    <line x1="443" y1="146" x2="443" y2="196" stroke="#1c7ed6" stroke-width="2"/>
+    <line x1="595" y1="146" x2="595" y2="196" stroke="#2f9e44" stroke-width="2"/>
+    <line x1="747" y1="146" x2="747" y2="196" stroke="#7048e8" stroke-width="2"/>
+    <rect x="236" y="196" width="110" height="44" rx="6" fill="#fff" stroke="#e8590c" stroke-width="2"/><text x="291" y="223">Z node</text>
+    <rect x="388" y="196" width="110" height="44" rx="6" fill="#fff" stroke="#1c7ed6" stroke-width="2"/><text x="443" y="223">A node</text>
+    <rect x="540" y="196" width="110" height="44" rx="6" fill="#fff" stroke="#2f9e44" stroke-width="2"/><text x="595" y="223">Y node</text>
+    <rect x="692" y="196" width="110" height="44" rx="6" fill="#fff" stroke="#7048e8" stroke-width="2"/><text x="747" y="223">X node</text>
+  </g>
+  <!-- step flashes: each node pulses at its own rate, as a move's axes do -->
+  <g>
+    <circle cx="747" cy="258" r="6" fill="#7048e8" opacity="0"><animate attributeName="opacity" values="1;0" dur="0.4s" repeatCount="indefinite"/></circle>
+    <circle cx="595" cy="258" r="6" fill="#2f9e44" opacity="0"><animate attributeName="opacity" values="1;0" dur="0.7s" repeatCount="indefinite"/></circle>
+    <circle cx="443" cy="258" r="6" fill="#1c7ed6" opacity="0"><animate attributeName="opacity" values="1;0" dur="1.5s" repeatCount="indefinite"/></circle>
+    <circle cx="291" cy="258" r="6" fill="#e8590c" opacity="0"><animate attributeName="opacity" values="1;0;0" keyTimes="0;0.15;1" dur="3s" repeatCount="indefinite"/></circle>
+  </g>
+  <text x="480" y="288" text-anchor="middle" font-size="12" fill="#868e96">A byte names no node: each stepper acts on the slot it holds and ignores the rest. Which node holds which slot is set at run time (slot_map).</text>
+</svg>

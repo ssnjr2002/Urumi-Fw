@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14">
+  <title>Architecture: host, controller and nodes</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#495057"/></marker>
+  </defs>
+  <rect width="960" height="560" fill="#ffffff"/>
+
+  <!-- host -->
+  <rect x="20" y="20" width="920" height="140" rx="10" fill="#f3f0ff" stroke="#7950f2"/>
+  <text x="36" y="44" font-weight="700" fill="#5f3dc4">Host · urumi-host (TypeScript, web/)</text>
+  <text x="924" y="44" text-anchor="end" fill="#7048e8" font-size="12">decides what to cut</text>
+  <g font-size="13">
+    <rect x="36" y="60" width="150" height="80" rx="6" fill="#fff" stroke="#9775fa"/><text x="111" y="84" text-anchor="middle" font-weight="600">toolpath</text><text x="111" y="104" text-anchor="middle" font-size="12">SVG → cubic curves</text><text x="111" y="122" text-anchor="middle" font-size="12">loadSvg · buildJob</text>
+    <rect x="204" y="60" width="150" height="80" rx="6" fill="#fff" stroke="#9775fa"/><text x="279" y="84" text-anchor="middle" font-weight="600">config</text><text x="279" y="104" text-anchor="middle" font-size="12">axes, heads, tools</text><text x="279" y="122" text-anchor="middle" font-size="12">loadConfig</text>
+    <rect x="372" y="60" width="200" height="80" rx="6" fill="#fff" stroke="#9775fa"/><text x="472" y="84" text-anchor="middle" font-weight="600">link</text><text x="472" y="104" text-anchor="middle" font-size="12">Session · Commands · CJog</text><text x="472" y="122" text-anchor="middle" font-size="12">status poll</text>
+    <rect x="590" y="60" width="150" height="80" rx="6" fill="#fff" stroke="#9775fa"/><text x="665" y="84" text-anchor="middle" font-weight="600">packets</text><text x="665" y="104" text-anchor="middle" font-size="12">records, CRCs,</text><text x="665" y="122" text-anchor="middle" font-size="12">codes and names</text>
+    <rect x="758" y="60" width="166" height="80" rx="6" fill="#fff" stroke="#9775fa"/><text x="841" y="84" text-anchor="middle" font-weight="600">transport</text><text x="841" y="104" text-anchor="middle" font-size="12">Web Serial · Node serial</text><text x="841" y="122" text-anchor="middle" font-size="12">or a simulator</text>
+  </g>
+
+  <!-- USB -->
+  <line x1="480" y1="162" x2="480" y2="208" stroke="#495057" stroke-width="2" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="492" y="182" font-weight="600" fill="#495057">USB serial, 115200</text>
+  <text x="492" y="200" font-size="12" fill="#868e96">text commands · binary records · status · jog · config</text>
+
+  <!-- controller -->
+  <rect x="20" y="210" width="920" height="200" rx="10" fill="#ebfbee" stroke="#37b24d"/>
+  <text x="36" y="234" font-weight="700" fill="#2b8a3e">Controller · RP2350 (C++, src/rp2350/)</text>
+  <text x="924" y="234" text-anchor="end" fill="#2f9e44" font-size="12">decides how to move, and whether it may</text>
+  <rect x="36" y="248" width="560" height="146" rx="8" fill="#fff" stroke="#69db7c"/>
+  <text x="52" y="270" font-weight="600">Core 0 · decides</text>
+  <g font-size="12">
+    <rect x="52" y="282" width="120" height="96" rx="5" fill="#d3f9d8"/><text x="112" y="304" text-anchor="middle" font-weight="600">wire</text><text x="112" y="322" text-anchor="middle">route bytes,</text><text x="112" y="338" text-anchor="middle">check records,</text><text x="112" y="354" text-anchor="middle">ACK / NACK</text>
+    <rect x="186" y="282" width="120" height="96" rx="5" fill="#d3f9d8"/><text x="246" y="304" text-anchor="middle" font-weight="600">controller</text><text x="246" y="322" text-anchor="middle">admission,</text><text x="246" y="338" text-anchor="middle">sequences,</text><text x="246" y="354" text-anchor="middle">one state</text>
+    <rect x="320" y="282" width="120" height="96" rx="5" fill="#d3f9d8"/><text x="380" y="304" text-anchor="middle" font-weight="600">planner</text><text x="380" y="322" text-anchor="middle">speed limits,</text><text x="380" y="338" text-anchor="middle">junctions,</text><text x="380" y="354" text-anchor="middle">profiles in time</text>
+    <rect x="454" y="282" width="128" height="96" rx="5" fill="#d3f9d8"/><text x="518" y="304" text-anchor="middle" font-weight="600">config</text><text x="518" y="322" text-anchor="middle">stored in flash,</text><text x="518" y="338" text-anchor="middle">pushed and pulled</text><text x="518" y="354" text-anchor="middle">by the host</text>
+  </g>
+  <rect x="664" y="248" width="260" height="146" rx="8" fill="#fff" stroke="#69db7c"/>
+  <text x="680" y="270" font-weight="600">Core 1 · moves</text>
+  <g font-size="12">
+    <rect x="680" y="282" width="110" height="96" rx="5" fill="#d3f9d8"/><text x="735" y="304" text-anchor="middle" font-weight="600">emit</text><text x="735" y="322" text-anchor="middle">positions</text><text x="735" y="338" text-anchor="middle">→ steps,</text><text x="735" y="354" text-anchor="middle">on time</text>
+    <rect x="800" y="282" width="110" height="96" rx="5" fill="#d3f9d8"/><text x="855" y="304" text-anchor="middle" font-weight="600">bus</text><text x="855" y="322" text-anchor="middle">stream bytes,</text><text x="855" y="338" text-anchor="middle">node commands,</text><text x="855" y="354" text-anchor="middle">e-stop sweep</text>
+  </g>
+  <line x1="598" y1="320" x2="662" y2="320" stroke="#495057" stroke-width="2" marker-end="url(#a)"/>
+  <text x="630" y="310" text-anchor="middle" font-size="11" fill="#495057">ring</text>
+  <line x1="662" y1="350" x2="598" y2="350" stroke="#495057" stroke-width="2" marker-end="url(#a)"/>
+  <text x="630" y="368" text-anchor="middle" font-size="11" fill="#495057">facts</text>
+
+  <!-- RS485 -->
+  <line x1="855" y1="412" x2="855" y2="456" stroke="#e8590c" stroke-width="3" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="840" y="432" text-anchor="end" font-weight="600" fill="#e8590c">RS485, 921600 baud, 9-bit words</text>
+  <text x="840" y="450" text-anchor="end" font-size="12" fill="#868e96">stream bytes step the motors · command frames talk to one node</text>
+
+  <!-- nodes -->
+  <rect x="20" y="458" width="920" height="88" rx="10" fill="#fff9db" stroke="#f59f00"/>
+  <text x="36" y="482" font-weight="700" fill="#e67700">Nodes · one AVR per axis or device (C++, src/node/)</text>
+  <g font-size="12">
+    <rect x="36" y="494" width="140" height="38" rx="5" fill="#fff" stroke="#fcc419"/><text x="106" y="518" text-anchor="middle">stepper X</text>
+    <rect x="186" y="494" width="140" height="38" rx="5" fill="#fff" stroke="#fcc419"/><text x="256" y="518" text-anchor="middle">stepper Y</text>
+    <rect x="336" y="494" width="140" height="38" rx="5" fill="#fff" stroke="#fcc419"/><text x="406" y="518" text-anchor="middle">stepper Z · A, per head</text>
+    <rect x="486" y="494" width="140" height="38" rx="5" fill="#fff" stroke="#fcc419"/><text x="556" y="518" text-anchor="middle">vacuum · servos · probe</text>
+    <rect x="636" y="494" width="140" height="38" rx="5" fill="#fff" stroke="#fcc419"/><text x="706" y="518" text-anchor="middle">knife · blower</text>
+  </g>
+  <text x="924" y="518" text-anchor="end" fill="#e67700" font-size="12">turn motors</text>
+</svg>
