@@ -6,7 +6,8 @@ machine, and each axis or device has its own small node board, all connected
 over an RS485 bus.
 
 Urumi is being developed at Super Fablab Kochi in collaboration with the MIT
-Center for Bits and Atoms.
+Center for Bits and Atoms, as part of the
+Machines that Make project.
 
 ## Hardware
 
@@ -101,6 +102,7 @@ jog, load an SVG and run it.
 
 ```sh
 cd web
+pnpm install   # once; skip if you did it under Get the code
 pnpm demo
 ```
 

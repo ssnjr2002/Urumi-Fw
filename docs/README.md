@@ -19,6 +19,8 @@ it jobs and commands over USB.
 The docs directly in `docs/` are design notes, audits and measurements written
 before these folders. Each moves out when a page replaces it.
 
+How the pages are written: the [style guide](STYLE.md).
+
 ## Notation
 
 Each string is written the way you meet it:

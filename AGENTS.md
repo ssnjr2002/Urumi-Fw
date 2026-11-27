@@ -1,81 +1,63 @@
-# Urumi Controller Development Guide
+# Urumi Development Guide
 
-Project: Open-source firmware and control software for a flatbed CNC cutter.
+Open-source firmware and host software for a flatbed CNC cutter. The repo
+map is in [README.md](README.md); how the machine and the code work is in
+[docs/README.md](docs/README.md). This file is how to work here.
+
+`docs/` holds the facts: the envs and build flags, the layers, the commands,
+the host API. Read the page for what you touch rather than relying on this
+file or memory.
 
 ---
 
-## Project Architecture
+## Environment
 
-### Firmware
+* **PlatformIO:** `~/.platformio/penv/Scripts/pio.exe` on Windows. Name the
+  env: plain `pio run` builds only the default.
+* **Host:** Node 22.12+ and pnpm, run in `web/`. `pio run -e pico -t
+  uploadfs` also needs them: it encodes `config/controller.jsonc` with the
+  host's encoder.
+* **Python:** with pyserial, for `scripts/node_console.py`, the bench scripts
+  and the demo's serial bridge.
+* **The machine:** the Pico enumerates as a USB serial port (COM8 on this
+  bench); nodes flash over a serial UPDI adapter. Only one program can hold a
+  port: close a serial monitor or the bridge before uploading.
+* **`web/dist`** is built locally and gitignored; `pnpm demo:dist` serves the
+  demo from it. Rebuild it (`pnpm build`) after a `web/` merge.
 
-#### Build System: PlatformIO 
+### Windows
 
-1. On Windows:
-    * Location: ~/.platformio/penv/Scripts/pio.exe
+* Edit files with the Edit/Write tools. Never rewrite a file through
+  PowerShell `Get-Content`/`Set-Content` or `>`: Windows PowerShell 5.1 reads
+  UTF-8 as the ANSI codepage and writes a BOM, which corrupts non-ASCII text
+  (`platformio.ini` box-drawing characters, em dashes in comments).
+  `Get-Content` also shows UTF-8 as mojibake (`â†’` for `→`) when the file is
+  fine; pass `-Encoding utf8` to read it.
+* If a script must write a file, use .NET with explicit UTF-8 without BOM:
+  `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))`
+* PowerShell 5.1 has no `&&`: use `A; if ($?) { B }`. Git Bash is also
+  available and suits short scripted edits.
+* For commit messages with more than one line, write the message to a file
+  and pass it with `git commit -F <file>`; piping text into git from
+  PowerShell adds a BOM to the message.
+* "LF will be replaced by CRLF" warnings from git are expected and harmless.
 
-**Configuration Files**:
+#### Worktrees and `node_modules`
 
-* `platformio.ini`: Main build configuration
+* Link `main`'s packages into a new worktree with a junction:
+  `cmd /c mklink /J web\node_modules <main folder>\web\node_modules`.
+* Before `git worktree remove`, delete the worktree's `web/node_modules`
+  with `cmd /c rmdir /s /q ..\urumi-<short-name>\web\node_modules`.
+  `rmdir /s` removes a junction without following it. Git for Windows
+  follows one: with a junction to `main`'s, `git worktree remove` empties
+  `main`'s `web/node_modules`, and with a `pnpm install`ed one it fails
+  partway with "Directory not empty".
+* Run `rmdir` through `cmd /c`: in PowerShell, `rmdir` is an alias for
+  `Remove-Item`, which is a different command.
+* Check `git diff --stat` after any scripted edit. A line count far larger
+  than the edit means the encoding was damaged: restore the file with
+  `git checkout -- <file>` and redo the edit.
 
-Contains config for 4 MCU types:
-
-* Nodes:
-    * ATtiny 3224: `attiny_base`
-    * ATtiny 3226: `attiny3226_base`
-    * AVR128DB32: `avr128db_base`
-* Controller:
-    * RP2350: `env:pico`
-* Scratch: Miscellaneous envs used for testing specific things.
-
-Controller Build Flags:
-
-* `PICO_ALLOW_UNCONFIGURED`: Compile `uncfg`, which clears the CONFIG fault (no usable config at boot), leaving the machine unconfigured until power-off. Off by default.
-* `ACCEPT_LASER_AS_POWER_TOOL`: Accept the laser's node as a tool's `power.node`, switched by `CMD_LASER`, so the laser stands in for a powered tool on the bench. Off by default.
-
-Controller Config:
-
-* `config/controller.jsonc`: the machine's config. `pio run -e pico -t uploadfs` encodes it into `data/config.bin` (generated, gitignored) and flashes it as `/config.bin`; see docs/config_storage.md.
-
-Node Types:
-
-* Core (shared across all types): `node_core`
-* Vacuum Controller Node: `type_vacuum`
-* Knife Controller Node: `type_knife`
-* Stepper Controller Nodes: `type_stepper` 
-
-Node Environments:
-
-* Combination of 
-    * MCU
-    * Node type 
-    * Build Flags
-
-Node Build Flags:
-
-* All nodes:
-    * `NODE_ID`: Specifies the node addressing id of a node.
-    * `NODE_DEBUG_CONSOLE`: Address a node over USB Serial instead of RS485 Bus through a python script (`scripts/node_console.py`).
-    * `NODE_HAS_PROBE_REPLY`: Allow a special stream reply mode which relays probe switch state. 
-    * `RS485_USE_XDIR`: Turn on XDIR, an automatic hardware direction switch for half duplex RS485 buses. 
-    * `NODE_HAS_LASER`: Node has a laser attached to it which can be toggled on or off.
-    * `NODE_IGNORE_FERR`: Process bytes with a UART framing error instead of dropping them (they are still counted).
-    * `NODE_HAS_SILENCE_TIMEOUT`: Make the node safe (as `CMD_MAKE_SAFE`) after `BUS_SILENCE_MS` without a bus byte. Not with `NODE_DEBUG_CONSOLE`.
-* Stepper nodes:
-    * `DM542`: Specify the stepper driver as a DM542 driver.
-    * `TMC_2660`: Specify the stepper driver as a TMC 2660 driver.
-    * `TMC_CURRENT`: Specify the current setting value for TMC 2660 driver.
-    * `TMC_MICROSTEPPING`: Specify the microstepping value for TMC 2660 driver.
-    * `DRV8825`: Specify the stepper driver as a DRV8825 driver.
-    * `DRV_MICROSTEPPING`: Specify the microstepping value for DRV8825 driver.
-    * `HAS_LIMIT_SWITCH`: Specify that a node has a limit switch and will support linear homing.
-    * `LIMIT_ACTIVE_HIGH`: Specify if the limit switch signal is high when active.
-    * `HAS_HALL_INDEX`: Specify that a node has hall effect sensor and may support rotary homing.
-* Vacuum nodes:
-    * `BOARD_DB32_VACUUM`: Specify that this board is a AVR128DB32 vacuum board.
-
-### Software
-
-In web/src
 
 ---
 
@@ -83,9 +65,43 @@ In web/src
 
 ### Comment Style
 
-* Keep comments short and write them for the merged state, as if the code had always worked this way.
-* Remove before/after narration, investigation measurements, and rationale that belongs in the commit message.
-* Keep only non-obvious mechanism, field/parameter meaning, or the reason a special case exists.
+* Keep comments short and write them for the merged state, as if the code
+  had always worked this way.
+* Remove before/after narration, investigation measurements, and rationale
+  that belongs in the commit message.
+* Keep only non-obvious mechanism, field/parameter meaning, or the reason a
+  special case exists.
+
+### Host API
+
+The public surface of the host library, `urumi-host` (`web/src`), as its
+subpaths export it and `docs/reference/host-api/` describes it.
+
+* Keep it small: export what a user needs, nothing for convenience.
+* One word per thing. Settle the vocabulary before writing code, and use the
+  same word in code, docs and UI.
+* The demo (`web/demo`) imports only the library's public subpaths. If it
+  needs something internal, the API is missing it.
+
+---
+
+## Docs
+
+The docs are part of the change. How a page is written is in
+[docs/STYLE.md](docs/STYLE.md), and the notation in
+[docs/README.md](docs/README.md).
+
+* **Where a page goes:** `machine/` for what you see the machine do,
+  `system/` for a layer underneath, `reference/` for exact strings, `plans/`
+  for a change.
+* **Stamps:** a `system/` or `reference/` page names the commit it was
+  checked against. Updating it means reading the `git diff` it gives, then
+  moving the stamp. Never move a stamp on a page you didn't check.
+* **Write for the merged state,** for a reader new to the subject, and only
+  for pages that exist: link or leave out, don't fill one page with another's
+  material.
+* **Docs travel with their code,** in the same branch. There is no docs-only
+  branch type.
 
 ---
 
@@ -108,9 +124,9 @@ worked on in parallel.
   Start → Planning → Work (branch 1) → Merge → Planning → Work (branch 2) → …
 * Each branch is created only when its turn comes, from `main` as it is after
   the previous branch merged.
-* If the session grows long, the user may compact the current session or continue in a fresh session. The
-  plan doc carries the context: "read docs/plans/<name>.md, continue from
-  branch <N>".
+* If the session grows long, the user may compact it or continue in a fresh
+  session. The plan doc carries the context: "read docs/plans/<name>.md,
+  continue from branch <N>".
 
 #### Multiple Sessions
 
@@ -126,20 +142,31 @@ For branches that don't depend on each other.
 
 ### Plan Docs
 
-* Live in `docs/plans/<name>.md`.
+* Live in `docs/plans/<name>.md`, and stay there whatever their state; moving
+  one breaks its links.
 * Created only in a Planning session, and committed directly to `main` as
   `docs:`.
+* **First lines say open or closed.** A plan is open while any branch is
+  neither merged nor dropped, closed once every branch is.
+* **The plan holds the details.** Vocabulary, decisions, drafts of reference
+  entries and API sketches go in the plan first; the doc pages are written
+  from it once the code is settled.
+* **Replaced by a page:** once a `system/` page describes what a plan built,
+  the plan opens with "Current behaviour: `system/<page>.md`; this plan
+  records how it was built."
 * Modified from any branch or folder. A Work session updates its own branch's
   section in its own branch, so the update merges with the code.
 * One section per branch, holding that branch's:
-  * Plan: name, type, purpose, files touched, depends-on. Written in Planning.
+  * Plan: name, type, purpose, files touched, doc pages touched, depends-on.
+    Written in Planning.
   * Status
   * Outcome: appended before the branch merges: deviations from the plan,
     interface changes later branches rely on, findings out of scope. Keep it
     short; commit messages already record what changed and why.
 * No shared status table; parallel branches then edit different lines and
   merge cleanly.
-* On a merge conflict in a plan doc, deliberate with the user to resolve the conflicts before committing.
+* On a merge conflict in a plan doc, deliberate with the user to resolve the
+  conflicts before committing.
 
 ### Session States
 
@@ -152,7 +179,7 @@ Start ──► Planning ──► Work ──► Merge ──► Planning ─�
 
 | State    | Location                   | Does                                              |
 | -------- | -------------------------- | ------------------------------------------------- |
-| Start    | wherever the session opens | works out where it is and which state to enter   |
+| Start    | wherever the session opens | works out where it is and which state to enter    |
 | Planning | main folder, on `main`     | plans, writes and commits plan docs               |
 | Work     | the branch's worktree      | implements the branch, prepares it for merge      |
 | Merge    | main folder, on `main`     | merges a ready branch, cleans up                  |
@@ -186,13 +213,13 @@ Start ──► Planning ──► Work ──► Merge ──► Planning ─�
 #### Planning
 
 * Location: main folder, on `main`.
-* Allowed: read code, discuss, create and commit plan docs (after user explicitly agrees).
+* Allowed: read code and docs, discuss, create and commit plan docs (after the
+  user explicitly agrees).
 * Not allowed: code edits.
-* Cite the files and lines the plan touches.
+* Cite the files and lines the plan touches, and the doc pages.
 * Propose a branch type for each branch and let the user confirm it (see
   Branching).
 * If a plan mixes types, split it into separate branches; refactors land first.
-* Docs travel with the code they describe, in the same branch.
 
 #### Work
 
@@ -209,31 +236,37 @@ Work has two phases.
 
 **Read**
 
-* Read the code the branch touches before writing any.
-* No code edits. Docs may be written if it helps and the user agrees.
+* Read the code the branch touches, and the doc pages that describe it,
+  before writing any. Where a page and the code disagree, that is a finding.
+* No code edits. The plan may be written if it helps and the user agrees.
 * End with a findings brief, then wait for the user's go-ahead:
-  * What the code showed that the plan didn't know.
+  * What the code showed that the plan and docs didn't know.
   * Decisions that need the user (see below).
   * A one-line direction to start in. No step list.
 
 **Write**
 
-* Implement the branch.
+1. **Vocabulary first:** settle the names the branch adds or changes with the
+   user, and record them in the plan.
+2. **Code:** implement the branch. The details the docs will need collect in
+   the plan as they are settled; the pages themselves are written with the
+   Outcome (see Work to Merge). A reference page may be written before the
+   code instead, when the user asks for it; the code is then made to match it.
+
 * Decisions that need the user: scope changes, new files or modules,
   interface or behaviour changes, new dependencies, anything that affects
   another branch. If one comes up while writing, pause and ask then; don't
   defer it to the hand-back.
 * Implementation details the agent settles alone go in the Outcome.
 * After each coherent unit, with its Agent Scope checks passing, propose a
-  commit with its message and wait. Docs written in Read are proposed before
-  the first write.
+  commit with its message and wait. If the plan was updated in Read,
+  propose that as its own commit before the first code edit.
 
 #### Merge
 
 * Location: main folder, on `main`.
 * Allowed: merge a branch whose Work session handed it back as ready, when the
-  user says so; remove its worktree; update the plan doc's Status for that
-  branch.
+  user says so; remove its worktree.
 * Not allowed: code edits, including resolving conflicts.
 
 #### Planning to Work Transition
@@ -243,9 +276,9 @@ Work has two phases.
 3. Check other open `feature/`, `fix/` and `refactor/` branches for
    overlapping files:
    `git diff --name-only main...<other-branch>`
-   Report overlap to the user, especially in: `platformio.ini`,
-   `src/rp2350/core0/cmd/table.h`, `web/src/wire/`, `web/src/machine/schema.ts`,
-   `lib/planner/`.
+   Report overlap to the user, especially in the files branches tend to
+   share: `platformio.ini`, `src/rp2350/core0/cmd/table.h`, `lib/planner/`,
+   `web/src/packets/`, `web/src/config/`, and each `docs/reference/` page.
 4. For the next branch in this session: create its worktree from current
    `main`, move the session into it, and continue as Work.
    For independent branches: give the user the opening message for each one's
@@ -261,20 +294,33 @@ When the branch is finished, in the Work session:
 2. Propose commit groups (see Merging); rewrite only once the user approves,
    and verify the tree is unchanged.
 3. Run the Agent Scope checks. Any failure is named, with a follow-up.
-4. Write the Outcome in the plan doc (or summarise it in chat if there is no
-   plan doc), and commit when told.
-5. Hand back: tell the user the branch is ready to merge. A parallel Work
+4. Write the docs: update the pages the branch changed, from the plan, and
+   move their stamps to the branch's commit. Propose the commit and wait.
+5. Write the Outcome in the plan doc, set the branch's Status to `merged`,
+   and name which branches it unblocks (or summarise it in chat if there is
+   no plan doc). Commit when told. This is the branch's last commit: with a
+   fast-forward merge it lands on `main` as the merge happens, so the merge
+   adds no commit of its own.
+6. Hand back: tell the user the branch is ready to merge. A parallel Work
    session ends here; in Single Session, move to the main folder.
 
-A `bench/` branch stops after step 4: its Outcome is committed to `main`
+A `bench/` branch stops after step 5: its Outcome is committed to `main`
 instead of the branch, and there is no merge. Remove its worktree when done;
 the branch stays.
 
 #### Merge to Planning Transition
 
-1. Merge when the user says so (see Branching).
-2. Remove the worktree. Delete the branch only if the user asks.
-3. Mark the branch done in the plan doc, and name which branches it unblocks.
+1. Merge when the user says so (see Branching), then rebuild `web/dist` if
+   the branch touched `web/`.
+2. Remove the worktree, in this order:
+   1. The session is in the main folder, not the worktree; a shell whose
+      directory is inside it keeps it locked.
+   2. Stop anything served from the worktree (`pnpm demo`, the bridge).
+   3. Delete the worktree's `web/node_modules` first, if it exists, without
+      following links (on Windows, see Environment, Windows).
+   4. `git worktree remove ../urumi-<short-name>`. If it fails, stop and
+      tell the user; don't force it.
+3. Delete the branch only if the user asks.
 4. Single Session with branches remaining: re-read the plan doc, since the
    merged branch's Outcome may change the next branch's plan, then go back
    through Planning to Work.
@@ -316,13 +362,11 @@ branch's purpose or type, or affects other branches:
 * `refactor/`: same behaviour, different structure; existing tests should pass
   unchanged
 * `bench/`: scratch firmware or scripts that measure something on the bench.
-  Code lives in `src/scratch/` and its own scratch env, and touches no
-  production code. Commits use `chore(bench)`. A bench branch never merges:
-  its numbers go in the plan doc's Outcome, committed to `main` as `docs:`
-  (or in chat, without a plan doc), and the branch stays for re-running.
-
-There is no docs-only branch type; docs go in the branch of the code they
-describe.
+  Code lives in `src/scratch/` and its own scratch env, or in
+  `scripts/`, and touches no production code. Commits use `chore(bench)`. A
+  bench branch never merges: its numbers go in the plan doc's Outcome,
+  committed to `main` as `docs:` (or in chat, without a plan doc), and the
+  branch stays for re-running.
 
 #### Branch Naming Convention
 
@@ -416,11 +460,14 @@ Tested the happy path and it works.
 #### Staging
 
 * Never `git add -A` or `git add .`; stage named paths.
+* Check `git status --short` before committing: a `git add` naming a path
+  that no longer exists fails and stages nothing from that command.
 * Untracked files are the user's decision: list them and ask.
 * Ask before committing any single file over ~1 MB or ~5,000 lines.
 * Test fixtures live in `web/test/fixtures/` or `web/test/production/data/`.
-  Scratch code lives in `src/scratch/`. Nothing new in the repo root
-  (`config/` and the generated `data/` are the exceptions).
+  Scratch firmware lives in `src/scratch/`, scripts in `scripts/`. Nothing
+  new in the repo root (`config/` and the generated `data/` are the
+  exceptions).
 
 #### Direct Commits to `main`
 
@@ -434,8 +481,11 @@ Everything reaches `main` by merge, with two exceptions:
 
 * Never create, move, delete or push a tag without being asked. Pushing a tag
   is the user's.
-* `fw/vX.Y.Z` and `host/vX.Y.Z`: independent version lines, need to pass Agent and Human scope tests.
-* `fw/vX.Y.Z-rc.N` / `host/vX.Y.Z-rc.N`: release candidates; needs to pass agent scope tests only. The final tag goes on the same commit once human scope passes.
+* `fw/vX.Y.Z` and `host/vX.Y.Z`: independent version lines, need to pass
+  Agent and Human scope.
+* `fw/vX.Y.Z-rc.N` / `host/vX.Y.Z-rc.N`: release candidates; need to pass
+  Agent scope only. The final tag goes on the same commit once Human scope
+  passes.
 * `archive/<name>-<yyyy-mm>`: preserved snapshots. Never build on these.
 * A hotfix for a shipped version: branch `release/X.Y` from its tag, fix it
   there (cherry-pick from `main` where possible), tag `X.Y.Z+1`. Nothing is
@@ -449,55 +499,63 @@ Everything reaches `main` by merge, with two exceptions:
   is never checked out in one.
 * Create from `main`:
   `git worktree add ../urumi-<short-name> -b <type>/<short-name> main`
-* A new worktree has no `web/node_modules` or `.pio/`; run `pnpm install` in
-  `web/` before the first test run.
+* A new worktree has no `web/node_modules` or `.pio/`. Either run
+  `pnpm install` in `web/`, or link `main`'s `web/node_modules` into it.
+  Either way, delete it before removing the worktree (see Merge to
+  Planning).
 * A worktree sees only committed files. Commit a plan doc before creating the
   worktrees that need it.
-* After the branch is merged, remove its worktree with
-  `git worktree remove ../urumi-<short-name>` (the branch and its commits are
-  unaffected).
+
+---
 
 ## Testing and Verification
+
+Two scopes: what the agent checks, at the desk or on the machine, and what
+only the user can judge. What each env, test env and script does is in
+[firmware build](docs/system/firmware-build.md) and
+[host build](docs/system/host-build.md).
 
 ### Agent Scope
 
 Run the checks for what changed, once, after the last code edit:
 
-| Changed                  | Run                                             |
-| ------------------------ | ----------------------------------------------- |
-| `src/node/`, node envs   | `pio run -e <each affected env>`                |
-| `src/rp2350/`            | `pio run -e pico`                               |
-| `lib/planner/`           | `pio run -e pico` and `pio test -e native`      |
-| `web/`                   | `pnpm typecheck` and `pnpm test` in `web/`      |
-| `platformio.ini`         | `pio run -e <each env whose section changed>`   |
+| Changed                  | Run                                                    |
+| ------------------------ | ------------------------------------------------------ |
+| `src/node/`, node envs   | `pio run -e <each affected env>`                       |
+| `src/rp2350/`            | `pio run -e pico`                                      |
+| `lib/planner/`           | `pio run -e pico` and `pio test -e native`             |
+| `web/`                   | `pnpm typecheck`, `pnpm lint` and `pnpm test` in `web/` |
+| `platformio.ini`         | `pio run -e <each env whose section changed>`          |
+| a `docs/` page           | its links resolve, and its stamp moved only if checked |
 
-* Plain `pio run` builds only the default env; name the envs.
 * `native` is a test env: use `pio test -e native`, not `pio run`.
 * Report failures with their output; never describe a red check as passing.
+
+#### On the machine
+
+The agent may also drive the machine itself, once the user says it is
+connected and is there to stop it.
+
+* **Needs:** coordinates, soft limits, homing and the guards in place, and the
+  e-stop within the user's reach. Without them, motion is Human scope.
+* **Two ways in:**
+  * the demo UI, through the serial bridge (`web/demo/bridge/`) and
+    `shim.js`, when the browser has no port picker;
+  * scripts: pyserial against the Pico's port, or `scripts/node_console.py`
+    against a `_dbg` node.
+* **Report** what was run and what the machine did, step by step, with any
+  faults and their text. Never describe a step that wasn't run.
+* **Leave it as found:** say what is mounted, homed and zeroed at the end,
+  and stop the bridge so the port is free.
+* The user is asked before anything that cuts, plunges or runs a tool's
+  power.
 
 ### Human Scope
 
 List these for the user instead of claiming them:
 
-* Motion, homing and probing on the machine
-* Anything timing- or bus-dependent (RS485, step streams, node replies)
-* RC testing on the machine before a release tag
-
----
-
-## Agent Tooling on Windows
-
-* Edit files with the Edit/Write tools. Never rewrite a file through
-  PowerShell `Get-Content`/`Set-Content` or `>`: Windows PowerShell 5.1 reads
-  UTF-8 as the ANSI codepage and writes a BOM, which corrupts non-ASCII text
-  (`platformio.ini` box-drawing characters, em dashes in comments).
-* If a script must write a file, use .NET with explicit UTF-8 without BOM:
-  `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))`
-* For commit messages with more than one line, write the message to a file
-  that way and pass it with `git commit -F <file>`; piping text into git from
-  PowerShell adds a BOM to the message.
-* Check `git diff --stat` after any scripted edit. A line count far larger
-  than the edit means the encoding was damaged: restore the file with
-  `git checkout -- <file>` and redo the edit.
-
----
+* What only a person can judge: cut quality, mechanical feel, noise, a tool's
+  behaviour on material.
+* Motion when the guards under Agent Scope, "On the machine", aren't in
+  place.
+* RC sign-off on the machine before a release tag.
