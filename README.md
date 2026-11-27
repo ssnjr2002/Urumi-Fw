@@ -19,17 +19,15 @@ pages, open the `.svg` files in `docs/images/` in a browser.
 **Contents:** [How it fits together](#how-it-fits-together) ·
 [Hardware](#hardware) · [Quick start](#quick-start) ·
 [How it talks](#how-it-talks) · [Where things are](#where-things-are) ·
-[From a drawing to a cut](#from-a-drawing-to-a-cut) ·
-[Driving it from code](#driving-it-from-code) ·
-[When it goes wrong](#when-it-goes-wrong) · [Folders](#folders) ·
+[From a drawing to a cut](#from-a-drawing-to-a-cut) · [Folders](#folders) ·
 [Docs](#docs)
 
 ## How it fits together
 
 ![Urumi from above: the bed, the gantry carrying two heads, the nodes on one RS485 bus, the controller and the host](docs/images/machine.svg)
 
-A sheet lies on the bed, held down by vacuum. A gantry moves over it in X,
-and a carriage on the gantry moves in Y. The carriage holds two heads, and
+A sheet lies on the bed, held down by vacuum. A gantry moves over it in Y,
+and a carriage on the gantry moves in X. The carriage holds two heads, and
 each head has a Z that lowers its tool and an A that turns it: a knife, a
 crease wheel or a pen. A laser dot on the carriage marks the anchor, the
 point everything is measured from.
@@ -301,56 +299,6 @@ and tight curves so the tool never takes one faster than the machine can.
 
 More: [docs/system/jobs.md](docs/system/jobs.md) and
 [docs/system/planner.md](docs/system/planner.md).
-
-## Driving it from code
-
-The console is a page over the host library; a program uses the same calls.
-Home, read the config off the controller, build a job from an SVG and run it:
-
-```ts
-import { WebSerialTransport } from "urumi-host/transport/webserial";
-import { MachineState } from "urumi-host/packets";
-import { buildJob } from "urumi-host/toolpath";
-import { Link, JobSource } from "urumi-host/link";
-
-const link = new Link(await WebSerialTransport.request());
-const cmd = link.commands();
-
-await cmd.home();                      // ok means it started
-while ((await link.freshStatus()).state !== MachineState.IDLE) {
-  await new Promise((r) => setTimeout(r, 500));
-}
-
-const config = await link.pullConfig();
-const job = buildJob(svgText, config, { thickness: 3, layers: [{ key: "pen", head: 0 }] });
-if (!job.ok) throw new Error(job.errors.join("; "));
-
-const session = link.session(new JobSource(job.layers));
-const ended = session.run();           // holds "place": jog the dot to the corner, then
-await cmd.place("set");
-await cmd.place("ok");
-console.log(await ended);              // after cancel: { ok: true, … }
-```
-
-The library's reference: [docs/reference/host-api/README.md](docs/reference/host-api/README.md).
-
-## When it goes wrong
-
-| You see | It means | Do |
-| --- | --- | --- |
-| Connect fails, or the port is busy | another program holds it | close the Serial Monitor or another console |
-| `→ err not_homed x` | that axis has no position yet | `home` |
-| `→ err busy` | something is still moving | wait for `busy=0` in the status |
-| `→ err bad_state` | the command isn't taken in this state, such as `wset` during a tool change | read the state; the command's page says when it runs |
-| `→ err estop` | the e-stop is latched | `unstop` |
-| state ALARM | a fault stopped the machine | read `faults`, fix the cause, `unalarm` |
-| `NACK NOT_HOMED` | a job needs an axis that isn't homed | home, then run the job again |
-| `NACK OUT_OF_RANGE` with text | part of the job leaves the travel, such as `mesh takes z out` | move the job, or zero Z where there's room to plunge |
-| `NACK TOOL_UNAVAILABLE` with text | the head can't run that tool | check `accepts` and the tool's power in the config |
-| a resume says "not taken (tool)" | the tool change isn't finished | mount the tool, `wzero z`, then Resume |
-
-Every refusal and its text: [docs/reference/packets.md](docs/reference/packets.md)
-and [docs/reference/commands.md](docs/reference/commands.md).
 
 ## Folders
 
