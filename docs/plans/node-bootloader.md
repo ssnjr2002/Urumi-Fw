@@ -1,6 +1,6 @@
 # Node bootloader: update DB32 nodes over the bus
 
-**Open.** No branch started.
+**Open.** Branch 1 done; branches 2–5 not started.
 
 Today every node is flashed over UPDI (`upload_protocol = serialupdi` in
 `platformio.ini`); the application starts at address 0 and owns the chip, so
@@ -147,8 +147,8 @@ Flow control reuses the wire's existing patterns (`system/wire.md` §7, §9).
 * New on the Pico: Core 0 sends a page only when the USB transmit buffer has
   room for all of it, otherwise on a later pass, never blocking.
 
-Both directions are bus-bound, ~1.5 s per 128 KB plus page writes; branch 1
-measures it.
+A write is bound by the node's flash, ~4 s per 128 KB; a read by the bus,
+~1.5 s (branch 1, Outcome).
 
 ### Debug bootloader
 
@@ -182,7 +182,48 @@ it sends `RUN`, and reads and flashes a node with no Pico.
 **Files:** `src/scratch/node_bootloader/`, its own scratch env in
 `platformio.ini`, a script in `scripts/`.
 
-**Status:** not started.
+**Status:** done at `253a936` (bench; the branch stays for re-running).
+
+**Outcome.** Measured on a spare `db_node` (24 MHz crystal), console and
+UPDI on one adapter, a CP2102N RS-485 adapter on the bus side. Envs
+`bench_osc`, `bench_flash`, `bench_boot`, `bench_boot_app`, `bench_bus`.
+
+| Measured | Result |
+| --- | --- |
+| OSCHF at 24 MHz vs the crystal, 25 °C, after 1 h on | −149 to +21 ppm (probe resolution 85 ppm) |
+| Control: `OSCHFTUNE` ±16 | +6.3 % / −4.9 %, so the probe counts OSCHF |
+| Page erase, 512 B | 1.02 ms avg, 1.03 ms max |
+| Page write, 512 B, word by word | 14.4 ms avg, 14.6 ms max |
+| CRC-32 over 128 KB | 733 ms (16-entry table), 1581 ms (bitwise) |
+| Bootloader skeleton (clock, USARTs, CRC-8, CRC-32, erase, write, jump, console) | 1360 B, ~180 B of it the C startup |
+| Jump to an application at 0x800 | works: timeout jumps, a key stays, the app takes the crystal |
+| 9-bit echo at 921 600 on OSCHF, `BAUD` = 104 (0.16 %) | 50 880 words in 120 bursts of 16–1000 B, 9th bit set and clear: no errors |
+
+Consequences for later branches:
+
+* **Clock:** internal-oscillator-only holds at room temperature with a wide
+  margin. Drift over temperature is unmeasured; the datasheet's figure stands.
+* **`BOOTSIZE` = 4 (2 KB)**, application at 0x800. The skeleton already
+  passes 1 KB; dropping the C startup (`-nostartfiles`) recovers ~180 B.
+* **Updates are write-bound, not bus-bound:** ~15.4 ms per page, ~4 s per
+  128 KB against ~1.5 s on the bus. The window of 16 pages hides the bus.
+* **Boot-time CRC:** ~5.7 ms per KB with the 16-entry table, ~170 ms for a
+  30 KB application. A 1 KB table cuts it about fourfold if that matters.
+* **The bootloader must leave `RSTFR` set.** DxCore's `init_reset_flags()`
+  (`cores/dxcore/main.cpp`) software-resets the chip when it reads 0, which
+  loops bootloader → app → reset. It is a weak function the application could
+  override instead.
+* **Build:** the application is placed with
+  `board_build.text_section_start`; `-Wl,--section-start` in `build_flags` is
+  overridden. Fuses are set with `board_fuses.bootsize` / `.codesize`, written
+  by `pio run -t fuses`; `fuse8` is not read. A bare (no framework) env needs
+  `platform_packages = platformio/toolchain-atmelavr@~3.70300.0`; the
+  platform's default toolchain has no DB device specs. An application upload
+  needs `upload_flags = -D` so it doesn't erase the bootloader.
+* **Not tested:** switching the 9th bit within one burst from the PC
+  (frame then stream byte). Updates send only frames.
+
+Unblocks branch 3 (with branch 2).
 
 ### Branch 2: `refactor/db32-nodes`
 
@@ -256,6 +297,5 @@ changes.
   in that range. Settle the ranges before numbering the new commands.
 * **Crash-loop threshold N**, and how long the application runs before it
   clears the count.
-* **Bootloader size:** `BOOTSIZE` is in 512-byte steps; branch 1 sets it.
 * **Image metadata:** where the build puts node type, board and version so the
   host can read them from the image file.
